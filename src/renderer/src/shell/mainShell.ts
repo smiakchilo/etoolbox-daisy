@@ -54,8 +54,6 @@ export async function mountMainShell(
   const splitView = createMainSplitView(
     loadBrowserPaneFraction() ?? DEFAULT_BROWSER_PANE_FRACTION,
     {
-      onDragStart: () => browserPane.setViewSuspended(true),
-      onDragEnd: () => browserPane.setViewSuspended(false),
       persist: saveBrowserPaneFraction,
     },
   );

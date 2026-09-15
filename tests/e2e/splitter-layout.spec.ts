@@ -12,9 +12,13 @@ import path from 'node:path';
  *    test can only prove the *handlers* run, never that the CSS grid track
  *    the handler writes has any effect);
  *  - the native AEM `WebContentsView` ends up over the pane's *new* reserved
- *    region - the view is collapsed for the duration of the drag, so a
- *    missing restore would leave the pane permanently blank, and nothing in
- *    the renderer's own DOM would show it;
+ *    region - the view is deliberately left fully visible during the drag
+ *    (no collapse, no input pass-through), and this is the assertion that it
+ *    still lands on the new size afterwards. It also refutes the long-held
+ *    assumption that a leftward drag would stall under the composited view:
+ *    `sp-split-view`'s pointer capture spans the whole window at the OS
+ *    level, so the view cannot swallow the drag even while it tracks the
+ *    pane live;
  *  - the position is still there after a full quit and relaunch, which is
  *    only observable across two real app processes sharing one profile.
  */
@@ -92,8 +96,9 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   // Several intermediate moves, as a real drag produces: a single jump would
-  // not exercise the mid-drag path where the collapsed native view would
-  // otherwise be sitting under the cursor.
+  // not exercise the mid-drag path where the cursor runs LEFT over the fully
+  // visible (never-hidden) native view - the exact gesture the old collapse
+  // was built to survive.
   for (const step of [0.25, 0.5, 0.75, 1]) {
     await page.mouse.move(startX + dragByPx * step, startY);
   }
@@ -106,8 +111,9 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   expect(draggedWidth).toBeLessThan(initialWidth);
   expect(Math.abs(draggedWidth - (initialWidth + dragByPx))).toBeLessThanOrEqual(3);
 
-  // The native view is deliberately collapsed while dragging; this is the
-  // assertion that it came back, at the new size.
+  // The native view is never collapsed by a drag (only by the server picker),
+  // so this asserts it followed the pane live and ended exactly where the
+  // drag took it.
   let matched: { x: number; y: number; width: number; height: number } | undefined;
   for (let attempt = 0; attempt < 40 && matched === undefined; attempt += 1) {
     const nativeBounds = await readNativeBounds(first);

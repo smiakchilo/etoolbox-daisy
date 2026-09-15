@@ -15,10 +15,14 @@ import {
  *    never merely because the component's `change` event fired (which also
  *    fires on every intermediate drag tick and on our own resize-driven
  *    `relayout()` writes);
- *  - that drag-suspend and persistence only react to events whose real
- *    origin is the component's own internal splitter, distinguished (as in
- *    the real, open-shadow-DOM component) by `event.target === element` -
- *    never to events bubbling up from our own slotted pane content.
+ *  - that persistence only reacts to events whose real origin is the
+ *    component's own internal splitter, distinguished (as in the real,
+ *    open-shadow-DOM component) by `event.target === element` - never to
+ *    events bubbling up from our own slotted pane content;
+ *  - that the drag only toggles the whole-window `daisy-pane-resizing`
+ *    cursor/selection class for its duration. The native AEM view is
+ *    deliberately NOT suspended by a drag (splitter-layout.spec.ts), so
+ *    there is no suspend hook to assert here.
  *
  * Since the real `@spectrum-web-components/split-view` custom element is not
  * registered in this jsdom instance, `element` behaves as a plain
@@ -34,8 +38,6 @@ const WIDTH_PX = 1000;
 
 interface Harness {
   readonly splitView: MainSplitView;
-  readonly onDragStart: ReturnType<typeof vi.fn>;
-  readonly onDragEnd: ReturnType<typeof vi.fn>;
   readonly persist: ReturnType<typeof vi.fn>;
 }
 
@@ -49,15 +51,13 @@ function primarySizeOf(element: HTMLElement): string | undefined {
 }
 
 function build(initialFraction = 2 / 3): Harness {
-  const onDragStart = vi.fn();
-  const onDragEnd = vi.fn();
   const persist = vi.fn();
 
-  const splitView = createMainSplitView(initialFraction, { onDragStart, onDragEnd, persist });
+  const splitView = createMainSplitView(initialFraction, { persist });
   setWidthPx(splitView.element, WIDTH_PX);
   dom.window.document.body.append(splitView.element);
 
-  return { splitView, onDragStart, onDragEnd, persist };
+  return { splitView, persist };
 }
 
 /** Simulates the component setting `splitterPos` and dispatching its own `change` event. */
@@ -114,29 +114,26 @@ describe('createMainSplitView', () => {
     expect(primarySizeOf(splitView.element)).toBeUndefined();
   });
 
-  it('suspends the native AEM view for exactly the duration of a drag on the internal splitter', () => {
-    const { splitView, onDragStart, onDragEnd } = build();
+  it('keeps the whole-window resizing cursor/selection class for exactly the duration of a drag on the internal splitter', () => {
+    const { splitView } = build();
     // Dispatched directly on the host: mirrors how a real, open-shadow-DOM
     // `sp-split-view` retargets an event whose origin is its own internal
     // splitter to report `event.target === element`.
     pointer(splitView.element, 'pointerdown');
-    expect(onDragStart).toHaveBeenCalledTimes(1);
-    expect(onDragEnd).not.toHaveBeenCalled();
     expect(dom.window.document.body.classList.contains('daisy-pane-resizing')).toBe(true);
 
     pointer(splitView.element, 'pointerup');
-    expect(onDragEnd).toHaveBeenCalledTimes(1);
     expect(dom.window.document.body.classList.contains('daisy-pane-resizing')).toBe(false);
   });
 
   it('ignores a pointerdown/pointerup originating from slotted pane content', () => {
-    const { splitView, onDragStart, persist } = build();
+    const { splitView, persist } = build();
     const paneContent = dom.window.document.createElement('div');
     splitView.element.append(paneContent);
 
     pointer(paneContent, 'pointerdown');
     pointer(paneContent, 'pointerup');
-    expect(onDragStart).not.toHaveBeenCalled();
+    expect(dom.window.document.body.classList.contains('daisy-pane-resizing')).toBe(false);
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -152,11 +149,10 @@ describe('createMainSplitView', () => {
     expect(persist.mock.lastCall?.[0]).toBeCloseTo(0.5, 10);
   });
 
-  it('restores the native view and persists when a drag is cancelled rather than released', () => {
-    const { splitView, onDragEnd, persist } = build();
+  it('persists a drag that is cancelled rather than released', () => {
+    const { splitView, persist } = build();
     pointer(splitView.element, 'pointerdown');
     pointer(splitView.element, 'pointercancel');
-    expect(onDragEnd).toHaveBeenCalledTimes(1);
     expect(persist).toHaveBeenCalledTimes(1);
   });
 
@@ -181,12 +177,11 @@ describe('createMainSplitView', () => {
   });
 
   it('stops responding to input once disposed', () => {
-    const { splitView, onDragStart, persist } = build();
+    const { splitView, persist } = build();
     splitView.dispose();
     pointer(splitView.element, 'pointerdown');
     pointer(splitView.element, 'pointerup');
     keydown(splitView.element, 'ArrowLeft');
-    expect(onDragStart).not.toHaveBeenCalled();
     expect(persist).not.toHaveBeenCalled();
   });
 });

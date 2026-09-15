@@ -11,18 +11,6 @@ interface SplitViewElement extends HTMLElement {
 }
 
 export interface MainSplitViewHost {
-  /**
-   * Called once when a pointer drag of the splitter starts and once when it
-   * ends. The main process composites the AEM page in a native
-   * `WebContentsView` *on top of* the renderer (see `browserViewHost.ts`),
-   * and a native view sitting above the document takes mouse input for its
-   * own rectangle - pointer capture is per-document and cannot reach across
-   * it. Dragging leftwards would therefore stall the moment the cursor
-   * outran the view's (IPC-delayed) new bounds. The host uses these hooks to
-   * collapse the native view for the duration of the drag.
-   */
-  onDragStart(): void;
-  onDragEnd(): void;
   /** Records a settled fraction, so it survives a restart. Never called per pointermove/resize. */
   persist(fraction: number): void;
 }
@@ -40,11 +28,16 @@ export interface MainSplitView {
  * splitter bar + CSS grid track.
  *
  * The component owns dragging, keyboard stepping, ARIA and min/max clamping
- * itself; this wrapper only bridges the two things it cannot know about:
+ * itself; this wrapper only bridges the one thing it cannot know about:
  * persisting a *fraction* of the resizable width (so a resized window keeps
  * proportions rather than a stale pixel width - `sp-split-view` does not
- * rescale `primary-size` on its own when its container resizes) and
- * suspending the native AEM view for exactly the duration of a drag.
+ * rescale `primary-size` on its own when its container resizes).
+ *
+ * The native AEM view needs no suspending for a drag, and this wrapper
+ * deliberately does none: the splitter's pointer capture spans the whole
+ * window at the OS level, so the composited WebContentsView simply cannot
+ * swallow a drag over its own rectangle. A real leftward drag against the
+ * built app proves it (splitter-layout.spec.ts).
  *
  * Drag detection relies on standard shadow-DOM event retargeting rather than
  * any of the component's internal structure: an event whose real origin is
@@ -86,14 +79,12 @@ export function createMainSplitView(
     if (event.target !== element || activePointerId !== undefined) return;
     activePointerId = event.pointerId;
     document.body.classList.add('daisy-pane-resizing');
-    host.onDragStart();
   }
 
   function endDrag(event: PointerEvent): void {
     if (event.target !== element || activePointerId !== event.pointerId) return;
     activePointerId = undefined;
     document.body.classList.remove('daisy-pane-resizing');
-    host.onDragEnd();
     host.persist(currentFraction);
   }
 

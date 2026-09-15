@@ -2,19 +2,6 @@ import { el } from '../lib/dom';
 import { computeReservedRegionBounds, type ReservedRegionBounds } from './viewModel';
 
 /**
- * How long the native view's collapse/expand animation runs. This must stay
- * in step with the `200ms ease` transition on `.browser-page-panel` in
- * shell.css - the two are deliberately the same motion, one applied to the
- * composited native view, one to the DOM cover panel beneath it.
- */
-const COLLAPSE_FADE_MS = 200;
-
-/** Smooth deceleration, the same curve the DOM panel's CSS transition implies. */
-function easeOutCubic(t: number): number {
-  return 1 - (1 - t) * (1 - t) * (1 - t);
-}
-
-/**
  * The region reserved below the browser toolbar for the native
  * `WebContentsView` that the main process positions over the renderer
  * (requirements-decisions.md section 8). This element deliberately renders no
@@ -32,22 +19,18 @@ export interface BrowserViewHost {
    * Collapses the native view to a zero-sized rectangle (`true`) and restores
    * it from the live measurement (`false`).
    *
-   * Used while the pane splitter is being dragged. The native view is
-   * composited *above* this document, so for its own rectangle it - not the
-   * renderer - receives mouse input; a drag heading left would lose its
-   * `pointermove`/`pointerup` stream as soon as the cursor overtook the
-   * view's IPC-delayed new bounds, leaving the splitter stuck mid-drag.
-   * Collapsing for the duration also avoids asking the main process to resize
-   * a live page once per animation frame.
+   * Used only by the server picker, which replaces the page-view region with
+   * its own DOM list (browserPane.ts). A DOM list cannot sit above the
+   * composited native view, so the view is collapsed the moment the picker
+   * opens and the panel's `[hidden]` swaps instantly.
    *
-   * The collapse/restore is animated by default (the view shrinks to a point
-   * about the centre of its reserved rectangle over {@link COLLAPSE_FADE_MS}),
-   * so the page itself participates in the drag's fade instead of vanishing in
-   * one frame. Pass `{ animate: false }` when an instant collapse is wanted -
-   * the server picker, whose list must get the layout space the moment it
-   * opens (details in browserPane.ts).
+   * The pane-splitter drag deliberately does NOT go through this path: the
+   * view stays fully visible and live-following for its whole duration (see
+   * splitter-layout.spec.ts for why even a leftward drag cannot stall - the
+   * likely-but-never-verified "input capture" reasoning that motivated a
+   * collapse is refuted there by a real drag against the built app).
    */
-  setSuspended(suspended: boolean, options?: { readonly animate?: boolean }): void;
+  setSuspended(suspended: boolean): void;
   dispose(): void;
 }
 
@@ -63,13 +46,6 @@ export function createBrowserViewHost(): BrowserViewHost {
 
   let lastReported: ReservedRegionBounds | undefined;
   let suspended = false;
-  // Which mode the collapse ran in, so the restore matches it (an instant
-  // picker collapse must not come back animated around a layout change).
-  let collapseAnimateMode = false;
-  // What an in-flight animation is doing, so `setSuspended` knows when a call
-  // is a true no-op versus a legitimate direction reversal (e.g. the picker
-  // opening mid-restore must collapse instantly, not be swallowed).
-  let pendingOp: 'suspending' | 'restoring' | 'none' = 'none';
 
   function reportBoundsNow(): void {
     if (suspended) return;
@@ -110,57 +86,6 @@ export function createBrowserViewHost(): BrowserViewHost {
     });
   }
 
-  // Animation for the splitter drag. The native view has no opacity
-  // (verified against electron.d.ts: `View` only exposes setBounds /
-  // setVisible / setBackgroundColor / setBackgroundBlur), so "fading" it
-  // means collapsing its rectangle to a point about its own centre. That is
-  // exactly as good for the drag: the page shrinks away over the same 200ms
-  // the covering DOM panel fades, and is only ever fully resolved to a
-  // zero-sized rectangle once the animation has run its course.
-  let animHandle: number | undefined;
-
-  /**
-   * Animates the native view between a full `anchor` rectangle and a
-   * centre-pinned point. `closing` picks the direction: the view shrinks
-   * `anchor` -> zero, or grows zero -> `anchor`. Each frame's rectangle is
-   * kept in `lastReported` so the mutual dedupe still holds while an
-   * animation is in flight and so an interrupted animation never leaves a
-   * stale full-size value behind.
-   */
-  function animateViewBounds(
-    anchor: ReservedRegionBounds,
-    closing: boolean,
-    onDone: () => void,
-  ): void {
-    if (animHandle !== undefined) {
-      window.cancelAnimationFrame(animHandle);
-      animHandle = undefined;
-    }
-    let startTime: number | undefined;
-    const step = (now: number): void => {
-      if (startTime === undefined) startTime = now;
-      const t = Math.min(1, (now - startTime) / COLLAPSE_FADE_MS);
-      const scale = closing ? 1 - easeOutCubic(t) : easeOutCubic(t);
-      const width = Math.max(0, Math.round(anchor.width * scale));
-      const height = Math.max(0, Math.round(anchor.height * scale));
-      const rect: ReservedRegionBounds = {
-        x: Math.round(anchor.x + (anchor.width - width) / 2),
-        y: Math.round(anchor.y + (anchor.height - height) / 2),
-        width,
-        height,
-      };
-      lastReported = rect;
-      window.daisy.browser.setViewBounds(rect);
-      if (t < 1) {
-        animHandle = window.requestAnimationFrame(step);
-      } else {
-        animHandle = undefined;
-        onDone();
-      }
-    };
-    animHandle = window.requestAnimationFrame(step);
-  }
-
   // The primary signal: the reserved element can change size without the
   // window changing size at all (e.g. the chat pane's flex sibling growing).
   const resizeObserver = new ResizeObserver(() => scheduleReport());
@@ -174,72 +99,23 @@ export function createBrowserViewHost(): BrowserViewHost {
   return {
     element: host,
     reportBoundsNow,
-    setSuspended(next: boolean, options?: { readonly animate?: boolean }): void {
-      const animate = options?.animate ?? true;
+    setSuspended(next: boolean): void {
+      if (suspended === next) return;
+      suspended = next;
       if (next) {
-        // Already collapsed, or a collapse in flight: nothing to do. Only a
-        // mid-restore must be interrupted (and re-collapsed), e.g. the picker
-        // opening while the view is still growing back.
-        if (suspended && pendingOp !== 'restoring') return;
+        const collapsed: ReservedRegionBounds = { x: 0, y: 0, width: 0, height: 0 };
+        // Recorded as the last reported value so the restore below is never
+        // swallowed by the dedupe: the restored rectangle always differs
+        // from a collapsed one.
+        lastReported = collapsed;
+        window.daisy.browser.setViewBounds(collapsed);
       } else {
-        // Fully restored, or already growing back: nothing to do.
-        if (!suspended || pendingOp === 'restoring') return;
-      }
-      // Cancel any in-flight animation before acting on this call. The
-      // animated paths re-cancel inside `animateViewBounds`, but the instant
-      // paths bypass it - without this, a queued frame from a cancelled
-      // restore would fire afterwards and resurrect the view with a stale
-      // rectangle.
-      if (animHandle !== undefined) {
-        window.cancelAnimationFrame(animHandle);
-        animHandle = undefined;
-      }
-      if (next) {
-        collapseAnimateMode = animate;
-        suspended = true;
-        // Base on the last measured value so a suspend that raced a pending
-        // `reportBoundsNow` still collapses from the size actually on screen.
-        const anchor = lastReported ?? computeReservedRegionBounds(host.getBoundingClientRect());
-        if (animate && anchor.width > 0 && anchor.height > 0) {
-          pendingOp = 'suspending';
-          animateViewBounds(anchor, true, () => {
-            // `lastReported` is the centre-pinned zero rect already; nothing
-            // to snap. The restore's dedupe sees it differ from the live
-            // rect, so the view is guaranteed to come back.
-            pendingOp = 'none';
-          });
-        } else {
-          const collapsed: ReservedRegionBounds = { x: 0, y: 0, width: 0, height: 0 };
-          lastReported = collapsed;
-          pendingOp = 'none';
-          window.daisy.browser.setViewBounds(collapsed);
-        }
-      } else {
-        const target = computeReservedRegionBounds(host.getBoundingClientRect());
-        if (collapseAnimateMode && target.width > 0 && target.height > 0) {
-          pendingOp = 'restoring';
-          animateViewBounds(target, false, () => {
-            // `suspended` stays true for the whole animation so
-            // `reportBoundsNow` can't slip an unrelated measurement in under
-            // the growing view; `lastReported` is already `target` from the
-            // final frame.
-            pendingOp = 'none';
-            suspended = false;
-          });
-        } else {
-          pendingOp = 'none';
-          suspended = false;
-          reportBoundsNow();
-        }
+        reportBoundsNow();
       }
     },
     dispose(): void {
       resizeObserver.disconnect();
       window.removeEventListener('resize', scheduleReport);
-      if (animHandle !== undefined) {
-        window.cancelAnimationFrame(animHandle);
-        animHandle = undefined;
-      }
       if (rafHandle !== undefined) {
         window.cancelAnimationFrame(rafHandle);
         rafHandle = undefined;

@@ -198,42 +198,25 @@ body.daisy-pane-resizing {
 }
 
 /* Groups the toolbar's status/message row with the reserved page-view region
-   it describes (browserPane.ts), so the picker/splitter suspension hiding the
+   it describes (browserPane.ts), so the picker suspension hiding the
    native view hides the message with it - the message text describes a page
    that is no longer on screen.
 
-   The `transition` makes the splitter drag's `--suspended` state fade the
-   panel in/out (see that rule below). `visibility` interpolates discretely:
-   it flips to `hidden` only after the fade-out finishes and to `visible`
-   before the fade-in starts, which is exactly the fade you want. A toggled
-   `[hidden]` (the picker path) is `display:none` - not transitionable - so
-   the picker still swaps instantly and its list gets the layout space. */
+   A splitter drag never hides this panel: the native view stays fully
+   visible and live-following for the drag's whole duration (splitter-layout
+   .spec.ts proves a leftward drag over the composited view cannot stall), so
+   no fade transition is needed here - the only swap is the picker's
+   `[hidden]`, which is `display:none` (not transitionable) and therefore
+   instant by design, giving the picker list the layout space immediately. */
 .browser-page-panel {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  transition:
-    opacity 200ms ease,
-    visibility 200ms ease;
 }
 
 .browser-page-panel[hidden] {
   display: none;
-}
-
-/* Splitter drag: the panel keeps its layout space (no pane-height jump -
-   `visibility: hidden` only removes it from hit-testing/a11y) and just fades
-   to transparent while the native view is collapsed. */
-.browser-page-panel--suspended {
-  opacity: 0;
-  visibility: hidden;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .browser-page-panel {
-    transition: none;
-  }
 }
 
 /* Reserved for the native WebContentsView the main process positions on
