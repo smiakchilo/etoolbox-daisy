@@ -1,7 +1,7 @@
 import { isInsecureOrigin, type ServerId, type ServerSnapshot } from '../../../shared';
 import { resolveServerColorCss } from '../lib/serverColor';
 
-/** One entry the address bar's server picker button (`sp-action-menu`) renders. */
+/** One entry the server picker panel (`serverPickerPanel.ts`) renders. */
 export interface ServerOption {
   readonly id: ServerId;
   readonly label: string;
@@ -11,7 +11,7 @@ export interface ServerOption {
   readonly selected: boolean;
 }
 
-/** Builds the server-selector's option list from the settings snapshot. */
+/** Builds the server picker panel's option list from the settings snapshot. */
 export function buildServerOptions(
   servers: readonly ServerSnapshot[],
   activeServerId: ServerId | null,

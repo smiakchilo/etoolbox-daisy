@@ -1,22 +1,26 @@
-import { _electron as electron, expect, test } from '@playwright/test';
+import { _electron as electron, expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { appSettingsSchema, defaultAppSettings } from '../../src/shared/contracts/appSettings';
+import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 
 /**
- * The address bar is a plain `sp-textfield` plus a separate "picker button"
- * (`sp-action-menu`, `#server-picker-button`) beside it: clicking the button
- * opens a menu of the configured servers underneath. Picking one fills the
- * address bar with that server's origin and navigates to it - the exact same
- * `navigate()` path a typed address goes through. With zero configured
- * servers the button must never even be shown.
+ * The address bar is a plain `sp-textfield` with an `sp-picker-button`
+ * (`#server-picker-button`) coupled to its right edge. Clicking the button
+ * suspends the native `WebContentsView`, hides the reserved
+ * `#browser-view-host` region, and reveals a whole-size server list panel
+ * (`.server-picker-panel`) in its place - instead of a dropdown trying to
+ * float above the always-composited-above native view. Picking a server (click
+ * or Enter on a `.server-picker-item` row, or the header's cross close button)
+ * restores the view and, for a selection, fills the address bar with that
+ * server's origin and navigates to it - the exact same `navigate()` path a
+ * typed address goes through. With zero configured servers the button stays
+ * visible but disabled and the panel never opens.
  *
  * This is exercised against the real built app/real Spectrum control rather
- * than jsdom: `sp-action-menu` renders its overlay via the native
- * `popover`/top-layer API, which jsdom cannot render, so only a real
- * Chromium proves the menu actually opens and a click actually selects.
+ * than jsdom: the whole point is the interaction between real DOM layout, the
+ * hidden/suspended native view, and a real custom element.
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -75,7 +79,24 @@ function writeSettings(home: string, settings: unknown): void {
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
-test("picking a server from the address bar's picker button navigates to it", async () => {
+/**
+ * The `open` attribute must *paint* pressed, not just tag the element: the
+ * non-quiet `sp-picker-button` paints its resting fill on `.spectrum-PickerButton-fill`
+ * (`.root` itself stays `background-color: initial`) inside the shadow root,
+ * and the fill flips to the darker "down" variant under `:host([open]) .root`.
+ * Playwright parks the pointer away first so `:hover` contributes nothing,
+ * then reads the actual computed background of the fill element.
+ */
+async function pickerPressedBackground(page: Page): Promise<string | null> {
+  await page.mouse.move(2, 2);
+  return page.evaluate(() => {
+    const el = document.getElementById('server-picker-button');
+    const fill = el?.shadowRoot?.querySelector('.spectrum-PickerButton-fill') ?? null;
+    return fill ? getComputedStyle(fill).backgroundColor : null;
+  });
+}
+
+test("picking a server from the address bar's picker panel navigates to it", async () => {
   test.setTimeout(120_000);
 
   const serverA = await startEchoOrigin();
@@ -112,34 +133,82 @@ test("picking a server from the address bar's picker button navigates to it", as
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
     const pickerButton = page.locator('#server-picker-button');
+    const panel = page.locator('.server-picker-panel');
+    const viewHost = page.locator('[data-testid="browser-view-host"]');
     await expect(pickerButton).toBeVisible({ timeout: 10_000 });
 
-    // Nothing is visibly open yet.
-    await expect(page.getByRole('menuitem', { name: 'Server B' })).toHaveCount(0);
+    // The panel opening proves the *elements* work, but not that they were
+    // actually registered: the picker's click listener fires even on an
+    // unregistered tag (jsdom renders it as HTMLUnknownElement). A real
+    // `customElement` registry entry is the only proof the register-imports
+    // step ran - see AGENTS.md's "jsdom cannot prove a custom element is
+    // registered" rule.
+    const registered = await page.evaluate(() => ({
+      pickerButton: Boolean(customElements.get('sp-picker-button')),
+      crossIcon: Boolean(customElements.get('sp-icon-cross100')),
+    }));
+    expect(registered.pickerButton).toBe(true);
+    expect(registered.crossIcon).toBe(true);
 
-    // Clicking the picker button opens the menu.
+    // Nothing is visibly open yet: the panel is hidden and the native view
+    // region is shown (the combo glyph is not reflecting an open state).
+    await expect(panel).toBeHidden();
+    await expect(viewHost).toBeVisible();
+    await expect(pickerButton).not.toHaveAttribute('open', '');
+    const restingBackground = await pickerPressedBackground(page);
+    expect(restingBackground).not.toBeNull();
+
+    // Clicking the picker button opens the panel: the native view region
+    // disappears underneath it and the button shows its pressed/open state -
+    // both the `open` attribute AND the painted "down" background it triggers.
     await pickerButton.click();
-    const itemA = page.getByRole('menuitem', { name: 'Server A' });
-    const itemB = page.getByRole('menuitem', { name: 'Server B' });
+    const itemA = page.locator(`.server-picker-item[data-origin="${serverA.origin}"]`);
+    const itemB = page.locator(`.server-picker-item[data-origin="${serverB.origin}"]`);
+    await expect(panel).toBeVisible({ timeout: 10_000 });
     await expect(itemA).toBeVisible({ timeout: 10_000 });
     await expect(itemB).toBeVisible({ timeout: 10_000 });
+    await expect(viewHost).toBeHidden();
+    await expect(pickerButton).toHaveAttribute('open', '');
+    await page.waitForTimeout(300);
+    const pressedBackground = await pickerPressedBackground(page);
+    expect(pressedBackground).not.toBe(restingBackground);
 
+    // Deciding to back out: the header's cross button closes the panel and
+    // restores the native view region without navigating anywhere.
+    await page.locator('.server-picker-panel__close').click();
+    await expect(panel).toBeHidden();
+    await expect(viewHost).toBeVisible();
+    await expect(pickerButton).not.toHaveAttribute('open', '');
+    expect(serverA.hits).toBe(0);
+    expect(serverB.hits).toBe(0);
+
+    // Re-open and actually pick Server B.
+    await pickerButton.click();
+    await expect(itemB).toBeVisible({ timeout: 10_000 });
     await itemB.click();
 
-    // Selecting it both fills the address bar and actually navigates. The
-    // final address-bar text comes from the real post-navigation URL (which
-    // can add a trailing "/"), not literally the menu item's string.
+    // Selecting both fills the address bar and actually navigates. The final
+    // address-bar text comes from the real post-navigation URL (which can add
+    // a trailing "/"), not literally the item's string.
     await expect
       .poll(async () => await addressInput.inputValue())
       .toMatch(new RegExp(`^${serverB.origin}/?$`));
     await expect.poll(() => serverB.hits > 0, { timeout: 30_000 }).toBe(true);
     expect(serverA.hits).toBe(0);
 
+    // The panel closed again, the native view region is back, and the button
+    // has released its pressed state back to the resting background.
+    await expect(panel).toBeHidden();
+    await expect(viewHost).toBeVisible();
+    await expect(pickerButton).not.toHaveAttribute('open', '');
+    await page.waitForTimeout(300);
+    expect(await pickerPressedBackground(page)).toBe(restingBackground);
+
     const message = page.locator('.browser-toolbar-message__text');
     expect((await message.textContent()) ?? '').toBe('');
 
-    // Opening the button's menu again and picking the other server works
-    // too - not a one-shot affordance.
+    // Opening the picker again and picking the other server works too - not
+    // a one-shot affordance.
     await pickerButton.click();
     await expect(itemA).toBeVisible({ timeout: 10_000 });
     await itemA.click();
@@ -157,7 +226,7 @@ test("picking a server from the address bar's picker button navigates to it", as
   }
 });
 
-test("with no configured servers, the address bar's picker button never appears", async () => {
+test("with no configured servers, the address bar's picker button stays visible but disabled", async () => {
   test.setTimeout(60_000);
 
   const { home, env } = launchProfile();
@@ -169,14 +238,16 @@ test("with no configured servers, the address bar's picker button never appears"
     const addressBar = page.locator('#browser-address-bar');
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
+    const pickerButton = page.locator('#server-picker-button');
 
-    await expect(page.locator('#server-picker-button')).toBeHidden();
-
-    // The field itself must still be fully usable for typing, and clicking
-    // it must never surface any menu when there is nothing to pick from.
+    // The button is still present (never hidden) but disabled, and clicking
+    // it must never surface the panel when there is nothing to pick from.
+    await expect(pickerButton).toBeVisible();
+    await expect(pickerButton).toBeDisabled();
     await addressInput.click();
+    await pickerButton.click({ force: true });
     await page.waitForTimeout(500);
-    await expect(page.getByRole('menuitem')).toHaveCount(0);
+    await expect(page.locator('.server-picker-panel')).toBeHidden();
     await expect(addressInput).toBeEnabled();
   } finally {
     await app.close();

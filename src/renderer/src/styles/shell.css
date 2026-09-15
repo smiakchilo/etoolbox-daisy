@@ -73,19 +73,67 @@ body.daisy-pane-resizing {
   flex: 0 0 auto;
 }
 
-.browser-toolbar .address-bar {
+/*
+ * The address field plus its coupled server "picker button": one flex item of
+ * the toolbar that reads as a single element - a combobox member (field +
+ * glyph). The button is an `sp-picker-button` at its default `position="right"`
+ * (its `border-radius-sided` tokens square the button's left corners); see
+ * browserToolbar.ts / requirements-decisions.md section 8.
+ */
+.browser-toolbar__address-group {
+  display: flex;
+  align-items: center;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-/* The component's own `:host{display:inline-flex}` (action-menu.css) would
-   otherwise beat the plain `[hidden]` UA rule, since an author-origin rule
-   always wins over the UA stylesheet regardless of specificity - the same
-   reason `.browser-toolbar-message[hidden]`/`.insecure-banner[hidden]` below
-   need their own override too. */
-.browser-toolbar .server-picker-button[hidden] {
-  display: none;
+.browser-toolbar__address-group .address-bar {
+  flex: 1 1 auto;
+  min-width: 0;
+
+  /* The field's shadow `.input` accepts only a single radius token
+     (`--mod-textfield-corner-radius`), so all four corners are squared here and
+     the LEFT pair is re-rounded by clipping on the host itself (the `.input`
+     fills the host box, so the clip reproduces a rounded-left field exactly).
+     The RIGHT corners stay square on purpose: they meet the picker's already-
+     squared left corners, and #server-picker-button then overlaps the field by
+     1px (margin-left below) so both 1px borders coincide as one line. */
+  --mod-textfield-corner-radius: 0;
+  border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
+  border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
+  overflow: hidden;
+
+  /* No focus "frame": the field's keyboard-focus border (black) and its 2px
+     outline indicator (blue) are both forced back to the resting gray-500, so
+     focus never separates the field from the button. `--mod-textfield-*` are
+     the component's documented state hooks and inherit into the shadow DOM. */
+  --mod-textfield-focus-indicator-color: transparent;
+  --mod-textfield-border-color-hover: var(--spectrum-gray-500);
+  --mod-textfield-border-color-focus: var(--spectrum-gray-500);
+  --mod-textfield-border-color-keyboard-focus: var(--spectrum-gray-500);
+  --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
 }
+
+.browser-toolbar__address-group #server-picker-button {
+  /* Fold the button onto the field: this 1px negative margin lays the button's
+     left border exactly over the field's right border (both now square at the
+     seam), merging them into one 1px line instead of a 2px divide.
+     The picker's own border defaults to a lighter gray than the field, so the
+     fill's border color is pinned to the field's resting gray to keep the seam
+     one tone. (The `:host([open]) .root` background down-variant still paints
+     the pressed state - only the border color is pinned.) */
+  margin-left: -1px;
+  /* Pin the seam border AND the resting fill to the field's values so the two
+     surfaces are indistinguishable: one gray-500 border line and one white
+     face. The `:host([open]) .root` background down-variant still overrides
+     the fill inside the shadow, so the pressed state keeps painting. */
+  --mod-picker-button-background-color: #ffffff;
+  --mod-picker-button-border-color: var(--spectrum-gray-500);
+  --mod-picker-button-background-animation-duration: 0s;
+}
+
+/* The picker button never hides any more (it stays visible but disabled with
+   zero servers), so there is no `[hidden]` override for it here. */
 
 /* Colour is always paired with the visible label text next to it - never
    the only distinguishing signal (requirements-decisions.md section 8);
@@ -153,6 +201,90 @@ body.daisy-pane-resizing {
   font-style: italic;
   padding: 0 16px;
   text-align: center;
+}
+
+/* Author-origin `display` rules above would beat the UA `[hidden]` rule, so
+   the banner/view-host need explicit overrides to actually disappear. */
+.browser-view-host[hidden] {
+  display: none;
+}
+
+/* The whole-size server list shown while the picker is "open": it replaces
+   the native WebContentsView region (browserViewHost is suspended/hidden
+   underneath), so it justifies/occupies exactly the pane's page-view area. */
+.server-picker-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--spectrum-gray-75, #fbfbfb);
+  overflow: hidden;
+}
+
+.server-picker-panel[hidden] {
+  display: none;
+}
+
+.server-picker-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  flex: 0 0 auto;
+}
+
+.server-picker-panel__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.server-picker-panel__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+/* One option per configured server: a real <button>, but bare - no resting
+   background, border or button padding - so the list reads as rows "one after
+   another", with only hover/keyboard state providing any visual affordance
+   (see serverPickerPanel.ts). */
+.server-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.server-picker-item:hover {
+  background: var(--spectrum-gray-200, #eaeaea);
+}
+
+.server-picker-item:focus-visible {
+  outline: 2px solid var(--spectrum-blue-400, #2680eb);
+  outline-offset: -2px;
+  background: var(--spectrum-gray-200, #eaeaea);
+}
+
+.server-picker-item__label {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.server-picker-item__origin {
+  margin-left: auto;
+  color: var(--spectrum-gray-600, #6e6e6e);
+  font-size: 13px;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .chat-pane {

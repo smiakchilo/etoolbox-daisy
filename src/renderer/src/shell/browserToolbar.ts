@@ -4,26 +4,23 @@ import type { ServerOption } from './viewModel';
 
 /**
  * The left pane's toolbar: Back/Forward/Refresh, a plain text address bar,
- * and a "picker button" that opens the full server list beside it
+ * and a "picker button" coupled to the address field's right edge
  * (requirements-decisions.md section 8).
  *
  * The address bar (`addressField`) is an ordinary `sp-textfield`: typing a
  * URL and committing it (Enter/blur) navigates exactly as before. The
- * `sp-action-menu` beside it (`serverMenuButton`) is a menu-button, not a
- * value-holding control - clicking it opens a menu of the configured
- * servers, each item showing its colour swatch and label like the old
- * standalone `sp-picker`. Selecting an item writes that server's *origin*
- * into the address field and runs it through the exact same `navigate()`
- * call as anything typed directly - see `buildServerMenuItem`. With zero
- * configured servers the button is hidden entirely (see `setServerOptions`),
- * so there is nothing to open.
+ * `sp-picker-button` beside it (`serverPickerButton`) is a combobox-style
+ * affordance, not a value-holding control - clicking it asks the owning pane
+ * to suspend the native `WebContentsView` and reveal the whole-size server
+ * list (`serverPickerPanel.ts`). Selecting a server there calls back into
+ * `navigateTo(origin)`, which writes that server's *origin* into the address
+ * field and runs it through the exact same `navigate()` call as anything
+ * typed directly. With zero configured servers the button stays visible but
+ * disabled (see `setServerOptions`), so there is nothing to open.
  *
- * Opening the menu from the address field itself (Chrome-address-bar-style)
- * was tried and deliberately dropped: `sp-action-menu`'s popover only runs
- * its open CSS transition reliably when toggled from its own trigger via a
- * real click; toggled from elsewhere it has no transition to watch, and the
- * library's own "no transition started" safety net force-closes it ~50ms
- * later. The button remains the only way to open the menu.
+ * The button reveals its "open" state when the picker panel is up:
+ * `setServerPickerOpen(true)` sets the `open` attribute, whose `:host([open])`
+ * CSS rule gives the pressed look; the pane clears it when the panel closes.
  *
  * Every control here is wired to the real `window.daisy.browser` IPC surface
  * now that it exists. Failures are handled generically per
@@ -39,8 +36,17 @@ export interface BrowserToolbar {
   /** Refreshes the address bar text and server-selector options for a newly loaded snapshot. */
   setAddressValue(value: string): void;
   setServerOptions(options: readonly ServerOption[]): void;
+  /** Marks the picker button as open (panel visible) or closed. */
+  setServerPickerOpen(open: boolean): void;
+  /** Writes `origin` into the address field and navigates to it, exactly like a typed address. */
+  navigateTo(origin: string): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`. */
   dispose(): void;
+}
+
+export interface BrowserToolbarCallbacks {
+  /** Fired when the picker button is activated; the owning pane opens/closes the panel. */
+  onServerPickerClick(): void;
 }
 
 /**
@@ -65,28 +71,7 @@ function buildNavButton(
   return button;
 }
 
-/**
- * One `sp-menu-item` for the server picker button's menu: a colour swatch
- * plus the server's label, exactly like the old standalone `sp-picker`.
- * Unlike `sp-combobox` (which clones slotted items into plain text),
- * `sp-action-menu` renders its slotted children directly, so the swatch's
- * icon-slot content survives. The item's `value` is the server's *origin*
- * (not its id, and not its label) - selecting it writes that origin into the
- * address field, which then flows through the same `navigate()` call as
- * anything typed directly.
- */
-function buildServerMenuItem(option: ServerOption): HTMLElement {
-  const swatch = el('span', { attrs: { class: 'server-swatch', role: 'presentation' } });
-  swatch.style.backgroundColor = option.colorCss;
-  swatch.setAttribute('slot', 'icon');
-  return el('sp-menu-item', {
-    attrs: { value: option.origin },
-    text: option.label,
-    children: [swatch],
-  });
-}
-
-export function createBrowserToolbar(): BrowserToolbar {
+export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): BrowserToolbar {
   const toolbar = el('div', { attrs: { class: 'toolbar browser-toolbar', role: 'toolbar' } });
 
   // "Back" reuses Forward's sp-icon-arrow100 glyph, rotated 180deg via CSS
@@ -173,39 +158,30 @@ export function createBrowserToolbar(): BrowserToolbar {
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
 
-  const serverMenuButton = el('sp-action-menu', {
+  // `sp-picker-button` default `position="right"` removes its left border
+  // radius so it sits flush against the address field's right edge as a
+  // combobox glyph (the sibling `.browser-toolbar__address-group` wrapper in
+  // shell.css completes the coupling). Its built-in chevron triggers the
+  // pane's open/close toggle. Non-quiet: a filled resting background whose
+  // `:host([open])` "down" variant is the visibly pressed toggle state.
+  const serverPickerButton = el('sp-picker-button', {
     attrs: {
       id: 'server-picker-button',
       class: 'server-picker-button',
-      quiet: '',
-      label: 'Choose server',
+      position: 'right',
+      'accessible-label': 'Choose server',
+      title: 'Choose server',
+      disabled: '',
     },
-  }) as HTMLElement & { value: string; toggle(target?: boolean): void };
-  const serverMenuIcon = document.createElement('sp-icon-chevron-down');
-  serverMenuIcon.setAttribute('slot', 'icon');
-  serverMenuButton.append(serverMenuIcon);
-  // Hidden until `setServerOptions` supplies at least one server - see the
-  // `[hidden]` override in shell.css (needed because the component's own
-  // `:host{display:inline-flex}` would otherwise win over the plain
-  // attribute).
-  serverMenuButton.hidden = true;
+  });
+  serverPickerButton.addEventListener('click', () => callbacks.onServerPickerClick());
 
-  // Selecting a menu item sets `.value` to that item's `value` (the origin)
-  // and fires this event synchronously from inside the click handler, before
-  // the component reverts `.value` back to its prior value (it does this
-  // regardless, since `selects` is deliberately left unset here - this is a
-  // stateless menu button, not a persistent selection control) - so reading
-  // `.value` here, during the event, is reliable even though it does not
-  // stick afterwards. One `navigate()` call handles it exactly like a typed
-  // address would.
-  serverMenuButton.addEventListener('change', () => {
-    const value = serverMenuButton.value.trim();
-    if (value === '') return;
-    addressField.value = value;
-    void window.daisy.browser.navigate(value).then(handleVoidResult);
+  const addressGroup = el('div', {
+    attrs: { class: 'browser-toolbar__address-group' },
+    children: [addressField, serverPickerButton],
   });
 
-  toolbar.append(backButton, forwardButton, refreshButton, addressField, serverMenuButton);
+  toolbar.append(backButton, forwardButton, refreshButton, addressGroup);
 
   // Once a real navigation-state event has been observed, it is the only
   // authoritative source for the address bar: `setAddressValue` (driven by
@@ -229,18 +205,28 @@ export function createBrowserToolbar(): BrowserToolbar {
     }
   });
 
+  // Re-derived whenever the snapshot changes so the switch handler below can
+  // restore the picker to its correct disabled state without clobbering the
+  // no-servers case (it must not blindly remove `disabled` after a switch).
+  let hasServers = false;
+
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
     // requirements-decisions.md section 4: "Keep tools disabled until the
     // transition completes." Back/Forward's finer-grained history state is
     // restored by the next `onStateChanged` push the switch produces, not
     // guessed at here.
-    const controls = [backButton, forwardButton, refreshButton, addressField, serverMenuButton];
+    const controls = [backButton, forwardButton, refreshButton, addressField];
     for (const control of controls) {
       if (state.switching) {
         control.setAttribute('disabled', '');
       } else {
         control.removeAttribute('disabled');
       }
+    }
+    if (state.switching || !hasServers) {
+      serverPickerButton.setAttribute('disabled', '');
+    } else {
+      serverPickerButton.removeAttribute('disabled');
     }
     if (state.switching) {
       showMessage('Switching servers...');
@@ -261,12 +247,26 @@ export function createBrowserToolbar(): BrowserToolbar {
       // text is owned exclusively by `setAddressValue`/the live
       // navigation-state event above, and must not be reset just because
       // the configured server list reloaded (e.g. the window regaining
-      // focus). The menu item elements themselves are re-slotted (the
-      // trailing icon child stays put, since it's addressed to a different
-      // slot). With zero servers the button is hidden entirely - there is
-      // nothing to open.
-      serverMenuButton.replaceChildren(serverMenuIcon, ...options.map(buildServerMenuItem));
-      serverMenuButton.hidden = options.length === 0;
+      // focus). Only the picker's disabled state depends on the snapshot.
+      hasServers = options.length > 0;
+      if (hasServers) {
+        serverPickerButton.removeAttribute('disabled');
+      } else {
+        serverPickerButton.setAttribute('disabled', '');
+      }
+    },
+    setServerPickerOpen(open: boolean): void {
+      if (open) {
+        serverPickerButton.setAttribute('open', '');
+        serverPickerButton.setAttribute('aria-expanded', 'true');
+      } else {
+        serverPickerButton.removeAttribute('open');
+        serverPickerButton.setAttribute('aria-expanded', 'false');
+      }
+    },
+    navigateTo(origin: string): void {
+      addressField.value = origin;
+      void window.daisy.browser.navigate(origin).then(handleVoidResult);
     },
     dispose(): void {
       unsubscribeState();
