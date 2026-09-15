@@ -1,0 +1,119 @@
+import {
+  canSendMessage,
+  type AgentServiceLifecycleState,
+  type CanSendBlockReason,
+  type SessionStatus,
+  type SessionStreamState,
+} from '../../../shared';
+
+/**
+ * Everything the composer's button/notice state depends on: the agent
+ * service's own startup lifecycle (`AgentChatStatus.serviceState`) plus the
+ * chat's `SessionStatus` (streaming state + auth), kept as two separate
+ * fields for the same reason `sessionState.ts` keeps `SessionStatus`'s own
+ * fields separate - see `computeComposerButtonState` below for why
+ * `serviceState` is checked first and short-circuits everything else.
+ */
+export interface ComposerStatus {
+  readonly serviceState: AgentServiceLifecycleState;
+  readonly session: SessionStatus;
+}
+
+export type ComposerButtonState =
+  | { readonly kind: 'connecting' }
+  | { readonly kind: 'stop' }
+  | { readonly kind: 'send-enabled' }
+  | { readonly kind: 'send-disabled'; readonly reason: CanSendBlockReason };
+
+/**
+ * Streaming states with a turn actually in flight, i.e. exactly the states
+ * for which a Stop button (calling `abort`) is the correct affordance
+ * instead of Send. Deliberately excludes `closed`/`error`: those are
+ * terminal/broken, not "something is running that Stop could cancel".
+ */
+const IN_FLIGHT_STATES: ReadonlySet<SessionStreamState> = new Set([
+  'sending',
+  'streaming',
+  'runningTool',
+  'cancelling',
+]);
+
+/**
+ * Derives what the composer's Send/Stop button should show right now.
+ *
+ * Checked in this order, each one short-circuiting the rest:
+ *
+ * 1. `serviceState === "starting"` - `agent-chat-ipc.ts`'s doc comment on
+ *    `AgentChatStatus` is explicit that `auth`/`sessionState` are
+ *    placeholder values while starting; running `canSendMessage` against
+ *    them here would misreport "not authenticated" for a user who is merely
+ *    a few seconds early, which is exactly the conflation the plan forbids.
+ * 2. A turn in flight - `canSendMessage` has no notion of "Stop" at all (see
+ *    below), so this composer-only concept has to be decided before
+ *    delegating to it, not folded into its reason codes.
+ * 3. Otherwise, `src/shared/contracts/sessionState.ts`'s own gate, called
+ *    verbatim - this is the exact rule `agentChatController.ts`'s
+ *    `sendMessage` enforces:
+ *
+ *      const gate = canSendMessage(sessionStatus);
+ *      if (!gate.canSend) return { ok: false, error: blockReasonError(gate.reason) };
+ *
+ *    Reusing the function itself (not re-deriving its logic) is what
+ *    guarantees the composer and main can never disagree about whether a
+ *    send would be accepted.
+ */
+export function computeComposerButtonState(status: ComposerStatus): ComposerButtonState {
+  if (status.serviceState === 'starting') return { kind: 'connecting' };
+  if (IN_FLIGHT_STATES.has(status.session.state)) return { kind: 'stop' };
+
+  const gate = canSendMessage(status.session);
+  if (!gate.canSend) return { kind: 'send-disabled', reason: gate.reason };
+  return { kind: 'send-enabled' };
+}
+
+/** Human-readable text for a `send-disabled` reason, shown next to the composer. */
+export function describeCanSendBlockReason(reason: CanSendBlockReason): string {
+  switch (reason) {
+    case 'session_closed':
+      return 'This conversation is closed.';
+    case 'not_authenticated':
+      return 'Sign in to Copilot to send a message.';
+    case 'session_error':
+      return 'The last turn ended in an error.';
+    case 'turn_in_progress':
+      return 'A response is already in progress.';
+    default: {
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
+  }
+}
+
+export interface SubmitOnEnterInput {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  /**
+   * Whether an IME composition session is currently open on the field. Must
+   * come from tracking `compositionstart`/`compositionend` and/or the
+   * triggering `KeyboardEvent.isComposing` - never assumed `false`.
+   */
+  readonly isComposing: boolean;
+}
+
+/**
+ * Whether a `keydown` should submit the composer. Enter submits;
+ * Shift+Enter inserts a newline (the field's own default multiline
+ * behaviour, left untouched here).
+ *
+ * Enter fired while `isComposing` is `true` must never submit: many IMEs
+ * report `key: "Enter"` for the very keystroke that only confirms a
+ * candidate, indistinguishable from an ordinary Enter press by `key` alone.
+ * Submitting on that keystroke would send text the user had not finished
+ * composing.
+ */
+export function shouldSubmitOnEnter(input: SubmitOnEnterInput): boolean {
+  if (input.key !== 'Enter') return false;
+  if (input.shiftKey) return false;
+  if (input.isComposing) return false;
+  return true;
+}

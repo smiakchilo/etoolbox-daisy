@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "rootDir": "src/preload",
+    "outDir": ".tsc-out/preload",
+    "types": ["node"]
+  },
+  "include": ["src/preload/**/*.ts"],
+  "references": [{ "path": "./tsconfig.shared.json" }]
+}

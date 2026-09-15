@@ -1,0 +1,79 @@
+appId: com.etoolboxdaisy.app
+productName: EToolbox Daisy
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  # The Copilot SDK/CLI platform packages ship payload this app never uses:
+  # src/agent only ever spawns copilot-runtime.exe (via the explicit-path
+  # RuntimeConnection, see runtimePaths.ts/copilotClient.ts) and copilot.exe
+  # (only for `login --web-flow`, see auth.ts). Everything below is dead
+  # weight for those two entry points - the `plugins/computer-use` MCP
+  # plugin, the bundled `ripgrep`/`tgrep` search binaries (the hardened tool
+  # policy in toolPolicy.ts never allows any tool that would shell out to
+  # them), and the `builtin-skills` markdown payload (enableSkills is forced
+  # off outside the one-off skill test noted in requirements-decisions.md).
+  # Trimmed after confirming empirically (docs/verification.md Step 02) that
+  # tests/integration/agent-runtime.test.ts-equivalent behavior still passes
+  # against the packaged output with these patterns applied.
+  - '!node_modules/@github/copilot-sdk-win32-x64/plugins/**'
+  - '!node_modules/@github/copilot-sdk-win32-x64/ripgrep/**'
+  - '!node_modules/@github/copilot-sdk-win32-x64/tgrep/**'
+  - '!node_modules/@github/copilot-sdk-win32-x64/builtin-skills/**'
+  - '!node_modules/@github/copilot-win32-x64/plugins/**'
+  - '!node_modules/@github/copilot-win32-x64/ripgrep/**'
+  - '!node_modules/@github/copilot-win32-x64/tgrep/**'
+  - '!node_modules/@github/copilot-win32-x64/builtin-skills/**'
+  # MSAL / OneAuth are Microsoft identity-broker binaries. This app only ever
+  # authenticates a GitHub account via the CLI's OAuth web flow, and the
+  # resulting credential is stored through the Windows Credential Manager
+  # (wincred/keytar), not through OneAuth. Verified empirically (U6,
+  # docs/verification.md Step 02): with all six files renamed away in both
+  # packages, reading an existing credential still reports
+  # `isAuthenticated: true, authType: "user"`, and a fresh login still
+  # succeeds AND still writes a real vault entry with no plaintext fallback.
+  # Excluding them also drops the Microsoft-licensed payload entirely.
+  - '!node_modules/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/OneAuthInterop.*'
+  - '!node_modules/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/msalruntime.dll'
+  - '!node_modules/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/msal-node-runtime.node'
+  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/OneAuthInterop.*'
+  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/msalruntime.dll'
+  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/msal-node-runtime.node'
+  # `@github/copilot-win32-x64` is used for exactly one thing: spawning
+  # `copilot.exe login --web-flow` (auth.ts). The agent session itself runs
+  # against the SDK package's `copilot-runtime.exe`. `copilot.exe` is a
+  # self-contained 138 MB binary and does not need this package's separate
+  # 79 MB `runtime.node` copy to perform a login - verified empirically (U6,
+  # docs/verification.md Step 02): with it renamed away, a synthetic web-flow
+  # login still succeeds and still writes a vault-backed credential. The SDK
+  # package keeps its own copy, which is the one actually loaded at runtime.
+  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/runtime.node'
+# Both platform packages contain native binaries (copilot-runtime.exe,
+# copilot.exe, and their .node/.dll dependencies) that must be real files on
+# disk to be spawned/dlopen'd - they cannot be loaded from inside the asar
+# archive. electron-builder's default heuristic already auto-detects and
+# unpacks packages containing native modules, but this is made explicit per
+# the Step 02 requirement instead of relying on that implicit behavior.
+asarUnpack:
+  - node_modules/@github/copilot-sdk-win32-x64/**
+  - node_modules/@github/copilot-win32-x64/**
+extraResources:
+  - from: resources
+    to: resources
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # Application data lives under the user's own etoolbox-daisy home directory
+  # (see requirements-decisions.md section 8), not under this installer's
+  # per-version program directory, so upgrades keep the same data paths.
+  deleteAppDataOnUninstall: false
+publish: null

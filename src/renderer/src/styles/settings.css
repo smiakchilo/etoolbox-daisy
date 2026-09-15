@@ -1,0 +1,188 @@
+/*
+ * Layout for the separate Settings window (requirements-decisions.md
+ * section 8: Settings and History are separate local child windows, not
+ * panels inside the main window).
+ */
+
+html,
+body {
+  margin: 0;
+}
+
+#app,
+sp-theme {
+  display: block;
+}
+
+.settings-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px;
+  max-width: 720px;
+}
+
+.settings-shell__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-shell__status {
+  color: var(--spectrum-red-700, #b3261e);
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  border-radius: 4px;
+}
+
+.server-list,
+.certificate-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.server-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--spectrum-gray-200, #e1e1e1);
+  border-radius: 4px;
+}
+
+.server-row__heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.server-row__actions,
+.authentication-section__actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Colour is always paired with the visible label text next to it - never
+   the only distinguishing signal (requirements-decisions.md section 8). */
+.server-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 20%);
+  flex: 0 0 auto;
+}
+
+.add-server-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.color-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.form-errors {
+  color: var(--spectrum-red-700, #b3261e);
+  flex-basis: 100%;
+}
+
+.password-entry {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.password-entry__status {
+  color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+.proxy-section__fields {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.proxy-section__status {
+  color: var(--spectrum-red-700, #b3261e);
+}
+
+.models-section__pickers {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.models-section__status {
+  color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+.models-section__save-status {
+  color: var(--spectrum-red-700, #b3261e);
+}
+
+/* Persistent, colour-independent marker for a plain-HTTP server (paired
+   with the negative sp-status-light, never colour alone). */
+.server-row__insecure-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--spectrum-red-700, #b3261e);
+  margin: 0;
+}
+
+.server-row__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.server-row__edit-status {
+  color: var(--spectrum-red-700, #b3261e);
+  margin: 0;
+}
+
+.add-server-form__notice {
+  color: var(--spectrum-gray-600, #6e6e6e);
+  flex-basis: 100%;
+}
+
+.certificate-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.certificate-list__status {
+  color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+.certificate-list__hint {
+  color: var(--spectrum-red-700, #b3261e);
+  font-size: 90%;
+}
+
+.models-placeholder__notice {
+  font-style: italic;
+  color: var(--spectrum-gray-600, #6e6e6e);
+}

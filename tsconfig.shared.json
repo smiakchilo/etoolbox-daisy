@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // `DOM` is present only for the universal WHATWG types that TypeScript
+    // happens to ship there but that exist in every runtime this code targets
+    // (main, preload, renderer): `URL`, `URLSearchParams`, `AbortSignal`.
+    // It is NOT a licence to touch the browser environment - `types: []` keeps
+    // Node out, and the `no-restricted-globals` rule for `src/shared` in
+    // eslint.config.mjs bans `window`/`document`/`process` and friends, so the
+    // "usable from any process" guarantee is enforced rather than assumed.
+    "lib": ["ES2023", "DOM"],
+    "rootDir": "src/shared",
+    "outDir": ".tsc-out/shared",
+    "types": []
+  },
+  "include": ["src/shared/**/*.ts"]
+}

@@ -1,0 +1,184 @@
+import { createMessageStream, type MessageStream } from './messageStream';
+import type {
+  AgentEvent,
+  JsonValue,
+  MessageId,
+  ToolCallId,
+  ToolError,
+  TurnId,
+} from '../../../shared';
+
+/**
+ * One transcript entry in first-seen order. A user's own prompt is not part
+ * of the `AgentEvent` stream at all (the renderer is the only place that
+ * knows the exact text it sent - see `applyUserPrompt`), so it is its own
+ * item kind alongside assistant messages and tool calls, not folded into
+ * either.
+ *
+ * Tool calls are tracked independently of messages and appear in `items()`
+ * from the moment `tool.call.requested` arrives, regardless of whether the
+ * turn's message ever receives any text - this is what makes tool lifecycle
+ * display independent of the model returning text (implementation-plan.md
+ * step 07).
+ */
+export type TranscriptItem =
+  | { readonly kind: 'userPrompt'; readonly turnId: TurnId }
+  | { readonly kind: 'message'; readonly messageId: MessageId }
+  | { readonly kind: 'toolCall'; readonly toolCallId: ToolCallId };
+
+export type ToolCallStatus =
+  | { readonly kind: 'requested' }
+  | { readonly kind: 'approved' }
+  | { readonly kind: 'rejected'; readonly reason: string }
+  | { readonly kind: 'succeeded'; readonly data: JsonValue }
+  | { readonly kind: 'failed'; readonly error: ToolError };
+
+export interface ToolCallView {
+  readonly toolCallId: ToolCallId;
+  readonly toolName: string;
+  readonly args: Readonly<Record<string, JsonValue>>;
+  readonly status: ToolCallStatus;
+}
+
+export interface TranscriptStore {
+  /** Feeds one normalized agent event into the transcript's view state. */
+  applyEvent(event: AgentEvent): void;
+  /**
+   * Records the user's own prompt for `turnId` as a transcript item. Must be
+   * called once, right after a successful `sendMessage` resolves with that
+   * `turnId` - there is no `AgentEvent` for a user's own message, so this is
+   * the only place that text is ever known.
+   */
+  applyUserPrompt(turnId: TurnId, prompt: string): void;
+  /** Every transcript item observed so far, in first-seen order. */
+  items(): readonly TranscriptItem[];
+  /** The current best-known text of an assistant message - see `MessageStream.textFor`. */
+  textForMessage(messageId: MessageId): string;
+  /** The exact text recorded by `applyUserPrompt` for `turnId`, or `""` if none was recorded. */
+  textForUserPrompt(turnId: TurnId): string;
+  /** The current view of one tool call, or `undefined` if `toolCallId` has not been observed. */
+  toolCallFor(toolCallId: ToolCallId): ToolCallView | undefined;
+  /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
+  takeDirty(): boolean;
+}
+
+/** Creates an empty transcript store with no items observed yet. */
+export function createTranscriptStore(
+  messageStream: MessageStream = createMessageStream(),
+): TranscriptStore {
+  const order: TranscriptItem[] = [];
+  const knownMessageIds = new Set<MessageId>();
+  const knownToolCallIds = new Set<ToolCallId>();
+  const userPrompts = new Map<TurnId, string>();
+  const toolCalls = new Map<ToolCallId, ToolCallView>();
+  let dirty = false;
+
+  function ensureMessageItem(messageId: MessageId): void {
+    if (knownMessageIds.has(messageId)) return;
+    knownMessageIds.add(messageId);
+    order.push({ kind: 'message', messageId });
+    dirty = true;
+  }
+
+  function ensureToolCallItem(toolCallId: ToolCallId): void {
+    if (knownToolCallIds.has(toolCallId)) return;
+    knownToolCallIds.add(toolCallId);
+    order.push({ kind: 'toolCall', toolCallId });
+    dirty = true;
+  }
+
+  function updateToolCallStatus(toolCallId: ToolCallId, status: ToolCallStatus): void {
+    const existing = toolCalls.get(toolCallId);
+    // A status update for a tool call this store never saw `requested` for
+    // carries no name/arguments to display and is dropped rather than
+    // fabricating a stub entry - this should not happen for an
+    // ownership-guarded event stream (see `agentChatController.ts`), but
+    // this store does not assume that guarantee holds.
+    if (existing === undefined) return;
+    toolCalls.set(toolCallId, { ...existing, status });
+    dirty = true;
+  }
+
+  return {
+    applyEvent(event) {
+      messageStream.applyEvent(event);
+      switch (event.type) {
+        case 'assistant.message.started':
+        case 'assistant.text.delta':
+        case 'assistant.message.completed':
+          ensureMessageItem(event.messageId);
+          return;
+        case 'tool.call.requested':
+          ensureToolCallItem(event.toolCallId);
+          toolCalls.set(event.toolCallId, {
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            args: event.arguments,
+            status: { kind: 'requested' },
+          });
+          dirty = true;
+          return;
+        case 'tool.call.approved':
+          updateToolCallStatus(event.toolCallId, { kind: 'approved' });
+          return;
+        case 'tool.call.rejected':
+          updateToolCallStatus(event.toolCallId, { kind: 'rejected', reason: event.reason });
+          return;
+        case 'tool.result':
+          // The mandatory anti-regression check: `outcome.ok` decides
+          // succeeded vs. failed here, and nowhere else - a failed tool call
+          // must render as FAILED (implementation-plan.md step 07), never as
+          // a completed one.
+          updateToolCallStatus(
+            event.toolCallId,
+            event.outcome.ok
+              ? { kind: 'succeeded', data: event.outcome.data }
+              : { kind: 'failed', error: event.outcome.error },
+          );
+          return;
+        case 'error':
+        case 'session.state.changed':
+          // Chat/turn-level signals with no transcript item of their own:
+          // `error` surfaces via the composer's disabled-reason notice
+          // (`composerViewModel.ts`, driven by `SessionStatus.state`), and
+          // `session.state.changed` only ever drives that same
+          // `SessionStatus`, which `chatPane.ts` derives independently.
+          return;
+        default: {
+          const exhaustive: never = event;
+          return exhaustive;
+        }
+      }
+    },
+    applyUserPrompt(turnId, prompt) {
+      if (!userPrompts.has(turnId)) {
+        order.push({ kind: 'userPrompt', turnId });
+      }
+      userPrompts.set(turnId, prompt);
+      dirty = true;
+    },
+    items() {
+      return order;
+    },
+    textForMessage(messageId) {
+      return messageStream.textFor(messageId);
+    },
+    textForUserPrompt(turnId) {
+      return userPrompts.get(turnId) ?? '';
+    },
+    toolCallFor(toolCallId) {
+      return toolCalls.get(toolCallId);
+    },
+    takeDirty() {
+      // `messageStream`'s own dirty flag must always be read (it clears on
+      // read), even once this store already knows it is dirty for its own
+      // reasons - otherwise a delta-only change would never be reflected in
+      // this store's own edge-triggered flag on a later call once no other
+      // change accompanies it.
+      const streamDirty = messageStream.takeDirty();
+      const wasDirty = dirty || streamDirty;
+      dirty = false;
+      return wasDirty;
+    },
+  };
+}

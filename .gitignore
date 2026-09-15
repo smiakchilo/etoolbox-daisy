@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+release/
+.tsc-out/
+*.tsbuildinfo
+
+# Electron-builder
+build/
+
+# Test artifacts
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor noise
+.idea/
+.vscode/
+*.iml
+*.swo
+*.swp
+
+# Env
+.env
+.env.local
+
+# Misc
+docs/
+.extra/

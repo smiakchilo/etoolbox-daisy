@@ -1,0 +1,433 @@
+import { app } from 'electron';
+import type { BrowserWindow, WebContents } from 'electron';
+import {
+  BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+  BROWSER_STATE_CHANGED_CHANNEL,
+  BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
+} from '../../shared/ipc-channels';
+import type {
+  ApproveCertificateExceptionRequest,
+  BrowserIpcError,
+  BrowserIpcVoidResult,
+  RevokeCertificateExceptionRequest,
+  ViewBounds,
+} from '../../shared/browser-ipc';
+import type { AppSettings } from '../../shared/contracts/appSettings';
+import type { ServerId } from '../../shared/contracts/ids';
+import { applyServerTargetingChange, loadSettings, saveSettings } from '../settingsStore';
+import type { AemSession } from '../aem/session';
+import type { ProxyPlainCredentials } from '../aem/proxyAuth';
+import type { SecretStore } from '../secretStore';
+import type { Logger } from '../logger';
+import {
+  createAemBrowserView,
+  type AemBrowserView,
+  type AemBrowserViewOptions,
+} from './aemBrowserView';
+import { ServerSwitchController } from './serverSwitch';
+import { decideAddressNavigation } from './unknownOrigin';
+import { createCertificateBlockedListener } from './certificatePrompt';
+import {
+  attachNavigationEpochTracking,
+  createNavigationEpochTracker,
+  type NavigationEpochTracker,
+} from './navigationEpoch';
+
+/**
+ * Top-level orchestrator for the browser shell (implementation-plan.md step
+ * 05). Everything under `src/main/browser/` up to this point is Electron-
+ * light and independently unit-tested; this module composes those pieces
+ * plus `settingsStore`/`secretStore` into the one object `src/main/index.ts`
+ * needs. Unlike `windows.ts`/`security.ts`/`session.ts`, it does carry
+ * decision logic worth testing directly (`navigate`/`switchServer`'s
+ * dispatch to the right `BrowserIpcError`, certificate-exception
+ * persistence) - see `tests/unit/main/browser/browserController.test.ts`,
+ * which exercises it through the `createAemView` seam below instead of a
+ * real `WebContentsView`/`screen`.
+ */
+export interface BrowserControllerOptions {
+  readonly settingsDir: string;
+  readonly secretStore: SecretStore;
+  readonly logger: Logger;
+  readonly aemSession: AemSession;
+  readonly window: BrowserWindow;
+  readonly aemPreloadPath: string;
+  /** The app's own chat-pane renderer `WebContents` - the only trusted push target. */
+  readonly rendererWebContents: WebContents;
+  /**
+   * Test seam: overrides how the AEM `WebContentsView` is constructed.
+   * Defaults to the real {@link createAemBrowserView}. Unit tests inject a
+   * fake `AemBrowserView` here so this module's own orchestration logic -
+   * decision dispatch, settings persistence, certificate handling - can be
+   * exercised without a real Electron `WebContentsView`/`screen`/
+   * `BrowserWindow`.
+   */
+  readonly createAemView?: (viewOptions: AemBrowserViewOptions) => AemBrowserView;
+}
+
+/**
+ * The identity of the AEM server the view is currently showing - the
+ * "where do requests go" fact the AEM tool pipeline (`src/main/index.ts`)
+ * binds every `aem_get_json` call to. Deliberately a narrower projection of
+ * `ServerConfig` than the full config: only the fields a tool request needs
+ * to address and stamp itself (`bridgeBroker.ts`'s `CurrentAemContext`,
+ * `aemTool.ts`'s `CurrentAemToolContext`), never proxy/TLS/label/colour.
+ */
+export interface ActiveAemServer {
+  readonly serverId: ServerId;
+  readonly origin: string;
+  readonly revision: number;
+}
+
+export interface BrowserController {
+  readonly aemView: AemBrowserView;
+  /**
+   * Which document the AEM view is currently showing. The tool broker stamps
+   * every outgoing request with `current()` and refuses any reply that no
+   * longer matches, so that a result produced by a page the user has since
+   * navigated away from is never presented as describing the page they are
+   * looking at now.
+   */
+  readonly navigationEpoch: NavigationEpochTracker;
+  /**
+   * The server the AEM view is currently showing, or `undefined` when none
+   * has been selected yet (no server configured, or the view has not
+   * switched to one in this run). Reflects the settings this controller
+   * itself most recently read or wrote via `switchServer`/`navigate` or a
+   * certificate-exception change to the active server - never a fabricated
+   * placeholder. It does NOT observe settings changes made through the
+   * separate Settings IPC surface (`ipc/settings.ts`), which has no channel
+   * back into this controller; that is a pre-existing gap in cross-module
+   * settings sync, not something this accessor papers over.
+   */
+  activeServer(): ActiveAemServer | undefined;
+  navigate(rawValue: string): Promise<BrowserIpcVoidResult>;
+  switchServer(serverId: ServerId): Promise<BrowserIpcVoidResult>;
+  goBack(): BrowserIpcVoidResult;
+  goForward(): BrowserIpcVoidResult;
+  reload(): BrowserIpcVoidResult;
+  setViewBounds(bounds: ViewBounds): void;
+  approveCertificateException(
+    request: ApproveCertificateExceptionRequest,
+  ): Promise<BrowserIpcVoidResult>;
+  revokeCertificateException(
+    request: RevokeCertificateExceptionRequest,
+  ): Promise<BrowserIpcVoidResult>;
+  /** Re-applies every persisted TLS exception to the live session. Call once at startup, before the AEM view loads anything. */
+  hydrateCertificateExceptions(): Promise<void>;
+  destroy(): void;
+}
+
+function ok(): BrowserIpcVoidResult {
+  return { ok: true };
+}
+function fail(error: BrowserIpcError): BrowserIpcVoidResult {
+  return { ok: false, error };
+}
+function storageError(message: string): BrowserIpcError {
+  return { code: 'storage_error', message };
+}
+
+function toActiveServer(server: AppSettings['servers'][number]): ActiveAemServer {
+  return { serverId: server.id, origin: server.origin, revision: server.revision };
+}
+
+/**
+ * Resolves a server's proxy password into plaintext, if one is configured.
+ * `secretStore.get` is async, which is why this exists as its own step run
+ * *before* `ServerSwitchController.switchTo` rather than inline in
+ * `resolveProxyCredentials` below - `AemSession.switchProxy`'s
+ * `resolveCredentials` parameter must be callable synchronously (Electron's
+ * `login` event callback is synchronous), so the plaintext value has to
+ * already be sitting in memory by the time that closure is invoked.
+ */
+async function resolvePlainProxyCredentials(
+  settings: AppSettings,
+  serverId: ServerId,
+  secretStore: SecretStore,
+): Promise<ProxyPlainCredentials | undefined> {
+  const server = settings.servers.find((candidate) => candidate.id === serverId);
+  const credentials = server?.proxy?.credentials;
+  if (!credentials) return undefined;
+  const password = await secretStore.get(credentials.secretRef);
+  if (password === undefined) return undefined;
+  return { username: credentials.username, password };
+}
+
+export function createBrowserController(options: BrowserControllerOptions): BrowserController {
+  const { settingsDir, secretStore, logger, aemSession, window, rendererWebContents } = options;
+
+  // Holds the most recently resolved plaintext credentials for whichever
+  // server is currently selected. `switchProxy` stores the closure below,
+  // not a value, and calls it fresh on every proxy challenge - but since
+  // that call must be synchronous, the actual secret lookup happens ahead of
+  // time (in `switchServer`) and is only ever read back out of this cell.
+  // Rotating a password without switching servers again requires the
+  // "requires_safe_transition" outcome from `applyServerTargetingChange`
+  // (settingsStore.ts) to trigger a fresh `switchServer` call for the same
+  // server id - not implemented by this module itself, which only owns the
+  // switch mechanism, not settings-mutation IPC.
+  let currentCredentials: ProxyPlainCredentials | undefined;
+
+  // The server the AEM view is currently showing, or `undefined` before the
+  // first successful `switchServer`/`navigate` in this run. Updated here -
+  // not re-derived from disk on every read - because `activeServer()` must
+  // be synchronous (it backs `AgentChatControllerDeps.currentAemServerContext`,
+  // itself read fresh on every tool call - see that interface's doc comment)
+  // while settings I/O is not. See `BrowserController.activeServer`'s own doc
+  // comment for what this does and does not track.
+  let activeServerState: ActiveAemServer | undefined;
+
+  const buildAemView = options.createAemView ?? createAemBrowserView;
+  const aemView = buildAemView({
+    window,
+    aemSession: aemSession.session,
+    aemPreloadPath: options.aemPreloadPath,
+    onNavigationStateChange: (state) => {
+      rendererWebContents.send(BROWSER_STATE_CHANGED_CHANNEL, state);
+    },
+  });
+
+  const navigationEpoch = createNavigationEpochTracker();
+  const detachNavigationEpoch = attachNavigationEpochTracking(aemView.webContents, navigationEpoch);
+
+  const switchController = new ServerSwitchController({
+    getView: () => aemView,
+    closeAuxiliaryWindows: () => aemView.auxiliaryWindows.closeAll(),
+    aemSession: {
+      switchProxy: (proxy, resolveCredentials) => aemSession.switchProxy(proxy, resolveCredentials),
+    },
+    resolveProxyCredentials: () => () => currentCredentials,
+    onStateChange: (state) => {
+      rendererWebContents.send(BROWSER_SWITCH_STATE_CHANGED_CHANNEL, {
+        switching: state === 'switching',
+      });
+    },
+  });
+
+  const certificateBlockedListener = createCertificateBlockedListener({
+    aemSession: aemSession.session,
+    listExceptions: () => aemSession.listCertificateExceptions(),
+    onBlocked: (info) => {
+      logger.warn('BROWSER_CERTIFICATE_BLOCKED');
+      rendererWebContents.send(BROWSER_CERTIFICATE_BLOCKED_CHANNEL, info);
+    },
+  });
+  // A second, purely observational `certificate-error` listener alongside
+  // the AEM session's own decisive one - see `certificatePrompt.ts`'s module
+  // comment for why registering a second listener is safe here.
+  app.on('certificate-error', certificateBlockedListener);
+
+  async function loadSettingsOrThrow(): Promise<AppSettings> {
+    const loaded = await loadSettings(settingsDir);
+    if (!loaded.ok) {
+      throw new Error(loaded.error.message);
+    }
+    return loaded.value.settings;
+  }
+
+  async function navigate(rawValue: string): Promise<BrowserIpcVoidResult> {
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch (error) {
+      return fail(storageError(error instanceof Error ? error.message : String(error)));
+    }
+    const decision = decideAddressNavigation(rawValue, settings.servers);
+    if (decision.kind === 'invalid_address') {
+      return fail({ code: 'invalid_address', message: `not a valid address: ${rawValue}` });
+    }
+    if (decision.kind === 'unknown_origin') {
+      return fail({
+        code: 'unknown_origin',
+        message: `${decision.origin} is not a configured server`,
+        origin: decision.origin,
+      });
+    }
+    return switchServer(decision.server.id, decision.url);
+  }
+
+  async function switchServer(
+    serverId: ServerId,
+    targetUrl?: string,
+  ): Promise<BrowserIpcVoidResult> {
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch (error) {
+      return fail(storageError(error instanceof Error ? error.message : String(error)));
+    }
+    const server = settings.servers.find((candidate) => candidate.id === serverId);
+    if (!server) {
+      return fail({ code: 'server_not_found', message: `no server with id ${serverId}` });
+    }
+
+    currentCredentials = await resolvePlainProxyCredentials(settings, serverId, secretStore);
+
+    // Bumped *before* the switch is attempted, not after it succeeds. From this
+    // point the view is no longer reliably showing the document that any
+    // in-flight tool request was issued against, and a request invalidated by a
+    // switch that then fails is the harmless direction of the error - whereas a
+    // reply from the outgoing server accepted as describing the incoming one is
+    // not. `did-start-navigation` also fires during the switch and bumps again;
+    // the epoch only has to move forward, never to move exactly once.
+    navigationEpoch.bump('server_switch');
+
+    const outcome = await switchController.switchTo(server, targetUrl);
+    if (!outcome.ok) {
+      // Whatever the view now shows - a half-loaded document, an error page,
+      // or (for "already_switching") whatever a *different* in-flight switch
+      // leaves it showing - it is not reliably `server`, so no server is
+      // reported as active rather than leaving a stale or guessed one in
+      // place. Mirrors the epoch bump just above: the same event that makes
+      // in-flight requests untrustworthy makes the "which server is this"
+      // answer untrustworthy too.
+      activeServerState = undefined;
+      if (outcome.reason === 'network_error') {
+        // Checked first (rather than last) because "network_error" is the
+        // only union member with a single-literal `reason`; narrowing on it
+        // positively lets the compiler exclude this whole member from what
+        // remains below, instead of trying to narrow a property that is
+        // itself a union (`"already_switching" | "no_active_view"`) via two
+        // sequential equality checks.
+        //
+        // The proxy switch or page load rejected with a Chromium `ERR_*`
+        // error (see `serverSwitch.ts`'s `extractChromiumErrorCode` doc
+        // comment). Surfaced as a structured result carrying that code, not
+        // as a thrown error that would escape `ipcMain.handle` as a generic
+        // Error the renderer cannot branch on.
+        logger.warn('BROWSER_SWITCH_FAILED');
+        return fail({
+          code: 'network_error',
+          message: outcome.message,
+          errorCode: outcome.errorCode,
+        });
+      }
+      if (outcome.reason === 'already_switching') {
+        return fail({
+          code: 'switch_in_progress',
+          message: 'a server switch is already in progress',
+        });
+      }
+      return fail({ code: 'no_active_view', message: 'no AEM view is available' });
+    }
+    activeServerState = toActiveServer(server);
+    return ok();
+  }
+
+  async function withPersistedTlsException(
+    serverId: ServerId,
+    tlsException: ApproveCertificateExceptionRequest['exception'] | null,
+  ): Promise<BrowserIpcVoidResult> {
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch (error) {
+      return fail(storageError(error instanceof Error ? error.message : String(error)));
+    }
+    const outcome = applyServerTargetingChange(settings, serverId, { tlsException });
+    if (!outcome.ok) {
+      if (outcome.error.kind === 'server_not_found') {
+        return fail({ code: 'server_not_found', message: outcome.error.message });
+      }
+      return fail(storageError(outcome.error.message));
+    }
+    const saved = await saveSettings(settingsDir, outcome.value.settings);
+    if (!saved.ok) {
+      return fail(storageError(saved.error.message));
+    }
+    if (activeServerState !== undefined && activeServerState.serverId === serverId) {
+      // A TLS-exception change bumps the server's `revision` (see
+      // `applyServerTargetingChange`), and the active server is the one this
+      // just changed - keep the reported revision current so a tool request
+      // made right after approving/revoking a certificate exception is
+      // stamped with the revision that is actually now in effect, not a
+      // value that is one change stale.
+      const updatedServer = outcome.value.settings.servers.find(
+        (candidate) => candidate.id === serverId,
+      );
+      if (updatedServer !== undefined) {
+        activeServerState = toActiveServer(updatedServer);
+      }
+    }
+    return ok();
+  }
+
+  async function approveCertificateException(
+    request: ApproveCertificateExceptionRequest,
+  ): Promise<BrowserIpcVoidResult> {
+    // Persist first: if saving fails, the live session is never told about an
+    // exception that would not survive a restart or show up in the UI.
+    const persisted = await withPersistedTlsException(request.serverId, request.exception);
+    if (!persisted.ok) return persisted;
+    await aemSession.approveCertificateException(request.exception);
+    logger.info('BROWSER_CERTIFICATE_APPROVED');
+    return ok();
+  }
+
+  async function revokeCertificateException(
+    request: RevokeCertificateExceptionRequest,
+  ): Promise<BrowserIpcVoidResult> {
+    const persisted = await withPersistedTlsException(request.serverId, null);
+    if (!persisted.ok) return persisted;
+    await aemSession.revokeCertificateException(request.origin);
+    logger.info('BROWSER_CERTIFICATE_REVOKED');
+    return ok();
+  }
+
+  async function hydrateCertificateExceptions(): Promise<void> {
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch {
+      // Reuses the existing "settings file could not be read/parsed" code -
+      // hydration failing for that reason is the same underlying fact as
+      // `SETTINGS_FILE_CORRUPT`, just observed from a different call site.
+      logger.error('SETTINGS_FILE_CORRUPT', { outcome: 'failure' });
+      return;
+    }
+    for (const server of settings.servers) {
+      if (server.tlsException) {
+        await aemSession.approveCertificateException(server.tlsException);
+      }
+    }
+  }
+
+  function goBack(): BrowserIpcVoidResult {
+    aemView.goBack();
+    return ok();
+  }
+  function goForward(): BrowserIpcVoidResult {
+    aemView.goForward();
+    return ok();
+  }
+  function reload(): BrowserIpcVoidResult {
+    aemView.reload();
+    return ok();
+  }
+
+  function destroy(): void {
+    app.removeListener('certificate-error', certificateBlockedListener);
+    // Bumped before the view goes away so anything still waiting on a reply
+    // from it is invalidated rather than left pending against a dead frame.
+    navigationEpoch.bump('view_destroyed');
+    detachNavigationEpoch();
+    aemView.destroy();
+  }
+
+  return {
+    aemView,
+    navigationEpoch,
+    activeServer: () => activeServerState,
+    navigate,
+    switchServer,
+    goBack,
+    goForward,
+    reload,
+    setViewBounds: (bounds) => aemView.setBounds(bounds),
+    approveCertificateException,
+    revokeCertificateException,
+    hydrateCertificateExceptions,
+    destroy,
+  };
+}
