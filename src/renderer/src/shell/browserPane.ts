@@ -18,20 +18,38 @@ export interface BrowserPane {
 }
 
 /**
- * The left-hand browser pane: toolbar, persistent insecure marker, the
- * reserved page-view region, and - overlaid on that region while the server
- * picker is open - the whole-size server list panel.
+ * The left-hand browser pane: toolbar, persistent insecure marker, the page
+ * panel - the browser's status/message row (toolbar errors, the "unknown
+ * origin" prompt, "Switching servers...") grouped with the reserved page-view
+ * region it describes - and, overlaid while the server picker is open, the
+ * whole-size server list panel.
  *
- * The picker ("combobox glyph" button coupled to the address field in the
- * toolbar) is the only way to surface that panel, and the panel is the only
- * thing the renderer may draw over the native view's region: instead of a
- * menu trying to float above an Electron-native WebContentsView (which always
- * composites *above* this document), opening the picker suspends/collapses
- * the native view (`suspendedByPicker`) and lets the DOM panel take the whole
- * page-view area. The splitter drag uses the same collapse mechanism
- * (`suspendedBySplitter`); the two are combined so each independently
- * collapsing and restoring never resurrects the native view while the other
- * still requires it hidden.
+ * Message and native-view region are grouped inside `browserPagePanel` so one
+ * `hidden` toggle governs both:
+ *
+ *  - the picker ("combobox glyph" button coupled to the address field in the
+ *    toolbar) is the only way to surface that panel, and the panel is the only
+ *    thing the renderer may draw over the native view's region: instead of a
+ *    menu trying to float above an Electron-native WebContentsView (which
+ *    always composites *above* this document), opening the picker
+ *    suspends/collapses the native view (`suspendedByPicker`) and lets the DOM
+ *    panel take the whole page-view area. The splitter drag uses the same
+ *    collapse mechanism (`suspendedBySplitter`); the two are combined so each
+ *    independently collapsing and restoring never resurrects the native view
+ *    while the other still requires it hidden.
+ *  - whenever the native view is hidden/collapsed that way, the message row is
+ *    hidden along with it - its text describes the page that just vanished, so
+ *    showing it against the picker list or an empty drag region would be
+ *    misleading. The picker swaps instantly (`pagePanel.hidden` + an instant
+ *    native-view collapse - the list needs the layout space immediately); a
+ *    splitter drag fades the panel via the `browser-page-panel--suspended`
+ *    class *and* asks the native view to collapse with an animation matching
+ *    that fade (browserViewHost.ts), so the pane's height stays put while the
+ *    page area fades in/out around the shrinking view.
+ *
+ * The row's *content* lifecycle stays in the toolbar (`browserToolbar.ts`):
+ * it is cleared when a new navigation starts loading, and re-shown only when
+ * that navigation fails.
  */
 export function createBrowserPane(): BrowserPane {
   let suspendedBySplitter = false;
@@ -39,7 +57,21 @@ export function createBrowserPane(): BrowserPane {
   let pickerOpen = false;
 
   function applySuspension(): void {
-    viewHost.setSuspended(suspendedBySplitter || suspendedByPicker);
+    const suspended = suspendedBySplitter || suspendedByPicker;
+    // Animate whenever a splitter drag is involved; a picker-only suspension
+    // (and its restore) collapses instantly so the list can take its space.
+    viewHost.setSuspended(suspended, { animate: suspendedBySplitter });
+    if (suspendedByPicker) {
+      // The server picker panel takes over the page area, so the page panel
+      // must relinquish its layout space at once (`display:none`). The drag
+      // path below instead fades it while keeping its space, so the pane does
+      // not jump mid-drag.
+      pagePanel.hidden = true;
+      pagePanel.classList.remove('browser-page-panel--suspended');
+    } else {
+      pagePanel.hidden = false;
+      pagePanel.classList.toggle('browser-page-panel--suspended', suspendedBySplitter);
+    }
   }
 
   const panel = createServerPickerPanel({
@@ -61,6 +93,13 @@ export function createBrowserPane(): BrowserPane {
   const insecureBanner = createInsecureBanner();
   const viewHost = createBrowserViewHost();
 
+  // Groups the toolbar's status/prompt row with the native view region so the
+  // picker/splitter suspension hides both at once (see the file doc comment).
+  const pagePanel = el('div', {
+    attrs: { class: 'browser-page-panel', 'data-testid': 'browser-page-panel' },
+    children: [toolbar.messageElement, viewHost.element],
+  });
+
   function openPickerPanel(): void {
     if (pickerOpen) return;
     pickerOpen = true;
@@ -69,7 +108,6 @@ export function createBrowserPane(): BrowserPane {
     // already-hidden panel.
     suspendedByPicker = true;
     applySuspension();
-    viewHost.element.hidden = true;
     toolbar.setServerPickerOpen(true);
     panel.open();
   }
@@ -81,21 +119,13 @@ export function createBrowserPane(): BrowserPane {
     // region, so the returning view never paints over a still-visible panel.
     panel.close();
     toolbar.setServerPickerOpen(false);
-    viewHost.element.hidden = false;
     suspendedByPicker = false;
     applySuspension();
-    viewHost.reportBoundsNow();
   }
 
   const element = el('section', {
     attrs: { class: 'pane browser-pane', 'aria-label': 'Browser' },
-    children: [
-      toolbar.element,
-      toolbar.messageElement,
-      insecureBanner.element,
-      viewHost.element,
-      panel.element,
-    ],
+    children: [toolbar.element, insecureBanner.element, pagePanel, panel.element],
   });
 
   return {

@@ -31,7 +31,12 @@ import type { ServerOption } from './viewModel';
  */
 export interface BrowserToolbar {
   readonly element: HTMLElement;
-  /** A status/prompt row rendered as a sibling of `element`, not nested inside it (keeps `role="toolbar"` clean). */
+  /**
+   * A status/prompt row rendered as a sibling of `element`, not nested inside
+   * it (keeps `role="toolbar"` clean). The owning pane groups it with the
+   * native view region (`browserPane.ts`'s `browserPagePanel`) so the two
+   * hide together; this module only owns when the row is shown/cleared.
+   */
   readonly messageElement: HTMLElement;
   /** Refreshes the address bar text and server-selector options for a newly loaded snapshot. */
   setAddressValue(value: string): void;
@@ -86,8 +91,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   const messageText = el('span', { attrs: { class: 'browser-toolbar-message__text' } });
   const openSettingsButton = el('sp-button', {
-    attrs: { variant: 'secondary' },
-    text: 'Open Settings',
+    attrs: {
+      variant: 'secondary',
+      quiet: '',
+      class: 'browser-toolbar-message__settings',
+    },
+    text: 'Settings',
   });
   openSettingsButton.hidden = true;
   openSettingsButton.addEventListener('click', () => {
@@ -193,6 +202,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
     hasLiveNavigationState = true;
     addressField.value = state.url;
+    // A navigation to a new page has begun, so whatever the row is showing
+    // (an error, the "unknown origin" prompt, "Switching servers...") now
+    // describes the state *before* this navigation and is stale - clear it.
+    // A failed navigation re-shows it via `handleVoidResult`; a successful
+    // one should never resurrect text from a previous page.
+    if (state.isLoading) {
+      clearMessage();
+    }
     if (state.canGoBack) {
       backButton.removeAttribute('disabled');
     } else {

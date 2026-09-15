@@ -181,8 +181,59 @@ body.daisy-pane-resizing {
   flex: 0 0 auto;
 }
 
+.browser-toolbar-message__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The "Settings" affordance that resolves the "unknown origin" prompt: pushed
+   to the message row's right edge, past the wrapping message text. */
+.browser-toolbar-message__settings {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
 .browser-toolbar-message[hidden] {
   display: none;
+}
+
+/* Groups the toolbar's status/message row with the reserved page-view region
+   it describes (browserPane.ts), so the picker/splitter suspension hiding the
+   native view hides the message with it - the message text describes a page
+   that is no longer on screen.
+
+   The `transition` makes the splitter drag's `--suspended` state fade the
+   panel in/out (see that rule below). `visibility` interpolates discretely:
+   it flips to `hidden` only after the fade-out finishes and to `visible`
+   before the fade-in starts, which is exactly the fade you want. A toggled
+   `[hidden]` (the picker path) is `display:none` - not transitionable - so
+   the picker still swaps instantly and its list gets the layout space. */
+.browser-page-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transition:
+    opacity 200ms ease,
+    visibility 200ms ease;
+}
+
+.browser-page-panel[hidden] {
+  display: none;
+}
+
+/* Splitter drag: the panel keeps its layout space (no pane-height jump -
+   `visibility: hidden` only removes it from hit-testing/a11y) and just fades
+   to transparent while the native view is collapsed. */
+.browser-page-panel--suspended {
+  opacity: 0;
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-page-panel {
+    transition: none;
+  }
 }
 
 /* Reserved for the native WebContentsView the main process positions on
