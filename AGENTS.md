@@ -178,8 +178,9 @@ central to correctness), `serverSwitch.ts`, `certificatePrompt.ts`,
 ### `src/renderer/`
 
 **Adobe Spectrum Web Components for all UI** —
-<https://opensource.adobe.com/spectrum-web-components/>. Thirteen packages, all
-pinned to `1.12.2`; add new ones at that same version. Elements are registered
+<https://opensource.adobe.com/spectrum-web-components/>. Eighteen packages, all
+pinned to `1.12.2` (including `alert-banner`, which renders the browser pane's
+status/message row); add new ones at that same version. Elements are registered
 by side-effect import in `src/renderer/src/main.ts`.
 
 `chat/` separates view-model from view on purpose: `transcriptViewModel.ts`,
@@ -226,8 +227,8 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1383 passed / 14 skipped**;
-**Playwright → 43/43**.
+Current baseline: **`npm run verify` → 1505 passed / 14 skipped**;
+**Playwright → 48/48**.
 
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's
@@ -318,6 +319,16 @@ because the two-field form permits impossible states.
 A green test suite is **not** evidence. Three habits found every real defect so
 far; keep them.
 
+**`get_file_problems` before the gate.** After editing any project file, run the
+`get_file_problems` tool from the intellij MCP on that file and amend until it
+reports zero problems — *before* Prettier/ESLint/`npm run verify`. Fix
+pre-existing problems the tool flags on the same file too (boy-scout principle);
+but if the flag seems wrong or contradicts the file's intent, **escalate to the
+user** for a decision rather than change code to silence the analyzer. IntelliJ
+analysis is near-instant and needs no toolchain startup, so it is the cheapest
+first gate and catches type errors and inspections the CLI linters miss. Fix
+them there; then format, then run the verify gate.
+
 **Mutation testing proves tests discriminate.** Inject a realistic defect into
 shipped source, run the suite, record which test catches it, restore, re-run.
 Step 08 ran 20 mutations across three batteries; all 20 were caught. Reusable
@@ -341,6 +352,10 @@ actual numbers, and what would have been missed without it.
 
 ## 10. Environment traps
 
+- **IntelliJ flags ```` ```ts ```` fences in `.md` as JS.** AGENTS.md §8's
+  `totalMatchesSchema` union snippet reports "expression/statement expected" at
+  the `| { ... }` alternators. Known false positive — decided to leave as-is;
+  do not "fix" the doc snippet.
 - **PowerShell has no heredoc.** `Add-Content` / `Set-Content -Encoding UTF8`
   writes a BOM that Prettier then rewrites — run `npx prettier --write` on any
   file you append to.
