@@ -5,8 +5,8 @@
  */
 export const APP_INFO_CHANNEL = 'app:get-app-info' as const;
 
-// Copilot sign-in/out surface, presented in the Settings window's
-// authentication section (src/renderer/src/settingsWindow/authenticationSection.ts).
+// Copilot sign-in/out surface, presented in the Settings panel's
+// authentication section (src/renderer/src/settings/authenticationSection.ts).
 export const AGENT_GET_AUTH_STATUS_CHANNEL = 'agent:get-auth-status' as const;
 export const AGENT_LOGIN_CHANNEL = 'agent:login' as const;
 export const AGENT_CANCEL_LOGIN_CHANNEL = 'agent:cancel-login' as const;
@@ -61,9 +61,6 @@ export const BROWSER_STATE_CHANGED_CHANNEL = 'browser:state-changed' as const;
 export const BROWSER_SWITCH_STATE_CHANGED_CHANNEL = 'browser:switch-state-changed' as const;
 /** Push channel: main -> renderer, whenever a certificate error has no matching exception. */
 export const BROWSER_CERTIFICATE_BLOCKED_CHANNEL = 'browser:certificate-blocked' as const;
-
-/** Opens the Settings child window (requirements-decisions.md section 8). */
-export const APP_OPEN_SETTINGS_WINDOW_CHANNEL = 'app:open-settings-window' as const;
 
 // Agent chat IPC surface (step 07) - see src/main/ipc/agentChat.ts and
 // src/shared/agent-chat-ipc.ts. Puts the `AgentService` behind IPC for a

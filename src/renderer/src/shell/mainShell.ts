@@ -5,6 +5,7 @@ import { createBrowserPane, type BrowserPane } from './browserPane';
 import { createChatPane } from './chatPane';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
+import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
 import { buildServerOptions, computeAddressBarValue, computeInsecureMarker } from './viewModel';
 
 export interface MountMainShellOptions {
@@ -43,7 +44,24 @@ export async function mountMainShell(
   options?: MountMainShellOptions,
 ): Promise<void> {
   const browserPane = createBrowserPane();
-  const chatPane = createChatPane();
+
+  // Settings live in a whole-size panel on the browser pane (superseding the
+  // separate child window). It is appended once, hidden, and revealed through
+  // the pane's single-open panel host: `createSettingsPanel` starts its first
+  // `loadSettingsSnapshot` immediately, so opening the panel for the first
+  // time never waits on a cold IPC.
+  const settingsPanel: SettingsPanel = createSettingsPanel({
+    onSnapshotApplied(snapshot: AppSettingsSnapshot): void {
+      applySnapshot(browserPane, snapshot);
+    },
+  });
+  browserPane.appendPanel(settingsPanel);
+
+  const chatPane = createChatPane({
+    onOpenSettings() {
+      browserPane.panelHost.open(settingsPanel);
+    },
+  });
   if (options?.chatFooterContent) {
     chatPane.appendFooterContent(...options.chatFooterContent);
   }
@@ -79,22 +97,15 @@ export async function mountMainShell(
     console.warn('[daisy] failed to load settings snapshot:', result.error);
   }
 
-  // Settings are edited only from the separate Settings window (requirements
-  // -decisions.md section 8), so re-poll on focus rather than pushing a
-  // change event - there is no settings-changed IPC channel yet either.
-  window.addEventListener('focus', () => {
-    void loadSettingsSnapshot().then((refreshed) => {
-      if (refreshed.ok) applySnapshot(browserPane, refreshed.snapshot);
-    });
-  });
-
   // Unsubscribes the toolbar's `onStateChanged`/`onSwitchStateChanged`
-  // listeners and the view host's resize observer/listener when this
-  // (single, app-lifetime) window actually closes.
+  // listeners, the settings panel's certificate-blocked subscription, and
+  // the view host's resize observer/listener when this (single, app-lifetime)
+  // window actually closes.
   window.addEventListener('unload', () => {
     shellResizeObserver.disconnect();
     splitView.dispose();
     browserPane.dispose();
+    settingsPanel.dispose();
     chatPane.dispose();
   });
 }

@@ -3,21 +3,24 @@ import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * Step 09 (models bullet): the Settings window really can select a model and a
- * reasoning effort, and the choice really is persisted.
+ * Step 09 (models bullet): the Settings surface really can select a model and
+ * a reasoning effort, and the choice really is persisted.
  *
  * This spec exists for two defects the unit suite provably cannot see.
  *
  * First, custom-element registration. jsdom renders an unregistered tag as
  * `HTMLUnknownElement` without complaint, so every `modelsViewModel` test
- * would stay green if `sp-picker` were never imported in `settingsMain.ts` -
- * and the section would be inert in the real app. Only a real Chromium can
- * answer `customElements.get("sp-picker")`, so that is asserted head-on.
+ * would stay green if `sp-picker` were never imported in the renderer entry
+ * (`main.ts`) - and the section would be inert in the real app. Only a real
+ * Chromium can answer `customElements.get("sp-picker")`, so that is asserted
+ * head-on.
  *
  * Second, the IPC wiring. `settings:get-model-selection` and
- * `settings:set-model-preferences` are new channels on a window that is a
- * separate `BrowserWindow` - exactly the configuration that made the entire
- * settings UI inert in step 05 while its unit tests passed.
+ * `settings:set-model-preferences` are new channels, and Settings is now a
+ * panel served from the one shell window - so the end-to-end round trip from
+ * a real picker in the DOM through the preload sender guard (which trusts
+ * only that single shell webContents id) to the main-process handler and back
+ * is what this spec drives.
  *
  * The catalogue here is the fixed one `fakeModelCatalog()` supplies under the
  * deterministic fake agent, so the options are known without a live Copilot.
@@ -57,12 +60,13 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
 
   const openSettings = async () => {
     const app = await electron.launch({ args: [mainEntry], env });
-    const shell = await app.firstWindow();
-    await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    const settingsPagePromise = app.waitForEvent('window', { timeout: 60_000 });
-    await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
-    const settings = await settingsPagePromise;
-    await settings.waitForLoadState('domcontentloaded');
+    const settings = await app.firstWindow();
+    await settings.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await settings.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await settings
+      .locator('.settings-panel')
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
     await settings
       .locator('section[aria-label="Models"]')
       .waitFor({ state: 'visible', timeout: 60_000 });
@@ -76,7 +80,7 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
 
     // The step-07 deferral placeholder must be gone, not merely supplemented.
     await expect(section).not.toContainText('deferred to a later step');
-    await expect(first.settings.locator('body')).not.toContainText('step 07');
+    await expect(section).not.toContainText('step 07');
 
     // `sp-picker` is genuinely upgraded - the assertion jsdom cannot make.
     const registered = await first.settings.evaluate(

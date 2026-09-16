@@ -3,16 +3,16 @@ import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * Step 05: the Settings window can actually add and remove servers, and the
+ * Step 05: the Settings surface can actually add and remove servers, and the
  * result survives a restart.
  *
- * This exists because the unit suite could not see the defect that mattered
- * most here. Every settings handler, schema and view-model function was tested
- * and green while the *live* Settings window was refused by the IPC sender
- * guard on every single call - the guard trusted one `webContents.id` (the
- * shell) and the Settings window is a separate `BrowserWindow`. The entire
- * settings UI was inert in the real app. Only driving the real window catches
- * that class of defect, so that is what this spec does.
+ * The unit suite covers every handler, schema and view-model function, but
+ * only driving the real built app proves that the IPC round-trip — preload
+ * sender-guard, main-process handler, settingsStore write, and the
+ * settings-changed re-fetch in the shell — is wired end-to-end. Settings
+ * became a panel in the shell (not a separate child window), so the sender
+ * guard trusts only the one shell webContents id; this spec proves that
+ * single-window path works.
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -26,7 +26,7 @@ function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out;
 }
 
-test('servers added in the Settings window persist, and removal persists too', async () => {
+test('servers added in the Settings panel persist, and removal persists too', async () => {
   test.setTimeout(180_000);
 
   mkdirSync(scratchBase, { recursive: true });
@@ -50,34 +50,29 @@ test('servers added in the Settings window persist, and removal persists too', a
     const app = await electron.launch({ args: [mainEntry], env });
     const shell = await app.firstWindow();
     await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    const settingsPagePromise = app.waitForEvent('window', { timeout: 60_000 });
     await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
-    const settings = await settingsPagePromise;
-    await settings.waitForLoadState('domcontentloaded');
-    await settings
-      .locator('.add-server-form')
-      .first()
-      .waitFor({ state: 'visible', timeout: 60_000 });
-    return { app, settings };
+    await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator('.add-server-form').first().waitFor({ state: 'visible', timeout: 60_000 });
+    return { app, page: shell };
   };
 
   // --- Launch 1: add a server through the real form -----------------------
   const first = await openSettings();
   try {
-    const rows = first.settings.locator('.server-row');
+    const rows = first.page.locator('.server-row');
     const initialRowCount = await rows.count();
 
-    await first.settings.locator('sp-textfield[placeholder="Label"] input').fill('Canary Author');
-    await first.settings
+    await first.page.locator('sp-textfield[placeholder="Label"] input').fill('Canary Author');
+    await first.page
       .locator('sp-textfield[placeholder="https://author.example"] input')
       .fill('https://canary-author.example');
-    await first.settings.locator('sp-button', { hasText: 'Add server' }).first().click();
+    await first.page.locator('sp-button', { hasText: 'Add server' }).first().click();
 
     // The list must grow - proving the mutation round-tripped through IPC and
     // came back as new state, not merely that a button was clickable.
     await expect(rows).toHaveCount(initialRowCount + 1, { timeout: 60_000 });
-    await expect(first.settings.locator('.server-row')).toContainText(['Canary Author']);
-    await expect(first.settings.locator('.form-errors')).toHaveText('');
+    await expect(first.page.locator('.server-row')).toContainText(['Canary Author']);
+    await expect(first.page.locator('.form-errors')).toHaveText('');
   } finally {
     await first.app.close();
   }
@@ -89,7 +84,7 @@ test('servers added in the Settings window persist, and removal persists too', a
   // --- Launch 2: the server is still there, edit it, then remove it -------
   const second = await openSettings();
   try {
-    const row = second.settings.locator('.server-row', { hasText: 'Canary Author' });
+    const row = second.page.locator('.server-row', { hasText: 'Canary Author' });
     await expect(row).toHaveCount(1, { timeout: 60_000 });
 
     // A row has exactly two buttons: Save and Remove.
@@ -107,7 +102,7 @@ test('servers added in the Settings window persist, and removal persists too', a
     await expect(save).not.toHaveAttribute('disabled', '');
     await save.click();
 
-    const renamed = second.settings.locator('.server-row', { hasText: 'Canary Renamed' });
+    const renamed = second.page.locator('.server-row', { hasText: 'Canary Renamed' });
     await expect(renamed).toHaveCount(1, { timeout: 60_000 });
 
     // An address change takes two clicks: the first only warns.
@@ -121,22 +116,21 @@ test('servers added in the Settings window persist, and removal persists too', a
     // The field is re-rendered from the freshly-fetched snapshot, so this
     // value came back out of the store rather than staying typed in the DOM.
     await expect(
-      second.settings
+      second.page
         .locator('.server-row', { hasText: 'Canary Renamed' })
         .locator('sp-textfield[aria-label="Server address"] input'),
     ).toHaveValue('https://canary-moved.example', { timeout: 60_000 });
 
     // Removal takes two clicks as well: the first only warns.
-    const current = second.settings.locator('.server-row', { hasText: 'Canary Renamed' });
+    const current = second.page.locator('.server-row', { hasText: 'Canary Renamed' });
     await current.locator('sp-button', { hasText: 'Remove' }).first().click();
     await expect(current.locator('.server-row__edit-status')).toContainText('Click Remove again');
     await expect(current).toHaveCount(1);
 
     await current.locator('sp-button', { hasText: 'Remove' }).first().click();
-    await expect(second.settings.locator('.server-row', { hasText: 'Canary Renamed' })).toHaveCount(
-      0,
-      { timeout: 60_000 },
-    );
+    await expect(second.page.locator('.server-row', { hasText: 'Canary Renamed' })).toHaveCount(0, {
+      timeout: 60_000,
+    });
   } finally {
     await second.app.close();
   }

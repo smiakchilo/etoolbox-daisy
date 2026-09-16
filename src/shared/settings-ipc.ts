@@ -4,17 +4,17 @@ import {
   serverSnapshotSchema,
   type AppSettingsSnapshot,
   type ServerSnapshot,
-} from './contracts/settingsSnapshot';
-import { serverIdSchema } from './contracts/ids';
-import { originSchema } from './contracts/origin';
-import { modelIdSchema, reasoningEffortSchema } from './contracts/appSettings';
-import { modelSelectionStateSchema, type ModelSelectionState } from './contracts/modelCatalog';
+} from './contracts';
+import { serverIdSchema } from './contracts';
+import { originSchema } from './contracts';
+import { modelIdSchema, reasoningEffortSchema } from './contracts';
+import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
 import {
   aemProxyConfigSchema,
   serverColorSchema,
   serverLabelSchema,
   tlsExceptionSchema,
-} from './contracts/serverConfig';
+} from './contracts';
 
 /**
  * Wire contracts for the dedicated settings IPC surface
@@ -277,7 +277,7 @@ export type SetCopilotProxyRequest = Readonly<z.infer<typeof setCopilotProxyRequ
  * Result of `settings:remove-server` and `settings:set-copilot-proxy`. Both
  * mutations have nothing more specific to report back than success/failure -
  * the renderer already re-fetches the whole snapshot afterward (see
- * `settingsShell.ts`'s `reload`) - so, like `settings:set-proxy-password`,
+ * `settingsPanel.ts`'s `reload`) - so, like `settings:set-proxy-password`,
  * they reuse {@link settingsIpcVoidResultSchema} rather than each declaring
  * an identical-shaped result type of their own. `settings:add-server`'s
  * {@link addServerResultSchema} above already covers that channel's result.

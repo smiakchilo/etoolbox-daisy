@@ -5,7 +5,7 @@ import { isBrowserPaneFraction } from '../shell/splitLayout';
  *
  * This deliberately does *not* go through `AppSettings`/`settings:*` IPC:
  * that document is a step-03 contract whose write path is restricted to the
- * Settings window, and a dragged pane divider is renderer-local view state,
+ * Settings panel, and a dragged pane divider is renderer-local view state,
  * not configuration the main process or the agent ever needs to read. Window
  * `localStorage` is scoped to this app's own partition and survives restarts,
  * which is exactly the required lifetime and no more.

@@ -50,7 +50,15 @@ const READY_POLL_INTERVAL_MS = 15_000;
  * The right-hand chat pane: toolbar, transcript, and composer, wired to the
  * `agent-chat:*` IPC surface (`window.daisy.agentChat`).
  */
-export function createChatPane(): ChatPane {
+export interface ChatPaneOptions {
+  /**
+   * Invoked when the toolbar's Settings button is clicked. The shell hands
+   * this to the opener of its in-shell Settings panel (see `mainShell.ts`).
+   */
+  readonly onOpenSettings: () => void;
+}
+
+export function createChatPane(options: ChatPaneOptions): ChatPane {
   const transcriptStore: TranscriptStore = createTranscriptStore();
   const transcriptView: TranscriptView = createTranscriptView();
 
@@ -166,7 +174,11 @@ export function createChatPane(): ChatPane {
 
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
-    children: [createChatToolbar(), transcript, composer.element],
+    children: [
+      createChatToolbar({ onOpenSettings: options.onOpenSettings }),
+      transcript,
+      composer.element,
+    ],
   });
 
   const repaintTimer = setInterval(() => {

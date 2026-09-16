@@ -1,31 +1,21 @@
 /*
- * Layout for the separate Settings window (requirements-decisions.md
- * section 8: Settings and History are separate local child windows, not
- * panels inside the main window).
+ * Layout for the Settings panel (a whole-size panel in the shell's browser
+ * pane, `shell/settingsPanel.ts` - converting what used to be a separate
+ * child window). Imported by the renderer entry alongside `shell.css`; only
+ * the Settings sections' own rules live here.
  */
 
-html,
-body {
-  margin: 0;
-}
-
-#app,
-sp-theme {
-  display: block;
-}
-
-.settings-shell {
+/* The panel's scrollable body: the shared `.panel` surface is a flex column
+   that must not itself scroll (see shell.css), so the sections scroll inside
+   this one region. */
+.settings-panel__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding: 16px;
-  max-width: 720px;
-}
-
-.settings-shell__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
 }
 
 .settings-shell__status {

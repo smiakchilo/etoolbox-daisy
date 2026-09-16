@@ -5,10 +5,14 @@ import { reportNotWired } from '../lib/notWired';
  * The chat pane's toolbar (requirements-decisions.md section 8). Chat
  * transcript rendering lands in a later implementation-plan step, so New
  * chat and History remain stubs until their agent-session/window-opening
- * IPC surfaces exist; Settings is wired to the real `app:open-settings
- * -window` channel.
+ * IPC surfaces exist; Settings opens the in-shell Settings panel provided by
+ * the caller (see `chatPane.ts` -> `shell/mainShell.ts`).
  */
-export function createChatToolbar(): HTMLElement {
+export interface ChatToolbarCallbacks {
+  readonly onOpenSettings: () => void;
+}
+
+export function createChatToolbar(callbacks: ChatToolbarCallbacks): HTMLElement {
   const toolbar = el('div', { attrs: { class: 'toolbar chat-toolbar', role: 'toolbar' } });
 
   const newChatButton = el('sp-action-button', { attrs: { quiet: '' } });
@@ -35,7 +39,7 @@ export function createChatToolbar(): HTMLElement {
   settingsIcon.setAttribute('slot', 'icon');
   settingsButton.append(settingsIcon, document.createTextNode('Settings'));
   settingsButton.addEventListener('click', () => {
-    void window.daisy.openSettingsWindow();
+    callbacks.onOpenSettings();
   });
 
   toolbar.append(newChatButton, historyButton, settingsButton);

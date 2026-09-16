@@ -11,7 +11,7 @@ import {
   SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
-} from '../../shared/ipc-channels';
+} from '../../shared';
 import {
   addServerRequestSchema,
   clearProxyPasswordRequestSchema,
@@ -38,24 +38,24 @@ import {
   type UpdateServerPresentationResult,
   type UpdateServerTargetingRequest,
   type UpdateServerTargetingResult,
-} from '../../shared/settings-ipc';
+} from '../../shared';
 import {
   toAppSettingsSnapshot,
   type ServerSnapshot,
-} from '../../shared/contracts/settingsSnapshot';
-import { defaultAppSettings, type AppSettings } from '../../shared/contracts/appSettings';
+} from '../../shared';
+import { defaultAppSettings, type AppSettings } from '../../shared';
 import {
   isReasoningEffortValidFor,
   type ModelCatalogEntry,
-} from '../../shared/contracts/modelCatalog';
+} from '../../shared';
 import type {
   ProxyCredentials,
   ServerConfig,
   ServerPresentationChanges,
   ServerTargetingChanges,
-} from '../../shared/contracts/serverConfig';
-import { newServerId } from '../../shared/contracts/ids';
-import { err, ok, type Result } from '../../shared/result';
+} from '../../shared';
+import { newServerId } from '../../shared';
+import { err, ok, type Result } from '../../shared';
 import {
   addServer as createServerEntry,
   applyServerPresentationChange,
@@ -677,11 +677,12 @@ export interface SettingsIpcSenderInfo {
 export interface TrustedSenderExpectation {
   /**
    * Whether a `webContents.id` belongs to this app's own local UI. A
-   * predicate rather than a single id because the settings surface spans two
-   * windows: the shell reads the snapshot, and the separate Settings child
-   * window mutates it. Consulted at call time, not at registration time, so a
-   * window created later (the Settings window is created on demand) is
-   * recognized.
+   * predicate rather than a single id because the settings surface is served
+   * from the one shell window alongside the browser pane (Settings became a
+   * panel in the shell, not a separate child window), and keeping a
+   * predicate here lets a future surface (e.g. History as a panel) join
+   * without re-typing the check. Consulted at call time, not at registration
+   * time.
    */
   readonly isTrustedWebContentsId: (webContentsId: number) => boolean;
   /** Passed to `isAllowedAppNavigation` - the same "is this our own local UI?"
@@ -726,7 +727,7 @@ function senderInfoFromInvokeEvent(event: IpcMainInvokeEvent): SettingsIpcSender
 
 const UNTRUSTED_SENDER_ERROR: SettingsIpcError = {
   code: 'untrusted_sender',
-  message: "This request must come from the local app's Settings window.",
+  message: "This request must come from the local app's shell window.",
 };
 
 function invalidPayloadError(message: string): SettingsIpcError {

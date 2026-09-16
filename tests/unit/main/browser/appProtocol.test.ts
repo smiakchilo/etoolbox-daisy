@@ -26,11 +26,6 @@ describe('resolveAppProtocolFile', () => {
     });
   });
 
-  it('resolves settings.html for the settings window', () => {
-    const result = resolveAppProtocolFile(buildAppUrl('settings.html'), rendererDistDir);
-    expect(result).toEqual({ ok: true, filePath: path.join(rendererDistDir, 'settings.html') });
-  });
-
   it("harmlessly collapses a forward-slash '..' segment inside the root, because WHATWG URL parsing already normalizes dot-segments before this function ever sees them", () => {
     // `new URL(...).pathname` cannot itself escape above the authority root,
     // so this never reaches the path-containment check as an escape attempt

@@ -6,7 +6,7 @@ import {
   validateNewServerForm,
   validateOriginInput,
   type NewServerFormInput,
-} from '../../../src/renderer/src/settingsWindow/viewModel';
+} from '../../../src/renderer/src/settings/viewModel';
 import type { AemProxySnapshot, CopilotProxySnapshot, TlsException } from '../../../src/shared';
 
 function baseInput(overrides: Partial<NewServerFormInput> = {}): NewServerFormInput {

@@ -6,7 +6,6 @@ import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './app
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
-import { registerAppWindowIpcHandlers } from './ipc/appWindow';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
@@ -15,7 +14,7 @@ import { createSecretStore } from './secretStore';
 import { loadSettings } from './settingsStore';
 import { installContentSecurityPolicy } from './csp';
 import { installWebContentsSecurityGuard } from './security';
-import { createAemSession } from './aem/session';
+import { createAemSession } from './aem';
 import { createAemBridgeBroker } from './aem/bridgeBroker';
 import { createAemBridgeTransport } from './aem/bridgeTransport';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
@@ -49,7 +48,7 @@ import {
 } from '../agent/aemTool';
 import { createSdkAgentService } from '../agent/sdkAgentService';
 import { createFakeAgentService } from '../agent/fakeAgentService';
-import { err, ok } from '../shared/result';
+import { err, ok } from '../shared';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
@@ -187,8 +186,10 @@ if (!gotSingleInstanceLock) {
     // very first load after restart.
     await browserController.hydrateCertificateExceptions();
 
-    // The shell window is trusted from the start; the Settings window adds
-    // itself when it is created (see `registerAppWindowIpcHandlers`).
+    // The shell window is trusted from the start. Settings, previously its
+    // own child window, now lives as a panel inside the shell itself, so
+    // this stays the one and only trusted web contents id for the app's
+    // lifetime.
     const trustedWindows = createTrustedWindowRegistry([mainWindow.webContents.id]);
 
     // Decided once, from the exact same pure function `selectAgentService`
@@ -372,13 +373,11 @@ if (!gotSingleInstanceLock) {
     // `agentComposition.ts`.
     startAppRuntime({
       registerNonAgentHandlers: () => {
-        registerAppWindowIpcHandlers({
-          mainWindow,
-          rendererDistDir,
-          mainWebContentsId: mainWindow.webContents.id,
-          logger,
-          trustedWindows,
-        });
+        // No non-agent handler was removed with the Settings window's
+        // departure: every surface the separate window used (`settings:*`,
+        // `agent:*`) is still served from the shell, so nothing needs
+        // registering here beyond the always-present IPC sets above.
+        return;
       },
       startAgentService: () =>
         startAgentServiceInBackground({

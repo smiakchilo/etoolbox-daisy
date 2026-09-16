@@ -9,7 +9,7 @@ import path from 'node:path';
  * The unit suite already asserts `toAppSettingsSnapshot` replaces a password
  * with `hasPassword`. That is necessary but not sufficient: it says nothing
  * about what the *live app* writes to disk once a real user types a real
- * password into the real Settings window. A password could still reach the
+ * password into the Settings panel. A password could still reach the
  * settings document, a diagnostic log, or a Chromium cache entry, and every
  * unit test would stay green.
  *
@@ -109,27 +109,25 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     const shell = await app.firstWindow();
     await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
 
-    const settingsPagePromise = app.waitForEvent('window', { timeout: 60_000 });
     await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
-    const settings = await settingsPagePromise;
-    await settings.waitForLoadState('domcontentloaded');
+    await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     // A proxy address must exist before a password has anywhere to attach.
-    const addressField = settings.locator('[aria-label="Copilot proxy address"] input');
+    const addressField = shell.locator('[aria-label="Copilot proxy address"] input');
     await addressField.waitFor({ state: 'visible', timeout: 60_000 });
     await addressField.fill('https://proxy.example:8080');
-    const usernameField = settings.locator('[aria-label="Copilot proxy username"] input');
+    const usernameField = shell.locator('[aria-label="Copilot proxy username"] input');
     await usernameField.fill('canary-user');
-    await settings.locator('sp-button', { hasText: 'Save address' }).first().click();
+    await shell.locator('sp-button', { hasText: 'Save address' }).first().click();
 
-    const passwordField = settings.locator('[aria-label="Proxy password"] input');
+    const passwordField = shell.locator('[aria-label="Proxy password"] input');
     await passwordField.waitFor({ state: 'visible', timeout: 60_000 });
     await passwordField.fill(CANARY);
-    await settings.locator('sp-button', { hasText: 'Set password' }).first().click();
+    await shell.locator('sp-button', { hasText: 'Set password' }).first().click();
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    await expect(settings.locator('.password-entry__status')).toHaveText('Password saved.', {
+    await expect(shell.locator('.password-entry__status')).toHaveText('Password saved.', {
       timeout: 60_000,
     });
 
@@ -138,17 +136,15 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     // nothing happened. The summary is rendered from a main-process snapshot,
     // so this asserts the round trip - and it must be the *positive* phrasing,
     // since "no password stored" would also match a loose substring check.
-    await expect(settings.locator('.proxy-section__summary')).toContainText('password stored', {
+    await expect(shell.locator('.proxy-section__summary')).toContainText('password stored', {
       timeout: 60_000,
     });
-    await expect(settings.locator('.proxy-section__summary')).not.toContainText(
-      'no password stored',
-    );
+    await expect(shell.locator('.proxy-section__summary')).not.toContainText('no password stored');
 
     // And the renderer must not be holding it either: the field is cleared on
-    // save, so the canary must not survive anywhere in the Settings document.
-    const settingsHtml = await settings.content();
-    expect(settingsHtml).not.toContain(CANARY);
+    // save, so the canary must not survive anywhere in the shell document.
+    const shellHtml = await shell.content();
+    expect(shellHtml).not.toContain(CANARY);
   } finally {
     // Closed before scanning so every buffered log and cache entry is flushed -
     // a scan of a live profile could miss a write still sitting in memory.

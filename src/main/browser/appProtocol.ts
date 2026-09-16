@@ -57,7 +57,7 @@ export function registerAppProtocolPrivileges(): void {
   ]);
 }
 
-/** Builds the `app://` URL for one file under the renderer's dist output, e.g. `index.html` or `settings.html`. */
+/** Builds the `app://` URL for one file under the renderer's dist output, e.g. `index.html`. */
 export function buildAppUrl(relativePath: string): string {
   return `${APP_PROTOCOL_SCHEME}://${APP_PROTOCOL_HOST}/${relativePath}`;
 }

@@ -1,22 +1,22 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defaultAppSettings } from '../../../../src/shared/contracts/appSettings';
+import { defaultAppSettings } from '../../../../src/shared';
 import { loadSettings, saveSettings } from '../../../../src/main/settingsStore';
 import {
   getModelSelection,
   setModelPreferences,
   type ModelSelectionDependencies,
 } from '../../../../src/main/ipc/settings';
-import { err, ok } from '../../../../src/shared/result';
-import type { ModelCatalogEntry } from '../../../../src/shared/contracts/modelCatalog';
+import { err, ok } from '../../../../src/shared';
+import type { ModelCatalogEntry } from '../../../../src/shared';
 
 /**
  * Tests for the `settings:get-model-selection` / `settings:set-model-preferences`
  * handlers (implementation-plan.md step 09).
  *
  * The write path is where step 09's "disable changes during an active turn" is
- * actually *enforced* - the disabled picker in the Settings window is only a
+ * actually *enforced* - the disabled picker in the Settings panel is only a
  * courtesy - so the refusals, and their order, are the substance here.
  */
 

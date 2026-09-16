@@ -47,14 +47,14 @@ export interface DaisyAppApi {
   getAppInfo(): Promise<AppInfo>;
   /**
    * The Copilot sign-in/out API: auth status, login, cancel-login, and
-   * logout. Backs the Settings window's authentication section
-   * (`src/renderer/src/settingsWindow/authenticationSection.ts`).
+   * logout. Backs the Settings panel's authentication section
+   * (`src/renderer/src/settings/authenticationSection.ts`).
    */
   readonly agent: DaisyAgentAuthApi;
   /**
    * Dedicated settings IPC surface (step 04): a secret-free snapshot plus
    * write-only proxy-password storage. The renderer UI that calls this
-   * (the Settings window) is built in step 05.
+   * (the Settings panel) is built in step 05.
    */
   readonly settings: DaisySettingsApi;
   /**
@@ -68,8 +68,6 @@ export interface DaisyAppApi {
    * later task; this surface only needs to exist and behave correctly.
    */
   readonly agentChat: DaisyAgentChatApi;
-  /** Opens the Settings child window (requirements-decisions.md section 8). */
-  openSettingsWindow(): Promise<void>;
 }
 
 export interface DaisyAgentChatApi {

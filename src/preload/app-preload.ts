@@ -11,7 +11,6 @@ import {
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   APP_INFO_CHANNEL,
-  APP_OPEN_SETTINGS_WINDOW_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
@@ -324,9 +323,6 @@ const daisyApi: DaisyAppApi = {
         ipcRenderer.removeListener(BROWSER_CERTIFICATE_BLOCKED_CHANNEL, handler);
       };
     },
-  },
-  async openSettingsWindow(): Promise<void> {
-    await ipcRenderer.invoke(APP_OPEN_SETTINGS_WINDOW_CHANNEL);
   },
 };
 

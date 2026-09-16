@@ -145,10 +145,10 @@ test("picking a server from the address bar's picker panel navigates to it", asy
     // registered" rule.
     const registered = await page.evaluate(() => ({
       pickerButton: Boolean(customElements.get('sp-picker-button')),
-      crossIcon: Boolean(customElements.get('sp-icon-cross500')),
+      closeIcon: Boolean(customElements.get('daisy-close-icon')),
     }));
     expect(registered.pickerButton).toBe(true);
-    expect(registered.crossIcon).toBe(true);
+    expect(registered.closeIcon).toBe(true);
 
     // Nothing is visibly open yet: the panel is hidden and the native view
     // region is shown (the combo glyph is not reflecting an open state).

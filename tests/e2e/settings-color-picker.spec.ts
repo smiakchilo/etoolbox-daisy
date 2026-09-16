@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 
 /**
- * The Settings window's colour picker is a plain `sp-textfield` (holding
+ * The Settings panel's colour picker is a plain `sp-textfield` (holding
  * either a swatch name like `blue` or a `#rrggbb` hex string) plus a
  * separate "picker button" (`sp-action-menu`, `.color-picker-button`) beside
  * it: clicking the button opens a menu of the named swatches, each showing
@@ -50,12 +50,13 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
-    const shell = await app.firstWindow();
-    await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    const settingsPagePromise = app.waitForEvent('window', { timeout: 60_000 });
-    await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
-    const settings = await settingsPagePromise;
-    await settings.waitForLoadState('domcontentloaded');
+    const settings = await app.firstWindow();
+    await settings.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await settings.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await settings
+      .locator('.settings-panel')
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
     const form = settings.locator('.add-server-form').first();
     await form.waitFor({ state: 'visible', timeout: 60_000 });
 

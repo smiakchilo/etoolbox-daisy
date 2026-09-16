@@ -23,8 +23,8 @@ import {
 
 /**
  * The Copilot sign-in/out IPC handlers: auth status, login, cancel-login,
- * logout. Backs the Settings window's authentication section
- * (`src/renderer/src/settingsWindow/authenticationSection.ts`).
+ * logout. Backs the Settings panel's authentication section
+ * (`src/renderer/src/settings/authenticationSection.ts`).
  * `src/main/agentChatController.ts` (and, transitively,
  * `src/main/ipc/agentChat.ts`) also imports `../../agent` now, so this is no
  * longer the only place in `src/main` that does; no ESLint rule ever

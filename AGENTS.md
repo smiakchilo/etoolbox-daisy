@@ -80,7 +80,7 @@ by a human.** It needs a real Copilot sign-in and a real AEM instance.
 │ src/renderer/  — Adobe Spectrum Web Components only                  │
 │    shell/ ........ two-pane layout, toolbars, panes                  │
 │    chat/ ......... transcript, composer, markdown, query table       │
-│    settingsWindow/ separate parented window                          │
+│    settings/ ..... settings panel sections (servers, proxy, models)  │
 └──────────────────────────────────────────────────────────────────────┘
 
            src/shared/  — imported by ALL of the above
@@ -383,8 +383,8 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 | Item | State |
 | --- | --- |
 | Step 07 manual smoke checklist | **Written, never run by a human.** Needs real Copilot + real AEM. |
-| Two Copilot clients | `src/main/ipc/agent.ts` keeps its own `cachedClient`, separate from `index.ts`'s composition client. Opening Settings may spawn a **second** `copilot-runtime.exe`. **Unmeasured** — measure before Step 10's shutdown work. |
-| `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way. |
+| Two Copilot clients | `src/main/ipc/agent.ts` keeps its own `cachedClient`, separate from `index.ts`'s composition client. Opening Settings may spawn a **second** `copilot-runtime.exe`; one leak is proven (fake path spawns a real runtime — 8 s+ hang measured). **Handoff and measurement plan: `docs/handoff-two-copilot-clients.md`.** Measure before Step 10's shutdown work; the design choice goes back to the user. |
+| `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — covered by the same handoff. |
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory. |
 | Git | Zero commits. `.idea/` is staged. |
 

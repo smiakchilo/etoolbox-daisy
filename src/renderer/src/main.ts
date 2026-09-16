@@ -17,13 +17,18 @@ import '@spectrum-web-components/table/sp-table-body.js';
 import '@spectrum-web-components/table/sp-table-row.js';
 import '@spectrum-web-components/table/sp-table-cell.js';
 import '@spectrum-web-components/icons-ui/icons/sp-icon-arrow100.js';
-import '@spectrum-web-components/icons-ui/icons/sp-icon-cross500.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-refresh.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-stop.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chat-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-history.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-settings.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-chevron-down.js';
+import '@spectrum-web-components/action-menu/sp-action-menu.js';
+import '@spectrum-web-components/menu/sp-menu-item.js';
+import '@spectrum-web-components/picker/sp-picker.js';
+import '@spectrum-web-components/checkbox/sp-checkbox.js';
 import './styles/shell.css';
+import './styles/settings.css';
 import { mountMainShell } from './shell/mainShell';
 
 async function render(): Promise<void> {

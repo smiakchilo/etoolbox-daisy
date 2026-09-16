@@ -62,7 +62,7 @@ beforeEach(() => {
       };
     }),
   };
-  Reflect.set(dom.window, 'daisy', { browser, openSettingsWindow: vi.fn(() => Promise.resolve()) });
+  Reflect.set(dom.window, 'daisy', { browser });
   Reflect.set(dom.window, 'requestAnimationFrame', () => 1);
   Reflect.set(dom.window, 'cancelAnimationFrame', () => undefined);
   Reflect.set(
@@ -111,8 +111,8 @@ describe('createBrowserPane page panel', () => {
     // (`:host{display:none}` / `:host([open]){display:flex}` in the
     // component's stylesheet), so "hidden" means "no such attribute".
     expect(message?.hasAttribute('open')).toBe(false);
-    // The "Settings" affordance was removed from the row; the settings window
-    // stays reachable through the window chrome, and an error row must not
+    // The "Settings" affordance was removed from the row; Settings is now a
+    // panel opened through the chat toolbar, and an error row must not
     // double as a navigation aid (see browserToolbar.ts).
     expect(pane.element.querySelector('.browser-toolbar-message__settings')).toBeNull();
   });

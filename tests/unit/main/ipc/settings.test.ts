@@ -2,10 +2,10 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { newServerId } from '../../../../src/shared/contracts/ids';
-import { defaultAppSettings, type AppSettings } from '../../../../src/shared/contracts/appSettings';
-import { serverConfigSchema } from '../../../../src/shared/contracts/serverConfig';
-import { toAppSettingsSnapshot } from '../../../../src/shared/contracts/settingsSnapshot';
+import { newServerId } from '../../../../src/shared';
+import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
+import { serverConfigSchema } from '../../../../src/shared';
+import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
 import { createSecretStore, type SecretCipher } from '../../../../src/main/secretStore';
 import {
@@ -597,9 +597,9 @@ describe('resolveProxySecretRef', () => {
 
 describe('isTrustedLocalSettingsSender', () => {
   const SHELL_ID = 1;
-  const SETTINGS_WINDOW_ID = 2;
+  const OTHER_LOCAL_ID = 2;
   const expectation: TrustedSenderExpectation = {
-    isTrustedWebContentsId: (id) => id === SHELL_ID || id === SETTINGS_WINDOW_ID,
+    isTrustedWebContentsId: (id) => id === SHELL_ID,
     rendererDistDir: path.join('C:', 'app', 'out', 'renderer'),
   };
 
@@ -630,25 +630,21 @@ describe('isTrustedLocalSettingsSender', () => {
     expect(isTrustedLocalSettingsSender(sender, expectation)).toBe(false);
   });
 
-  // The regression this whole predicate change exists for: settings are
-  // mutated from the *Settings* window, which is a different BrowserWindow
-  // with a different webContents id than the shell that reads the snapshot.
-  // A guard that trusts only the shell silently refuses the entire Settings
-  // UI.
-  it('trusts the separate Settings window, not only the shell window', () => {
-    const sender = localFileSender({
-      webContentsId: SETTINGS_WINDOW_ID,
-      url: `file:///${path.join('C:', 'app', 'out', 'renderer', 'settings.html').replace(/\\/g, '/')}`,
-    });
-    expect(isTrustedLocalSettingsSender(sender, expectation)).toBe(true);
+  // The Settings surface is served from the one-and-only shell window (it
+  // became a panel in the shell, not a separate child window), so the shell
+  // id is the only trusted webContents id. The check remains a predicate so
+  // a future panel surface (e.g. History) can join without re-typing it.
+  it('rejects any other local webContents id: the shell is the only trusted window', () => {
+    const sender = localFileSender({ webContentsId: OTHER_LOCAL_ID });
+    expect(isTrustedLocalSettingsSender(sender, expectation)).toBe(false);
   });
 
-  it('rejects a window whose trust has been revoked (e.g. closed Settings window)', () => {
+  it('rejects a sender whose trust has been revoked', () => {
     const revoked: TrustedSenderExpectation = {
-      isTrustedWebContentsId: (id) => id === SHELL_ID,
+      isTrustedWebContentsId: () => false,
       rendererDistDir: path.join('C:', 'app', 'out', 'renderer'),
     };
-    const sender = localFileSender({ webContentsId: SETTINGS_WINDOW_ID });
+    const sender = localFileSender();
     expect(isTrustedLocalSettingsSender(sender, revoked)).toBe(false);
   });
 

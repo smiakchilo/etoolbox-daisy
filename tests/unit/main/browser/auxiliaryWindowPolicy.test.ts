@@ -20,7 +20,7 @@ describe('decideAuxiliaryWindowOpen', () => {
   });
 
   it("denies a custom-scheme URL, including the app's own app: scheme", () => {
-    expect(decideAuxiliaryWindowOpen('app://daisy/settings.html')).toEqual({
+    expect(decideAuxiliaryWindowOpen('app://daisy/index.html')).toEqual({
       kind: 'deny',
       reason: 'unsupported_scheme',
     });
