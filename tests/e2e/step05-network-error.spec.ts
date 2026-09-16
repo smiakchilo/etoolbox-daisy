@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { appSettingsSchema, defaultAppSettings } from '../../src/shared/contracts/appSettings';
+import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 
 /**
  * Step 05 success criterion: "Network errors are explicit."
@@ -105,16 +105,33 @@ test('a configured server that is down is reported to the user, not swallowed', 
   await addressInput.fill(deadOrigin);
   await addressInput.press('Enter');
 
-  const message = page.locator('.browser-toolbar-message__text');
+  const message = page.locator('.browser-toolbar-message');
   await expect(message).toBeVisible({ timeout: 60_000 });
 
-  // Explicit means the user can act on it: the message must eventually name
-  // the real Chromium failure, not a generic "something went wrong" - and not
-  // the transient "Switching servers..." status that precedes it.
-  await expect(message).toContainText('ERR_', { timeout: 60_000 });
+  // The row is an `sp-alert-banner`, not a plain div - and jsdom cannot prove
+  // a custom element registered, so this must be asserted against the real
+  // built app (AGENTS.md §9): `customElements.get` resolved and a real shadow
+  // root exists. A missing registration would render it as an unknown element
+  // that matches the class but has none of the banner's display rules.
+  const banner = page.locator('sp-alert-banner.browser-toolbar-message');
+  await expect
+    .poll(() => banner.evaluate(() => Boolean(customElements.get('sp-alert-banner'))))
+    .toBe(true);
+  await expect.poll(() => banner.evaluate((element) => element.shadowRoot !== null)).toBe(true);
+
+  // Explicit means the user can act on it - but the copy must be humanised,
+  // not the raw Chromium "ERR_CONNECTION_REFUSED (-102) loading '...'"
+  // string that main receives from headless loadURL. The message names the
+  // origin and says what to check; the raw `ERR_`/`(-102)` vocabulary stays
+  // on `errorCode` for diagnostics and never reaches the renderer.
+  await expect(message).not.toContainText('ERR_');
+  await expect(message).not.toContainText('(-10');
+  await expect(message).toContainText(deadOrigin, { timeout: 60_000 });
+  await expect(message).toContainText('Check that the server is running');
   const text = (await message.textContent()) ?? '';
-  console.error('toolbar message:', JSON.stringify(text));
   expect(text).not.toContain('Switching servers');
+  expect(text).not.toContain('Sp switching');
+  expect(text).not.toContain('undefined');
 
   await app.close();
 });

@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { appSettingsSchema, defaultAppSettings } from '../../src/shared/contracts/appSettings';
+import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 
 /**
  * The address bar displays the full current URL, so it must also ACCEPT one.
@@ -119,7 +119,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
       .poll(async () => await addressInput.inputValue(), { timeout: 60_000 })
       .toBe(deepUrl);
 
-    const message = page.locator('.browser-toolbar-message__text');
+    const message = page.locator('.browser-toolbar-message');
     expect((await message.textContent()) ?? '').not.toContain('not a valid address');
 
     // The other half of the contract: a path must not become a way to reach an

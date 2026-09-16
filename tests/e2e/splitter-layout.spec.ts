@@ -109,7 +109,14 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   const draggedWidth = (after as { width: number }).width;
 
   expect(draggedWidth).toBeLessThan(initialWidth);
-  expect(Math.abs(draggedWidth - (initialWidth + dragByPx))).toBeLessThanOrEqual(3);
+  // `sp-split-view` re-anchors the splitter's LEFT edge to the pointer's
+  // host-relative column on drag, so grabbing the bar's bounding-box *center*
+  // (as a real user grabs a handle) lands the boundary at
+  // `initialWidth + dragByPx + bar.width / 2`, not at `initialWidth +
+  // dragByPx`. The app's 8px-wide bar makes that half-width 4px; the
+  // expectation derives from the measured bar rather than hardcoding it, so
+  // a future width change cannot silently break this.
+  expect(Math.abs(draggedWidth - (initialWidth + dragByPx + bar.width / 2))).toBeLessThanOrEqual(3);
 
   // The native view is never collapsed by a drag (only by the server picker),
   // so this asserts it followed the pane live and ended exactly where the

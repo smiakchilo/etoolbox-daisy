@@ -3,21 +3,22 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BrowserWindow, Session, WebContents } from 'electron';
 import { createBrowserController } from '../../../../src/main/browser/browserController';
+import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
 import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView';
 import type { AuxiliaryWindowManager } from '../../../../src/main/browser/auxiliaryWindows';
-import type { AemSession } from '../../../../src/main/aem/session';
-import type { CertificateExceptionRecord } from '../../../../src/main/aem/certificateExceptions';
+import type { AemSession } from '../../../../src/main/aem';
+import type { CertificateExceptionRecord } from '../../../../src/main/aem';
 import type { SecretStore } from '../../../../src/main/secretStore';
 import type { Logger } from '../../../../src/main/logger';
 import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
-import { newServerId } from '../../../../src/shared/contracts/ids';
-import { defaultAppSettings, type AppSettings } from '../../../../src/shared/contracts/appSettings';
+import { newServerId } from '../../../../src/shared';
+import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
 import {
   serverConfigSchema,
   type ServerConfig,
-} from '../../../../src/shared/contracts/serverConfig';
-import type { BrowserNavigationState } from '../../../../src/shared/browser-ipc';
-import { BROWSER_SWITCH_STATE_CHANGED_CHANNEL } from '../../../../src/shared/ipc-channels';
+} from '../../../../src/shared';
+import type { BrowserNavigationState } from '../../../../src/shared';
+import { BROWSER_SWITCH_STATE_CHANGED_CHANNEL } from '../../../../src/shared';
 
 /**
  * `createBrowserController` unconditionally calls `app.on("certificate-error", ...)`
@@ -448,7 +449,8 @@ describe('browserController.switchServer', () => {
       ok: false,
       error: {
         code: 'network_error',
-        message: "ERR_CERT_AUTHORITY_INVALID (-202) loading 'https://localhost:53158/nav'",
+        // Humanised copy: the raw Chromium string never reaches the renderer.
+        message: describeNetworkError('ERR_CERT_AUTHORITY_INVALID', server.origin),
         errorCode: 'ERR_CERT_AUTHORITY_INVALID',
       },
     });
@@ -476,7 +478,7 @@ describe('browserController.switchServer', () => {
       ok: false,
       error: {
         code: 'network_error',
-        message: "ERR_PROXY_CONNECTION_FAILED (-130) setting proxy 'https://proxy.example'",
+        message: describeNetworkError('ERR_PROXY_CONNECTION_FAILED', server.origin),
         errorCode: 'ERR_PROXY_CONNECTION_FAILED',
       },
     });

@@ -42,7 +42,7 @@ export function createServerPickerPanel(callbacks: ServerPickerPanelCallbacks): 
   const closeButton = el('sp-action-button', {
     attrs: { quiet: '', 'aria-label': 'Close server list', class: 'server-picker-panel__close' },
   });
-  const closeIcon = document.createElement('sp-icon-cross100');
+  const closeIcon = document.createElement('sp-icon-cross500');
   closeIcon.setAttribute('slot', 'icon');
   closeButton.append(closeIcon);
 

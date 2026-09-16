@@ -10,6 +10,12 @@ import { computeReservedRegionBounds, type ReservedRegionBounds } from './viewMo
  * point of a native view is that Electron composites it outside the web
  * page's DOM/paint pipeline. It exists only so its geometry can be measured
  * and reported to main.
+ *
+ * `shell.css` gives this element an 8px right margin: the measured/reported
+ * rectangle therefore ends before the `sp-split-view` handle's overhang, so
+ * the composited view never covers the handle (a native view always paints
+ * above this document). The pane's own width - the persisted split - is
+ * unaffected; only the reserved rectangle narrows.
  */
 export interface BrowserViewHost {
   readonly element: HTMLElement;

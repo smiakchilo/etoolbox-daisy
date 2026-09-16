@@ -4,19 +4,19 @@ import {
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
-} from '../../shared/ipc-channels';
+} from '../../shared';
 import type {
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
   RevokeCertificateExceptionRequest,
   ViewBounds,
-} from '../../shared/browser-ipc';
-import type { AppSettings } from '../../shared/contracts/appSettings';
-import type { ServerId } from '../../shared/contracts/ids';
+} from '../../shared';
+import type { AppSettings } from '../../shared';
+import type { ServerId } from '../../shared';
 import { applyServerTargetingChange, loadSettings, saveSettings } from '../settingsStore';
-import type { AemSession } from '../aem/session';
-import type { ProxyPlainCredentials } from '../aem/proxyAuth';
+import type { AemSession } from '../aem';
+import type { ProxyPlainCredentials } from '../aem';
 import type { SecretStore } from '../secretStore';
 import type { Logger } from '../logger';
 import {
@@ -25,6 +25,7 @@ import {
   type AemBrowserViewOptions,
 } from './aemBrowserView';
 import { ServerSwitchController } from './serverSwitch';
+import { describeNetworkError } from './networkErrorCopy';
 import { decideAddressNavigation } from './unknownOrigin';
 import { createCertificateBlockedListener } from './certificatePrompt';
 import {
@@ -299,7 +300,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         logger.warn('BROWSER_SWITCH_FAILED');
         return fail({
           code: 'network_error',
-          message: outcome.message,
+          // The raw Chromium rejection ("ERR_CONNECTION_REFUSED (-102) loading
+          // ...") is kept on `errorCode` for programmatic branching; the
+          // message a user sees is the humanised copy (`networkErrorCopy.ts`),
+          // built from the code and the address this switch actually tried to
+          // load (`targetUrl` when one was given, the server origin otherwise).
+          message: describeNetworkError(outcome.errorCode, targetUrl ?? server.origin),
           errorCode: outcome.errorCode,
         });
       }

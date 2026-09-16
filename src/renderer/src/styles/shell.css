@@ -44,6 +44,36 @@ sp-theme {
    * of scrolling, silently hiding content. Sizing to exactly 100% (the
    * viewport height) is what keeps the reserved region's geometry correct.
    */
+
+  /*
+   * The splitter is hidden on purpose (the two panes read as one continuous
+   * surface) but stays fully functional: these `--mod-*` tokens are the
+   * component's documented shadow-DOM colour hooks, so making every state
+   * transparent removes the line and gripper dots while leaving the resize
+   * hit area, pointer capture and keyboard stepping untouched. The focus
+   * ring is hidden too (there is nothing to focus *on* visually), but the
+   * splitter remains keyboard-operable. Windows forced-colors mode is
+   * deliberately NOT overridden: the shadow stylesheet's own
+   * `--highcontrast-splitview-handle-background-color` still paints the
+   * handle there, keeping it findable for high-contrast users.
+   */
+  --mod-splitview-handle-background-color: transparent;
+  --mod-splitview-handle-background-color-hover: transparent;
+  --mod-splitview-handle-background-color-down: transparent;
+  --mod-splitview-handle-background-color-focus: transparent;
+
+  /*
+   * Widen the splitter's inline-size (its flex box) from ~2px to an 8px
+   * gutter so the invisible drag target is actually hit-able. This is a
+   * *layout* change, not a visual one: the splitter is transparent,
+   * `splitterPos` - and therefore the persisted fraction - is the splitter's
+   * left edge and is unaffected by the splitter's own width, and the second
+   * pane is `flex:1`, so the extra pixels come out of the chat pane, not the
+   * browser pane. The wider band sits against the browser pane's right edge
+   * and reads as a slightly deeper (all-white) gutter on the chat side.
+   */
+  --mod-splitview-handle-width: 8px;
+
   height: 100%;
 }
 
@@ -170,31 +200,15 @@ body.daisy-pane-resizing {
 
 /* Toolbar-level status/prompt row (navigation errors, the "unknown origin"
    add-server prompt, and the "switching servers" state) - a sibling of the
-   toolbar itself, not nested inside its role="toolbar" container. */
+   toolbar itself, not nested inside its role="toolbar" container. Rendered
+   as an `sp-alert-banner` (neutral variant) whose own stylesheet owns the
+   show/hide pair (`:host{display:none}` / `:host([open]){display:flex}`) -
+   nothing here fights it with a `hidden` attribute. The only override needed
+   is `max-inline-size`: the component's default banner width (832px) would
+   otherwise stop the strip short of the pane's right edge. */
 .browser-toolbar-message {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--spectrum-gray-100, #f5f5f5);
-  border-bottom: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  max-inline-size: none;
   flex: 0 0 auto;
-}
-
-.browser-toolbar-message__text {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* The "Settings" affordance that resolves the "unknown origin" prompt: pushed
-   to the message row's right edge, past the wrapping message text. */
-.browser-toolbar-message__settings {
-  margin-left: auto;
-  flex: 0 0 auto;
-}
-
-.browser-toolbar-message[hidden] {
-  display: none;
 }
 
 /* Groups the toolbar's status/message row with the reserved page-view region
@@ -220,14 +234,14 @@ body.daisy-pane-resizing {
 }
 
 /* Reserved for the native WebContentsView the main process positions on
-   top of this element; deliberately empty, see browserViewHost.ts. */
+   top of this element; deliberately empty, see browserViewHost.ts.*/
 .browser-view-host {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--spectrum-gray-100, #f5f5f5);
+  background: var(--spectrum-gray-75, #fbfbfb);
 }
 
 .browser-view-host__notice {
@@ -260,17 +274,18 @@ body.daisy-pane-resizing {
 }
 
 .server-picker-panel__header {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px 6px 12px;
   border-bottom: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  display: flex;
   flex: 0 0 auto;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 6px 16px 6px 12px;
 }
 
 .server-picker-panel__title {
-  font-weight: 600;
-  font-size: 14px;
+  font-size: 16px;
+  text-transform: uppercase;
 }
 
 .server-picker-panel__list {
@@ -321,6 +336,12 @@ body.daisy-pane-resizing {
   overflow-wrap: anywhere;
 }
 
+/* Both panes paint the same near-white surface (gray-75). Without this the
+   browser pane is transparent and shows the split-view's own
+   `--system-split-view-background-color` (a muted gray) through the toolbar
+   and page panel, which is exactly what makes the left half read darker than
+   the chat side; the chat pane already pinned gray-75 here. */
+.browser-pane,
 .chat-pane {
   background: var(--spectrum-gray-75, #fbfbfb);
 }

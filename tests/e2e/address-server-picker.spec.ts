@@ -145,7 +145,7 @@ test("picking a server from the address bar's picker panel navigates to it", asy
     // registered" rule.
     const registered = await page.evaluate(() => ({
       pickerButton: Boolean(customElements.get('sp-picker-button')),
-      crossIcon: Boolean(customElements.get('sp-icon-cross100')),
+      crossIcon: Boolean(customElements.get('sp-icon-cross500')),
     }));
     expect(registered.pickerButton).toBe(true);
     expect(registered.crossIcon).toBe(true);
@@ -204,7 +204,8 @@ test("picking a server from the address bar's picker panel navigates to it", asy
     await page.waitForTimeout(300);
     expect(await pickerPressedBackground(page)).toBe(restingBackground);
 
-    const message = page.locator('.browser-toolbar-message__text');
+    const message = page.locator('.browser-toolbar-message');
+    await expect(message).toBeHidden();
     expect((await message.textContent()) ?? '').toBe('');
 
     // Opening the picker again and picking the other server works too - not

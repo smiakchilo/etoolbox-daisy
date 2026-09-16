@@ -24,18 +24,28 @@ import type { ServerOption } from './viewModel';
  *
  * Every control here is wired to the real `window.daisy.browser` IPC surface
  * now that it exists. Failures are handled generically per
- * implementation-plan.md step 05: `result.error.message` is always shown,
- * and only `unknown_origin` gets different treatment (a prompt to add the
- * server in Settings, per requirements-decisions.md section 3 - the address
- * is never silently navigated to and no server is ever auto-created).
+ * implementation-plan.md step 05: `result.error.message` is always shown
+ * (for `network_error` this is already humanised copy - see
+ * networkErrorCopy.ts), and only `unknown_origin` gets different treatment (a
+ * prompt to add the server in Settings, per requirements-decisions.md section
+ * 3 - the address is never silently navigated to and no server is ever
+ * auto-created).
  */
 export interface BrowserToolbar {
   readonly element: HTMLElement;
   /**
    * A status/prompt row rendered as a sibling of `element`, not nested inside
-   * it (keeps `role="toolbar"` clean). The owning pane groups it with the
-   * native view region (`browserPane.ts`'s `browserPagePanel`) so the two
-   * hide together; this module only owns when the row is shown/cleared.
+   * it (keeps `role="toolbar"` clean). An `sp-alert-banner` (neutral
+   * variant) whose `open` attribute is its whole show/hide mechanism
+   * (`:host{display:none}` / `:host([open]){display:flex}` in the
+   * component's own stylesheet) - so nothing here has to fight the
+   * component's display rules with a `hidden` attribute. It is also
+   * `dismissible`: the user can close the row with its close button, which
+   * makes the component remove the `open` attribute itself; this module
+   * listens for the component's `close` event to reclaim the row. The owning
+   * pane groups it with the native view region (`browserPane.ts`'s
+   * `browserPagePanel`) so the two hide together; this module only owns when
+   * the row is shown/cleared.
    */
   readonly messageElement: HTMLElement;
   /** Refreshes the address bar text and server-selector options for a newly loaded snapshot. */
@@ -89,36 +99,35 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   backButton.setAttribute('disabled', '');
   forwardButton.setAttribute('disabled', '');
 
-  const messageText = el('span', { attrs: { class: 'browser-toolbar-message__text' } });
-  const openSettingsButton = el('sp-button', {
+  const messageElement = el('sp-alert-banner', {
     attrs: {
-      variant: 'secondary',
-      quiet: '',
-      class: 'browser-toolbar-message__settings',
+      class: 'browser-toolbar-message',
+      variant: 'neutral',
+      // Lets the user dismiss a status/prompt row with the close button (an
+      // `sp-close-button`). The component owns the mechanics: clicking it
+      // dispatches a cancelable `close` event and removes the `open`
+      // attribute itself - the toolbar's `showMessage`/`clearMessage` need
+      // only stay consistent with that state, they never fight it.
+      dismissible: '',
     },
-    text: 'Settings',
   });
-  openSettingsButton.hidden = true;
-  openSettingsButton.addEventListener('click', () => {
-    void window.daisy.openSettingsWindow();
-  });
-  const messageElement = el('div', {
-    attrs: { class: 'browser-toolbar-message', role: 'status' },
-    children: [messageText, openSettingsButton],
-  });
-  messageElement.hidden = true;
 
-  function showMessage(text: string, options?: { readonly offerOpenSettings?: boolean }): void {
-    messageText.textContent = text;
-    messageElement.hidden = false;
-    openSettingsButton.hidden = !options?.offerOpenSettings;
+  function showMessage(text: string): void {
+    messageElement.textContent = text;
+    messageElement.setAttribute('open', '');
   }
 
   function clearMessage(): void {
-    messageElement.hidden = true;
-    messageText.textContent = '';
-    openSettingsButton.hidden = true;
+    messageElement.textContent = '';
+    messageElement.removeAttribute('open');
   }
+
+  // A dismissed row was closed by the user, not by navigation state, so the
+  // text goes away with it - otherwise the stale copy would linger in the DOM
+  // and reappear if a later `showMessage` re-opened the row over it.
+  messageElement.addEventListener('close', () => {
+    clearMessage();
+  });
 
   function handleVoidResult(result: BrowserIpcVoidResult): void {
     if (result.ok) {
@@ -129,15 +138,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // requirements-decisions.md section 3: an unknown origin must prompt
       // the user to add a server, and must never silently navigate or
       // auto-create one - so this branches on the code, but only to change
-      // *which* message/affordance is shown, never to retry the navigation.
+      // *which* message is shown, never to retry the navigation. The prompt
+      // is text-only: the Settings window is one click away in the window
+      // chrome, so the row carries no button of its own (the "Settings"
+      // affordance lived only on this transient error row and was removed).
       const origin = result.error.origin ?? 'That address';
-      showMessage(`"${origin}" is not a configured server. Add it in Settings first.`, {
-        offerOpenSettings: true,
-      });
+      showMessage(`"${origin}" is not a configured server. Add it in Settings, then try again`);
       return;
     }
     // Generic handling for every other/future error code (implementation
-    // -plan.md step 05): always show the message, never swallow it.
+    // -plan.md step 05): always show the message, never swallow it. Raw
+    // Chromium codes never reach the user: main humanises `network_error`
+    // via `describeNetworkError()` (networkErrorCopy.ts) and the raw code,
+    // if needed for diagnostics, still rides on `error.errorCode`.
     showMessage(result.error.message);
   }
 
@@ -161,6 +174,21 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       'aria-label': 'Address',
     },
   }) as HTMLElement & { value: string };
+
+  // The field's built-in truncation tooltip (`TruncatedValueTooltipController`)
+  // draws a "bottom"-placed tooltip under the field whenever the address
+  // overflows. That region is occupied by the native webview, which paints
+  // above all web content, so the tooltip is unusable here - the controller's
+  // `render()` is stubbed so the overlay is never produced at all.
+  const truncatedValueTooltipController = (
+    addressField as unknown as {
+      truncatedValueTooltipController?: { render(): unknown };
+    }
+  ).truncatedValueTooltipController;
+  if (truncatedValueTooltipController) {
+    truncatedValueTooltipController.render = () => undefined;
+  }
+
   addressField.addEventListener('change', () => {
     const value = addressField.value.trim();
     if (value === '') return;
