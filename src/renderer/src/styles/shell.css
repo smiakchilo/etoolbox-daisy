@@ -209,8 +209,8 @@ body.daisy-pane-resizing {
    width (832px) from truncating the strip. The banner opens/closes
    instantly (a status strip, not a toast); `position: relative` makes the
    host the containing block for the loading presentation's absolutely
-   positioned progress line below. The light-gray loading fill follows
-   after that. */
+   positioned progress line at its top edge. The light-gray loading fill
+   follows after that. */
 .browser-toolbar-message {
   max-inline-size: none;
   flex: 0 0 auto;
@@ -218,7 +218,7 @@ body.daisy-pane-resizing {
 }
 
 /* The loading presentation pins a narrow, indeterminate progress line to the
-   banner's bottom edge: a hand-copied rendering of Spectrum's
+   banner's top edge: a hand-copied rendering of Spectrum's
    `sp-progress-bar` size="s" sweep. Copied rather than instantiated because
    `@spectrum-web-components/progress-bar` is not a project dependency (every
    SWC package is pinned to 1.12.2; adding one would be a reportable
@@ -233,7 +233,7 @@ body.daisy-pane-resizing {
 .browser-toolbar-message__progress {
   position: absolute;
   inset-inline: 0;
-  inset-block-end: 0;
+  inset-block-start: 0;
   height: var(--spectrum-progress-bar-thickness-small, 4px);
   border-radius: var(--spectrum-corner-radius-100, 4px);
   overflow: hidden;

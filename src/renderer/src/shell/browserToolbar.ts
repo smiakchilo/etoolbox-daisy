@@ -129,8 +129,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     children: [progressCircle, document.createTextNode(LOADING_LABEL)],
   });
 
-  // Indeterminate progress line pinned to the loading banner's bottom edge -
-  // a hand-copied rendering of Spectrum's `sp-progress-bar` size="s" sweep
+  // Indeterminate progress line pinned to the loading banner's top edge - a
+  // hand-copied rendering of Spectrum's `sp-progress-bar` size="s" sweep
   // (see shell.css `.browser-toolbar-message__progress`), because the
   // `@spectrum-web-components/progress-bar` package is not a project
   // dependency. Created once so the DOM node is stable across loading
@@ -149,9 +149,16 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   let pendingExternalNav = 0;
   let errorText: string | null = null;
 
+  // How long a loading state must persist before the loading banner appears.
+  // A chrome-armed external navigation that finishes within this window (fast
+  // reload, near-instant local server) never shows the banner, so no layout
+  // shift happens for the common quick case.
+  const LOADING_BANNER_DELAY_MS = 200;
+  let loadingBannerTimer: ReturnType<typeof setTimeout> | null = null;
+
   // ── Banner ───────────────────────────────────────────────────────────────
   // The banner shows (in priority order):
-  //  1. "Loading…"+spinner (plus a progress line at the bottom edge) — any
+  //  1. "Loading…"+spinner (plus a progress line at the top edge) — any
   //     external load is in progress (either a server switch, or a
   //     toolbar-initiated reload/back/forward/address submit while
   //     `isLoading` is true).
@@ -160,36 +167,84 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   //  3. Closed (idle) — no active external load and no error to display.
   //
   // Opening and closing are instant (`open` toggles `display` on the
-  // component) - no slide animation. The loading presentation is never
-  // dismissible: the close control is reserved for error/prompt rows, where
-  // dismissing clears the error copy.
+  // component) - no slide animation. Loading is debounced by
+  // `LOADING_BANNER_DELAY_MS`: a sustained load arms a timer; if the load
+  // ends before the timer fires the banner is never shown (and no layout
+  // shift occurs). Error and idle transitions apply immediately. The loading
+  // presentation is never dismissible: the close control is reserved for
+  // error/prompt rows, where dismissing clears the error copy.
+
+  /** True when the `--loading` class + loading content are actively applied. */
+  function isLoadingPresentationShown(): boolean {
+    return messageElement.classList.contains('browser-toolbar-message--loading');
+  }
+
+  function cancelLoadingBanner(): void {
+    if (loadingBannerTimer !== null) {
+      clearTimeout(loadingBannerTimer);
+      loadingBannerTimer = null;
+    }
+  }
+
+  function applyLoadingPresentation(): void {
+    cancelLoadingBanner();
+    messageElement.classList.add('browser-toolbar-message--loading');
+    messageElement.removeAttribute('dismissible');
+    messageElement.replaceChildren(loadingSpan, progressTrack);
+    messageElement.setAttribute('open', '');
+    setNavMode('stop');
+  }
+
+  function applyErrorPresentation(): void {
+    cancelLoadingBanner();
+    messageElement.classList.remove('browser-toolbar-message--loading');
+    messageElement.setAttribute('dismissible', '');
+    messageElement.replaceChildren(document.createTextNode(errorText ?? ''));
+    messageElement.setAttribute('open', '');
+    setNavMode('refresh');
+  }
+
+  function applyIdlePresentation(): void {
+    cancelLoadingBanner();
+    messageElement.classList.remove('browser-toolbar-message--loading');
+    messageElement.removeAttribute('dismissible');
+    messageElement.removeAttribute('open');
+    messageElement.replaceChildren();
+    setNavMode('refresh');
+  }
+
   function applyPresentation(): void {
     const isLoading = lastNavigationState?.isLoading === true;
     const loading = switching || (isLoading && pendingExternalNav > 0);
 
     // ── Banner ───────────────────────────────────────────────────────────
+    // Loading is the only presentation with a delay: the banner appears
+    // only after `LOADING_BANNER_DELAY_MS` of sustained load, then stays
+    // until the load ends.  Fast external navigations finish inside the
+    // window and never move the layout.  Anything else (error, idle,
+    // dismiss) applies / cancels immediately.
     if (loading) {
-      messageElement.classList.add('browser-toolbar-message--loading');
-      messageElement.removeAttribute('dismissible');
-      messageElement.replaceChildren(loadingSpan, progressTrack);
-      messageElement.setAttribute('open', '');
+      if (isLoadingPresentationShown()) {
+        // Banner already visible — nothing to do.
+      } else if (loadingBannerTimer === null) {
+        loadingBannerTimer = setTimeout(() => {
+          loadingBannerTimer = null;
+          const stillIsLoading = lastNavigationState?.isLoading === true;
+          const stillLoading = switching || (stillIsLoading && pendingExternalNav > 0);
+          if (stillLoading) {
+            applyLoadingPresentation();
+          } else {
+            // The load ended inside the debounce window (or an error
+            // superseded it): the synchronous transitions above already
+            // handled it; this is a safety net for a same-tick race.
+            applyPresentation();
+          }
+        }, LOADING_BANNER_DELAY_MS);
+      }
     } else if (errorText !== null) {
-      messageElement.classList.remove('browser-toolbar-message--loading');
-      messageElement.setAttribute('dismissible', '');
-      messageElement.replaceChildren(document.createTextNode(errorText));
-      messageElement.setAttribute('open', '');
+      applyErrorPresentation();
     } else {
-      messageElement.classList.remove('browser-toolbar-message--loading');
-      messageElement.removeAttribute('dismissible');
-      messageElement.removeAttribute('open');
-      messageElement.replaceChildren();
-    }
-
-    // ── Refresh / Stop ──────────────────────────────────────────────────
-    if (loading) {
-      setNavMode('stop');
-    } else {
-      setNavMode('refresh');
+      applyIdlePresentation();
     }
 
     // ── Toolbar controls ────────────────────────────────────────────────
@@ -398,8 +453,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // `open` itself; the default is prevented so this module keeps full
   // control over visibility through `applyPresentation`. Any error text goes
   // away with the dismissal - but if an external load is still in progress
-  // the loading presentation is re-shown immediately (`applyPresentation`
-  // runs synchronously). This is a minor accepted edge.
+  // the loading presentation stays (or, if it had not been shown yet,
+  // re-appears after the debounce window).
   messageElement.addEventListener('close', (event) => {
     event.preventDefault();
     errorText = null;
@@ -476,6 +531,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       void window.daisy.browser.navigate(origin).then(handleVoidResult);
     },
     dispose(): void {
+      cancelLoadingBanner();
       unsubscribeState();
       unsubscribeSwitch();
     },

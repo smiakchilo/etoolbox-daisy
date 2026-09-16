@@ -78,6 +78,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   dom.window.close();
   Reflect.set(globalThis, 'document', previousDocument);
   Reflect.set(globalThis, 'window', previousWindow);
@@ -100,6 +101,11 @@ describe('createBrowserPane page panel', () => {
     // The message row lives inside the page panel, next to the view region.
     expect(pagePanel?.contains(message)).toBe(true);
     expect(pagePanel?.contains(viewHost)).toBe(true);
+    // ...but BELOW it in DOM order (statusbar-style): the flex column lays
+    // the row out under the page, so it physically can't overlap the native
+    // view during the load it describes.
+    expect(pagePanel?.firstElementChild).toBe(viewHost);
+    expect(pagePanel?.lastElementChild).toBe(message);
     // Apart from a loading state, there is nothing to say yet. The row is an
     // `sp-alert-banner` whose show/hide mechanism is its own `open` attribute
     // (`:host{display:none}` / `:host([open]){display:flex}` in the
@@ -140,10 +146,16 @@ describe('createBrowserPane page panel', () => {
 
 describe('createBrowserPane message lifecycle', () => {
   it('shows the loading banner while switching is active and closes it when switching ends', () => {
+    vi.useFakeTimers();
     const pane = build();
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
 
     switchListeners[0]?.({ switching: true });
+    // The loading presentation is debounced by 200ms; the banner is still
+    // closed inside the window.
+    expect(message?.hasAttribute('open')).toBe(false);
+
+    vi.advanceTimersByTime(1000);
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');
 
@@ -154,10 +166,12 @@ describe('createBrowserPane message lifecycle', () => {
   });
 
   it('keeps the loading banner open across a switch+isLoading overlap, then closes when both clear', () => {
+    vi.useFakeTimers();
     const pane = build();
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
 
     switchListeners[0]?.({ switching: true });
+    vi.advanceTimersByTime(1000);
     expect(message?.textContent).toBe('Loading\u2026');
 
     stateListeners[0]?.({
@@ -182,6 +196,7 @@ describe('createBrowserPane message lifecycle', () => {
   });
 
   it('gives the loading banner no close control (only error/prompt rows are dismissible)', () => {
+    vi.useFakeTimers();
     const pane = build();
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
 
@@ -189,22 +204,26 @@ describe('createBrowserPane message lifecycle', () => {
     // presentation doesn't use it, so it stays latent until the first
     // error/prompt). Switching on the loading presentation removes it.
     switchListeners[0]?.({ switching: true });
+    vi.advanceTimersByTime(1000);
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.hasAttribute('dismissible')).toBe(false);
   });
 
   it('re-opens the loading banner on dismissal when switching is still active', () => {
+    vi.useFakeTimers();
     const pane = build();
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
 
     switchListeners[0]?.({ switching: true });
+    vi.advanceTimersByTime(1000);
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');
 
     // A synthetic close while loading still active: preventDefault means
-    // this module keeps control and immediately re-opens with "Loading…".
-    // This is an accepted minor edge - in production the loading banner
-    // carries no close control, so only programmatic events reach here.
+    // this module keeps control and the already-visible loading presentation
+    // stays (it is re-applied, immediately). This is an accepted minor edge
+    // - in production the loading banner carries no close control, so only
+    // programmatic events reach here.
     message?.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');

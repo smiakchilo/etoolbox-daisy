@@ -18,9 +18,10 @@ export interface BrowserPane {
 /**
  * The left-hand browser pane: toolbar, persistent insecure marker, the page
  * panel - the browser's status/message row (toolbar errors, the "unknown
- * origin" prompt, external-loading "Loading…" presentation) grouped with the
- * reserved page-view region it describes - and, overlaid while the server
- * picker is open, the whole-size server list panel.
+ * origin" prompt, external-loading "Loading…" presentation) grouped below
+ * the reserved page-view region it describes (statusbar-style: the row sits
+ * under the page, not over it) - and, overlaid while the server picker is
+ * open, the whole-size server list panel.
  *
  * Message and native-view region are grouped inside `browserPagePanel` so one
  * `hidden` toggle governs both:
@@ -68,10 +69,13 @@ export function createBrowserPane(): BrowserPane {
   const viewHost = createBrowserViewHost();
 
   // Groups the toolbar's status/prompt row with the native view region so the
-  // picker suspension hides both at once (see the file doc comment).
+  // picker suspension hides both at once (see the file doc comment). The
+  // message row comes AFTER the view host in DOM order - the flex column lays
+  // it out below the reserved page-view region (statusbar-style), where it
+  // physically can't overlap the native view during the load it describes.
   const pagePanel = el('div', {
     attrs: { class: 'browser-page-panel', 'data-testid': 'browser-page-panel' },
-    children: [toolbar.messageElement, viewHost.element],
+    children: [viewHost.element, toolbar.messageElement],
   });
 
   function openPickerPanel(): void {

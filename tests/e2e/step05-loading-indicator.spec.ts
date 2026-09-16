@@ -11,10 +11,11 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  *
  * The unit suite proves the renderer's state machine (arm on a chrome
  * action, banner shown while `isLoading`, Refresh⇄Stop swap, disarming on
- * did-stop-loading) with fake IPC. This spec proves the whole chain against
- * the real built app: a real server that deliberately withholds its response
- * long enough to observe the loading phase, real `did-start-navigation` /
- * `did-stop-loading` states, real custom elements.
+ * did-stop-loading, the 200ms loading-banner debounce) with fake IPC. This
+ * spec proves the whole chain against the real built app: a real server
+ * that deliberately withholds its response long enough to observe the
+ * loading phase, real `did-start-navigation` / `did-stop-loading` states,
+ * real custom elements.
  *
  * Two things past failures have shown must be asserted here (AGENTS.md §9,
  * "jsdom cannot prove a custom element is registered"): custom element
@@ -125,7 +126,7 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   await expect(banner).not.toHaveAttribute('dismissible', '');
 
   // The loading presentation ends in a narrow indeterminate progress line
-  // pinned to the banner's bottom edge: a hand-copied `sp-progress-bar`
+  // pinned to the banner's top edge: a hand-copied `sp-progress-bar`
   // size="s" sweep (the light-DOM track + animated fill; see shell.css).
   await expect(banner.locator('.browser-toolbar-message__progress')).toHaveCount(1);
   const progressStyle = await banner.evaluate((element) => {
@@ -136,6 +137,7 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
     const fillCS = getComputedStyle(fill);
     return {
       position: trackCS.position,
+      insetBlockStart: trackCS.insetBlockStart,
       height: trackCS.height,
       borderRadius: trackCS.borderRadius,
       trackBackground: trackCS.backgroundColor,
@@ -146,6 +148,7 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   });
   expect(progressStyle).toEqual({
     position: 'absolute',
+    insetBlockStart: '0px',
     height: '4px',
     borderRadius: '4px',
     trackBackground: 'rgb(213, 213, 213)',
@@ -256,6 +259,86 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
   // Cancellation is not an error: no humanised error copy, no raw ERR_ text.
   await expect(banner).not.toBeVisible();
   expect(((await banner.textContent().catch(() => null)) ?? '').length).toBe(0);
+
+  await app.close();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+// A fast external navigation (<200ms) must never show the loading banner:
+// the presentation is debounced, so a load that finishes inside the window
+// moves no layout at all. Unit tests prove the timing deterministically with
+// fake timers; this proves the real IPC chain also finishes within the
+// window for a quick localhost answer.
+test('a navigation that finishes inside the 200ms debounce window shows no loading banner', async () => {
+  test.setTimeout(120_000);
+
+  const { server, port } = await startSlowServer(100);
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-fast-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+
+  const origin = `http://127.0.0.1:${String(port)}`;
+  const serverId = randomUUID();
+
+  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    servers: [
+      ...base.servers,
+      {
+        id: serverId,
+        label: 'Fast fixture',
+        origin,
+        color: { kind: 'swatch', swatch: 'blue' },
+        revision: 0,
+      },
+    ],
+  });
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(seeded, null, 2), 'utf8');
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  const page = await app.firstWindow();
+  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+
+  const addressInput = page.locator('#browser-address-bar input');
+  const banner = page.locator('sp-alert-banner.browser-toolbar-message');
+  const toolbar = page.locator('.browser-toolbar');
+
+  // The fixture answers in ~100ms — comfortably inside the 200ms debounce.
+  await addressInput.fill(origin);
+  await addressInput.press('Enter');
+
+  // Sample across the whole first-load duration plus the debounce window:
+  // neither the banner nor the Stop swap may appear at any point. A Stop
+  // button would mean the debounce fired and the banner was shown.
+  await expect
+    .poll(
+      async () => {
+        const visible = await banner.isVisible().catch(() => false);
+        const stopCount = await toolbar.locator('[aria-label="Stop"]').count();
+        return !visible && stopCount === 0;
+      },
+      { intervals: [100, 100, 100, 100, 100, 100], timeout: 2000 },
+    )
+    .toBe(true);
+  // The load completed: still Refresh, still no banner.
+  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
+  await expect(banner).not.toBeVisible();
+  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(0);
 
   await app.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));

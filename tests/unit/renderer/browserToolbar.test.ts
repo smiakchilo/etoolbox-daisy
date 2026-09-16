@@ -12,6 +12,9 @@ import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/sh
  *
  * - Only chrome-armed loads (`pendingExternalNav > 0`) or active switches
  *   show the banner; a plain in-webview `isLoading:true` push does not.
+ * - A sustained load is debounced by 200ms: the banner appears only after
+ *   the load has outlived the debounce window, and a load that finishes
+ *   inside the window never shows it (no layout shift for quick reloads).
  * - The banner clears when the armed load ends (`isLoading:false`), which
  *   also disarms the counter so a later in-webview navigation can't
  *   resurrect it.
@@ -69,6 +72,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   dom.window.close();
   Reflect.set(globalThis, 'document', previousDocument);
   Reflect.set(globalThis, 'window', previousWindow);
@@ -100,7 +104,8 @@ function findNavButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLEl
 }
 
 describe('createBrowserToolbar loading state machine', () => {
-  it('shows "Loading…" + Stop only after a chrome-arm, and restores on did-stop-loading', () => {
+  it('shows "Loading…" + Stop only after a chrome-arm and the 200ms debounce, and restores on did-stop-loading', () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
 
@@ -108,6 +113,12 @@ describe('createBrowserToolbar loading state machine', () => {
     // handler), then the load starts.
     findNavButton(toolbar).click();
     stateListeners[0]?.(loadingState(true));
+
+    // Debounce: the banner waits 200ms of sustained load before appearing.
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+
+    vi.advanceTimersByTime(1000);
 
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
@@ -140,6 +151,7 @@ describe('createBrowserToolbar loading state machine', () => {
   });
 
   it('arms the loading presentation from Back/Forward too', () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
     // Back is the Refresh/Stop button's sibling with aria-label "Back".
@@ -149,6 +161,9 @@ describe('createBrowserToolbar loading state machine', () => {
     back.click();
     expect(browser.goBack).toHaveBeenCalledTimes(1);
     stateListeners[0]?.(loadingState(true));
+    expect(message.hasAttribute('open')).toBe(false);
+
+    vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
@@ -157,12 +172,16 @@ describe('createBrowserToolbar loading state machine', () => {
   });
 
   it('disarms after did-stop-loading so a later in-webview load stays silent', () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
 
     findNavButton(toolbar).click();
     stateListeners[0]?.(loadingState(true));
     stateListeners[0]?.(loadingState(false));
+    // Even long after the load ended, the timer never fires (it was
+    // cancelled by the idle transition).
+    vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(false);
 
     // A later in-webview navigation (no arm) must not resurrect the banner.
@@ -171,12 +190,31 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
 
+  it('never shows the banner when the armed load finishes inside the 200ms debounce window', () => {
+    vi.useFakeTimers();
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    findNavButton(toolbar).click();
+    stateListeners[0]?.(loadingState(true));
+    expect(message.hasAttribute('open')).toBe(false);
+
+    // did-stop-loading arrives at ~150ms — well inside the window.
+    stateListeners[0]?.(loadingState(false));
+    vi.advanceTimersByTime(1000);
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+    expect(message.querySelector('.browser-toolbar-message__progress')).toBeNull();
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+  });
+
   it('suppresses the ERR_ABORTED from a user-initiated Stop (no error banner)', async () => {
     const toolbar = build();
     const message = findMessage(toolbar);
 
     // An address submit arms an external navigation (source: the address bar,
-    // routed through `browser:navigate`). The load briefly starts.
+    // routed through `browser:navigate`). The load briefly starts — inside
+    // the 200ms debounce window, so no banner has appeared yet.
     browser.navigate.mockResolvedValueOnce({
       ok: false,
       error: { code: 'network_error', message: 'net::ERR_ABORTED', errorCode: 'ERR_ABORTED' },
@@ -187,9 +225,8 @@ describe('createBrowserToolbar loading state machine', () => {
     address.value = 'https://author.example/content/page.html';
     address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     stateListeners[0]?.(loadingState(true));
-
-    expect(message.hasAttribute('open')).toBe(true);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
 
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
@@ -206,6 +243,7 @@ describe('createBrowserToolbar loading state machine', () => {
   });
 
   it('suppresses the real Stop cancellation (ERR_FAILED from Electron 44) without an error banner', async () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
 
@@ -223,7 +261,12 @@ describe('createBrowserToolbar loading state machine', () => {
     address.value = 'https://author.example/content/page.html';
     address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     stateListeners[0]?.(loadingState(true));
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
 
+    // The load persists past the debounce, so the banner and the Stop
+    // affordance appear.
+    vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
@@ -232,9 +275,10 @@ describe('createBrowserToolbar loading state machine', () => {
     // ERR_ABORTED (probe in the Step 05 verification records). Suppression
     // keys on the user action captured when Stop was clicked.
     findNavButton(toolbar).click();
-    await vi.waitFor(() => {
-      expect(browser.stop).toHaveBeenCalledTimes(1);
-    });
+    expect(browser.stop).toHaveBeenCalledTimes(1);
+    // Let the ok Stop result flow through `handleVoidResult`.
+    await Promise.resolve();
+    await Promise.resolve();
 
     resolveNavigation?.({
       ok: false,
@@ -244,10 +288,10 @@ describe('createBrowserToolbar loading state machine', () => {
         errorCode: 'ERR_FAILED',
       },
     });
+    await Promise.resolve();
+    await Promise.resolve();
 
-    await vi.waitFor(() => {
-      expect(message.hasAttribute('open')).toBe(false);
-    });
+    expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
@@ -289,6 +333,7 @@ describe('createBrowserToolbar loading state machine', () => {
   });
 
   it('keeps the banner open across a switch+load overlap, then closes when both clear', () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
 
@@ -296,6 +341,10 @@ describe('createBrowserToolbar loading state machine', () => {
     // and begins a server switch.
     toolbar.navigateTo('https://author.example/');
     switchListeners[0]?.({ switching: true });
+    // Debounce: loading presentation waits 200ms.
+    expect(message.hasAttribute('open')).toBe(false);
+
+    vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
 
@@ -316,23 +365,67 @@ describe('createBrowserToolbar loading state machine', () => {
   });
 
   it('re-opens seamlessly when a new external load starts right after the previous one ended', () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
 
     findNavButton(toolbar).click();
     stateListeners[0]?.(loadingState(true));
-    stateListeners[0]?.(loadingState(false));
-    expect(message.hasAttribute('open')).toBe(false);
-    expect(message.textContent).toBe('');
-
-    // A new load starts before anything else happens: the banner re-opens
-    // with the loading presentation. There is no slide-out/entrance
-    // animation to cancel - the swap is synchronous and seamless.
-    findNavButton(toolbar).click();
-    stateListeners[0]?.(loadingState(true));
+    vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
     expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
     expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
+
+    stateListeners[0]?.(loadingState(false));
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+
+    // A new load starts: the debounce arms again and the banner re-opens
+    // after the 200ms window.
+    findNavButton(toolbar).click();
+    stateListeners[0]?.(loadingState(true));
+    expect(message.hasAttribute('open')).toBe(false);
+    vi.advanceTimersByTime(1000);
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
+    expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
+  });
+
+  it('shows a fetch error immediately even while a loading debounce is armed', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'network_error',
+        message:
+          "Can't connect to https://dead.example. Check that the server is running, then try again",
+        errorCode: 'ERR_CONNECTION_REFUSED',
+      },
+    });
+
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    address.value = 'https://dead.example';
+    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    // The chrome arm also fires a loading push that arms the 200ms timer;
+    // the error arrives first and supersedes it.
+    stateListeners[0]?.(loadingState(true));
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    // The error appears immediately — the user never waits for the debounce
+    // timer to fire.
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(true);
+    });
+    expect(message.textContent).toContain('dead.example');
+    expect(message.hasAttribute('dismissible')).toBe(true);
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
 });
