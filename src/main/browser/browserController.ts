@@ -107,6 +107,8 @@ export interface BrowserController {
   goBack(): BrowserIpcVoidResult;
   goForward(): BrowserIpcVoidResult;
   reload(): BrowserIpcVoidResult;
+  /** Stops any in-flight load in the AEM view (the toolbar's Stop control while a navigation is loading). */
+  stop(): BrowserIpcVoidResult;
   setViewBounds(bounds: ViewBounds): void;
   approveCertificateException(
     request: ApproveCertificateExceptionRequest,
@@ -411,6 +413,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     aemView.reload();
     return ok();
   }
+  function stop(): BrowserIpcVoidResult {
+    aemView.stop();
+    return ok();
+  }
 
   function destroy(): void {
     app.removeListener('certificate-error', certificateBlockedListener);
@@ -430,6 +436,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     goBack,
     goForward,
     reload,
+    stop,
     setViewBounds: (bounds) => aemView.setBounds(bounds),
     approveCertificateException,
     revokeCertificateException,

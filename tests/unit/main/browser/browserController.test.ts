@@ -13,10 +13,7 @@ import type { Logger } from '../../../../src/main/logger';
 import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
 import { newServerId } from '../../../../src/shared';
 import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
-import {
-  serverConfigSchema,
-  type ServerConfig,
-} from '../../../../src/shared';
+import { serverConfigSchema, type ServerConfig } from '../../../../src/shared';
 import type { BrowserNavigationState } from '../../../../src/shared';
 import { BROWSER_SWITCH_STATE_CHANGED_CHANNEL } from '../../../../src/shared';
 
@@ -362,6 +359,17 @@ describe('browserController.navigate', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected a failure result');
     expect(result.error.code).toBe('storage_error');
+  });
+});
+
+describe('browserController.stop', () => {
+  it('delegates to the AEM view and returns ok', () => {
+    const harness = makeControllerHarness();
+
+    const result = harness.controller.stop();
+
+    expect(result).toEqual({ ok: true });
+    expect(harness.aemViewControls.stop).toHaveBeenCalledTimes(1);
   });
 });
 

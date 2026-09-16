@@ -7,8 +7,9 @@ import {
   BROWSER_RELOAD_CHANNEL,
   BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
+  BROWSER_STOP_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
-} from '../../shared/ipc-channels';
+} from '../../shared';
 import {
   approveCertificateExceptionRequestSchema,
   navigateRequestSchema,
@@ -16,7 +17,7 @@ import {
   switchServerRequestSchema,
   viewBoundsSchema,
   type BrowserIpcVoidResult,
-} from '../../shared/browser-ipc';
+} from '../../shared';
 import { isAllowedAppNavigation } from '../security';
 import type { Logger } from '../logger';
 import type { BrowserController } from '../browser/browserController';
@@ -112,6 +113,11 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
   ipcMain.handle(BROWSER_RELOAD_CHANNEL, (event): BrowserIpcVoidResult => {
     if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
     return deps.controller.reload();
+  });
+
+  ipcMain.handle(BROWSER_STOP_CHANNEL, (event): BrowserIpcVoidResult => {
+    if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
+    return deps.controller.stop();
   });
 
   ipcMain.handle(

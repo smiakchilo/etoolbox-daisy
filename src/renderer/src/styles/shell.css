@@ -199,16 +199,26 @@ body.daisy-pane-resizing {
 }
 
 /* Toolbar-level status/prompt row (navigation errors, the "unknown origin"
-   add-server prompt, and the "switching servers" state) - a sibling of the
-   toolbar itself, not nested inside its role="toolbar" container. Rendered
-   as an `sp-alert-banner` (neutral variant) whose own stylesheet owns the
-   show/hide pair (`:host{display:none}` / `:host([open]){display:flex}`) -
-   nothing here fights it with a `hidden` attribute. The only override needed
-   is `max-inline-size`: the component's default banner width (832px) would
-   otherwise stop the strip short of the pane's right edge. */
+   add-server prompt, and the external-loading presentation: "Loading…" with
+   a progress circle when any chrome-initiated navigation is in flight) - a
+   sibling of the toolbar itself, not nested inside its role="toolbar"
+   container. Rendered as an `sp-alert-banner` (neutral variant) whose own
+   stylesheet owns the show/hide pair (`:host{display:none}` /
+   `:host([open]){display:flex}`) - nothing here fights it with a `hidden`
+   attribute. The only override needed is `max-inline-size`: the component's
+   default banner width (832px) would otherwise stop the strip short of the
+   pane's right edge. */
 .browser-toolbar-message {
   max-inline-size: none;
   flex: 0 0 auto;
+}
+
+/* Wraps the progress circle + text inside the loading banner so the two sit
+   on one row with consistent vertical alignment and spacing. */
+.browser-toolbar-message__loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Groups the toolbar's status/message row with the reserved page-view region

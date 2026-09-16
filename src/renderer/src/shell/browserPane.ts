@@ -18,9 +18,9 @@ export interface BrowserPane {
 /**
  * The left-hand browser pane: toolbar, persistent insecure marker, the page
  * panel - the browser's status/message row (toolbar errors, the "unknown
- * origin" prompt, "Switching servers...") grouped with the reserved page-view
- * region it describes - and, overlaid while the server picker is open, the
- * whole-size server list panel.
+ * origin" prompt, external-loading "Loading…" presentation) grouped with the
+ * reserved page-view region it describes - and, overlaid while the server
+ * picker is open, the whole-size server list panel.
  *
  * Message and native-view region are grouped inside `browserPagePanel` so one
  * `hidden` toggle governs both:

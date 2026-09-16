@@ -49,6 +49,8 @@ export const BROWSER_RELOAD_CHANNEL = 'browser:reload' as const;
 export const BROWSER_NAVIGATE_CHANNEL = 'browser:navigate' as const;
 export const BROWSER_SET_VIEW_BOUNDS_CHANNEL = 'browser:set-view-bounds' as const;
 export const BROWSER_SWITCH_SERVER_CHANNEL = 'browser:switch-server' as const;
+/** Stops any in-flight load in the AEM view (the toolbar's Refresh/Stop control). */
+export const BROWSER_STOP_CHANNEL = 'browser:stop' as const;
 export const BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL =
   'browser:approve-certificate-exception' as const;
 export const BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL =

@@ -33,7 +33,7 @@ import type {
   AgentChatStatus,
   AgentChatVoidResult,
 } from './agent-chat-ipc';
-import type { AgentEvent } from './contracts/agentEvents';
+import type { AgentEvent } from './contracts';
 
 /**
  * Contract for the API the app-preload bridge exposes on
@@ -86,6 +86,7 @@ export interface DaisyBrowserApi {
   goBack(): Promise<BrowserIpcVoidResult>;
   goForward(): Promise<BrowserIpcVoidResult>;
   reload(): Promise<BrowserIpcVoidResult>;
+  stop(): Promise<BrowserIpcVoidResult>;
   navigate(value: string): Promise<BrowserIpcVoidResult>;
   switchServer(serverId: string): Promise<BrowserIpcVoidResult>;
   /** Fire-and-forget: reports the renderer's `.browser-view-host` bounds. Never awaited. */

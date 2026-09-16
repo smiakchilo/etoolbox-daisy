@@ -8,7 +8,7 @@ import type { BrowserController } from '../../../../src/main/browser/browserCont
 import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView';
 import type { NavigationEpochTracker } from '../../../../src/main/browser/navigationEpoch';
 import type { Logger } from '../../../../src/main/logger';
-import { err } from '../../../../src/shared/result';
+import { err } from '../../../../src/shared';
 
 /**
  * Proves the sender check is actually WIRED to every registered IPC channel.
@@ -173,6 +173,7 @@ beforeEach(() => {
     goBack: () => record('goBack'),
     goForward: () => record('goForward'),
     reload: () => record('reload'),
+    stop: () => record('stop'),
     setViewBounds: () => {
       controllerCalls.push('setViewBounds');
     },

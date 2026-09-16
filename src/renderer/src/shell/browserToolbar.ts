@@ -1,5 +1,5 @@
 import { el } from '../lib/dom';
-import type { BrowserIpcVoidResult } from '../../../shared';
+import type { BrowserIpcVoidResult, BrowserNavigationState } from '../../../shared';
 import type { ServerOption } from './viewModel';
 
 /**
@@ -29,7 +29,9 @@ import type { ServerOption } from './viewModel';
  * networkErrorCopy.ts), and only `unknown_origin` gets different treatment (a
  * prompt to add the server in Settings, per requirements-decisions.md section
  * 3 - the address is never silently navigated to and no server is ever
- * auto-created).
+ * auto-created). A user-initiated stop (`browser:stop`) produces an
+ * `ERR_ABORTED` error that is suppressed here as expected behaviour rather
+ * than surfaced as an error banner.
  */
 export interface BrowserToolbar {
   readonly element: HTMLElement;
@@ -86,6 +88,8 @@ function buildNavButton(
   return button;
 }
 
+const LOADING_LABEL = 'Loading\u2026';
+
 export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): BrowserToolbar {
   const toolbar = el('div', { attrs: { class: 'toolbar browser-toolbar', role: 'toolbar' } });
 
@@ -106,62 +110,197 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // Lets the user dismiss a status/prompt row with the close button (an
       // `sp-close-button`). The component owns the mechanics: clicking it
       // dispatches a cancelable `close` event and removes the `open`
-      // attribute itself - the toolbar's `showMessage`/`clearMessage` need
-      // only stay consistent with that state, they never fight it.
+      // attribute itself - the toolbar only stays consistent with that state
+      // and never fights it.
       dismissible: '',
     },
   });
 
-  function showMessage(text: string): void {
-    messageElement.textContent = text;
-    messageElement.setAttribute('open', '');
-  }
-
-  function clearMessage(): void {
-    messageElement.textContent = '';
-    messageElement.removeAttribute('open');
-  }
-
-  // A dismissed row was closed by the user, not by navigation state, so the
-  // text goes away with it - otherwise the stale copy would linger in the DOM
-  // and reappear if a later `showMessage` re-opened the row over it.
-  messageElement.addEventListener('close', () => {
-    clearMessage();
+  // Indeterminate progress circle reused across loading cycles. Created once
+  // so the DOM node is stable when the banner content is swapped between
+  // loading, error, and idle.
+  const progressCircle = el('sp-progress-circle', {
+    attrs: { size: 's', indeterminate: '', 'aria-label': LOADING_LABEL },
+  });
+  const loadingSpan = el('span', {
+    attrs: { class: 'browser-toolbar-message__loading' },
+    children: [progressCircle, document.createTextNode(LOADING_LABEL)],
   });
 
-  function handleVoidResult(result: BrowserIpcVoidResult): void {
-    if (result.ok) {
-      clearMessage();
-      return;
+  // ── State ────────────────────────────────────────────────────────────────
+  let lastNavigationState: BrowserNavigationState | null = null;
+  let switching = false;
+  let pendingExternalNav = 0;
+  let errorText: string | null = null;
+
+  // ── Banner ───────────────────────────────────────────────────────────────
+  // The banner shows (in priority order):
+  //  1. "Loading…"+spinner — any external load is in progress (either a
+  //     server switch, or a toolbar-initiated reload/back/forward/address
+  //     submit while `isLoading` is true).
+  //  2. Error copy — set by `handleVoidResult` (network failures, unknown-
+  //     origin prompt, storage errors).
+  //  3. Closed (idle) — no active external load and no error to display.
+  function applyPresentation(): void {
+    const isLoading = lastNavigationState?.isLoading === true;
+    const loading = switching || (isLoading && pendingExternalNav > 0);
+
+    // ── Banner ───────────────────────────────────────────────────────────
+    if (loading) {
+      messageElement.replaceChildren(loadingSpan);
+      messageElement.setAttribute('open', '');
+    } else if (errorText !== null) {
+      messageElement.replaceChildren(document.createTextNode(errorText));
+      messageElement.setAttribute('open', '');
+    } else {
+      messageElement.replaceChildren();
+      messageElement.removeAttribute('open');
     }
-    if (result.error.code === 'unknown_origin') {
-      // requirements-decisions.md section 3: an unknown origin must prompt
-      // the user to add a server, and must never silently navigate or
-      // auto-create one - so this branches on the code, but only to change
-      // *which* message is shown, never to retry the navigation. The prompt
-      // is text-only: the Settings window is one click away in the window
-      // chrome, so the row carries no button of its own (the "Settings"
-      // affordance lived only on this transient error row and was removed).
-      const origin = result.error.origin ?? 'That address';
-      showMessage(`"${origin}" is not a configured server. Add it in Settings, then try again`);
-      return;
+
+    // ── Refresh / Stop ──────────────────────────────────────────────────
+    if (loading) {
+      setNavMode('stop');
+    } else {
+      setNavMode('refresh');
     }
-    // Generic handling for every other/future error code (implementation
-    // -plan.md step 05): always show the message, never swallow it. Raw
-    // Chromium codes never reach the user: main humanises `network_error`
-    // via `describeNetworkError()` (networkErrorCopy.ts) and the raw code,
-    // if needed for diagnostics, still rides on `error.errorCode`.
-    showMessage(result.error.message);
+
+    // ── Toolbar controls ────────────────────────────────────────────────
+    // Switching disables every control until the transition completes
+    // (requirements-decisions.md section 4). When not switching, back/
+    // forward reflect the live history; address field is always enabled so
+    // the user can type a new address.
+    const controls = [backButton, forwardButton, addressField];
+    for (const control of controls) {
+      if (switching) {
+        control.setAttribute('disabled', '');
+      } else {
+        control.removeAttribute('disabled');
+      }
+    }
+    if (!switching) {
+      if (lastNavigationState?.canGoBack === true) {
+        backButton.removeAttribute('disabled');
+      } else {
+        backButton.setAttribute('disabled', '');
+      }
+      if (lastNavigationState?.canGoForward === true) {
+        forwardButton.removeAttribute('disabled');
+      } else {
+        forwardButton.setAttribute('disabled', '');
+      }
+    }
+    // Picker: disabled while switching, or when no servers are configured.
+    if (switching || !hasServers) {
+      serverPickerButton.setAttribute('disabled', '');
+    } else {
+      serverPickerButton.removeAttribute('disabled');
+    }
   }
 
+  // ── Refresh / Stop swap ──────────────────────────────────────────────────
+  // The button DOM node is reused across swaps; only its icon, title,
+  // aria-label, and click handler change. `setNavMode` is idempotent
+  // (early-returns if the mode is already set). The initial call below wires
+  // the Refresh handler immediately so the control is usable even before the
+  // first navigation-state event arrives.
+  let navMode: 'refresh' | 'stop' = 'refresh';
+  let navClickHandler: (() => void) | null = null;
+
+  function setNavMode(mode: 'refresh' | 'stop'): void {
+    // Idempotent once wired: the initial `setNavMode('refresh')` call below
+    // must run despite `navMode` already being 'refresh', so the guard also
+    // checks that a click handler is actually attached.
+    if (navMode === mode && navClickHandler !== null) return;
+    navMode = mode;
+    refreshButton.replaceChildren();
+    if (navClickHandler) {
+      refreshButton.removeEventListener('click', navClickHandler);
+      navClickHandler = null;
+    }
+    if (mode === 'stop') {
+      const icon = document.createElement('sp-icon-stop');
+      icon.setAttribute('slot', 'icon');
+      refreshButton.append(icon);
+      refreshButton.setAttribute('title', 'Stop');
+      refreshButton.setAttribute('aria-label', 'Stop');
+      navClickHandler = () => {
+        void window.daisy.browser.stop().then(handleVoidResult);
+      };
+    } else {
+      const icon = document.createElement('sp-icon-refresh');
+      icon.setAttribute('slot', 'icon');
+      refreshButton.append(icon);
+      refreshButton.setAttribute('title', 'Refresh');
+      refreshButton.setAttribute('aria-label', 'Refresh');
+      navClickHandler = () => {
+        markExternalNavigation();
+        void window.daisy.browser.reload().then(handleVoidResult);
+      };
+    }
+    refreshButton.addEventListener('click', navClickHandler);
+  }
+
+  // ── External navigation flag ─────────────────────────────────────────────
+  // The toolbar is the only thing in the renderer that knows a navigation
+  // was initiated outside the webview (address-bar, picker, back, forward,
+  // refresh). Every chrome action arms `pendingExternalNav` right before
+  // the IPC call. The counter is disarmed on the next `isLoading:false`
+  // push (did-stop-loading), or when a non-ok IPC result arrives (the
+  // navigation never actually started). This is sufficient because every
+  // user-initiated server switch also sets `switching=true` via the
+  // `ServerSwitchController` — so a switch's teardown phase (proxy setup,
+  // before any `loadURL`) is covered by the `switching` condition in
+  // `applyPresentation` regardless of whether `did-start-loading` has
+  // fired yet.
+  function markExternalNavigation(): void {
+    pendingExternalNav += 1;
+  }
+
+  // ── IPC result handler ───────────────────────────────────────────────────
+  function handleVoidResult(result: BrowserIpcVoidResult): void {
+    if (!result.ok) {
+      pendingExternalNav = 0;
+      // A Stop clicked during a load makes `loadURL` reject. Verified on
+      // Electron 44.3.0 (probe in the Step 05 verification records): the
+      // rejection arrives as ERR_FAILED; `did-stop-loading` arrives first in
+      // the renderer and disarms the arm, so the only reliable signal is the
+      // error code itself. ERR_ABORTED covers other cancellation paths and
+      // earlier Chromium versions. Neither code is produced by a genuine
+      // server-side failure here or AEM QueryBuilder traffic (those map to
+      // ERR_CONNECTION_REFUSED, ERR_TIMED_OUT, ERR_NAME_NOT_RESOLVED…), so
+      // suppressing them cannot hide a real "couldn't display content"
+      // condition.
+      const isCancellation =
+        result.error.code === 'network_error' &&
+        (result.error.errorCode === 'ERR_ABORTED' || result.error.errorCode === 'ERR_FAILED');
+      if (!isCancellation) {
+        if (result.error.code === 'unknown_origin') {
+          // requirements-decisions.md section 3: an unknown origin must prompt
+          // the user to add a server, and must never silently navigate or
+          // auto-create one. The prompt is text-only: the Settings window is
+          // one click away in the window chrome, so the row carries no button.
+          const origin = result.error.origin ?? 'That address';
+          errorText = `"${origin}" is not a configured server. Add it in Settings, then try again`;
+        } else {
+          errorText = result.error.message;
+        }
+      }
+    }
+    applyPresentation();
+  }
+
+  // ── Chrome action click handlers ─────────────────────────────────────────
+  // Back/Forward are chrome-initiated but NOT sourced from a fetch-against
+  // the server — they replay a browser history entry that the view already
+  // knows. `markExternalNavigation()` is still called for consistency so
+  // the trio (banner + stop) shows for the resulting load.
   backButton.addEventListener('click', () => {
+    markExternalNavigation();
     void window.daisy.browser.goBack().then(handleVoidResult);
   });
   forwardButton.addEventListener('click', () => {
+    markExternalNavigation();
     void window.daisy.browser.goForward().then(handleVoidResult);
-  });
-  refreshButton.addEventListener('click', () => {
-    void window.daisy.browser.reload().then(handleVoidResult);
   });
 
   const addressField = el('sp-textfield', {
@@ -192,6 +331,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   addressField.addEventListener('change', () => {
     const value = addressField.value.trim();
     if (value === '') return;
+    markExternalNavigation();
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
 
@@ -220,6 +360,21 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   toolbar.append(backButton, forwardButton, refreshButton, addressGroup);
 
+  // Wire the Refresh control immediately (idempotent), so clicking it before
+  // the first navigation-state event still works.
+  setNavMode('refresh');
+
+  // ── Close / Dismiss handler ──────────────────────────────────────────────
+  // A dismissed row was closed by the user, not by navigation state. Any
+  // error text goes away with the dismissal — but if an external load is
+  // still in progress the loading presentation is re-shown on the next
+  // state push. This is a minor accepted edge.
+  messageElement.addEventListener('close', () => {
+    errorText = null;
+    applyPresentation();
+  });
+
+  // ── State subscriptions ──────────────────────────────────────────────────
   // Once a real navigation-state event has been observed, it is the only
   // authoritative source for the address bar: `setAddressValue` (driven by
   // `computeAddressBarValue()`, which is always "" - see viewModel.ts) must
@@ -229,25 +384,23 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
     hasLiveNavigationState = true;
+    lastNavigationState = state;
     addressField.value = state.url;
-    // A navigation to a new page has begun, so whatever the row is showing
-    // (an error, the "unknown origin" prompt, "Switching servers...") now
-    // describes the state *before* this navigation and is stale - clear it.
-    // A failed navigation re-shows it via `handleVoidResult`; a successful
-    // one should never resurrect text from a previous page.
+    // A navigation to a new page has begun — any stale error text is now
+    // superseded by the live load state; clearing it here lets the banner
+    // show "Loading…" instead of a stale error. A failed navigation
+    // re-sets `errorText` via `handleVoidResult`; a successful one should
+    // never resurrect text from a previous page.
     if (state.isLoading) {
-      clearMessage();
-    }
-    if (state.canGoBack) {
-      backButton.removeAttribute('disabled');
+      errorText = null;
     } else {
-      backButton.setAttribute('disabled', '');
+      // A load finished with `isLoading:false` (did-stop-loading): every
+      // pending external navigation is now complete, so the counter resets.
+      // This also guards a later *in-webview* navigation (isLoading true,
+      // no chrome had armed a counter) from wrongly showing the banner.
+      pendingExternalNav = 0;
     }
-    if (state.canGoForward) {
-      forwardButton.removeAttribute('disabled');
-    } else {
-      forwardButton.setAttribute('disabled', '');
-    }
+    applyPresentation();
   });
 
   // Re-derived whenever the snapshot changes so the switch handler below can
@@ -256,28 +409,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   let hasServers = false;
 
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
-    // requirements-decisions.md section 4: "Keep tools disabled until the
-    // transition completes." Back/Forward's finer-grained history state is
-    // restored by the next `onStateChanged` push the switch produces, not
-    // guessed at here.
-    const controls = [backButton, forwardButton, refreshButton, addressField];
-    for (const control of controls) {
-      if (state.switching) {
-        control.setAttribute('disabled', '');
-      } else {
-        control.removeAttribute('disabled');
-      }
-    }
-    if (state.switching || !hasServers) {
-      serverPickerButton.setAttribute('disabled', '');
-    } else {
-      serverPickerButton.removeAttribute('disabled');
-    }
-    if (state.switching) {
-      showMessage('Switching servers...');
-    } else {
-      clearMessage();
-    }
+    switching = state.switching;
+    applyPresentation();
   });
 
   return {
@@ -294,11 +427,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // the configured server list reloaded (e.g. the window regaining
       // focus). Only the picker's disabled state depends on the snapshot.
       hasServers = options.length > 0;
-      if (hasServers) {
-        serverPickerButton.removeAttribute('disabled');
-      } else {
-        serverPickerButton.setAttribute('disabled', '');
-      }
+      applyPresentation();
     },
     setServerPickerOpen(open: boolean): void {
       if (open) {
@@ -311,6 +440,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
     navigateTo(origin: string): void {
       addressField.value = origin;
+      markExternalNavigation();
       void window.daisy.browser.navigate(origin).then(handleVoidResult);
     },
     dispose(): void {

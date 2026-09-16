@@ -21,6 +21,7 @@ import {
   BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
+  BROWSER_STOP_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
@@ -256,6 +257,10 @@ const daisyApi: DaisyAppApi = {
     },
     async reload(): Promise<BrowserIpcVoidResult> {
       const raw: unknown = await ipcRenderer.invoke(BROWSER_RELOAD_CHANNEL);
+      return parseBrowserIpcVoidResult(raw);
+    },
+    async stop(): Promise<BrowserIpcVoidResult> {
+      const raw: unknown = await ipcRenderer.invoke(BROWSER_STOP_CHANNEL);
       return parseBrowserIpcVoidResult(raw);
     },
     async navigate(value: string): Promise<BrowserIpcVoidResult> {

@@ -1,0 +1,205 @@
+import { JSDOM } from 'jsdom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
+import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/shared';
+
+/**
+ * The browser pane's page panel grouping (browserPane.ts): the toolbar's
+ * status/message row and the reserved native-view region hide as one while
+ * the server picker covers the page, so the message row never claims to
+ * describe a page that is no longer on screen. A splitter drag never hides a
+ * panel - the native view stays fully visible - so only the picker path is
+ * exercised here.
+ *
+ * The toolbar's own message lifecycle is exercised through the pane for the
+ * one signal that needs a running app in E2E otherwise: the unified
+ * "Loading…" presentation appears while switching is active, and closes
+ * when the transition completes. Dedicated loading/error/stop coverage
+ * lives in `browserToolbar.test.ts`.
+ */
+
+interface FakeDaisyBrowser {
+  setViewBounds: ReturnType<typeof vi.fn>;
+  goBack: ReturnType<typeof vi.fn>;
+  goForward: ReturnType<typeof vi.fn>;
+  reload: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+  navigate: ReturnType<typeof vi.fn>;
+  onStateChanged: ReturnType<typeof vi.fn>;
+  onSwitchStateChanged: ReturnType<typeof vi.fn>;
+}
+
+let dom: JSDOM;
+let browser: FakeDaisyBrowser;
+let stateListeners: Array<(state: BrowserNavigationState) => void>;
+let switchListeners: Array<(state: BrowserSwitchState) => void>;
+
+const previousDocument = Reflect.get(globalThis, 'document') as unknown;
+const previousWindow = Reflect.get(globalThis, 'window') as unknown;
+const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
+
+beforeEach(() => {
+  dom = new JSDOM();
+  stateListeners = [];
+  switchListeners = [];
+  browser = {
+    setViewBounds: vi.fn(),
+    goBack: vi.fn(() => Promise.resolve({ ok: true })),
+    goForward: vi.fn(() => Promise.resolve({ ok: true })),
+    reload: vi.fn(() => Promise.resolve({ ok: true })),
+    stop: vi.fn(() => Promise.resolve({ ok: true })),
+    navigate: vi.fn(() => Promise.resolve({ ok: true })),
+    onStateChanged: vi.fn((listener: (state: BrowserNavigationState) => void) => {
+      stateListeners.push(listener);
+      return () => {
+        stateListeners = stateListeners.filter((candidate) => candidate !== listener);
+      };
+    }),
+    onSwitchStateChanged: vi.fn((listener: (state: BrowserSwitchState) => void) => {
+      switchListeners.push(listener);
+      return () => {
+        switchListeners = switchListeners.filter((candidate) => candidate !== listener);
+      };
+    }),
+  };
+  Reflect.set(dom.window, 'daisy', { browser, openSettingsWindow: vi.fn(() => Promise.resolve()) });
+  Reflect.set(dom.window, 'requestAnimationFrame', () => 1);
+  Reflect.set(dom.window, 'cancelAnimationFrame', () => undefined);
+  Reflect.set(
+    globalThis,
+    'ResizeObserver',
+    class {
+      observe(): void {}
+      disconnect(): void {}
+    },
+  );
+  Reflect.set(globalThis, 'document', dom.window.document);
+  Reflect.set(globalThis, 'window', dom.window);
+});
+
+afterEach(() => {
+  dom.window.close();
+  Reflect.set(globalThis, 'document', previousDocument);
+  Reflect.set(globalThis, 'window', previousWindow);
+  Reflect.set(globalThis, 'ResizeObserver', previousResizeObserver);
+});
+
+function build(): ReturnType<typeof createBrowserPane> {
+  return createBrowserPane();
+}
+
+describe('createBrowserPane page panel', () => {
+  it('groups, and initially hides, the message row together with the native view region', () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+
+    expect(pagePanel).not.toBeNull();
+    expect(pagePanel?.hidden).toBe(false);
+    // The message row lives inside the page panel, next to the view region.
+    expect(pagePanel?.contains(message)).toBe(true);
+    expect(pagePanel?.contains(viewHost)).toBe(true);
+    // Apart from a loading state, there is nothing to say yet. The row is an
+    // `sp-alert-banner` whose show/hide mechanism is its own `open` attribute
+    // (`:host{display:none}` / `:host([open]){display:flex}` in the
+    // component's stylesheet), so "hidden" means "no such attribute".
+    expect(message?.hasAttribute('open')).toBe(false);
+    // The "Settings" affordance was removed from the row; the settings window
+    // stays reachable through the window chrome, and an error row must not
+    // double as a navigation aid (see browserToolbar.ts).
+    expect(pane.element.querySelector('.browser-toolbar-message__settings')).toBeNull();
+  });
+
+  it('hides the whole page panel while the server picker is open, and restores it on close', () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const pickerButton = pane.element.querySelector<HTMLElement>('#server-picker-button');
+
+    expect(pagePanel?.hidden).toBe(false);
+    pickerButton?.click();
+    expect(pagePanel?.hidden).toBe(true);
+
+    pane.element.querySelector<HTMLElement>('.server-picker-panel__close')?.click();
+    expect(pagePanel?.hidden).toBe(false);
+  });
+
+  it('swaps the picker instantly via `hidden`', () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+
+    pane.element.querySelector<HTMLElement>('#server-picker-button')?.click();
+    // The list needs the layout space immediately, so the panel must be
+    // `display:none` (hidden).
+    expect(pagePanel?.hidden).toBe(true);
+
+    pane.element.querySelector<HTMLElement>('.server-picker-panel__close')?.click();
+    expect(pagePanel?.hidden).toBe(false);
+  });
+});
+
+describe('createBrowserPane message lifecycle', () => {
+  it('shows the loading banner while switching is active and closes it when switching ends', () => {
+    const pane = build();
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
+
+    switchListeners[0]?.({ switching: true });
+    expect(message?.hasAttribute('open')).toBe(true);
+    expect(message?.textContent).toBe('Loading\u2026');
+
+    switchListeners[0]?.({ switching: false });
+    expect(message?.hasAttribute('open')).toBe(false);
+    expect(message?.textContent).toBe('');
+  });
+
+  it('keeps the loading banner open across a switch+isLoading overlap, then closes when both clear', () => {
+    const pane = build();
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
+
+    switchListeners[0]?.({ switching: true });
+    expect(message?.textContent).toBe('Loading\u2026');
+
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: true,
+    });
+    expect(message?.hasAttribute('open')).toBe(true);
+    expect(message?.textContent).toBe('Loading\u2026');
+
+    switchListeners[0]?.({ switching: false });
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    });
+    expect(message?.hasAttribute('open')).toBe(false);
+    expect(message?.textContent).toBe('');
+  });
+
+  it('is dismissible: the banner carries a close control', () => {
+    const pane = build();
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
+
+    // The component shows its sp-close-button when `dismissible` is set.
+    expect(message?.hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('re-opens the loading banner on dismissal when switching is still active', () => {
+    const pane = build();
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
+
+    switchListeners[0]?.({ switching: true });
+    expect(message?.hasAttribute('open')).toBe(true);
+    expect(message?.textContent).toBe('Loading\u2026');
+
+    // Dismiss the row. Because switching is still true, applyPresentation
+    // immediately re-opens with "Loading…". This is an accepted minor edge:
+    // the load is still happening, so showing it again is honest.
+    message?.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+    expect(message?.hasAttribute('open')).toBe(true);
+    expect(message?.textContent).toBe('Loading\u2026');
+  });
+});
