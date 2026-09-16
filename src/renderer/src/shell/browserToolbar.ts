@@ -41,10 +41,12 @@ export interface BrowserToolbar {
    * variant) whose `open` attribute is its whole show/hide mechanism
    * (`:host{display:none}` / `:host([open]){display:flex}` in the
    * component's own stylesheet) - so nothing here has to fight the
-   * component's display rules with a `hidden` attribute. It is also
-   * `dismissible`: the user can close the row with its close button, which
-   * makes the component remove the `open` attribute itself; this module
-   * listens for the component's `close` event to reclaim the row. The owning
+   * component's display rules with a `hidden` attribute. Dismissibility is
+   * state-dependent: the loading banner carries no close control (a load in
+   * flight is not something to wave away), while error/prompt rows are
+   * `dismissible`. The component dispatches a cancelable `close` event when
+   * the user dismisses a row; this module prevents the default so it keeps
+   * full control of `open`, and listens to reclaim the row. The owning
    * pane groups it with the native view region (`browserPane.ts`'s
    * `browserPagePanel`) so the two hide together; this module only owns when
    * the row is shown/cleared.
@@ -107,11 +109,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     attrs: {
       class: 'browser-toolbar-message',
       variant: 'neutral',
-      // Lets the user dismiss a status/prompt row with the close button (an
-      // `sp-close-button`). The component owns the mechanics: clicking it
-      // dispatches a cancelable `close` event and removes the `open`
-      // attribute itself - the toolbar only stays consistent with that state
-      // and never fights it.
+      // Error/prompt rows are dismissible (the loading presentation is not -
+      // the `applyPresentation` loading branch removes this attribute). The
+      // component shows its `sp-close-button` when `dismissible` is set and
+      // dispatches a cancelable `close` on click; this module prevents the
+      // default so it keeps full control of `open`.
       dismissible: '',
     },
   });
@@ -127,6 +129,20 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     children: [progressCircle, document.createTextNode(LOADING_LABEL)],
   });
 
+  // Indeterminate progress line pinned to the loading banner's bottom edge -
+  // a hand-copied rendering of Spectrum's `sp-progress-bar` size="s" sweep
+  // (see shell.css `.browser-toolbar-message__progress`), because the
+  // `@spectrum-web-components/progress-bar` package is not a project
+  // dependency. Created once so the DOM node is stable across loading
+  // cycles, then swapped in/out of the banner like `loadingSpan`.
+  const progressFill = el('div', {
+    attrs: { class: 'browser-toolbar-message__progress-fill' },
+  });
+  const progressTrack = el('div', {
+    attrs: { class: 'browser-toolbar-message__progress' },
+    children: [progressFill],
+  });
+
   // ── State ────────────────────────────────────────────────────────────────
   let lastNavigationState: BrowserNavigationState | null = null;
   let switching = false;
@@ -135,26 +151,38 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   // ── Banner ───────────────────────────────────────────────────────────────
   // The banner shows (in priority order):
-  //  1. "Loading…"+spinner — any external load is in progress (either a
-  //     server switch, or a toolbar-initiated reload/back/forward/address
-  //     submit while `isLoading` is true).
+  //  1. "Loading…"+spinner (plus a progress line at the bottom edge) — any
+  //     external load is in progress (either a server switch, or a
+  //     toolbar-initiated reload/back/forward/address submit while
+  //     `isLoading` is true).
   //  2. Error copy — set by `handleVoidResult` (network failures, unknown-
   //     origin prompt, storage errors).
   //  3. Closed (idle) — no active external load and no error to display.
+  //
+  // Opening and closing are instant (`open` toggles `display` on the
+  // component) - no slide animation. The loading presentation is never
+  // dismissible: the close control is reserved for error/prompt rows, where
+  // dismissing clears the error copy.
   function applyPresentation(): void {
     const isLoading = lastNavigationState?.isLoading === true;
     const loading = switching || (isLoading && pendingExternalNav > 0);
 
     // ── Banner ───────────────────────────────────────────────────────────
     if (loading) {
-      messageElement.replaceChildren(loadingSpan);
+      messageElement.classList.add('browser-toolbar-message--loading');
+      messageElement.removeAttribute('dismissible');
+      messageElement.replaceChildren(loadingSpan, progressTrack);
       messageElement.setAttribute('open', '');
     } else if (errorText !== null) {
+      messageElement.classList.remove('browser-toolbar-message--loading');
+      messageElement.setAttribute('dismissible', '');
       messageElement.replaceChildren(document.createTextNode(errorText));
       messageElement.setAttribute('open', '');
     } else {
-      messageElement.replaceChildren();
+      messageElement.classList.remove('browser-toolbar-message--loading');
+      messageElement.removeAttribute('dismissible');
       messageElement.removeAttribute('open');
+      messageElement.replaceChildren();
     }
 
     // ── Refresh / Stop ──────────────────────────────────────────────────
@@ -365,11 +393,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   setNavMode('refresh');
 
   // ── Close / Dismiss handler ──────────────────────────────────────────────
-  // A dismissed row was closed by the user, not by navigation state. Any
-  // error text goes away with the dismissal — but if an external load is
-  // still in progress the loading presentation is re-shown on the next
-  // state push. This is a minor accepted edge.
-  messageElement.addEventListener('close', () => {
+  // A dismissed row was closed by the user, not by navigation state. The
+  // component's `shouldClose()` dispatches a cancelable `close` and removes
+  // `open` itself; the default is prevented so this module keeps full
+  // control over visibility through `applyPresentation`. Any error text goes
+  // away with the dismissal - but if an external load is still in progress
+  // the loading presentation is re-shown immediately (`applyPresentation`
+  // runs synchronously). This is a minor accepted edge.
+  messageElement.addEventListener('close', (event) => {
+    event.preventDefault();
     errorText = null;
     applyPresentation();
   });

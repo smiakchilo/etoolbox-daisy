@@ -148,6 +148,7 @@ describe('createBrowserPane message lifecycle', () => {
     expect(message?.textContent).toBe('Loading\u2026');
 
     switchListeners[0]?.({ switching: false });
+    // The row closes instantly (no slide-out animation).
     expect(message?.hasAttribute('open')).toBe(false);
     expect(message?.textContent).toBe('');
   });
@@ -175,16 +176,21 @@ describe('createBrowserPane message lifecycle', () => {
       canGoForward: false,
       isLoading: false,
     });
+    // Both conditions cleared: the banner closes instantly.
     expect(message?.hasAttribute('open')).toBe(false);
     expect(message?.textContent).toBe('');
   });
 
-  it('is dismissible: the banner carries a close control', () => {
+  it('gives the loading banner no close control (only error/prompt rows are dismissible)', () => {
     const pane = build();
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
 
-    // The component shows its sp-close-button when `dismissible` is set.
-    expect(message?.hasAttribute('dismissible')).toBe(true);
+    // The freshly built banner is dismissible by default (the idle
+    // presentation doesn't use it, so it stays latent until the first
+    // error/prompt). Switching on the loading presentation removes it.
+    switchListeners[0]?.({ switching: true });
+    expect(message?.hasAttribute('open')).toBe(true);
+    expect(message?.hasAttribute('dismissible')).toBe(false);
   });
 
   it('re-opens the loading banner on dismissal when switching is still active', () => {
@@ -195,9 +201,10 @@ describe('createBrowserPane message lifecycle', () => {
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');
 
-    // Dismiss the row. Because switching is still true, applyPresentation
-    // immediately re-opens with "Loading…". This is an accepted minor edge:
-    // the load is still happening, so showing it again is honest.
+    // A synthetic close while loading still active: preventDefault means
+    // this module keeps control and immediately re-opens with "Loading…".
+    // This is an accepted minor edge - in production the loading banner
+    // carries no close control, so only programmatic events reach here.
     message?.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');

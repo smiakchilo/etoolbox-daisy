@@ -15,6 +15,8 @@ import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/sh
  * - The banner clears when the armed load ends (`isLoading:false`), which
  *   also disarms the counter so a later in-webview navigation can't
  *   resurrect it.
+ * - Opening/closing is instant (no slide animation) and the loading banner
+ *   is never dismissible (no close control); error/prompt rows are.
  * - A user-initiated Stop swaps Refresh→Stop, and its ERR_ABORTED rejection
  *   is suppressed rather than surfaced as an error banner.
  * - Fetch failures surface as an error banner; dismissing it clears the row.
@@ -109,12 +111,19 @@ describe('createBrowserToolbar loading state machine', () => {
 
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
+    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
+    // The loading presentation is not dismissible and ends in a progress line.
+    expect(message.hasAttribute('dismissible')).toBe(false);
+    expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
     expect(browser.reload).toHaveBeenCalledTimes(1);
 
     stateListeners[0]?.(loadingState(false));
+    // Closing is instant: `open`/children are cleared synchronously (no
+    // slide-out animation to wait out).
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
+    expect(message.querySelector('.browser-toolbar-message__progress')).toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
 
@@ -189,7 +198,9 @@ describe('createBrowserToolbar loading state machine', () => {
     // (`reload`/`goBack`/`goForward` return ok immediately), and an abort
     // from a user Stop is a cancellation - the error banner must stay
     // suppressed and the arm cleared (back to idle/Refresh).
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
     expect(message.textContent).toBe('');
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
@@ -266,11 +277,15 @@ describe('createBrowserToolbar loading state machine', () => {
     });
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toContain('dead.example');
+    // Error/prompt rows are dismissible, unlike the loading presentation.
+    expect(message.hasAttribute('dismissible')).toBe(true);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
 
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+    // The dismissal clears the error copy synchronously - no slide-out.
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
+    expect(message.hasAttribute('dismissible')).toBe(false);
   });
 
   it('keeps the banner open across a switch+load overlap, then closes when both clear', () => {
@@ -291,10 +306,33 @@ describe('createBrowserToolbar loading state machine', () => {
     switchListeners[0]?.({ switching: false });
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
+    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
 
-    // did-stop-loading disarms and closes.
+    // did-stop-loading disarms and closes (instant - no slide-out).
     stateListeners[0]?.(loadingState(false));
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
+    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(false);
+  });
+
+  it('re-opens seamlessly when a new external load starts right after the previous one ended', () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    findNavButton(toolbar).click();
+    stateListeners[0]?.(loadingState(true));
+    stateListeners[0]?.(loadingState(false));
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+
+    // A new load starts before anything else happens: the banner re-opens
+    // with the loading presentation. There is no slide-out/entrance
+    // animation to cancel - the swap is synchronous and seamless.
+    findNavButton(toolbar).click();
+    stateListeners[0]?.(loadingState(true));
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
+    expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
   });
 });

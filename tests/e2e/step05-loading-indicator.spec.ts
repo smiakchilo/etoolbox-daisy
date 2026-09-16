@@ -120,6 +120,48 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   await expect(banner).toContainText('Loading\u2026');
   await expect(banner.locator('sp-progress-circle')).toHaveCount(1);
 
+  // The loading banner is not dismissible - a load in flight is not something
+  // to wave away; only error/prompt rows get a close control.
+  await expect(banner).not.toHaveAttribute('dismissible', '');
+
+  // The loading presentation ends in a narrow indeterminate progress line
+  // pinned to the banner's bottom edge: a hand-copied `sp-progress-bar`
+  // size="s" sweep (the light-DOM track + animated fill; see shell.css).
+  await expect(banner.locator('.browser-toolbar-message__progress')).toHaveCount(1);
+  const progressStyle = await banner.evaluate((element) => {
+    const track = element.querySelector<HTMLElement>('.browser-toolbar-message__progress');
+    const fill = track?.querySelector<HTMLElement>('.browser-toolbar-message__progress-fill');
+    if (!track || !fill) return null;
+    const trackCS = getComputedStyle(track);
+    const fillCS = getComputedStyle(fill);
+    return {
+      position: trackCS.position,
+      height: trackCS.height,
+      borderRadius: trackCS.borderRadius,
+      trackBackground: trackCS.backgroundColor,
+      fillColor: fillCS.backgroundColor,
+      animationIterationCount: fillCS.animationIterationCount,
+      animationDuration: fillCS.animationDuration,
+    };
+  });
+  expect(progressStyle).toEqual({
+    position: 'absolute',
+    height: '4px',
+    borderRadius: '4px',
+    trackBackground: 'rgb(213, 213, 213)',
+    fillColor: 'rgb(2, 101, 220)',
+    animationIterationCount: 'infinite',
+    animationDuration: '1s',
+  });
+
+  // The loading presentation is light-gray (--spectrum-gray-200), not the
+  // neutral dark-gray. The fill is decided inside the banner's shadow
+  // (`background-color` on `:host`), so the computed style of the host has to
+  // be read here - a unit test cannot see the real painted colors.
+  await expect
+    .poll(() => banner.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe('rgb(230, 230, 230)');
+
   // The progress circle must itself be registered (AGENTS.md §9: a missing
   // import renders an unknown element that matches the selector but is inert).
   await expect

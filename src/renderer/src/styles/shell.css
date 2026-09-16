@@ -205,12 +205,79 @@ body.daisy-pane-resizing {
    container. Rendered as an `sp-alert-banner` (neutral variant) whose own
    stylesheet owns the show/hide pair (`:host{display:none}` /
    `:host([open]){display:flex}`) - nothing here fights it with a `hidden`
-   attribute. The only override needed is `max-inline-size`: the component's
-   default banner width (832px) would otherwise stop the strip short of the
-   pane's right edge. */
+   attribute. `max-inline-size:none` stops the component's default banner
+   width (832px) from truncating the strip. The banner opens/closes
+   instantly (a status strip, not a toast); `position: relative` makes the
+   host the containing block for the loading presentation's absolutely
+   positioned progress line below. The light-gray loading fill follows
+   after that. */
 .browser-toolbar-message {
   max-inline-size: none;
   flex: 0 0 auto;
+  position: relative;
+}
+
+/* The loading presentation pins a narrow, indeterminate progress line to the
+   banner's bottom edge: a hand-copied rendering of Spectrum's
+   `sp-progress-bar` size="s" sweep. Copied rather than instantiated because
+   `@spectrum-web-components/progress-bar` is not a project dependency (every
+   SWC package is pinned to 1.12.2; adding one would be a reportable
+   deviation). Tokens resolved from the installed `theme` package: thickness
+   4px (`--spectrum-progress-bar-thickness-small`), pill radius 4px
+   (`--spectrum-corner-radius-100`), track `--spectrum-gray-300`
+   (rgb 213,213,213), fill `--spectrum-accent-color-900`
+   (= `--spectrum-blue-900`, rgb 2,101,220), loop of 1s
+   (`--spectrum-animation-duration-2000`) on `--spectrum-animation-ease-in-out`
+   (cubic-bezier(.45,0,.4,1)), fill width 70%
+   (`--system-progress-bar-fill-size-indeterminate`). */
+.browser-toolbar-message__progress {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  height: var(--spectrum-progress-bar-thickness-small, 4px);
+  border-radius: var(--spectrum-corner-radius-100, 4px);
+  overflow: hidden;
+  background: var(--spectrum-gray-300, rgb(213, 213, 213));
+}
+
+.browser-toolbar-message__progress-fill {
+  position: absolute;
+  inset-block: 0;
+  width: var(--system-progress-bar-fill-size-indeterminate, 70%);
+  background: var(--spectrum-accent-color-900, rgb(2, 101, 220));
+  animation: browser-toolbar-message-progress-indeterminate
+    var(--spectrum-animation-duration-2000, 1s)
+    var(--spectrum-animation-ease-in-out, cubic-bezier(0.45, 0, 0.4, 1)) infinite;
+}
+
+/* The sweep: `left` percentages resolve against the track (the banner's full
+   width), so the 70%-wide fill travels completely across at any width.
+   Spectrum's own keyframes are absolute (translate(-100%) → translate(192px))
+   and only fit the component's fixed 192px default size. */
+@keyframes browser-toolbar-message-progress-indeterminate {
+  from {
+    left: -70%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-toolbar-message__progress-fill {
+    animation: none;
+  }
+}
+
+/* The loading presentation is light-gray, not the neutral dark-gray. SWC
+   exposes `--mod-alert-banner-*` custom properties on the host for exactly
+   this; the neutral variant's fill is `--mod-alert-banner-neutral-background`
+   (dark `--system-alert-banner-neutral-background` by default) with white
+   text, so both background and text are overridden here. Only the loading
+   presentation is light — error/prompt rows keep the neutral styling. */
+.browser-toolbar-message--loading {
+  --mod-alert-banner-neutral-background: var(--spectrum-gray-200);
+  --mod-alert-banner-font-color: var(--spectrum-gray-800);
 }
 
 /* Wraps the progress circle + text inside the loading banner so the two sit
