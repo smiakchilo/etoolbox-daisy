@@ -170,9 +170,9 @@ beforeEach(() => {
     },
     navigate: () => Promise.resolve(record('navigate')),
     switchServer: () => Promise.resolve(record('switchServer')),
-    goBack: () => record('goBack'),
-    goForward: () => record('goForward'),
-    reload: () => record('reload'),
+    goBack: () => Promise.resolve(record('goBack')),
+    goForward: () => Promise.resolve(record('goForward')),
+    reload: () => Promise.resolve(record('reload')),
     stop: () => record('stop'),
     setViewBounds: () => {
       controllerCalls.push('setViewBounds');

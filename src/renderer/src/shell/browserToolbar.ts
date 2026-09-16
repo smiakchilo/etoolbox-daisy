@@ -118,15 +118,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
   });
 
-  // Indeterminate progress circle reused across loading cycles. Created once
-  // so the DOM node is stable when the banner content is swapped between
-  // loading, error, and idle.
-  const progressCircle = el('sp-progress-circle', {
-    attrs: { size: 's', indeterminate: '', 'aria-label': LOADING_LABEL },
-  });
+  // Loading text shown inside the banner — the indefinite progress bar
+  // animation is rendered via CSS in shell.css, so no spinner is needed.
   const loadingSpan = el('span', {
     attrs: { class: 'browser-toolbar-message__loading' },
-    children: [progressCircle, document.createTextNode(LOADING_LABEL)],
+    children: [document.createTextNode(LOADING_LABEL)],
   });
 
   // Indeterminate progress line pinned to the loading banner's top edge - a

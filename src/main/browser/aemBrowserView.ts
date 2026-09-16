@@ -1,8 +1,9 @@
 import { WebContentsView, screen } from 'electron';
 import type { BrowserWindow, Session, WebContents } from 'electron';
-import type { BrowserNavigationState, ViewBounds } from '../../shared/browser-ipc';
+import type { BrowserNavigationState, ViewBounds } from '../../shared';
 import { decideAuxiliaryWindowOpen } from './auxiliaryWindowPolicy';
 import { createAuxiliaryWindowManager, type AuxiliaryWindowManager } from './auxiliaryWindows';
+import { extractChromiumErrorCodeFromText } from './serverSwitch';
 import { clampViewBounds } from './viewBounds';
 
 /**
@@ -39,14 +40,29 @@ export interface AemBrowserViewOptions {
   readonly onNavigationStateChange: (state: BrowserNavigationState) => void;
 }
 
+/**
+ * The outcome of a chrome-initiated `goBack`/`goForward`/`reload` command,
+ * resolved once the navigation it triggers actually settles (as opposed to
+ * `switchServer`'s `loadURL`, whose own promise rejection already carries
+ * this information). `errorCode` is the Chromium `ERR_*` code extracted from
+ * the failing `did-fail-load` event, `failedUrl` is that event's
+ * `validatedURL` - the address that failed, which is what
+ * `describeNetworkError` needs to name in its copy (not necessarily the
+ * view's current URL: a failed `goBack` fails on the *previous* history
+ * entry's address, not the one still showing).
+ */
+export type ChromeNavigationOutcome =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly errorCode: string; readonly failedUrl: string };
+
 export interface AemBrowserView {
   readonly webContents: WebContents;
   readonly auxiliaryWindows: AuxiliaryWindowManager;
   setBounds(bounds: ViewBounds): void;
   getNavigationState(): BrowserNavigationState;
-  goBack(): void;
-  goForward(): void;
-  reload(): void;
+  goBack(): Promise<ChromeNavigationOutcome>;
+  goForward(): Promise<ChromeNavigationOutcome>;
+  reload(): Promise<ChromeNavigationOutcome>;
   /** Stops in-flight loading. Also required by `serverSwitch.ts`'s `SwitchableAemView`. */
   stop(): void;
   loadURL(url: string): Promise<void>;
@@ -111,6 +127,87 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   view.webContents.on('did-start-loading', pushNavigationState);
   view.webContents.on('did-stop-loading', pushNavigationState);
 
+  // How long a chrome-initiated goBack/goForward/reload waits to see whether
+  // it produced any navigation at all before giving up and reporting `ok`.
+  // Only reached by a command that triggers no load (e.g. Refresh before any
+  // page has ever loaded) - a real navigation fires `did-start-loading`
+  // essentially synchronously, long before this elapses.
+  const NAVIGATION_START_GRACE_MS = 200;
+
+  /**
+   * Runs `command` (a `goBack`/`goForward`/`reload` call) and resolves once
+   * its navigation settles, translating a genuine failure into a structured
+   * {@link ChromeNavigationOutcome} instead of the fire-and-forget `void`
+   * these commands used to be. This is what makes a reload/back/forward of a
+   * down server explicit to the caller (`browserController.ts`) the same way
+   * `switchServer`'s `loadURL` rejection already is - previously `did-fail-
+   * load` was not observed at all for these three commands, so the renderer
+   * never learned the reload failed and the error banner from an earlier
+   * failed navigation, once dismissed, never came back.
+   *
+   * `did-fail-load` can fire more than once for a single command (main frame
+   * plus subframes) and can also fire for a merely-*cancelled* load (a Stop,
+   * or a newer navigation superseding this one) with `ERR_ABORTED`/
+   * `ERR_FAILED` - exactly the two codes the renderer's own
+   * `handleVoidResult` already treats as "not a real error"
+   * (`browserToolbar.ts`). Both are filtered out here so cancellation is
+   * never reported as a network failure; only a genuine main-frame failure
+   * is kept, and only the first one, since every command triggers exactly
+   * one top-level navigation.
+   */
+  function runNavigationCommand(command: () => void): Promise<ChromeNavigationOutcome> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let started = false;
+      let failure: { errorCode: string; failedUrl: string } | undefined;
+
+      function cleanup(): void {
+        view.webContents.removeListener('did-start-loading', onStartLoading);
+        view.webContents.removeListener('did-fail-load', onFailLoad);
+        view.webContents.removeListener('did-stop-loading', onStopLoading);
+        clearTimeout(graceTimer);
+      }
+
+      function finish(outcome: ChromeNavigationOutcome): void {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(outcome);
+      }
+
+      function onStartLoading(): void {
+        started = true;
+      }
+
+      function onFailLoad(
+        _event: unknown,
+        _errorCode: number,
+        errorDescription: string,
+        validatedURL: string,
+        isMainFrame: boolean,
+      ): void {
+        if (!isMainFrame || settled || failure !== undefined) return;
+        const code = extractChromiumErrorCodeFromText(errorDescription);
+        if (code === undefined || code === 'ERR_ABORTED' || code === 'ERR_FAILED') return;
+        failure = { errorCode: code, failedUrl: validatedURL };
+      }
+
+      function onStopLoading(): void {
+        finish(failure ? { ok: false, ...failure } : { ok: true });
+      }
+
+      view.webContents.on('did-start-loading', onStartLoading);
+      view.webContents.on('did-fail-load', onFailLoad);
+      view.webContents.on('did-stop-loading', onStopLoading);
+
+      const graceTimer = setTimeout(() => {
+        if (!started) finish({ ok: true });
+      }, NAVIGATION_START_GRACE_MS);
+
+      command();
+    });
+  }
+
   // Top-level navigation guard for the AEM view itself: http(s) only. Cross-
   // *origin* http(s) navigation is deliberately still allowed here (an SSO
   // redirect chain legitimately leaves the AEM origin for an IdP origin and
@@ -153,9 +250,9 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     auxiliaryWindows,
     setBounds,
     getNavigationState,
-    goBack: () => view.webContents.navigationHistory.goBack(),
-    goForward: () => view.webContents.navigationHistory.goForward(),
-    reload: () => view.webContents.reload(),
+    goBack: () => runNavigationCommand(() => view.webContents.navigationHistory.goBack()),
+    goForward: () => runNavigationCommand(() => view.webContents.navigationHistory.goForward()),
+    reload: () => runNavigationCommand(() => view.webContents.reload()),
     stop: () => view.webContents.stop(),
     loadURL: (url: string) => view.webContents.loadURL(url),
     destroy,

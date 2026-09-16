@@ -195,9 +195,9 @@ function makeFakeAemView(): FakeAemViewControls {
     auxiliaryWindows,
     setBounds: vi.fn(),
     getNavigationState: vi.fn(() => navigationState),
-    goBack: vi.fn(),
-    goForward: vi.fn(),
-    reload: vi.fn(),
+    goBack: vi.fn(() => Promise.resolve({ ok: true as const })),
+    goForward: vi.fn(() => Promise.resolve({ ok: true as const })),
+    reload: vi.fn(() => Promise.resolve({ ok: true as const })),
     stop,
     loadURL,
     destroy,
@@ -370,6 +370,70 @@ describe('browserController.stop', () => {
 
     expect(result).toEqual({ ok: true });
     expect(harness.aemViewControls.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('browserController.reload / goBack / goForward', () => {
+  /**
+   * The bug this pins: before `ChromeNavigationOutcome` existed, `reload()`
+   * (and `goBack`/`goForward`) always returned `ok()` immediately, so a
+   * `did-fail-load` observed later by `aemBrowserView.ts` was never reported
+   * to the renderer at all - a dismissed error banner from an earlier failed
+   * navigation never reappeared on a same-cause reload. These three now
+   * await the AEM view's real outcome and map a failure to the identical
+   * `network_error` shape `switchServer` already produces.
+   */
+  it('reload maps a failed AEM-view outcome to a structured network_error result', async () => {
+    const harness = makeControllerHarness();
+    harness.aemViewControls.view.reload = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        errorCode: 'ERR_CONNECTION_REFUSED',
+        failedUrl: 'http://localhost:4502/',
+      }),
+    );
+
+    const result = await harness.controller.reload();
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'network_error',
+        message: describeNetworkError('ERR_CONNECTION_REFUSED', 'http://localhost:4502/'),
+        errorCode: 'ERR_CONNECTION_REFUSED',
+      },
+    });
+  });
+
+  it('goBack maps a failed AEM-view outcome to a structured network_error result', async () => {
+    const harness = makeControllerHarness();
+    harness.aemViewControls.view.goBack = vi.fn(() =>
+      Promise.resolve({
+        ok: false,
+        errorCode: 'ERR_NAME_NOT_RESOLVED',
+        failedUrl: 'https://previous.example/',
+      }),
+    );
+
+    const result = await harness.controller.goBack();
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'network_error',
+        message: describeNetworkError('ERR_NAME_NOT_RESOLVED', 'https://previous.example/'),
+        errorCode: 'ERR_NAME_NOT_RESOLVED',
+      },
+    });
+  });
+
+  it('goForward reports ok when the AEM view resolves the navigation without a real failure', async () => {
+    const harness = makeControllerHarness();
+    harness.aemViewControls.view.goForward = vi.fn(() => Promise.resolve({ ok: true as const }));
+
+    const result = await harness.controller.goForward();
+
+    expect(result).toEqual({ ok: true });
   });
 });
 

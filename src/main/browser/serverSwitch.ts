@@ -1,6 +1,6 @@
-import type { AemProxyConfig, ServerConfig } from '../../shared/contracts/serverConfig';
-import { originsMatch, parseNavigationTarget } from '../../shared/contracts/origin';
-import type { ProxyPlainCredentials } from '../aem/proxyAuth';
+import type { AemProxyConfig, ServerConfig } from '../../shared';
+import { originsMatch, parseNavigationTarget } from '../../shared';
+import type { ProxyPlainCredentials } from '../aem';
 
 /**
  * The sequential server-switch state machine (implementation-plan.md step
@@ -59,6 +59,18 @@ export type ServerSwitchState = 'idle' | 'switching';
 const CHROMIUM_ERROR_CODE_PATTERN = /\bERR_[A-Z0-9_]+\b/;
 
 /**
+ * Extracts the Chromium `ERR_*` code embedded in an arbitrary text, if any.
+ * Shared by `extractChromiumErrorCode` below (a rejected promise's message)
+ * and `aemBrowserView.ts`'s `did-fail-load` handling (Chromium's own
+ * `errorDescription` string, e.g. `"ERR_CONNECTION_REFUSED (-102)"`) - both
+ * are the same closed `net::Error` vocabulary, just observed at two
+ * different call sites.
+ */
+export function extractChromiumErrorCodeFromText(text: string): string | undefined {
+  return CHROMIUM_ERROR_CODE_PATTERN.exec(text)?.[0];
+}
+
+/**
  * Extracts the Chromium `ERR_*` code embedded in a rejected `loadURL`/
  * `setProxy` promise's message, if any. Returns `undefined` for anything
  * that is not recognisably a Chromium network error - including a non-Error
@@ -68,7 +80,7 @@ const CHROMIUM_ERROR_CODE_PATTERN = /\bERR_[A-Z0-9_]+\b/;
  */
 export function extractChromiumErrorCode(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
-  return CHROMIUM_ERROR_CODE_PATTERN.exec(error.message)?.[0];
+  return extractChromiumErrorCodeFromText(error.message);
 }
 
 export interface ServerSwitchDeps {

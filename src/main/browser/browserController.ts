@@ -23,6 +23,7 @@ import {
   createAemBrowserView,
   type AemBrowserView,
   type AemBrowserViewOptions,
+  type ChromeNavigationOutcome,
 } from './aemBrowserView';
 import { ServerSwitchController } from './serverSwitch';
 import { describeNetworkError } from './networkErrorCopy';
@@ -104,9 +105,9 @@ export interface BrowserController {
   activeServer(): ActiveAemServer | undefined;
   navigate(rawValue: string): Promise<BrowserIpcVoidResult>;
   switchServer(serverId: ServerId): Promise<BrowserIpcVoidResult>;
-  goBack(): BrowserIpcVoidResult;
-  goForward(): BrowserIpcVoidResult;
-  reload(): BrowserIpcVoidResult;
+  goBack(): Promise<BrowserIpcVoidResult>;
+  goForward(): Promise<BrowserIpcVoidResult>;
+  reload(): Promise<BrowserIpcVoidResult>;
   /** Stops any in-flight load in the AEM view (the toolbar's Stop control while a navigation is loading). */
   stop(): BrowserIpcVoidResult;
   setViewBounds(bounds: ViewBounds): void;
@@ -401,17 +402,34 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     }
   }
 
-  function goBack(): BrowserIpcVoidResult {
-    aemView.goBack();
-    return ok();
+  /**
+   * Maps a `goBack`/`goForward`/`reload` outcome to the same
+   * `BrowserIpcVoidResult` shape `switchServer`'s `network_error` branch
+   * produces, reusing the identical humanised copy (`describeNetworkError`).
+   * Before this existed, these three commands always returned `ok()`
+   * immediately and a failure surfacing later via `did-fail-load` was never
+   * reported at all - see `ChromeNavigationOutcome`'s doc comment
+   * (`aemBrowserView.ts`) for the bug this closes: a dismissed error banner
+   * from an earlier failed navigation never reappeared on a same-cause
+   * reload/back/forward, because nothing set `errorText` again.
+   */
+  function mapNavigationOutcome(outcome: ChromeNavigationOutcome): BrowserIpcVoidResult {
+    if (outcome.ok) return ok();
+    return fail({
+      code: 'network_error',
+      message: describeNetworkError(outcome.errorCode, outcome.failedUrl),
+      errorCode: outcome.errorCode,
+    });
   }
-  function goForward(): BrowserIpcVoidResult {
-    aemView.goForward();
-    return ok();
+
+  async function goBack(): Promise<BrowserIpcVoidResult> {
+    return mapNavigationOutcome(await aemView.goBack());
   }
-  function reload(): BrowserIpcVoidResult {
-    aemView.reload();
-    return ok();
+  async function goForward(): Promise<BrowserIpcVoidResult> {
+    return mapNavigationOutcome(await aemView.goForward());
+  }
+  async function reload(): Promise<BrowserIpcVoidResult> {
+    return mapNavigationOutcome(await aemView.reload());
   }
   function stop(): BrowserIpcVoidResult {
     aemView.stop();

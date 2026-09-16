@@ -100,17 +100,17 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
     return trusted;
   }
 
-  ipcMain.handle(BROWSER_GO_BACK_CHANNEL, (event): BrowserIpcVoidResult => {
+  ipcMain.handle(BROWSER_GO_BACK_CHANNEL, async (event): Promise<BrowserIpcVoidResult> => {
     if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
     return deps.controller.goBack();
   });
 
-  ipcMain.handle(BROWSER_GO_FORWARD_CHANNEL, (event): BrowserIpcVoidResult => {
+  ipcMain.handle(BROWSER_GO_FORWARD_CHANNEL, async (event): Promise<BrowserIpcVoidResult> => {
     if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
     return deps.controller.goForward();
   });
 
-  ipcMain.handle(BROWSER_RELOAD_CHANNEL, (event): BrowserIpcVoidResult => {
+  ipcMain.handle(BROWSER_RELOAD_CHANNEL, async (event): Promise<BrowserIpcVoidResult> => {
     if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
     return deps.controller.reload();
   });
