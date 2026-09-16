@@ -1,0 +1,133 @@
+/*
+ * The root document contract plus the two-pane shell skeleton
+ * (requirements-decisions.md section 8): document sizing, the split-view
+ * element, the panes and the atoms shared across both of them. Imported
+ * first by the renderer entry; everything else (panel.css, browser.css,
+ * chat.css, settings.css) builds on these rules. `unsafe-inline` styles are
+ * permitted by the CSP for lit/Spectrum internals, but this file itself is a
+ * regular same-origin stylesheet bundled by Vite, so it needs no CSP
+ * allowance of its own.
+ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  /*
+   * Hard guarantee that the *document* never scrolls - only
+   * `.chat-transcript` (and the Settings panel's own content region) do.
+   * The main process positions the native WebContentsView over
+   * `.browser-view-host` using bounds measured via ResizeObserver (see
+   * computeReservedRegionBounds in shell/viewModel.ts); a native view does
+   * not scroll with the document, so if the document could scroll even
+   * slightly, the reserved region's reported position would desync from
+   * where the view actually sits.
+   */
+  overflow: hidden;
+}
+
+#app,
+sp-theme {
+  display: block;
+  height: 100%;
+}
+
+/*
+ * `.main-shell` is the `<sp-split-view>` element itself (see
+ * `shell/mainSplitView.ts`); the component's own shadow styles
+ * (`:host{display:flex}` plus `--spectrum-split-view-first-pane-size`) size
+ * and lay out its two slotted panes and the draggable boundary between them,
+ * so no grid/track declarations belong here. `primary-min`/`secondary-min`
+ * attributes (set by `mainSplitView.ts`) enforce the minimum widths, so CSS
+ * cannot disagree with the value that gets persisted.
+ */
+.main-shell {
+  /*
+   * No min-height floor here: with html/body's overflow:hidden above, any
+   * intrinsic minimum taller than the real viewport would just clip instead
+   * of scrolling, silently hiding content. Sizing to exactly 100% (the
+   * viewport height) is what keeps the reserved region's geometry correct.
+   */
+
+  /*
+   * The splitter is hidden on purpose (the two panes read as one continuous
+   * surface) but stays fully functional: these `--mod-*` tokens are the
+   * component's documented shadow-DOM colour hooks, so making every state
+   * transparent removes the line and gripper dots while leaving the resize
+   * hit area, pointer capture and keyboard stepping untouched. The focus
+   * ring is hidden too (there is nothing to focus *on* visually), but the
+   * splitter remains keyboard-operable. Windows forced-colors mode is
+   * deliberately NOT overridden: the shadow stylesheet's own
+   * `--highcontrast-splitview-handle-background-color` still paints the
+   * handle there, keeping it findable for high-contrast users.
+   */
+  --mod-splitview-handle-background-color: transparent;
+  --mod-splitview-handle-background-color-hover: transparent;
+  --mod-splitview-handle-background-color-down: transparent;
+  --mod-splitview-handle-background-color-focus: transparent;
+
+  /*
+   * Widen the splitter's inline-size (its flex box) from ~2px to an 8px
+   * gutter so the invisible drag target is actually hit-able. This is a
+   * *layout* change, not a visual one: the splitter is transparent,
+   * `splitterPos` - and therefore the persisted fraction - is the splitter's
+   * left edge and is unaffected by the splitter's own width, and the second
+   * pane is `flex:1`, so the extra pixels come out of the chat pane, not the
+   * browser pane. The wider band sits against the browser pane's right edge
+   * and reads as a slightly deeper (all-white) gutter on the chat side.
+   */
+  --mod-splitview-handle-width: 8px;
+
+  height: 100%;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * Set on <body> for the duration of a drag: keeps the resize cursor while the
+ * pointer is over either pane, and stops the drag from selecting text in the
+ * chat transcript it passes over.
+ */
+body.daisy-pane-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  flex: 0 0 auto;
+}
+
+/* Both panes paint the same near-white surface (gray-75). Without this the
+   browser pane is transparent and shows the split-view's own
+   `--system-split-view-background-color` (a muted gray) through the toolbar
+   and page panel, which is exactly what makes the left half read darker than
+   the chat side; the chat pane already pinned gray-75 here. */
+.browser-pane,
+.chat-pane {
+  background: var(--spectrum-gray-75, #fbfbfb);
+}
+
+/*
+ * The server's colour dot: one shared definition for the browser pane's
+ * toolbar/picker and the Settings servers section (requirements-decisions.md
+ * section 8 - colour is always paired with the visible label text next to
+ * it, never the only distinguishing signal).
+ */
+.server-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgb(0 0 0 / 20%);
+  flex: 0 0 auto;
+}

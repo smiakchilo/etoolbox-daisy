@@ -14,7 +14,7 @@ import type { ServerOption } from './viewModel';
  *
  * Each option is a real `<button>` addressable in the accessibility tree, but
  * styled as a flat list row (no resting button background - see
- * `.server-picker-item` in shell.css), so the list reads as "one item after
+ * `.server-picker-item` in browser.css), so the list reads as "one item after
  * another", exactly like a browser's own server/bookmark picker. Clicking or
  * pressing Enter on an item selects it; the header offers a close (cross)
  * button and Escape dismisses. The `server-picker-panel*` class names are

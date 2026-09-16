@@ -36,6 +36,14 @@ export interface CreateSettingsPanelOptions {
    * server options, insecure marker) without a second IPC round trip.
    */
   onSnapshotApplied(snapshot: AppSettingsSnapshot): void;
+  /**
+   * Fired when the panel's own close button or Escape dismisses it, so the
+   * shell can unwire the browser-pane panel host (restore the suspended
+   * native view and clear the pane's active-panel reference). Without this
+   * the pane keeps pointing at a panel the user already closed, so the
+   * native view stays collapsed and re-opening the panel short-circuits.
+   */
+  onDismiss(): void;
 }
 
 export function createSettingsPanel(options: CreateSettingsPanelOptions): SettingsPanel {
@@ -45,7 +53,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   const authenticationSection = createAuthenticationSection();
   const modelsSection = createModelsSection();
 
-  const statusLine = el('p', { attrs: { class: 'settings-shell__status' } });
+  const statusLine = el('p', { attrs: { class: 'settings-panel__status' } });
   const reloadButton = el('sp-button', { attrs: { variant: 'secondary' }, text: 'Reload' });
 
   async function reload(): Promise<void> {
@@ -94,8 +102,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     closeButtonClassName: 'settings-panel__close',
     content,
     onDismiss(): void {
-      // The browser pane's panel host already closes the panel and restores
-      // the native view; there is nothing Settings-specific to unwind here.
+      options.onDismiss();
     },
   });
 

@@ -111,7 +111,8 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   await addressInput.press('Enter');
 
   // The loading banner is an `sp-alert-banner` with a real shadow root
-  // (registered, not an unknown element), carrying the spinner + text.
+  // (registered, not an unknown element), carrying the loading text and the
+  // CSS progress line (the spinner was removed in b9dc6b0 — see below).
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   await expect(banner).toBeVisible({ timeout: 60_000 });
   await expect
@@ -119,7 +120,6 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
     .toBe(true);
   await expect.poll(() => banner.evaluate((element) => element.shadowRoot !== null)).toBe(true);
   await expect(banner).toContainText('Loading\u2026');
-  await expect(banner.locator('sp-progress-circle')).toHaveCount(1);
 
   // The loading banner is not dismissible - a load in flight is not something
   // to wave away; only error/prompt rows get a close control.
@@ -127,7 +127,7 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
 
   // The loading presentation ends in a narrow indeterminate progress line
   // pinned to the banner's top edge: a hand-copied `sp-progress-bar`
-  // size="s" sweep (the light-DOM track + animated fill; see shell.css).
+  // size="s" sweep (the light-DOM track + animated fill; see browser.css).
   await expect(banner.locator('.browser-toolbar-message__progress')).toHaveCount(1);
   const progressStyle = await banner.evaluate((element) => {
     const track = element.querySelector<HTMLElement>('.browser-toolbar-message__progress');
@@ -164,12 +164,6 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   await expect
     .poll(() => banner.evaluate((element) => getComputedStyle(element).backgroundColor))
     .toBe('rgb(230, 230, 230)');
-
-  // The progress circle must itself be registered (AGENTS.md §9: a missing
-  // import renders an unknown element that matches the selector but is inert).
-  await expect
-    .poll(() => page.evaluate(() => Boolean(customElements.get('sp-progress-circle'))))
-    .toBe(true);
 
   // During loading the Refresh button becomes the Stop button.
   const toolbar = page.locator('.browser-toolbar');

@@ -14,7 +14,7 @@ export interface MountMainShellOptions {
    * region (see `chatPane.ts`), rather than after the shell as document-level
    * siblings. Used by `main.ts` to keep its hello-button/app-info elements
    * mounted without letting them grow the document past the viewport - see
-   * `styles/shell.css` for the "document never scrolls" layout contract this
+   * `styles/base.css` for the "document never scrolls" layout contract this
    * depends on.
    */
   readonly chatFooterContent?: readonly HTMLElement[];
@@ -53,6 +53,12 @@ export async function mountMainShell(
   const settingsPanel: SettingsPanel = createSettingsPanel({
     onSnapshotApplied(snapshot: AppSettingsSnapshot): void {
       applySnapshot(browserPane, snapshot);
+    },
+    // Dismissal is the panel's own close button or Escape: the browser-pane
+    // panel host must hear about it too, because it is the host that holds
+    // the active-panel reference and suspends/restores the native view.
+    onDismiss() {
+      browserPane.panelHost.close();
     },
   });
   browserPane.appendPanel(settingsPanel);

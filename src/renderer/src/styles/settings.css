@@ -1,12 +1,13 @@
 /*
  * Layout for the Settings panel (a whole-size panel in the shell's browser
  * pane, `shell/settingsPanel.ts` - converting what used to be a separate
- * child window). Imported by the renderer entry alongside `shell.css`; only
- * the Settings sections' own rules live here.
+ * child window). Imported by the renderer entry alongside `base.css` and
+ * `panel.css`; only the Settings sections' own rules live here - the panel
+ * surface itself is the shared `.panel` from panel.css.
  */
 
 /* The panel's scrollable body: the shared `.panel` surface is a flex column
-   that must not itself scroll (see shell.css), so the sections scroll inside
+   that must not itself scroll (see panel.css), so the sections scroll inside
    this one region. */
 .settings-panel__content {
   flex: 1 1 auto;
@@ -18,7 +19,7 @@
   gap: 20px;
 }
 
-.settings-shell__status {
+.settings-panel__status {
   color: var(--spectrum-red-700, #b3261e);
 }
 
@@ -61,17 +62,6 @@
 .authentication-section__actions {
   display: flex;
   gap: 8px;
-}
-
-/* Colour is always paired with the visible label text next to it - never
-   the only distinguishing signal (requirements-decisions.md section 8). */
-.server-swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1px solid rgb(0 0 0 / 20%);
-  flex: 0 0 auto;
 }
 
 .add-server-form {

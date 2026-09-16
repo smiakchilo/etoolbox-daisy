@@ -11,11 +11,12 @@ import { computeReservedRegionBounds, type ReservedRegionBounds } from './viewMo
  * page's DOM/paint pipeline. It exists only so its geometry can be measured
  * and reported to main.
  *
- * `shell.css` gives this element an 8px right margin: the measured/reported
- * rectangle therefore ends before the `sp-split-view` handle's overhang, so
- * the composited view never covers the handle (a native view always paints
- * above this document). The pane's own width - the persisted split - is
- * unaffected; only the reserved rectangle narrows.
+ * base.css widens the `sp-split-view` handle to 8px (its
+ * `--mod-splitview-handle-width`); the measured/reported rectangle must
+ * therefore end before that handle's overhang, so the composited view never
+ * covers it (a native view always paints above this document). The pane's
+ * own width - the persisted split - is unaffected; only the reserved
+ * rectangle narrows.
  */
 export interface BrowserViewHost {
   readonly element: HTMLElement;
@@ -70,7 +71,7 @@ export function createBrowserViewHost(): BrowserViewHost {
     // viewport, which is what `aemBrowserView.ts` expects: it feeds this
     // rectangle straight to `WebContentsView.setBounds()` against a
     // same-origin `window.getContentBounds()` rectangle whose own (0,0) is
-    // the window's content-area top-left. `shell.css` guarantees the
+    // the window's content-area top-left. `base.css` guarantees the
     // document itself never scrolls (see its top-of-file comment), so the
     // viewport and the window content area never drift apart here.
     window.daisy.browser.setViewBounds(bounds);

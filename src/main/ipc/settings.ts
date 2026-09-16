@@ -39,15 +39,9 @@ import {
   type UpdateServerTargetingRequest,
   type UpdateServerTargetingResult,
 } from '../../shared';
-import {
-  toAppSettingsSnapshot,
-  type ServerSnapshot,
-} from '../../shared';
+import { toAppSettingsSnapshot, type ServerSnapshot } from '../../shared';
 import { defaultAppSettings, type AppSettings } from '../../shared';
-import {
-  isReasoningEffortValidFor,
-  type ModelCatalogEntry,
-} from '../../shared';
+import { isReasoningEffortValidFor, type ModelCatalogEntry } from '../../shared';
 import type {
   ProxyCredentials,
   ServerConfig,

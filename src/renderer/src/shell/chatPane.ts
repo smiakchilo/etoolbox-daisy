@@ -18,7 +18,7 @@ export interface ChatPane {
    * Appends content into the pane's one internally-scrolling region. Used to
    * host `main.ts`'s hello-button/app-info elements (see `main.ts`) so they
    * cannot grow the document past the viewport - only this region scrolls,
-   * the document itself never does (see `styles/shell.css`). Appended as a
+   * the document itself never does (see `styles/base.css`). Appended as a
    * sibling of the transcript's own message list, which is fully replaced on
    * every repaint (see `transcriptView.ts`) - so this content is never
    * touched by it.

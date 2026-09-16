@@ -27,7 +27,10 @@ import '@spectrum-web-components/action-menu/sp-action-menu.js';
 import '@spectrum-web-components/menu/sp-menu-item.js';
 import '@spectrum-web-components/picker/sp-picker.js';
 import '@spectrum-web-components/checkbox/sp-checkbox.js';
-import './styles/shell.css';
+import './styles/base.css';
+import './styles/panel.css';
+import './styles/browser.css';
+import './styles/chat.css';
 import './styles/settings.css';
 import { mountMainShell } from './shell/mainShell';
 
@@ -48,7 +51,7 @@ async function render(): Promise<void> {
   // relocated into the chat pane's internally-scrolling transcript region
   // (via `chatFooterContent`) instead of being appended after the shell, so
   // they cannot grow the document past the viewport - see
-  // `styles/shell.css`'s "document never scrolls" layout contract.
+  // `styles/base.css`'s "document never scrolls" layout contract.
   const divider = document.createElement('sp-divider');
   divider.setAttribute('size', 's');
 

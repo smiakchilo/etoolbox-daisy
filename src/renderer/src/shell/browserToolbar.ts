@@ -96,7 +96,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   const toolbar = el('div', { attrs: { class: 'toolbar browser-toolbar', role: 'toolbar' } });
 
   // "Back" reuses Forward's sp-icon-arrow100 glyph, rotated 180deg via CSS
-  // (see .nav-icon--back in shell.css) rather than a separate icon asset.
+  // (see .nav-icon--back in browser.css) rather than a separate icon asset.
   const backButton = buildNavButton('Back', 'sp-icon-arrow100', { iconClass: 'nav-icon--back' });
   const forwardButton = buildNavButton('Forward', 'sp-icon-arrow100');
   const refreshButton = buildNavButton('Refresh', 'sp-icon-refresh');
@@ -119,7 +119,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   });
 
   // Loading text shown inside the banner — the indefinite progress bar
-  // animation is rendered via CSS in shell.css, so no spinner is needed.
+  // animation is rendered via CSS in browser.css, so no spinner is needed.
   const loadingSpan = el('span', {
     attrs: { class: 'browser-toolbar-message__loading' },
     children: [document.createTextNode(LOADING_LABEL)],
@@ -127,7 +127,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   // Indeterminate progress line pinned to the loading banner's top edge - a
   // hand-copied rendering of Spectrum's `sp-progress-bar` size="s" sweep
-  // (see shell.css `.browser-toolbar-message__progress`), because the
+  // (see browser.css `.browser-toolbar-message__progress`), because the
   // `@spectrum-web-components/progress-bar` package is not a project
   // dependency. Created once so the DOM node is stable across loading
   // cycles, then swapped in/out of the banner like `loadingSpan`.
@@ -417,7 +417,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // `sp-picker-button` default `position="right"` removes its left border
   // radius so it sits flush against the address field's right edge as a
   // combobox glyph (the sibling `.browser-toolbar__address-group` wrapper in
-  // shell.css completes the coupling). Its built-in chevron triggers the
+  // browser.css completes the coupling). Its built-in chevron triggers the
   // pane's open/close toggle. Non-quiet: a filled resting background whose
   // `:host([open])` "down" variant is the visibly pressed toggle state.
   const serverPickerButton = el('sp-picker-button', {
