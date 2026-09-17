@@ -1,6 +1,6 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
@@ -20,7 +20,22 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * It also pins the half of the behaviour that must NOT change: authorization
  * is still decided on the origin alone, so a deep link into an unconfigured
  * origin still prompts instead of navigating (requirements-decisions.md
- * section 3 - "never silently navigate and never auto-create the entry").
+ * section 3 - "never silently navigate and never auto-create the entry"). The
+ * prompt is fixed copy with a single "OK" `sp-action-button` (the origin is
+ * deliberately NOT cited - the address bar on the row above already shows it;
+ * cancel is the banner's dismiss cross), so the second half of this spec
+ * clicks the button and asserts the server appears in settings.json -
+ * proving the add happens only after the user's explicit click.
+ *
+ * It also pins the re-trigger rule after a dismissal: dismissing the prompt
+ * must not silence later attempts. Entering the *same* unchanged address again
+ * (sp-textfield emits no `change` for an unchanged value, so navigation fires
+ * on the Enter keydown itself) and pressing Refresh while the address bar's
+ * URL differs from the loaded page - including when NOTHING is loaded
+ * (`lastNavigationState` is null because a refused unknown-origin navigation
+ * never pushes state) - must both re-show the prompt. The second test in this
+ * file reproduces the fresh-profile case exactly (zero configured servers, no
+ * page ever loaded, first navigation is the refused URL, then Refresh).
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -128,13 +143,122 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     await addressInput.fill(unknownDeepUrl);
     await addressInput.press('Enter');
 
-    await expect(message).toContainText('is not a configured server', { timeout: 60_000 });
-    // The prompt must name the ORIGIN, not the full URL - that is what the
-    // user would be adding as a server.
-    await expect(message).toContainText('https://unconfigured.example');
+    await expect(message).toContainText(
+      'This host is unknown. Press OK to add it to the managed hosts',
+      { timeout: 60_000 },
+    );
+    // The copy must never cite the URL/host: the address bar is right above
+    // the banner and already shows it, and repeating it is noise.
+    expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
     expect((await message.textContent()) ?? '').not.toContain('editor.html');
+
+    const dismissMessage = async (): Promise<void> => {
+      await page.locator('.browser-toolbar-message sp-close-button').click();
+      await expect(message).not.toHaveAttribute('open');
+    };
+
+    // Every navigation to an unknown host must re-trigger the banner after a
+    // dismissal (bug: dismissing once silently suppressed all later attempts).
+    await dismissMessage();
+
+    // Case 1: pressing Enter on the SAME untouched address value (sp-textfield
+    // fires no `change` for an unchanged value) must still navigate and prompt
+    // again.
+    await addressInput.press('Enter');
+    await expect(message).toContainText(
+      'This host is unknown. Press OK to add it to the managed hosts',
+      { timeout: 60_000 },
+    );
+    expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
+
+    // Case 2: dismissing again, then pressing Refresh - the address bar's URL
+    // differs from the loaded page, so Refresh must navigate it (not blindly
+    // reload the stale page) and the prompt must reappear.
+    await dismissMessage();
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(message).toContainText(
+      'This host is unknown. Press OK to add it to the managed hosts',
+      { timeout: 60_000 },
+    );
+
+    // The prompt's OK action button persists the server (only after the
+    // user's explicit click), then retries the address through the normal
+    // switchServer path. The retry will DNS-fail (`unconfigured.example` is
+    // reserved and unresolvable), so the observable proof is the new entry in
+    // settings.json rather than the navigation outcome.
+    await page.getByRole('button', { name: 'OK' }).click();
+    await expect
+      .poll(
+        () => {
+          if (!existsSync(settingsPath)) return false;
+          const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+            servers?: Array<{ origin: string }>;
+          };
+          return (parsed.servers ?? []).some(
+            (server) => server.origin === 'https://unconfigured.example',
+          );
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true);
   } finally {
     await app.close();
     aem.close();
+  }
+});
+
+test('Refresh re-triggers the unknown-origin banner on a FRESH profile (no page ever loaded)', async () => {
+  test.setTimeout(120_000);
+
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-fresh-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+
+  // No settings.json at all: zero configured servers, so nothing ever loads
+  // and `lastNavigationState` in the toolbar stays null - the exact repro
+  // where Refresh used to fall back to reload() of the blank view and do
+  // nothing.
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+
+    const addressInput = page.locator('#browser-address-bar input');
+    const message = page.locator('.browser-toolbar-message');
+    const unknownDeepUrl = 'https://unconfigured.example/editor.html/content/x.html';
+
+    await addressInput.fill(unknownDeepUrl);
+    await addressInput.press('Enter');
+    await expect(message).toContainText(
+      'This host is unknown. Press OK to add it to the managed hosts',
+      { timeout: 60_000 },
+    );
+
+    // Dismiss, then Refresh: the refused navigation never pushed any
+    // navigation state, so the toolbar must still re-request the address bar
+    // value and re-show the prompt (not reload the blank view).
+    await page.locator('.browser-toolbar-message sp-close-button').click();
+    await expect(message).not.toHaveAttribute('open');
+    await page.getByRole('button', { name: 'Refresh' }).click();
+    await expect(message).toContainText(
+      'This host is unknown. Press OK to add it to the managed hosts',
+      { timeout: 60_000 },
+    );
+    // The copy still never cites the host after the re-trigger.
+    expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
+  } finally {
+    await app.close();
   }
 });

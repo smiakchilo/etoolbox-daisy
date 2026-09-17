@@ -4,7 +4,9 @@ import {
   computeAddressBarValue,
   computeInsecureMarker,
   computeReservedRegionBounds,
+  deriveServerLabelFromOrigin,
   describeBlockedCertificate,
+  describeUnknownOrigin,
   shortFingerprint,
 } from '../../../src/renderer/src/shell/viewModel';
 import { newServerId, type ServerSnapshot } from '../../../src/shared';
@@ -131,5 +133,24 @@ describe('describeBlockedCertificate', () => {
     ).toBe(
       'Untrusted certificate for https://author.example:8443 (SHA-256 cccccccc\u2026cccccc, net::ERR_CERT_AUTHORITY_INVALID).',
     );
+  });
+});
+
+describe('describeUnknownOrigin', () => {
+  it('uses fixed copy that never cites the origin - the address bar already shows it', () => {
+    expect(describeUnknownOrigin()).toBe(
+      'This host is unknown. Press OK to add it to the managed hosts',
+    );
+  });
+});
+
+describe('deriveServerLabelFromOrigin', () => {
+  it('keeps the port so two local AEM instances stay distinguishable', () => {
+    expect(deriveServerLabelFromOrigin('https://localhost:4502')).toBe('localhost:4502');
+    expect(deriveServerLabelFromOrigin('https://localhost:4503')).toBe('localhost:4503');
+  });
+
+  it('omits the port when it is the scheme default', () => {
+    expect(deriveServerLabelFromOrigin('https://author.example')).toBe('author.example');
   });
 });

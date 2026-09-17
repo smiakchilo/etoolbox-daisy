@@ -43,8 +43,13 @@ interface FakeDaisyBrowser {
   onCertificateBlocked: ReturnType<typeof vi.fn>;
 }
 
+interface FakeDaisySettings {
+  addServer: ReturnType<typeof vi.fn>;
+}
+
 let dom: JSDOM;
 let browser: FakeDaisyBrowser;
+let settings: FakeDaisySettings;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
 let switchListeners: Array<(state: BrowserSwitchState) => void>;
 let blockedListeners: Array<(info: CertificateBlockedInfo) => void>;
@@ -85,7 +90,10 @@ beforeEach(() => {
       };
     }),
   };
-  Reflect.set(dom.window, 'daisy', { browser });
+  settings = {
+    addServer: vi.fn(() => Promise.resolve({ ok: true, server: snapshotOf(AUTHOR_SERVER_ID) })),
+  };
+  Reflect.set(dom.window, 'daisy', { browser, settings });
   Reflect.set(globalThis, 'document', dom.window.document);
   Reflect.set(globalThis, 'window', dom.window);
 });
@@ -455,6 +463,22 @@ const BLOCKED_INFO: CertificateBlockedInfo = {
   errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
 };
 
+function snapshotOf(id: string): {
+  id: string;
+  label: string;
+  origin: string;
+  color: { kind: 'swatch'; swatch: 'red' };
+  revision: number;
+} {
+  return {
+    id,
+    label: 'Author',
+    origin: 'https://author.example',
+    color: { kind: 'swatch', swatch: 'red' },
+    revision: 0,
+  };
+}
+
 function serverOption(overrides: Partial<ServerOption> = {}): ServerOption {
   return {
     id: AUTHOR_SERVER_ID,
@@ -587,5 +611,348 @@ describe('createBrowserToolbar certificate prompt', () => {
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(message.querySelector('sp-button')).toBeNull();
+  });
+});
+
+function findUnknownOriginOk(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
+  const message = findMessage(toolbar);
+  const ok = message.querySelector('sp-action-button');
+  if (!ok) throw new Error('unknown-origin OK button not found');
+  return ok as HTMLElement;
+}
+
+function triggerUnknownOrigin(
+  toolbar: ReturnType<typeof createBrowserToolbar>,
+  url: string,
+  origin = 'https://unknown.example',
+): void {
+  browser.navigate.mockResolvedValueOnce({
+    ok: false,
+    error: { code: 'unknown_origin', message: `${origin} is not a configured server`, origin },
+  });
+  const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+    value: string;
+  };
+  address.value = url;
+  address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+}
+
+describe('createBrowserToolbar unknown-origin prompt', () => {
+  it('renders an OK action-button prompt instead of a text-only error', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    triggerUnknownOrigin(toolbar, 'https://unknown.example/content/page.html');
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toContain(
+      'This host is unknown. Press OK to add it to the managed hosts',
+    );
+    // The origin is visible in the address bar above the banner; the copy
+    // must not repeat it (noise, and invites reading the banner instead of
+    // the real navigated address).
+    expect(message.textContent).not.toContain('https://unknown.example');
+    // Exactly one accepting action: an `sp-action-button` (never an accent
+    // `sp-button` - no blue fill). Cancel is the banner's dismiss cross.
+    const okButtons = message.querySelectorAll('sp-action-button');
+    expect(okButtons).toHaveLength(1);
+    expect(okButtons[0]?.textContent).toBe('OK');
+    expect(message.querySelector('sp-button[variant="accent"]')).toBeNull();
+    expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('"OK" creates the server with defaults derived from the origin, then retries the exact URL', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    triggerUnknownOrigin(
+      toolbar,
+      'https://unknown.example:4502/content/page.html',
+      'https://unknown.example:4502',
+    );
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+
+    findUnknownOriginOk(toolbar).click();
+
+    await vi.waitFor(() => {
+      expect(settings.addServer).toHaveBeenCalledWith({
+        label: 'unknown.example:4502',
+        origin: 'https://unknown.example:4502',
+        color: { kind: 'swatch', swatch: 'red' },
+        allowInsecureHttp: false,
+      });
+    });
+    // The retry navigates to the address that was refused, now that the
+    // origin is a configured server.
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenLastCalledWith(
+        'https://unknown.example:4502/content/page.html',
+      );
+    });
+    expect(browser.navigate).toHaveBeenCalledTimes(2);
+    // The prompt cleared once the auto-navigation started.
+    expect(message.hasAttribute('open')).toBe(false);
+  });
+
+  it('marks a plain-http origin as allowInsecureHttp', async () => {
+    const toolbar = build();
+
+    triggerUnknownOrigin(toolbar, 'http://author.example:4502/', 'http://author.example:4502');
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+
+    findUnknownOriginOk(toolbar).click();
+
+    await vi.waitFor(() => {
+      expect(settings.addServer).toHaveBeenCalledWith(
+        expect.objectContaining({ allowInsecureHttp: true }),
+      );
+    });
+  });
+
+  it('surfaces an add failure as an error row instead of leaving the prompt up', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    settings.addServer.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'storage_error', message: 'settings file could not be written' },
+    });
+
+    triggerUnknownOrigin(toolbar, 'https://unknown.example/content/page.html');
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+
+    findUnknownOriginOk(toolbar).click();
+
+    await vi.waitFor(() => {
+      expect(message.textContent).toContain("Couldn't add");
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toContain('settings file could not be written');
+    // The failed add must not have auto-retried the navigation.
+    expect(browser.navigate).toHaveBeenCalledTimes(1);
+    expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('the banner close control dismisses the prompt too', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    triggerUnknownOrigin(toolbar, 'https://unknown.example/content/page.html');
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+
+    message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+
+    expect(settings.addServer).not.toHaveBeenCalled();
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+  });
+
+  it('a new navigation supersedes the prompt', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    triggerUnknownOrigin(toolbar, 'https://unknown.example/content/page.html');
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+
+    stateListeners[0]?.(loadingState(true));
+
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+    expect(message.querySelector('sp-action-button')).toBeNull();
+  });
+
+  it('pressing Enter again on the same address re-triggers the banner after dismissal', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    const UNKNOWN_URL = 'https://unknown.example/content/page.html';
+    const UNKNOWN_ORIGIN = 'https://unknown.example';
+
+    // First attempt: type + change → banner.
+    triggerUnknownOrigin(toolbar, UNKNOWN_URL, UNKNOWN_ORIGIN);
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+
+    // Dismiss.
+    message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+    expect(message.hasAttribute('open')).toBe(false);
+
+    // Address bar still holds the refused URL (no state push from a failed
+    // navigate). Pressing Enter via keydown — value unchanged, so `change`
+    // would not fire — must still re-trigger the prompt.
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'unknown_origin',
+        message: `${UNKNOWN_ORIGIN} is not a configured server`,
+        origin: UNKNOWN_ORIGIN,
+      },
+    });
+    address.value = UNKNOWN_URL;
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(2);
+    });
+    expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toContain(
+      'This host is unknown. Press OK to add it to the managed hosts',
+    );
+  });
+
+  it('Refresh navigates the address bar URL when it differs from the loaded page', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    const UNKNOWN_URL = 'https://unknown.example/content/page.html';
+    const UNKNOWN_ORIGIN = 'https://unknown.example';
+    const refreshButton = findNavButton(toolbar);
+
+    // First attempt → banner.
+    triggerUnknownOrigin(toolbar, UNKNOWN_URL, UNKNOWN_ORIGIN);
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+
+    // Dismiss. Address bar still holds the refused URL.
+    message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+    expect(message.hasAttribute('open')).toBe(false);
+
+    // Simulate a loaded page on a different origin so the Refresh handler
+    // sees address !== currentUrl.
+    stateListeners[0]?.({
+      url: 'https://author.example/',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    });
+
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'unknown_origin',
+        message: `${UNKNOWN_ORIGIN} is not a configured server`,
+        origin: UNKNOWN_ORIGIN,
+      },
+    });
+    address.value = UNKNOWN_URL;
+    refreshButton.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(2);
+    });
+    expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
+    expect(message.hasAttribute('open')).toBe(true);
+  });
+
+  it('Refresh still reloads when the address bar matches the loaded page', () => {
+    const toolbar = build();
+    const refreshButton = findNavButton(toolbar);
+
+    stateListeners[0]?.({
+      url: 'https://author.example/',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    });
+
+    refreshButton.click();
+
+    expect(browser.reload).toHaveBeenCalledTimes(1);
+    expect(browser.navigate).not.toHaveBeenCalled();
+  });
+
+  it('Refresh navigates the address bar URL when NO page has loaded yet (fresh state)', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    const UNKNOWN_URL = 'https://unknown.example/content/page.html';
+    const UNKNOWN_ORIGIN = 'https://unknown.example';
+    const refreshButton = findNavButton(toolbar);
+
+    // First attempt → banner. The refused navigation fires no
+    // did-navigate/did-stop-loading state push, so `lastNavigationState`
+    // stays null - exactly the fresh-profile repro.
+    triggerUnknownOrigin(toolbar, UNKNOWN_URL, UNKNOWN_ORIGIN);
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(stateListeners[0]).toBeDefined();
+
+    // Dismiss. Address bar still holds the refused URL; no state was pushed.
+    message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+    expect(message.hasAttribute('open')).toBe(false);
+
+    // Refresh with no `lastNavigationState` must still re-request the address
+    // bar value (previously it fell back to `reload()` of the blank view,
+    // which does nothing - the reported bug).
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'unknown_origin',
+        message: `${UNKNOWN_ORIGIN} is not a configured server`,
+        origin: UNKNOWN_ORIGIN,
+      },
+    });
+    address.value = UNKNOWN_URL;
+    refreshButton.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(2);
+    });
+    expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
+    expect(browser.reload).not.toHaveBeenCalled();
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toContain(
+      'This host is unknown. Press OK to add it to the managed hosts',
+    );
+  });
+
+  it('keydown Enter does not double-fire when change also fires', async () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+
+    browser.navigate.mockResolvedValue({ ok: true });
+    address.value = 'https://author.example/content/page.html';
+    // Simulate the browser event order: keydown fires first, then change.
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
+    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+
+    // Only one navigate call must have been made (keydown navigated, change
+    // was suppressed by the guard).
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -1,11 +1,17 @@
 import { el } from '../lib/dom';
 import type {
+  AddServerResult,
   BrowserIpcVoidResult,
   BrowserNavigationState,
   CertificateBlockedInfo,
 } from '../../../shared';
+import { SERVER_SWATCHES, isInsecureOrigin } from '../../../shared';
 import type { ServerOption } from './viewModel';
-import { describeBlockedCertificate } from './viewModel';
+import {
+  describeBlockedCertificate,
+  describeUnknownOrigin,
+  deriveServerLabelFromOrigin,
+} from './viewModel';
 
 /**
  * The left pane's toolbar: Back/Forward/Refresh, a plain text address bar,
@@ -31,12 +37,12 @@ import { describeBlockedCertificate } from './viewModel';
  * now that it exists. Failures are handled generically per
  * implementation-plan.md step 05: `result.error.message` is always shown
  * (for `network_error` this is already humanised copy - see
- * networkErrorCopy.ts), and only `unknown_origin` gets different treatment (a
- * prompt to add the server in Settings, per requirements-decisions.md section
- * 3 - the address is never silently navigated to and no server is ever
- * auto-created). A user-initiated stop (`browser:stop`) produces an
- * `ERR_ABORTED` error that is suppressed here as expected behaviour rather
- * than surfaced as an error banner.
+ * networkErrorCopy.ts), and only `unknown_origin` gets different treatment
+ * (a prompt: the origin is added as a new server via `settings:add-server`,
+ * then the address is retried on the normal switchServer path - the toolbar
+ * never navigates or auto-creates on its own). A user-initiated stop
+ * (`browser:stop`) produces an `ERR_ABORTED` error that is suppressed here
+ * as expected behaviour rather than surfaced as an error banner.
  *
  * Untrusted certificates follow a different route from the errors above:
  * main observes the blocked navigation and pushes
@@ -168,6 +174,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // boundaries), by Dismiss/the banner close control, and when an approval
   // request is dispatched.
   let blockedCertificate: CertificateBlockedInfo | null = null;
+  // The unknown-origin prompt (`browser:navigate`'s `unknown_origin` error):
+  // the address the user typed (retried after the server is created) and the
+  // canonical origin to store. `url` is captured from the address field at
+  // error time, `origin` comes from the IPC error. Cleared by a new
+  // navigation, by Dismiss/the banner close control, and when an Add
+  // dispatch starts.
+  let unknownOriginPrompt: { readonly url: string; readonly origin: string } | null = null;
 
   // How long a loading state must persist before the loading banner appears.
   // A chrome-armed external navigation that finishes within this window (fast
@@ -181,13 +194,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   //  1. "Loading…"+spinner (plus a progress line at the top edge) — any
   //     external load is in progress (either a server switch, or a
   //     toolbar-initiated reload/back/forward/address submit while
-  //     `isLoading` is true). A pending certificate prompt is cleared the
-  //     moment a new load starts - approving's auto-retry and any manual
-  //     navigation both supersede it.
+  //     `isLoading` is true). Pending certificate and unknown-origin prompts
+  //     are cleared the moment a new load starts - approving/adding's
+  //     auto-retry and any manual navigation both supersede them.
   //  2. The untrusted-certificate prompt — set by `onCertificateBlocked`.
-  //  3. Error copy — set by `handleVoidResult` (network failures, unknown-
-  //     origin prompt, storage errors).
-  //  4. Closed (idle) — no active external load and nothing to display.
+  //  3. The unknown-origin prompt — set by `browser:navigate`'s
+  //     `unknown_origin` error.
+  //  4. Error copy — set by `handleVoidResult` (network failures, storage
+  //     errors).
+  //  5. Closed (idle) — no active external load and nothing to display.
   //
   // Opening and closing are instant (`open` toggles `display` on the
   // component) - no slide animation. Loading is debounced by
@@ -294,6 +309,74 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     applyPresentation();
   }
 
+  // The unknown-origin prompt: `browser:navigate` refused an address whose
+  // origin matches no configured server (requirements-decisions.md section 3:
+  // never navigate silently, never auto-create on the tool's behalf). Unlike
+  // the certificate prompt - where approval only ever attaches to servers the
+  // user already configured - this one offers to *create* the server, because
+  // navigation is impossible without one. The origin stored via
+  // `settings:add-server` is exactly the one main refused, but the copy never
+  // cites it: the address bar on the row above already shows it, and repeating
+  // the URL both adds noise and invites the user to read the banner instead of
+  // the actual navigated address. A single "OK" `sp-action-button` accepts;
+  // cancel is implicit in the banner's dismiss cross (the `dismissible`
+  // attribute is set on every non-loading prompt). OK deliberately is not an
+  // accent `sp-button` - there is no blue fill - so the banner reads as a
+  // status strip, not a blocking dialog.
+  function applyUnknownOriginPromptPresentation(): void {
+    cancelLoadingBanner();
+    messageElement.classList.remove('browser-toolbar-message--loading');
+    messageElement.setAttribute('dismissible', '');
+    const prompt = unknownOriginPrompt;
+    if (prompt === null) return;
+
+    const okButton = el('sp-action-button', { attrs: { size: 'm' }, text: 'OK' });
+    okButton.addEventListener('click', () => {
+      void addOriginServer(prompt);
+    });
+
+    const actions = el('span', {
+      attrs: { class: 'browser-toolbar-message__actions' },
+      children: [okButton],
+    });
+    messageElement.replaceChildren(
+      el('span', {
+        attrs: { class: 'browser-toolbar-message__copy' },
+        children: [document.createTextNode(describeUnknownOrigin())],
+      }),
+      actions,
+    );
+    messageElement.setAttribute('open', '');
+    setNavMode('refresh');
+  }
+
+  // "OK": persists the new server (default label from the origin, first
+  // swatch, `allowInsecureHttp` derived from the scheme), then retries the
+  // exact address the user typed. The retry goes through the same
+  // `browser:navigate` as the failed attempt, which now resolves to a
+  // configured server and takes the normal switchServer path - so the toolbar
+  // never performs a second, different kind of navigation.
+  async function addOriginServer(prompt: {
+    readonly url: string;
+    readonly origin: string;
+  }): Promise<void> {
+    unknownOriginPrompt = null;
+    const result: AddServerResult = await window.daisy.settings.addServer({
+      label: deriveServerLabelFromOrigin(prompt.origin),
+      origin: prompt.origin,
+      color: { kind: 'swatch', swatch: SERVER_SWATCHES[0] },
+      allowInsecureHttp: isInsecureOrigin(prompt.origin),
+    });
+    if (!result.ok) {
+      errorText = `Couldn't add "${prompt.origin}": ${result.error.message}`;
+      applyPresentation();
+      return;
+    }
+    markExternalNavigation();
+    const navigation: BrowserIpcVoidResult = await window.daisy.browser.navigate(prompt.url);
+    handleVoidResult(navigation);
+  }
+
   function applyIdlePresentation(): void {
     cancelLoadingBanner();
     messageElement.classList.remove('browser-toolbar-message--loading');
@@ -333,6 +416,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       }
     } else if (blockedCertificate !== null) {
       applyCertificatePromptPresentation();
+    } else if (unknownOriginPrompt !== null) {
+      applyUnknownOriginPromptPresentation();
     } else if (errorText !== null) {
       applyErrorPresentation();
     } else {
@@ -408,8 +493,25 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       refreshButton.setAttribute('title', 'Refresh');
       refreshButton.setAttribute('aria-label', 'Refresh');
       navClickHandler = () => {
-        markExternalNavigation();
-        void window.daisy.browser.reload().then(handleVoidResult);
+        // When the address bar shows a different URL than the loaded page,
+        // Refresh navigates to the address bar value instead of blindly
+        // reloading the stale page — matching normal browser behaviour where
+        // Refresh retries whatever the address bar shows. Crucially this also
+        // covers the case where NO page is loaded yet (`lastNavigationState`
+        // is null — e.g. a fresh profile whose first attempt was refused as
+        // unknown_origin before `loadURL` ever ran, so no state push fired):
+        // the only non-empty address then differs from "nothing", so Refresh
+        // re-requests it and re-triggers the prompt. `reload()` alone would
+        // reload the blank view and do nothing.
+        const value = (addressField.value ?? '').trim();
+        const currentUrl = lastNavigationState?.url;
+        if (value !== '' && value !== currentUrl) {
+          markExternalNavigation();
+          void window.daisy.browser.navigate(value).then(handleVoidResult);
+        } else {
+          markExternalNavigation();
+          void window.daisy.browser.reload().then(handleVoidResult);
+        }
       };
     }
     refreshButton.addEventListener('click', navClickHandler);
@@ -450,12 +552,17 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         (result.error.errorCode === 'ERR_ABORTED' || result.error.errorCode === 'ERR_FAILED');
       if (!isCancellation) {
         if (result.error.code === 'unknown_origin') {
-          // requirements-decisions.md section 3: an unknown origin must prompt
-          // the user to add a server, and must never silently navigate or
-          // auto-create one. The prompt is text-only: the Settings window is
-          // one click away in the window chrome, so the row carries no button.
-          const origin = result.error.origin ?? 'That address';
-          errorText = `"${origin}" is not a configured server. Add it in Settings, then try again`;
+          // requirements-decisions.md section 3: an unknown origin must never
+          // be navigated to or auto-created silently. The prompt offers to
+          // add it as a server (a single "OK" action button; cancel is the
+          // banner's dismiss cross). The address field still holds the value
+          // that was just refused (a failed navigation fires no did-navigate
+          // state push), so it is captured wholesale as the auto-retry target
+          // once the server exists.
+          const submittedUrl = addressField.value.trim();
+          const origin = result.error.origin ?? submittedUrl;
+          unknownOriginPrompt = { url: submittedUrl === '' ? origin : submittedUrl, origin };
+          errorText = null;
         } else {
           errorText = result.error.message;
         }
@@ -503,7 +610,30 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     truncatedValueTooltipController.render = () => undefined;
   }
 
+  // Enter keydown navigates immediately regardless of whether the value
+  // changed.  sp-textfield's `change` event only fires when the committed
+  // value differs from the previous commit (same as native <input>), so
+  // pressing Enter on an unchanged URL — e.g. after dismissing an
+  // unknown-origin prompt — would silently do nothing without this handler.
+  // A guard prevents double-firing: when keydown fires first it sets the
+  // flag so the subsequent `change` event (if one fires) is skipped.
+  let keydownNavigated = false;
+
+  addressField.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    const value = addressField.value.trim();
+    if (value === '') return;
+    event.preventDefault();
+    keydownNavigated = true;
+    markExternalNavigation();
+    void window.daisy.browser.navigate(value).then(handleVoidResult);
+  });
+
   addressField.addEventListener('change', () => {
+    if (keydownNavigated) {
+      keydownNavigated = false;
+      return;
+    }
     const value = addressField.value.trim();
     if (value === '') return;
     markExternalNavigation();
@@ -550,6 +680,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   messageElement.addEventListener('close', (event) => {
     event.preventDefault();
     blockedCertificate = null;
+    unknownOriginPrompt = null;
     errorText = null;
     applyPresentation();
   });
@@ -573,9 +704,10 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // never resurrect text from a previous page.
     if (state.isLoading) {
       errorText = null;
-      // A navigation to a new page has begun — a pending certificate prompt
-      // (and main's matching auto-retry target) is superseded by it.
+      // A navigation to a new page has begun — any pending prompts (and
+      // main's matching auto-retry target) are superseded by it.
       blockedCertificate = null;
+      unknownOriginPrompt = null;
     } else {
       // A load finished with `isLoading:false` (did-stop-loading): every
       // pending external navigation is now complete, so the counter resets.

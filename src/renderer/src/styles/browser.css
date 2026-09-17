@@ -178,17 +178,30 @@
   gap: 8px;
 }
 
-/* The certificate prompt's Allow/Dismiss buttons, grouped after the copy so
-   the banner's default-slot layout keeps them on one row with text before
-   actions. `margin-inline-start:auto` pushes the pair to the right edge of
-   the strip; the banner aligns the slot content itself, so this only sets
-   the grouping and the gap between the two buttons. */
+/* Message text block in prompt rows (the unknown-origin prompt wraps its copy
+   in this span). `flex: 1 1 auto` lets it absorb the strip's flex space while
+   `min-width: 0` overrides the flex item's implicit `min-width:auto` so the
+   text may wrap *inside* the span instead of forcing the whole row - the
+   prompt stays one flex line with the action button to its right, and on a
+   narrow screen only the message wraps. */
+.browser-toolbar-message__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The prompt action buttons (the certificate prompt's Allow/Dismiss pair and
+   the unknown-origin prompt's single OK action button), grouped after the
+   copy so the banner's default-slot layout keeps them on one row with text
+   before actions. `margin-inline-start:auto` pushes the group to the right
+   edge of the strip; the banner aligns the slot content itself, so this only
+   sets the grouping and the gap between buttons. `flex: 0 0 auto` keeps the
+   button from shrinking when the copy wraps. */
 .browser-toolbar-message__actions {
-  margin-inline-start: auto;
-  display: inline-flex;
   align-items: center;
+  display: inline-flex;
   gap: 8px;
   flex: 0 0 auto;
+  margin-inline-start: 12px;
 }
 
 /* Groups the toolbar's status/message row with the reserved page-view region

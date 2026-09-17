@@ -6,6 +6,22 @@ import {
 } from '../../../shared';
 import { resolveServerColorCss } from '../lib/serverColor';
 
+/**
+ * Derives a default server label from a canonical origin, for the browser
+ * toolbar's "add this unknown origin as a server" flow. Uses `URL.host`
+ * (host name plus the port only when it is non-default), so two local AEM
+ * instances on different ports produce distinguishable labels instead of
+ * both collapsing to "localhost". Falls back to the origin itself when the
+ * host cannot be read (defensive - `parseOrigin` already guarantees a host).
+ */
+export function deriveServerLabelFromOrigin(origin: string): string {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return origin;
+  }
+}
+
 /** One entry the server picker panel (`serverPickerPanel.ts`) renders. */
 export interface ServerOption {
   readonly id: ServerId;
@@ -95,6 +111,18 @@ export function describeBlockedCertificate(info: CertificateBlockedInfo): string
     `Untrusted certificate for ${info.origin} ` +
     `(SHA-256 ${shortFingerprint(info.certificateSha256Fingerprint)}, ${info.errorClass}).`
   );
+}
+
+/**
+ * Builds the copy for the browser pane's unknown-origin prompt (the banner
+ * row in `browserToolbar.ts`, `browser:navigate`'s `unknown_origin` error).
+ * Takes no arguments so it cannot quietly re-insert the origin into the copy:
+ * the address is already visible in the address bar right above the banner,
+ * and citing it again is noise. The acting affordance is a single "OK"
+ * `sp-action-button` that adds the host; cancel is the banner's dismiss cross.
+ */
+export function describeUnknownOrigin(): string {
+  return 'This host is unknown. Press OK to add it to the managed hosts';
 }
 
 /** Integer-pixel bounds suitable for `WebContentsView.setBounds()`. */
