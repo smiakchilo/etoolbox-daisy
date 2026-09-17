@@ -17,8 +17,8 @@ export function deriveServerLabelFromOrigin(origin: string): string {
   }
 }
 
-/** One entry the server picker panel (`serverPickerPanel.ts`) renders. */
-export interface ServerOption {
+/** One entry the hosts panel (`hostsPanel.ts`) renders. */
+export interface HostOption {
   readonly id: ServerId;
   readonly label: string;
   readonly origin: string;
@@ -27,11 +27,11 @@ export interface ServerOption {
   readonly selected: boolean;
 }
 
-/** Builds the server picker panel's option list from the settings snapshot. */
-export function buildServerOptions(
+/** Builds the hosts panel's option list from the settings snapshot. */
+export function buildHostOptions(
   servers: readonly ServerSnapshot[],
   activeServerId: ServerId | null,
-): readonly ServerOption[] {
+): readonly HostOption[] {
   return servers.map((server) => ({
     id: server.id,
     label: server.label,

@@ -9,7 +9,7 @@ import path from 'node:path';
  * it: clicking the button opens a menu of the named swatches, each showing
  * its colour dot. Picking one writes that swatch's name into the field -
  * exactly the same textfield-plus-picker-button pattern as the browser
- * toolbar's address bar/server picker (see `address-server-picker.spec.ts`).
+ * toolbar's address bar/hosts picker (see `address-hosts-picker.spec.ts`).
  * Typing a hex value directly into the field still works too, with no menu
  * interaction at all.
  *

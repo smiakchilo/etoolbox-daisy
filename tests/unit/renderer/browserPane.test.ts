@@ -6,10 +6,10 @@ import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/sh
 /**
  * The browser pane's page panel grouping (browserPane.ts): the toolbar's
  * status/message row and the reserved native-view region hide as one while
- * the server picker covers the page, so the message row never claims to
+ * the hosts panel covers the page, so the message row never claims to
  * describe a page that is no longer on screen. A splitter drag never hides a
- * panel - the native view stays fully visible - so only the picker path is
- * exercised here.
+ * panel - the native view stays fully visible - so only the hosts panel path
+ * is exercised here.
  *
  * The toolbar's own message lifecycle is exercised through the pane for the
  * one signal that needs a running app in E2E otherwise: the unified
@@ -119,29 +119,29 @@ describe('createBrowserPane page panel', () => {
     expect(pane.element.querySelector('.browser-toolbar-message__settings')).toBeNull();
   });
 
-  it('hides the whole page panel while the server picker is open, and restores it on close', () => {
+  it('hides the whole page panel while the hosts panel is open, and restores it on close', () => {
     const pane = build();
     const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
-    const pickerButton = pane.element.querySelector<HTMLElement>('#server-picker-button');
+    const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
     expect(pagePanel?.hidden).toBe(false);
     pickerButton?.click();
     expect(pagePanel?.hidden).toBe(true);
 
-    pane.element.querySelector<HTMLElement>('.server-picker-panel__close')?.click();
+    pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
     expect(pagePanel?.hidden).toBe(false);
   });
 
-  it('swaps the picker instantly via `hidden`', () => {
+  it('swaps the hosts panel instantly via `hidden`', () => {
     const pane = build();
     const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
 
-    pane.element.querySelector<HTMLElement>('#server-picker-button')?.click();
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
     // The list needs the layout space immediately, so the panel must be
     // `display:none` (hidden).
     expect(pagePanel?.hidden).toBe(true);
 
-    pane.element.querySelector<HTMLElement>('.server-picker-panel__close')?.click();
+    pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
     expect(pagePanel?.hidden).toBe(false);
   });
 });

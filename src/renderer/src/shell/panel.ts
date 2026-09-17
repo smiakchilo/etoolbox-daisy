@@ -3,7 +3,7 @@ import { CLOSE_ICON_TAG, registerCloseIcon } from './closeIcon';
 
 /**
  * The whole-size, page-view "modal" panel shared by every surface that must
- * replace the native `WebContentsView` region while open (the server picker
+ * replace the native `WebContentsView` region while open (the hosts panel
  * today; the Settings and History panels that supersede their child windows).
  *
  * It exists because a Spectrum overlay/dropdown can never paint above the

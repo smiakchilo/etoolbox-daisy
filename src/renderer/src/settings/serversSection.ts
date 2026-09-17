@@ -26,7 +26,7 @@ const SWATCH_SET = new Set<string>(SERVER_SWATCHES);
  * button" beside it listing the named swatches with their colour dots.
  * Selecting an item writes that swatch's name into the field - the exact
  * same textfield-plus-picker-button pattern as the browser toolbar's address
- * bar/server picker (`browserToolbar.ts`), chosen for the same reason: it
+ * bar/hosts picker (`browserToolbar.ts`), chosen for the same reason: it
  * keeps the field itself as the single source of truth and typable at all
  * times, with the menu as a pure convenience for the common case. Unlike
  * that address bar, this button never needs to hide - `SERVER_SWATCHES` is a

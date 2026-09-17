@@ -7,14 +7,14 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 
 /**
  * Regression test for the Settings panel's dismissal bug: loading a URL from
- * the server picker, opening Settings, and closing it via the panel's own
+ * the hosts panel, opening Settings, and closing it via the panel's own
  * cross button left the browser pane with a stale active-panel reference and
  * a permanently suspended native view - the page vanished, and the next
  * Settings click did nothing because `openPanel` short-circuited on the still-
  * armed panel (`browserPane.ts` `if (activePanel === panel) return`).
  *
- * The Settings panel's `onDismiss` used to be a no-op, while the server
- * picker's forwards dismissal into the pane's panel host - the asymmetry was
+ * The Settings panel's `onDismiss` used to be a no-op, while the hosts
+ * panel's forwards dismissal into the pane's panel host - the asymmetry was
  * the bug. Only the real built app can prove the native view is actually
  * collapsed while the panel is open and *restored* on close, so this spec
  * reads the real `WebContentsView` child bounds through `app.evaluate`
@@ -138,11 +138,11 @@ test('closing Settings with its close button restores the AEM view and Settings 
       return false;
     };
 
-    // --- Step 1: load a URL from the server picker ------------------------
-    const pickerButton = page.locator('#server-picker-button');
+    // --- Step 1: load a URL from the hosts panel ---------------------------
+    const pickerButton = page.locator('#hosts-button');
     await expect(pickerButton).toBeVisible({ timeout: 10_000 });
     await pickerButton.click();
-    await page.locator(`.server-picker-item[data-origin="${origin}"]`).click();
+    await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
     // The native view is full-size again after the navigation.
     expect(await waitForNativeView('full')).toBe(true);

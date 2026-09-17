@@ -118,7 +118,7 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   // a future width change cannot silently break this.
   expect(Math.abs(draggedWidth - (initialWidth + dragByPx + bar.width / 2))).toBeLessThanOrEqual(3);
 
-  // The native view is never collapsed by a drag (only by the server picker),
+  // The native view is never collapsed by a drag (only by the hosts panel),
   // so this asserts it followed the pane live and ended exactly where the
   // drag took it.
   let matched: { x: number; y: number; width: number; height: number } | undefined;

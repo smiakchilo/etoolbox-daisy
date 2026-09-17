@@ -6,7 +6,7 @@ import type {
   CertificateBlockedInfo,
 } from '../../../shared';
 import { SERVER_SWATCHES, isInsecureOrigin } from '../../../shared';
-import type { ServerOption } from './viewModel';
+import type { HostOption } from './viewModel';
 import {
   describeBlockedCertificate,
   describeUnknownOrigin,
@@ -20,17 +20,17 @@ import {
  *
  * The address bar (`addressField`) is an ordinary `sp-textfield`: typing a
  * URL and committing it (Enter/blur) navigates exactly as before. The
- * `sp-picker-button` beside it (`serverPickerButton`) is a combobox-style
+ * `sp-picker-button` beside it (`hostsButton`) is a combobox-style
  * affordance, not a value-holding control - clicking it asks the owning pane
- * to suspend the native `WebContentsView` and reveal the whole-size server
- * list (`serverPickerPanel.ts`). Selecting a server there calls back into
- * `navigateTo(origin)`, which writes that server's *origin* into the address
+ * to suspend the native `WebContentsView` and reveal the whole-size hosts
+ * list (`hostsPanel.ts`). Selecting a host there calls back into
+ * `navigateTo(origin)`, which writes that host's *origin* into the address
  * field and runs it through the exact same `navigate()` call as anything
  * typed directly. With zero configured servers the button stays visible but
- * disabled (see `setServerOptions`), so there is nothing to open.
+ * disabled (see `setHostOptions`), so there is nothing to open.
  *
- * The button reveals its "open" state when the picker panel is up:
- * `setServerPickerOpen(true)` sets the `open` attribute, whose `:host([open])`
+ * The button reveals its "open" state when the hosts panel is up:
+ * `setHostsPickerOpen(true)` sets the `open` attribute, whose `:host([open])`
  * CSS rule gives the pressed look; the pane clears it when the panel closes.
  *
  * Every control here is wired to the real `window.daisy.browser` IPC surface
@@ -83,12 +83,12 @@ export interface BrowserToolbar {
    * the row is shown/cleared.
    */
   readonly messageElement: HTMLElement;
-  /** Refreshes the address bar text and server-selector options for a newly loaded snapshot. */
+  /** Refreshes the address bar text and host-selector options for a newly loaded snapshot. */
   setAddressValue(value: string): void;
-  /** Refreshes the server-selector options (and the certificate prompt's matching-server state) for a newly loaded snapshot. */
-  setServerOptions(options: readonly ServerOption[]): void;
+  /** Refreshes the host-selector options (and the certificate prompt's matching-server state) for a newly loaded snapshot. */
+  setHostOptions(options: readonly HostOption[]): void;
   /** Marks the picker button as open (panel visible) or closed. */
-  setServerPickerOpen(open: boolean): void;
+  setHostsPickerOpen(open: boolean): void;
   /** Writes `origin` into the address field and navigates to it, exactly like a typed address. */
   navigateTo(origin: string): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
@@ -97,7 +97,7 @@ export interface BrowserToolbar {
 
 export interface BrowserToolbarCallbacks {
   /** Fired when the picker button is activated; the owning pane opens/closes the panel. */
-  onServerPickerClick(): void;
+  onHostsPickerClick(): void;
 }
 
 /**
@@ -267,13 +267,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     const info = blockedCertificate;
     if (info === null) return;
 
-    const matchingServer = serverOptions.find((server) => server.origin === info.origin);
+    const matchingHost = hostOptions.find((host) => host.origin === info.origin);
     const okButton = el('sp-action-button', { attrs: { size: 'm' }, text: 'OK' });
-    if (matchingServer === undefined) {
+    if (matchingHost === undefined) {
       okButton.setAttribute('disabled', '');
     }
     okButton.addEventListener('click', () => {
-      void allowBlockedCertificate(info, matchingServer);
+      void allowBlockedCertificate(info, matchingHost);
     });
 
     const actions = el('span', {
@@ -298,12 +298,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // from the prompt when that navigation reports `isLoading`.
   async function allowBlockedCertificate(
     info: CertificateBlockedInfo,
-    matchingServer: ServerOption | undefined,
+    matchingHost: HostOption | undefined,
   ): Promise<void> {
-    if (matchingServer === undefined) return;
+    if (matchingHost === undefined) return;
     blockedCertificate = null;
     const result: BrowserIpcVoidResult = await window.daisy.browser.approveCertificateException({
-      serverId: matchingServer.id,
+      serverId: matchingHost.id,
       exception: info,
     });
     if (!result.ok) {
@@ -456,11 +456,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         forwardButton.setAttribute('disabled', '');
       }
     }
-    // Picker: disabled while switching, or when no servers are configured.
-    if (switching || !hasServers) {
-      serverPickerButton.setAttribute('disabled', '');
+    // Picker: disabled while switching, or when no hosts are configured.
+    if (switching || !hasHosts) {
+      hostsButton.setAttribute('disabled', '');
     } else {
-      serverPickerButton.removeAttribute('disabled');
+      hostsButton.removeAttribute('disabled');
     }
   }
 
@@ -598,7 +598,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       id: 'browser-address-bar',
       // Not a URL-shaped example: kept honest until the first real
       // navigation-state event arrives (see `hasLiveNavigationState` below).
-      placeholder: 'Select a server or type an address',
+      placeholder: 'Select a host or type an address',
       'aria-label': 'Address',
     },
   }) as HTMLElement & { value: string };
@@ -653,21 +653,21 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // browser.css completes the coupling). Its built-in chevron triggers the
   // pane's open/close toggle. Non-quiet: a filled resting background whose
   // `:host([open])` "down" variant is the visibly pressed toggle state.
-  const serverPickerButton = el('sp-picker-button', {
+  const hostsButton = el('sp-picker-button', {
     attrs: {
-      id: 'server-picker-button',
-      class: 'server-picker-button',
+      id: 'hosts-button',
+      class: 'hosts-button',
       position: 'right',
-      'accessible-label': 'Choose server',
-      title: 'Choose server',
+      'accessible-label': 'Choose host',
+      title: 'Choose host',
       disabled: '',
     },
   });
-  serverPickerButton.addEventListener('click', () => callbacks.onServerPickerClick());
+  hostsButton.addEventListener('click', () => callbacks.onHostsPickerClick());
 
   const addressGroup = el('div', {
     attrs: { class: 'browser-toolbar__address-group' },
-    children: [addressField, serverPickerButton],
+    children: [addressField, hostsButton],
   });
 
   toolbar.append(backButton, forwardButton, refreshButton, addressGroup);
@@ -728,13 +728,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // Re-derived whenever the snapshot changes so the switch handler below can
   // restore the picker to its correct disabled state without clobbering the
   // no-servers case (it must not blindly remove `disabled` after a switch).
-  let hasServers = false;
-  // The full server option list, kept for the certificate prompt's
-  // matching-server check (Allow is enabled only when a configured server's
-  // origin equals the blocked origin). Mirrors `hasServers` (which only feeds
-  // the picker's disabled state) but cannot be merged into it: `hasServers`
+  let hasHosts = false;
+  // The full host option list, kept for the certificate prompt's
+  // matching-host check (Allow is enabled only when a configured host's
+  // origin equals the blocked origin). Mirrors `hasHosts` (which only feeds
+  // the picker's disabled state) but cannot be merged into it: `hasHosts`
   // is a boolean, and matching needs the actual origins.
-  let serverOptions: readonly ServerOption[] = [];
+  let hostOptions: readonly HostOption[] = [];
 
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
     switching = state.switching;
@@ -758,25 +758,25 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       if (hasLiveNavigationState) return;
       addressField.value = value;
     },
-    setServerOptions(options: readonly ServerOption[]): void {
+    setHostOptions(options: readonly HostOption[]): void {
       // Never touches `addressField.value`: the address bar's displayed
       // text is owned exclusively by `setAddressValue`/the live
       // navigation-state event above, and must not be reset just because
-      // the configured server list reloaded (e.g. the window regaining
+      // the configured host list reloaded (e.g. the window regaining
       // focus). The picker's disabled state and the certificate prompt's
-      // matching-server state both depend on the snapshot, so both are
+      // matching-host state both depend on the snapshot, so both are
       // re-derived here.
-      hasServers = options.length > 0;
-      serverOptions = options;
+      hasHosts = options.length > 0;
+      hostOptions = options;
       applyPresentation();
     },
-    setServerPickerOpen(open: boolean): void {
+    setHostsPickerOpen(open: boolean): void {
       if (open) {
-        serverPickerButton.setAttribute('open', '');
-        serverPickerButton.setAttribute('aria-expanded', 'true');
+        hostsButton.setAttribute('open', '');
+        hostsButton.setAttribute('aria-expanded', 'true');
       } else {
-        serverPickerButton.removeAttribute('open');
-        serverPickerButton.setAttribute('aria-expanded', 'false');
+        hostsButton.removeAttribute('open');
+        hostsButton.setAttribute('aria-expanded', 'false');
       }
     },
     navigateTo(origin: string): void {

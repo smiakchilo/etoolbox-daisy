@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildServerOptions,
+  buildHostOptions,
   computeAddressBarValue,
   computeInsecureMarker,
   computeReservedRegionBounds,
@@ -31,9 +31,9 @@ const httpServer: ServerSnapshot = {
 
 const servers: readonly ServerSnapshot[] = [httpsServer, httpServer];
 
-describe('buildServerOptions', () => {
+describe('buildHostOptions', () => {
   it('maps every server, marking the active one as selected', () => {
-    const options = buildServerOptions(servers, httpServerId);
+    const options = buildHostOptions(servers, httpServerId);
     expect(options).toEqual([
       {
         id: httpsServerId,
@@ -53,12 +53,12 @@ describe('buildServerOptions', () => {
   });
 
   it('marks nothing selected when there is no active server', () => {
-    const options = buildServerOptions(servers, null);
+    const options = buildHostOptions(servers, null);
     expect(options.every((option) => !option.selected)).toBe(true);
   });
 
   it('returns an empty list for no configured servers', () => {
-    expect(buildServerOptions([], null)).toEqual([]);
+    expect(buildHostOptions([], null)).toEqual([]);
   });
 });
 

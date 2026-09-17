@@ -7,7 +7,7 @@ import type {
   CertificateBlockedInfo,
 } from '../../../src/shared';
 import { newServerId } from '../../../src/shared';
-import type { ServerOption } from '../../../src/renderer/src/shell/viewModel';
+import type { HostOption } from '../../../src/renderer/src/shell/viewModel';
 
 /**
  * The toolbar's external-navigation loading state machine (browserToolbar.ts).
@@ -106,7 +106,7 @@ afterEach(() => {
 });
 
 function build(): ReturnType<typeof createBrowserToolbar> {
-  return createBrowserToolbar({ onServerPickerClick: () => {} });
+  return createBrowserToolbar({ onHostsPickerClick: () => {} });
 }
 
 function loadingState(isLoading: boolean): BrowserNavigationState {
@@ -479,7 +479,7 @@ function snapshotOf(id: string): {
   };
 }
 
-function serverOption(overrides: Partial<ServerOption> = {}): ServerOption {
+function hostOption(overrides: Partial<HostOption> = {}): HostOption {
   return {
     id: AUTHOR_SERVER_ID,
     label: 'Author',
@@ -501,9 +501,9 @@ describe('createBrowserToolbar certificate prompt', () => {
   it('renders the prompt with the fixed copy and an enabled OK when a configured server matches the blocked origin', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
-    toolbar.setServerOptions([
-      serverOption(),
-      serverOption({ id: newServerId(() => 'server-b'), label: 'Other' }),
+    toolbar.setHostOptions([
+      hostOption(),
+      hostOption({ id: newServerId(() => 'server-b'), label: 'Other' }),
     ]);
 
     blockedListeners[0]?.(BLOCKED_INFO);
@@ -528,14 +528,14 @@ describe('createBrowserToolbar certificate prompt', () => {
 
     // The settings snapshot lands after the prompt: OK re-evaluates against
     // the now-present server.
-    toolbar.setServerOptions([serverOption()]);
+    toolbar.setHostOptions([hostOption()]);
     expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(false);
   });
 
   it('approves with the exact decision main pushed and clears the prompt', async () => {
     const toolbar = build();
     const message = findMessage(toolbar);
-    toolbar.setServerOptions([serverOption()]);
+    toolbar.setHostOptions([hostOption()]);
     blockedListeners[0]?.(BLOCKED_INFO);
 
     findPromptOk(toolbar).click();
@@ -553,7 +553,7 @@ describe('createBrowserToolbar certificate prompt', () => {
   it('surfaces an approval failure as an error row instead of leaving the prompt up', async () => {
     const toolbar = build();
     const message = findMessage(toolbar);
-    toolbar.setServerOptions([serverOption()]);
+    toolbar.setHostOptions([hostOption()]);
     blockedListeners[0]?.(BLOCKED_INFO);
     browser.approveCertificateException.mockResolvedValueOnce({
       ok: false,
@@ -571,7 +571,7 @@ describe('createBrowserToolbar certificate prompt', () => {
   it('the banner close control dismisses the prompt without persisting anything', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
-    toolbar.setServerOptions([serverOption()]);
+    toolbar.setHostOptions([hostOption()]);
     blockedListeners[0]?.(BLOCKED_INFO);
     expect(message.hasAttribute('open')).toBe(true);
 
@@ -585,7 +585,7 @@ describe('createBrowserToolbar certificate prompt', () => {
   it('re-appears after a dismissal when the address is re-requested (Enter/Refresh re-fires the block)', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
-    toolbar.setServerOptions([serverOption()]);
+    toolbar.setHostOptions([hostOption()]);
     blockedListeners[0]?.(BLOCKED_INFO);
     expect(message.hasAttribute('open')).toBe(true);
 
@@ -605,7 +605,7 @@ describe('createBrowserToolbar certificate prompt', () => {
   it('a new navigation supersedes the prompt', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
-    toolbar.setServerOptions([serverOption()]);
+    toolbar.setHostOptions([hostOption()]);
     blockedListeners[0]?.(BLOCKED_INFO);
     expect(message.hasAttribute('open')).toBe(true);
 

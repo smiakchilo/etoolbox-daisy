@@ -26,10 +26,10 @@ export interface BrowserViewHost {
    * Collapses the native view to a zero-sized rectangle (`true`) and restores
    * it from the live measurement (`false`).
    *
-   * Used only by the server picker, which replaces the page-view region with
+   * Used only by the hosts panel, which replaces the page-view region with
    * its own DOM list (browserPane.ts). A DOM list cannot sit above the
-   * composited native view, so the view is collapsed the moment the picker
-   * opens and the panel's `[hidden]` swaps instantly.
+   * composited native view, so the view is collapsed the moment the hosts
+   * panel opens and the panel's `[hidden]` swaps instantly.
    *
    * The pane-splitter drag deliberately does NOT go through this path: the
    * view stays fully visible and live-following for its whole duration (see

@@ -1,8 +1,8 @@
 /*
  * The whole-size "modal" panel surface shared by every surface that replaces
  * the browser pane's native WebContentsView region while open (`panel.ts`):
- * the server picker today, the Settings panel (and the History panel to
- * come). Each caller adds its own surface alias class (`server-picker-panel`,
+ * the hosts panel today, the Settings panel (and the History panel to
+ * come). Each caller adds its own surface alias class (`hosts-panel`,
  * `settings-panel`) that is styled via the selector aliases here, so
  * existing unit/E2E selectors keep resolving.
  */
@@ -10,7 +10,7 @@
 /* Justifies/occupies exactly the pane's page-view area - the browser view
    host is suspended/hidden underneath via browserPane.ts's panel host. */
 .panel,
-.server-picker-panel {
+.hosts-panel {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -20,7 +20,7 @@
 }
 
 .panel[hidden],
-.server-picker-panel[hidden] {
+.hosts-panel[hidden] {
   display: none;
 }
 

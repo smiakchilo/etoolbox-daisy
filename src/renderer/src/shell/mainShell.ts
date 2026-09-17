@@ -6,7 +6,7 @@ import { createChatPane } from './chatPane';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
-import { buildServerOptions, computeAddressBarValue, computeInsecureMarker } from './viewModel';
+import { buildHostOptions, computeAddressBarValue, computeInsecureMarker } from './viewModel';
 
 export interface MountMainShellOptions {
   /**
@@ -25,7 +25,7 @@ function applySnapshot(browserPane: BrowserPane, snapshot: AppSettingsSnapshot):
   const { servers, activeServerId } = snapshot;
   browserPane.update({
     addressValue: computeAddressBarValue(),
-    serverOptions: buildServerOptions(servers, activeServerId),
+    hostOptions: buildHostOptions(servers, activeServerId),
     insecureMarker: computeInsecureMarker(servers, activeServerId),
   });
 }

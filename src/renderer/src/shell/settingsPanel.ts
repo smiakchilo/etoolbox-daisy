@@ -20,7 +20,7 @@ import { createPanel, type Panel } from './panel';
  *
  * The panel occupies the browser pane's page-view region while open (the
  * native view is suspended underneath by `browserPane.ts`'s panel host), so
- * it behaves like the server picker: one panel at a time, close button and
+ * it behaves like the hosts panel: one panel at a time, close button and
  * Escape dismiss it.
  */
 export interface SettingsPanel extends Panel {

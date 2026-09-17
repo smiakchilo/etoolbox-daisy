@@ -1,6 +1,6 @@
 /*
  * The browser pane's own chrome: toolbar controls, the status/message row,
- * the reserved page-view region, and the server-picker panel that replaces
+ * the reserved page-view region, and the hosts panel that replaces
  * it while open (all consuming the shared `.toolbar`/`.pane`/`.panel`
  * surfaces from base.css / panel.css).
  */
@@ -28,7 +28,7 @@
      the LEFT pair is re-rounded by clipping on the host itself (the `.input`
      fills the host box, so the clip reproduces a rounded-left field exactly).
      The RIGHT corners stay square on purpose: they meet the picker's already-
-     squared left corners, and #server-picker-button then overlaps the field by
+     squared left corners, and #hosts-button then overlaps the field by
      1px (margin-left below) so both 1px borders coincide as one line. */
   --mod-textfield-corner-radius: 0;
   border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
@@ -46,7 +46,7 @@
   --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
 }
 
-.browser-toolbar__address-group #server-picker-button {
+.browser-toolbar__address-group #hosts-button {
   /* Fold the button onto the field: this 1px negative margin lays the button's
      left border exactly over the field's right border (both now square at the
      seam), merging them into one 1px line instead of a 2px divide.
@@ -250,18 +250,18 @@
   display: none;
 }
 
-.server-picker-panel__list {
+.hosts-panel__list {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: 4px 0;
 }
 
-/* One option per configured server: a real <button>, but bare - no resting
+/* One option per configured host: a real <button>, but bare - no resting
    background, border or button padding - so the list reads as rows "one after
    another", with only hover/keyboard state providing any visual affordance
-   (see serverPickerPanel.ts). */
-.server-picker-item {
+   (see hostsPanel.ts). */
+.hosts-item {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -275,22 +275,22 @@
   cursor: pointer;
 }
 
-.server-picker-item:hover {
+.hosts-item:hover {
   background: var(--spectrum-gray-200, #eaeaea);
 }
 
-.server-picker-item:focus-visible {
+.hosts-item:focus-visible {
   outline: 2px solid var(--spectrum-blue-400, #2680eb);
   outline-offset: -2px;
   background: var(--spectrum-gray-200, #eaeaea);
 }
 
-.server-picker-item__label {
+.hosts-item__label {
   font-weight: 500;
   overflow-wrap: anywhere;
 }
 
-.server-picker-item__origin {
+.hosts-item__origin {
   margin-left: auto;
   color: var(--spectrum-gray-600, #6e6e6e);
   font-size: 13px;

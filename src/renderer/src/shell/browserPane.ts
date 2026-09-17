@@ -3,12 +3,12 @@ import { createBrowserToolbar } from './browserToolbar';
 import { createBrowserViewHost } from './browserViewHost';
 import { createInsecureBanner } from './insecureBanner';
 import type { Panel } from './panel';
-import { createServerPickerPanel } from './serverPickerPanel';
-import type { InsecureMarkerState, ServerOption } from './viewModel';
+import { createHostsPanel } from './hostsPanel';
+import type { HostOption, InsecureMarkerState } from './viewModel';
 
 /**
  * The single-open host for whole-size panels over the pane's page-view
- * region (the server picker and the Settings panel today; History later).
+ * region (the hosts panel and the Settings panel today; History later).
  * Only one panel is visible at a time: opening a second panel first closes
  * whatever is active. The host owns the native-view suspension dance and
  * nothing else - the panels themselves are plain `Panel` instances managed
@@ -34,7 +34,7 @@ export interface BrowserPane {
   appendPanel(panel: Panel): void;
   update(state: {
     readonly addressValue: string;
-    readonly serverOptions: readonly ServerOption[];
+    readonly hostOptions: readonly HostOption[];
     readonly insecureMarker: InsecureMarkerState;
   }): void;
   dispose(): void;
@@ -46,7 +46,7 @@ export interface BrowserPane {
  * origin" prompt, external-loading "Loading…" presentation) grouped below
  * the reserved page-view region it describes (statusbar-style: the row sits
  * under the page, not over it) - and, covered while a whole-size panel is
- * open, the panel (server picker or Settings).
+ * open, the panel (hosts panel or Settings).
  *
  * Message and native-view region are grouped inside `browserPagePanel` so one
  * `hidden` toggle governs both:
@@ -55,8 +55,8 @@ export interface BrowserPane {
  *    draw over the native view's region: instead of an overlay trying to
  *    float above an Electron-native WebContentsView (which always composites
  *    *above* this document), opening the panel suspends/collapses the native
- *    view and lets the DOM panel take the whole page-view area. The server
- *    picker ("combobox glyph" button in the toolbar) and the chat pane's
+ *    view and lets the DOM panel take the whole page-view area. The hosts
+ *    panel ("combobox glyph" button in the toolbar) and the chat pane's
  *    Settings/History buttons all go through this one host.
  *  - a splitter drag does NOT touch the native view or the panel at all: the
  *    page stays fully visible and live-following for the drag's whole
@@ -74,7 +74,7 @@ export interface BrowserPane {
 export function createBrowserPane(): BrowserPane {
   let activePanel: Panel | undefined;
 
-  const picker = createServerPickerPanel({
+  const picker = createHostsPanel({
     onSelect(origin: string): void {
       closeActivePanel();
       toolbar.navigateTo(origin);
@@ -85,7 +85,7 @@ export function createBrowserPane(): BrowserPane {
   });
 
   const toolbar = createBrowserToolbar({
-    onServerPickerClick(): void {
+    onHostsPickerClick(): void {
       if (activePanel === picker) closeActivePanel();
       else openPanel(picker);
     },
@@ -112,7 +112,7 @@ export function createBrowserPane(): BrowserPane {
     // already-hidden panel.
     viewHost.setSuspended(true);
     pagePanel.hidden = true;
-    toolbar.setServerPickerOpen(panel === picker);
+    toolbar.setHostsPickerOpen(panel === picker);
     panel.open();
   }
 
@@ -123,7 +123,7 @@ export function createBrowserPane(): BrowserPane {
     // Hide the panel first (via its own close), then restore the native view
     // region, so the returning view never paints over a still-visible panel.
     panel.close();
-    toolbar.setServerPickerOpen(false);
+    toolbar.setHostsPickerOpen(false);
     viewHost.setSuspended(false);
     pagePanel.hidden = false;
   }
@@ -145,8 +145,8 @@ export function createBrowserPane(): BrowserPane {
     },
     update(state): void {
       toolbar.setAddressValue(state.addressValue);
-      toolbar.setServerOptions(state.serverOptions);
-      picker.setServerOptions(state.serverOptions);
+      toolbar.setHostOptions(state.hostOptions);
+      picker.setHostOptions(state.hostOptions);
       insecureBanner.update(state.insecureMarker);
       viewHost.reportBoundsNow();
     },

@@ -14,8 +14,8 @@ import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPan
  * the next Settings click short-circuited in `openPanel` and nothing
  * happened (see browserPane.ts `if (activePanel === panel) return`).
  *
- * The picker never hit this because its `onDismiss` forwards to the pane's
- * `close()` (serverPickerPanel.ts); Settings simply forgot the forwarding.
+ * The hosts panel never hit this because its `onDismiss` forwards to the pane's
+ * `close()` (hostsPanel.ts); Settings simply forgot the forwarding.
  */
 
 const snapshotStub = parseAppSettingsSnapshot({

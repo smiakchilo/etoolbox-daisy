@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserViewHost } from '../../../src/renderer/src/shell/browserViewHost';
 
 /**
- * The reserved-region reporter, with the server-picker suspension path under
+ * The reserved-region reporter, with the hosts-panel suspension path under
  * test.
  *
- * The picker collapses the native view (`setSuspended`). That path exists
+ * The hosts panel collapses the native view (`setSuspended`). That path exists
  * because a DOM list cannot sit above the composited `WebContentsView`.
  * Collapsing is only safe if the restore afterwards is guaranteed to re-send
  * the live rectangle - the reporter's own "don't re-send an unchanged
