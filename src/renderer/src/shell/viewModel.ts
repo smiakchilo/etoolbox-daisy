@@ -1,9 +1,4 @@
-import {
-  isInsecureOrigin,
-  type CertificateBlockedInfo,
-  type ServerId,
-  type ServerSnapshot,
-} from '../../../shared';
+import { isInsecureOrigin, type ServerId, type ServerSnapshot } from '../../../shared';
 import { resolveServerColorCss } from '../lib/serverColor';
 
 /**
@@ -93,24 +88,18 @@ export function computeAddressBarValue(): string {
   return '';
 }
 
-/** Shrinks a certificate's bare hex SHA-256 fingerprint to a scannable short form: first 8 hex chars' …' last 6. */
-export function shortFingerprint(fingerprint: string): string {
-  return `${fingerprint.slice(0, 8)}\u2026${fingerprint.slice(-6)}`;
-}
-
 /**
  * Builds the copy for the browser pane's untrusted-certificate prompt (the
- * banner row in `browserToolbar.ts`). Pure so the exact wording and the
- * fingerprint short-form are unit-testable without a DOM or Electron. The
- * banner keeps the *decision* (origin, full fingerprint, error class) exactly
- * as main pushed it via `browser:certificate-blocked`; nothing here is
- * re-derived, so what the user is asked to approve is what was blocked.
+ * banner row in `browserToolbar.ts`, the `browser:certificate-blocked` push).
+ * Takes no arguments so it cannot quietly re-insert the origin or fingerprint
+ * into the copy: both are already visible in the address bar above the banner
+ * (and fingerprint-level detail was never something a decision-free row should
+ * restate). The acting affordance is a single "OK" `sp-action-button` that
+ * allows the certificate for the already-created managed server; cancel is the
+ * banner's dismiss cross.
  */
-export function describeBlockedCertificate(info: CertificateBlockedInfo): string {
-  return (
-    `Untrusted certificate for ${info.origin} ` +
-    `(SHA-256 ${shortFingerprint(info.certificateSha256Fingerprint)}, ${info.errorClass}).`
-  );
+export function describeBlockedCertificate(): string {
+  return 'This host has an untrusted certificate. Press OK to allow it';
 }
 
 /**

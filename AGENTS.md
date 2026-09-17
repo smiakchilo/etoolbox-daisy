@@ -227,8 +227,8 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1519 passed / 14 skipped**;
-**Playwright → 51/51**.
+Current baseline: **`npm run verify` → 1543 passed / 14 skipped**;
+**Playwright → 55/55**.
 
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's

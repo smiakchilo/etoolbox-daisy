@@ -490,19 +490,15 @@ function serverOption(overrides: Partial<ServerOption> = {}): ServerOption {
   };
 }
 
-function findPromptButtons(toolbar: ReturnType<typeof createBrowserToolbar>): {
-  allow: HTMLElement;
-  dismiss: HTMLElement;
-} {
+function findPromptOk(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
   const message = findMessage(toolbar);
-  const allow = message.querySelector('sp-button[variant="accent"]');
-  const dismiss = message.querySelector('sp-button:not([variant])');
-  if (!allow || !dismiss) throw new Error('certificate prompt buttons not found');
-  return { allow: allow as HTMLElement, dismiss: dismiss as HTMLElement };
+  const ok = message.querySelector('sp-action-button');
+  if (!ok) throw new Error('certificate prompt OK button not found');
+  return ok as HTMLElement;
 }
 
 describe('createBrowserToolbar certificate prompt', () => {
-  it('renders the prompt with copy and an enabled Allow when a configured server matches the blocked origin', () => {
+  it('renders the prompt with the fixed copy and an enabled OK when a configured server matches the blocked origin', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
     toolbar.setServerOptions([
@@ -513,23 +509,27 @@ describe('createBrowserToolbar certificate prompt', () => {
     blockedListeners[0]?.(BLOCKED_INFO);
 
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain('Untrusted certificate for https://author.example');
-    expect(message.textContent).toContain('SHA-256 aaaaaaaa\u2026aaaaaa');
-    expect(message.textContent).toContain('net::ERR_CERT_AUTHORITY_INVALID');
-    expect(findPromptButtons(toolbar).allow.hasAttribute('disabled')).toBe(false);
+    expect(message.textContent).toContain(
+      'This host has an untrusted certificate. Press OK to allow it',
+    );
+    expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(false);
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
   });
 
-  it('disables Allow while the blocked origin has no matching configured server, then enables it once a match arrives', () => {
+  it('disables OK while the blocked origin has no matching configured server, then enables it once a match arrives', () => {
     const toolbar = build();
 
+    // Normal flow cannot reach this state - an unknown origin is refused and
+    // created *before* any certificate check, so a matching configured server
+    // always exists by the time this banner appears. The guard still holds for
+    // the edge case where that server was deleted concurrently.
     blockedListeners[0]?.(BLOCKED_INFO);
-    expect(findPromptButtons(toolbar).allow.hasAttribute('disabled')).toBe(true);
+    expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(true);
 
-    // The settings snapshot lands after the prompt (a slow first login): the
-    // Allow button must re-evaluate against the now-present server.
+    // The settings snapshot lands after the prompt: OK re-evaluates against
+    // the now-present server.
     toolbar.setServerOptions([serverOption()]);
-    expect(findPromptButtons(toolbar).allow.hasAttribute('disabled')).toBe(false);
+    expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(false);
   });
 
   it('approves with the exact decision main pushed and clears the prompt', async () => {
@@ -538,7 +538,7 @@ describe('createBrowserToolbar certificate prompt', () => {
     toolbar.setServerOptions([serverOption()]);
     blockedListeners[0]?.(BLOCKED_INFO);
 
-    findPromptButtons(toolbar).allow.click();
+    findPromptOk(toolbar).click();
 
     await vi.waitFor(() => {
       expect(browser.approveCertificateException).toHaveBeenCalledWith({
@@ -560,7 +560,7 @@ describe('createBrowserToolbar certificate prompt', () => {
       error: { code: 'server_not_found', message: `no server with id server-a` },
     });
 
-    findPromptButtons(toolbar).allow.click();
+    findPromptOk(toolbar).click();
     await vi.waitFor(() => {
       expect(message.textContent).toContain('no longer exists');
     });
@@ -568,21 +568,7 @@ describe('createBrowserToolbar certificate prompt', () => {
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
   });
 
-  it('Dismiss clears the prompt without persisting anything', () => {
-    const toolbar = build();
-    const message = findMessage(toolbar);
-    toolbar.setServerOptions([serverOption()]);
-    blockedListeners[0]?.(BLOCKED_INFO);
-    expect(message.hasAttribute('open')).toBe(true);
-
-    findPromptButtons(toolbar).dismiss.click();
-
-    expect(browser.approveCertificateException).not.toHaveBeenCalled();
-    expect(message.hasAttribute('open')).toBe(false);
-    expect(message.textContent).toBe('');
-  });
-
-  it('the banner close control dismisses the prompt too', () => {
+  it('the banner close control dismisses the prompt without persisting anything', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
     toolbar.setServerOptions([serverOption()]);
@@ -594,6 +580,26 @@ describe('createBrowserToolbar certificate prompt', () => {
     expect(browser.approveCertificateException).not.toHaveBeenCalled();
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
+  });
+
+  it('re-appears after a dismissal when the address is re-requested (Enter/Refresh re-fires the block)', () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([serverOption()]);
+    blockedListeners[0]?.(BLOCKED_INFO);
+    expect(message.hasAttribute('open')).toBe(true);
+
+    // The user waves the banner away; nothing is persisted.
+    message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+    expect(message.hasAttribute('open')).toBe(false);
+
+    // Re-requesting the address (Enter in the address bar, or Refresh)
+    // re-runs navigation, `certificate-error` re-fires, and main re-pushes
+    // the decision - so the prompt must come back, exactly like the
+    // unknown-origin prompt after its dismissal.
+    blockedListeners[0]?.(BLOCKED_INFO);
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(browser.approveCertificateException).not.toHaveBeenCalled();
   });
 
   it('a new navigation supersedes the prompt', () => {
@@ -610,7 +616,7 @@ describe('createBrowserToolbar certificate prompt', () => {
 
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
-    expect(message.querySelector('sp-button')).toBeNull();
+    expect(message.querySelector('sp-action-button')).toBeNull();
   });
 });
 

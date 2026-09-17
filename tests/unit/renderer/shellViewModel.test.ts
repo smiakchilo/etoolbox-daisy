@@ -7,7 +7,6 @@ import {
   deriveServerLabelFromOrigin,
   describeBlockedCertificate,
   describeUnknownOrigin,
-  shortFingerprint,
 } from '../../../src/renderer/src/shell/viewModel';
 import { newServerId, type ServerSnapshot } from '../../../src/shared';
 
@@ -111,27 +110,10 @@ describe('computeReservedRegionBounds', () => {
   });
 });
 
-describe('shortFingerprint', () => {
-  it('keeps the first eight and last six hex digits, omitting the middle', () => {
-    expect(shortFingerprint('a'.repeat(64))).toBe('aaaaaaaa\u2026aaaaaa');
-  });
-
-  it('is deterministic regardless of certificate content', () => {
-    const fingerprint = `ab12cd34ef56`.padEnd(64, '0');
-    expect(shortFingerprint(fingerprint)).toBe(`${fingerprint.slice(0, 8)}\u2026${'0'.repeat(6)}`);
-  });
-});
-
 describe('describeBlockedCertificate', () => {
-  it('bundles the origin, short fingerprint, and error class into the browser-pane prompt copy', () => {
-    expect(
-      describeBlockedCertificate({
-        origin: 'https://author.example:8443',
-        certificateSha256Fingerprint: 'c'.repeat(64),
-        errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
-      }),
-    ).toBe(
-      'Untrusted certificate for https://author.example:8443 (SHA-256 cccccccc\u2026cccccc, net::ERR_CERT_AUTHORITY_INVALID).',
+  it('uses the fixed copy, mirroring the unknown-origin prompt (the address bar already shows the host)', () => {
+    expect(describeBlockedCertificate()).toBe(
+      'This host has an untrusted certificate. Press OK to allow it',
     );
   });
 });

@@ -48,13 +48,21 @@ import {
  * main observes the blocked navigation and pushes
  * `browser:certificate-blocked` (with the *decision*, not the page URL),
  * and this module turns it into the banner's most prominent non-loading
- * presentation - an "Allow / Dismiss" prompt. Allow only acts when a
- * configured server's origin matches the blocked origin (the exception is
- * attached to that server's persisted entry; approving never auto-creates a
- * server), asks main to approve it, and clears the row - main then
- * auto-retries the blocked navigation, which surfaces via the normal
- * loading state. Dismiss (or the banner's close control) just clears the
- * row: nothing is persisted and nothing is retried.
+ * presentation - a single "OK" `sp-action-button` prompt, structured exactly
+ * like the unknown-origin prompt below (a `_copy` span plus a
+ * `_actions` span; cancel is the banner's dismiss cross). The flow guarantees
+ * the host is already a managed server by the time this banner can appear:
+ * an unknown origin is refused *before* any certificate check and only becomes
+ * navigable once the unknown-origin prompt's OK has created the server (see
+ * `addOriginServer`), so OK here just attaches the exception to that existing
+ * entry - it never creates or re-creates a server. OK asks main to approve
+ * it, and clears the row; main then auto-retries the blocked navigation, which
+ * surfaces via the normal loading state. Dismissal (the banner's close control)
+ * just clears the row: nothing is persisted and nothing is retried. The banner
+ * re-appears the next time the address is re-requested (Enter in the address
+ * bar or Refresh), because every such re-request re-fires `certificate-error`
+ * and main re-pushes the decision - exactly how the unknown-origin prompt
+ * re-appears after a dismissal.
  */
 export interface BrowserToolbar {
   readonly element: HTMLElement;
@@ -243,11 +251,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   }
 
   // The untrusted-certificate prompt: the decision main pushed to the
-  // renderer, rendered verbatim (nothing re-derived, so what is shown by the
-  // Allow click is exactly what was blocked), plus Allow/Dismiss. Allow is
-  // disabled unless a configured server's origin matches the blocked origin:
-  // approval attaches the exception to that server's persisted entry, and the
-  // app never auto-creates a server from a blocked URL.
+  // renderer, plus a single "OK" action button. Structured and placed exactly
+  // like the unknown-origin prompt below (copy span + actions span, cancel is
+  // the banner's dismiss cross), so the two decisions read as one family. OK
+  // is disabled only in the degenerate case where no configured server's
+  // origin matches the blocked origin - normal flow can never reach it,
+  // because an unknown origin is refused and created *before* any certificate
+  // check (see `addOriginServer`), so the host is always a managed server by
+  // the time this banner appears. Approval attaches the exception to that
+  // server's persisted entry; approving never creates a server.
   function applyCertificatePromptPresentation(): void {
     cancelLoadingBanner();
     messageElement.classList.remove('browser-toolbar-message--loading');
@@ -256,28 +268,23 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     if (info === null) return;
 
     const matchingServer = serverOptions.find((server) => server.origin === info.origin);
-    const allowButton = el('sp-button', {
-      attrs: { variant: 'accent', size: 'm' },
-      text: 'Allow',
-    });
+    const okButton = el('sp-action-button', { attrs: { size: 'm' }, text: 'OK' });
     if (matchingServer === undefined) {
-      allowButton.setAttribute('disabled', '');
+      okButton.setAttribute('disabled', '');
     }
-    allowButton.addEventListener('click', () => {
+    okButton.addEventListener('click', () => {
       void allowBlockedCertificate(info, matchingServer);
-    });
-    const dismissButton = el('sp-button', { attrs: { size: 'm' }, text: 'Dismiss' });
-    dismissButton.addEventListener('click', () => {
-      blockedCertificate = null;
-      applyPresentation();
     });
 
     const actions = el('span', {
       attrs: { class: 'browser-toolbar-message__actions' },
-      children: [allowButton, dismissButton],
+      children: [okButton],
     });
     messageElement.replaceChildren(
-      document.createTextNode(describeBlockedCertificate(info)),
+      el('span', {
+        attrs: { class: 'browser-toolbar-message__copy' },
+        children: [document.createTextNode(describeBlockedCertificate())],
+      }),
       actions,
     );
     messageElement.setAttribute('open', '');
