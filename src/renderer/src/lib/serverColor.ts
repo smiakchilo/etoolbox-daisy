@@ -30,3 +30,22 @@ const SWATCH_HEX: Readonly<Record<ServerSwatch, string>> = {
 export function resolveServerColorCss(color: ServerColor): string {
   return color.kind === 'swatch' ? SWATCH_HEX[color.swatch] : color.hex;
 }
+
+/**
+ * Reverse of {@link resolveServerColorCss}: which named swatch a 6-digit hex
+ * belongs to, if any. The settings colour picker's field always holds a hex
+ * (a picked swatch writes its concrete `#rrggbb`, never its name), so a known
+ * swatch hex must round-trip back to the swatch when the form is read, instead
+ * of silently degrading a `blue` pick to a stored `custom` value.
+ */
+const SWATCH_BY_HEX: ReadonlyMap<string, ServerSwatch> = new Map(
+  (Object.entries(SWATCH_HEX) as ReadonlyArray<[ServerSwatch, string]>).map(([swatch, hex]) => [
+    hex.toLowerCase(),
+    swatch,
+  ]),
+);
+
+/** Returns the named swatch for `hex`, or `undefined` when it is not one of the closed set. */
+export function resolveServerSwatchFromHex(hex: string): ServerSwatch | undefined {
+  return SWATCH_BY_HEX.get(hex.trim().toLowerCase());
+}

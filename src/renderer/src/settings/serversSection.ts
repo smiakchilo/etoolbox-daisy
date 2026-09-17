@@ -1,10 +1,11 @@
 import { el } from '../lib/dom';
-import { resolveServerColorCss } from '../lib/serverColor';
+import { resolveServerColorCss, resolveServerSwatchFromHex } from '../lib/serverColor';
 import {
   isInsecureOrigin,
   SERVER_SWATCHES,
   type ServerColor,
   type ServerSnapshot,
+  type ServerSwatch,
 } from '../../../shared';
 import { createPasswordEntry } from './passwordEntry';
 import {
@@ -19,18 +20,31 @@ type CheckboxElement = HTMLElement & { checked: boolean };
 
 const SWATCH_SET = new Set<string>(SERVER_SWATCHES);
 
+/** Narrowing guard: is this (possibly user-typed) string one of the named swatches? */
+function isSwatch(value: string): value is ServerSwatch {
+  return SWATCH_SET.has(value);
+}
+
+/** The label shown in the picker's menu: the swatch key with a capital first letter. */
+function swatchLabel(swatch: string): string {
+  return swatch.charAt(0).toUpperCase() + swatch.slice(1);
+}
+
 /**
  * The colour picker shared by the add-server form and each row's inline edit
- * form: a plain, always-typable `sp-textfield` (holding either a swatch name
- * like `blue` or a `#rrggbb` hex string) plus an `sp-action-menu` "picker
- * button" beside it listing the named swatches with their colour dots.
- * Selecting an item writes that swatch's name into the field - the exact
- * same textfield-plus-picker-button pattern as the browser toolbar's address
- * bar/hosts picker (`browserToolbar.ts`), chosen for the same reason: it
- * keeps the field itself as the single source of truth and typable at all
- * times, with the menu as a pure convenience for the common case. Unlike
- * that address bar, this button never needs to hide - `SERVER_SWATCHES` is a
- * fixed, always-non-empty list - so there is no `[hidden]` handling here.
+ * form: a plain, always-typable `sp-textfield` holding a `#rrggbb` hex string
+ * (typed freely, or a named swatch's concrete value written by a pick) plus
+ * an `sp-action-menu` "picker button" beside it listing the named swatches
+ * with their colour dots. Selecting an item writes that swatch's hex into the
+ * field - the exact same textfield-plus-picker-button pattern as the browser
+ * toolbar's address bar/hosts picker (`browserToolbar.ts`), chosen for the
+ * same reason: it keeps the field itself as the single source of truth and
+ * typable at all times, with the menu as a pure convenience for the common
+ * case. The field accepts a bare swatch name like `blue` as shorthand, and on
+ * read a value matching a named swatch's hex round-trips back to the swatch.
+ * Unlike that address bar, this button never needs to hide -
+ * `SERVER_SWATCHES` is a fixed, always-non-empty list - so there is no
+ * `[hidden]` handling here.
  */
 function createColorPicker(
   initial?: ServerColor,
@@ -43,7 +57,11 @@ function createColorPicker(
   setValue(color: ServerColor): void;
 } {
   const colorField = el('sp-textfield', {
-    attrs: { placeholder: '#2680eb or a swatch name', 'aria-label': 'Colour' },
+    attrs: {
+      class: 'color-picker__field',
+      placeholder: '#2680eb or a swatch name',
+      'aria-label': 'Colour',
+    },
   }) as TextField;
 
   const colorMenuButton = el('sp-action-menu', {
@@ -54,20 +72,28 @@ function createColorPicker(
   colorMenuButton.append(
     colorMenuIcon,
     ...SERVER_SWATCHES.map((swatch) => {
-      const dot = el('span', { attrs: { class: 'server-swatch', role: 'presentation' } });
+      const dot = el('span', {
+        attrs: { class: 'server-swatch color-picker__swatch', role: 'presentation' },
+      });
       dot.style.backgroundColor = resolveServerColorCss({ kind: 'swatch', swatch });
       dot.setAttribute('slot', 'icon');
-      return el('sp-menu-item', { attrs: { value: swatch }, text: swatch, children: [dot] });
+      return el('sp-menu-item', {
+        attrs: { value: swatch },
+        text: swatchLabel(swatch),
+        children: [dot],
+      });
     }),
   );
 
   // Same reasoning as `serverMenuButton.addEventListener("change", ...)` in
-  // browserToolbar.ts: selecting an item just writes its value into the
-  // field, then the field is the only thing read back.
+  // browserToolbar.ts: selecting an item just writes a value into the field,
+  // then the field is the only thing read back. Here the value written is the
+  // swatch's concrete hex - never its name - so the field always holds one
+  // format, and the menu keeps showing the human label (`swatchLabel`).
   colorMenuButton.addEventListener('change', () => {
-    const value = colorMenuButton.value.trim();
-    if (value === '') return;
-    colorField.value = value;
+    const swatch = colorMenuButton.value.trim().toLowerCase();
+    if (!isSwatch(swatch)) return;
+    colorField.value = resolveServerColorCss({ kind: 'swatch', swatch });
     onInput?.();
   });
 
@@ -77,7 +103,10 @@ function createColorPicker(
   }
 
   function setValue(color: ServerColor): void {
-    colorField.value = color.kind === 'custom' ? color.hex : color.swatch;
+    colorField.value =
+      color.kind === 'custom'
+        ? color.hex
+        : resolveServerColorCss({ kind: 'swatch', swatch: color.swatch });
   }
 
   setValue(initial ?? { kind: 'swatch', swatch: SERVER_SWATCHES[0] });
@@ -94,6 +123,13 @@ function createColorPicker(
       const normalized = value.toLowerCase();
       if (SWATCH_SET.has(normalized)) {
         return { kind: 'swatch', swatch: normalized };
+      }
+      // A picked swatch put its hex in the field; a known swatch hex must
+      // round-trip back to the swatch, or an untouched pick would degrade to a
+      // stored `custom` value (and flag the colour dirty on the next save).
+      const swatch = resolveServerSwatchFromHex(normalized);
+      if (swatch !== undefined) {
+        return { kind: 'swatch', swatch };
       }
       return { kind: 'custom', hex: value };
     },

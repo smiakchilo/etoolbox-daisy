@@ -19,17 +19,40 @@
   gap: 12px;
 }
 
-.settings-panel__status {
-  color: var(--spectrum-red-700, #b3261e);
-  margin: 0;
+/* The panel's own status/prompt row (auto-save feedback, validation errors,
+   and the two-click address/removal confirmations): a second
+   `sp-alert-banner`, styled to look exactly like the browser pane's status
+   row (`.browser-toolbar-message`) but with its own class name, so
+   Playwright's strict-mode locators targeting the *browser* banner never
+   match two elements while Settings is open. `max-inline-size:none` stops the
+   component's default 832px banner width from truncating the strip, and
+   `flex: 0 0 auto` keeps it from shrinking as the guidance scrolls. It sits
+   at the bottom of the content column, outside the tab strip's scroll region,
+   so it stays visible while any tab is selected. */
+.settings-banner {
+  max-inline-size: none;
+  flex: 0 0 auto;
 }
 
-/* The status line is a permanent child of the content column; while there is
-   nothing to report it must collapse to nothing, or its (empty) line box plus
-   the column's 12px gap would leave a blank band between the panel header
-   and the tab strip. */
-.settings-panel__status:empty {
-  display: none;
+/* Message text in prompt rows (the address/removal confirmations wrap their
+   copy in this span). `flex: 1 1 auto` lets it absorb the strip's flex space
+   while `min-width: 0` overrides the flex item's implicit `min-width:auto` so
+   the text may wrap *inside* the span instead of forcing the whole row. */
+.settings-banner__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The prompt action button, grouped after the copy so the banner's
+   default-slot layout keeps it on one row with text before actions.
+   `margin-inline-start:auto` pushes it to the right edge of the strip;
+   `flex: 0 0 auto` keeps it from shrinking when the copy wraps. */
+.settings-banner__actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-inline-start: 12px;
 }
 
 /* `sp-tabs` is a grid (`auto 1fr` rows) whose second row hosts the panels;
@@ -104,13 +127,104 @@
 
 .color-picker {
   display: flex;
-  gap: 8px;
   align-items: center;
 }
 
-.form-errors {
-  color: var(--spectrum-red-700, #b3261e);
-  flex-basis: 100%;
+/* The hex field plus its coupled "picker button", styled as one combobox:
+   no gap between the two, their facing borders overlap onto one 1px line, and
+   the seam-facing corner radiuses are nullified - the same address-group
+   visual as the browser toolbar (see browser.css `.browser-toolbar__address-
+   group`). The field's shadow `.input` accepts only a single radius token, so
+   all four of its corners are squared here and the LEFT pair is re-rounded by
+   clipping on the host. The button's frame can *not* be styled via its shadow
+   `.button`: the inner `sp-action-button` is `quiet`, and quiet forces a
+   transparent border (`:host([quiet])`), and the open menu forwards
+   `selected` to it, which also forces a transparent border (`:host([selected])`
+   and the accent-white selected content colour). Both are hard-wired in the
+   component's shadow CSS, so the border, fill and right-hand rounding are
+   drawn on the `sp-action-menu` host itself and the inner button is left as a
+   content-only window for the chevron. Its overlay is a native top-layer
+   popover, so the clip never swallows the open menu. */
+.color-picker .color-picker__field {
+  --mod-textfield-corner-radius: 0;
+  border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
+  border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
+  overflow: hidden;
+
+  /* No focus "frame": the keyboard-focus border and outline indicator are
+     forced back to the resting gray-500 so focus never separates the field
+     from the button (pure copy of the address bar's rule). */
+  --mod-textfield-focus-indicator-color: transparent;
+  --mod-textfield-border-color-hover: var(--spectrum-gray-500);
+  --mod-textfield-border-color-focus: var(--spectrum-gray-500);
+  --mod-textfield-border-color-keyboard-focus: var(--spectrum-gray-500);
+  --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
+}
+
+.color-picker .color-picker-button {
+  /* Fold the button onto the field: this 1px negative margin lays the button's
+     left border exactly over the field's right border (both square at the
+     seam), merging them into one 1px line. */
+  margin-left: -1px;
+
+  /* The host is the button's frame: gray-500 border, white fill, the right
+     pair of corners rounded (the left pair stays square to meet the field).
+     The inner button is shrunk by the 2px of frame (30px in a 32px border-box,
+     since it cannot host a visible border of its own) and squared off, so it
+     is nothing but the chevron window. */
+  border: 1px solid var(--spectrum-gray-500);
+  border-radius: 0 var(--spectrum-corner-radius-100, 4px) var(--spectrum-corner-radius-100, 4px) 0;
+  background: #ffffff;
+  overflow: hidden;
+
+  --mod-actionbutton-height: 30px;
+  --mod-actionbutton-border-radius: 0;
+
+  /* Pin every background variant (including the `-selected` ones painted
+     while the menu is open) to white, so the frame's one fill never develops
+     an accent tint or hover patch inside the border. */
+  --mod-actionbutton-background-color-default: #ffffff;
+  --mod-actionbutton-background-color-hover: #ffffff;
+  --mod-actionbutton-background-color-focus: #ffffff;
+  --mod-actionbutton-background-color-down: #ffffff;
+  --mod-actionbutton-background-color-default-selected: #ffffff;
+  --mod-actionbutton-background-color-hover-selected: #ffffff;
+  --mod-actionbutton-background-color-focus-selected: #ffffff;
+  --mod-actionbutton-background-color-down-selected: #ffffff;
+
+  /* The open menu's `selected` state defaults its content (the chevron) to
+     accent white, which is invisible on the white frame. Pin the selected
+     content colours to the resting neutral so the chevron stays visible while
+     the menu is open and while the button is held down. */
+  --mod-actionbutton-content-color-default-selected: var(
+    --spectrum-neutral-content-color-default,
+    var(--spectrum-gray-800, #2e2e2e)
+  );
+  --mod-actionbutton-content-color-hover-selected: var(
+    --spectrum-neutral-content-color-default,
+    var(--spectrum-gray-800, #2e2e2e)
+  );
+  --mod-actionbutton-content-color-down-selected: var(
+    --spectrum-neutral-content-color-default,
+    var(--spectrum-gray-800, #2e2e2e)
+  );
+  --mod-actionbutton-content-color-focus-selected: var(
+    --spectrum-neutral-content-color-default,
+    var(--spectrum-gray-800, #2e2e2e)
+  );
+
+  --mod-actionbutton-focus-indicator-color: transparent;
+  --mod-actionbutton-animation-duration: 0s;
+}
+
+/* In the open menu the swatch dot is slotted into the item's icon area, which
+   the component anchors to the item's top edge (`align-self: start`); this
+   document-side rule wins by specificity, so the dot lines up by height with
+   its label. Light rules live on `::slotted([slot="icon"])` inside the menu's
+   shadow tree; the item itself keeps its author selectors, so
+   `.color-picker .color-picker__swatch` reaches it. */
+.color-picker .color-picker__swatch {
+  align-self: center;
 }
 
 .password-entry {
