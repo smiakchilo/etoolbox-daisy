@@ -227,8 +227,11 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1543 passed / 14 skipped**;
-**Playwright → 55/55**.
+Current baseline: **`npm run verify` → 1547 passed / 14 skipped**;
+**Playwright → 56 tests** (55 baseline + closeability spec). One residual,
+load-correlated, now-self-diagnosing E2E flake in
+`step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
+closeability section).
 
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's
@@ -386,6 +389,7 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 | Two Copilot clients | `src/main/ipc/agent.ts` keeps its own `cachedClient`, separate from `index.ts`'s composition client. Opening Settings may spawn a **second** `copilot-runtime.exe`; one leak is proven (fake path spawns a real runtime — 8 s+ hang measured). **Handoff and measurement plan: `docs/handoff-two-copilot-clients.md`.** Measure before Step 10's shutdown work; the design choice goes back to the user. |
 | `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — covered by the same handoff. |
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory. |
+| `step05-address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | Git | Zero commits. `.idea/` is staged. |
 
 ---

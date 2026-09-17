@@ -31,11 +31,15 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * must not silence later attempts. Entering the *same* unchanged address again
  * (sp-textfield emits no `change` for an unchanged value, so navigation fires
  * on the Enter keydown itself) and pressing Refresh while the address bar's
- * URL differs from the loaded page - including when NOTHING is loaded
- * (`lastNavigationState` is null because a refused unknown-origin navigation
- * never pushes state) - must both re-show the prompt. The second test in this
- * file reproduces the fresh-profile case exactly (zero configured servers, no
- * page ever loaded, first navigation is the refused URL, then Refresh).
+ * URL differs from the loaded page must both re-show the prompt. The second
+ * test pins that against a seeded profile: a page IS loaded (a panel cannot
+ * be dismissed until one is - panel.ts `setCloseable`), so the address-bar
+ * URL genuinely differs from the loaded page. The historical fresh-profile
+ * branch (zero servers plus a *null* `lastNavigationState` - a refused
+ * unknown-origin navigation never pushes state) is unreachable in E2E by
+ * design now, because a fresh profile's startup Settings panel cannot be
+ * dismissed; that toolbar branch stays covered by the unit suite
+ * (browserToolbar.test.ts).
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -117,9 +121,25 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
-
+    // Seeded profile: the hosts panel is already open at startup, and with no
+    // page sitting under it yet it is not dismissible. Picking the seeded host
+    // is the sanctioned way out - it loads the page "the app was showing
+    // them", which the deep link (copied straight back) then deepens.
+    await page.locator(`.hosts-item[data-origin="${aem.origin}"]`).click();
+    // The address bar is always visible (the toolbar never hides), so waiting
+    // on it synchronizes nothing. What must settle first is the picker's
+    // server switch: typing the deep link before it finishes races the
+    // in-flight switch, and main serializes switches
+    // (`ServerSwitchController.switchTo` rejects a second switch with
+    // `already_switching`), which would swallow the deep-link navigation. The
+    // origin echo of the load and the address bar reflecting the loaded URL
+    // together prove the switch has fully settled.
+    await expect.poll(() => aem.paths.includes('/'), { timeout: 30_000 }).toBe(true);
     const addressInput = page.locator('#browser-address-bar input');
+    await expect
+      .poll(async () => await addressInput.inputValue())
+      .toMatch(new RegExp(`^${aem.origin}/?$`));
+
     const deepUrl = `${aem.origin}${DEEP_PATH}`;
     await addressInput.fill(deepUrl);
     await addressInput.press('Enter');
@@ -187,29 +207,53 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     // reserved and unresolvable), so the observable proof is the new entry in
     // settings.json rather than the navigation outcome.
     await page.getByRole('button', { name: 'OK' }).click();
-    await expect
-      .poll(
-        () => {
-          if (!existsSync(settingsPath)) return false;
-          const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-            servers?: Array<{ origin: string }>;
-          };
-          return (parsed.servers ?? []).some(
-            (server) => server.origin === 'https://unconfigured.example',
-          );
-        },
-        { timeout: 60_000 },
-      )
-      .toBe(true);
+    try {
+      await expect
+        .poll(
+          () => {
+            if (!existsSync(settingsPath)) return false;
+            const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+              servers?: Array<{ origin: string }>;
+            };
+            return (parsed.servers ?? []).some(
+              (server) => server.origin === 'https://unconfigured.example',
+            );
+          },
+          { timeout: 60_000 },
+        )
+        .toBe(true);
+    } catch (error) {
+      const onDisk = existsSync(settingsPath)
+        ? (
+            (
+              JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+                servers?: Array<{ origin: string }>;
+              }
+            ).servers ?? []
+          )
+            .map((server) => server.origin)
+            .join(', ') || '(servers: [])'
+        : '(settings.json missing)';
+      const state = await message.getAttribute('open');
+      const bannerText = (await message.textContent()) ?? '';
+      const addressValue = await addressInput.inputValue();
+      throw new Error(
+        `settings.json never gained https://unconfigured.example; ` +
+          `onDisk=${onDisk}; bannerOpen=${state}; banner="${bannerText}"; ` +
+          `address="${addressValue}"`,
+        { cause: error },
+      );
+    }
   } finally {
     await app.close();
     aem.close();
   }
 });
 
-test('Refresh re-triggers the unknown-origin banner on a FRESH profile (no page ever loaded)', async () => {
+test('Refresh re-triggers the unknown-origin banner when the address bar differs from the loaded page', async () => {
   test.setTimeout(120_000);
 
+  const aem = await startEchoOrigin();
   mkdirSync(scratchBase, { recursive: true });
   const root = mkdtempSync(path.join(scratchBase, 'profile-fresh-'));
   const home = path.join(root, 'home');
@@ -226,16 +270,48 @@ test('Refresh re-triggers the unknown-origin banner on a FRESH profile (no page 
     LOCALAPPDATA: localAppData,
   };
 
-  // No settings.json at all: zero configured servers, so nothing ever loads
-  // and `lastNavigationState` in the toolbar stays null - the exact repro
-  // where Refresh used to fall back to reload() of the blank view and do
-  // nothing.
+  // A page must be loaded before the prompt flow can be exercised, because a
+  // panel is not user-dismissible until one is (panel.ts `setCloseable`).
+  // The historical "FRESH profile, nothing ever loaded" repro for the
+  // null-`lastNavigationState` Refresh branch is unreachable by design now
+  // (a fresh profile's startup Settings panel cannot be dismissed), so that
+  // toolbar branch is covered by unit tests (browserToolbar.test.ts) and this
+  // spec pins the same re-trigger rule against a seeded profile where the
+  // address bar's URL genuinely differs from the loaded echo page.
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    servers: [
+      ...base.servers,
+      {
+        id: randomUUID(),
+        label: 'Echo fixture',
+        origin: aem.origin,
+        color: { kind: 'swatch', swatch: 'blue' },
+        revision: 0,
+      },
+    ],
+  });
+  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(seeded, null, 2), 'utf8');
+
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
-
+    // Seeded profile: the hosts panel opens at startup and is not dismissible
+    // until a page sits under it - pick the echo host first (it closes the
+    // panel AND loads a page in one step).
+    await page.locator(`.hosts-item[data-origin="${aem.origin}"]`).click();
+    // Same synchronization as test 1: the picker's switch must settle before
+    // the unknown deep link is submitted, or `already_switching` swallows it
+    // and the prompt never appears.
+    await expect.poll(() => aem.paths.includes('/'), { timeout: 30_000 }).toBe(true);
     const addressInput = page.locator('#browser-address-bar input');
+    await expect
+      .poll(async () => await addressInput.inputValue())
+      .toMatch(new RegExp(`^${aem.origin}/?$`));
+
     const message = page.locator('.browser-toolbar-message');
     const unknownDeepUrl = 'https://unconfigured.example/editor.html/content/x.html';
 
@@ -246,9 +322,10 @@ test('Refresh re-triggers the unknown-origin banner on a FRESH profile (no page 
       { timeout: 60_000 },
     );
 
-    // Dismiss, then Refresh: the refused navigation never pushed any
-    // navigation state, so the toolbar must still re-request the address bar
-    // value and re-show the prompt (not reload the blank view).
+    // Dismiss, then Refresh: the requested URL (the unknown deep link, which
+    // the refused navigation never loaded) differs from the loaded echo page,
+    // so Refresh must navigate it and re-show the prompt (not blindly reload
+    // the stale page).
     await page.locator('.browser-toolbar-message sp-close-button').click();
     await expect(message).not.toHaveAttribute('open');
     await page.getByRole('button', { name: 'Refresh' }).click();
@@ -260,5 +337,6 @@ test('Refresh re-triggers the unknown-origin banner on a FRESH profile (no page 
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
   } finally {
     await app.close();
+    aem.close();
   }
 });

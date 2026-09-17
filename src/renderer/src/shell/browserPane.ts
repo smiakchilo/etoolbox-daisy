@@ -27,6 +27,13 @@ export interface BrowserPane {
   /** The single-open host for whole-size panels over the page-view region. */
   readonly panelHost: BrowserPanelHost;
   /**
+   * Opens the pane's own hosts panel as the active panel (covering the whole
+   * page-view region, exactly like a click on the toolbar's hosts button).
+   * Used by the shell to reveal the existing-host list at startup when at
+   * least one server is configured.
+   */
+  openHostsPicker(): void;
+  /**
    * Appends a panel's element to the pane's page-view region (hidden until
    * `panelHost.open` reveals it). Used for panels the pane does not itself
    * own (settings, history).
@@ -74,6 +81,17 @@ export interface BrowserPane {
 export function createBrowserPane(): BrowserPane {
   let activePanel: Panel | undefined;
 
+  // The closeability latch. A whole-size panel replaces (suspends) the native
+  // view, so dismissing it reveals the bare page-view region. That region is
+  // only meaningful once a real page has loaded into the native view, which is
+  // exactly when the main process starts pushing navigation-state updates; a
+  // user must therefore never be able to dismiss a panel until at least one
+  // `onStateChanged` event has arrived (the startup hosts picker/Settings
+  // panel on a fresh profile are the prime case). The latch is one-way for the
+  // session - a view that has loaded a page keeps it, so once the pane unlocks
+  // it stays unlocked.
+  let pageLoaded = false;
+
   const picker = createHostsPanel({
     onSelect(origin: string): void {
       closeActivePanel();
@@ -86,12 +104,30 @@ export function createBrowserPane(): BrowserPane {
 
   const toolbar = createBrowserToolbar({
     onHostsPickerClick(): void {
-      if (activePanel === picker) closeActivePanel();
-      else openPanel(picker);
+      if (activePanel === picker) {
+        // Toggling the open picker off is a dismissal, so it obeys the same
+        // closeability rule: with nothing loaded under it yet, the only way
+        // out is to select a host (which navigates AND closes the panel).
+        if (pageLoaded) closeActivePanel();
+      } else {
+        openPanel(picker);
+      }
     },
   });
   const insecureBanner = createInsecureBanner();
   const viewHost = createBrowserViewHost();
+
+  // The pane keeps its own latch on the navigation-state feed: the toolbar's
+  // copy is private, and each `onStateChanged` listener is an independent
+  // `ipcRenderer.on` subscription (app-preload.ts), so subscribing twice is
+  // safe. Like the toolbar's `lastNavigationState`, it latches on ANY push -
+  // including the start/stop of a failed load, so a down server still unlocks
+  // the panel once the user has navigated at it.
+  const unsubscribeState = window.daisy.browser.onStateChanged(() => {
+    if (pageLoaded) return;
+    pageLoaded = true;
+    activePanel?.setCloseable(true);
+  });
 
   // Groups the toolbar's status/prompt row with the native view region so the
   // panel suspension hides both at once (see the file doc comment). The
@@ -113,6 +149,7 @@ export function createBrowserPane(): BrowserPane {
     viewHost.setSuspended(true);
     pagePanel.hidden = true;
     toolbar.setHostsPickerOpen(panel === picker);
+    panel.setCloseable(pageLoaded);
     panel.open();
   }
 
@@ -140,6 +177,9 @@ export function createBrowserPane(): BrowserPane {
       close: closeActivePanel,
       isActive: (panel) => activePanel === panel,
     },
+    openHostsPicker(): void {
+      openPanel(picker);
+    },
     appendPanel(panel: Panel): void {
       element.append(panel.element);
     },
@@ -151,6 +191,7 @@ export function createBrowserPane(): BrowserPane {
       viewHost.reportBoundsNow();
     },
     dispose(): void {
+      unsubscribeState();
       toolbar.dispose();
       picker.dispose();
       viewHost.dispose();

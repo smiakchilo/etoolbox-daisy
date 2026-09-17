@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 
 /**
  * The draggable pane boundary, exercised against the real built app.
@@ -52,6 +55,12 @@ function createProfile(): Record<string, string> {
   };
 }
 
+function writeSettings(home: string, settings: unknown): void {
+  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+}
+
 function readNativeBounds(
   app: ElectronApplication,
 ): Promise<{ x: number; y: number; width: number; height: number }[]> {
@@ -67,8 +76,48 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
 
   const env = createProfile();
 
+  // Seed one real host. A fresh profile opens (and then keeps) the Settings
+  // panel at startup - a panel is not user-dismissible until a page sits under
+  // it, so the splitter/native-view measurements need a host picked from the
+  // startup hosts picker instead, which loads the page and closes the panel
+  // in one step.
+  const state = { hits: 0 };
+  const server: Server = createServer((_req, res) => {
+    state.hits += 1;
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><title>echo</title><p>ok</p>');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  const origin = `http://127.0.0.1:${String(address.port)}`;
+  const base = defaultAppSettings();
+  writeSettings(
+    env.USERPROFILE as string,
+    appSettingsSchema.parse({
+      ...base,
+      servers: [
+        ...base.servers,
+        {
+          id: randomUUID(),
+          label: 'Echo',
+          origin,
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+      ],
+    }),
+  );
+
   const first = await electron.launch({ args: [mainEntry], env });
   const page = await first.firstWindow();
+
+  // A seeded profile means the hosts panel is already open at startup. With
+  // nothing loaded into the native view yet it is not dismissible, so pick
+  // the seeded host: it closes the panel AND loads a page, and the
+  // splitter/native-view measurements below land on the idle two-pane shell.
+  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
+  await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
 
   const splitterHost = page.locator('[data-testid="pane-splitter"]');
   // The draggable bar itself lives inside `sp-split-view`'s own (open) shadow
@@ -141,6 +190,10 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   // --- second run, same profile -------------------------------------------
   const second = await electron.launch({ args: [mainEntry], env });
   const restoredPage = await second.firstWindow();
+  // Same seeded profile, so the hosts panel opens at startup again - pick the
+  // seeded host to reach the idle shell (the panel is not dismissible until a
+  // page loads).
+  await restoredPage.locator(`.hosts-item[data-origin="${origin}"]`).click();
   const restoredHost = restoredPage.locator('[data-testid="browser-view-host"]');
   await restoredHost.waitFor({ state: 'visible', timeout: 30_000 });
 
@@ -156,4 +209,5 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   expect(Math.abs(restoredWidth - initialWidth)).toBeGreaterThan(50);
 
   await second.close();
+  server.close();
 });

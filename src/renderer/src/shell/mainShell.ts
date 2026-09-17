@@ -97,10 +97,19 @@ export async function mountMainShell(
   const result = await loadSettingsSnapshot();
   if (result.ok) {
     applySnapshot(browserPane, result.snapshot);
+    // Startup affordance: with configured hosts the picker leads with the
+    // list ready to choose from (it replaces the otherwise blank page-view
+    // region); with none, Settings is where the first server gets added.
+    if (result.snapshot.servers.length > 0) {
+      browserPane.openHostsPicker();
+    } else {
+      browserPane.panelHost.open(settingsPanel);
+    }
   } else {
-    // Leave the panes in their empty/no-server state; surfacing this error
-    // more prominently is out of scope for step 05's initial shell.
     console.warn('[daisy] failed to load settings snapshot:', result.error);
+    // No usable host list - Settings is the discoverable surface for fixing
+    // that, and its own reload will surface the load error in its status row.
+    browserPane.panelHost.open(settingsPanel);
   }
 
   // Unsubscribes the toolbar's `onStateChanged`/`onSwitchStateChanged`

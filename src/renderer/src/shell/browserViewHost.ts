@@ -42,13 +42,8 @@ export interface BrowserViewHost {
 }
 
 export function createBrowserViewHost(): BrowserViewHost {
-  const placeholder = el('p', {
-    attrs: { class: 'browser-view-host__notice' },
-    text: 'Reserved for the page view. Content is drawn by the main process, not the renderer.',
-  });
   const host = el('div', {
     attrs: { class: 'browser-view-host', 'data-testid': 'browser-view-host' },
-    children: [placeholder],
   });
 
   let lastReported: ReservedRegionBounds | undefined;

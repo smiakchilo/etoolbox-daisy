@@ -95,6 +95,14 @@ test('closing Settings with its close button restores the AEM view and Settings 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
+    // A seeded profile means the hosts panel is already open at startup. The
+    // panel cannot be dismissed yet (no page sits under it — the close button
+    // and Escape are inert), so we pick the echo host directly: it loads the
+    // page and closes the panel in one step.
+    const pickerItem = page.locator(`.hosts-item[data-origin="${origin}"]`);
+    await pickerItem.waitFor({ state: 'visible', timeout: 10_000 });
+    await pickerItem.click();
+    await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
     const viewHost = page.locator('[data-testid="browser-view-host"]');
     await viewHost.waitFor({ state: 'visible', timeout: 30_000 });
 
@@ -138,13 +146,7 @@ test('closing Settings with its close button restores the AEM view and Settings 
       return false;
     };
 
-    // --- Step 1: load a URL from the hosts panel ---------------------------
-    const pickerButton = page.locator('#hosts-button');
-    await expect(pickerButton).toBeVisible({ timeout: 10_000 });
-    await pickerButton.click();
-    await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-    await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
-    // The native view is full-size again after the navigation.
+    // The native view is full-size after the startup navigation.
     expect(await waitForNativeView('full')).toBe(true);
 
     // --- Step 2: open Settings ---------------------------------------------

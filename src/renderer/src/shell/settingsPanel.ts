@@ -141,6 +141,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       void reload();
     },
     close: () => panel.close(),
+    setCloseable: (closeable) => panel.setCloseable(closeable),
     reload,
     dispose(): void {
       panel.dispose();

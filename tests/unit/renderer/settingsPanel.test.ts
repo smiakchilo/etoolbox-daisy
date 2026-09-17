@@ -101,6 +101,17 @@ function build() {
   return { pane, settings };
 }
 
+/** Emits a minimal navigation-state push (the pane latches its closeability on it). */
+function emitNavigationState(): void {
+  const minimal: BrowserNavigationState = {
+    url: 'https://author.example/content/page.html',
+    canGoBack: false,
+    canGoForward: false,
+    isLoading: false,
+  };
+  for (const listener of stateListeners) listener(minimal);
+}
+
 describe('createSettingsPanel dismissal', () => {
   it('forwards the close button to the pane host, restoring the view so Settings can open again', () => {
     const { pane, settings } = build();
@@ -111,6 +122,9 @@ describe('createSettingsPanel dismissal', () => {
     expect(pagePanel?.hidden).toBe(true);
     expect(panelSurface?.hidden).toBe(false);
 
+    // The panel is only user-dismissible once a page sits under it (the pane
+    // gates closeability on navigation-state pushes), so unlock it first.
+    emitNavigationState();
     pane.element.querySelector<HTMLElement>('.settings-panel__close')?.click();
     // The host heard the dismissal: the page view (native view region plus
     // message row) is restored and the panel is hidden.
@@ -134,8 +148,27 @@ describe('createSettingsPanel dismissal', () => {
     pane.appendPanel(settings);
 
     pane.panelHost.open(settings);
+    emitNavigationState();
     pane.element.querySelector<HTMLElement>('.settings-panel__close')?.click();
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Settings locked until a page has loaded', () => {
+    const { pane, settings } = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const close = pane.element.querySelector<HTMLElement>('.settings-panel__close');
+
+    pane.panelHost.open(settings);
+    expect(close?.hasAttribute('disabled')).toBe(true);
+
+    close?.click();
+    expect(pagePanel?.hidden).toBe(true);
+
+    emitNavigationState();
+    expect(close?.hasAttribute('disabled')).toBe(false);
+
+    close?.click();
+    expect(pagePanel?.hidden).toBe(false);
   });
 });

@@ -104,11 +104,13 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
 
   const app = await electron.launch({ args: [mainEntry], env });
   const page = await app.firstWindow();
+  // Seeded profile: the hosts panel opens at startup and is NOT dismissible
+  // yet (no page sits under it - see panel.ts `setCloseable`). Picking the
+  // seeded host is the sanctioned way out: it closes the panel AND starts the
+  // slow external navigation, so the loading-banner assertions land on the
+  // visible page-view region.
+  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
   await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
-
-  const addressInput = page.locator('#browser-address-bar input');
-  await addressInput.fill(origin);
-  await addressInput.press('Enter');
 
   // The loading banner is an `sp-alert-banner` with a real shadow root
   // (registered, not an unknown element), carrying the loading text and the
@@ -222,18 +224,22 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
 
   const app = await electron.launch({ args: [mainEntry], env });
   const page = await app.firstWindow();
+  // Seeded profile: the hosts panel opens at startup and is NOT dismissible
+  // yet (no page sits under it - see panel.ts `setCloseable`). Picking the
+  // seeded host is the sanctioned way out: it closes the panel AND starts the
+  // first slow external navigation.
+  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
   await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
 
   const addressInput = page.locator('#browser-address-bar input');
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   const toolbar = page.locator('.browser-toolbar');
 
-  // First navigation completes fully so the next one is a fresh external load.
-  // The AEM pane is a native WebContentsView above the page DOM, so its
-  // content isn't reachable from Playwright's `page`; the loading banner
-  // closing (isLoading false = content rendered) is that completion signal.
-  await addressInput.fill(origin);
-  await addressInput.press('Enter');
+  // The first navigation (from the picker selection) completes fully so the
+  // next one is a fresh external load. The AEM pane is a native
+  // WebContentsView above the page DOM, so its content isn't reachable from
+  // Playwright's `page`; the loading banner closing (isLoading false =
+  // content rendered) is that completion signal.
   await expect(banner).not.toBeVisible({ timeout: 60_000 });
   await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
 
@@ -306,15 +312,15 @@ test('a navigation that finishes inside the 200ms debounce window shows no loadi
 
   const app = await electron.launch({ args: [mainEntry], env });
   const page = await app.firstWindow();
+  // Seeded profile: the hosts panel opens at startup and is NOT dismissible
+  // yet (no page sits under it - see panel.ts `setCloseable`). Picking the
+  // seeded host is the sanctioned way out: it closes the panel AND starts the
+  // fast navigation (~100ms, inside the 200ms debounce).
+  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
   await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
 
-  const addressInput = page.locator('#browser-address-bar input');
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   const toolbar = page.locator('.browser-toolbar');
-
-  // The fixture answers in ~100ms — comfortably inside the 200ms debounce.
-  await addressInput.fill(origin);
-  await addressInput.press('Enter');
 
   // Sample across the whole first-load duration plus the debounce window:
   // neither the banner nor the Stop swap may appear at any point. A Stop

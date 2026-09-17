@@ -30,6 +30,15 @@ export interface Panel {
   open(): void;
   /** Hides the panel. Programmatic closes do not fire `onDismiss`. */
   close(): void;
+  /**
+   * Locks or unlocks the panel's user dismissal affordances (the close (cross)
+   * button and Escape). When locked, both are inert: the cross is disabled and
+   * Escape does nothing, so the panel can only be left through a programmatic
+   * close (e.g. the hosts panel's selection, which navigates). The owning pane
+   * gates this on whether a page is loaded under the panel — dismissing a
+   * panel must never reveal a bare, page-less page-view region.
+   */
+  setCloseable(closeable: boolean): void;
   dispose(): void;
 }
 
@@ -54,6 +63,7 @@ export interface CreatePanelOptions extends PanelDismissHandler {
 export function createPanel(options: CreatePanelOptions): Panel {
   registerCloseIcon();
   let open = false;
+  let closeable = true;
 
   const closeButton = el('sp-action-button', {
     attrs: {
@@ -86,7 +96,8 @@ export function createPanel(options: CreatePanelOptions): Panel {
     const autofocus = options.autofocusSelector
       ? element.querySelector<HTMLElement>(options.autofocusSelector)
       : null;
-    (autofocus ?? closeButton).focus();
+    const focusTarget = autofocus ?? (closeable ? closeButton : null);
+    focusTarget?.focus();
   }
 
   function closePanel(): void {
@@ -95,7 +106,17 @@ export function createPanel(options: CreatePanelOptions): Panel {
     element.hidden = true;
   }
 
+  function setPanelCloseable(next: boolean): void {
+    closeable = next;
+    if (next) {
+      closeButton.removeAttribute('disabled');
+    } else {
+      closeButton.setAttribute('disabled', '');
+    }
+  }
+
   function handleDismiss(): void {
+    if (!closeable) return;
     closePanel();
     options.onDismiss();
   }
@@ -119,6 +140,7 @@ export function createPanel(options: CreatePanelOptions): Panel {
     },
     open: openPanel,
     close: closePanel,
+    setCloseable: setPanelCloseable,
     dispose(): void {
       closeButton.removeEventListener('click', handleDismiss);
       document.removeEventListener('keydown', handleKeydown, true);

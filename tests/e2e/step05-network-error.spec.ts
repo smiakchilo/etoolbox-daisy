@@ -96,6 +96,14 @@ test('a configured server that is down is reported to the user, not swallowed', 
 
   const app = await electron.launch({ args: [mainEntry], env });
   const page = await app.firstWindow();
+  // Seeded profile: the hosts panel opens at startup and is NOT dismissible
+  // yet - nothing has loaded into the native view under it, so its cross
+  // button and Escape are inert (dismissing it would reveal the bare
+  // page-view region). The address bar stays usable above the panel, so drive
+  // the navigation to the dead origin first: even a failed load pushes
+  // navigation state (did-start/did-stop), which is what unlocks the panel.
+  // Only then can it be dismissed so the banner lands on the visible
+  // page-view region.
   await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
 
   // Drive the real control the user drives: `sp-textfield` renders a native
@@ -105,15 +113,27 @@ test('a configured server that is down is reported to the user, not swallowed', 
   await addressInput.fill(deadOrigin);
   await addressInput.press('Enter');
 
+  const banner = page.locator('sp-alert-banner.browser-toolbar-message');
+  // The banner opens even while the hosts panel still covers the page-view
+  // region (its `open` attribute is set independent of the page-panel
+  // `hidden`), so wait for its copy before dismissing.
+  await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
+  await expect(banner).toContainText(deadOrigin, { timeout: 60_000 });
+
+  // The failed navigation pushed state, so the panel is now closeable.
+  const panelClose = page.locator('.hosts-panel__close');
+  await expect(panelClose).not.toHaveAttribute('disabled');
+  await panelClose.click();
+  await expect(page.locator('.hosts-panel')).toBeHidden();
+
   const message = page.locator('.browser-toolbar-message');
-  await expect(message).toBeVisible({ timeout: 60_000 });
+  await expect(message).toBeVisible({ timeout: 10_000 });
 
   // The row is an `sp-alert-banner`, not a plain div - and jsdom cannot prove
   // a custom element registered, so this must be asserted against the real
   // built app (AGENTS.md §9): `customElements.get` resolved and a real shadow
   // root exists. A missing registration would render it as an unknown element
   // that matches the class but has none of the banner's display rules.
-  const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   await expect
     .poll(() => banner.evaluate(() => Boolean(customElements.get('sp-alert-banner'))))
     .toBe(true);
@@ -188,6 +208,10 @@ test('dismissing the error banner then Reload re-shows it for the same still-dow
 
   const app = await electron.launch({ args: [mainEntry], env });
   const page = await app.firstWindow();
+  // Seeded profile: the hosts panel opens at startup and is NOT dismissible
+  // yet (no page sits under it - see panel.ts `setCloseable`). Type the dead
+  // origin first: the failed load still pushes navigation state, which
+  // unlocks the panel so it can be dismissed and the banner revealed.
   await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
 
   const addressInput = page.locator('#browser-address-bar input');
@@ -195,8 +219,19 @@ test('dismissing the error banner then Reload re-shows it for the same still-dow
   await addressInput.press('Enter');
 
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
-  await expect(banner).toBeVisible({ timeout: 60_000 });
+  // Opens under the still-covered page region; the `open` attribute is set
+  // regardless, so wait for the copy before dismissing the panel.
+  await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
   await expect(banner).toContainText('Check that the server is running');
+
+  // The failed navigation pushed state, so the panel is now closeable.
+  const panelClose = page.locator('.hosts-panel__close');
+  await expect(panelClose).not.toHaveAttribute('disabled');
+  await panelClose.click();
+  await expect(page.locator('.hosts-panel')).toBeHidden();
+
+  // Now the banner is visible on the restored page-view region.
+  await expect(banner).toBeVisible();
 
   // Dismiss via the close button, exactly as a user would.
   const toolbar = page.locator('.browser-toolbar');

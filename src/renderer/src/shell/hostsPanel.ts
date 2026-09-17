@@ -28,6 +28,14 @@ export interface HostsPanel {
   /** Hides the panel. */
   close(): void;
   readonly isOpen: boolean;
+  /**
+   * Locks or unlocks the panel's dismissal affordances (close button and
+   * Escape). See `Panel.setCloseable` — the browser pane gates this on whether
+   * a page is loaded under the panel, so a user can never dismiss the startup
+   * picker to reveal a bare page-view region. Selecting a host stays the
+   * sanctioned way out regardless.
+   */
+  setCloseable(closeable: boolean): void;
   dispose(): void;
 }
 
@@ -48,8 +56,8 @@ export function createHostsPanel(callbacks: HostsPanelCallbacks): HostsPanel {
   });
 
   const panel = createPanel({
-    title: 'Select your host',
-    closeAriaLabel: 'Close hosts list',
+    title: 'Select a host',
+    closeAriaLabel: 'Close hosts panel',
     surfaceClassName: 'hosts-panel',
     closeButtonClassName: 'hosts-panel__close',
     autofocusSelector: '.hosts-item',
@@ -106,6 +114,7 @@ export function createHostsPanel(callbacks: HostsPanelCallbacks): HostsPanel {
     setHostOptions,
     open: () => panel.open(),
     close: () => panel.close(),
+    setCloseable: (closeable) => panel.setCloseable(closeable),
     get isOpen() {
       return panel.isOpen;
     },

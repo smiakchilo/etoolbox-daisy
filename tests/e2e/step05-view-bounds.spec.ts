@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 
 /**
  * Regression test for a defect that every unit test and a clean build missed:
@@ -35,6 +38,15 @@ function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 test("the AEM view is composited over the renderer's reserved region, not at 0 x 0", async () => {
   test.setTimeout(90_000);
 
+  const server: Server = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><title>ok</title><p>ok</p>');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  const origin = `http://127.0.0.1:${String(address.port)}`;
+
   mkdirSync(scratchBase, { recursive: true });
   const root = mkdtempSync(path.join(scratchBase, 'profile-'));
   const home = path.join(root, 'home');
@@ -42,6 +54,31 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
   const localAppData = path.join(home, 'AppData', 'Local');
   mkdirSync(appData, { recursive: true });
   mkdirSync(localAppData, { recursive: true });
+
+  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  const base = defaultAppSettings();
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(
+    settingsPath,
+    JSON.stringify(
+      appSettingsSchema.parse({
+        ...base,
+        servers: [
+          ...base.servers,
+          {
+            id: randomUUID(),
+            label: 'View-bounds fixture',
+            origin,
+            color: { kind: 'swatch', swatch: 'blue' },
+            revision: 0,
+          },
+        ],
+      }),
+      null,
+      2,
+    ),
+    'utf8',
+  );
 
   const app = await electron.launch({
     args: [mainEntry],
@@ -55,6 +92,11 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
   });
 
   const page = await app.firstWindow();
+  // A seeded profile means the hosts panel opens at startup. With no page
+  // loaded yet it is not dismissible, so pick the seeded host: it loads a page
+  // and closes the panel in one step, restoring the native view to full size
+  // for the bounds measurement below.
+  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
   const hostLocator = page.locator('[data-testid="browser-view-host"]');
   await hostLocator.waitFor({ state: 'visible', timeout: 30_000 });
 
@@ -106,4 +148,5 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
   expect(Math.abs(view.y - region.y)).toBeLessThanOrEqual(1);
 
   await app.close();
+  server.close();
 });

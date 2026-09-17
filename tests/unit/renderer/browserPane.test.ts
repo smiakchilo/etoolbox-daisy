@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
 import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/shared';
+import { newServerId } from '../../../src/shared';
 
 /**
  * The browser pane's page panel grouping (browserPane.ts): the toolbar's
@@ -91,6 +92,17 @@ function build(): ReturnType<typeof createBrowserPane> {
   return createBrowserPane();
 }
 
+/** Emits a minimal navigation-state push to every listener (like one IPC event). */
+function emitNavigationState(): void {
+  const minimal: BrowserNavigationState = {
+    url: 'https://author.example/content/page.html',
+    canGoBack: false,
+    canGoForward: false,
+    isLoading: false,
+  };
+  for (const listener of stateListeners) listener(minimal);
+}
+
 describe('createBrowserPane page panel', () => {
   it('groups, and initially hides, the message row together with the native view region', () => {
     const pane = build();
@@ -123,12 +135,18 @@ describe('createBrowserPane page panel', () => {
     const pane = build();
     const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
+    const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
 
     expect(pagePanel?.hidden).toBe(false);
     pickerButton?.click();
     expect(pagePanel?.hidden).toBe(true);
 
-    pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
+    // The panel must only be closeable after a page sits under it (the pane
+    // latches on navigation-state pushes), so unlock it before dismissing.
+    emitNavigationState();
+    expect(close?.hasAttribute('disabled')).toBe(false);
+
+    close?.click();
     expect(pagePanel?.hidden).toBe(false);
   });
 
@@ -141,6 +159,7 @@ describe('createBrowserPane page panel', () => {
     // `display:none` (hidden).
     expect(pagePanel?.hidden).toBe(true);
 
+    emitNavigationState();
     pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
     expect(pagePanel?.hidden).toBe(false);
   });
@@ -229,5 +248,80 @@ describe('createBrowserPane message lifecycle', () => {
     message?.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');
+  });
+});
+
+describe('createBrowserPane closeability', () => {
+  it('keeps cross, Escape and the picker toggle inert until a page has loaded', () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
+    const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
+
+    pickerButton?.click();
+    expect(pagePanel?.hidden).toBe(true);
+    // Nothing has loaded into the native view yet, so the panel must not be
+    // dismissible: the cross is disabled and Escape / the hosts-button toggle
+    // are no-ops. Dismissing it would reveal the bare page-view region.
+    expect(close?.hasAttribute('disabled')).toBe(true);
+
+    close?.click();
+    expect(pagePanel?.hidden).toBe(true);
+
+    document.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    expect(pagePanel?.hidden).toBe(true);
+
+    pickerButton?.click();
+    expect(pagePanel?.hidden).toBe(true);
+  });
+
+  it('unlocks the open panel when the first navigation state push arrives', () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
+    const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
+
+    pickerButton?.click();
+    expect(close?.hasAttribute('disabled')).toBe(true);
+
+    // A navigation push (even a failed load's start/stop) latches the pane as
+    // page-loaded and un-disables the active panel's close affordance.
+    emitNavigationState();
+    expect(close?.hasAttribute('disabled')).toBe(false);
+
+    close?.click();
+    expect(pagePanel?.hidden).toBe(false);
+  });
+
+  it('lets a host selection close the panel and navigate even while locked', () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
+
+    pane.update({
+      addressValue: 'https://author.example',
+      hostOptions: [
+        {
+          id: newServerId(() => 'srv-1'),
+          label: 'Author',
+          origin: 'https://author.example',
+          colorCss: '#0f0',
+          selected: false,
+        },
+      ],
+      insecureMarker: { visible: false, message: '' },
+    });
+
+    pickerButton?.click();
+    // Selecting a host is the sanctioned way out of a locked picker: it closes
+    // the panel AND navigates, so the page-view region is never left empty.
+    pane.element
+      .querySelector<HTMLElement>('.hosts-item[data-origin="https://author.example"]')
+      ?.click();
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://author.example');
+    expect(pagePanel?.hidden).toBe(false);
   });
 });
