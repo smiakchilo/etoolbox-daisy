@@ -5,7 +5,6 @@ import {
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
-  BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STOP_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
@@ -13,7 +12,6 @@ import {
 import {
   approveCertificateExceptionRequestSchema,
   navigateRequestSchema,
-  revokeCertificateExceptionRequestSchema,
   switchServerRequestSchema,
   viewBoundsSchema,
   type BrowserIpcVoidResult,
@@ -147,16 +145,6 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
       const parsed = approveCertificateExceptionRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadResult(parsed.error.message);
       return deps.controller.approveCertificateException(parsed.data);
-    },
-  );
-
-  ipcMain.handle(
-    BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL,
-    async (event, rawRequest: unknown): Promise<BrowserIpcVoidResult> => {
-      if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
-      const parsed = revokeCertificateExceptionRequestSchema.safeParse(rawRequest);
-      if (!parsed.success) return invalidPayloadResult(parsed.error.message);
-      return deps.controller.revokeCertificateException(parsed.data);
     },
   );
 

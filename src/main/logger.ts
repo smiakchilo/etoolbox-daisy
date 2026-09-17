@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { TOOL_ERROR_CODES, type ToolErrorCode } from '../shared/contracts/errors';
+import { TOOL_ERROR_CODES, type ToolErrorCode } from '../shared';
 import {
   chatIdSchema,
   messageIdSchema,
@@ -17,8 +17,8 @@ import {
   type SdkSessionId,
   type ToolCallId,
   type TurnId,
-} from '../shared/contracts/ids';
-import { parseOrigin } from '../shared/contracts/origin';
+} from '../shared';
+import { parseOrigin } from '../shared';
 
 /**
  * Diagnostics-only logger (implementation-plan.md step 04;
@@ -75,7 +75,7 @@ export const DIAGNOSTIC_CODES = [
   'BROWSER_AUX_WINDOW_DENIED',
   'BROWSER_CERTIFICATE_BLOCKED',
   'BROWSER_CERTIFICATE_APPROVED',
-  'BROWSER_CERTIFICATE_REVOKED',
+  'BROWSER_CERTIFICATE_RETRY_FAILED',
   'BROWSER_IPC_SENDER_REJECTED',
   'SETTINGS_WINDOW_CREATED',
   'AGENT_CHAT_IPC_SENDER_REJECTED',

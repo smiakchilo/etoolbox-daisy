@@ -21,7 +21,6 @@ import type {
   BrowserNavigationState,
   BrowserSwitchState,
   CertificateBlockedInfo,
-  RevokeCertificateExceptionRequest,
   ViewBounds,
 } from './browser-ipc';
 import type {
@@ -91,9 +90,6 @@ export interface DaisyBrowserApi {
   setViewBounds(bounds: ViewBounds): void;
   approveCertificateException(
     request: ApproveCertificateExceptionRequest,
-  ): Promise<BrowserIpcVoidResult>;
-  revokeCertificateException(
-    request: RevokeCertificateExceptionRequest,
   ): Promise<BrowserIpcVoidResult>;
   /** Subscribes to `browser:state-changed`; returns an unsubscribe function. */
   onStateChanged(listener: (state: BrowserNavigationState) => void): () => void;

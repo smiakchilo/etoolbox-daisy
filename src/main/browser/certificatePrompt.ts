@@ -2,16 +2,18 @@ import {
   computeCertificateFingerprintHex,
   decideCertificateTrust,
   type CertificateExceptionRecord,
-} from '../aem/certificateExceptions';
-import type { CertificateBlockedInfo } from '../../shared/browser-ipc';
+} from '../aem';
+import type { CertificateBlockedInfo } from '../../shared';
 
 /**
  * The TLS-exception-approval flow's *detection* half
  * (implementation-plan.md step 05; requirements-decisions.md section 4: "a
  * human can approve an exception after inspecting the origin and
- * certificate"). The *approval* half (`approveCertificateException`/
- * `revokeCertificateException`) already exists on `AemSession` and is called
- * directly from the browser IPC handler - nothing new is needed there.
+ * certificate"). The *approval* half (`approveCertificateException`) already
+ * exists on `AemSession` and is called from the browser IPC handler;
+ * approving also auto-retries the blocked navigation (in
+ * `browserController.ts`), so the human's decision is honoured immediately
+ * rather than requiring them to re-navigate by hand.
  *
  * This module registers a second, purely *observational* `app.on(
  * "certificate-error", ...)` listener alongside the AEM session's own
@@ -50,7 +52,15 @@ export type CertificateBlockedListener = (
 export interface CertificateBlockedListenerDeps {
   readonly aemSession: unknown;
   readonly listExceptions: () => readonly CertificateExceptionRecord[];
-  readonly onBlocked: (info: CertificateBlockedInfo) => void;
+  /**
+   * Fired with the blocked certificate's `CertificateBlockedInfo` and the
+   * full URL the navigation (or fetch) was trying to reach. The URL is
+   * deliberately delivered only to main (the controller keeps it as the
+   * auto-retry target when a human approves the exception); the renderer's
+   * prompt only ever needs the three `TlsException` fields, so they are the
+   * only thing the `browser:certificate-blocked` push carries.
+   */
+  readonly onBlocked: (info: CertificateBlockedInfo, url: string) => void;
 }
 
 /**
@@ -89,6 +99,6 @@ export function createCertificateBlockedListener(
     } catch {
       return;
     }
-    deps.onBlocked({ origin, certificateSha256Fingerprint: fingerprint, errorClass: error });
+    deps.onBlocked({ origin, certificateSha256Fingerprint: fingerprint, errorClass: error }, url);
   };
 }

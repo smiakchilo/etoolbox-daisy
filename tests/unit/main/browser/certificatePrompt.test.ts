@@ -1,37 +1,43 @@
 import { describe, expect, it } from 'vitest';
-import { computeCertificateFingerprintHex } from '../../../../src/main/aem/certificateExceptions';
+import { computeCertificateFingerprintHex } from '../../../../src/main/aem';
 import { createCertificateBlockedListener } from '../../../../src/main/browser/certificatePrompt';
-import { tlsExceptionSchema } from '../../../../src/shared/contracts/serverConfig';
+import { tlsExceptionSchema } from '../../../../src/shared';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
 
 const ERROR_SELF_SIGNED = 'net::ERR_CERT_AUTHORITY_INVALID';
 
 describe('createCertificateBlockedListener', () => {
-  it('reports a blocked certificate with origin, fingerprint, and error class when there is no matching exception', async () => {
+  it('reports a blocked certificate with origin, fingerprint, error class, and the full blocked URL when there is no matching exception', async () => {
     const leaf = await issueUntrustedLeafCert('blocked.example.test');
     const aemSession = { marker: 'aem' };
-    const blocked: unknown[] = [];
+    const blockedUrl = 'https://blocked.example.test:8443/some/page';
+    const blocked: Array<{ info: unknown; url: string }> = [];
 
     const listener = createCertificateBlockedListener({
       aemSession,
       listExceptions: () => [],
-      onBlocked: (info) => blocked.push(info),
+      onBlocked: (info, url) => blocked.push({ info, url }),
     });
 
     listener(
       { preventDefault: () => undefined },
       { session: aemSession },
-      'https://blocked.example.test:8443/some/page',
+      blockedUrl,
       ERROR_SELF_SIGNED,
       { data: leaf.cert },
       () => undefined,
     );
 
+    // The renderer-facing decision payload stays exactly the three
+    // `TlsException` fields; the URL is a main-side-only retry target.
     expect(blocked).toEqual([
       {
-        origin: 'https://blocked.example.test:8443',
-        certificateSha256Fingerprint: computeCertificateFingerprintHex(leaf.cert),
-        errorClass: ERROR_SELF_SIGNED,
+        info: {
+          origin: 'https://blocked.example.test:8443',
+          certificateSha256Fingerprint: computeCertificateFingerprintHex(leaf.cert),
+          errorClass: ERROR_SELF_SIGNED,
+        },
+        url: blockedUrl,
       },
     ]);
   });

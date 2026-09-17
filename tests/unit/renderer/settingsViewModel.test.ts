@@ -1,13 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeProxySnapshot,
-  describeTlsException,
   validateEditServerForm,
   validateNewServerForm,
   validateOriginInput,
   type NewServerFormInput,
 } from '../../../src/renderer/src/settings/viewModel';
-import type { AemProxySnapshot, CopilotProxySnapshot, TlsException } from '../../../src/shared';
+import type { AemProxySnapshot, CopilotProxySnapshot } from '../../../src/shared';
 
 function baseInput(overrides: Partial<NewServerFormInput> = {}): NewServerFormInput {
   return {
@@ -240,23 +239,6 @@ describe('describeProxySnapshot', () => {
     };
     expect(describeProxySnapshot(proxy)).toBe(
       'https://proxy.example:8080 - user "alice" (no password stored)',
-    );
-  });
-});
-
-describe('describeTlsException', () => {
-  it('reports no exception recorded', () => {
-    expect(describeTlsException(undefined)).toBe('No certificate exception recorded.');
-  });
-
-  it('reports the origin and fingerprint', () => {
-    const tlsException: TlsException = {
-      origin: 'https://author.example',
-      certificateSha256Fingerprint: 'a'.repeat(64),
-      errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
-    };
-    expect(describeTlsException(tlsException)).toBe(
-      `https://author.example - SHA-256 ${'a'.repeat(64)}`,
     );
   });
 });

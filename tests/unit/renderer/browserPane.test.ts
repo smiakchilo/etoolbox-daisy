@@ -27,6 +27,7 @@ interface FakeDaisyBrowser {
   navigate: ReturnType<typeof vi.fn>;
   onStateChanged: ReturnType<typeof vi.fn>;
   onSwitchStateChanged: ReturnType<typeof vi.fn>;
+  onCertificateBlocked: ReturnType<typeof vi.fn>;
 }
 
 let dom: JSDOM;
@@ -61,6 +62,7 @@ beforeEach(() => {
         switchListeners = switchListeners.filter((candidate) => candidate !== listener);
       };
     }),
+    onCertificateBlocked: vi.fn(() => () => undefined),
   };
   Reflect.set(dom.window, 'daisy', { browser });
   Reflect.set(dom.window, 'requestAnimationFrame', () => 1);

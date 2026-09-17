@@ -1,13 +1,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BrowserWindow, Session, WebContents } from 'electron';
+import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { createBrowserController } from '../../../../src/main/browser/browserController';
 import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
 import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView';
 import type { AuxiliaryWindowManager } from '../../../../src/main/browser/auxiliaryWindows';
 import type { AemSession } from '../../../../src/main/aem';
 import type { CertificateExceptionRecord } from '../../../../src/main/aem';
+import { computeCertificateFingerprintHex } from '../../../../src/main/aem';
 import type { SecretStore } from '../../../../src/main/secretStore';
 import type { Logger } from '../../../../src/main/logger';
 import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
@@ -15,7 +16,11 @@ import { newServerId } from '../../../../src/shared';
 import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../../../src/shared';
 import type { BrowserNavigationState } from '../../../../src/shared';
-import { BROWSER_SWITCH_STATE_CHANGED_CHANNEL } from '../../../../src/shared';
+import {
+  BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+  BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
+} from '../../../../src/shared';
+import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
 
 /**
  * `createBrowserController` unconditionally calls `app.on("certificate-error", ...)`
@@ -218,7 +223,6 @@ interface FakeAemSessionControls {
   readonly aemSession: AemSession;
   readonly switchProxy: ReturnType<typeof vi.fn>;
   readonly approveCertificateException: ReturnType<typeof vi.fn>;
-  readonly revokeCertificateException: ReturnType<typeof vi.fn>;
   switchProxyImpl: () => Promise<void>;
 }
 
@@ -227,19 +231,16 @@ function makeFakeAemSession(): FakeAemSessionControls {
     await controls.switchProxyImpl();
   });
   const approveCertificateException = vi.fn(() => Promise.resolve());
-  const revokeCertificateException = vi.fn(() => Promise.resolve());
   const aemSession: AemSession = {
     session: {} as Session,
     switchProxy,
     approveCertificateException,
-    revokeCertificateException,
     listCertificateExceptions: vi.fn((): readonly CertificateExceptionRecord[] => []),
   };
   const controls: FakeAemSessionControls = {
     aemSession,
     switchProxy,
     approveCertificateException,
-    revokeCertificateException,
     switchProxyImpl: () => Promise.resolve(),
   };
   return controls;
@@ -594,31 +595,126 @@ describe('browserController certificate exceptions persist through the settings 
     expect(reloaded.value.settings.servers[0]?.tlsException).toEqual(exception);
   });
 
-  it('revokeCertificateException clears the persisted exception and applies the revocation to the live session', async () => {
-    const server = makeServer({
-      tlsException: {
-        origin: 'https://author.example',
-        certificateSha256Fingerprint: 'a'.repeat(64),
-        errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
-      },
-    });
+  it('approveCertificateException auto-retries the exact blocked URL when the approved origin matches it', async () => {
+    const server = makeServer();
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-
-    const result = await harness.controller.revokeCertificateException({
-      serverId: server.id,
+    const leaf = await issueUntrustedLeafCert('retry.example.test');
+    const blockedUrl = `${server.origin}/editor.html/content/site/en.html`;
+    const errorClass = 'net::ERR_CERT_AUTHORITY_INVALID';
+    const exception = {
       origin: server.origin,
+      certificateSha256Fingerprint: computeCertificateFingerprintHex(leaf.cert),
+      errorClass,
+    };
+
+    driveCertificateError(harness, blockedUrl, errorClass, leaf.cert);
+    expect(harness.rendererSend).toHaveBeenCalledWith(
+      BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+      exception,
+    );
+
+    const result = await harness.controller.approveCertificateException({
+      serverId: server.id,
+      exception,
     });
 
     expect(result).toEqual({ ok: true });
-    expect(harness.aemSessionControls.revokeCertificateException).toHaveBeenCalledWith(
-      server.origin,
-    );
-    const reloaded = await loadSettings(harness.settingsDir);
-    if (!reloaded.ok) throw new Error('expected settings to reload');
-    expect(reloaded.value.settings.servers[0]?.tlsException).toBeUndefined();
+    // The blocked deep link, not the server root, was re-requested.
+    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(blockedUrl);
+  });
+
+  it('does not re-navigate after approval when the blocked origin differs from the approved exception', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    const leaf = await issueUntrustedLeafCert('other-origin.example.test');
+    const foreignOrigin = 'https://other-origin.example.test';
+    const errorClass = 'net::ERR_CERT_AUTHORITY_INVALID';
+    const exception = {
+      origin: foreignOrigin,
+      certificateSha256Fingerprint: computeCertificateFingerprintHex(leaf.cert),
+      errorClass,
+    };
+
+    driveCertificateError(harness, `${foreignOrigin}/page`, errorClass, leaf.cert);
+
+    const result = await harness.controller.approveCertificateException({
+      // Attach to the only configured server, per the renderer's contract.
+      serverId: server.id,
+      exception,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
+  });
+
+  it('does not re-navigate after approval once a newer navigation has cleared the retry target', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    const leaf = await issueUntrustedLeafCert('stale-retry.example.test');
+    const errorClass = 'net::ERR_CERT_AUTHORITY_INVALID';
+    const exception = {
+      origin: server.origin,
+      certificateSha256Fingerprint: computeCertificateFingerprintHex(leaf.cert),
+      errorClass,
+    };
+
+    driveCertificateError(harness, `${server.origin}/blocked`, errorClass, leaf.cert);
+    await harness.controller.navigate(server.origin);
+
+    const result = await harness.controller.approveCertificateException({
+      serverId: server.id,
+      exception,
+    });
+
+    expect(result).toEqual({ ok: true });
+    // Only the manual navigate's load happened; the stale blocked URL was
+    // not re-requested.
+    expect(harness.aemViewControls.loadURL).toHaveBeenCalledTimes(1);
+    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(`${server.origin}/`);
   });
 });
+
+/**
+ * Drives the real `certificate-error` listener the controller registered on
+ * `app` at construction, the same way Electron would after a blocked
+ * navigation. The listener is purely observational (rejects by default), so
+ * the harness only has to invoke it with an event/`webContents` pair that
+ * passes the AEM-session comparison.
+ */
+function driveCertificateError(
+  harness: ReturnType<typeof makeControllerHarness>,
+  url: string,
+  errorClass: string,
+  certificatePem: string,
+): void {
+  const registration = vi
+    .mocked(app)
+    .on.mock.calls.find((call) => (call[0] as string) === 'certificate-error');
+  const listener = registration?.[1] as
+    | ((
+        event: { preventDefault(): void },
+        webContents: { session: unknown },
+        u: string,
+        error: string,
+        certificate: { data: string },
+        callback: (isTrusted: boolean) => void,
+      ) => void)
+    | undefined;
+  if (listener === undefined) {
+    throw new Error('controller did not register a certificate-error listener');
+  }
+  listener(
+    { preventDefault: () => undefined },
+    { session: harness.aemSessionControls.aemSession.session },
+    url,
+    errorClass,
+    { data: certificatePem },
+    () => undefined,
+  );
+}
 
 describe('browserController navigation epoch', () => {
   it('starts at a stable value and exposes it for request stamping', () => {

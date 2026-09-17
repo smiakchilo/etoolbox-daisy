@@ -47,7 +47,7 @@ export function describeRequiredAction(action: RequiredAction): string | undefin
     case 'select_server':
       return 'Select an AEM server first.';
     case 'review_certificate':
-      return 'Review the certificate exception in Settings.';
+      return 'Approve the untrusted certificate in the banner above the browser pane, then try again.';
     case 'check_proxy_settings':
       return 'Check the proxy settings in Settings.';
     case 'reduce_result_size':

@@ -112,6 +112,9 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
     await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
 
+    // Settings is tabbed; the Copilot proxy fields live behind their own tab.
+    await shell.locator('sp-tab', { hasText: 'Copilot proxy' }).click();
+
     // A proxy address must exist before a password has anywhere to attach.
     const addressField = shell.locator('[aria-label="Copilot proxy address"] input');
     await addressField.waitFor({ state: 'visible', timeout: 60_000 });

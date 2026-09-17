@@ -143,6 +143,19 @@ export default tseslint.config(
     extends: [...tseslint.configs.recommended],
   },
   {
+    // Standalone repo scripts (scripts/**/*.mjs): plain Node with no
+    // tsconfig, so `no-undef` is live and the Node globals must be declared.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+  {
     files: ['src/shared/**/*.ts'],
     rules: {
       'no-restricted-imports': sharedPurityRestriction,

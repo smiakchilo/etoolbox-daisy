@@ -178,6 +178,19 @@
   gap: 8px;
 }
 
+/* The certificate prompt's Allow/Dismiss buttons, grouped after the copy so
+   the banner's default-slot layout keeps them on one row with text before
+   actions. `margin-inline-start:auto` pushes the pair to the right edge of
+   the strip; the banner aligns the slot content itself, so this only sets
+   the grouping and the gap between the two buttons. */
+.browser-toolbar-message__actions {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 /* Groups the toolbar's status/message row with the reserved page-view region
    it describes (browserPane.ts), so the picker suspension hiding the
    native view hides the message with it - the message text describes a page

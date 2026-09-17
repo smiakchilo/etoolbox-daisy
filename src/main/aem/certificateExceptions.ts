@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { tlsExceptionSchema, type TlsException } from '../../shared/contracts/serverConfig';
+import { tlsExceptionSchema, type TlsException } from '../../shared';
 
 /**
  * Certificate-exception policy for the AEM session (implementation-plan.md
@@ -17,11 +17,15 @@ import { tlsExceptionSchema, type TlsException } from '../../shared/contracts/se
  *    top-level navigation. This module is written against that event; see
  *    `createCertificateErrorListener` below for the Electron-facing side.
  * 2. Chromium caches an ALLOW decision for a (host, port, certificate) tuple.
- *    Revoking or replacing an exception does nothing on its own -
+ *    Replacing an exception does nothing on its own -
  *    `clearHostResolverCache()` does not touch it either - only
  *    `session.closeAllConnections()` does. Every mutation in
  *    {@link createCertificateExceptionStore} therefore closes connections
- *    through the injected {@link ConnectionCloser}.
+ *    through the injected {@link ConnectionCloser}. (There is deliberately no
+ *    in-app revoke path: exceptions are only ever *added* here, and removed
+ *    by editing the persisted `settings.json` with the app closed - a fresh
+ *    Chromium session has no cached decisions to clear. See
+ *    handoff-steps-09-12.md's certificate-prompt deviation note.)
  *
  * Matching requires an exact origin (scheme + host + port) AND the
  * certificate's SHA-256 fingerprint AND the reported error class (e.g.
@@ -124,11 +128,10 @@ export function decideCertificateTrust(
 // ---------------------------------------------------------------------------
 
 /**
- * The one Electron capability revoking/replacing an exception needs -
- * narrowed from `Session` to a single method so this store is constructible
- * and testable with a plain fake, per docs/verification.md constraint 1
- * ("Chromium caches the ALLOW decision ... `session.closeAllConnections()`
- * DOES [clear it]").
+ * The one Electron capability replacing an exception needs - narrowed from
+ * `Session` to a single method so this store is constructible and testable
+ * with a plain fake, per docs/verification.md constraint 1 ("Chromium caches
+ * the ALLOW decision ... `session.closeAllConnections()` DOES [clear it]").
  */
 export interface ConnectionCloser {
   closeAllConnections(): Promise<void>;
@@ -145,8 +148,6 @@ export interface CertificateExceptionStore {
    * record, which has nothing cached to invalidate.
    */
   approve(record: CertificateExceptionRecord): Promise<void>;
-  /** Removes the exception for `origin`, if any, and closes all connections if one was actually removed. */
-  revoke(origin: string): Promise<void>;
   /** Convenience wrapper around {@link decideCertificateTrust} using this store's current exceptions. */
   decide(input: CertificateDecisionInput): CertificateDecision;
 }
@@ -170,13 +171,6 @@ export function createCertificateExceptionStore(
         existing.errorClass !== parsed.errorClass;
       byOrigin.set(parsed.origin, parsed);
       if (changed) {
-        await closer.closeAllConnections();
-      }
-    },
-
-    async revoke(origin) {
-      const existed = byOrigin.delete(origin);
-      if (existed) {
         await closer.closeAllConnections();
       }
     },

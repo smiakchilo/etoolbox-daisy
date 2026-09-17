@@ -9,7 +9,6 @@ import type {
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
-  RevokeCertificateExceptionRequest,
   ViewBounds,
 } from '../../shared';
 import type { AppSettings } from '../../shared';
@@ -114,9 +113,6 @@ export interface BrowserController {
   approveCertificateException(
     request: ApproveCertificateExceptionRequest,
   ): Promise<BrowserIpcVoidResult>;
-  revokeCertificateException(
-    request: RevokeCertificateExceptionRequest,
-  ): Promise<BrowserIpcVoidResult>;
   /** Re-applies every persisted TLS exception to the live session. Call once at startup, before the AEM view loads anything. */
   hydrateCertificateExceptions(): Promise<void>;
   destroy(): void;
@@ -173,6 +169,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // switch mechanism, not settings-mutation IPC.
   let currentCredentials: ProxyPlainCredentials | undefined;
 
+  // The full URL of the navigation that was most recently blocked by an
+  // untrusted certificate, if any. Set by the observational
+  // `certificate-error` listener; consumed by `approveCertificateException`
+  // to auto-retry exactly what the human was trying to reach (a deep link,
+  // not just the server root), and cleared by any *new* navigation so a stale
+  // target is never retried after the user has moved on.
+  let certificateRetryTarget: { readonly url: string; readonly origin: string } | undefined;
+
   // The server the AEM view is currently showing, or `undefined` before the
   // first successful `switchServer`/`navigate` in this run. Updated here -
   // not re-derived from disk on every read - because `activeServer()` must
@@ -212,8 +216,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const certificateBlockedListener = createCertificateBlockedListener({
     aemSession: aemSession.session,
     listExceptions: () => aemSession.listCertificateExceptions(),
-    onBlocked: (info) => {
+    onBlocked: (info, url) => {
       logger.warn('BROWSER_CERTIFICATE_BLOCKED');
+      certificateRetryTarget = { url, origin: info.origin };
       rendererWebContents.send(BROWSER_CERTIFICATE_BLOCKED_CHANNEL, info);
     },
   });
@@ -231,6 +236,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   }
 
   async function navigate(rawValue: string): Promise<BrowserIpcVoidResult> {
+    // Any user-initiated navigation supersedes a pending certificate-retry
+    // target (the renderer's prompt was dismissed by this navigation).
+    certificateRetryTarget = undefined;
     let settings: AppSettings;
     try {
       settings = await loadSettingsOrThrow();
@@ -255,6 +263,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     serverId: ServerId,
     targetUrl?: string,
   ): Promise<BrowserIpcVoidResult> {
+    // Any user-initiated switch supersedes a pending certificate-retry
+    // target (the renderer's prompt was dismissed by this switch).
+    certificateRetryTarget = undefined;
     let settings: AppSettings;
     try {
       settings = await loadSettingsOrThrow();
@@ -326,7 +337,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   async function withPersistedTlsException(
     serverId: ServerId,
-    tlsException: ApproveCertificateExceptionRequest['exception'] | null,
+    tlsException: ApproveCertificateExceptionRequest['exception'],
   ): Promise<BrowserIpcVoidResult> {
     let settings: AppSettings;
     try {
@@ -349,9 +360,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // A TLS-exception change bumps the server's `revision` (see
       // `applyServerTargetingChange`), and the active server is the one this
       // just changed - keep the reported revision current so a tool request
-      // made right after approving/revoking a certificate exception is
-      // stamped with the revision that is actually now in effect, not a
-      // value that is one change stale.
+      // made right after approving a certificate exception is stamped with
+      // the revision that is actually now in effect, not a value that is one
+      // change stale.
       const updatedServer = outcome.value.settings.servers.find(
         (candidate) => candidate.id === serverId,
       );
@@ -366,21 +377,25 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     request: ApproveCertificateExceptionRequest,
   ): Promise<BrowserIpcVoidResult> {
     // Persist first: if saving fails, the live session is never told about an
-    // exception that would not survive a restart or show up in the UI.
+    // exception that would not survive a restart.
     const persisted = await withPersistedTlsException(request.serverId, request.exception);
     if (!persisted.ok) return persisted;
     await aemSession.approveCertificateException(request.exception);
+    // Auto-retry the navigation that was blocked, if the approval covers the
+    // origin it was for (a stale target whose origin differs is dropped, not
+    // reused). `navigate` clears the target itself, so it is captured first.
+    const retryTarget = certificateRetryTarget;
+    if (retryTarget !== undefined && retryTarget.origin === request.exception.origin) {
+      const retried = await navigate(retryTarget.url);
+      if (!retried.ok) {
+        // A load failure in the retry surfaces through the normal
+        // navigation-state push (the toolbar shows it as its usual error
+        // row), so a retry failure must not flip the otherwise-successful
+        // approval result - but it should be visible in the log.
+        logger.warn('BROWSER_CERTIFICATE_RETRY_FAILED');
+      }
+    }
     logger.info('BROWSER_CERTIFICATE_APPROVED');
-    return ok();
-  }
-
-  async function revokeCertificateException(
-    request: RevokeCertificateExceptionRequest,
-  ): Promise<BrowserIpcVoidResult> {
-    const persisted = await withPersistedTlsException(request.serverId, null);
-    if (!persisted.ok) return persisted;
-    await aemSession.revokeCertificateException(request.origin);
-    logger.info('BROWSER_CERTIFICATE_REVOKED');
     return ok();
   }
 
@@ -457,7 +472,6 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     stop,
     setViewBounds: (bounds) => aemView.setBounds(bounds),
     approveCertificateException,
-    revokeCertificateException,
     hydrateCertificateExceptions,
     destroy,
   };

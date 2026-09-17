@@ -53,8 +53,6 @@ export const BROWSER_SWITCH_SERVER_CHANNEL = 'browser:switch-server' as const;
 export const BROWSER_STOP_CHANNEL = 'browser:stop' as const;
 export const BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL =
   'browser:approve-certificate-exception' as const;
-export const BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL =
-  'browser:revoke-certificate-exception' as const;
 /** Push channel: main -> renderer, whenever the AEM view's navigation state changes. */
 export const BROWSER_STATE_CHANGED_CHANNEL = 'browser:state-changed' as const;
 /** Push channel: main -> renderer, whenever a server switch starts/finishes. */

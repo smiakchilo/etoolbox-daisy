@@ -1,7 +1,13 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserToolbar } from '../../../src/renderer/src/shell/browserToolbar';
-import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/shared';
+import type {
+  BrowserNavigationState,
+  BrowserSwitchState,
+  CertificateBlockedInfo,
+} from '../../../src/shared';
+import { newServerId } from '../../../src/shared';
+import type { ServerOption } from '../../../src/renderer/src/shell/viewModel';
 
 /**
  * The toolbar's external-navigation loading state machine (browserToolbar.ts).
@@ -31,14 +37,19 @@ interface FakeDaisyBrowser {
   reload: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   navigate: ReturnType<typeof vi.fn>;
+  approveCertificateException: ReturnType<typeof vi.fn>;
   onStateChanged: ReturnType<typeof vi.fn>;
   onSwitchStateChanged: ReturnType<typeof vi.fn>;
+  onCertificateBlocked: ReturnType<typeof vi.fn>;
 }
 
 let dom: JSDOM;
 let browser: FakeDaisyBrowser;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
 let switchListeners: Array<(state: BrowserSwitchState) => void>;
+let blockedListeners: Array<(info: CertificateBlockedInfo) => void>;
+
+const AUTHOR_SERVER_ID = newServerId(() => 'server-a');
 
 const previousDocument = Reflect.get(globalThis, 'document') as unknown;
 const previousWindow = Reflect.get(globalThis, 'window') as unknown;
@@ -47,12 +58,14 @@ beforeEach(() => {
   dom = new JSDOM();
   stateListeners = [];
   switchListeners = [];
+  blockedListeners = [];
   browser = {
     goBack: vi.fn(() => Promise.resolve({ ok: true })),
     goForward: vi.fn(() => Promise.resolve({ ok: true })),
     reload: vi.fn(() => Promise.resolve({ ok: true })),
     stop: vi.fn(() => Promise.resolve({ ok: true })),
     navigate: vi.fn(() => Promise.resolve({ ok: true })),
+    approveCertificateException: vi.fn(() => Promise.resolve({ ok: true })),
     onStateChanged: vi.fn((listener: (state: BrowserNavigationState) => void) => {
       stateListeners.push(listener);
       return () => {
@@ -63,6 +76,12 @@ beforeEach(() => {
       switchListeners.push(listener);
       return () => {
         switchListeners = switchListeners.filter((candidate) => candidate !== listener);
+      };
+    }),
+    onCertificateBlocked: vi.fn((listener: (info: CertificateBlockedInfo) => void) => {
+      blockedListeners.push(listener);
+      return () => {
+        blockedListeners = blockedListeners.filter((candidate) => candidate !== listener);
       };
     }),
   };
@@ -427,5 +446,146 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.textContent).toContain('dead.example');
     expect(message.hasAttribute('dismissible')).toBe(true);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+  });
+});
+
+const BLOCKED_INFO: CertificateBlockedInfo = {
+  origin: 'https://author.example',
+  certificateSha256Fingerprint: 'a'.repeat(64),
+  errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
+};
+
+function serverOption(overrides: Partial<ServerOption> = {}): ServerOption {
+  return {
+    id: AUTHOR_SERVER_ID,
+    label: 'Author',
+    origin: 'https://author.example',
+    colorCss: 'color: rgb(20, 115, 230)',
+    selected: true,
+    ...overrides,
+  };
+}
+
+function findPromptButtons(toolbar: ReturnType<typeof createBrowserToolbar>): {
+  allow: HTMLElement;
+  dismiss: HTMLElement;
+} {
+  const message = findMessage(toolbar);
+  const allow = message.querySelector('sp-button[variant="accent"]');
+  const dismiss = message.querySelector('sp-button:not([variant])');
+  if (!allow || !dismiss) throw new Error('certificate prompt buttons not found');
+  return { allow: allow as HTMLElement, dismiss: dismiss as HTMLElement };
+}
+
+describe('createBrowserToolbar certificate prompt', () => {
+  it('renders the prompt with copy and an enabled Allow when a configured server matches the blocked origin', () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([
+      serverOption(),
+      serverOption({ id: newServerId(() => 'server-b'), label: 'Other' }),
+    ]);
+
+    blockedListeners[0]?.(BLOCKED_INFO);
+
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toContain('Untrusted certificate for https://author.example');
+    expect(message.textContent).toContain('SHA-256 aaaaaaaa\u2026aaaaaa');
+    expect(message.textContent).toContain('net::ERR_CERT_AUTHORITY_INVALID');
+    expect(findPromptButtons(toolbar).allow.hasAttribute('disabled')).toBe(false);
+    expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('disables Allow while the blocked origin has no matching configured server, then enables it once a match arrives', () => {
+    const toolbar = build();
+
+    blockedListeners[0]?.(BLOCKED_INFO);
+    expect(findPromptButtons(toolbar).allow.hasAttribute('disabled')).toBe(true);
+
+    // The settings snapshot lands after the prompt (a slow first login): the
+    // Allow button must re-evaluate against the now-present server.
+    toolbar.setServerOptions([serverOption()]);
+    expect(findPromptButtons(toolbar).allow.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('approves with the exact decision main pushed and clears the prompt', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([serverOption()]);
+    blockedListeners[0]?.(BLOCKED_INFO);
+
+    findPromptButtons(toolbar).allow.click();
+
+    await vi.waitFor(() => {
+      expect(browser.approveCertificateException).toHaveBeenCalledWith({
+        serverId: AUTHOR_SERVER_ID,
+        exception: BLOCKED_INFO,
+      });
+    });
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+  });
+
+  it('surfaces an approval failure as an error row instead of leaving the prompt up', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([serverOption()]);
+    blockedListeners[0]?.(BLOCKED_INFO);
+    browser.approveCertificateException.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'server_not_found', message: `no server with id server-a` },
+    });
+
+    findPromptButtons(toolbar).allow.click();
+    await vi.waitFor(() => {
+      expect(message.textContent).toContain('no longer exists');
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('Dismiss clears the prompt without persisting anything', () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([serverOption()]);
+    blockedListeners[0]?.(BLOCKED_INFO);
+    expect(message.hasAttribute('open')).toBe(true);
+
+    findPromptButtons(toolbar).dismiss.click();
+
+    expect(browser.approveCertificateException).not.toHaveBeenCalled();
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+  });
+
+  it('the banner close control dismisses the prompt too', () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([serverOption()]);
+    blockedListeners[0]?.(BLOCKED_INFO);
+    expect(message.hasAttribute('open')).toBe(true);
+
+    message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
+
+    expect(browser.approveCertificateException).not.toHaveBeenCalled();
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+  });
+
+  it('a new navigation supersedes the prompt', () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    toolbar.setServerOptions([serverOption()]);
+    blockedListeners[0]?.(BLOCKED_INFO);
+    expect(message.hasAttribute('open')).toBe(true);
+
+    // Approving should not be possible after the user has moved on; a new
+    // load clears the prompt at the same boundary main clears its retry
+    // target.
+    stateListeners[0]?.(loadingState(true));
+
+    expect(message.hasAttribute('open')).toBe(false);
+    expect(message.textContent).toBe('');
+    expect(message.querySelector('sp-button')).toBeNull();
   });
 });

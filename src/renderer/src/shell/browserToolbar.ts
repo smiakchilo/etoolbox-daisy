@@ -1,6 +1,11 @@
 import { el } from '../lib/dom';
-import type { BrowserIpcVoidResult, BrowserNavigationState } from '../../../shared';
+import type {
+  BrowserIpcVoidResult,
+  BrowserNavigationState,
+  CertificateBlockedInfo,
+} from '../../../shared';
 import type { ServerOption } from './viewModel';
+import { describeBlockedCertificate } from './viewModel';
 
 /**
  * The left pane's toolbar: Back/Forward/Refresh, a plain text address bar,
@@ -32,6 +37,18 @@ import type { ServerOption } from './viewModel';
  * auto-created). A user-initiated stop (`browser:stop`) produces an
  * `ERR_ABORTED` error that is suppressed here as expected behaviour rather
  * than surfaced as an error banner.
+ *
+ * Untrusted certificates follow a different route from the errors above:
+ * main observes the blocked navigation and pushes
+ * `browser:certificate-blocked` (with the *decision*, not the page URL),
+ * and this module turns it into the banner's most prominent non-loading
+ * presentation - an "Allow / Dismiss" prompt. Allow only acts when a
+ * configured server's origin matches the blocked origin (the exception is
+ * attached to that server's persisted entry; approving never auto-creates a
+ * server), asks main to approve it, and clears the row - main then
+ * auto-retries the blocked navigation, which surfaces via the normal
+ * loading state. Dismiss (or the banner's close control) just clears the
+ * row: nothing is persisted and nothing is retried.
  */
 export interface BrowserToolbar {
   readonly element: HTMLElement;
@@ -54,12 +71,13 @@ export interface BrowserToolbar {
   readonly messageElement: HTMLElement;
   /** Refreshes the address bar text and server-selector options for a newly loaded snapshot. */
   setAddressValue(value: string): void;
+  /** Refreshes the server-selector options (and the certificate prompt's matching-server state) for a newly loaded snapshot. */
   setServerOptions(options: readonly ServerOption[]): void;
   /** Marks the picker button as open (panel visible) or closed. */
   setServerPickerOpen(open: boolean): void;
   /** Writes `origin` into the address field and navigates to it, exactly like a typed address. */
   navigateTo(origin: string): void;
-  /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`. */
+  /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
   dispose(): void;
 }
 
@@ -144,6 +162,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   let switching = false;
   let pendingExternalNav = 0;
   let errorText: string | null = null;
+  // The blocked-certificate decision main most recently pushed via
+  // `browser:certificate-blocked`, or null when no prompt is pending. Cleared
+  // by a new navigation (main clears its own auto-retry target at the same
+  // boundaries), by Dismiss/the banner close control, and when an approval
+  // request is dispatched.
+  let blockedCertificate: CertificateBlockedInfo | null = null;
 
   // How long a loading state must persist before the loading banner appears.
   // A chrome-armed external navigation that finishes within this window (fast
@@ -157,10 +181,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   //  1. "Loading…"+spinner (plus a progress line at the top edge) — any
   //     external load is in progress (either a server switch, or a
   //     toolbar-initiated reload/back/forward/address submit while
-  //     `isLoading` is true).
-  //  2. Error copy — set by `handleVoidResult` (network failures, unknown-
+  //     `isLoading` is true). A pending certificate prompt is cleared the
+  //     moment a new load starts - approving's auto-retry and any manual
+  //     navigation both supersede it.
+  //  2. The untrusted-certificate prompt — set by `onCertificateBlocked`.
+  //  3. Error copy — set by `handleVoidResult` (network failures, unknown-
   //     origin prompt, storage errors).
-  //  3. Closed (idle) — no active external load and no error to display.
+  //  4. Closed (idle) — no active external load and nothing to display.
   //
   // Opening and closing are instant (`open` toggles `display` on the
   // component) - no slide animation. Loading is debounced by
@@ -168,7 +195,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // ends before the timer fires the banner is never shown (and no layout
   // shift occurs). Error and idle transitions apply immediately. The loading
   // presentation is never dismissible: the close control is reserved for
-  // error/prompt rows, where dismissing clears the error copy.
+  // error/prompt rows, where dismissing clears the error copy or the prompt.
 
   /** True when the `--loading` class + loading content are actively applied. */
   function isLoadingPresentationShown(): boolean {
@@ -198,6 +225,73 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     messageElement.replaceChildren(document.createTextNode(errorText ?? ''));
     messageElement.setAttribute('open', '');
     setNavMode('refresh');
+  }
+
+  // The untrusted-certificate prompt: the decision main pushed to the
+  // renderer, rendered verbatim (nothing re-derived, so what is shown by the
+  // Allow click is exactly what was blocked), plus Allow/Dismiss. Allow is
+  // disabled unless a configured server's origin matches the blocked origin:
+  // approval attaches the exception to that server's persisted entry, and the
+  // app never auto-creates a server from a blocked URL.
+  function applyCertificatePromptPresentation(): void {
+    cancelLoadingBanner();
+    messageElement.classList.remove('browser-toolbar-message--loading');
+    messageElement.setAttribute('dismissible', '');
+    const info = blockedCertificate;
+    if (info === null) return;
+
+    const matchingServer = serverOptions.find((server) => server.origin === info.origin);
+    const allowButton = el('sp-button', {
+      attrs: { variant: 'accent', size: 'm' },
+      text: 'Allow',
+    });
+    if (matchingServer === undefined) {
+      allowButton.setAttribute('disabled', '');
+    }
+    allowButton.addEventListener('click', () => {
+      void allowBlockedCertificate(info, matchingServer);
+    });
+    const dismissButton = el('sp-button', { attrs: { size: 'm' }, text: 'Dismiss' });
+    dismissButton.addEventListener('click', () => {
+      blockedCertificate = null;
+      applyPresentation();
+    });
+
+    const actions = el('span', {
+      attrs: { class: 'browser-toolbar-message__actions' },
+      children: [allowButton, dismissButton],
+    });
+    messageElement.replaceChildren(
+      document.createTextNode(describeBlockedCertificate(info)),
+      actions,
+    );
+    messageElement.setAttribute('open', '');
+    setNavMode('refresh');
+  }
+
+  // Approving intentionally precedes any auto-retry surfacing: `browser:
+  // approve-certificate-exception` resolves ok once the exception is
+  // persisted and live, and main then re-navigates on its own (this toolbar
+  // never issues the retry) - the banner's loading presentation takes over
+  // from the prompt when that navigation reports `isLoading`.
+  async function allowBlockedCertificate(
+    info: CertificateBlockedInfo,
+    matchingServer: ServerOption | undefined,
+  ): Promise<void> {
+    if (matchingServer === undefined) return;
+    blockedCertificate = null;
+    const result: BrowserIpcVoidResult = await window.daisy.browser.approveCertificateException({
+      serverId: matchingServer.id,
+      exception: info,
+    });
+    if (!result.ok) {
+      if (result.error.code === 'server_not_found') {
+        errorText = `The server for ${info.origin} no longer exists. Add it in Settings, then try again.`;
+      } else {
+        errorText = result.error.message;
+      }
+    }
+    applyPresentation();
   }
 
   function applyIdlePresentation(): void {
@@ -237,6 +331,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
           }
         }, LOADING_BANNER_DELAY_MS);
       }
+    } else if (blockedCertificate !== null) {
+      applyCertificatePromptPresentation();
     } else if (errorText !== null) {
       applyErrorPresentation();
     } else {
@@ -453,6 +549,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // re-appears after the debounce window).
   messageElement.addEventListener('close', (event) => {
     event.preventDefault();
+    blockedCertificate = null;
     errorText = null;
     applyPresentation();
   });
@@ -476,6 +573,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // never resurrect text from a previous page.
     if (state.isLoading) {
       errorText = null;
+      // A navigation to a new page has begun — a pending certificate prompt
+      // (and main's matching auto-retry target) is superseded by it.
+      blockedCertificate = null;
     } else {
       // A load finished with `isLoading:false` (did-stop-loading): every
       // pending external navigation is now complete, so the counter resets.
@@ -490,9 +590,25 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // restore the picker to its correct disabled state without clobbering the
   // no-servers case (it must not blindly remove `disabled` after a switch).
   let hasServers = false;
+  // The full server option list, kept for the certificate prompt's
+  // matching-server check (Allow is enabled only when a configured server's
+  // origin equals the blocked origin). Mirrors `hasServers` (which only feeds
+  // the picker's disabled state) but cannot be merged into it: `hasServers`
+  // is a boolean, and matching needs the actual origins.
+  let serverOptions: readonly ServerOption[] = [];
 
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
     switching = state.switching;
+    applyPresentation();
+  });
+
+  // A blocked navigation arrives as a decision on the renderer's own
+  // deadline: main pushes it on the AEM session's `certificate-error` event,
+  // which also secretly carries the full URL so main can keep it as the
+  // auto-retry target. The push payload deliberately carries only the three
+  // `TlsException` fields, so the renderer never touches that URL.
+  const unsubscribeBlocked = window.daisy.browser.onCertificateBlocked((info) => {
+    blockedCertificate = info;
     applyPresentation();
   });
 
@@ -508,8 +624,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // text is owned exclusively by `setAddressValue`/the live
       // navigation-state event above, and must not be reset just because
       // the configured server list reloaded (e.g. the window regaining
-      // focus). Only the picker's disabled state depends on the snapshot.
+      // focus). The picker's disabled state and the certificate prompt's
+      // matching-server state both depend on the snapshot, so both are
+      // re-derived here.
       hasServers = options.length > 0;
+      serverOptions = options;
       applyPresentation();
     },
     setServerPickerOpen(open: boolean): void {
@@ -530,6 +649,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       cancelLoadingBanner();
       unsubscribeState();
       unsubscribeSwitch();
+      unsubscribeBlocked();
     },
   };
 }

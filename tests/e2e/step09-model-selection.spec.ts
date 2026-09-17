@@ -67,6 +67,9 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       .locator('.settings-panel')
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
+    // Settings is tabbed and the Servers tab is selected by default, so the
+    // Models panel is only visible once its tab is chosen.
+    await settings.locator('sp-tab', { hasText: 'Models' }).click();
     await settings
       .locator('section[aria-label="Models"]')
       .waitFor({ state: 'visible', timeout: 60_000 });

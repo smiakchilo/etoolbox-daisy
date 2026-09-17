@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "package:win": "electron-builder --win --x64",
+    "preview:dev": "node scripts/preview-selfsigned-server.mjs",
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {
@@ -24,6 +25,7 @@
     "@github/copilot-sdk": "1.0.13",
     "@spectrum-web-components/alert-banner": "1.12.2",
     "@spectrum-web-components/table": "1.12.2",
+    "@spectrum-web-components/tabs": "1.12.2",
     "dompurify": "3.4.15",
     "marked": "18.0.13",
     "zod": "4.6.4"

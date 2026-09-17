@@ -6,30 +6,61 @@
  * surface itself is the shared `.panel` from panel.css.
  */
 
-/* The panel's scrollable body: the shared `.panel` surface is a flex column
-   that must not itself scroll (see panel.css), so the sections scroll inside
-   this one region. */
+/* The panel's body. The surface itself is a flex column that must not scroll
+   (see panel.css), so the scroll region lives one level down: the tab strip
+   row stays put and the selected tab panel scrolls (see the `sp-tab-panel`
+   rule below). */
 .settings-panel__content {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
 }
 
 .settings-panel__status {
   color: var(--spectrum-red-700, #b3261e);
+  margin: 0;
+}
+
+/* The status line is a permanent child of the content column; while there is
+   nothing to report it must collapse to nothing, or its (empty) line box plus
+   the column's 12px gap would leave a blank band between the panel header
+   and the tab strip. */
+.settings-panel__status:empty {
+  display: none;
+}
+
+/* `sp-tabs` is a grid (`auto 1fr` rows) whose second row hosts the panels;
+   allowing it to shrink within the flex column bounds that second row, so the
+   panel below can scroll instead of overflowing the panel surface. */
+.settings-panel__tabs {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The selected panel is the scroll region. The component hides unselected
+   panels itself (`:host(:not([selected])) { display: none }` in the shadow
+   tree), but a document-tree rule that sets `display` on the panel host
+   overrides that - even at lower specificity - so both sides must be spelled
+   out here: the unselected panels are hidden by an explicit rule, and the
+   selected one is made a block scroll region. */
+.settings-panel__tab-panel {
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 0 0 0;
+}
+
+.settings-panel__tab-panel:not([selected]) {
+  display: none;
 }
 
 .settings-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--spectrum-gray-300, #d3d3d3);
-  border-radius: 4px;
 }
 
 .server-list,

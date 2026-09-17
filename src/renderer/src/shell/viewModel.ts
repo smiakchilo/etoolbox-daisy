@@ -1,4 +1,9 @@
-import { isInsecureOrigin, type ServerId, type ServerSnapshot } from '../../../shared';
+import {
+  isInsecureOrigin,
+  type CertificateBlockedInfo,
+  type ServerId,
+  type ServerSnapshot,
+} from '../../../shared';
 import { resolveServerColorCss } from '../lib/serverColor';
 
 /** One entry the server picker panel (`serverPickerPanel.ts`) renders. */
@@ -70,6 +75,26 @@ export function computeInsecureMarker(
  */
 export function computeAddressBarValue(): string {
   return '';
+}
+
+/** Shrinks a certificate's bare hex SHA-256 fingerprint to a scannable short form: first 8 hex chars' …' last 6. */
+export function shortFingerprint(fingerprint: string): string {
+  return `${fingerprint.slice(0, 8)}\u2026${fingerprint.slice(-6)}`;
+}
+
+/**
+ * Builds the copy for the browser pane's untrusted-certificate prompt (the
+ * banner row in `browserToolbar.ts`). Pure so the exact wording and the
+ * fingerprint short-form are unit-testable without a DOM or Electron. The
+ * banner keeps the *decision* (origin, full fingerprint, error class) exactly
+ * as main pushed it via `browser:certificate-blocked`; nothing here is
+ * re-derived, so what the user is asked to approve is what was blocked.
+ */
+export function describeBlockedCertificate(info: CertificateBlockedInfo): string {
+  return (
+    `Untrusted certificate for ${info.origin} ` +
+    `(SHA-256 ${shortFingerprint(info.certificateSha256Fingerprint)}, ${info.errorClass}).`
+  );
 }
 
 /** Integer-pixel bounds suitable for `WebContentsView.setBounds()`. */

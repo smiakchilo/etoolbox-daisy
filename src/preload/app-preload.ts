@@ -17,7 +17,6 @@ import {
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
-  BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_STOP_CHANNEL,
@@ -60,7 +59,6 @@ import {
   parseUpdateServerPresentationResult,
   parseUpdateServerTargetingResult,
   removeServerRequestSchema,
-  revokeCertificateExceptionRequestSchema,
   setCopilotProxyRequestSchema,
   setModelPreferencesRequestSchema,
   setProxyPasswordRequestSchema,
@@ -92,7 +90,6 @@ import {
   type LogoutResult,
   type ProxyPasswordTarget,
   type RemoveServerRequest,
-  type RevokeCertificateExceptionRequest,
   type SetCopilotProxyRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
@@ -282,16 +279,6 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = approveCertificateExceptionRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(
         BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
-        parsedRequest,
-      );
-      return parseBrowserIpcVoidResult(raw);
-    },
-    async revokeCertificateException(
-      request: RevokeCertificateExceptionRequest,
-    ): Promise<BrowserIpcVoidResult> {
-      const parsedRequest = revokeCertificateExceptionRequestSchema.parse(request);
-      const raw: unknown = await ipcRenderer.invoke(
-        BROWSER_REVOKE_CERTIFICATE_EXCEPTION_CHANNEL,
         parsedRequest,
       );
       return parseBrowserIpcVoidResult(raw);

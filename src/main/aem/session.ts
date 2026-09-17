@@ -1,6 +1,6 @@
 import { app, session } from 'electron';
 import type { Session } from 'electron';
-import type { AemProxyConfig } from '../../shared/contracts/serverConfig';
+import type { AemProxyConfig } from '../../shared';
 import {
   createCertificateErrorListener,
   createCertificateExceptionStore,
@@ -54,9 +54,6 @@ export interface AemSession {
   /** Approves a certificate exception and closes all connections so the new decision takes effect immediately (see `certificateExceptions.ts`). */
   approveCertificateException(record: CertificateExceptionRecord): Promise<void>;
 
-  /** Revokes a certificate exception and closes all connections so the origin stops being trusted immediately (see `certificateExceptions.ts`). */
-  revokeCertificateException(origin: string): Promise<void>;
-
   listCertificateExceptions(): readonly CertificateExceptionRecord[];
 }
 
@@ -102,7 +99,6 @@ export function createAemSession(): AemSession {
     },
 
     approveCertificateException: (record) => certificateStore.approve(record),
-    revokeCertificateException: (origin) => certificateStore.revoke(origin),
     listCertificateExceptions: () => certificateStore.list(),
   };
 }

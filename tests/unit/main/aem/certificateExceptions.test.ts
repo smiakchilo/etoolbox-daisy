@@ -7,8 +7,8 @@ import {
   decideCertificateTrust,
   type CertificateExceptionRecord,
   type ConnectionCloser,
-} from '../../../../src/main/aem/certificateExceptions';
-import { tlsExceptionSchema } from '../../../../src/shared/contracts/serverConfig';
+} from '../../../../src/main/aem';
+import { tlsExceptionSchema } from '../../../../src/shared';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
 
 const ORIGIN_A = 'https://aem.example.test:8443';
@@ -185,25 +185,6 @@ describe('createCertificateExceptionStore', () => {
     await store.approve(record());
 
     expect(closer.calls).toBe(1);
-  });
-
-  it('closes all connections when an exception is revoked', async () => {
-    const closer = createCountingCloser();
-    const store = createCertificateExceptionStore(closer);
-    await store.approve(record());
-
-    await store.revoke(ORIGIN_A);
-
-    expect(closer.calls).toBe(2);
-  });
-
-  it('does not close connections when revoking an origin with no exception', async () => {
-    const closer = createCountingCloser();
-    const store = createCertificateExceptionStore(closer);
-
-    await store.revoke(ORIGIN_A);
-
-    expect(closer.calls).toBe(0);
   });
 
   it('lists and gets approved exceptions', async () => {

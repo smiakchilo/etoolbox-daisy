@@ -178,7 +178,6 @@ beforeEach(() => {
       controllerCalls.push('setViewBounds');
     },
     approveCertificateException: () => Promise.resolve(record('approveCertificateException')),
-    revokeCertificateException: () => Promise.resolve(record('revokeCertificateException')),
     hydrateCertificateExceptions: () => Promise.resolve(),
     destroy: () => {
       controllerCalls.push('destroy');

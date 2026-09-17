@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { serverIdSchema } from './contracts/ids';
-import { originSchema } from './contracts/origin';
-import { tlsExceptionSchema, type TlsException } from './contracts/serverConfig';
+import { serverIdSchema } from './contracts';
+import { originSchema } from './contracts';
+import { tlsExceptionSchema, type TlsException } from './contracts';
 
 /**
  * Wire contracts for the browser-shell IPC surface (implementation-plan.md
@@ -183,16 +183,4 @@ export const approveCertificateExceptionRequestSchema = z
 
 export type ApproveCertificateExceptionRequest = Readonly<
   z.infer<typeof approveCertificateExceptionRequestSchema>
->;
-
-/** `browser:revoke-certificate-exception`. */
-export const revokeCertificateExceptionRequestSchema = z
-  .object({
-    serverId: serverIdSchema,
-    origin: originSchema,
-  })
-  .strict();
-
-export type RevokeCertificateExceptionRequest = Readonly<
-  z.infer<typeof revokeCertificateExceptionRequestSchema>
 >;

@@ -2,7 +2,6 @@ import { el } from '../lib/dom';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
 import type { AppSettingsSnapshot } from '../../../shared';
 import { createAuthenticationSection } from '../settings/authenticationSection';
-import { createCertificatesSection } from '../settings/certificatesSection';
 import { createModelsSection } from '../settings/modelsSection';
 import { createProxySection } from '../settings/proxySection';
 import { createServersSection } from '../settings/serversSection';
@@ -13,9 +12,9 @@ import { createPanel, type Panel } from './panel';
  * separate Settings child window (`requirements-decisions.md` section 8, as
  * deviated - see `docs/handoff-steps-09-12.md`). It reuses the same section
  * components the window used to mount (servers, proxy, authentication,
- * certificate exceptions, models) and the same re-fetch-on-change rhythm:
+ * models) and the same re-fetch-on-change rhythm:
  * every section that mutates settings calls back into `reload`, which
- * re-reads the snapshot, re-renders the server/proxy/certificate sections,
+ * re-reads the snapshot, re-renders the server/proxy sections,
  * refreshes the model pickers, and reports the fresh snapshot to the caller
  * so the shell's browser pane follows along in real time.
  *
@@ -48,7 +47,6 @@ export interface CreateSettingsPanelOptions {
 
 export function createSettingsPanel(options: CreateSettingsPanelOptions): SettingsPanel {
   const serversSection = createServersSection(() => void reload());
-  const certificatesSection = createCertificatesSection(() => void reload());
   const proxySection = createProxySection(() => void reload());
   const authenticationSection = createAuthenticationSection();
   const modelsSection = createModelsSection();
@@ -64,7 +62,6 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     }
     statusLine.textContent = '';
     serversSection.update(result.snapshot.servers);
-    certificatesSection.update(result.snapshot.servers);
     proxySection.update(result.snapshot.copilotProxy);
     // These two do their own IPC reads rather than rendering a projection of
     // the snapshot: the authentication section needs the live sign-in status,
@@ -83,16 +80,37 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
 
   reloadButton.addEventListener('click', () => void reload());
 
+  // The four sections become tab panels (AGENTS.md rule 1: Spectrum Web
+  // Components only), their headings promoted to `<sp-tab>` labels so the
+  // panel body no longer repeats the tab's title. The Servers tab is the
+  // default selection, matching the previous stacked layout's top position.
+  const tabSections: ReadonlyArray<{
+    readonly value: string;
+    readonly label: string;
+    readonly element: HTMLElement;
+  }> = [
+    { value: 'servers', label: 'Servers', element: serversSection.element },
+    { value: 'proxy', label: 'Copilot proxy', element: proxySection.element },
+    { value: 'authentication', label: 'Authentication', element: authenticationSection.element },
+    { value: 'models', label: 'Models', element: modelsSection.element },
+  ];
+
+  const tabs = el('sp-tabs', {
+    attrs: { class: 'settings-panel__tabs', selected: 'servers', size: 'm' },
+    children: [
+      ...tabSections.map(({ value, label }) => el('sp-tab', { attrs: { value }, text: label })),
+      ...tabSections.map(({ value, element }) =>
+        el('sp-tab-panel', {
+          attrs: { class: 'settings-panel__tab-panel', value },
+          children: [element],
+        }),
+      ),
+    ],
+  });
+
   const content = el('div', {
     attrs: { class: 'settings-panel__content' },
-    children: [
-      statusLine,
-      serversSection.element,
-      proxySection.element,
-      authenticationSection.element,
-      certificatesSection.element,
-      modelsSection.element,
-    ],
+    children: [statusLine, tabs],
   });
 
   const panel = createPanel({
@@ -125,9 +143,6 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     close: () => panel.close(),
     reload,
     dispose(): void {
-      // Unsubscribes the certificates section's `onCertificateBlocked`
-      // listener (and the panel's own keydown/close listeners).
-      certificatesSection.dispose();
       panel.dispose();
     },
   };
