@@ -33,6 +33,25 @@ sp-theme {
 }
 
 /*
+ * Global focus-frame suppression for every text field in the app (address
+ * bar, Settings hosts/proxy/color inputs, and anything else that mounts an
+ * `sp-textfield`). The component paints a 2px blue focus indicator plus a
+ * black keyboard-focus border; both are forced back to the field's resting
+ * gray-500 so focus never draws a ring around the control. `--mod-textfield-*`
+ * are the component's documented state hooks and inherit into the shadow DOM.
+ * They are declared on `sp-theme` rather than `:root` because the
+ * `var(--spectrum-gray-500)` here must resolve against the colour tokens
+ * `sp-theme` itself defines; an ancestor that carries the tokens is what
+ * makes the `gray-500` value reach every descendant field unchanged. */
+sp-theme {
+  --mod-textfield-focus-indicator-color: transparent;
+  --mod-textfield-border-color-hover: var(--spectrum-gray-500);
+  --mod-textfield-border-color-focus: var(--spectrum-gray-500);
+  --mod-textfield-border-color-keyboard-focus: var(--spectrum-gray-500);
+  --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
+}
+
+/*
  * `.main-shell` is the `<sp-split-view>` element itself (see
  * `shell/mainSplitView.ts`); the component's own shadow styles
  * (`:host{display:flex}` plus `--spectrum-split-view-first-pane-size`) size

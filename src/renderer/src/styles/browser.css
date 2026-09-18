@@ -35,15 +35,11 @@
   border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
   overflow: hidden;
 
-  /* No focus "frame": the field's keyboard-focus border (black) and its 2px
-     outline indicator (blue) are both forced back to the resting gray-500, so
-     focus never separates the field from the button. `--mod-textfield-*` are
-     the component's documented state hooks and inherit into the shadow DOM. */
-  --mod-textfield-focus-indicator-color: transparent;
-  --mod-textfield-border-color-hover: var(--spectrum-gray-500);
-  --mod-textfield-border-color-focus: var(--spectrum-gray-500);
-  --mod-textfield-border-color-keyboard-focus: var(--spectrum-gray-500);
-  --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
+  /* No focus "frame": the field's keyboard-focus border and its 2px blue
+     focus indicator stay gray because every text field pins them via
+     `--mod-textfield-*` at the theme root (see base.css); without the pinned
+     gray the border would go black and the indicator blue on focus,
+     separating the field from the button. */
 }
 
 .browser-toolbar__address-group #hosts-button {

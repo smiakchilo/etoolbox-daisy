@@ -124,6 +124,25 @@
   min-height: 0;
 }
 
+/* The strip's 16px side padding is applied to the tab elements themselves on
+   purpose. Padding the `sp-tabs` host instead double-counts for the accent
+   lines under the tabs: the strip's `#selection-indicator` (and the divider
+   drawn in `#list`'s shadow background) are positioned absolute to the strip,
+   but their translate is measured from `tab.offsetLeft`, which resolves
+   *outside* the host's shadow - so host padding shifts the lines another 16px
+   to the right of the tab titles. Margins on the tabs indent the titles the
+   same 16px while `offsetLeft` still reports the true position, so the
+   indicator stays aligned under the selected tab. The first tab needs the
+   left margin (the component's `::slotted(:not(:first-child))` rule already
+   spaces the rest); `:last-of-type` gives the Models tab the right margin. */
+.settings-panel__tabs sp-tab:first-of-type {
+  margin-inline-start: 16px;
+}
+
+.settings-panel__tabs sp-tab:last-of-type {
+  margin-inline-end: 16px;
+}
+
 /* The selected panel is the scroll region. The component hides unselected
    panels itself (`:host(:not([selected])) { display: none }` in the shadow
    tree), but a document-tree rule that sets `display` on the panel host
@@ -212,14 +231,10 @@
   border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
   overflow: hidden;
 
-  /* No focus "frame": the keyboard-focus border and outline indicator are
-     forced back to the resting gray-500 so focus never separates the field
-     from the button (pure copy of the address bar's rule). */
-  --mod-textfield-focus-indicator-color: transparent;
-  --mod-textfield-border-color-hover: var(--spectrum-gray-500);
-  --mod-textfield-border-color-focus: var(--spectrum-gray-500);
-  --mod-textfield-border-color-keyboard-focus: var(--spectrum-gray-500);
-  --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
+  /* No focus "frame": the keyboard-focus border and blue focus indicator stay
+     gray because every text field pins them via `--mod-textfield-*` at the
+     theme root (see base.css), so focus never separates the field from the
+     button. */
 }
 
 .color-picker .color-picker-button {
