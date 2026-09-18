@@ -227,9 +227,12 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1547 passed / 14 skipped**;
-**Playwright → 56 tests** (55 baseline + closeability spec). One residual,
-load-correlated, now-self-diagnosing E2E flake in
+Current baseline: **`npm run verify` → 1583 passed / 14 skipped**;
+**Playwright → 56 tests** (55 baseline + closeability spec).
+`app.spec.ts` no longer collides with a running `npm run dev`: it now
+provisions a scratch storage home like every sibling spec (see
+`docs/verification.md` "Settings Servers renamed to Hosts", traps). One
+residual, load-correlated, now-self-diagnosing E2E flake in
 `step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
 closeability section).
 

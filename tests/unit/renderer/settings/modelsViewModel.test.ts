@@ -106,8 +106,7 @@ describe('buildModelsViewModel', () => {
       stateWith({ models: [], catalogUnavailable: true, selectedModel: 'model-a' }),
       { model: 'model-a', reasoningEffort: null },
     );
-    expect(vm.statusMessage).toContain('could not be loaded');
-    expect(vm.statusMessage).toContain('unchanged');
+    expect(vm.statusMessage).toBe('Could not retrieve the list of models');
     expect(vm.selectedModelValue).toBe('model-a');
   });
 

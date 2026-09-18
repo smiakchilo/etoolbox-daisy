@@ -67,7 +67,7 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       .locator('.settings-panel')
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
-    // Settings is tabbed and the Servers tab is selected by default, so the
+    // Settings is tabbed and the Hosts tab is selected by default, so the
     // Models panel is only visible once its tab is chosen.
     await settings.locator('sp-tab', { hasText: 'Models' }).click();
     await settings
@@ -122,10 +122,28 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       node.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    await section.locator('sp-button', { hasText: 'Save' }).first().click();
-    await expect(section.locator('.models-section__save-status')).toContainText('Saved', {
-      timeout: 60_000,
-    });
+    // The selection auto-saves ~1s after the last pick (no Save button); the
+    // settings document on disk is the sync point, and a freshly-read file
+    // on a restart is covered by Launch 2.
+    const readModelsDoc = (): {
+      readonly defaultModel?: unknown;
+      readonly defaultReasoningEffort?: unknown;
+    } => {
+      try {
+        return JSON.parse(readFileSync(settingsFile, 'utf8')) as {
+          readonly defaultModel?: unknown;
+          readonly defaultReasoningEffort?: unknown;
+        };
+      } catch {
+        // The file is first written by this very auto-save; a missing file is
+        // "not persisted yet", not an error. expect.poll only retries on
+        // matcher mismatch, never on a thrown callback, so do not throw.
+        return {};
+      }
+    };
+    await expect
+      .poll(() => readModelsDoc().defaultModel, { timeout: 60_000 })
+      .toBe('fake-model-reasoning');
   } finally {
     await first.app.close();
   }
@@ -164,10 +182,24 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
     await expect(reasoningPicker).toHaveAttribute('disabled', '');
     await expect(reasoningPicker.locator('sp-menu-item')).toHaveCount(1);
 
-    await section.locator('sp-button', { hasText: 'Save' }).first().click();
-    await expect(section.locator('.models-section__save-status')).toContainText('Saved', {
-      timeout: 60_000,
-    });
+    // The same auto-save path persists the plain model (and clears the
+    // reasoning level); the on-disk document is the sync point.
+    const readModelsDoc = (): {
+      readonly defaultModel?: unknown;
+      readonly defaultReasoningEffort?: unknown;
+    } => {
+      try {
+        return JSON.parse(readFileSync(settingsFile, 'utf8')) as {
+          readonly defaultModel?: unknown;
+          readonly defaultReasoningEffort?: unknown;
+        };
+      } catch {
+        return {};
+      }
+    };
+    await expect
+      .poll(() => readModelsDoc().defaultModel, { timeout: 60_000 })
+      .toBe('fake-model-plain');
   } finally {
     await second.app.close();
   }

@@ -137,7 +137,7 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
     await form
       .locator('sp-textfield[placeholder="https://author.example"] input')
       .fill('https://blue-server.example');
-    await form.locator('sp-button', { hasText: 'Add server' }).first().click();
+    await form.locator('sp-button', { hasText: 'Add host' }).first().click();
 
     const blueRow = settings.locator('.server-row', { hasText: 'Blue Server' });
     await expect(blueRow).toHaveCount(1, { timeout: 60_000 });
@@ -152,7 +152,7 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
     await form
       .locator('sp-textfield[placeholder="https://author.example"] input')
       .fill('https://custom-color-server.example');
-    await form.locator('sp-button', { hasText: 'Add server' }).first().click();
+    await form.locator('sp-button', { hasText: 'Add host' }).first().click();
 
     const customRow = settings.locator('.server-row', { hasText: 'Custom Colour Server' });
     await expect(customRow).toHaveCount(1, { timeout: 60_000 });
@@ -161,7 +161,10 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
       'rgb(18, 58, 188)', // #123abc
     );
 
-    await expect(form.locator('.form-errors')).toHaveText('');
+    // Both adds accepted without a validation error: each success reset the
+    // form's fields (a rejected add would keep the typed values on screen).
+    await expect(form.locator('sp-textfield[placeholder="Label"] input')).toHaveValue('');
+    await expect(colorField).toHaveValue('#e34850');
   } finally {
     await app.close();
   }

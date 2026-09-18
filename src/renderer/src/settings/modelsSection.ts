@@ -6,6 +6,8 @@ import {
   type ModelOption,
 } from './modelsViewModel';
 import type { ModelSelectionState } from '../../../shared';
+import { createAutoSave } from './autoSave';
+import type { SaveOutcome, StatusBannerSink } from './statusBanner';
 
 /**
  * The Settings panel's Models section (implementation-plan.md step 09:
@@ -16,11 +18,32 @@ import type { ModelSelectionState } from '../../../shared';
  * Replaces the read-only placeholder this section used to be. All of the
  * decision-making lives in `modelsViewModel.ts`; this file only renders what
  * that returns and forwards the save.
+ *
+ * The selection auto-saves ~1s after the last pick, exactly like the proxy
+ * section's fields — there is no Save button. The section reports its saves
+ * into the panel's one banner slot through `reportSave`; on either outcome
+ * (accept or refusal) it re-reads the catalogue and lock state, so the
+ * pickers always reflect what is actually persisted. The informational
+ * `status` paragraph (why changes are locked, whether the catalogue is
+ * unreadable, that a change applies from the next prompt) stays where it is —
+ * that is durable context, not a mutation result.
  */
+export interface ModelsSectionOptions {
+  /** The panel's single status slot (never used for plain informational text). */
+  status: StatusBannerSink;
+  /** Registers a debounced save with the panel's save reporter. */
+  reportSave(outcome: Promise<SaveOutcome>): void;
+}
+
 export interface ModelsSection {
   readonly element: HTMLElement;
   /** Re-reads the catalogue and the stored selection from the main process. */
   refresh(): Promise<void>;
+  /** Runs any pending save now (the close-and-persist path). */
+  flushNow(): Promise<void>;
+  /** True while a pick is unsaved or a save is in flight. */
+  hasPendingEdits(): boolean;
+  dispose(): void;
 }
 
 type PickerElement = HTMLElement & { value: string; disabled: boolean };
@@ -45,12 +68,11 @@ function renderOptions(picker: PickerElement, options: readonly ModelOption[], s
   picker.value = selected;
 }
 
-export function createModelsSection(): ModelsSection {
+export function createModelsSection(options: ModelsSectionOptions): ModelsSection {
   const status = el('p', { attrs: { class: 'models-section__status' } });
-  const saveStatus = el('p', { attrs: { class: 'models-section__save-status' } });
   const modelPicker = createPicker('Model');
   const reasoningPicker = createPicker('Reasoning effort');
-  const saveButton = el('sp-button', { attrs: { variant: 'primary' }, text: 'Save' });
+  const autoSave = createAutoSave();
 
   /**
    * The last state fetched from main, plus the user's not-yet-saved picks.
@@ -79,11 +101,6 @@ export function createModelsSection(): ModelsSection {
 
     modelPicker.disabled = viewModel.controlsDisabled;
     reasoningPicker.disabled = viewModel.controlsDisabled || viewModel.reasoningDisabled;
-    if (viewModel.controlsDisabled) {
-      saveButton.setAttribute('disabled', '');
-    } else {
-      saveButton.removeAttribute('disabled');
-    }
     status.textContent = viewModel.statusMessage;
   }
 
@@ -93,14 +110,51 @@ export function createModelsSection(): ModelsSection {
     // Cleared rather than remapped: there is no meaningful correspondence
     // between one model's levels and another's.
     pendingReasoning = null;
-    saveStatus.textContent = '';
     render();
+    armSave();
   });
 
   reasoningPicker.addEventListener('change', () => {
     pendingReasoning = fromPickerValue(reasoningPicker.value);
-    saveStatus.textContent = '';
+    armSave();
   });
+
+  function hasUnsavedSelection(): boolean {
+    return (
+      state !== undefined &&
+      (pendingModel !== state.selectedModel || pendingReasoning !== state.selectedReasoningEffort)
+    );
+  }
+
+  function runSave(): Promise<SaveOutcome> | undefined {
+    if (state === undefined || !hasUnsavedSelection()) return undefined;
+    const model = pendingModel;
+    const reasoningEffort = pendingReasoning;
+    return window.daisy.settings.setModelPreferences({ model, reasoningEffort }).then(
+      (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
+      (error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : 'Could not save the model selection',
+      }),
+    );
+  }
+
+  function armSave(): void {
+    autoSave.arm(() => {
+      const outcome = runSave();
+      if (outcome === undefined) return;
+      // The reporter's settle attaches first, so a drain that empties the
+      // batch is announced before we re-read below.
+      options.reportSave(outcome);
+      void outcome.then(() => {
+        // Whether the save was accepted or refused (e.g. `turn_in_flight`:
+        // a turn started meanwhile and the lock state on screen is already
+        // stale), re-read - the pickers and lock state must always end up
+        // reflecting what is actually persisted.
+        void refresh();
+      });
+    });
+  }
 
   async function refresh(): Promise<void> {
     const result = await window.daisy.settings.getModelSelection();
@@ -114,45 +168,24 @@ export function createModelsSection(): ModelsSection {
     render();
   }
 
-  saveButton.addEventListener('click', () => {
-    saveStatus.textContent = '';
-    saveButton.setAttribute('disabled', '');
-    void window.daisy.settings
-      .setModelPreferences({ model: pendingModel, reasoningEffort: pendingReasoning })
-      .then(async (result) => {
-        if (!result.ok) {
-          saveStatus.textContent = result.error.message;
-          // A refusal is re-read rather than trusted to have changed nothing:
-          // `turn_in_flight` in particular means the lock state on screen is
-          // already out of date.
-          await refresh();
-          return;
-        }
-        saveStatus.textContent = 'Saved. This applies to your next prompt.';
-        await refresh();
-      })
-      .catch((error: unknown) => {
-        saveStatus.textContent =
-          error instanceof Error ? error.message : 'Could not save the model selection.';
-      })
-      .finally(() => {
-        if (state?.changesLocked !== true) saveButton.removeAttribute('disabled');
-      });
-  });
-
   const element = el('section', {
     attrs: { class: 'settings-section', 'aria-label': 'Models' },
     children: [
       el('div', {
         attrs: { class: 'models-section__pickers' },
-        children: [modelPicker, reasoningPicker, saveButton],
+        children: [modelPicker, reasoningPicker],
       }),
       status,
-      saveStatus,
     ],
   });
 
-  return { element, refresh };
+  return {
+    element,
+    refresh,
+    flushNow: () => autoSave.flushNow(),
+    hasPendingEdits: () => autoSave.hasPending() || hasUnsavedSelection(),
+    dispose: () => autoSave.dispose(),
+  };
 }
 
 export { NO_PREFERENCE_VALUE };

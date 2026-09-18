@@ -4,17 +4,23 @@ import type { AppSettingsSnapshot } from '../../../shared';
 import { createAuthenticationSection } from '../settings/authenticationSection';
 import { createModelsSection } from '../settings/modelsSection';
 import { createProxySection } from '../settings/proxySection';
-import { createServersSection } from '../settings/serversSection';
+import { createHostsSection } from '../settings/hostsSection';
+import {
+  createSaveReporter,
+  createStatusBanner,
+  reportSave,
+  type SaveOutcome,
+} from '../settings/statusBanner';
 import { createPanel, type Panel } from './panel';
 
 /**
  * The Settings surface as a whole-size panel (`panel.ts`), superseding the
  * separate Settings child window (`requirements-decisions.md` section 8, as
  * deviated - see `docs/handoff-steps-09-12.md`). It reuses the same section
- * components the window used to mount (servers, proxy, authentication,
+ * components the window used to mount (hosts, proxy, authentication,
  * models) and the same re-fetch-on-change rhythm:
  * every section that mutates settings calls back into `reload`, which
- * re-reads the snapshot, re-renders the server/proxy sections,
+ * re-reads the snapshot, re-renders the host/proxy sections,
  * refreshes the model pickers, and reports the fresh snapshot to the caller
  * so the shell's browser pane follows along in real time.
  *
@@ -22,6 +28,14 @@ import { createPanel, type Panel } from './panel';
  * native view is suspended underneath by `browserPane.ts`'s panel host), so
  * it behaves like the hosts panel: one panel at a time, close button and
  * Escape dismiss it.
+ *
+ * Status is a single slot: the panel owns one banner (`statusBanner.ts`) the
+ * sections share, and one save reporter that collapses the many debounced
+ * saves into a single "Saving..." -> "Settings saved"/first-error sequence.
+ * `reload` is guarded: a section with unpersisted edits is left untouched
+ * (its in-progress input is not clobbered by a re-read), while the rest of
+ * the snapshot - including the shell-facing callback - still refreshes.
+ * Closing the panel flushes whatever is still pending instead of dropping it.
  */
 export interface SettingsPanel extends Panel {
   /** Re-reads the settings snapshot and re-renders every section. */
@@ -46,23 +60,54 @@ export interface CreateSettingsPanelOptions {
 }
 
 export function createSettingsPanel(options: CreateSettingsPanelOptions): SettingsPanel {
-  const serversSection = createServersSection(() => void reload());
-  const proxySection = createProxySection(() => void reload());
-  const authenticationSection = createAuthenticationSection();
-  const modelsSection = createModelsSection();
+  const banner = createStatusBanner();
 
-  const statusLine = el('p', { attrs: { class: 'settings-panel__status' } });
-  const reloadButton = el('sp-button', { attrs: { variant: 'secondary' }, text: 'Reload' });
+  // One reporter for every section's saves. The handlers never disturb a
+  // showing prompt: the banner's priority already stops a prompt being
+  // displaced by an error/status, and here a *new* save batch does not
+  // interrupt an actionable prompt either.
+  const saveReporter = createSaveReporter({
+    onPendingStart(): void {
+      if (banner.isPromptShowing()) return;
+      banner.clear();
+      banner.showStatus('Saving\u2026');
+    },
+    onDrained(firstError: string | undefined): void {
+      if (banner.isPromptShowing()) return;
+      if (firstError !== undefined) banner.showError(firstError);
+      else banner.showStatus('Settings saved');
+    },
+  });
+
+  function reportWith(outcome: Promise<SaveOutcome>): void {
+    reportSave(saveReporter, outcome);
+  }
+
+  const hostsSection = createHostsSection({
+    status: banner,
+    reportSave: reportWith,
+    onSettingsChanged: () => void reload(),
+  });
+  const proxySection = createProxySection({
+    onCredentialsChanged: () => void reload(),
+    status: banner,
+    reportSave: reportWith,
+  });
+  const authenticationSection = createAuthenticationSection(banner);
+  const modelsSection = createModelsSection({ status: banner, reportSave: reportWith });
 
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
     if (!result.ok) {
-      statusLine.textContent = `Failed to load settings: ${result.error.message}`;
+      banner.showError(`Failed to load settings: ${result.error.message}`);
       return;
     }
-    statusLine.textContent = '';
-    serversSection.update(result.snapshot.servers);
-    proxySection.update(result.snapshot.copilotProxy);
+    // A section with unpersisted edits keeps what it has on screen rather
+    // than being clobbered by a re-read; everything else follows the fresh
+    // snapshot. The shell-facing callback always fires (the address bar and
+    // server options should follow the committed state immediately).
+    if (!hostsSection.hasPendingEdits()) hostsSection.update(result.snapshot.servers);
+    if (!proxySection.hasPendingEdits()) proxySection.update(result.snapshot.copilotProxy);
     // These two do their own IPC reads rather than rendering a projection of
     // the snapshot: the authentication section needs the live sign-in status,
     // and the models section needs the SDK catalogue and the live turn lock.
@@ -73,23 +118,28 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     // refresh is kicked off here and awaited last; the section repaints
     // itself whenever it resolves.
     const authRefresh = authenticationSection.refresh();
-    await modelsSection.refresh();
+    if (!modelsSection.hasPendingEdits()) await modelsSection.refresh();
     options.onSnapshotApplied(result.snapshot);
     await authRefresh;
   }
 
-  reloadButton.addEventListener('click', () => void reload());
+  /** Close-and-persist: surfaces what was about to be lost, then hands over to the panel. */
+  async function flushPendingEdits(): Promise<void> {
+    await hostsSection.flushNow();
+    await proxySection.flushNow();
+    await modelsSection.flushNow();
+  }
 
   // The four sections become tab panels (AGENTS.md rule 1: Spectrum Web
   // Components only), their headings promoted to `<sp-tab>` labels so the
-  // panel body no longer repeats the tab's title. The Servers tab is the
+  // panel body no longer repeats the tab's title. The Hosts tab is the
   // default selection, matching the previous stacked layout's top position.
   const tabSections: ReadonlyArray<{
     readonly value: string;
     readonly label: string;
     readonly element: HTMLElement;
   }> = [
-    { value: 'servers', label: 'Servers', element: serversSection.element },
+    { value: 'servers', label: 'Hosts', element: hostsSection.element },
     { value: 'proxy', label: 'Copilot proxy', element: proxySection.element },
     { value: 'authentication', label: 'Authentication', element: authenticationSection.element },
     { value: 'models', label: 'Models', element: modelsSection.element },
@@ -108,9 +158,10 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     ],
   });
 
+  // The tab strip and its panels are the only content column children.
   const content = el('div', {
     attrs: { class: 'settings-panel__content' },
-    children: [statusLine, tabs],
+    children: [tabs],
   });
 
   const panel = createPanel({
@@ -123,6 +174,12 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       options.onDismiss();
     },
   });
+
+  // Single status slot, appended to the panel surface and pinned to its
+  // bottom edge (settings.css keeps it out of the layout flow): like the
+  // browser pane's status row, a prompt or an error raised from any section
+  // is visible regardless of the active tab, and never reflows the tabs.
+  panel.element.append(banner.element);
 
   // No eager reload at construction: the panel is created at shell startup,
   // and its refresh chain reads live IPCs (including `agent:get-auth-status`,
@@ -140,10 +197,19 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       panel.open();
       void reload();
     },
-    close: () => panel.close(),
+    close: () => {
+      // Fire-and-forget: the flush outlives the panel surface. Nothing on
+      // screen depends on the close point, so closing never waits on IPC.
+      void flushPendingEdits();
+      panel.close();
+    },
     setCloseable: (closeable) => panel.setCloseable(closeable),
     reload,
     dispose(): void {
+      hostsSection.dispose();
+      proxySection.dispose();
+      modelsSection.dispose();
+      banner.dispose();
       panel.dispose();
     },
   };

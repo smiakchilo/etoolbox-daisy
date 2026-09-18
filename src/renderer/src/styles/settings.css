@@ -13,25 +13,84 @@
 .settings-panel__content {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-/* The panel's own status/prompt row (auto-save feedback, validation errors,
-   and the two-click address/removal confirmations): a second
-   `sp-alert-banner`, styled to look exactly like the browser pane's status
-   row (`.browser-toolbar-message`) but with its own class name, so
-   Playwright's strict-mode locators targeting the *browser* banner never
-   match two elements while Settings is open. `max-inline-size:none` stops the
-   component's default 832px banner width from truncating the strip, and
-   `flex: 0 0 auto` keeps it from shrinking as the guidance scrolls. It sits
-   at the bottom of the content column, outside the tab strip's scroll region,
-   so it stays visible while any tab is selected. */
+/* The panel surface made the containing block for the banner strip, which is
+   positioned against it (see the `.settings-banner` rules below). The
+   surface is the shared `.panel` flex column from panel.css; `position:
+   relative` alone changes nothing about that flow. */
+.settings-panel {
+  position: relative;
+}
+
+/* The panel's own status/prompt row - auto-save feedback, validation errors,
+   and the two-click address/removal confirmations - a second `sp-alert-banner`
+   styled exactly like the browser pane's status row
+   (`.browser-toolbar-message`) but with its own class name, so Playwright's
+   strict-mode locators targeting the *browser* banner never match two elements
+   while Settings is open.
+
+   It is pinned to the bottom edge of the panel surface, in the same spot the
+   browser row occupies in the browser pane: the panel `.panel` is the flex
+   column, and the banner is taken out of that flow with `position: absolute`
+   and `inset-block-end: 0`, so it never displaces the tab content above or
+   reflows the panel when it appears/disappears - a floating status strip, not
+   a layout participant. `inset-inline: 0` plus `max-inline-size: none` spans
+   the surface full width (the component's default 832px banner width never
+   truncates the strip), and `margin: 0` keeps it flush to the edges. The
+   strip sits above the tab content and header (`z-index`) and is clipped with
+   them (`overflow: hidden` on `.panel`). */
 .settings-banner {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  margin: 0;
   max-inline-size: none;
-  flex: 0 0 auto;
+  z-index: 1;
+}
+
+/* The strip fades in/out instead of popping: the host's `:host{display:none}`
+   / `:host([open]){display:flex}` pair from the component's own stylesheet
+   flips display instantly (nothing here fights it - see browser.css), so the
+   fade rides on `opacity`. Fade-in replays whenever `open` is (re)set;
+   fade-out is driven by `statusBanner.ts`, which keeps `open` up under the
+   `settings-banner--closing` class for `--settings-banner-fade-duration` and
+   tears the row down after. The JS timer and these keyframes share the
+   duration through the same custom property. */
+.settings-banner[open] {
+  animation: settings-banner-fade-in var(--settings-banner-fade-duration, 150ms) ease-out;
+}
+
+.settings-banner.settings-banner--closing {
+  animation: settings-banner-fade-out var(--settings-banner-fade-duration, 150ms) ease-in forwards;
+}
+
+@keyframes settings-banner-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes settings-banner-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-banner[open],
+  .settings-banner.settings-banner--closing {
+    animation: none;
+  }
 }
 
 /* Message text in prompt rows (the address/removal confirmations wrap their
@@ -44,9 +103,11 @@
 }
 
 /* The prompt action button, grouped after the copy so the banner's
-   default-slot layout keeps it on one row with text before actions.
-   `margin-inline-start:auto` pushes it to the right edge of the strip;
-   `flex: 0 0 auto` keeps it from shrinking when the copy wraps. */
+   default-slot layout keeps it on one row with text before actions. The
+   copy's own `flex: 1 1 auto` absorbs the strip's spare space, pushing the
+   actions to the right edge; `margin-inline-start: 12px` is the seam between
+   them, and `flex: 0 0 auto` keeps the button from shrinking when the copy
+   wraps. */
 .settings-banner__actions {
   align-items: center;
   display: inline-flex;
@@ -73,7 +134,7 @@
   display: block;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 0 0 0;
+  padding: 16px;
 }
 
 .settings-panel__tab-panel:not([selected]) {
@@ -234,18 +295,10 @@
   flex-wrap: wrap;
 }
 
-.password-entry__status {
-  color: var(--spectrum-gray-600, #6e6e6e);
-}
-
 .proxy-section__fields {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.proxy-section__status {
-  color: var(--spectrum-red-700, #b3261e);
 }
 
 .models-section__pickers {
@@ -257,10 +310,6 @@
 
 .models-section__status {
   color: var(--spectrum-gray-600, #6e6e6e);
-}
-
-.models-section__save-status {
-  color: var(--spectrum-red-700, #b3261e);
 }
 
 /* Persistent, colour-independent marker for a plain-HTTP server (paired
@@ -279,16 +328,6 @@
   gap: 8px;
   align-items: center;
   margin: 4px 0;
-}
-
-.server-row__edit-status {
-  color: var(--spectrum-red-700, #b3261e);
-  margin: 0;
-}
-
-.add-server-form__notice {
-  color: var(--spectrum-gray-600, #6e6e6e);
-  flex-basis: 100%;
 }
 
 .certificate-list__item {

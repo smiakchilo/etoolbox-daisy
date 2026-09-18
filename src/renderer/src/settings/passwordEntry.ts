@@ -1,5 +1,6 @@
 import { el } from '../lib/dom';
 import type { ProxyPasswordTarget } from '../../../shared';
+import type { StatusBannerSink } from './statusBanner';
 
 /**
  * A "set password" / "clear password" control for one proxy target. This is
@@ -12,8 +13,18 @@ import type { ProxyPasswordTarget } from '../../../shared';
  * immediately after the call settles, win or lose, so nothing here ever
  * holds, displays, or echoes a password value (the hard security boundary
  * from `ProxyCredentialsSnapshot` only ever carrying `hasPassword`).
+ *
+ * Set/Clear stay explicit buttons (unlike the debounced fields around them):
+ * the password's raw text is never supposed to sit in a field that a later
+ * automatic save could sweep up, and the two actions are deliberately
+ * deliberate. Their results go to the panel's one banner slot through
+ * `status` - "Password saved" / "Password cleared" are transient statuses,
+ * failures are sticky errors.
  */
-export function createPasswordEntry(target: ProxyPasswordTarget): {
+export function createPasswordEntry(
+  target: ProxyPasswordTarget,
+  status: StatusBannerSink,
+): {
   readonly element: HTMLElement;
   onChanged(listener: () => void): void;
 } {
@@ -23,7 +34,6 @@ export function createPasswordEntry(target: ProxyPasswordTarget): {
 
   const setButton = el('sp-button', { attrs: { variant: 'secondary' }, text: 'Set password' });
   const clearButton = el('sp-button', { attrs: { variant: 'secondary' }, text: 'Clear password' });
-  const statusText = el('span', { attrs: { class: 'password-entry__status' } });
 
   let changedListener: (() => void) | undefined;
 
@@ -40,15 +50,19 @@ export function createPasswordEntry(target: ProxyPasswordTarget): {
   setButton.addEventListener('click', () => {
     const password = passwordField.value;
     if (password === '') {
-      statusText.textContent = 'Enter a password first.';
+      status.showError('Enter a password first');
       return;
     }
     setBusy(true);
     void window.daisy.settings
       .setProxyPassword(target, password)
       .then((result) => {
-        statusText.textContent = result.ok ? 'Password saved.' : result.error.message;
-        if (result.ok) changedListener?.();
+        if (result.ok) {
+          status.showStatus('Password saved');
+          changedListener?.();
+        } else {
+          status.showError(result.error.message);
+        }
       })
       .finally(() => {
         passwordField.value = '';
@@ -61,8 +75,12 @@ export function createPasswordEntry(target: ProxyPasswordTarget): {
     void window.daisy.settings
       .clearProxyPassword(target)
       .then((result) => {
-        statusText.textContent = result.ok ? 'Password cleared.' : result.error.message;
-        if (result.ok) changedListener?.();
+        if (result.ok) {
+          status.showStatus('Password cleared');
+          changedListener?.();
+        } else {
+          status.showError(result.error.message);
+        }
       })
       .finally(() => {
         passwordField.value = '';
@@ -72,7 +90,7 @@ export function createPasswordEntry(target: ProxyPasswordTarget): {
 
   const element = el('div', {
     attrs: { class: 'password-entry' },
-    children: [passwordField, setButton, clearButton, statusText],
+    children: [passwordField, setButton, clearButton],
   });
 
   return {

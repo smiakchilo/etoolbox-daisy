@@ -103,6 +103,7 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     APPDATA: appData,
     LOCALAPPDATA: localAppData,
   };
+  const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
@@ -121,7 +122,23 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     await addressField.fill('https://proxy.example:8080');
     const usernameField = shell.locator('[aria-label="Copilot proxy username"] input');
     await usernameField.fill('canary-user');
-    await shell.locator('sp-button', { hasText: 'Save address' }).first().click();
+    // The address/username pair auto-saves (no Save button); the settings
+    // document on disk is the sync point that makes the password below attach
+    // to a proxy the main process already knows about. The callback must not
+    // throw while the file does not exist yet - expect.poll fails immediately
+    // on a thrown error, it only retries on a matcher mismatch.
+    await expect
+      .poll(
+        () => {
+          try {
+            return readFileSync(settingsFile, 'utf8');
+          } catch {
+            return '';
+          }
+        },
+        { timeout: 60_000 },
+      )
+      .toContain('https://proxy.example:8080');
 
     const passwordField = shell.locator('[aria-label="Proxy password"] input');
     await passwordField.waitFor({ state: 'visible', timeout: 60_000 });
@@ -130,7 +147,8 @@ test('a password typed into Settings is never written anywhere in plaintext', as
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    await expect(shell.locator('.password-entry__status')).toHaveText('Password saved.', {
+    // It now appears in the panel's one banner (`settings-banner`).
+    await expect(shell.locator('.settings-banner')).toHaveText('Password saved', {
       timeout: 60_000,
     });
 

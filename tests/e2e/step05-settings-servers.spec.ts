@@ -13,6 +13,12 @@ import path from 'node:path';
  * became a panel in the shell (not a separate child window), so the sender
  * guard trusts only the one shell webContents id; this spec proves that
  * single-window path works.
+ *
+ * Since step 10 the fields auto-save (debounced ~1s, no Save button): the
+ * label/colour edits persist by themselves, while an address change and a
+ * removal need the confirmation flows in the panel's one banner
+ * (`.settings-banner`). Persistence is asserted by polling `settings.json` on
+ * disk, never by trusting the renderer's own re-fetch.
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -66,13 +72,12 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await first.page
       .locator('sp-textfield[placeholder="https://author.example"] input')
       .fill('https://canary-author.example');
-    await first.page.locator('sp-button', { hasText: 'Add server' }).first().click();
+    await first.page.locator('sp-button', { hasText: 'Add host' }).first().click();
 
     // The list must grow - proving the mutation round-tripped through IPC and
     // came back as new state, not merely that a button was clickable.
     await expect(rows).toHaveCount(initialRowCount + 1, { timeout: 60_000 });
     await expect(first.page.locator('.server-row')).toContainText(['Canary Author']);
-    await expect(first.page.locator('.form-errors')).toHaveText('');
   } finally {
     await first.app.close();
   }
@@ -81,53 +86,65 @@ test('servers added in the Settings panel persist, and removal persists too', as
   const afterAdd: unknown = JSON.parse(readFileSync(settingsFile, 'utf8'));
   expect(JSON.stringify(afterAdd)).toContain('https://canary-author.example');
 
-  // --- Launch 2: the server is still there, edit it, then remove it -------
+  // --- Launch 2: the server is still there, rename it, move it, remove it --
   const second = await openSettings();
   try {
+    const banner = second.page.locator('.settings-banner').first();
+    // Reads the settings document on disk; the poll retries until a save lands.
+    // It must not throw while the file is briefly absent, since expect.poll
+    // fails immediately on a thrown callback rather than retrying it.
+    const readDoc = () => {
+      try {
+        return readFileSync(settingsFile, 'utf8');
+      } catch {
+        return '';
+      }
+    };
+
     const row = second.page.locator('.server-row', { hasText: 'Canary Author' });
     await expect(row).toHaveCount(1, { timeout: 60_000 });
 
-    // A row has exactly two buttons: Save and Remove.
-    await expect(row.locator('sp-button')).toHaveCount(2);
-    const save = row.locator('sp-button', { hasText: 'Save' }).first();
+    // A row has exactly one button now: Remove. The label/colour and address
+    // auto-save ~1s after the last edit; there is no Save button left.
+    await expect(row.locator('sp-button')).toHaveCount(1);
 
-    // Save is inert until something is actually dirty.
-    await expect(save).toHaveAttribute('disabled', '');
-    await row.locator('sp-textfield[aria-label="Server label"] input').fill('Canary Renamed');
-    await expect(save).not.toHaveAttribute('disabled', '');
-    // Typing the saved value back makes the row clean again, so Save goes inert.
-    await row.locator('sp-textfield[aria-label="Server label"] input').fill('Canary Author');
-    await expect(save).toHaveAttribute('disabled', '');
-    await row.locator('sp-textfield[aria-label="Server label"] input').fill('Canary Renamed');
-    await expect(save).not.toHaveAttribute('disabled', '');
-    await save.click();
-
+    // Renaming auto-saves on its own: the row re-renders from the fresh
+    // snapshot and the rename reaches disk without any button click.
+    const labelField = row.locator('sp-textfield[aria-label="Host label"] input');
+    await labelField.fill('Canary Renamed');
     const renamed = second.page.locator('.server-row', { hasText: 'Canary Renamed' });
     await expect(renamed).toHaveCount(1, { timeout: 60_000 });
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('Canary Renamed');
 
-    // An address change takes two clicks: the first only warns.
-    const addressField = renamed.locator('sp-textfield[aria-label="Server address"] input');
+    // An address change is never applied by the auto-save: the debounce only
+    // raises a one-button confirmation in the banner, and a single OK click
+    // persists it.
+    const addressField = renamed.locator('sp-textfield[aria-label="Host address"] input');
     await addressField.fill('https://canary-moved.example');
-    await renamed.locator('sp-button', { hasText: 'Save' }).first().click();
-    await expect(renamed.locator('.server-row__edit-status')).toContainText('Click Save again');
+    await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
     await expect(addressField).toHaveValue('https://canary-moved.example');
 
-    await renamed.locator('sp-button', { hasText: 'Save' }).first().click();
-    // The field is re-rendered from the freshly-fetched snapshot, so this
-    // value came back out of the store rather than staying typed in the DOM.
-    await expect(
-      second.page
-        .locator('.server-row', { hasText: 'Canary Renamed' })
-        .locator('sp-textfield[aria-label="Server address"] input'),
-    ).toHaveValue('https://canary-moved.example', { timeout: 60_000 });
+    await second.page
+      .locator('.settings-banner sp-action-button', { hasText: 'OK' })
+      .first()
+      .click();
+    // The move reaches disk, and the row re-renders from the freshly-fetched
+    // snapshot, so the value came back out of the store rather than staying
+    // typed in the DOM.
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('https://canary-moved.example');
+    await expect(addressField).toHaveValue('https://canary-moved.example', { timeout: 60_000 });
 
-    // Removal takes two clicks as well: the first only warns.
+    // Removal is confirmed in the banner too: the Remove click raises the
+    // warning, and only the banner's OK button performs it.
     const current = second.page.locator('.server-row', { hasText: 'Canary Renamed' });
     await current.locator('sp-button', { hasText: 'Remove' }).first().click();
-    await expect(current.locator('.server-row__edit-status')).toContainText('Click Remove again');
+    await expect(banner).toContainText('Confirm removing the host. This action cannot be undone');
     await expect(current).toHaveCount(1);
 
-    await current.locator('sp-button', { hasText: 'Remove' }).first().click();
+    await second.page
+      .locator('.settings-banner sp-action-button', { hasText: 'OK' })
+      .first()
+      .click();
     await expect(second.page.locator('.server-row', { hasText: 'Canary Renamed' })).toHaveCount(0, {
       timeout: 60_000,
     });

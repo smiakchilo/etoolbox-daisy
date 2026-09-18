@@ -77,14 +77,14 @@ test('Settings sections are real tab panels, switching their content', async () 
     // Every section is one tab, labelled with its former heading. (The
     // certificate-exceptions tab was removed when approval moved into the
     // browser pane's banner - see handoff-steps-09-12.md's deviation note.)
-    const labels = ['Servers', 'Copilot proxy', 'Authentication', 'Models'];
+    const labels = ['Hosts', 'Copilot proxy', 'Authentication', 'Models'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
     }
 
-    // Servers is selected by default; every other panel is hidden.
-    await expect(settings.locator('section[aria-label="Servers"]')).toBeVisible();
+    // Hosts is selected by default; every other panel is hidden.
+    await expect(settings.locator('section[aria-label="Hosts"]')).toBeVisible();
     await expect(settings.locator('.settings-panel__tab-panel[selected]')).toHaveCount(1);
     for (const panelValue of ['proxy', 'authentication', 'models']) {
       await expect(
@@ -95,14 +95,14 @@ test('Settings sections are real tab panels, switching their content', async () 
     // Switching tabs swaps the visible content.
     await settings.locator('sp-tab', { hasText: 'Models' }).click();
     await expect(settings.locator('section[aria-label="Models"]')).toBeVisible();
-    await expect(settings.locator('section[aria-label="Servers"]')).toBeHidden();
+    await expect(settings.locator('section[aria-label="Hosts"]')).toBeHidden();
 
     await settings.locator('sp-tab', { hasText: 'Authentication' }).click();
     await expect(settings.locator('section[aria-label="Authentication"]')).toBeVisible();
     await expect(settings.locator('sp-button', { hasText: 'Sign in' })).toBeVisible();
     await expect(settings.locator('section[aria-label="Models"]')).toBeHidden();
 
-    await settings.locator('sp-tab', { hasText: 'Servers' }).click();
+    await settings.locator('sp-tab', { hasText: 'Hosts' }).click();
     await expect(settings.locator('.add-server-form')).toBeVisible();
   } finally {
     await app.close();

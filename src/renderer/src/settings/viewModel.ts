@@ -20,7 +20,7 @@ const ORIGIN_REJECTION_MESSAGES: Readonly<Record<OriginRejectionReason, string>>
   missing_host: 'must include a host',
 };
 
-/** Raw values collected from the "Add server" form. Every field is a plain string, matching a textfield's `.value`. */
+/** Raw values collected from the "Add host" form. Every field is a plain string, matching a textfield's `.value`. */
 export interface NewServerFormInput {
   readonly label: string;
   readonly origin: string;
@@ -57,7 +57,7 @@ export interface ValidatedNewServer {
   /**
    * Present (and always `true`) only when `origin` is plain HTTP and the
    * user explicitly confirmed it; omitted for an HTTPS origin, where the
-   * flag is meaningless. This is what `serversSection.ts` forwards as
+   * flag is meaningless. This is what `hostsSection.ts` forwards as
    * `AddServerRequest.allowInsecureHttp` (defaulting to `false` when absent).
    */
   readonly allowInsecureHttp?: true;
@@ -68,7 +68,7 @@ export type NewServerFormResult =
   | { readonly ok: false; readonly errors: NewServerFormErrors };
 
 /**
- * Client-side validation for the "Add server" form, reusing the exact shared
+ * Client-side validation for the "Add host" form, reusing the exact shared
  * schemas the main process will enforce again once it persists the entry
  * (`settings:add-server`, `src/main/ipc/settings.ts`) - this only gives the
  * user immediate feedback; it is never a substitute for main's own

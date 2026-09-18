@@ -101,12 +101,12 @@ export function buildModelsViewModel(
  */
 function buildStatusMessage(state: ModelSelectionState): string {
   if (state.changesLocked) {
-    return 'A response is in progress. Model changes are disabled until it finishes.';
+    return 'Model changes disabled while a response is in progress';
   }
   if (state.catalogUnavailable) {
-    return 'The list of models could not be loaded. Sign in to Copilot, then reload. Your saved choice is unchanged.';
+    return 'Could not retrieve the list of models';
   }
-  return 'A change applies to the next prompt. The current conversation and its history are preserved.';
+  return 'Changes will apply to the next prompt';
 }
 
 /**

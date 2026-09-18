@@ -1,19 +1,20 @@
 import { el } from '../lib/dom';
 import type { AuthStatus } from '../../../shared';
+import type { StatusBannerSink } from './statusBanner';
 
 /**
  * Authentication status section: uses the real `window.daisy.agent` sign-in
  * API, presented as one line of Settings. Sign-in/out are real; there is no
- * stub here.
+ * stub here. Transient outcomes (a failed web-flow sign-in, the local
+ * sign-out's blast-radius warning) go to the panel's one banner slot.
  */
 export interface AuthenticationSection {
   readonly element: HTMLElement;
   refresh(): Promise<void>;
 }
 
-export function createAuthenticationSection(): AuthenticationSection {
+export function createAuthenticationSection(status: StatusBannerSink): AuthenticationSection {
   const statusLight = el('sp-status-light', { attrs: { variant: 'neutral' }, text: 'Checking...' });
-  const warning = el('p', { attrs: { class: 'authentication-section__warning' } });
 
   const signInButton = el('sp-button', { attrs: { variant: 'accent' }, text: 'Sign in' });
   const signOutButton = el('sp-button', {
@@ -23,13 +24,13 @@ export function createAuthenticationSection(): AuthenticationSection {
 
   async function refresh(): Promise<void> {
     try {
-      const status: AuthStatus = await window.daisy.agent.getAuthStatus();
-      if (status.isAuthenticated) {
+      const auth: AuthStatus = await window.daisy.agent.getAuthStatus();
+      if (auth.isAuthenticated) {
         statusLight.setAttribute('variant', 'positive');
-        statusLight.textContent = `Signed in${status.login ? ` as ${status.login}` : ''}`;
+        statusLight.textContent = `Signed in${auth.login ? ` as ${auth.login}` : ''}`;
       } else {
         statusLight.setAttribute('variant', 'negative');
-        statusLight.textContent = status.statusMessage ?? 'Not signed in';
+        statusLight.textContent = auth.statusMessage ?? 'Not signed in';
       }
     } catch (error) {
       statusLight.setAttribute('variant', 'negative');
@@ -43,7 +44,7 @@ export function createAuthenticationSection(): AuthenticationSection {
       .login()
       .then((outcome) => {
         if (outcome.status === 'failed') {
-          warning.textContent = `Sign-in failed: ${outcome.message}`;
+          status.showError(`Sign-in failed: ${outcome.message}`);
         }
       })
       .finally(() => {
@@ -54,7 +55,7 @@ export function createAuthenticationSection(): AuthenticationSection {
 
   signOutButton.addEventListener('click', () => {
     void window.daisy.agent.logout().then((result) => {
-      warning.textContent = result.warning;
+      status.showStatus(result.warning);
       void refresh();
     });
   });
@@ -63,7 +64,6 @@ export function createAuthenticationSection(): AuthenticationSection {
     attrs: { class: 'settings-section', 'aria-label': 'Authentication' },
     children: [
       el('div', { attrs: { class: 'authentication-section__row' }, children: [statusLight] }),
-      warning,
       el('div', {
         attrs: { class: 'authentication-section__actions' },
         children: [signInButton, signOutButton],
