@@ -19,155 +19,12 @@ const ORIGIN_REJECTION_MESSAGES: Readonly<Record<OriginRejectionReason, string>>
   missing_host: 'must include a host',
 };
 
-/** Raw values collected from the "Add host" form. Every field is a plain string, matching a textfield's `.value`. */
-export interface NewServerFormInput {
-  readonly label: string;
-  readonly origin: string;
-  readonly color:
-    | { readonly kind: 'swatch'; readonly swatch: string }
-    | { readonly kind: 'custom'; readonly hex: string };
-  /** Empty string means "no AEM proxy configured". */
-  readonly proxyOrigin: string;
-  /** Empty string means "no proxy username set". Ignored unless `proxyOrigin` is set. */
-  readonly proxyUsername: string;
-}
-
-export interface NewServerFormErrors {
-  readonly label?: string;
-  readonly origin?: string;
-  readonly color?: string;
-  readonly proxyOrigin?: string;
-  readonly proxyUsername?: string;
-}
-
-export interface ValidatedNewServer {
-  readonly label: string;
-  readonly origin: string;
-  readonly color: ServerColor;
-  readonly proxy?: { readonly origin: string; readonly username?: string };
-}
-
-export type NewServerFormResult =
-  | { readonly ok: true; readonly value: ValidatedNewServer }
-  | { readonly ok: false; readonly errors: NewServerFormErrors };
-
 /**
- * Client-side validation for the "Add host" form, reusing the exact shared
- * schemas the main process will enforce again once it persists the entry
- * (`settings:add-server`, `src/main/ipc/settings.ts`) - this only gives the
- * user immediate feedback; it is never a substitute for main's own
- * validation, which re-checks everything independently.
- */
-export function validateNewServerForm(input: NewServerFormInput): NewServerFormResult {
-  const errors: {
-    label?: string;
-    origin?: string;
-    color?: string;
-    proxyOrigin?: string;
-    proxyUsername?: string;
-  } = {};
-
-  const labelResult = serverLabelSchema.safeParse(input.label);
-  if (!labelResult.success) {
-    errors.label = labelResult.error.issues[0]?.message ?? 'invalid label';
-  }
-
-  const originResult = parseOrigin(input.origin);
-  if (!originResult.ok) {
-    errors.origin = ORIGIN_REJECTION_MESSAGES[originResult.reason];
-  }
-
-  const colorResult = serverColorSchema.safeParse(input.color);
-  if (!colorResult.success) {
-    errors.color = colorResult.error.issues[0]?.message ?? 'invalid colour';
-  }
-
-  const proxyOrigin = input.proxyOrigin.trim();
-  const proxyUsername = input.proxyUsername.trim();
-  const proxyOriginResult = proxyOrigin === '' ? undefined : parseOrigin(proxyOrigin);
-  if (proxyOriginResult && !proxyOriginResult.ok) {
-    errors.proxyOrigin = ORIGIN_REJECTION_MESSAGES[proxyOriginResult.reason];
-  } else if (proxyOrigin === '' && proxyUsername !== '') {
-    errors.proxyUsername = 'a proxy username requires a proxy address';
-  }
-
-  const isValid =
-    labelResult.success &&
-    originResult.ok &&
-    colorResult.success &&
-    (proxyOriginResult === undefined || proxyOriginResult.ok) &&
-    Object.keys(errors).length === 0;
-
-  if (!isValid || !labelResult.success || !originResult.ok || !colorResult.success) {
-    return { ok: false, errors };
-  }
-
-  const proxy =
-    proxyOriginResult && proxyOriginResult.ok
-      ? {
-          origin: proxyOriginResult.origin,
-          ...(proxyUsername !== '' ? { username: proxyUsername } : {}),
-        }
-      : undefined;
-
-  return {
-    ok: true,
-    value: {
-      label: labelResult.data,
-      origin: originResult.origin,
-      color: colorResult.data,
-      ...(proxy ? { proxy } : {}),
-    },
-  };
-}
-
-/** Raw values collected from a server row's inline "Edit" form (label + colour, i.e. presentation only - see `updateServerPresentationRequestSchema`). */
-export interface EditServerFormInput {
-  readonly label: string;
-  readonly color:
-    | { readonly kind: 'swatch'; readonly swatch: string }
-    | { readonly kind: 'custom'; readonly hex: string };
-}
-
-export interface EditServerFormErrors {
-  readonly label?: string;
-  readonly color?: string;
-}
-
-export interface ValidatedEditServer {
-  readonly label: string;
-  readonly color: ServerColor;
-}
-
-export type EditServerFormResult =
-  | { readonly ok: true; readonly value: ValidatedEditServer }
-  | { readonly ok: false; readonly errors: EditServerFormErrors };
-
-/** Client-side validation for a server row's inline label/colour edit, mirroring `settings:update-server-presentation`'s own schema. */
-export function validateEditServerForm(input: EditServerFormInput): EditServerFormResult {
-  const errors: { label?: string; color?: string } = {};
-
-  const labelResult = serverLabelSchema.safeParse(input.label);
-  if (!labelResult.success) {
-    errors.label = labelResult.error.issues[0]?.message ?? 'invalid label';
-  }
-
-  const colorResult = serverColorSchema.safeParse(input.color);
-  if (!colorResult.success) {
-    errors.color = colorResult.error.issues[0]?.message ?? 'invalid colour';
-  }
-
-  if (!labelResult.success || !colorResult.success) {
-    return { ok: false, errors };
-  }
-
-  return { ok: true, value: { label: labelResult.data, color: colorResult.data } };
-}
-
-/**
- * Validates a raw origin string typed into a server row's inline "change
- * address" field, reusing the same rejection messages `validateNewServerForm`
- * uses so an origin error reads identically everywhere it can appear.
+ * Validates a raw origin string typed into a host item's address field,
+ * reusing the same shared `parseOrigin` (and the same rejection messages) the
+ * main process enforces again when it persists the entry. This only gives the
+ * user immediate feedback; it is never a substitute for main's own validation,
+ * which re-checks everything independently.
  */
 export function validateOriginInput(
   value: string,
@@ -177,6 +34,51 @@ export function validateOriginInput(
     return { ok: false, error: ORIGIN_REJECTION_MESSAGES[result.reason] };
   }
   return { ok: true, origin: result.origin };
+}
+
+/**
+ * An optional label is allowed to be blank, in which case it defaults to the
+ * host's address (the one required field). Everything else is validated by the
+ * exact `serverLabelSchema` main will re-apply, so an over-long label or one
+ * with surrounding whitespace is reported inline rather than at save time.
+ *
+ * The blank-label case returns `{ ok: true, label: "" }` when the address is
+ * itself blank: there is no address to default to yet, and the address field
+ * already reports that. The caller only persists once the address is valid, at
+ * which point the default resolves to the address.
+ */
+export function resolveHostLabelInput(
+  rawLabel: string,
+  origin: string,
+): { readonly ok: true; readonly label: string } | { readonly ok: false; readonly error: string } {
+  const trimmed = rawLabel.trim();
+  const candidate = trimmed === '' ? origin : trimmed;
+  if (candidate === '') {
+    return { ok: true, label: '' };
+  }
+  const result = serverLabelSchema.safeParse(candidate);
+  if (!result.success) {
+    return { ok: false, error: result.error.issues[0]?.message ?? 'invalid label' };
+  }
+  return { ok: true, label: result.data };
+}
+
+/** The raw shape a colour picker reads back, before validation. */
+export type RawServerColor =
+  | { readonly kind: 'swatch'; readonly swatch: string }
+  | { readonly kind: 'custom'; readonly hex: string };
+
+/** Validates a colour picker's read value with the shared `serverColorSchema`. */
+export function validateHostColorInput(
+  color: RawServerColor,
+):
+  | { readonly ok: true; readonly value: ServerColor }
+  | { readonly ok: false; readonly error: string } {
+  const result = serverColorSchema.safeParse(color);
+  if (!result.success) {
+    return { ok: false, error: result.error.issues[0]?.message ?? 'invalid colour' };
+  }
+  return { ok: true, value: result.data };
 }
 
 /** Renders an optional proxy snapshot (per-server AEM proxy, or the global Copilot proxy) as one display line. */

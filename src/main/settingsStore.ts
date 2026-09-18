@@ -678,6 +678,65 @@ export function removeServer(
   return ok({ settings: parsed.data, wasActive });
 }
 
+/**
+ * Reorders the configured servers to exactly the order given by `orderedIds`
+ * (the Settings "Hosts" multifield's up/down actions).
+ *
+ * The argument is the whole desired order, not one up/down step, so the order
+ * persisted is the one the user is looking at. It must be a *permutation* of
+ * the configured ids: every configured id exactly once, no unknown id, none
+ * missing. Anything else is rejected as `invalid_change` rather than being
+ * partially applied - a partial application would silently drop servers from
+ * the document, which is a data-loss bug, not a validation nicety.
+ *
+ * Order is presentation only. `revision` is untouched on every server (it
+ * exists to signal a change in *where/how* a server is reached, and nothing
+ * about reaching it changed), and `activeServerId` is untouched too - the
+ * active server is identified by id, never by position.
+ */
+export function reorderServers(
+  settings: AppSettings,
+  orderedIds: readonly ServerId[],
+): Result<AppSettings, ServerMutationError> {
+  if (orderedIds.length !== settings.servers.length) {
+    return err({
+      kind: 'invalid_change',
+      message:
+        `the requested order lists ${String(orderedIds.length)} server(s), but ` +
+        `${String(settings.servers.length)} are configured; the order must list every server exactly once`,
+    });
+  }
+
+  const byId = new Map(settings.servers.map((server) => [server.id, server]));
+  const seen = new Set<string>();
+  const reordered: ServerConfig[] = [];
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      return err({
+        kind: 'invalid_change',
+        message: `duplicate server id in the requested order: ${id}`,
+      });
+    }
+    seen.add(id);
+    const server = byId.get(id);
+    if (!server) {
+      return err({ kind: 'invalid_change', message: `no server with id ${id}` });
+    }
+    reordered.push(server);
+  }
+
+  const parsed = appSettingsSchema.safeParse({ ...settings, servers: reordered });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
+}
+
 // ---------------------------------------------------------------------------
 // Global Copilot proxy (step 05)
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import {
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
   SETTINGS_REMOVE_SERVER_CHANNEL,
+  SETTINGS_REORDER_SERVERS_CHANNEL,
   SETTINGS_SET_COPILOT_PROXY_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
@@ -55,10 +56,12 @@ import {
   parseGetSettingsSnapshotResult,
   parseLoginOutcome,
   parseLogoutResult,
+  parseReorderServersResult,
   parseSettingsIpcVoidResult,
   parseUpdateServerPresentationResult,
   parseUpdateServerTargetingResult,
   removeServerRequestSchema,
+  reorderServersRequestSchema,
   setCopilotProxyRequestSchema,
   setModelPreferencesRequestSchema,
   setProxyPasswordRequestSchema,
@@ -90,6 +93,7 @@ import {
   type LogoutResult,
   type ProxyPasswordTarget,
   type RemoveServerRequest,
+  type ReorderServersRequest,
   type SetCopilotProxyRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
@@ -177,6 +181,14 @@ const daisyApi: DaisyAppApi = {
         parsedRequest,
       );
       return parseUpdateServerTargetingResult(raw);
+    },
+    async reorderServers(request: ReorderServersRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = reorderServersRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        SETTINGS_REORDER_SERVERS_CHANNEL,
+        parsedRequest,
+      );
+      return parseReorderServersResult(raw);
     },
     async setCopilotProxy(request: SetCopilotProxyRequest): Promise<SettingsIpcVoidResult> {
       const parsedRequest = setCopilotProxyRequestSchema.parse(request);

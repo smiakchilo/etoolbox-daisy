@@ -5,7 +5,7 @@ import path from 'node:path';
 /**
  * The Settings surface's sections are organised as Spectrum Tabs
  * (`sp-tabs` / `sp-tab` / `sp-tab-panel`, registered in `main.ts`): one tab
- * per section, Servers selected by default, exactly one panel visible.
+ * per section, Hosts selected by default, exactly one panel visible.
  *
  * Only the real built app can prove this. jsdom renders `sp-tabs`,
  * `sp-tab` and `sp-tab-panel` as inert `HTMLUnknownElement`s, and the
@@ -83,9 +83,13 @@ test('Settings sections are real tab panels, switching their content', async () 
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
     }
 
-    // Hosts is selected by default; every other panel is hidden.
+    // Hosts is selected by default; every other panel is hidden. The panel's
+    // node value is `hosts` (not `servers`) - the surface language was renamed
+    // even though the underlying data model still calls these servers.
     await expect(settings.locator('section[aria-label="Hosts"]')).toBeVisible();
-    await expect(settings.locator('.settings-panel__tab-panel[selected]')).toHaveCount(1);
+    const selectedPanel = settings.locator('.settings-panel__tab-panel[selected]');
+    await expect(selectedPanel).toHaveCount(1);
+    await expect(selectedPanel.first()).toHaveAttribute('value', 'hosts');
     for (const panelValue of ['proxy', 'authentication', 'models']) {
       await expect(
         settings.locator(`.settings-panel__tab-panel[value="${panelValue}"]`),
@@ -103,7 +107,7 @@ test('Settings sections are real tab panels, switching their content', async () 
     await expect(settings.locator('section[aria-label="Models"]')).toBeHidden();
 
     await settings.locator('sp-tab', { hasText: 'Hosts' }).click();
-    await expect(settings.locator('.add-server-form')).toBeVisible();
+    await expect(settings.locator('.multifield__add')).toBeVisible();
   } finally {
     await app.close();
   }

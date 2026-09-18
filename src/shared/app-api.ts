@@ -7,6 +7,7 @@ import type {
   GetSettingsSnapshotResult,
   ProxyPasswordTarget,
   RemoveServerRequest,
+  ReorderServersRequest,
   SetCopilotProxyRequest,
   SetModelPreferencesRequest,
   SettingsIpcVoidResult,
@@ -111,6 +112,8 @@ export interface DaisySettingsApi {
   updateServerTargeting(
     request: UpdateServerTargetingRequest,
   ): Promise<UpdateServerTargetingResult>;
+  /** Persists the host list's order (the Settings Hosts multifield's up/down actions). */
+  reorderServers(request: ReorderServersRequest): Promise<SettingsIpcVoidResult>;
   setCopilotProxy(request: SetCopilotProxyRequest): Promise<SettingsIpcVoidResult>;
   /**
    * The model catalogue, the stored selection, and whether a turn currently

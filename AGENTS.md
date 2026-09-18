@@ -227,8 +227,10 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1583 passed / 14 skipped**;
-**Playwright → 56 tests** (55 baseline + closeability spec).
+Current baseline: **`npm run verify` → 1605 passed / 14 skipped**;
+**Playwright → 58 tests**. (The Hosts multifield follow-on moved the unit
+baseline from 1583 and the Playwright count from 56 — see
+`docs/verification.md` "Settings \"Hosts\" tab is now a real multifield".)
 `app.spec.ts` no longer collides with a running `npm run dev`: it now
 provisions a scratch storage home like every sibling spec (see
 `docs/verification.md` "Settings Servers renamed to Hosts", traps). One

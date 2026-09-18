@@ -325,6 +325,43 @@ export function parseUpdateServerTargetingResult(candidate: unknown): UpdateServ
   return updateServerTargetingResultSchema.parse(candidate);
 }
 
+/**
+ * `settings:reorder-servers` - the Settings "Hosts" multifield's up/down
+ * actions.
+ *
+ * Deliberately the whole desired order (`serverIds`), not a single
+ * `{ serverId, direction }` step: the renderer already holds the list it
+ * shows, and sending the complete permutation means the persisted order can
+ * never disagree with what the user sees. Main validates that the list is
+ * exactly the set of configured ids (every id once, none missing, none
+ * unknown) before writing - see `reorderServers` in `settingsStore.ts`.
+ *
+ * Order is presentation, not targeting: it never bumps a `revision`, so a
+ * reorder cannot interrupt an in-flight request or the live AEM view. This is
+ * why it is a dedicated channel rather than a use of
+ * `settings:update-server-presentation` (which takes label/colour only).
+ */
+export const reorderServersRequestSchema = z
+  .object({
+    serverIds: z.array(serverIdSchema),
+  })
+  .strict();
+
+export type ReorderServersRequest = Readonly<z.infer<typeof reorderServersRequestSchema>>;
+
+/**
+ * Result of `settings:reorder-servers`. Nothing more specific than
+ * success/failure to report - the renderer re-reads the snapshot afterward
+ * (see `settingsPanel.ts`'s `reload`) - so it reuses
+ * {@link settingsIpcVoidResultSchema}, matching `settings:remove-server`.
+ */
+export const reorderServersResultSchema = settingsIpcVoidResultSchema;
+export type ReorderServersResult = SettingsIpcVoidResult;
+
+export function parseReorderServersResult(candidate: unknown): ReorderServersResult {
+  return settingsIpcVoidResultSchema.parse(candidate);
+}
+
 // ---------------------------------------------------------------------------
 // Model / reasoning-effort selection (step 09)
 // ---------------------------------------------------------------------------

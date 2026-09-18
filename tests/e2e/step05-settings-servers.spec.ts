@@ -14,9 +14,10 @@ import path from 'node:path';
  * guard trusts only the one shell webContents id; this spec proves that
  * single-window path works.
  *
- * Since step 10 the fields auto-save (debounced ~1s, no Save button): the
- * label/colour edits persist by themselves, while an address change and a
- * removal need the confirmation flows in the panel's one banner
+ * The Hosts tab is now a multifield (reusable `lib/multifield.ts`): "Add item"
+ * inserts an empty draft, its first valid address creates the host, and the
+ * label/colour auto-save (debounced ~1s, no Save button). An address change
+ * and a removal still need the confirmation flows in the panel's one banner
  * (`.settings-banner`). Persistence is asserted by polling `settings.json` on
  * disk, never by trusting the renderer's own re-fetch.
  */
@@ -58,26 +59,46 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
     await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
     await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
-    await shell.locator('.add-server-form').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     return { app, page: shell };
   };
 
-  // --- Launch 1: add a server through the real form -----------------------
+  // --- Launch 1: add a server through the multifield ----------------------
   const first = await openSettings();
   try {
-    const rows = first.page.locator('.server-row');
-    const initialRowCount = await rows.count();
+    const items = first.page.locator('.multifield__item');
+    const initialRowCount = await items.count();
 
-    await first.page.locator('sp-textfield[placeholder="Label"] input').fill('Canary Author');
-    await first.page
-      .locator('sp-textfield[placeholder="https://author.example"] input')
+    // "Add item" inserts the first (and only) empty draft.
+    await first.page.locator('.multifield__add').first().click();
+    const draft = items.last();
+    await expect(draft).toHaveCount(1);
+
+    await draft
+      .locator('sp-textfield[aria-label="Address"] input')
       .fill('https://canary-author.example');
-    await first.page.locator('sp-button', { hasText: 'Add host' }).first().click();
+    await draft.locator('sp-textfield[aria-label="Label"] input').fill('Canary Author');
 
-    // The list must grow - proving the mutation round-tripped through IPC and
-    // came back as new state, not merely that a button was clickable.
-    await expect(rows).toHaveCount(initialRowCount + 1, { timeout: 60_000 });
-    await expect(first.page.locator('.server-row')).toContainText(['Canary Author']);
+    // The draft's first valid address creates the host. The disk read is the
+    // real proof (a draft already counts as one row before it is saved), and it
+    // also guarantees the write landed before the app is closed.
+    await expect
+      .poll(
+        () => {
+          try {
+            return readFileSync(settingsFile, 'utf8');
+          } catch {
+            return '';
+          }
+        },
+        { timeout: 60_000 },
+      )
+      .toContain('https://canary-author.example');
+    await expect(items).toHaveCount(initialRowCount + 1, { timeout: 60_000 });
+    await expect(items.last().locator('sp-textfield[aria-label="Label"] input')).toHaveValue(
+      'Canary Author',
+      { timeout: 60_000 },
+    );
   } finally {
     await first.app.close();
   }
@@ -101,25 +122,24 @@ test('servers added in the Settings panel persist, and removal persists too', as
       }
     };
 
-    const row = second.page.locator('.server-row', { hasText: 'Canary Author' });
-    await expect(row).toHaveCount(1, { timeout: 60_000 });
+    const items = second.page.locator('.multifield__item');
+    await expect(items).toHaveCount(1, { timeout: 60_000 });
 
-    // A row has exactly one button now: Remove. The label/colour and address
-    // auto-save ~1s after the last edit; there is no Save button left.
-    await expect(row.locator('sp-button')).toHaveCount(1);
+    // A host row has its three icon actions (up/down/remove) and no Save
+    // button: the fields auto-save ~1s after the last edit.
+    await expect(items.first().locator('.multifield__action')).toHaveCount(3);
 
     // Renaming auto-saves on its own: the row re-renders from the fresh
     // snapshot and the rename reaches disk without any button click.
-    const labelField = row.locator('sp-textfield[aria-label="Host label"] input');
+    const labelField = items.first().locator('sp-textfield[aria-label="Label"] input');
     await labelField.fill('Canary Renamed');
-    const renamed = second.page.locator('.server-row', { hasText: 'Canary Renamed' });
-    await expect(renamed).toHaveCount(1, { timeout: 60_000 });
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('Canary Renamed');
+    await expect(labelField).toHaveValue('Canary Renamed', { timeout: 60_000 });
 
     // An address change is never applied by the auto-save: the debounce only
     // raises a one-button confirmation in the banner, and a single OK click
     // persists it.
-    const addressField = renamed.locator('sp-textfield[aria-label="Host address"] input');
+    const addressField = items.first().locator('sp-textfield[aria-label="Address"] input');
     await addressField.fill('https://canary-moved.example');
     await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
     await expect(addressField).toHaveValue('https://canary-moved.example');
@@ -134,20 +154,18 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('https://canary-moved.example');
     await expect(addressField).toHaveValue('https://canary-moved.example', { timeout: 60_000 });
 
-    // Removal is confirmed in the banner too: the Remove click raises the
+    // Removal is confirmed in the banner too: the remove click raises the
     // warning, and only the banner's OK button performs it.
-    const current = second.page.locator('.server-row', { hasText: 'Canary Renamed' });
-    await current.locator('sp-button', { hasText: 'Remove' }).first().click();
+    await expect(items).toHaveCount(1);
+    await items.first().locator('.multifield__action--remove').click();
     await expect(banner).toContainText('Confirm removing the host. This action cannot be undone');
-    await expect(current).toHaveCount(1);
+    await expect(items).toHaveCount(1);
 
     await second.page
       .locator('.settings-banner sp-action-button', { hasText: 'OK' })
       .first()
       .click();
-    await expect(second.page.locator('.server-row', { hasText: 'Canary Renamed' })).toHaveCount(0, {
-      timeout: 60_000,
-    });
+    await expect(items).toHaveCount(0, { timeout: 60_000 });
   } finally {
     await second.app.close();
   }
@@ -189,30 +207,29 @@ test('the Settings banner keeps one height with and without an action button', a
     const page = await app.firstWindow();
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
     await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
-    await page.locator('.add-server-form').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     const banner = page.locator('.settings-banner').first();
 
     // One host to edit.
-    await page.locator('sp-textfield[placeholder="Label"] input').fill('Height Check');
-    await page
-      .locator('sp-textfield[placeholder="https://author.example"] input')
+    await page.locator('.multifield__add').first().click();
+    const item = page.locator('.multifield__item').last();
+    await item
+      .locator('sp-textfield[aria-label="Address"] input')
       .fill('https://height-check.example');
-    await page.locator('sp-button', { hasText: 'Add host' }).first().click();
-    const added = page.locator('.server-row', { hasText: 'Height Check' });
-    await expect(added).toHaveCount(1, { timeout: 60_000 });
+    await item.locator('sp-textfield[aria-label="Label"] input').fill('Height Check');
+    await expect(page.locator('.multifield__item')).toHaveCount(1, { timeout: 60_000 });
 
     // A plain text row: the label auto-save settles on "Settings saved",
     // which carries no close control and no action button.
-    await added.locator('sp-textfield[aria-label="Host label"] input').fill('Height Check 2');
+    await item.locator('sp-textfield[aria-label="Label"] input').fill('Height Check 2');
     await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
     await expect(banner.locator('sp-action-button')).toHaveCount(0);
     const textRowHeight = await banner.evaluate((node) => node.getBoundingClientRect().height);
 
     // A with-button row: the address change raises the sticky confirmation
     // with its single OK `sp-action-button`.
-    const moved = page.locator('.server-row', { hasText: 'Height Check 2' });
-    await moved
-      .locator('sp-textfield[aria-label="Host address"] input')
+    await item
+      .locator('sp-textfield[aria-label="Address"] input')
       .fill('https://height-moved.example');
     await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
     await expect(banner.locator('sp-action-button')).toHaveCount(1);
@@ -225,5 +242,121 @@ test('the Settings banner keeps one height with and without an action button', a
     expect(Math.round(buttonRowHeight)).toBe(48);
   } finally {
     await app.close();
+  }
+});
+
+/**
+ * Reordering is part of the requirement, and its persistence is a real IPC
+ * round trip (`settings:reorder-servers`), so it is proven here rather than
+ * only against the store in isolation. This also pins the bound recomputation:
+ * up is disabled on the first row and down on the last, and those must follow
+ * the *new* order immediately after a move.
+ */
+test('reordering hosts persists, and the move buttons follow the new order', async () => {
+  test.setTimeout(180_000);
+
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+  const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+
+  const readOrigins = (): string[] => {
+    try {
+      const doc = JSON.parse(readFileSync(settingsFile, 'utf8')) as {
+        servers?: { origin?: string }[];
+      };
+      return (doc.servers ?? []).map((server) => server.origin ?? '');
+    } catch {
+      return [];
+    }
+  };
+
+  const openSettings = async (app: Awaited<ReturnType<typeof electron.launch>>) => {
+    const page = await app.firstWindow();
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('.multifield__item').first().waitFor({ state: 'visible', timeout: 60_000 });
+    return page;
+  };
+
+  // --- Launch 1: add two hosts, then close --------------------------------
+  const first = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await first.firstWindow();
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
+
+    const add = async (label: string, origin: string): Promise<void> => {
+      await page.locator('.multifield__add').first().click();
+      const item = page.locator('.multifield__item').last();
+      await item.locator('sp-textfield[aria-label="Address"] input').fill(origin);
+      await item.locator('sp-textfield[aria-label="Label"] input').fill(label);
+      await expect.poll(readOrigins, { timeout: 60_000 }).toContain(origin);
+    };
+    await add('Order A', 'https://order-a.example');
+    await add('Order B', 'https://order-b.example');
+  } finally {
+    await first.close();
+  }
+
+  // --- Launch 2: every row is a persisted host (no drafts), so the reorder
+  // is deterministic. The bounds must follow the new order immediately. ---
+  const second = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await openSettings(second);
+    const rows = page.locator('.multifield__item');
+    await expect(rows).toHaveCount(2, { timeout: 60_000 });
+
+    const up = (index: number) => rows.nth(index).locator('.multifield__action--up');
+    const down = (index: number) => rows.nth(index).locator('.multifield__action--down');
+    await expect(up(0)).toHaveAttribute('disabled', '');
+    await expect(down(0)).not.toHaveAttribute('disabled', '');
+    await expect(up(1)).not.toHaveAttribute('disabled', '');
+    await expect(down(1)).toHaveAttribute('disabled', '');
+
+    // Focus the first host's address field, then move that host down with the
+    // button - which steals focus. The field must come back focused *and*
+    // visibly accented, since all the items' fields look alike.
+    const movedFrom = rows.nth(0).locator('sp-textfield[aria-label="Address"]');
+    await movedFrom.click();
+    await down(0).click();
+    await expect
+      .poll(readOrigins, { timeout: 60_000 })
+      .toEqual(['https://order-b.example', 'https://order-a.example']);
+
+    // The bounds flip immediately, with the moved row's own buttons correct.
+    await expect(up(0)).toHaveAttribute('disabled', '');
+    await expect(down(1)).toHaveAttribute('disabled', '');
+    await expect(down(0)).not.toHaveAttribute('disabled', '');
+    await expect(up(1)).not.toHaveAttribute('disabled', '');
+
+    // The moved field (now the second row) still holds focus: the caret stays
+    // in the field the user was editing.
+    const movedTo = rows.nth(1).locator('sp-textfield[aria-label="Address"]');
+    expect(await movedTo.evaluate((el) => el === el.ownerDocument.activeElement)).toBe(true);
+
+    // Moving again without having focused a field (the button was clicked
+    // straight away) still forces focus into the moved item's first field.
+    await down(0).click();
+    await expect
+      .poll(readOrigins, { timeout: 60_000 })
+      .toEqual(['https://order-a.example', 'https://order-b.example']);
+    const forced = rows.nth(1).locator('sp-textfield[aria-label="Address"]');
+    expect(await forced.evaluate((el) => el === el.ownerDocument.activeElement)).toBe(true);
+  } finally {
+    await second.close();
   }
 });

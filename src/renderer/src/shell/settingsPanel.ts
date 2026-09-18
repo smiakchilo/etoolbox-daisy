@@ -139,14 +139,14 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     readonly label: string;
     readonly element: HTMLElement;
   }> = [
-    { value: 'servers', label: 'Hosts', element: hostsSection.element },
+    { value: 'hosts', label: 'Hosts', element: hostsSection.element },
     { value: 'proxy', label: 'Copilot proxy', element: proxySection.element },
     { value: 'authentication', label: 'Authentication', element: authenticationSection.element },
     { value: 'models', label: 'Models', element: modelsSection.element },
   ];
 
   const tabs = el('sp-tabs', {
-    attrs: { class: 'settings-panel__tabs', selected: 'servers', size: 'm' },
+    attrs: { class: 'settings-panel__tabs', selected: 'hosts', size: 'm' },
     children: [
       ...tabSections.map(({ value, label }) => el('sp-tab', { attrs: { value }, text: label })),
       ...tabSections.map(({ value, element }) =>

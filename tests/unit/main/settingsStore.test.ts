@@ -19,6 +19,7 @@ import {
   loadSettings,
   migrateSettingsData,
   removeServer,
+  reorderServers,
   saveSettings,
   settingsFilePath,
   updateCopilotProxy,
@@ -643,6 +644,64 @@ describe('removeServer', () => {
       // reason activeServerId is cleared rather than left dangling.
       expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
     }
+  });
+});
+
+describe('reorderServers', () => {
+  it('reorders the servers to the given permutation without touching revisions', () => {
+    const a = makeServer('server-a', 'https://a.example');
+    const b = makeServer('server-b', 'https://b.example');
+    const c = makeServer('server-c', 'https://c.example');
+    const settings = makeSettings([a, b, c], a.id);
+
+    const result = reorderServers(settings, [c.id, a.id, b.id]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.servers.map((server) => server.id)).toEqual([c.id, a.id, b.id]);
+      expect(result.value.servers.map((server) => server.revision)).toEqual([0, 0, 0]);
+      expect(result.value.activeServerId).toBe(a.id);
+    }
+  });
+
+  it('rejects an order that omits a configured server', () => {
+    const a = makeServer('server-a', 'https://a.example');
+    const b = makeServer('server-b', 'https://b.example');
+    const settings = makeSettings([a, b]);
+
+    const result = reorderServers(settings, [a.id]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('invalid_change');
+  });
+
+  it('rejects an order with a duplicate id', () => {
+    const a = makeServer('server-a', 'https://a.example');
+    const b = makeServer('server-b', 'https://b.example');
+    const settings = makeSettings([a, b]);
+
+    const result = reorderServers(settings, [a.id, a.id]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('invalid_change');
+  });
+
+  it('rejects an unknown id', () => {
+    const a = makeServer('server-a', 'https://a.example');
+    const settings = makeSettings([a]);
+
+    const result = reorderServers(settings, [newServerId(() => 'ghost')]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('invalid_change');
+  });
+
+  it('accepts an empty order for a settings document with no servers', () => {
+    const settings = makeSettings([]);
+
+    const result = reorderServers(settings, []);
+
+    expect(result.ok).toBe(true);
   });
 });
 

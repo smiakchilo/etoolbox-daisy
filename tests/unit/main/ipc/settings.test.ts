@@ -14,6 +14,7 @@ import {
   getSettingsSnapshot,
   isTrustedLocalSettingsSender,
   removeServer,
+  reorderServers,
   resolveProxySecretRef,
   setCopilotProxy,
   setProxyPassword,
@@ -413,6 +414,63 @@ describe('removeServer', () => {
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
     expect(snapshot.snapshot.activeServerId).toBeNull();
+  });
+});
+
+describe('reorderServers', () => {
+  function twoServerSettings(): AppSettings {
+    const a = serverConfigSchema.parse({
+      id: newServerId(() => 'server-a'),
+      label: 'A',
+      origin: 'https://a.example',
+      color: { kind: 'swatch' as const, swatch: 'blue' as const },
+      revision: 0,
+    });
+    const b = serverConfigSchema.parse({
+      id: newServerId(() => 'server-b'),
+      label: 'B',
+      origin: 'https://b.example',
+      color: { kind: 'swatch' as const, swatch: 'red' as const },
+      revision: 0,
+    });
+    return {
+      schemaVersion: 1,
+      servers: [a, b],
+      activeServerId: a.id,
+      defaultModel: null,
+      defaultReasoningEffort: null,
+    };
+  }
+
+  it('persists the requested order', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, twoServerSettings());
+
+    const result = await reorderServers(settingsDir, {
+      serverIds: [newServerId(() => 'server-b'), newServerId(() => 'server-a')],
+    });
+
+    expect(result).toEqual({ ok: true });
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected ok snapshot result');
+    expect(snapshot.snapshot.servers.map((server) => server.id)).toEqual([
+      newServerId(() => 'server-b'),
+      newServerId(() => 'server-a'),
+    ]);
+  });
+
+  it('rejects an order that is not a permutation instead of dropping a server', async () => {
+    const settingsDir = createScratchRoot();
+    await writeSettings(settingsDir, twoServerSettings());
+
+    const result = await reorderServers(settingsDir, {
+      serverIds: [newServerId(() => 'server-a')],
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('invalid_change');
   });
 });
 

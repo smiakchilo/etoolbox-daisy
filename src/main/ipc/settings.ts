@@ -6,6 +6,7 @@ import {
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
   SETTINGS_REMOVE_SERVER_CHANNEL,
+  SETTINGS_REORDER_SERVERS_CHANNEL,
   SETTINGS_SET_COPILOT_PROXY_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
@@ -16,6 +17,7 @@ import {
   addServerRequestSchema,
   clearProxyPasswordRequestSchema,
   removeServerRequestSchema,
+  reorderServersRequestSchema,
   setCopilotProxyRequestSchema,
   setModelPreferencesRequestSchema,
   setProxyPasswordRequestSchema,
@@ -28,6 +30,7 @@ import {
   type GetSettingsSnapshotResult,
   type ProxyPasswordTarget,
   type RemoveServerRequest,
+  type ReorderServersRequest,
   type ServerTargetingMutationKind,
   type SetCopilotProxyRequest,
   type SetModelPreferencesRequest,
@@ -57,6 +60,7 @@ import {
   confirmOriginChange,
   loadSettings,
   removeServer as deleteServerEntry,
+  reorderServers as reorderServerEntries,
   saveSettings,
   updateCopilotProxy as updateCopilotProxyEntry,
   updateModelPreferences as updateModelPreferencesEntry,
@@ -345,6 +349,33 @@ export async function removeServer(
   }
 
   const saved = await persist(settingsDir, removed.value.settings);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
+/**
+ * Implements `settings:reorder-servers`. The requested order is validated as a
+ * permutation of the configured servers by `settingsStore.ts`'s
+ * `reorderServers`; a mismatch is `invalid_change` (the store's
+ * `ServerMutationError` kinds are a subset of `SettingsIpcErrorCode`).
+ */
+export async function reorderServers(
+  settingsDir: string,
+  request: ReorderServersRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const reordered = reorderServerEntries(loaded.value, request.serverIds);
+  if (!reordered.ok) {
+    return { ok: false, error: { code: reordered.error.kind, message: reordered.error.message } };
+  }
+
+  const saved = await persist(settingsDir, reordered.value);
   if (!saved.ok) {
     return { ok: false, error: saved.error };
   }
@@ -827,6 +858,20 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
       return removeServer(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_REORDER_SERVERS_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = reorderServersRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return reorderServers(deps.settingsDir, parsed.data);
     },
   );
 

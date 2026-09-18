@@ -31,6 +31,14 @@ export const SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL =
   'settings:update-server-presentation' as const;
 export const SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL = 'settings:update-server-targeting' as const;
 export const SETTINGS_SET_COPILOT_PROXY_CHANNEL = 'settings:set-copilot-proxy' as const;
+/**
+ * Persists the host list's order (the rows in the Settings "Hosts" multifield
+ * can be moved up/down; the order is meaningful because it drives the browser
+ * toolbar's host picker). A full permutation of the configured server ids, not
+ * a single up/down step, so the renderer's view of the order is the one that is
+ * persisted - see `reorderServersRequestSchema`.
+ */
+export const SETTINGS_REORDER_SERVERS_CHANNEL = 'settings:reorder-servers' as const;
 
 // Model / reasoning-effort selection (step 09) - see src/main/ipc/settings.ts,
 // src/agent/modelCatalog.ts and src/shared/contracts/modelCatalog.ts. Read is

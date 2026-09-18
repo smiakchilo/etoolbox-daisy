@@ -8,6 +8,7 @@ import {
   parseSettingsIpcVoidResult,
   proxyPasswordTargetSchema,
   removeServerRequestSchema,
+  reorderServersRequestSchema,
   setCopilotProxyRequestSchema,
   setProxyPasswordRequestSchema,
   settingsIpcVoidResultSchema,
@@ -323,6 +324,31 @@ describe('updateServerTargetingRequestSchema', () => {
       changes: { origin: 'not a url' },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('reorderServersRequestSchema', () => {
+  const serverIdA = newServerId(() => 'server-a');
+  const serverIdB = newServerId(() => 'server-b');
+
+  it('accepts a full permutation of server ids', () => {
+    const result = reorderServersRequestSchema.safeParse({ serverIds: [serverIdB, serverIdA] });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an empty order', () => {
+    expect(reorderServersRequestSchema.safeParse({ serverIds: [] }).success).toBe(true);
+  });
+
+  it('rejects an unknown key', () => {
+    expect(
+      reorderServersRequestSchema.safeParse({ serverIds: [serverIdA], extra: true }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a non-array of ids', () => {
+    expect(reorderServersRequestSchema.safeParse({ serverIds: 'server-a' }).success).toBe(false);
+    expect(reorderServersRequestSchema.safeParse({ serverIds: [42] }).success).toBe(false);
   });
 });
 

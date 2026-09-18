@@ -144,8 +144,16 @@
   gap: 8px;
 }
 
-.server-list,
-.certificate-list {
+/* The reusable multifield (lib/multifield.ts): one item per row, its fields
+   full-width beneath an action strip in the row's top-right corner, and the
+   "Add item" action underneath the whole list. */
+.multifield {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.multifield__list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -154,33 +162,81 @@
   gap: 12px;
 }
 
-.server-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px;
+/* Two columns: the fields take the remaining width, the action buttons sit in
+   a gutter on the right. `minmax(0, 1fr)` lets the field column shrink instead
+   of overflowing when the panel is narrow. */
+.multifield__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
   border: 1px solid var(--spectrum-gray-200, #e1e1e1);
   border-radius: 4px;
 }
 
-.server-row__heading {
+/* The right-hand gutter: up/down/remove stacked at the item's top-right. */
+.multifield__item-actions {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.server-row__actions,
+.multifield__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.multifield__footer {
+  display: flex;
+}
+
+/* One labelled field block: the visible label above the control. */
+.host-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.host-item__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Every host field spans the whole item width (minus the item's padding). The
+   address/label fields are direct children; the colour field is nested inside
+   its combo and is sized by flex instead (see `.color-picker__field`). */
+.host-field > sp-textfield,
+.host-field .color-picker-field {
+  width: 100%;
+}
+
+/* The colour control is the live preview dot plus the field/button combobox,
+   which takes the remaining width. */
+.color-picker-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-picker-field .color-picker {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Same dot as the browser pane's server swatch, a touch larger here so the
+   selected colour reads at a glance beside the field. */
+.color-picker__preview {
+  width: 14px;
+  height: 14px;
+}
+
 .authentication-section__actions {
   display: flex;
   gap: 8px;
-}
-
-.add-server-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
 }
 
 .color-picker {
@@ -218,6 +274,11 @@
    window for the chevron. Its overlay is a native top-layer popover, so the
    clip never swallows the open menu. */
 .color-picker .color-picker__field {
+  /* The combo spans the item width; the hex field takes the space the picker
+     button does not. */
+  flex: 1 1 auto;
+  min-width: 0;
+
   --mod-textfield-corner-radius: 0;
   --mod-textfield-border-color: transparent;
   --mod-textfield-border-color-hover: transparent;
@@ -335,30 +396,6 @@
 
 .models-section__status {
   color: var(--spectrum-gray-600, #6e6e6e);
-}
-
-.server-row__fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin: 4px 0;
-}
-
-.certificate-list__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.certificate-list__status {
-  color: var(--spectrum-gray-600, #6e6e6e);
-}
-
-.certificate-list__hint {
-  color: var(--spectrum-red-700, #b3261e);
-  font-size: 90%;
 }
 
 .models-placeholder__notice {

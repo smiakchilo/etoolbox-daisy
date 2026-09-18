@@ -1,5 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -29,7 +29,7 @@ function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out;
 }
 
-test("picking a swatch, and typing a custom hex, both set a new server's colour", async () => {
+test('picking a swatch, and typing a custom hex, both set a host colour', async () => {
   test.setTimeout(120_000);
 
   mkdirSync(scratchBase, { recursive: true });
@@ -47,6 +47,7 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
     APPDATA: appData,
     LOCALAPPDATA: localAppData,
   };
+  const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
@@ -57,17 +58,26 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
       .locator('.settings-panel')
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
-    const form = settings.locator('.add-server-form').first();
-    await form.waitFor({ state: 'visible', timeout: 60_000 });
+    await settings
+      .locator('.multifield__add')
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
 
-    const colorField = form.locator('.color-picker input').first();
-    const colorFieldHost = form.locator('.color-picker__field').first();
-    const colorMenuButton = form.locator('.color-picker-button').first();
+    // A draft exists only once "Add item" is clicked.
+    await settings.locator('.multifield__add').first().click();
+    const item = settings.locator('.multifield__item').first();
+    await expect(item).toHaveCount(1);
 
-    // Nothing open yet, and the field starts on the first named swatch with
-    // its concrete hex (red = #e34850).
+    const colorField = item.locator('.color-picker input').first();
+    const colorFieldHost = item.locator('.color-picker__field').first();
+    const colorMenuButton = item.locator('.color-picker-button').first();
+    const colorPreview = item.locator('.color-picker__preview').first();
+
+    // Nothing open yet, and the field starts on the agreed "blue" default with
+    // its concrete hex (#2680eb). The preview dot shows that colour.
     await expect(settings.getByRole('menuitem')).toHaveCount(0);
-    await expect(colorField).toHaveValue('#e34850');
+    await expect(colorField).toHaveValue('#2680eb');
+    await expect(colorPreview).toHaveCSS('background-color', 'rgb(38, 128, 235)');
 
     // The pair reads as one combobox: the button overlaps the field's right
     // edge by 1px (borders coincide), and they share a vertical centre.
@@ -96,8 +106,8 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
     await expect(colorMenuButton).toHaveCSS('border-top-width', '1px');
     await expect(colorMenuButton).toHaveCSS('border-top-style', 'solid');
     await colorMenuButton.click();
-    const blueItem = settings.getByRole('menuitem', { name: 'Blue' });
-    await expect(blueItem).toBeVisible({ timeout: 10_000 });
+    const purpleItem = settings.getByRole('menuitem', { name: 'Purple' });
+    await expect(purpleItem).toBeVisible({ timeout: 10_000 });
 
     // The frame must survive the open state: the inner quiet button's border
     // is transparent by definition and `selected` re-pins it transparent, so
@@ -118,8 +128,8 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
 
     // Inside the open menu the colour dot is vertically centred on its label
     // (not anchored to the row's top edge).
-    const itemBox = await blueItem.boundingBox();
-    const swatchBox = await blueItem.locator('.color-picker__swatch').boundingBox();
+    const itemBox = await purpleItem.boundingBox();
+    const swatchBox = await purpleItem.locator('.color-picker__swatch').boundingBox();
     expect(itemBox).not.toBeNull();
     expect(swatchBox).not.toBeNull();
     expect(
@@ -130,41 +140,48 @@ test("picking a swatch, and typing a custom hex, both set a new server's colour"
       ),
     ).toBeLessThanOrEqual(2);
 
-    await blueItem.click();
-    await expect(colorField).toHaveValue('#2680eb');
+    await purpleItem.click();
+    await expect(colorField).toHaveValue('#9256d9');
+    await expect(colorPreview).toHaveCSS('background-color', 'rgb(146, 86, 217)');
 
-    await form.locator('sp-textfield[placeholder="Label"] input').fill('Blue Server');
-    await form
-      .locator('sp-textfield[placeholder="https://author.example"] input')
-      .fill('https://blue-server.example');
-    await form.locator('sp-button', { hasText: 'Add host' }).first().click();
+    await item.locator('sp-textfield[aria-label="Label"] input').fill('Purple Server');
+    await item
+      .locator('sp-textfield[aria-label="Address"] input')
+      .fill('https://purple-server.example');
 
-    const blueRow = settings.locator('.server-row', { hasText: 'Blue Server' });
-    await expect(blueRow).toHaveCount(1, { timeout: 60_000 });
-    await expect(blueRow.locator('.server-swatch').first()).toHaveCSS(
-      'background-color',
-      'rgb(38, 128, 235)', // #2680eb, the "blue" swatch
-    );
+    // The draft is created once its address is valid; the colour survives the
+    // snapshot round trip (the re-rendered field shows the stored swatch hex).
+    const items = settings.locator('.multifield__item');
+    const readDoc = () => {
+      try {
+        return readFileSync(settingsFile, 'utf8');
+      } catch {
+        return '';
+      }
+    };
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('https://purple-server.example');
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('"swatch": "purple"');
+    await expect(items).toHaveCount(1, { timeout: 60_000 });
+    await expect(items.first().locator('.color-picker input').first()).toHaveValue('#9256d9');
 
     // Typing a hex value directly - no menu interaction - also works.
-    await colorField.fill('#123abc');
-    await form.locator('sp-textfield[placeholder="Label"] input').fill('Custom Colour Server');
-    await form
-      .locator('sp-textfield[placeholder="https://author.example"] input')
-      .fill('https://custom-color-server.example');
-    await form.locator('sp-button', { hasText: 'Add host' }).first().click();
-
-    const customRow = settings.locator('.server-row', { hasText: 'Custom Colour Server' });
-    await expect(customRow).toHaveCount(1, { timeout: 60_000 });
-    await expect(customRow.locator('.server-swatch').first()).toHaveCSS(
+    await settings.locator('.multifield__add').first().click();
+    const customItem = items.last();
+    await expect(items).toHaveCount(2);
+    await customItem.locator('.color-picker input').first().fill('#123abc');
+    await expect(customItem.locator('.color-picker__preview').first()).toHaveCSS(
       'background-color',
-      'rgb(18, 58, 188)', // #123abc
+      'rgb(18, 58, 188)',
     );
+    await customItem.locator('sp-textfield[aria-label="Label"] input').fill('Custom Colour Server');
+    await customItem
+      .locator('sp-textfield[aria-label="Address"] input')
+      .fill('https://custom-color-server.example');
 
-    // Both adds accepted without a validation error: each success reset the
-    // form's fields (a rejected add would keep the typed values on screen).
-    await expect(form.locator('sp-textfield[placeholder="Label"] input')).toHaveValue('');
-    await expect(colorField).toHaveValue('#e34850');
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('"hex": "#123abc"');
+    await expect(items.nth(1).locator('.color-picker input').first()).toHaveValue('#123abc', {
+      timeout: 60_000,
+    });
   } finally {
     await app.close();
   }

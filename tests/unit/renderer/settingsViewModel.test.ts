@@ -1,171 +1,78 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeProxySnapshot,
-  validateEditServerForm,
-  validateNewServerForm,
+  resolveHostLabelInput,
+  validateHostColorInput,
   validateOriginInput,
-  type NewServerFormInput,
 } from '../../../src/renderer/src/settings/viewModel';
 import type { AemProxySnapshot, CopilotProxySnapshot } from '../../../src/shared';
 
-function baseInput(overrides: Partial<NewServerFormInput> = {}): NewServerFormInput {
-  return {
-    label: 'Production',
-    origin: 'https://author.example',
-    color: { kind: 'swatch', swatch: 'blue' },
-    proxyOrigin: '',
-    proxyUsername: '',
-    ...overrides,
-  };
-}
-
-describe('validateNewServerForm', () => {
-  it('accepts a minimal valid server with no proxy', () => {
-    const result = validateNewServerForm(baseInput());
-    expect(result).toEqual({
+describe('resolveHostLabelInput', () => {
+  it('accepts a valid label unchanged', () => {
+    expect(resolveHostLabelInput('Production', 'https://author.example')).toEqual({
       ok: true,
-      value: {
-        label: 'Production',
-        origin: 'https://author.example',
-        color: { kind: 'swatch', swatch: 'blue' },
-      },
+      label: 'Production',
     });
   });
 
-  it('accepts a valid server with a proxy address and username', () => {
-    const result = validateNewServerForm(
-      baseInput({ proxyOrigin: ' https://proxy.example:8080 ', proxyUsername: ' alice ' }),
-    );
-    expect(result).toEqual({
+  it('defaults a blank label to the host address', () => {
+    expect(resolveHostLabelInput('   ', 'https://author.example')).toEqual({
       ok: true,
-      value: {
-        label: 'Production',
-        origin: 'https://author.example',
-        color: { kind: 'swatch', swatch: 'blue' },
-        proxy: { origin: 'https://proxy.example:8080', username: 'alice' },
-      },
+      label: 'https://author.example',
     });
   });
 
-  it('accepts a custom hex colour, normalized to lowercase', () => {
-    const result = validateNewServerForm(baseInput({ color: { kind: 'custom', hex: '#ABCDEF' } }));
-    expect(result).toEqual({
+  it('trims surrounding whitespace from a provided label', () => {
+    expect(resolveHostLabelInput(' Production ', 'https://author.example')).toEqual({
       ok: true,
-      value: {
-        label: 'Production',
-        origin: 'https://author.example',
-        color: { kind: 'custom', hex: '#abcdef' },
-      },
+      label: 'Production',
     });
   });
 
-  it('accepts plain HTTP without any confirmation flag', () => {
-    const result = validateNewServerForm(baseInput({ origin: 'http://internal.example' }));
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        label: 'Production',
-        origin: 'http://internal.example',
-        color: { kind: 'swatch', swatch: 'blue' },
-      },
-    });
+  it('leaves a blank label with a blank address to the address field', () => {
+    // The address is the required field; an empty label with no address yet is
+    // not an independent error, so this stays "ok" until the address is valid.
+    expect(resolveHostLabelInput('', '')).toEqual({ ok: true, label: '' });
   });
 
-  it('rejects an empty label', () => {
-    const result = validateNewServerForm(baseInput({ label: '' }));
+  it('rejects an over-long label', () => {
+    const result = resolveHostLabelInput('x'.repeat(101), 'https://author.example');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.label).toBeDefined();
+    if (!result.ok) expect(result.error).toMatch(/at most 100 characters/);
   });
 
-  it('rejects a label with leading/trailing whitespace', () => {
-    const result = validateNewServerForm(baseInput({ label: ' Production ' }));
+  it('rejects an over-long address used as the default label', () => {
+    const longOrigin = `https://${'a'.repeat(120)}.example`;
+    const result = resolveHostLabelInput('', longOrigin);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.label).toBeDefined();
-  });
-
-  it('rejects an origin carrying a path', () => {
-    const result = validateNewServerForm(baseInput({ origin: 'https://author.example/login' }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.origin).toMatch(/path/);
-  });
-
-  it('rejects an origin carrying userinfo', () => {
-    const result = validateNewServerForm(baseInput({ origin: 'https://user:pass@author.example' }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.origin).toMatch(/username or password/);
-  });
-
-  it('rejects an unsupported scheme', () => {
-    const result = validateNewServerForm(baseInput({ origin: 'ftp://author.example' }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.origin).toMatch(/http/);
-  });
-
-  it('rejects an invalid custom hex colour', () => {
-    const result = validateNewServerForm(baseInput({ color: { kind: 'custom', hex: 'blue' } }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.color).toBeDefined();
-  });
-
-  it('rejects an invalid proxy origin', () => {
-    const result = validateNewServerForm(baseInput({ proxyOrigin: 'not a url' }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.proxyOrigin).toBeDefined();
-  });
-
-  it('rejects a proxy username with no proxy address', () => {
-    const result = validateNewServerForm(baseInput({ proxyUsername: 'alice' }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.proxyUsername).toBeDefined();
-  });
-
-  it("reports every field's error at once rather than stopping at the first", () => {
-    const result = validateNewServerForm(
-      baseInput({ label: '', origin: 'not a url', color: { kind: 'custom', hex: 'blue' } }),
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.errors.label).toBeDefined();
-      expect(result.errors.origin).toBeDefined();
-      expect(result.errors.color).toBeDefined();
-    }
   });
 });
 
-describe('validateEditServerForm', () => {
-  it('accepts a valid label and colour', () => {
-    const result = validateEditServerForm({
-      label: 'Staging',
-      color: { kind: 'swatch', swatch: 'blue' },
-    });
-    expect(result).toEqual({
+describe('validateHostColorInput', () => {
+  it('accepts a named swatch', () => {
+    expect(validateHostColorInput({ kind: 'swatch', swatch: 'blue' })).toEqual({
       ok: true,
-      value: { label: 'Staging', color: { kind: 'swatch', swatch: 'blue' } },
+      value: { kind: 'swatch', swatch: 'blue' },
     });
   });
 
-  it('rejects an empty label', () => {
-    const result = validateEditServerForm({ label: '', color: { kind: 'swatch', swatch: 'blue' } });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.label).toBeDefined();
-  });
-
-  it('rejects an invalid custom hex colour', () => {
-    const result = validateEditServerForm({
-      label: 'Staging',
-      color: { kind: 'custom', hex: 'not-a-colour' },
+  it('accepts a custom hex, normalized to lowercase', () => {
+    expect(validateHostColorInput({ kind: 'custom', hex: '#ABCDEF' })).toEqual({
+      ok: true,
+      value: { kind: 'custom', hex: '#abcdef' },
     });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.color).toBeDefined();
   });
 
-  it('reports both errors at once', () => {
-    const result = validateEditServerForm({ label: '', color: { kind: 'custom', hex: 'nope' } });
+  it('rejects an unknown swatch name', () => {
+    const result = validateHostColorInput({ kind: 'swatch', swatch: 'chartreuse' });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.errors.label).toBeDefined();
-      expect(result.errors.color).toBeDefined();
-    }
+    if (!result.ok) expect(result.error).toBeDefined();
+  });
+
+  it('rejects an invalid custom colour', () => {
+    const result = validateHostColorInput({ kind: 'custom', hex: 'not-a-colour' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeDefined();
   });
 });
 
