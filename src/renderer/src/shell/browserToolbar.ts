@@ -5,7 +5,7 @@ import type {
   BrowserNavigationState,
   CertificateBlockedInfo,
 } from '../../../shared';
-import { SERVER_SWATCHES, isInsecureOrigin } from '../../../shared';
+import { SERVER_SWATCHES } from '../../../shared';
 import type { HostOption } from './viewModel';
 import {
   describeBlockedCertificate,
@@ -358,11 +358,10 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   }
 
   // "OK": persists the new server (default label from the origin, first
-  // swatch, `allowInsecureHttp` derived from the scheme), then retries the
-  // exact address the user typed. The retry goes through the same
-  // `browser:navigate` as the failed attempt, which now resolves to a
-  // configured server and takes the normal switchServer path - so the toolbar
-  // never performs a second, different kind of navigation.
+  // swatch), then retries the exact address the user typed. The retry goes
+  // through the same `browser:navigate` as the failed attempt, which now
+  // resolves to a configured server and takes the normal switchServer path -
+  // so the toolbar never performs a second, different kind of navigation.
   async function addOriginServer(prompt: {
     readonly url: string;
     readonly origin: string;
@@ -372,7 +371,6 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       label: deriveServerLabelFromOrigin(prompt.origin),
       origin: prompt.origin,
       color: { kind: 'swatch', swatch: SERVER_SWATCHES[0] },
-      allowInsecureHttp: isInsecureOrigin(prompt.origin),
     });
     if (!result.ok) {
       errorText = `Couldn't add "${prompt.origin}": ${result.error.message}`;

@@ -327,16 +327,6 @@
   color: var(--spectrum-gray-600, #6e6e6e);
 }
 
-/* Persistent, colour-independent marker for a plain-HTTP server (paired
-   with the negative sp-status-light, never colour alone). */
-.server-row__insecure-notice {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--spectrum-red-700, #b3261e);
-  margin: 0;
-}
-
 .server-row__fields {
   display: flex;
   flex-wrap: wrap;

@@ -46,7 +46,7 @@ export interface CreateSettingsPanelOptions {
   /**
    * Fired after every successful settings reload with the freshly-read
    * snapshot, so the shell can re-apply it to the browser pane (address bar,
-   * server options, insecure marker) without a second IPC round trip.
+   * server options) without a second IPC round trip.
    */
   onSnapshotApplied(snapshot: AppSettingsSnapshot): void;
   /**

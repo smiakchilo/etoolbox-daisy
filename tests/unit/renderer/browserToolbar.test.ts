@@ -690,7 +690,6 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
         label: 'unknown.example:4502',
         origin: 'https://unknown.example:4502',
         color: { kind: 'swatch', swatch: 'red' },
-        allowInsecureHttp: false,
       });
     });
     // The retry navigates to the address that was refused, now that the
@@ -703,23 +702,6 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     expect(browser.navigate).toHaveBeenCalledTimes(2);
     // The prompt cleared once the auto-navigation started.
     expect(message.hasAttribute('open')).toBe(false);
-  });
-
-  it('marks a plain-http origin as allowInsecureHttp', async () => {
-    const toolbar = build();
-
-    triggerUnknownOrigin(toolbar, 'http://author.example:4502/', 'http://author.example:4502');
-    await vi.waitFor(() => {
-      expect(browser.navigate).toHaveBeenCalledTimes(1);
-    });
-
-    findUnknownOriginOk(toolbar).click();
-
-    await vi.waitFor(() => {
-      expect(settings.addServer).toHaveBeenCalledWith(
-        expect.objectContaining({ allowInsecureHttp: true }),
-      );
-    });
   });
 
   it('surfaces an add failure as an error row instead of leaving the prompt up', async () => {

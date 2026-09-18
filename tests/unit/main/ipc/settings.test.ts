@@ -311,7 +311,6 @@ describe('addServer', () => {
       label: 'Staging',
       origin: 'https://staging.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
 
     expect(result.ok).toBe(true);
@@ -334,7 +333,6 @@ describe('addServer', () => {
       label: 'Duplicate',
       origin: 'https://a.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
 
     expect(result.ok).toBe(false);
@@ -342,7 +340,7 @@ describe('addServer', () => {
     expect(result.error.code).toBe('duplicate_origin');
   });
 
-  it('returns insecure_http_not_confirmed for a plain-HTTP origin without explicit confirmation', async () => {
+  it('adds a plain-HTTP origin without any confirmation flag', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
@@ -351,12 +349,12 @@ describe('addServer', () => {
       label: 'Insecure',
       origin: 'http://insecure.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected an error result');
-    expect(result.error.code).toBe('insecure_http_not_confirmed');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.server.origin).toBe('http://insecure.example');
+    }
   });
 
   it('returns storage_error rather than throwing when the settings file is corrupt', async () => {
@@ -366,13 +364,12 @@ describe('addServer', () => {
     writeFileSync(path.join(settingsDir, 'settings.json'), '{ not valid json', 'utf8');
 
     const result = await addServer(settingsDir, secretStore, {
-      label: 'X',
-      origin: 'https://x.example',
+      label: 'Insecure',
+      origin: 'http://insecure.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     if (result.ok) throw new Error('expected an error result');
     expect(result.error.code).toBe('storage_error');
   });

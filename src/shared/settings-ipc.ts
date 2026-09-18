@@ -89,8 +89,6 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'origin_change_requires_confirmation',
   /** A configured server already uses the requested origin. */
   'duplicate_origin',
-  /** The requested origin is plain HTTP and the caller did not explicitly allow it. */
-  'insecure_http_not_confirmed',
   /** The requested change does not produce a valid settings document. */
   'invalid_change',
   /** The Copilot model catalogue could not be read (runtime starting, signed out, unavailable). */
@@ -169,19 +167,12 @@ export function parseSettingsIpcVoidResult(candidate: unknown): SettingsIpcVoidR
  * `settings:add-server`. Presentation only - `proxy`/`tlsException` are set
  * afterward via `update-server-targeting`, matching `bumpRevision`'s "id is
  * permanent, targeting is a separate revision-bumping step" split.
- *
- * `allowInsecureHttp` must be `true` when `origin` is plain HTTP
- * (requirements-decisions.md section 4); it is ignored for an HTTPS origin.
- * See `settingsStore.ts`'s `NewServerInput.allowInsecureHttp` for why this is
- * a one-shot confirmation on the request rather than a field stored on the
- * server itself.
  */
 export const addServerRequestSchema = z
   .object({
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
-    allowInsecureHttp: z.boolean(),
   })
   .strict();
 

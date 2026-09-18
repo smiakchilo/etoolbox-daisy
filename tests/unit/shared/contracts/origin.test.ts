@@ -3,10 +3,9 @@ import {
   parseOrigin,
   parseNavigationTarget,
   isCanonicalOrigin,
-  isInsecureOrigin,
   originSchema,
   originsMatch,
-} from '../../../../src/shared/contracts/origin';
+} from '../../../../src/shared';
 
 describe('parseOrigin', () => {
   it.each([
@@ -102,17 +101,6 @@ describe('originsMatch', () => {
   it('reports no match when either side is unparseable, never defaulting to true', () => {
     expect(originsMatch('garbage', 'https://a.example')).toBe(false);
     expect(originsMatch('garbage', 'garbage')).toBe(false);
-  });
-});
-
-describe('isInsecureOrigin', () => {
-  it('flags plain HTTP so the UI can show the persistent warning indicator', () => {
-    expect(isInsecureOrigin('http://localhost:4502')).toBe(true);
-    expect(isInsecureOrigin('https://a.example')).toBe(false);
-  });
-
-  it('does not flag an unparseable value as insecure, which would be a false claim', () => {
-    expect(isInsecureOrigin('httpsomething')).toBe(false);
   });
 });
 

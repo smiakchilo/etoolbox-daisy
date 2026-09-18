@@ -68,22 +68,6 @@
   transform: rotate(180deg);
 }
 
-/* Persistent (non-toast) insecure-connection marker; hidden entirely via
-   [hidden] rather than visually hidden, so it never occupies layout space
-   while the active server is HTTPS. */
-.insecure-banner {
-  display: flex;
-  align-items: center;
-  padding: 6px 8px;
-  background: var(--spectrum-red-100, #ffebe7);
-  border-bottom: 1px solid var(--spectrum-red-400, #e34850);
-  flex: 0 0 auto;
-}
-
-.insecure-banner[hidden] {
-  display: none;
-}
-
 /* Toolbar-level status/prompt row (navigation errors, the "unknown origin"
    add-server prompt, and the external-loading presentation: "Loading…" with
    a progress circle when any chrome-initiated navigation is in flight) - a

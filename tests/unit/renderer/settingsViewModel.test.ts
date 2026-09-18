@@ -15,7 +15,6 @@ function baseInput(overrides: Partial<NewServerFormInput> = {}): NewServerFormIn
     color: { kind: 'swatch', swatch: 'blue' },
     proxyOrigin: '',
     proxyUsername: '',
-    allowInsecureHttp: false,
     ...overrides,
   };
 }
@@ -60,34 +59,15 @@ describe('validateNewServerForm', () => {
     });
   });
 
-  it('accepts plain HTTP when explicitly allowed', () => {
+  it('accepts plain HTTP without any confirmation flag', () => {
     const result = validateNewServerForm(
-      baseInput({ origin: 'http://internal.example', allowInsecureHttp: true }),
+      baseInput({ origin: 'http://internal.example' }),
     );
     expect(result).toEqual({
       ok: true,
       value: {
         label: 'Production',
         origin: 'http://internal.example',
-        color: { kind: 'swatch', swatch: 'blue' },
-        allowInsecureHttp: true,
-      },
-    });
-  });
-
-  it('rejects plain HTTP when not explicitly allowed', () => {
-    const result = validateNewServerForm(baseInput({ origin: 'http://internal.example' }));
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.allowInsecureHttp).toBeDefined();
-  });
-
-  it('ignores allowInsecureHttp for an HTTPS origin', () => {
-    const result = validateNewServerForm(baseInput({ allowInsecureHttp: true }));
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        label: 'Production',
-        origin: 'https://author.example',
         color: { kind: 'swatch', swatch: 'blue' },
       },
     });

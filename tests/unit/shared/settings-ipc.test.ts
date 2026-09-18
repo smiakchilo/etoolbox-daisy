@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { newServerId } from '../../../src/shared/contracts/ids';
+import { newServerId } from '../../../src/shared';
 import {
   addServerRequestSchema,
   clearProxyPasswordRequestSchema,
@@ -13,7 +13,7 @@ import {
   settingsIpcVoidResultSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
-} from '../../../src/shared/settings-ipc';
+} from '../../../src/shared';
 
 const serverId = newServerId(() => 'server-a');
 
@@ -179,26 +179,25 @@ describe('addServerRequestSchema', () => {
       label: 'Staging',
       origin: 'https://staging.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
     expect(result.success).toBe(true);
   });
 
-  it('accepts a plain-HTTP origin when allowInsecureHttp is set', () => {
+  it('accepts a plain-HTTP origin with no confirmation field', () => {
     const result = addServerRequestSchema.safeParse({
       label: 'Insecure',
       origin: 'http://insecure.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: true,
     });
     expect(result.success).toBe(true);
   });
 
-  it('rejects a missing allowInsecureHttp - the field is required, not optional-defaulted', () => {
+  it("rejects a payload still carrying the removed allowInsecureHttp field", () => {
     const result = addServerRequestSchema.safeParse({
       label: 'Staging',
       origin: 'https://staging.example',
       color: { kind: 'swatch', swatch: 'blue' },
+      allowInsecureHttp: true,
     });
     expect(result.success).toBe(false);
   });
@@ -208,7 +207,6 @@ describe('addServerRequestSchema', () => {
       label: 'Staging',
       origin: 'not a url',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
     expect(result.success).toBe(false);
   });
@@ -218,7 +216,6 @@ describe('addServerRequestSchema', () => {
       label: '',
       origin: 'https://staging.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
     });
     expect(result.success).toBe(false);
   });
@@ -228,7 +225,6 @@ describe('addServerRequestSchema', () => {
       label: 'Staging',
       origin: 'https://staging.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      allowInsecureHttp: false,
       proxy: { url: 'https://proxy.example' },
     });
     expect(result.success).toBe(false);

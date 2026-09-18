@@ -15,10 +15,9 @@ import {
   parseAppSettings,
   type AppSettings,
   type CopilotProxyConfig,
-} from '../shared/contracts/appSettings';
-import type { ServerId } from '../shared/contracts/ids';
-import { isInsecureOrigin } from '../shared/contracts/origin';
-import { err, ok, type Result } from '../shared/result';
+} from '../shared';
+import type { ServerId } from '../shared';
+import { err, ok, type Result } from '../shared';
 import {
   bumpRevision,
   serverConfigSchema,
@@ -27,7 +26,7 @@ import {
   type ServerConfig,
   type ServerPresentationChanges,
   type ServerTargetingChanges,
-} from '../shared/contracts/serverConfig';
+} from '../shared';
 
 /**
  * Persistence and mutation orchestration for {@link AppSettings}
@@ -553,8 +552,6 @@ export function applyServerTargetingChange(
 export const ADD_SERVER_ERROR_KINDS = [
   /** A configured server already uses this exact origin. */
   'duplicate_origin',
-  /** `origin` is plain HTTP and `allowInsecureHttp` was not set. */
-  'insecure_http_not_confirmed',
   /** The requested change does not produce a valid settings document. */
   'invalid_change',
 ] as const;
@@ -570,24 +567,6 @@ export interface NewServerInput {
   readonly label: string;
   readonly origin: string;
   readonly color: ServerColor;
-  /**
-   * Must be `true` for this call to succeed when `origin` is plain HTTP
-   * (requirements-decisions.md section 4: "Plain HTTP AEM | Allowed for
-   * explicitly configured addresses ... with a persistent visible
-   * insecure-connection indicator"). Ignored when `origin` is HTTPS.
-   *
-   * There is deliberately no persisted field for this on {@link ServerConfig}
-   * itself: whether an origin is insecure is already a pure derivation of its
-   * scheme ({@link isInsecureOrigin}), which is exactly what drives the
-   * persistent indicator this decision requires (`viewModel.ts`'s
-   * `computeInsecureMarker`) - there is nothing further to store. This flag
-   * only gates the *act* of adding a plain-HTTP entry through Settings: the
-   * explicit checkbox the user ticks in that one moment *is* the "explicitly
-   * configured" record requirements-decisions.md section 4 asks for; a
-   * server, once added, carries no separate "I was allowed" bit to drift out
-   * of sync with its own origin.
-   */
-  readonly allowInsecureHttp: boolean;
 }
 
 export interface AddServerOutcome {
@@ -609,15 +588,6 @@ export function addServer(
   newId: ServerId,
   input: NewServerInput,
 ): Result<AddServerOutcome, AddServerError> {
-  if (isInsecureOrigin(input.origin) && !input.allowInsecureHttp) {
-    return err({
-      kind: 'insecure_http_not_confirmed',
-      message:
-        `"${input.origin}" is a plain HTTP address; adding it requires explicitly ` +
-        'confirming that plain HTTP is allowed for this server',
-    });
-  }
-
   if (settings.servers.some((server) => server.origin === input.origin)) {
     return err({
       kind: 'duplicate_origin',

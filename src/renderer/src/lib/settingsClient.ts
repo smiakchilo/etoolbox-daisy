@@ -14,7 +14,7 @@ export type SettingsSnapshotLoad =
 /**
  * Loads the current settings snapshot through `window.daisy.settings`
  * (implementation-plan.md step 04/05). Both the main-window shell (server
- * selector, insecure marker) and the Settings panel read through this one
+ * selector) and the Settings panel read through this one
  * function so a transport failure is reported identically in both places.
  */
 export async function loadSettingsSnapshot(): Promise<SettingsSnapshotLoad> {

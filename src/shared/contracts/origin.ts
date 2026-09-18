@@ -94,17 +94,6 @@ export function originsMatch(left: string, right: string): boolean {
   return a.ok && b.ok && a.origin === b.origin;
 }
 
-/**
- * Whether an origin's traffic is unencrypted. Plain HTTP is permitted for
- * explicitly configured internal hosts, but requirements-decisions.md section
- * 4 requires a persistent visible indicator - so this is a first-class query
- * rather than something each UI site re-derives from the string.
- */
-export function isInsecureOrigin(value: string): boolean {
-  const parsed = parseOrigin(value);
-  return parsed.ok && parsed.origin.startsWith('http://');
-}
-
 export type ParseNavigationTargetResult =
   | { readonly ok: true; readonly origin: string; readonly url: string }
   | { readonly ok: false; readonly reason: OriginRejectionReason };

@@ -7,9 +7,9 @@ import {
   appSettingsSchema,
   defaultAppSettings,
   type AppSettings,
-} from '../../../src/shared/contracts/appSettings';
-import { newServerId } from '../../../src/shared/contracts/ids';
-import { serverConfigSchema, type ServerConfig } from '../../../src/shared/contracts/serverConfig';
+} from '../../../src/shared';
+import { newServerId } from '../../../src/shared';
+import { serverConfigSchema, type ServerConfig } from '../../../src/shared';
 import {
   addServer,
   applyServerPresentationChange,
@@ -544,7 +544,6 @@ describe('addServer', () => {
         label: 'New server',
         origin: 'https://new.example',
         color: { kind: 'swatch', swatch: 'blue' },
-        allowInsecureHttp: false,
       },
     );
 
@@ -559,7 +558,7 @@ describe('addServer', () => {
     }
   });
 
-  it('rejects a plain-HTTP origin when allowInsecureHttp is not set', () => {
+  it('accepts a plain-HTTP origin - hosts are added at all schemes', () => {
     const settings = makeSettings([]);
 
     const result = addServer(
@@ -569,27 +568,6 @@ describe('addServer', () => {
         label: 'New server',
         origin: 'http://new.example',
         color: { kind: 'swatch', swatch: 'blue' },
-        allowInsecureHttp: false,
-      },
-    );
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.kind).toBe('insecure_http_not_confirmed');
-    }
-  });
-
-  it('accepts a plain-HTTP origin when allowInsecureHttp is explicitly set', () => {
-    const settings = makeSettings([]);
-
-    const result = addServer(
-      settings,
-      newServerId(() => 'server-new'),
-      {
-        label: 'New server',
-        origin: 'http://new.example',
-        color: { kind: 'swatch', swatch: 'blue' },
-        allowInsecureHttp: true,
       },
     );
 
@@ -610,7 +588,6 @@ describe('addServer', () => {
         label: 'Duplicate',
         origin: 'https://a.example',
         color: { kind: 'swatch', swatch: 'blue' },
-        allowInsecureHttp: false,
       },
     );
 

@@ -1,10 +1,9 @@
 import { el } from '../lib/dom';
 import { createBrowserToolbar } from './browserToolbar';
 import { createBrowserViewHost } from './browserViewHost';
-import { createInsecureBanner } from './insecureBanner';
 import type { Panel } from './panel';
 import { createHostsPanel } from './hostsPanel';
-import type { HostOption, InsecureMarkerState } from './viewModel';
+import type { HostOption } from './viewModel';
 
 /**
  * The single-open host for whole-size panels over the pane's page-view
@@ -42,14 +41,13 @@ export interface BrowserPane {
   update(state: {
     readonly addressValue: string;
     readonly hostOptions: readonly HostOption[];
-    readonly insecureMarker: InsecureMarkerState;
   }): void;
   dispose(): void;
 }
 
 /**
- * The left-hand browser pane: toolbar, persistent insecure marker, the page
- * panel - the browser's status/message row (toolbar errors, the "unknown
+ * The left-hand browser pane: toolbar, the page panel - the browser's
+ * status/message row (toolbar errors, the "unknown
  * origin" prompt, external-loading "Loading…" presentation) grouped below
  * the reserved page-view region it describes (statusbar-style: the row sits
  * under the page, not over it) - and, covered while a whole-size panel is
@@ -114,7 +112,6 @@ export function createBrowserPane(): BrowserPane {
       }
     },
   });
-  const insecureBanner = createInsecureBanner();
   const viewHost = createBrowserViewHost();
 
   // The pane keeps its own latch on the navigation-state feed: the toolbar's
@@ -167,7 +164,7 @@ export function createBrowserPane(): BrowserPane {
 
   const element = el('section', {
     attrs: { class: 'pane browser-pane', 'aria-label': 'Browser' },
-    children: [toolbar.element, insecureBanner.element, pagePanel, picker.element],
+    children: [toolbar.element, pagePanel, picker.element],
   });
 
   return {
@@ -187,7 +184,6 @@ export function createBrowserPane(): BrowserPane {
       toolbar.setAddressValue(state.addressValue);
       toolbar.setHostOptions(state.hostOptions);
       picker.setHostOptions(state.hostOptions);
-      insecureBanner.update(state.insecureMarker);
       viewHost.reportBoundsNow();
     },
     dispose(): void {

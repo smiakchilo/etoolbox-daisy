@@ -1,7 +1,6 @@
 import { el } from '../lib/dom';
 import { resolveServerColorCss, resolveServerSwatchFromHex } from '../lib/serverColor';
 import {
-  isInsecureOrigin,
   SERVER_SWATCHES,
   type ServerColor,
   type ServerSnapshot,
@@ -18,7 +17,6 @@ import {
 } from './viewModel';
 
 type TextField = HTMLElement & { value: string };
-type CheckboxElement = HTMLElement & { checked: boolean };
 
 const SWATCH_SET = new Set<string>(SERVER_SWATCHES);
 
@@ -192,19 +190,6 @@ function buildServerRow(server: ServerSnapshot, ctx: ServerRowContext): ServerRo
   heading.append(document.createTextNode(` ${server.label}`));
 
   const proxyLine = el('p', { text: `AEM proxy: ${describeProxySnapshot(server.proxy)}` });
-
-  // Colour never carries this fact alone (requirements-decisions.md sections
-  // 4 and 8): plain HTTP always shows this explicit, persistent text line
-  // too, for exactly as long as the server's origin remains insecure.
-  const insecureLine = isInsecureOrigin(server.origin)
-    ? el('p', {
-        attrs: { class: 'server-row__insecure-notice' },
-        children: [
-          el('sp-status-light', { attrs: { variant: 'negative', size: 's' } }),
-          document.createTextNode(' Insecure connection: plain HTTP, not HTTPS'),
-        ],
-      })
-    : undefined;
 
   const labelField = el('sp-textfield', { attrs: { 'aria-label': 'Host label' } }) as TextField;
   labelField.value = server.label;
@@ -426,7 +411,6 @@ function buildServerRow(server: ServerSnapshot, ctx: ServerRowContext): ServerRo
     }),
     proxyLine,
   ];
-  if (insecureLine) children.push(insecureLine);
   if (server.proxy) {
     const passwordEntry = createPasswordEntry({ kind: 'server', serverId: server.id }, ctx.status);
     passwordEntry.onChanged(() => ctx.onSettingsChanged());
@@ -507,9 +491,6 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
   const proxyUsernameField = el('sp-textfield', {
     attrs: { placeholder: 'Proxy username (optional, not saved yet)' },
   }) as TextField;
-  const insecureCheckbox = el('sp-checkbox', {
-    text: 'Allow plain HTTP (insecure) - required only for a non-HTTPS address',
-  }) as CheckboxElement;
   const addButton = el('sp-button', { attrs: { variant: 'accent' }, text: 'Add host' });
 
   addButton.addEventListener('click', () => {
@@ -519,7 +500,6 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
       color: colorPicker.read(),
       proxyOrigin: proxyOriginField.value,
       proxyUsername: proxyUsernameField.value,
-      allowInsecureHttp: insecureCheckbox.checked,
     });
     if (!result.ok) {
       options.status.showError(Object.values(result.errors).filter(Boolean).join(' | '));
@@ -531,7 +511,6 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
         label: result.value.label,
         origin: result.value.origin,
         color: result.value.color,
-        allowInsecureHttp: result.value.allowInsecureHttp ?? false,
       })
       .then((addResult) => {
         if (!addResult.ok) {
@@ -542,7 +521,6 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
         originField.value = '';
         proxyOriginField.value = '';
         proxyUsernameField.value = '';
-        insecureCheckbox.checked = false;
         colorPicker.setValue({ kind: 'swatch', swatch: SERVER_SWATCHES[0] });
         options.status.showStatus('Host added');
         options.onSettingsChanged();
@@ -561,7 +539,6 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
       colorPicker.element,
       proxyOriginField,
       proxyUsernameField,
-      insecureCheckbox,
       addButton,
     ],
   });

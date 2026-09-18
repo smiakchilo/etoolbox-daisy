@@ -1,4 +1,4 @@
-import { isInsecureOrigin, type ServerId, type ServerSnapshot } from '../../../shared';
+import { type ServerId, type ServerSnapshot } from '../../../shared';
 import { resolveServerColorCss } from '../lib/serverColor';
 
 /**
@@ -39,39 +39,6 @@ export function buildHostOptions(
     colorCss: resolveServerColorCss(server.color),
     selected: server.id === activeServerId,
   }));
-}
-
-/** Display state for the persistent insecure-connection marker (requirements-decisions.md sections 4 and 8). */
-export interface InsecureMarkerState {
-  readonly visible: boolean;
-  /** Empty when `visible` is false; always paired with the marker's icon/colour, never shown as colour alone. */
-  readonly message: string;
-}
-
-const HIDDEN_MARKER: InsecureMarkerState = { visible: false, message: '' };
-
-/**
- * Computes whether the persistent insecure marker should be shown, from the
- * currently active server's configured origin.
- *
- * This is the best available signal until main exposes a live "current
- * displayed URL" event (see `browserViewHost.ts`'s TODO): it reflects the
- * *configured* server, not necessarily the exact page currently rendered by
- * the `WebContentsView`, which can differ during an SSO redirect. Recomputing
- * from the live URL once that event exists would tighten this, not loosen it
- * (a same-origin page navigation cannot change the answer either way).
- */
-export function computeInsecureMarker(
-  servers: readonly ServerSnapshot[],
-  activeServerId: ServerId | null,
-): InsecureMarkerState {
-  if (activeServerId === null) return HIDDEN_MARKER;
-  const active = servers.find((server) => server.id === activeServerId);
-  if (!active || !isInsecureOrigin(active.origin)) return HIDDEN_MARKER;
-  return {
-    visible: true,
-    message: `Insecure connection: "${active.label}" (${active.origin}) uses plain HTTP, not HTTPS.`,
-  };
 }
 
 /**

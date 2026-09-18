@@ -1,5 +1,4 @@
 import {
-  isInsecureOrigin,
   parseOrigin,
   serverColorSchema,
   serverLabelSchema,
@@ -31,13 +30,6 @@ export interface NewServerFormInput {
   readonly proxyOrigin: string;
   /** Empty string means "no proxy username set". Ignored unless `proxyOrigin` is set. */
   readonly proxyUsername: string;
-  /**
-   * Whether the user has explicitly ticked the "allow plain HTTP" checkbox.
-   * Only meaningful when `origin` is insecure (requirements-decisions.md
-   * section 4: plain HTTP is allowed only for explicitly configured
-   * servers, never silently); ignored for an HTTPS origin.
-   */
-  readonly allowInsecureHttp: boolean;
 }
 
 export interface NewServerFormErrors {
@@ -46,7 +38,6 @@ export interface NewServerFormErrors {
   readonly color?: string;
   readonly proxyOrigin?: string;
   readonly proxyUsername?: string;
-  readonly allowInsecureHttp?: string;
 }
 
 export interface ValidatedNewServer {
@@ -54,13 +45,6 @@ export interface ValidatedNewServer {
   readonly origin: string;
   readonly color: ServerColor;
   readonly proxy?: { readonly origin: string; readonly username?: string };
-  /**
-   * Present (and always `true`) only when `origin` is plain HTTP and the
-   * user explicitly confirmed it; omitted for an HTTPS origin, where the
-   * flag is meaningless. This is what `hostsSection.ts` forwards as
-   * `AddServerRequest.allowInsecureHttp` (defaulting to `false` when absent).
-   */
-  readonly allowInsecureHttp?: true;
 }
 
 export type NewServerFormResult =
@@ -81,7 +65,6 @@ export function validateNewServerForm(input: NewServerFormInput): NewServerFormR
     color?: string;
     proxyOrigin?: string;
     proxyUsername?: string;
-    allowInsecureHttp?: string;
   } = {};
 
   const labelResult = serverLabelSchema.safeParse(input.label);
@@ -108,22 +91,11 @@ export function validateNewServerForm(input: NewServerFormInput): NewServerFormR
     errors.proxyUsername = 'a proxy username requires a proxy address';
   }
 
-  // Plain HTTP is allowed only for explicitly configured servers
-  // (requirements-decisions.md section 4) - never silently, and never
-  // signalled by colour alone. This check only ever fires for an origin
-  // that already parsed successfully as HTTP.
-  const requiresInsecureConfirmation = originResult.ok && isInsecureOrigin(originResult.origin);
-  if (requiresInsecureConfirmation && !input.allowInsecureHttp) {
-    errors.allowInsecureHttp =
-      'check \u201cAllow plain HTTP\u201d to confirm this insecure address is intentional';
-  }
-
   const isValid =
     labelResult.success &&
     originResult.ok &&
     colorResult.success &&
     (proxyOriginResult === undefined || proxyOriginResult.ok) &&
-    (!requiresInsecureConfirmation || input.allowInsecureHttp) &&
     Object.keys(errors).length === 0;
 
   if (!isValid || !labelResult.success || !originResult.ok || !colorResult.success) {
@@ -145,7 +117,6 @@ export function validateNewServerForm(input: NewServerFormInput): NewServerFormR
       origin: originResult.origin,
       color: colorResult.data,
       ...(proxy ? { proxy } : {}),
-      ...(requiresInsecureConfirmation ? { allowInsecureHttp: true as const } : {}),
     },
   };
 }
