@@ -192,27 +192,59 @@
    no gap between the two, their facing borders overlap onto one 1px line, and
    the seam-facing corner radiuses are nullified - the same address-group
    visual as the browser toolbar (see browser.css `.browser-toolbar__address-
-   group`). The field's shadow `.input` accepts only a single radius token, so
-   all four of its corners are squared here and the LEFT pair is re-rounded by
-   clipping on the host. The button's frame can *not* be styled via its shadow
-   `.button`: the inner `sp-action-button` is `quiet`, and quiet forces a
-   transparent border (`:host([quiet])`), and the open menu forwards
-   `selected` to it, which also forces a transparent border (`:host([selected])`
-   and the accent-white selected content colour). Both are hard-wired in the
-   component's shadow CSS, so the border, fill and right-hand rounding are
-   drawn on the `sp-action-menu` host itself and the inner button is left as a
-   content-only window for the chevron. Its overlay is a native top-layer
-   popover, so the clip never swallows the open menu. */
+   group`).
+
+   The field's shadow `.input` accepts only a single radius token
+   (`--mod-textfield-corner-radius`), so its four corners are squared here and
+   the rounded-left look is rebuilt on the host: the host carries the LEFT pair
+   of radii and `overflow: hidden` (which rounds the field's fill), and the 1px
+   frame is drawn by the positioned `::before` overlay below. The border can
+   *not* be left to the shadow's `.input`: a square shadow border clipped by
+   the rounded host has no pixels along the rounded arc, so the clip cuts the
+   stroke short and leaves a notch at each left corner. The overlay draws a
+   genuine rounded path, and the shadow border colours are pinned transparent
+   so the notched one never doubles it. No focus "frame": the keyboard-focus
+   border and blue focus indicator stay gray because every text field pins
+   them via `--mod-textfield-*` at the theme root (see base.css), so focus
+   never separates the field from the button.
+
+   The button's frame can *not* be styled via its shadow `.button`: the inner
+   `sp-action-button` is `quiet`, and quiet forces a transparent border
+   (`:host([quiet])`), and the open menu forwards `selected` to it, which also
+   forces a transparent border (`:host([selected])` and the accent-white
+   selected content colour). Both are hard-wired in the component's shadow
+   CSS, so the border, fill and right-hand rounding are drawn on the
+   `sp-action-menu` host itself and the inner button is left as a content-only
+   window for the chevron. Its overlay is a native top-layer popover, so the
+   clip never swallows the open menu. */
 .color-picker .color-picker__field {
   --mod-textfield-corner-radius: 0;
+  --mod-textfield-border-color: transparent;
+  --mod-textfield-border-color-hover: transparent;
+  --mod-textfield-border-color-focus: transparent;
+  --mod-textfield-border-color-keyboard-focus: transparent;
+  --mod-textfield-border-color-focus-hover: transparent;
+
+  position: relative;
   border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
   border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
   overflow: hidden;
+}
 
-  /* No focus "frame": the keyboard-focus border and blue focus indicator stay
-     gray because every text field pins them via `--mod-textfield-*` at the
-     theme root (see base.css), so focus never separates the field from the
-     button. */
+/* The field's real 1px frame: a rounded border overlay on the host, above the
+   shadow content (`z-index`) and never hit-testing (`pointer-events: none`),
+   so clicks still reach the input. Its left corners trace the host's radius
+   while its right edge lands on the squared seam against the picker button. */
+.color-picker .color-picker__field::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 1px solid var(--spectrum-gray-500);
+  border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
+  border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
 }
 
 .color-picker .color-picker-button {

@@ -24,22 +24,47 @@
   min-width: 0;
 
   /* The field's shadow `.input` accepts only a single radius token
-     (`--mod-textfield-corner-radius`), so all four corners are squared here and
-     the LEFT pair is re-rounded by clipping on the host itself (the `.input`
-     fills the host box, so the clip reproduces a rounded-left field exactly).
-     The RIGHT corners stay square on purpose: they meet the picker's already-
-     squared left corners, and #hosts-button then overlaps the field by
-     1px (margin-left below) so both 1px borders coincide as one line. */
-  --mod-textfield-corner-radius: 0;
-  border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
-  border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
-  overflow: hidden;
-
-  /* No focus "frame": the field's keyboard-focus border and its 2px blue
-     focus indicator stay gray because every text field pins them via
+     (`--mod-textfield-corner-radius`), so its four corners are squared and
+     the rounded-left look is rebuilt on the host: the host carries the LEFT
+     pair of radii and `overflow: hidden` (rounding the field's fill), and the
+     1px frame is drawn by the positioned `::before` overlay below. Leaving the
+     border to the shadow would notch it: a square shadow border clipped by the
+     rounded host has no pixels along the arc, so the stroke is cut short at
+     each left corner. The RIGHT corners stay square on purpose: they meet the
+     picker's already-squared left corners, and #hosts-button then overlaps the
+     field by 1px (margin-left below) so both 1px borders coincide as one line.
+     No focus "frame": the field's keyboard-focus border and its 2px blue focus
+     indicator stay gray because every text field pins them via
      `--mod-textfield-*` at the theme root (see base.css); without the pinned
      gray the border would go black and the indicator blue on focus,
      separating the field from the button. */
+  --mod-textfield-corner-radius: 0;
+  --mod-textfield-border-color: transparent;
+  --mod-textfield-border-color-hover: transparent;
+  --mod-textfield-border-color-focus: transparent;
+  --mod-textfield-border-color-keyboard-focus: transparent;
+  --mod-textfield-border-color-focus-hover: transparent;
+
+  position: relative;
+  border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
+  border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
+  overflow: hidden;
+}
+
+/* The field's real 1px frame: a rounded border overlay on the host, above the
+   shadow content (`z-index`) and never hit-testing (`pointer-events: none`),
+   so clicks still reach the input. Its left corners trace the host's radius;
+   its right edge lands on the squared seam against #hosts-button. */
+.browser-toolbar__address-group .address-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 1px solid var(--spectrum-gray-500);
+  border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
+  border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
 }
 
 .browser-toolbar__address-group #hosts-button {
