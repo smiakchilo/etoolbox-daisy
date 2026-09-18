@@ -156,3 +156,74 @@ test('servers added in the Settings panel persist, and removal persists too', as
   expect(JSON.stringify(afterRemove)).not.toContain('https://canary-author.example');
   expect(JSON.stringify(afterRemove)).not.toContain('https://canary-moved.example');
 });
+
+/**
+ * The shared banner row (`.banner-row`, lib/alertBanner.ts + banner.css) must
+ * hold one height whether or not it contains an action button: a plain
+ * status row and a with-button confirmation must measure the same. jsdom has
+ * no layout, so only the real built app can prove this - and the fix that
+ * pinned it (zeroing the component's `.text` slot margins) is exactly the
+ * kind of CSS that would otherwise regress silently.
+ */
+test('the Settings banner keeps one height with and without an action button', async () => {
+  test.setTimeout(120_000);
+
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('.add-server-form').first().waitFor({ state: 'visible', timeout: 60_000 });
+    const banner = page.locator('.settings-banner').first();
+
+    // One host to edit.
+    await page.locator('sp-textfield[placeholder="Label"] input').fill('Height Check');
+    await page
+      .locator('sp-textfield[placeholder="https://author.example"] input')
+      .fill('https://height-check.example');
+    await page.locator('sp-button', { hasText: 'Add host' }).first().click();
+    const added = page.locator('.server-row', { hasText: 'Height Check' });
+    await expect(added).toHaveCount(1, { timeout: 60_000 });
+
+    // A plain text row: the label auto-save settles on "Settings saved",
+    // which carries no close control and no action button.
+    await added.locator('sp-textfield[aria-label="Host label"] input').fill('Height Check 2');
+    await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
+    await expect(banner.locator('sp-action-button')).toHaveCount(0);
+    const textRowHeight = await banner.evaluate((node) => node.getBoundingClientRect().height);
+
+    // A with-button row: the address change raises the sticky confirmation
+    // with its single OK `sp-action-button`.
+    const moved = page.locator('.server-row', { hasText: 'Height Check 2' });
+    await moved
+      .locator('sp-textfield[aria-label="Host address"] input')
+      .fill('https://height-moved.example');
+    await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
+    await expect(banner.locator('sp-action-button')).toHaveCount(1);
+    const buttonRowHeight = await banner.evaluate((node) => node.getBoundingClientRect().height);
+
+    // The whole point: the banner does not grow when an action appears. Both
+    // rows sit on the theme's 48px banner minimum (the pinned height from
+    // banner.css); before the fix the with-button row measured ~63px.
+    expect(Math.round(textRowHeight)).toBe(48);
+    expect(Math.round(buttonRowHeight)).toBe(48);
+  } finally {
+    await app.close();
+  }
+});

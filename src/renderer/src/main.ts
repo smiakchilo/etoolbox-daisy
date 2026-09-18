@@ -32,6 +32,7 @@ import '@spectrum-web-components/tabs/sp-tab.js';
 import '@spectrum-web-components/tabs/sp-tab-panel.js';
 import './styles/base.css';
 import './styles/panel.css';
+import './styles/banner.css';
 import './styles/browser.css';
 import './styles/chat.css';
 import './styles/settings.css';

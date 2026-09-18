@@ -1,4 +1,5 @@
 import { el } from '../lib/dom';
+import { buildBannerPrompt, createBannerRow } from '../lib/alertBanner';
 import type {
   AddServerResult,
   BrowserIpcVoidResult,
@@ -137,18 +138,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   backButton.setAttribute('disabled', '');
   forwardButton.setAttribute('disabled', '');
 
-  const messageElement = el('sp-alert-banner', {
-    attrs: {
-      class: 'browser-toolbar-message',
-      variant: 'neutral',
-      // Error/prompt rows are dismissible (the loading presentation is not -
-      // the `applyPresentation` loading branch removes this attribute). The
-      // component shows its `sp-close-button` when `dismissible` is set and
-      // dispatches a cancelable `close` on click; this module prevents the
-      // default so it keeps full control of `open`.
-      dismissible: '',
-    },
-  });
+  // The shared banner-row base (lib/alertBanner.ts, styles/banner.css) with
+  // the browser surface class. The factory starts the row `dismissible`;
+  // error/prompt presentations keep it, the loading branch removes it (the
+  // `applyPresentation` loading path). The component shows its `sp-close-button`
+  // when `dismissible` is set and dispatches a cancelable `close` on click;
+  // this module prevents the default so it keeps full control of `open`.
+  const messageElement = createBannerRow('browser-toolbar-message');
 
   // Loading text shown inside the banner — the indefinite progress bar
   // animation is rendered via CSS in browser.css, so no spinner is needed.
@@ -276,17 +272,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       void allowBlockedCertificate(info, matchingHost);
     });
 
-    const actions = el('span', {
-      attrs: { class: 'browser-toolbar-message__actions' },
-      children: [okButton],
-    });
-    messageElement.replaceChildren(
-      el('span', {
-        attrs: { class: 'browser-toolbar-message__copy' },
-        children: [document.createTextNode(describeBlockedCertificate())],
-      }),
-      actions,
-    );
+    messageElement.replaceChildren(...buildBannerPrompt(describeBlockedCertificate(), [okButton]));
     messageElement.setAttribute('open', '');
     setNavMode('refresh');
   }
@@ -342,17 +328,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       void addOriginServer(prompt);
     });
 
-    const actions = el('span', {
-      attrs: { class: 'browser-toolbar-message__actions' },
-      children: [okButton],
-    });
-    messageElement.replaceChildren(
-      el('span', {
-        attrs: { class: 'browser-toolbar-message__copy' },
-        children: [document.createTextNode(describeUnknownOrigin())],
-      }),
-      actions,
-    );
+    messageElement.replaceChildren(...buildBannerPrompt(describeUnknownOrigin(), [okButton]));
     messageElement.setAttribute('open', '');
     setNavMode('refresh');
   }

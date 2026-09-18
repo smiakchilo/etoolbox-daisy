@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildHostOptions,
   computeAddressBarValue,
-  computeInsecureMarker,
   computeReservedRegionBounds,
   deriveServerLabelFromOrigin,
   describeBlockedCertificate,
@@ -59,31 +58,6 @@ describe('buildHostOptions', () => {
 
   it('returns an empty list for no configured servers', () => {
     expect(buildHostOptions([], null)).toEqual([]);
-  });
-});
-
-describe('computeInsecureMarker', () => {
-  it('is hidden when no server is active', () => {
-    expect(computeInsecureMarker(servers, null)).toEqual({ visible: false, message: '' });
-  });
-
-  it('is hidden when the active server is HTTPS', () => {
-    expect(computeInsecureMarker(servers, httpsServerId)).toEqual({
-      visible: false,
-      message: '',
-    });
-  });
-
-  it('is visible with a message naming the server when the active server is plain HTTP', () => {
-    const state = computeInsecureMarker(servers, httpServerId);
-    expect(state.visible).toBe(true);
-    expect(state.message).toContain('Internal staging');
-    expect(state.message).toContain('http://staging.internal');
-  });
-
-  it('is hidden when the active server id does not match any configured server', () => {
-    const danglingId = newServerId(() => 'server-deleted');
-    expect(computeInsecureMarker(servers, danglingId)).toEqual({ visible: false, message: '' });
   });
 });
 

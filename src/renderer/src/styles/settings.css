@@ -27,28 +27,26 @@
 }
 
 /* The panel's own status/prompt row - auto-save feedback, validation errors,
-   and the two-click address/removal confirmations - a second `sp-alert-banner`
-   styled exactly like the browser pane's status row
-   (`.browser-toolbar-message`) but with its own class name, so Playwright's
-   strict-mode locators targeting the *browser* banner never match two elements
-   while Settings is open.
+   and the two-click address/removal confirmations - the Settings surface of
+   the shared banner-row base (banner.css, lib/alertBanner.ts): the row
+   carries `.banner-row` plus this `.settings-banner` surface class, so
+   Playwright's strict-mode locators targeting the *browser* banner
+   (`.browser-toolbar-message`) never match two elements while Settings is
+   open. Only the surface-specific wiring lives here.
 
    It is pinned to the bottom edge of the panel surface, in the same spot the
    browser row occupies in the browser pane: the panel `.panel` is the flex
    column, and the banner is taken out of that flow with `position: absolute`
    and `inset-block-end: 0`, so it never displaces the tab content above or
    reflows the panel when it appears/disappears - a floating status strip, not
-   a layout participant. `inset-inline: 0` plus `max-inline-size: none` spans
-   the surface full width (the component's default 832px banner width never
-   truncates the strip), and `margin: 0` keeps it flush to the edges. The
-   strip sits above the tab content and header (`z-index`) and is clipped with
-   them (`overflow: hidden` on `.panel`). */
+   a layout participant. `inset-inline: 0` spans the surface full width
+   (`max-inline-size: none`, the pinned height and `margin: 0` come from the
+   shared base). The strip sits above the tab content and header (`z-index`)
+   and is clipped with them (`overflow: hidden` on `.panel`). */
 .settings-banner {
   position: absolute;
   inset-inline: 0;
   inset-block-end: 0;
-  margin: 0;
-  max-inline-size: none;
   z-index: 1;
 }
 
@@ -60,7 +58,7 @@
    `settings-banner--closing` class for `--settings-banner-fade-duration` and
    tears the row down after. The JS timer and these keyframes share the
    duration through the same custom property. */
-.settings-banner[open] {
+/*.settings-banner[open] {
   animation: settings-banner-fade-in var(--settings-banner-fade-duration, 150ms) ease-out;
 }
 
@@ -91,30 +89,10 @@
   .settings-banner.settings-banner--closing {
     animation: none;
   }
-}
+}*/
 
-/* Message text in prompt rows (the address/removal confirmations wrap their
-   copy in this span). `flex: 1 1 auto` lets it absorb the strip's flex space
-   while `min-width: 0` overrides the flex item's implicit `min-width:auto` so
-   the text may wrap *inside* the span instead of forcing the whole row. */
-.settings-banner__copy {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* The prompt action button, grouped after the copy so the banner's
-   default-slot layout keeps it on one row with text before actions. The
-   copy's own `flex: 1 1 auto` absorbs the strip's spare space, pushing the
-   actions to the right edge; `margin-inline-start: 12px` is the seam between
-   them, and `flex: 0 0 auto` keeps the button from shrinking when the copy
-   wraps. */
-.settings-banner__actions {
-  align-items: center;
-  display: inline-flex;
-  gap: 8px;
-  flex: 0 0 auto;
-  margin-inline-start: 12px;
-}
+/* The panel's prompt rows' `_copy` span and `_actions` span are the shared
+   `.banner-row__copy` / `.banner-row__actions` rules in banner.css. */
 
 /* `sp-tabs` is a grid (`auto 1fr` rows) whose second row hosts the panels;
    allowing it to shrink within the flex column bounds that second row, so the

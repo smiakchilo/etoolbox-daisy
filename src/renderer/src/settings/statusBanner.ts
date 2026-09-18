@@ -2,11 +2,13 @@
  * The Settings panel's one status slot, and the aggregation that feeds it.
  *
  * The panel shows exactly one message at a time - a second `sp-alert-banner`
- * appended to the panel surface and pinned to its bottom edge (class
- * `settings-banner`, styled to look exactly like the browser pane's status row
- * in `browserToolbar.ts`, but with its own class name so Playwright
- * strict-mode locators targeting the *browser* banner never match two elements
- * while Settings is open). Every mutation
+ * appended to the panel surface and pinned to its bottom edge. The row shares
+ * the `banner-row` base class, styles and height with the browser pane's
+ * status row (`lib/alertBanner.ts`, `styles/banner.css`), plus its own
+ * `settings-banner` surface class - the class split keeps Playwright
+ * strict-mode locators targeting the *browser* banner
+ * (`.browser-toolbar-message`) from matching two elements while Settings is
+ * open. Every mutation
  * status the sections used to render as per-field paragraphs now arrives here
  * (see the step-09/10 handoff): auto-save feedback, validation errors,
  * two-click confirmations, and password set/clear results.
@@ -25,6 +27,7 @@
  */
 
 import { el } from '../lib/dom';
+import { buildBannerPrompt, createBannerRow } from '../lib/alertBanner';
 
 export interface StatusBannerAction {
   readonly label: string;
@@ -70,9 +73,7 @@ function prefersReducedMotion(): boolean {
 }
 
 export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): StatusBanner {
-  const banner = el('sp-alert-banner', {
-    attrs: { class: 'settings-banner', variant: 'neutral' },
-  });
+  const banner = createBannerRow('settings-banner');
   banner.style.setProperty('--settings-banner-fade-duration', `${BANNER_FADE_DURATION_MS}ms`);
 
   let slot: BannerSlot | null = null;
@@ -156,13 +157,7 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
       text: action.label,
     });
     actionButton.addEventListener('click', () => action.onActivate());
-    return [
-      el('span', { attrs: { class: 'settings-banner__copy' }, text: copy }),
-      el('div', {
-        attrs: { class: 'settings-banner__actions' },
-        children: [actionButton],
-      }),
-    ];
+    return buildBannerPrompt(copy, [actionButton]);
   }
 
   // Same contract as the browser banner (browserToolbar.ts): the component's

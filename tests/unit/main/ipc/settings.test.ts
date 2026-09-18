@@ -369,7 +369,7 @@ describe('addServer', () => {
       color: { kind: 'swatch', swatch: 'blue' },
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');
     expect(result.error.code).toBe('storage_error');
   });

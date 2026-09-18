@@ -311,7 +311,6 @@ describe('createBrowserPane closeability', () => {
           selected: false,
         },
       ],
-      insecureMarker: { visible: false, message: '' },
     });
 
     pickerButton?.click();

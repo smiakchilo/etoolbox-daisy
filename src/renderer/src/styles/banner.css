@@ -1,0 +1,55 @@
+/*
+ * Shared styling for the two status/prompt rows in the shell: the browser
+ * pane's toolbar message (`shell/browserToolbar.ts`) and the Settings
+ * panel's single status slot (`settings/statusBanner.ts`). Imported by the
+ * renderer entry BEFORE `browser.css`/`settings.css`, so the surface-specific
+ * rules there can override at equal specificity where they genuinely differ.
+ *
+ * Both rows are an `sp-alert-banner` (neutral variant) carrying the shared
+ * `.banner-row` class plus their own surface class
+ * (`.browser-toolbar-message` / `.settings-banner`) - see `lib/alertBanner.ts`.
+ * Everything the two can honestly share lives here; `.banner-row` never sets
+ * anything the surfaces need to contradict.
+ */
+
+.banner-row {
+  /*
+   * Pin every row to one height regardless of its content. The component's
+   * `.text` slot pads its content with `--mod-alert-banner-top-text`
+   * (14px) + `--mod-alert-banner-bottom-text` (17px), so a plain text row
+   * measures ~50px while a row containing an `sp-action-button` (32px) grows
+   * to ~63px. Zeroing the margins puts the slot content back inside the
+   * theme's 48px `--spectrum-alert-banner-minimum-height`, whose `.body`
+   * `align-items: center` centers it vertically - a with-button prompt row
+   * is exactly as tall as a quiet text row, so the strip never changes
+   * height when an action appears.
+   */
+  --mod-alert-banner-top-text: 0;
+  --mod-alert-banner-bottom-text: 0;
+  --mod-alert-banner-min-height: var(--spectrum-alert-banner-minimum-height, 48px);
+  max-inline-size: none;
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+/* Message text block in prompt rows (the copy sits in this span). `flex: 1
+   1 auto` lets it absorb the strip's flex space while `min-width: 0`
+   overrides the flex item's implicit `min-width:auto` so the text may wrap
+   *inside* the span instead of forcing the whole row - the prompt stays one
+   row with the action group after it. */
+.banner-row__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The prompt action buttons, grouped after the copy so they stay on one row
+   with text before actions. `margin-inline-start: 12px` is the seam between
+   copy and actions, and `flex: 0 0 auto` keeps the buttons from shrinking
+   when the copy wraps. */
+.banner-row__actions {
+  align-items: center;
+  display: inline-flex;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-inline-start: 12px;
+}

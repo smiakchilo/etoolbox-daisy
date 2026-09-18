@@ -192,7 +192,7 @@ describe('addServerRequestSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects a payload still carrying the removed allowInsecureHttp field", () => {
+  it('rejects a payload still carrying the removed allowInsecureHttp field', () => {
     const result = addServerRequestSchema.safeParse({
       label: 'Staging',
       origin: 'https://staging.example',

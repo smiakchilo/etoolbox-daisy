@@ -60,9 +60,7 @@ describe('validateNewServerForm', () => {
   });
 
   it('accepts plain HTTP without any confirmation flag', () => {
-    const result = validateNewServerForm(
-      baseInput({ origin: 'http://internal.example' }),
-    );
+    const result = validateNewServerForm(baseInput({ origin: 'http://internal.example' }));
     expect(result).toEqual({
       ok: true,
       value: {

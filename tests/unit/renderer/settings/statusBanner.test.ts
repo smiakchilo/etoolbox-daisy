@@ -154,7 +154,7 @@ describe('createStatusBanner single slot', () => {
     banner.showPrompt('Second', { label: 'Apply', onActivate: secondAction });
 
     expect(banner.isPromptShowing()).toBe(true);
-    expect(banner.element.querySelector('.settings-banner__copy')?.textContent).toBe('Second');
+    expect(banner.element.querySelector('.banner-row__copy')?.textContent).toBe('Second');
     banner.element
       .querySelector('sp-action-button')
       ?.dispatchEvent(new dom.window.MouseEvent('click'));
