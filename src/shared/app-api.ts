@@ -7,7 +7,7 @@ import type {
   AddServerResult,
   GetModelSelectionResult,
   GetSettingsSnapshotResult,
-  ProxyPasswordTarget,
+  PasswordTarget,
   RemoveProxyRequest,
   RemoveServerRequest,
   ReorderProxiesRequest,
@@ -57,7 +57,7 @@ export interface DaisyAppApi {
   readonly agent: DaisyAgentAuthApi;
   /**
    * Dedicated settings IPC surface (step 04): a secret-free snapshot plus
-   * write-only proxy-password storage. The renderer UI that calls this
+   * write-only password storage. The renderer UI that calls this
    * (the Settings panel) is built in step 05.
    */
   readonly settings: DaisySettingsApi;
@@ -106,8 +106,8 @@ export interface DaisyBrowserApi {
 
 export interface DaisySettingsApi {
   getSnapshot(): Promise<GetSettingsSnapshotResult>;
-  setProxyPassword(target: ProxyPasswordTarget, password: string): Promise<SettingsIpcVoidResult>;
-  clearProxyPassword(target: ProxyPasswordTarget): Promise<SettingsIpcVoidResult>;
+  setPassword(target: PasswordTarget, password: string): Promise<SettingsIpcVoidResult>;
+  clearPassword(target: PasswordTarget): Promise<SettingsIpcVoidResult>;
   addServer(request: AddServerRequest): Promise<AddServerResult>;
   removeServer(request: RemoveServerRequest): Promise<SettingsIpcVoidResult>;
   updateServerPresentation(

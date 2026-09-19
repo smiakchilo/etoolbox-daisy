@@ -3,7 +3,7 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 import {
   SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
-  SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL,
+  SETTINGS_CLEAR_PASSWORD_CHANNEL,
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
   SETTINGS_REMOVE_PROXY_CHANNEL,
@@ -11,7 +11,7 @@ import {
   SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
-  SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
+  SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
@@ -19,13 +19,13 @@ import {
 import {
   addProxyRequestSchema,
   addServerRequestSchema,
-  clearProxyPasswordRequestSchema,
+  clearPasswordRequestSchema,
   removeProxyRequestSchema,
   removeServerRequestSchema,
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
   setModelPreferencesRequestSchema,
-  setProxyPasswordRequestSchema,
+  setPasswordRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
@@ -33,10 +33,10 @@ import {
   type AddProxyResult,
   type AddServerRequest,
   type AddServerResult,
-  type ClearProxyPasswordRequest,
+  type ClearPasswordRequest,
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
-  type ProxyPasswordTarget,
+  type PasswordTarget,
   type ProxySnapshot,
   type RemoveProxyRequest,
   type RemoveServerRequest,
@@ -44,7 +44,7 @@ import {
   type ReorderServersRequest,
   type ServerTargetingMutationKind,
   type SetModelPreferencesRequest,
-  type SetProxyPasswordRequest,
+  type SetPasswordRequest,
   type SettingsIpcError,
   type SettingsIpcVoidResult,
   type UpdateProxyRequest,
@@ -92,8 +92,8 @@ import { isAllowedAppNavigation } from '../security';
  *
  *  - `settings:get-snapshot` - read the secret-free
  *    {@link import("../../shared/contracts/settingsSnapshot").AppSettingsSnapshot}.
- *  - `settings:set-proxy-password` / `settings:clear-proxy-password` -
- *    write-only proxy password storage, never echoed back.
+ *  - `settings:set-password` / `settings:clear-password` -
+ *    write-only password storage, never echoed back.
  *  - `settings:add-server` / `settings:remove-server` -
  *    create/delete a server entry.
  *  - `settings:update-server-presentation` / `settings:update-server-targeting` -
@@ -123,7 +123,7 @@ import { isAllowedAppNavigation } from '../security';
 
 function findProxyCredentials(
   settings: AppSettings,
-  target: ProxyPasswordTarget,
+  target: PasswordTarget,
 ): ProxyCredentials | undefined {
   if (target.kind === 'proxy') {
     return settings.proxies.find((proxy) => proxy.id === target.proxyId)?.credentials;
@@ -132,16 +132,16 @@ function findProxyCredentials(
 }
 
 /**
- * Resolves a {@link ProxyPasswordTarget} to the `secretRef` already recorded
+ * Resolves a {@link PasswordTarget} to the `secretRef` already recorded
  * in `settings` for it. Never mints a new `secretRef`: assigning one to a
  * proxy is part of configuring that proxy (username + `secretRef` together),
  * which is a settings mutation reserved for step 05. A target with no proxy
  * credentials configured yet is reported as {@link SettingsIpcError}
  * `"no_proxy_configured"`, not silently created.
  */
-export function resolveProxySecretRef(
+export function resolvePasswordSecretRef(
   settings: AppSettings,
-  target: ProxyPasswordTarget,
+  target: PasswordTarget,
 ): Result<string, SettingsIpcError> {
   const credentials = findProxyCredentials(settings, target);
   if (!credentials) {
@@ -226,17 +226,17 @@ export async function getSettingsSnapshot(
   return { ok: true, snapshot };
 }
 
-/** Implements `settings:set-proxy-password`. Never returns the password. */
-export async function setProxyPassword(
+/** Implements `settings:set-password`. Never returns the password. */
+export async function setPassword(
   settingsDir: string,
   secretStore: SecretStore,
-  request: SetProxyPasswordRequest,
+  request: SetPasswordRequest,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
   if (!loaded.ok) {
     return { ok: false, error: loaded.error };
   }
-  const secretRef = resolveProxySecretRef(loaded.value, request.target);
+  const secretRef = resolvePasswordSecretRef(loaded.value, request.target);
   if (!secretRef.ok) {
     return { ok: false, error: secretRef.error };
   }
@@ -249,17 +249,17 @@ export async function setProxyPassword(
   return { ok: true };
 }
 
-/** Implements `settings:clear-proxy-password`. */
-export async function clearProxyPassword(
+/** Implements `settings:clear-password`. */
+export async function clearPassword(
   settingsDir: string,
   secretStore: SecretStore,
-  request: ClearProxyPasswordRequest,
+  request: ClearPasswordRequest,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
   if (!loaded.ok) {
     return { ok: false, error: loaded.error };
   }
-  const secretRef = resolveProxySecretRef(loaded.value, request.target);
+  const secretRef = resolvePasswordSecretRef(loaded.value, request.target);
   if (!secretRef.ok) {
     return { ok: false, error: secretRef.error };
   }
@@ -563,7 +563,7 @@ export async function addProxy(
 /**
  * Implements `settings:update-proxy`. Best-effort deletes an orphaned
  * password (see `settingsStore.ts`'s `UpdateProxyOutcome.orphanedSecretRef`)
- * the same way `clearProxyPassword` already does for an explicit clear - a
+ * the same way `clearPassword` already does for an explicit clear - a
  * failure to delete the now-unreachable secret does not fail the save that
  * already succeeded.
  */
@@ -930,30 +930,30 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
   );
 
   ipcMain.handle(
-    SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
+    SETTINGS_SET_PASSWORD_CHANNEL,
     async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
       if (!checkSender(event)) {
         return { ok: false, error: UNTRUSTED_SENDER_ERROR };
       }
-      const parsed = setProxyPasswordRequestSchema.safeParse(rawRequest);
+      const parsed = setPasswordRequestSchema.safeParse(rawRequest);
       if (!parsed.success) {
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
-      return setProxyPassword(deps.settingsDir, deps.secretStore, parsed.data);
+      return setPassword(deps.settingsDir, deps.secretStore, parsed.data);
     },
   );
 
   ipcMain.handle(
-    SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL,
+    SETTINGS_CLEAR_PASSWORD_CHANNEL,
     async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
       if (!checkSender(event)) {
         return { ok: false, error: UNTRUSTED_SENDER_ERROR };
       }
-      const parsed = clearProxyPasswordRequestSchema.safeParse(rawRequest);
+      const parsed = clearPasswordRequestSchema.safeParse(rawRequest);
       if (!parsed.success) {
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
-      return clearProxyPassword(deps.settingsDir, deps.secretStore, parsed.data);
+      return clearPassword(deps.settingsDir, deps.secretStore, parsed.data);
     },
   );
 

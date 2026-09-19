@@ -143,10 +143,10 @@ test('a password typed into Settings is never written anywhere in plaintext', as
       )
       .toContain('https://proxy.example:8080');
 
-    const passwordField = proxies.locator('[aria-label="Proxy password"] input');
+    const passwordField = proxies.locator('[aria-label="Password"] input');
     await passwordField.waitFor({ state: 'visible', timeout: 60_000 });
     await passwordField.fill(CANARY);
-    await proxies.locator('.proxy-password sp-action-button', { hasText: 'Set' }).click();
+    await proxies.locator('.password-control sp-action-button', { hasText: 'Set' }).click();
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.

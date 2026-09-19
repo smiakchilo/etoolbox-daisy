@@ -11,15 +11,15 @@ import { createSecretStore, type SecretCipher } from '../../../../src/main/secre
 import {
   addProxy,
   addServer,
-  clearProxyPassword,
+  clearPassword,
   getSettingsSnapshot,
   isTrustedLocalSettingsSender,
   removeProxy,
   removeServer,
   reorderProxies,
   reorderServers,
-  resolveProxySecretRef,
-  setProxyPassword,
+  resolvePasswordSecretRef,
+  setPassword,
   updateProxy,
   updateServerPresentation,
   updateServerTargeting,
@@ -99,13 +99,13 @@ async function writeSettings(settingsDir: string, settings: AppSettings): Promis
   if (!result.ok) throw new Error(`failed to write test settings: ${result.error.message}`);
 }
 
-describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round trip)', () => {
+describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () => {
   it('stores a password, reports hasPassword: true, and never leaks it through the snapshot', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
 
-    const setResult = await setProxyPassword(settingsDir, secretStore, {
+    const setResult = await setPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: SERVER_ID },
       password: CANARY_PASSWORD,
     });
@@ -149,12 +149,12 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
-    await setProxyPassword(settingsDir, secretStore, {
+    await setPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: SERVER_ID },
       password: CANARY_PASSWORD,
     });
 
-    const clearResult = await clearProxyPassword(settingsDir, secretStore, {
+    const clearResult = await clearPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: SERVER_ID },
     });
 
@@ -182,7 +182,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     };
     await writeSettings(settingsDir, settings);
 
-    const setResult = await setProxyPassword(settingsDir, secretStore, {
+    const setResult = await setPassword(settingsDir, secretStore, {
       target: { kind: 'proxy', proxyId },
       password: CANARY_PASSWORD,
     });
@@ -213,7 +213,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
       activeHostId: server.id,
     });
 
-    const result = await setProxyPassword(settingsDir, secretStore, {
+    const result = await setPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: SERVER_ID },
       password: CANARY_PASSWORD,
     });
@@ -228,7 +228,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const result = await clearProxyPassword(settingsDir, secretStore, {
+    const result = await clearPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: newServerId(() => 'unknown-server') },
     });
 
@@ -301,7 +301,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     );
     await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
 
-    const result = await setProxyPassword(settingsDir, secretStore, {
+    const result = await setPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: SERVER_ID },
       password: CANARY_PASSWORD,
     });
@@ -607,7 +607,7 @@ describe('addProxy / updateProxy / removeProxy / reorderProxies', () => {
       ],
     };
     await writeSettings(settingsDir, settings);
-    await setProxyPassword(settingsDir, secretStore, {
+    await setPassword(settingsDir, secretStore, {
       target: { kind: 'proxy', proxyId },
       password: CANARY_PASSWORD,
     });
@@ -658,7 +658,7 @@ describe('addProxy / updateProxy / removeProxy / reorderProxies', () => {
       ],
     };
     await writeSettings(settingsDir, settings);
-    await setProxyPassword(settingsDir, secretStore, {
+    await setPassword(settingsDir, secretStore, {
       target: { kind: 'proxy', proxyId },
       password: CANARY_PASSWORD,
     });
@@ -710,11 +710,11 @@ describe('addProxy / updateProxy / removeProxy / reorderProxies', () => {
   });
 });
 
-describe('resolveProxySecretRef', () => {
+describe('resolvePasswordSecretRef', () => {
   it('resolves the secretRef already recorded for a server target', () => {
     const settings = serverWithProxy('server:server-a:proxy');
 
-    const result = resolveProxySecretRef(settings, { kind: 'server', serverId: SERVER_ID });
+    const result = resolvePasswordSecretRef(settings, { kind: 'server', serverId: SERVER_ID });
 
     expect(result).toEqual({ ok: true, value: 'server:server-a:proxy' });
   });
@@ -733,13 +733,13 @@ describe('resolveProxySecretRef', () => {
       ],
     };
 
-    const result = resolveProxySecretRef(settings, { kind: 'proxy', proxyId });
+    const result = resolvePasswordSecretRef(settings, { kind: 'proxy', proxyId });
 
     expect(result).toEqual({ ok: true, value: 'proxy:proxy-a' });
   });
 
   it('never mints a new secretRef for a target with no proxy configured', () => {
-    const result = resolveProxySecretRef(defaultAppSettings(), {
+    const result = resolvePasswordSecretRef(defaultAppSettings(), {
       kind: 'proxy',
       proxyId: newProxyId(() => 'proxy-a'),
     });
@@ -832,7 +832,7 @@ describe('toAppSettingsSnapshot via getSettingsSnapshot never leaks the canary p
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
-    await setProxyPassword(settingsDir, secretStore, {
+    await setPassword(settingsDir, secretStore, {
       target: { kind: 'server', serverId: SERVER_ID },
       password: CANARY_PASSWORD,
     });

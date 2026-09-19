@@ -1,17 +1,16 @@
 import { el } from '../lib/dom';
-import type { ProxyPasswordTarget } from '../../../shared';
+import type { PasswordTarget } from '../../../shared';
 import type { StatusBannerSink } from './statusBanner';
 
 /**
- * A per-item "Set" / "Clear" password control for one proxy-library entry,
- * rendered on the same line as its password field. This is the one piece of
- * proxy mutation with its own explicit buttons (unlike the debounced
- * label/address/username fields around it): the password's raw text is never
- * supposed to sit in a field a later automatic save could sweep up, so the
- * two actions stay deliberate.
+ * A per-item "Set" / "Clear" password control rendered on the same line as
+ * its password field. Unlike the debounced label/address/username fields
+ * around it, this is one deliberate two-action control: the password's raw
+ * text is never supposed to sit in a field a later automatic save could sweep
+ * up, so set/clear stay explicit.
  *
  * The typed password never leaves this closure other than as the argument to
- * `setProxyPassword`: it is read from the field and the field is cleared
+ * `setPassword`: it is read from the field and the field is cleared
  * immediately after the call settles, win or lose, so nothing here ever
  * holds, displays, or echoes a password value (the hard security boundary
  * from `ProxyCredentialsSnapshot` only ever carrying `hasPassword`).
@@ -22,23 +21,23 @@ import type { StatusBannerSink } from './statusBanner';
  * the panel's one banner slot through `status` - "Password saved" / "Password
  * cleared" are transient statuses, failures are sticky errors.
  */
-export interface ProxyPasswordControlOptions {
+export interface PasswordControlOptions {
   /** Resolves the target at click time; `undefined` while a draft has no id yet. */
-  readonly target: () => ProxyPasswordTarget | undefined;
+  readonly target: () => PasswordTarget | undefined;
   /** Called after a successful set/clear so the panel re-reads the snapshot. */
   readonly onChanged: () => void;
 }
 
-export interface ProxyPasswordControl {
+export interface PasswordControl {
   readonly element: HTMLElement;
 }
 
-export function createProxyPasswordControl(
-  options: ProxyPasswordControlOptions,
+export function createPasswordControl(
+  options: PasswordControlOptions,
   status: StatusBannerSink,
-): ProxyPasswordControl {
+): PasswordControl {
   const passwordField = el('sp-textfield', {
-    attrs: { type: 'password', placeholder: 'New password', 'aria-label': 'Proxy password' },
+    attrs: { type: 'password', placeholder: 'New password', 'aria-label': 'Password' },
   }) as HTMLElement & { value: string };
 
   const setButton = el('sp-action-button', {
@@ -60,7 +59,7 @@ export function createProxyPasswordControl(
   setButton.addEventListener('click', () => {
     const target = options.target();
     if (target === undefined) {
-      status.showError('Save the proxy before setting a password');
+      status.showError('Save the item before setting a password');
       return;
     }
     const password = passwordField.value;
@@ -70,7 +69,7 @@ export function createProxyPasswordControl(
     }
     setBusy(true);
     void window.daisy.settings
-      .setProxyPassword(target, password)
+      .setPassword(target, password)
       .then((result) => {
         if (result.ok) {
           status.showStatus('Password saved');
@@ -88,12 +87,12 @@ export function createProxyPasswordControl(
   clearButton.addEventListener('click', () => {
     const target = options.target();
     if (target === undefined) {
-      status.showError('Save the proxy before clearing a password');
+      status.showError('Save the item before clearing a password');
       return;
     }
     setBusy(true);
     void window.daisy.settings
-      .clearProxyPassword(target)
+      .clearPassword(target)
       .then((result) => {
         if (result.ok) {
           status.showStatus('Password cleared');
@@ -109,7 +108,7 @@ export function createProxyPasswordControl(
   });
 
   const element = el('div', {
-    attrs: { class: 'proxy-password' },
+    attrs: { class: 'password-control' },
     children: [passwordField, setButton, clearButton],
   });
 

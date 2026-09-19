@@ -24,7 +24,7 @@ import {
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
   SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
-  SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL,
+  SETTINGS_CLEAR_PASSWORD_CHANNEL,
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
   SETTINGS_REMOVE_PROXY_CHANNEL,
@@ -32,14 +32,14 @@ import {
   SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
-  SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
+  SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
   addProxyRequestSchema,
   addServerRequestSchema,
   approveCertificateExceptionRequestSchema,
-  clearProxyPasswordRequestSchema,
+  clearPasswordRequestSchema,
   navigateRequestSchema,
   parseAddProxyResult,
   parseAddServerResult,
@@ -70,7 +70,7 @@ import {
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
   setModelPreferencesRequestSchema,
-  setProxyPasswordRequestSchema,
+  setPasswordRequestSchema,
   switchServerRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
@@ -100,7 +100,7 @@ import {
   type GetSettingsSnapshotResult,
   type LoginOutcome,
   type LogoutResult,
-  type ProxyPasswordTarget,
+  type PasswordTarget,
   type RemoveProxyRequest,
   type RemoveServerRequest,
   type ReorderProxiesRequest,
@@ -150,17 +150,14 @@ const daisyApi: DaisyAppApi = {
       const raw: unknown = await ipcRenderer.invoke(SETTINGS_GET_SNAPSHOT_CHANNEL);
       return parseGetSettingsSnapshotResult(raw);
     },
-    async setProxyPassword(
-      target: ProxyPasswordTarget,
-      password: string,
-    ): Promise<SettingsIpcVoidResult> {
-      const request = setProxyPasswordRequestSchema.parse({ target, password });
-      const raw: unknown = await ipcRenderer.invoke(SETTINGS_SET_PROXY_PASSWORD_CHANNEL, request);
+    async setPassword(target: PasswordTarget, password: string): Promise<SettingsIpcVoidResult> {
+      const request = setPasswordRequestSchema.parse({ target, password });
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_SET_PASSWORD_CHANNEL, request);
       return parseSettingsIpcVoidResult(raw);
     },
-    async clearProxyPassword(target: ProxyPasswordTarget): Promise<SettingsIpcVoidResult> {
-      const request = clearProxyPasswordRequestSchema.parse({ target });
-      const raw: unknown = await ipcRenderer.invoke(SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL, request);
+    async clearPassword(target: PasswordTarget): Promise<SettingsIpcVoidResult> {
+      const request = clearPasswordRequestSchema.parse({ target });
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_CLEAR_PASSWORD_CHANNEL, request);
       return parseSettingsIpcVoidResult(raw);
     },
     async addServer(request: AddServerRequest): Promise<AddServerResult> {

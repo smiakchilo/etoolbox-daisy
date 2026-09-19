@@ -26,7 +26,7 @@ import {
  * surface live directly under `src/shared`, separate from the domain
  * contracts in `src/shared/contracts`.
  *
- * Step 04 kept this narrow: read the secret-free snapshot, set a proxy
+ * Step 04 kept this narrow: read the secret-free snapshot, set a
  * password, or clear one. Step 05 (this comment's own update) adds the
  * mutation channels that step 04 explicitly deferred - add/remove a server,
  * choose the active one, and change presentation/targeting - by wrapping the
@@ -36,37 +36,37 @@ import {
  */
 
 /**
- * Identifies *which* proxy a password belongs to, without ever naming a
+ * Identifies *which* target a password belongs to, without ever naming a
  * `secretRef` - the renderer is never told one (see `settingsSnapshot.ts`),
- * so it can only refer to a proxy by the same handles the snapshot already
- * exposes: a server id (the per-server AEM proxy), or a proxy-library entry
+ * so it can only refer to a target by the same handles the snapshot already
+ * exposes: a server id (its per-server AEM proxy), or a proxy-library entry
  * id.
  */
-export const proxyPasswordTargetSchema = z.discriminatedUnion('kind', [
+export const passwordTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('server'), serverId: serverIdSchema }).strict(),
   z.object({ kind: z.literal('proxy'), proxyId: proxyIdSchema }).strict(),
 ]);
 
-export type ProxyPasswordTarget = z.infer<typeof proxyPasswordTargetSchema>;
+export type PasswordTarget = z.infer<typeof passwordTargetSchema>;
 
-const PROXY_PASSWORD_MAX_LENGTH = 1000;
+const PASSWORD_MAX_LENGTH = 1000;
 
-export const setProxyPasswordRequestSchema = z
+export const setPasswordRequestSchema = z
   .object({
-    target: proxyPasswordTargetSchema,
-    password: z.string().min(1).max(PROXY_PASSWORD_MAX_LENGTH),
+    target: passwordTargetSchema,
+    password: z.string().min(1).max(PASSWORD_MAX_LENGTH),
   })
   .strict();
 
-export type SetProxyPasswordRequest = z.infer<typeof setProxyPasswordRequestSchema>;
+export type SetPasswordRequest = z.infer<typeof setPasswordRequestSchema>;
 
-export const clearProxyPasswordRequestSchema = z
+export const clearPasswordRequestSchema = z
   .object({
-    target: proxyPasswordTargetSchema,
+    target: passwordTargetSchema,
   })
   .strict();
 
-export type ClearProxyPasswordRequest = z.infer<typeof clearProxyPasswordRequestSchema>;
+export type ClearPasswordRequest = z.infer<typeof clearPasswordRequestSchema>;
 
 /**
  * Distinguishable failure reasons for this IPC surface. `secret_storage_unavailable`
@@ -148,7 +148,7 @@ export function parseGetSettingsSnapshotResult(candidate: unknown): GetSettingsS
 }
 
 /**
- * Result of `settings:set-proxy-password` / `settings:clear-proxy-password`.
+ * Result of `settings:set-password` / `settings:clear-password`.
  * The success branch carries no data at all - in particular, never the
  * password that was just set - so there is nothing for a caller to echo
  * back even by accident.
@@ -260,7 +260,7 @@ export type UpdateServerTargetingRequest = Readonly<
  * `settings:add-proxy` - creates one entry in the proxies library ("Add item"
  * in the Settings "Proxies" multifield). Presentation/identity only, matching
  * `addServerRequestSchema`'s split: the entry starts with no password, which
- * is set separately via `settings:set-proxy-password` with target
+ * is set separately via `settings:set-password` with target
  * `{ kind: "proxy", proxyId }`.
  *
  * `username` is optional; when supplied the entry is created with
@@ -333,7 +333,7 @@ export type ReorderProxiesRequest = Readonly<z.infer<typeof reorderProxiesReques
  * `settings:remove-proxy` and `settings:reorder-proxies`. All
  * mutations have nothing more specific to report back than success/failure -
  * the renderer already re-fetches the whole snapshot afterward (see
- * `settingsPanel.ts`'s `reload`) - so, like `settings:set-proxy-password`,
+ * `settingsPanel.ts`'s `reload`) - so, like `settings:set-password`,
  * they reuse {@link settingsIpcVoidResultSchema} rather than each declaring
  * an identical-shaped result type of their own. `settings:add-server`'s
  * {@link addServerResultSchema} above already covers that channel's result.

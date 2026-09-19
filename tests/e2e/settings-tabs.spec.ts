@@ -111,9 +111,11 @@ test('Settings sections are real tab panels, switching their content', async () 
     await settings.locator('sp-tab', { hasText: 'Proxies' }).click();
     await expect(settings.locator('section[aria-label="Proxies"]')).toBeVisible();
     await settings.locator('section[aria-label="Proxies"] .multifield__add').click();
-    await expect(settings.locator('section[aria-label="Proxies"] .proxy-password')).toHaveCount(1);
+    await expect(settings.locator('section[aria-label="Proxies"] .password-control')).toHaveCount(
+      1,
+    );
     await expect(
-      settings.locator('section[aria-label="Proxies"] .proxy-password sp-action-button'),
+      settings.locator('section[aria-label="Proxies"] .password-control sp-action-button'),
     ).toHaveCount(2);
 
     await settings.locator('sp-tab', { hasText: 'Hosts' }).click();

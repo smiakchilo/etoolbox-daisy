@@ -16,8 +16,8 @@ export const AGENT_LOGOUT_CHANNEL = 'agent:logout' as const;
 // src/shared/settings-ipc.ts. Read-only snapshot plus write-only secret
 // storage; server/proxy/origin mutation channels belong to step 05.
 export const SETTINGS_GET_SNAPSHOT_CHANNEL = 'settings:get-snapshot' as const;
-export const SETTINGS_SET_PROXY_PASSWORD_CHANNEL = 'settings:set-proxy-password' as const;
-export const SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL = 'settings:clear-proxy-password' as const;
+export const SETTINGS_SET_PASSWORD_CHANNEL = 'settings:set-password' as const;
+export const SETTINGS_CLEAR_PASSWORD_CHANNEL = 'settings:clear-password' as const;
 
 // Settings mutation (step 05) - see src/main/ipc/settingsMutation.ts and
 // src/main/settingsStore.ts. Presentation/targeting edits for an existing

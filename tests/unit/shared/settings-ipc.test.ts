@@ -3,17 +3,17 @@ import { APP_SETTINGS_SCHEMA_VERSION, newProxyId, newServerId } from '../../../s
 import {
   addProxyRequestSchema,
   addServerRequestSchema,
-  clearProxyPasswordRequestSchema,
+  clearPasswordRequestSchema,
   getSettingsSnapshotResultSchema,
   parseAddProxyResult,
   parseGetSettingsSnapshotResult,
   parseSettingsIpcVoidResult,
-  proxyPasswordTargetSchema,
+  passwordTargetSchema,
   removeProxyRequestSchema,
   removeServerRequestSchema,
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
-  setProxyPasswordRequestSchema,
+  setPasswordRequestSchema,
   settingsIpcVoidResultSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
@@ -23,36 +23,36 @@ import {
 const serverId = newServerId(() => 'server-a');
 const proxyId = newProxyId(() => 'proxy-a');
 
-describe('proxyPasswordTargetSchema', () => {
+describe('passwordTargetSchema', () => {
   it('accepts a server target', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'server', serverId })).not.toThrow();
+    expect(() => passwordTargetSchema.parse({ kind: 'server', serverId })).not.toThrow();
   });
 
   it('accepts a proxy-library target', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'proxy', proxyId })).not.toThrow();
+    expect(() => passwordTargetSchema.parse({ kind: 'proxy', proxyId })).not.toThrow();
   });
 
   it('rejects an unknown kind', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'somethingElse' })).toThrow();
+    expect(() => passwordTargetSchema.parse({ kind: 'somethingElse' })).toThrow();
   });
 
   it('rejects a server target missing serverId', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'server' })).toThrow();
+    expect(() => passwordTargetSchema.parse({ kind: 'server' })).toThrow();
   });
 
   it('rejects a proxy target missing proxyId', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'proxy' })).toThrow();
+    expect(() => passwordTargetSchema.parse({ kind: 'proxy' })).toThrow();
   });
 
   it('rejects a proxy target carrying an extra key', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'proxy', proxyId, serverId })).toThrow();
+    expect(() => passwordTargetSchema.parse({ kind: 'proxy', proxyId, serverId })).toThrow();
   });
 });
 
-describe('setProxyPasswordRequestSchema', () => {
+describe('setPasswordRequestSchema', () => {
   it('accepts a well-formed request', () => {
     expect(() =>
-      setProxyPasswordRequestSchema.parse({
+      setPasswordRequestSchema.parse({
         target: { kind: 'server', serverId },
         password: 'hunter2',
       }),
@@ -60,7 +60,7 @@ describe('setProxyPasswordRequestSchema', () => {
   });
 
   it('rejects an empty password', () => {
-    const result = setProxyPasswordRequestSchema.safeParse({
+    const result = setPasswordRequestSchema.safeParse({
       target: { kind: 'server', serverId },
       password: '',
     });
@@ -68,7 +68,7 @@ describe('setProxyPasswordRequestSchema', () => {
   });
 
   it('rejects a password over the length limit', () => {
-    const result = setProxyPasswordRequestSchema.safeParse({
+    const result = setPasswordRequestSchema.safeParse({
       target: { kind: 'proxy', proxyId },
       password: 'x'.repeat(1001),
     });
@@ -76,12 +76,12 @@ describe('setProxyPasswordRequestSchema', () => {
   });
 
   it('rejects a payload missing target', () => {
-    const result = setProxyPasswordRequestSchema.safeParse({ password: 'hunter2' });
+    const result = setPasswordRequestSchema.safeParse({ password: 'hunter2' });
     expect(result.success).toBe(false);
   });
 
   it('rejects a payload with an unknown top-level key', () => {
-    const result = setProxyPasswordRequestSchema.safeParse({
+    const result = setPasswordRequestSchema.safeParse({
       target: { kind: 'proxy', proxyId },
       password: 'hunter2',
       extra: 'nope',
@@ -90,22 +90,22 @@ describe('setProxyPasswordRequestSchema', () => {
   });
 
   it('rejects a completely malformed payload', () => {
-    expect(setProxyPasswordRequestSchema.safeParse('not an object').success).toBe(false);
-    expect(setProxyPasswordRequestSchema.safeParse(null).success).toBe(false);
-    expect(setProxyPasswordRequestSchema.safeParse(undefined).success).toBe(false);
-    expect(setProxyPasswordRequestSchema.safeParse(42).success).toBe(false);
+    expect(setPasswordRequestSchema.safeParse('not an object').success).toBe(false);
+    expect(setPasswordRequestSchema.safeParse(null).success).toBe(false);
+    expect(setPasswordRequestSchema.safeParse(undefined).success).toBe(false);
+    expect(setPasswordRequestSchema.safeParse(42).success).toBe(false);
   });
 });
 
-describe('clearProxyPasswordRequestSchema', () => {
+describe('clearPasswordRequestSchema', () => {
   it('accepts a well-formed request', () => {
     expect(() =>
-      clearProxyPasswordRequestSchema.parse({ target: { kind: 'proxy', proxyId } }),
+      clearPasswordRequestSchema.parse({ target: { kind: 'proxy', proxyId } }),
     ).not.toThrow();
   });
 
   it('rejects a payload missing target', () => {
-    expect(clearProxyPasswordRequestSchema.safeParse({}).success).toBe(false);
+    expect(clearPasswordRequestSchema.safeParse({}).success).toBe(false);
   });
 });
 

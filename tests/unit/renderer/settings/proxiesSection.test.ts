@@ -16,8 +16,8 @@ const addProxy = vi.fn();
 const updateProxy = vi.fn();
 const removeProxy = vi.fn();
 const reorderProxies = vi.fn();
-const setProxyPassword = vi.fn();
-const clearProxyPassword = vi.fn();
+const setPassword = vi.fn();
+const clearPassword = vi.fn();
 
 function snapshot(
   id: string,
@@ -48,7 +48,7 @@ function buildSection() {
   return createProxiesSection({ status, reportSave, onSettingsChanged });
 }
 
-function field(root: ParentNode, ariaLabel: 'Address' | 'Label' | 'User name' | 'Proxy password') {
+function field(root: ParentNode, ariaLabel: 'Address' | 'Label' | 'User name' | 'Password') {
   return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
 }
 
@@ -68,8 +68,8 @@ beforeEach(() => {
   updateProxy.mockReset();
   removeProxy.mockReset();
   reorderProxies.mockReset();
-  setProxyPassword.mockReset();
-  clearProxyPassword.mockReset();
+  setPassword.mockReset();
+  clearPassword.mockReset();
 
   addProxy.mockResolvedValue({
     ok: true,
@@ -78,8 +78,8 @@ beforeEach(() => {
   updateProxy.mockResolvedValue({ ok: true });
   removeProxy.mockResolvedValue({ ok: true });
   reorderProxies.mockResolvedValue({ ok: true });
-  setProxyPassword.mockResolvedValue({ ok: true });
-  clearProxyPassword.mockResolvedValue({ ok: true });
+  setPassword.mockResolvedValue({ ok: true });
+  clearPassword.mockResolvedValue({ ok: true });
 
   lastPrompt = undefined;
   showPrompt.mockReset();
@@ -104,8 +104,8 @@ beforeEach(() => {
       updateProxy,
       removeProxy,
       reorderProxies,
-      setProxyPassword,
-      clearProxyPassword,
+      setPassword,
+      clearPassword,
     },
   });
 });
@@ -131,7 +131,7 @@ describe('createProxiesSection', () => {
     expect(field(section.element, 'User name')?.value).toBe('');
     expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(8);
 
-    const passwordRow = section.element.querySelector('.proxy-password');
+    const passwordRow = section.element.querySelector('.password-control');
     expect(passwordRow).not.toBeNull();
     const buttons = [...(passwordRow?.querySelectorAll('sp-action-button') ?? [])];
     expect(buttons.map((button) => button.textContent)).toEqual(['Set', 'Clear']);
@@ -227,20 +227,20 @@ describe('createProxiesSection', () => {
     expect(reportSave).not.toHaveBeenCalled();
   });
 
-  it('sets a password through setProxyPassword targeting the proxy id', async () => {
+  it('sets a password through setPassword targeting the proxy id', async () => {
     const section = buildSection();
     section.update([
       snapshot('a', 'https://a.example', 'A', { username: 'alice', hasPassword: false }),
     ]);
 
-    const password = field(section.element, 'Proxy password');
+    const password = field(section.element, 'Password');
     if (!password) throw new Error('missing password field');
     password.value = 'secret';
-    const setButton = section.element.querySelector('.proxy-password sp-action-button');
+    const setButton = section.element.querySelector('.password-control sp-action-button');
     setButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await settle(0);
 
-    expect(setProxyPassword).toHaveBeenCalledExactlyOnceWith(
+    expect(setPassword).toHaveBeenCalledExactlyOnceWith(
       { kind: 'proxy', proxyId: newProxyId(() => 'a') },
       'secret',
     );
@@ -248,17 +248,17 @@ describe('createProxiesSection', () => {
     expect(onSettingsChanged).toHaveBeenCalledTimes(1);
   });
 
-  it('clears a password through clearProxyPassword targeting the proxy id', async () => {
+  it('clears a password through clearPassword targeting the proxy id', async () => {
     const section = buildSection();
     section.update([
       snapshot('a', 'https://a.example', 'A', { username: 'alice', hasPassword: true }),
     ]);
 
-    const clearButton = section.element.querySelectorAll('.proxy-password sp-action-button')[1];
+    const clearButton = section.element.querySelectorAll('.password-control sp-action-button')[1];
     clearButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await settle(0);
 
-    expect(clearProxyPassword).toHaveBeenCalledExactlyOnceWith({
+    expect(clearPassword).toHaveBeenCalledExactlyOnceWith({
       kind: 'proxy',
       proxyId: newProxyId(() => 'a'),
     });

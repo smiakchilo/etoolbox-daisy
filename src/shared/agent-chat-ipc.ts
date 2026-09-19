@@ -1,10 +1,6 @@
 import { z } from 'zod';
 import { authStatusSchema } from './agent-auth';
-import {
-  agentEventSchema,
-  sessionStreamStateSchema,
-  type AgentEvent,
-} from './contracts';
+import { agentEventSchema, sessionStreamStateSchema, type AgentEvent } from './contracts';
 import { chatIdSchema, sdkSessionIdSchema, turnIdSchema } from './contracts';
 import { requiredActionSchema, toolErrorCodeSchema } from './contracts';
 

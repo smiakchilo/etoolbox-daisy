@@ -131,7 +131,7 @@ if (!gotSingleInstanceLock) {
     registerAgentAuthHandlers();
 
     // Step 04: diagnostics-only logger, and the OS-backed secret store for
-    // app-managed proxy passwords. `safeStorage` (Electron's real DPAPI
+    // app-managed passwords. `safeStorage` (Electron's real DPAPI
     // wrapper on Windows) is injected as the store's `SecretCipher` here -
     // the only place this app is allowed to construct one - so
     // `secretStore.ts` itself stays Electron-free and unit-testable. The
@@ -145,7 +145,7 @@ if (!gotSingleInstanceLock) {
     // fallback. `secretStore` itself already throws instead of falling
     // back to plaintext on every `set`/`get`; this just makes an
     // unavailable secure storage visible in the logs from the moment the
-    // app starts, even before any proxy password is touched.
+    // app starts, even before any password is touched.
     if (!safeStorage.isEncryptionAvailable()) {
       logger.error('SECRET_STORAGE_UNAVAILABLE');
     }

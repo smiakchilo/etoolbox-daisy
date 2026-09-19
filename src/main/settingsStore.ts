@@ -862,7 +862,7 @@ export interface NewProxyInput {
 /**
  * Creates a new proxy-library entry at the end of the list, optionally with
  * credentials (and so a fresh `secretRef`). The password itself is stored
- * separately through `settings:set-proxy-password`; a credentials object with
+ * separately through `settings:set-password`; a credentials object with
  * no secret stored under its ref is a valid intermediate state (`hasPassword`
  * simply reads `false`).
  */
@@ -910,7 +910,7 @@ export interface UpdateProxyOutcome {
    * now unreachable from `settings`. This module has no I/O of its own, so
    * it cannot delete the orphaned password itself - `ipc/settings.ts` uses
    * this to also clear it from `secretStore`, the same hygiene
-   * `clearProxyPassword` already performs for an explicit clear.
+   * `clearPassword` already performs for an explicit clear.
    */
   readonly orphanedSecretRef?: string;
 }
@@ -920,7 +920,7 @@ export interface UpdateProxyOutcome {
  * This is a full replace, not a partial patch - matching
  * `updateProxyRequestSchema`'s shape. Omitting `username` therefore removes
  * any existing credentials entirely, not merely "leaves them unchanged"; the
- * password itself is set separately, through `settings:set-proxy-password`
+ * password itself is set separately, through `settings:set-password`
  * targeting `{ kind: "proxy", proxyId }`.
  *
  * A pre-existing `secretRef` is preserved when a username is supplied (so a

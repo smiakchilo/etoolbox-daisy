@@ -2,7 +2,7 @@ import { el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProxyId, type ProxySnapshot } from '../../../shared';
 import { createAutoSave } from './autoSave';
-import { createProxyPasswordControl } from './passwordEntry';
+import { createPasswordControl } from './passwordEntry';
 import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
 import { resolveHostLabelInput, validateOriginInput } from './viewModel';
 
@@ -109,7 +109,7 @@ function buildProxyItem(
 
   let proxyId: ProxyId | undefined = proxy?.id;
 
-  const passwordControl = createProxyPasswordControl(
+  const passwordControl = createPasswordControl(
     {
       target: () => (proxyId === undefined ? undefined : { kind: 'proxy', proxyId }),
       onChanged: () => ctx.onSettingsChanged(),

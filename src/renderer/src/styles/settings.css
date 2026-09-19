@@ -377,13 +377,13 @@
 
 /* The password field and its two quiet Set/Clear action buttons on one line;
    the field takes the remaining width, the buttons sit beside it. */
-.proxy-password {
+.password-control {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
-.proxy-password > sp-textfield {
+.password-control > sp-textfield {
   flex: 1 1 auto;
   min-width: 0;
 }

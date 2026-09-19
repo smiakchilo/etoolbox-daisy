@@ -1,5 +1,5 @@
-import {el} from '../lib/dom';
-import {createMultifield} from '../lib/multifield';
+import { el } from '../lib/dom';
+import { createMultifield } from '../lib/multifield';
 import {
   type ProxyId,
   type ProxySnapshot,
@@ -8,11 +8,11 @@ import {
   type ServerSnapshot,
   type ServerSwatch,
 } from '../../../shared';
-import {colorKey, createColorPicker} from './colorPicker';
-import {createProxyPicker} from './proxyPicker';
-import {createAutoSave} from './autoSave';
-import type {SaveOutcome, StatusBannerAction, StatusBannerSink} from './statusBanner';
-import {resolveHostLabelInput, validateHostColorInput, validateOriginInput} from './viewModel';
+import { colorKey, createColorPicker } from './colorPicker';
+import { createProxyPicker } from './proxyPicker';
+import { createAutoSave } from './autoSave';
+import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
+import { resolveHostLabelInput, validateHostColorInput, validateOriginInput } from './viewModel';
 
 type TextField = HTMLElement & { value: string };
 
