@@ -3,7 +3,7 @@ import { loadSettingsSnapshot } from '../lib/settingsClient';
 import type { AppSettingsSnapshot } from '../../../shared';
 import { createAuthenticationSection } from '../settings/authenticationSection';
 import { createModelsSection } from '../settings/modelsSection';
-import { createProxySection } from '../settings/proxySection';
+import { createProxiesSection } from '../settings/proxiesSection';
 import { createHostsSection } from '../settings/hostsSection';
 import {
   createSaveReporter,
@@ -17,7 +17,7 @@ import { createPanel, type Panel } from './panel';
  * The Settings surface as a whole-size panel (`panel.ts`), superseding the
  * separate Settings child window (`requirements-decisions.md` section 8, as
  * deviated - see `docs/handoff-steps-09-12.md`). It reuses the same section
- * components the window used to mount (hosts, proxy, authentication,
+ * components the window used to mount (hosts, proxies, authentication,
  * models) and the same re-fetch-on-change rhythm:
  * every section that mutates settings calls back into `reload`, which
  * re-reads the snapshot, re-renders the host/proxy sections,
@@ -88,8 +88,8 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     reportSave: reportWith,
     onSettingsChanged: () => void reload(),
   });
-  const proxySection = createProxySection({
-    onCredentialsChanged: () => void reload(),
+  const proxiesSection = createProxiesSection({
+    onSettingsChanged: () => void reload(),
     status: banner,
     reportSave: reportWith,
   });
@@ -106,8 +106,10 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     // than being clobbered by a re-read; everything else follows the fresh
     // snapshot. The shell-facing callback always fires (the address bar and
     // server options should follow the committed state immediately).
-    if (!hostsSection.hasPendingEdits()) hostsSection.update(result.snapshot.servers);
-    if (!proxySection.hasPendingEdits()) proxySection.update(result.snapshot.copilotProxy);
+    // The hosts section is always told about the latest proxies: its Proxy
+    // combobox must reflect library changes even when a host edit is pending.
+    hostsSection.update(result.snapshot.hosts, result.snapshot.proxies);
+    if (!proxiesSection.hasPendingEdits()) proxiesSection.update(result.snapshot.proxies);
     // These two do their own IPC reads rather than rendering a projection of
     // the snapshot: the authentication section needs the live sign-in status,
     // and the models section needs the SDK catalogue and the live turn lock.
@@ -126,7 +128,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   /** Close-and-persist: surfaces what was about to be lost, then hands over to the panel. */
   async function flushPendingEdits(): Promise<void> {
     await hostsSection.flushNow();
-    await proxySection.flushNow();
+    await proxiesSection.flushNow();
     await modelsSection.flushNow();
   }
 
@@ -140,7 +142,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     readonly element: HTMLElement;
   }> = [
     { value: 'hosts', label: 'Hosts', element: hostsSection.element },
-    { value: 'proxy', label: 'Copilot proxy', element: proxySection.element },
+    { value: 'proxies', label: 'Proxies', element: proxiesSection.element },
     { value: 'authentication', label: 'Authentication', element: authenticationSection.element },
     { value: 'models', label: 'Models', element: modelsSection.element },
   ];
@@ -207,7 +209,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     reload,
     dispose(): void {
       hostsSection.dispose();
-      proxySection.dispose();
+      proxiesSection.dispose();
       modelsSection.dispose();
       banner.dispose();
       panel.dispose();

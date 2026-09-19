@@ -77,7 +77,7 @@ test('Settings sections are real tab panels, switching their content', async () 
     // Every section is one tab, labelled with its former heading. (The
     // certificate-exceptions tab was removed when approval moved into the
     // browser pane's banner - see handoff-steps-09-12.md's deviation note.)
-    const labels = ['Hosts', 'Copilot proxy', 'Authentication', 'Models'];
+    const labels = ['Hosts', 'Proxies', 'Authentication', 'Models'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
@@ -90,7 +90,7 @@ test('Settings sections are real tab panels, switching their content', async () 
     const selectedPanel = settings.locator('.settings-panel__tab-panel[selected]');
     await expect(selectedPanel).toHaveCount(1);
     await expect(selectedPanel.first()).toHaveAttribute('value', 'hosts');
-    for (const panelValue of ['proxy', 'authentication', 'models']) {
+    for (const panelValue of ['proxies', 'authentication', 'models']) {
       await expect(
         settings.locator(`.settings-panel__tab-panel[value="${panelValue}"]`),
       ).toBeHidden();
@@ -106,8 +106,18 @@ test('Settings sections are real tab panels, switching their content', async () 
     await expect(settings.locator('sp-button', { hasText: 'Sign in' })).toBeVisible();
     await expect(settings.locator('section[aria-label="Models"]')).toBeHidden();
 
+    // The Proxies tab is a multifield too: its "Add item" and the per-item
+    // quiet Set/Clear password actions are present.
+    await settings.locator('sp-tab', { hasText: 'Proxies' }).click();
+    await expect(settings.locator('section[aria-label="Proxies"]')).toBeVisible();
+    await settings.locator('section[aria-label="Proxies"] .multifield__add').click();
+    await expect(settings.locator('section[aria-label="Proxies"] .proxy-password')).toHaveCount(1);
+    await expect(
+      settings.locator('section[aria-label="Proxies"] .proxy-password sp-action-button'),
+    ).toHaveCount(2);
+
     await settings.locator('sp-tab', { hasText: 'Hosts' }).click();
-    await expect(settings.locator('.multifield__add')).toBeVisible();
+    await expect(settings.locator('section[aria-label="Hosts"] .multifield__add')).toBeVisible();
   } finally {
     await app.close();
   }

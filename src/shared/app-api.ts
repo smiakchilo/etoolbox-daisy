@@ -1,16 +1,20 @@
 import type { AppInfo } from './app-info';
 import type { AuthStatus, LoginOutcome, LogoutResult } from './agent-auth';
 import type {
+  AddProxyRequest,
+  AddProxyResult,
   AddServerRequest,
   AddServerResult,
   GetModelSelectionResult,
   GetSettingsSnapshotResult,
   ProxyPasswordTarget,
+  RemoveProxyRequest,
   RemoveServerRequest,
+  ReorderProxiesRequest,
   ReorderServersRequest,
-  SetCopilotProxyRequest,
   SetModelPreferencesRequest,
   SettingsIpcVoidResult,
+  UpdateProxyRequest,
   UpdateServerPresentationRequest,
   UpdateServerPresentationResult,
   UpdateServerTargetingRequest,
@@ -114,7 +118,14 @@ export interface DaisySettingsApi {
   ): Promise<UpdateServerTargetingResult>;
   /** Persists the host list's order (the Settings Hosts multifield's up/down actions). */
   reorderServers(request: ReorderServersRequest): Promise<SettingsIpcVoidResult>;
-  setCopilotProxy(request: SetCopilotProxyRequest): Promise<SettingsIpcVoidResult>;
+  /** Creates one entry in the proxies library (the Settings "Proxies" multifield's "Add item"). */
+  addProxy(request: AddProxyRequest): Promise<AddProxyResult>;
+  /** Replaces one proxy entry's label/address/username. */
+  updateProxy(request: UpdateProxyRequest): Promise<SettingsIpcVoidResult>;
+  /** Deletes one proxy entry. */
+  removeProxy(request: RemoveProxyRequest): Promise<SettingsIpcVoidResult>;
+  /** Persists the proxy list's order (the Settings "Proxies" multifield's up/down actions). */
+  reorderProxies(request: ReorderProxiesRequest): Promise<SettingsIpcVoidResult>;
   /**
    * The model catalogue, the stored selection, and whether a turn currently
    * locks changes - all in one call (step 09). See

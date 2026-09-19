@@ -80,8 +80,8 @@ test('a configured server that is down is reported to the user, not swallowed', 
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: serverId,
         label: 'Unreachable fixture',
@@ -192,8 +192,8 @@ test('dismissing the error banner then Reload re-shows it for the same still-dow
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: serverId,
         label: 'Unreachable fixture',

@@ -1,7 +1,12 @@
 import { z } from 'zod';
-import { serverIdSchema } from './ids';
+import { proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
-import { proxyCredentialsSchema, serverConfigSchema, type ServerConfig } from './serverConfig';
+import {
+  proxyCredentialsSchema,
+  serverConfigSchema,
+  serverLabelSchema,
+  type ServerConfig,
+} from './serverConfig';
 import { err, ok, type Result } from '../result';
 
 /**
@@ -21,7 +26,7 @@ import { err, ok, type Result } from '../result';
  * migrating between versions is a step-04 concern (explicit migrations), not
  * something this module attempts implicitly.
  */
-export const APP_SETTINGS_SCHEMA_VERSION = 1 as const;
+export const APP_SETTINGS_SCHEMA_VERSION = 2 as const;
 
 const MODEL_ID_MAX_LENGTH = 200;
 
@@ -43,28 +48,37 @@ const REASONING_EFFORT_MAX_LENGTH = 50;
 export const reasoningEffortSchema = z.string().min(1).max(REASONING_EFFORT_MAX_LENGTH);
 
 /**
- * The global Copilot/GitHub proxy. Distinct from a per-server `AemProxyConfig`
- * (requirements-decisions.md section 4 is explicit that the two must not be
- * merged or implicitly inherited from one another) even though both accept
- * the same credential-reference shape. It has no `tlsException` field: unlike
- * an AEM server, Copilot/GitHub TLS only ever accepts correctly trusted
- * certificates, so there is nothing here for an exception to apply to.
+ * One configured proxy entry in the proxies library. Distinct from a
+ * per-server `AemProxyConfig` (requirements-decisions.md section 4 is explicit
+ * that the two must not be merged or implicitly inherited from one another)
+ * even though both accept the same credential-reference shape. It has no
+ * `tlsException` field: unlike an AEM server, proxy TLS only ever accepts
+ * correctly trusted certificates, so there is nothing here for an exception
+ * to apply to.
+ *
+ * The library replaces the former single global Copilot proxy. It carries an
+ * `id` (so a password can target one entry, and so reordering can be
+ * persisted) and a `label` (defaulted from the address by the UI, exactly as
+ * a host label is). Which entry the Copilot runtime actually uses is a
+ * selection concern deliberately deferred, so no entry is "active" yet.
  */
-export const copilotProxyConfigSchema = z
+export const proxyConfigSchema = z
   .object({
+    id: proxyIdSchema,
+    label: serverLabelSchema,
     url: originSchema,
     credentials: proxyCredentialsSchema.optional(),
   })
   .strict();
 
-export type CopilotProxyConfig = Readonly<z.infer<typeof copilotProxyConfigSchema>>;
+export type ProxyConfig = Readonly<z.infer<typeof proxyConfigSchema>>;
 
 export const appSettingsSchema = z
   .object({
     schemaVersion: z.literal(APP_SETTINGS_SCHEMA_VERSION),
-    servers: z.array(serverConfigSchema),
-    activeServerId: serverIdSchema.nullable(),
-    copilotProxy: copilotProxyConfigSchema.optional(),
+    hosts: z.array(serverConfigSchema),
+    activeHostId: serverIdSchema.nullable(),
+    proxies: z.array(proxyConfigSchema),
     defaultModel: modelIdSchema.nullable(),
     defaultReasoningEffort: reasoningEffortSchema.nullable(),
   })
@@ -72,12 +86,12 @@ export const appSettingsSchema = z
   .superRefine((settings, ctx) => {
     const seenIds = new Set<string>();
     const seenOrigins = new Set<string>();
-    settings.servers.forEach((server, index) => {
+    settings.hosts.forEach((server, index) => {
       if (seenIds.has(server.id)) {
         ctx.addIssue({
           code: 'custom',
           message: `duplicate server id: ${server.id}`,
-          path: ['servers', index, 'id'],
+          path: ['hosts', index, 'id'],
         });
       } else {
         seenIds.add(server.id);
@@ -86,31 +100,58 @@ export const appSettingsSchema = z
         ctx.addIssue({
           code: 'custom',
           message: `duplicate server origin: ${server.origin}`,
-          path: ['servers', index, 'origin'],
+          path: ['hosts', index, 'origin'],
         });
       } else {
         seenOrigins.add(server.origin);
       }
     });
-    if (settings.activeServerId !== null && !seenIds.has(settings.activeServerId)) {
+    if (settings.activeHostId !== null && !seenIds.has(settings.activeHostId)) {
       ctx.addIssue({
         code: 'custom',
-        message: 'activeServerId does not refer to a configured server',
-        path: ['activeServerId'],
+        message: 'activeHostId does not refer to a configured host',
+        path: ['activeHostId'],
       });
     }
+    const seenProxyIds = new Set<string>();
+    settings.proxies.forEach((proxy, index) => {
+      if (seenProxyIds.has(proxy.id)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `duplicate proxy id: ${proxy.id}`,
+          path: ['proxies', index, 'id'],
+        });
+      } else {
+        seenProxyIds.add(proxy.id);
+      }
+    });
+    // A host may only name a proxy that exists: a dangling reference would
+    // silently stop proxying (or, worse, resolve to the wrong entry later).
+    // Removing a proxy is expected to clear it from every host that named it
+    // (see `removeProxy` in `settingsStore.ts`).
+    settings.hosts.forEach((host, index) => {
+      if (host.proxyId !== undefined && !seenProxyIds.has(host.proxyId)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `proxyId "${host.proxyId}" does not refer to a configured proxy`,
+          path: ['hosts', index, 'proxyId'],
+        });
+      }
+    });
   });
 
-export type AppSettings = Readonly<Omit<z.infer<typeof appSettingsSchema>, 'servers'>> & {
-  readonly servers: readonly ServerConfig[];
+export type AppSettings = Readonly<Omit<z.infer<typeof appSettingsSchema>, 'hosts' | 'proxies'>> & {
+  readonly hosts: readonly ServerConfig[];
+  readonly proxies: readonly ProxyConfig[];
 };
 
-/** A valid, empty settings document: no servers, no active server, direct mode. */
+/** A valid, empty settings document: no hosts, no active host, no proxies, direct mode. */
 export function defaultAppSettings(): AppSettings {
   return appSettingsSchema.parse({
     schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-    servers: [],
-    activeServerId: null,
+    hosts: [],
+    activeHostId: null,
+    proxies: [],
     defaultModel: null,
     defaultReasoningEffort: null,
   });

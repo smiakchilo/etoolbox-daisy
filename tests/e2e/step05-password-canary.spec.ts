@@ -113,20 +113,23 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
     await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
 
-    // Settings is tabbed; the Copilot proxy fields live behind their own tab.
-    await shell.locator('sp-tab', { hasText: 'Copilot proxy' }).click();
+    // Settings is tabbed; the proxy library lives behind the "Proxies" tab as
+    // a multifield. Create one entry, then set its password.
+    await shell.locator('sp-tab', { hasText: 'Proxies' }).click();
+    const proxies = shell.locator('section[aria-label="Proxies"]');
+    await proxies.locator('.multifield__add').click();
 
-    // A proxy address must exist before a password has anywhere to attach.
-    const addressField = shell.locator('[aria-label="Copilot proxy address"] input');
-    await addressField.waitFor({ state: 'visible', timeout: 60_000 });
-    await addressField.fill('https://proxy.example:8080');
-    const usernameField = shell.locator('[aria-label="Copilot proxy username"] input');
-    await usernameField.fill('canary-user');
-    // The address/username pair auto-saves (no Save button); the settings
+    // A proxy address and username must exist before a password has anywhere
+    // to attach; the entry's fields auto-save (no Save button). The settings
     // document on disk is the sync point that makes the password below attach
     // to a proxy the main process already knows about. The callback must not
     // throw while the file does not exist yet - expect.poll fails immediately
     // on a thrown error, it only retries on a matcher mismatch.
+    const addressField = proxies.locator('[aria-label="Address"] input');
+    await addressField.waitFor({ state: 'visible', timeout: 60_000 });
+    await addressField.fill('https://proxy.example:8080');
+    const usernameField = proxies.locator('[aria-label="User name"] input');
+    await usernameField.fill('canary-user');
     await expect
       .poll(
         () => {
@@ -140,27 +143,25 @@ test('a password typed into Settings is never written anywhere in plaintext', as
       )
       .toContain('https://proxy.example:8080');
 
-    const passwordField = shell.locator('[aria-label="Proxy password"] input');
+    const passwordField = proxies.locator('[aria-label="Proxy password"] input');
     await passwordField.waitFor({ state: 'visible', timeout: 60_000 });
     await passwordField.fill(CANARY);
-    await shell.locator('sp-button', { hasText: 'Set password' }).first().click();
+    await proxies.locator('.proxy-password sp-action-button', { hasText: 'Set' }).click();
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    // It now appears in the panel's one banner (`settings-banner`).
+    // It appears in the panel's one banner (`settings-banner`).
     await expect(shell.locator('.settings-banner')).toHaveText('Password saved', {
       timeout: 60_000,
     });
 
-    // Anti-vacuity: the password must genuinely have been STORED, otherwise
-    // "not found on disk" would be true for the uninteresting reason that
-    // nothing happened. The summary is rendered from a main-process snapshot,
-    // so this asserts the round trip - and it must be the *positive* phrasing,
-    // since "no password stored" would also match a loose substring check.
-    await expect(shell.locator('.proxy-section__summary')).toContainText('password stored', {
-      timeout: 60_000,
-    });
-    await expect(shell.locator('.proxy-section__summary')).not.toContainText('no password stored');
+    // Anti-vacuity: the entry must genuinely carry credentials on disk,
+    // otherwise "not found anywhere" would be true for the uninteresting
+    // reason that nothing happened. `secretRef` is the persisted pointer whose
+    // target the secret store encrypts.
+    const onDisk = readFileSync(settingsFile, 'utf8');
+    expect(onDisk).toContain('canary-user');
+    expect(onDisk).toContain('secretRef');
 
     // And the renderer must not be holding it either: the field is cleared on
     // save, so the canary must not survive anywhere in the shell document.

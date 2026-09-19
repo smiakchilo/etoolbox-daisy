@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { newServerId } from '../../../../src/shared/contracts/ids';
+import { newProxyId, newServerId } from '../../../../src/shared';
 import {
   SERVER_SWATCHES,
   aemProxyConfigSchema,
@@ -11,7 +11,7 @@ import {
   sha256FingerprintSchema,
   tlsExceptionSchema,
   updatePresentation,
-} from '../../../../src/shared/contracts/serverConfig';
+} from '../../../../src/shared';
 
 const serverId = newServerId(() => 'server-1');
 
@@ -268,6 +268,14 @@ describe('serverConfigSchema', () => {
       expect(bumped.proxy).toEqual({ url: 'https://proxy.example:8080' });
       expect(bumped.revision).toBe(config.revision + 1);
     });
+
+    it('bumps the revision when a proxy-library reference is set', () => {
+      const config = serverConfigSchema.parse(validConfig());
+      const proxyId = newProxyId(() => 'proxy-1');
+      const bumped = bumpRevision(config, { proxyId });
+      expect(bumped.proxyId).toBe(proxyId);
+      expect(bumped.revision).toBe(config.revision + 1);
+    });
   });
 
   describe('removing an optional targeting field', () => {
@@ -301,6 +309,23 @@ describe('serverConfigSchema', () => {
       });
       const bumped = bumpRevision(config, { origin: 'https://author2.example' });
       expect(bumped.proxy).toEqual({ url: 'https://proxy.example:8080' });
+    });
+
+    it('removes a proxy-library reference when bumpRevision is called with proxyId: null', () => {
+      const config = serverConfigSchema.parse({
+        ...validConfig(),
+        proxyId: newProxyId(() => 'proxy-1'),
+      });
+      const bumped = bumpRevision(config, { proxyId: null });
+      expect(bumped.proxyId).toBeUndefined();
+      expect(bumped.revision).toBe(config.revision + 1);
+    });
+
+    it('keeps the proxy-library reference across an origin change', () => {
+      const proxyId = newProxyId(() => 'proxy-1');
+      const config = serverConfigSchema.parse({ ...validConfig(), proxyId });
+      const bumped = bumpRevision(config, { origin: 'https://author2.example' });
+      expect(bumped.proxyId).toBe(proxyId);
     });
   });
 

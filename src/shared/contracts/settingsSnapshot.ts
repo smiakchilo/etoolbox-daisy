@@ -4,9 +4,9 @@ import {
   modelIdSchema,
   reasoningEffortSchema,
   type AppSettings,
-  type CopilotProxyConfig,
+  type ProxyConfig,
 } from './appSettings';
-import { serverIdSchema } from './ids';
+import { proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 import {
   serverColorSchema,
@@ -51,19 +51,32 @@ export const proxyCredentialsSnapshotSchema = z
 
 export type ProxyCredentialsSnapshot = Readonly<z.infer<typeof proxyCredentialsSnapshotSchema>>;
 
-/** Shared shape for both the per-server AEM proxy and the global Copilot proxy snapshots. */
-const proxySnapshotSchema = z
+/** Shared shape for the per-server AEM proxy snapshot. */
+const aemProxySnapshotShape = z
   .object({
     url: originSchema,
     credentials: proxyCredentialsSnapshotSchema.optional(),
   })
   .strict();
 
-export const aemProxySnapshotSchema = proxySnapshotSchema;
+export const aemProxySnapshotSchema = aemProxySnapshotShape;
 export type AemProxySnapshot = Readonly<z.infer<typeof aemProxySnapshotSchema>>;
 
-export const copilotProxySnapshotSchema = proxySnapshotSchema;
-export type CopilotProxySnapshot = Readonly<z.infer<typeof copilotProxySnapshotSchema>>;
+/**
+ * The renderer-safe projection of one proxy-library entry. Unlike the AEM
+ * proxy snapshot it also carries the entry's `id` (so the UI can target its
+ * password and persist its order) and its `label`.
+ */
+export const proxySnapshotSchema = z
+  .object({
+    id: proxyIdSchema,
+    label: serverLabelSchema,
+    url: originSchema,
+    credentials: proxyCredentialsSnapshotSchema.optional(),
+  })
+  .strict();
+
+export type ProxySnapshot = Readonly<z.infer<typeof proxySnapshotSchema>>;
 
 export const serverSnapshotSchema = z
   .object({
@@ -72,6 +85,8 @@ export const serverSnapshotSchema = z
     origin: originSchema,
     color: serverColorSchema,
     proxy: aemProxySnapshotSchema.optional(),
+    /** Which proxy-library entry this host uses, by id; absent means "none". */
+    proxyId: proxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
     revision: serverRevisionSchema,
   })
@@ -82,18 +97,18 @@ export type ServerSnapshot = Readonly<z.infer<typeof serverSnapshotSchema>>;
 export const appSettingsSnapshotSchema = z
   .object({
     schemaVersion: z.literal(APP_SETTINGS_SCHEMA_VERSION),
-    servers: z.array(serverSnapshotSchema),
-    activeServerId: serverIdSchema.nullable(),
-    copilotProxy: copilotProxySnapshotSchema.optional(),
+    hosts: z.array(serverSnapshotSchema),
+    activeHostId: serverIdSchema.nullable(),
+    proxies: z.array(proxySnapshotSchema),
     defaultModel: modelIdSchema.nullable(),
     defaultReasoningEffort: reasoningEffortSchema.nullable(),
   })
   .strict();
 
 export type AppSettingsSnapshot = Readonly<
-  Omit<z.infer<typeof appSettingsSnapshotSchema>, 'servers'>
+  Omit<z.infer<typeof appSettingsSnapshotSchema>, 'hosts'>
 > & {
-  readonly servers: readonly ServerSnapshot[];
+  readonly hosts: readonly ServerSnapshot[];
 };
 
 export function parseAppSettingsSnapshot(candidate: unknown): AppSettingsSnapshot {
@@ -112,19 +127,36 @@ export function parseAppSettingsSnapshot(candidate: unknown): AppSettingsSnapsho
  */
 export type HasStoredSecret = (secretRef: string) => boolean;
 
-function toProxySnapshot(
-  proxy: AemProxyConfig | CopilotProxyConfig | undefined,
+function credentialsSnapshot(
+  credentials: ProxyCredentials | undefined,
+  hasStoredSecret: HasStoredSecret,
+): ProxyCredentialsSnapshot | undefined {
+  if (!credentials) return undefined;
+  return {
+    username: credentials.username,
+    hasPassword: hasStoredSecret(credentials.secretRef),
+  };
+}
+
+function toAemProxySnapshot(
+  proxy: AemProxyConfig | undefined,
   hasStoredSecret: HasStoredSecret,
 ): AemProxySnapshot | undefined {
   if (!proxy) return undefined;
   const snapshot: Record<string, unknown> = { url: proxy.url };
-  if (proxy.credentials) {
-    const credentials: ProxyCredentials = proxy.credentials;
-    snapshot.credentials = {
-      username: credentials.username,
-      hasPassword: hasStoredSecret(credentials.secretRef),
-    };
-  }
+  const credentials = credentialsSnapshot(proxy.credentials, hasStoredSecret);
+  if (credentials) snapshot.credentials = credentials;
+  return aemProxySnapshotSchema.parse(snapshot);
+}
+
+function toProxySnapshot(proxy: ProxyConfig, hasStoredSecret: HasStoredSecret): ProxySnapshot {
+  const snapshot: Record<string, unknown> = {
+    id: proxy.id,
+    label: proxy.label,
+    url: proxy.url,
+  };
+  const credentials = credentialsSnapshot(proxy.credentials, hasStoredSecret);
+  if (credentials) snapshot.credentials = credentials;
   return proxySnapshotSchema.parse(snapshot);
 }
 
@@ -138,7 +170,7 @@ export function toAppSettingsSnapshot(
   settings: AppSettings,
   hasStoredSecret: HasStoredSecret,
 ): AppSettingsSnapshot {
-  const servers = settings.servers.map((server) => {
+  const hosts = settings.hosts.map((server) => {
     const snapshot: Record<string, unknown> = {
       id: server.id,
       label: server.label,
@@ -146,21 +178,23 @@ export function toAppSettingsSnapshot(
       color: server.color,
       revision: server.revision,
     };
-    const proxySnapshot = toProxySnapshot(server.proxy, hasStoredSecret);
+    const proxySnapshot = toAemProxySnapshot(server.proxy, hasStoredSecret);
     if (proxySnapshot) snapshot.proxy = proxySnapshot;
+    if (server.proxyId !== undefined) snapshot.proxyId = server.proxyId;
     if (server.tlsException) snapshot.tlsException = server.tlsException;
     return serverSnapshotSchema.parse(snapshot);
   });
 
+  const proxies = settings.proxies.map((proxy) => toProxySnapshot(proxy, hasStoredSecret));
+
   const document: Record<string, unknown> = {
     schemaVersion: settings.schemaVersion,
-    servers,
-    activeServerId: settings.activeServerId,
+    hosts,
+    activeHostId: settings.activeHostId,
+    proxies,
     defaultModel: settings.defaultModel,
     defaultReasoningEffort: settings.defaultReasoningEffort,
   };
-  const copilotProxySnapshot = toProxySnapshot(settings.copilotProxy, hasStoredSecret);
-  if (copilotProxySnapshot) document.copilotProxy = copilotProxySnapshot;
 
   return appSettingsSnapshotSchema.parse(document);
 }

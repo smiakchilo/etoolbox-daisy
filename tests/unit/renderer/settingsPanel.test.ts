@@ -1,6 +1,10 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { parseAppSettingsSnapshot, type BrowserNavigationState } from '../../../src/shared';
+import {
+  APP_SETTINGS_SCHEMA_VERSION,
+  parseAppSettingsSnapshot,
+  type BrowserNavigationState,
+} from '../../../src/shared';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
 import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPanel';
 
@@ -19,9 +23,10 @@ import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPan
  */
 
 const snapshotStub = parseAppSettingsSnapshot({
-  schemaVersion: 1,
-  servers: [],
-  activeServerId: null,
+  schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+  hosts: [],
+  activeHostId: null,
+  proxies: [],
   defaultModel: null,
   defaultReasoningEffort: null,
 });

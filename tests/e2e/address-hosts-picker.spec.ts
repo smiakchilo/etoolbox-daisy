@@ -106,8 +106,8 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: randomUUID(),
         label: 'Server A',

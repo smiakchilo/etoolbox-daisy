@@ -96,8 +96,8 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
     env.USERPROFILE as string,
     appSettingsSchema.parse({
       ...base,
-      servers: [
-        ...base.servers,
+      hosts: [
+        ...base.hosts,
         {
           id: randomUUID(),
           label: 'Echo',

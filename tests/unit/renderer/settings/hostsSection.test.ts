@@ -6,7 +6,15 @@ import type {
   StatusBannerAction,
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
-import { newServerId, serverSnapshotSchema, type ServerSnapshot } from '../../../../src/shared';
+import {
+  newProxyId,
+  newServerId,
+  proxySnapshotSchema,
+  serverSnapshotSchema,
+  type ProxySnapshot,
+  type ServerSnapshot,
+} from '../../../../src/shared';
+import { NO_PROXY_VALUE } from '../../../../src/renderer/src/settings/proxyPicker';
 
 const previousDocument = Reflect.get(globalThis, 'document') as unknown;
 const previousWindow = Reflect.get(globalThis, 'window') as unknown;
@@ -18,14 +26,39 @@ const updateServerPresentation = vi.fn();
 const updateServerTargeting = vi.fn();
 const reorderServers = vi.fn();
 
-function snapshot(id: string, origin: string, label: string, swatch = 'blue'): ServerSnapshot {
+function snapshot(
+  id: string,
+  origin: string,
+  label: string,
+  options: { swatch?: string; proxyId?: string } = {},
+): ServerSnapshot {
   return serverSnapshotSchema.parse({
     id: newServerId(() => id),
     label,
     origin,
-    color: { kind: 'swatch', swatch },
+    color: { kind: 'swatch', swatch: options.swatch ?? 'blue' },
+    ...(options.proxyId !== undefined ? { proxyId: newProxyId(() => options.proxyId!) } : {}),
     revision: 0,
   });
+}
+
+function proxySnapshot(id: string, label: string, url: string): ProxySnapshot {
+  return proxySnapshotSchema.parse({ id: newProxyId(() => id), label, url });
+}
+
+function proxyMenuLabels(picker: HTMLElement): string[] {
+  return [...picker.querySelectorAll('sp-menu-item')].map((item) => item.textContent ?? '');
+}
+
+function proxyMenuValues(picker: HTMLElement): string[] {
+  return [...picker.querySelectorAll('sp-menu-item')].map(
+    (item) => item.getAttribute('value') ?? '',
+  );
+}
+
+function chooseProxy(picker: HTMLElement & { value: string }, value: string): void {
+  picker.value = value;
+  picker.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 }
 
 interface PromptCapture {
@@ -43,7 +76,7 @@ function buildSection() {
   return createHostsSection({ status, reportSave, onSettingsChanged });
 }
 
-function field(root: ParentNode, ariaLabel: 'Address' | 'Label' | 'Color tag') {
+function field(root: ParentNode, ariaLabel: 'Address' | 'Label' | 'Color tag' | 'Proxy') {
   return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
 }
 
@@ -120,7 +153,8 @@ describe('createHostsSection', () => {
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(2);
     expect(field(section.element, 'Address')?.value).toBe('https://a.example');
     expect(field(section.element, 'Label')?.value).toBe('A');
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(6);
+    // Address, Label, Color tag, Proxy per item.
+    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(8);
     expect(section.element.querySelectorAll('.multifield__action--remove')).toHaveLength(2);
   });
 
@@ -302,5 +336,123 @@ describe('createHostsSection', () => {
     // resolved (saved or removed).
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(1);
     expect(field(section.element, 'Address')?.value).toBe('https://draft.example');
+  });
+
+  describe('Proxy combobox', () => {
+    const corp = proxySnapshot('p1', 'Corporate', 'https://proxy.example:8080');
+    const home = proxySnapshot('p2', 'Home', 'https://home.example:3128');
+
+    it('offers "(No proxy)" plus every library label, and stores ids', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A')], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      if (!picker) throw new Error('missing proxy picker');
+      // Labels are shown...
+      expect(proxyMenuLabels(picker)).toEqual(['(No proxy)', 'Corporate', 'Home']);
+      // ...but the item values (what is stored) are the library ids.
+      expect(proxyMenuValues(picker)).toEqual([
+        NO_PROXY_VALUE,
+        String(newProxyId(() => 'p1')),
+        String(newProxyId(() => 'p2')),
+      ]);
+      // Host 'a' has no proxy, so the sentinel is selected.
+      expect(picker.value).toBe(NO_PROXY_VALUE);
+    });
+
+    it('preselects the stored library id', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      expect(picker?.value).toBe(String(newProxyId(() => 'p1')));
+    });
+
+    it('persists the chosen id via updateServerTargeting', async () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A')], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      if (!picker) throw new Error('missing proxy picker');
+      chooseProxy(picker, String(newProxyId(() => 'p1')));
+      await Promise.resolve();
+
+      expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'a'),
+        changes: { proxyId: newProxyId(() => 'p1') },
+      });
+    });
+
+    it('clears the selection with null when "(No proxy)" is chosen', async () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      if (!picker) throw new Error('missing proxy picker');
+      chooseProxy(picker, NO_PROXY_VALUE);
+      await Promise.resolve();
+
+      expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'a'),
+        changes: { proxyId: null },
+      });
+    });
+
+    it('reflects library changes made in parallel (added entries)', () => {
+      const section = buildSection();
+      const host = snapshot('a', 'https://a.example', 'A');
+      section.update([host], [corp]);
+
+      section.update([host], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      expect(proxyMenuLabels(picker!)).toEqual(['(No proxy)', 'Corporate', 'Home']);
+    });
+
+    it('reflects a renamed entry without changing the stored id', () => {
+      const section = buildSection();
+      const host = snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' });
+      section.update([host], [corp]);
+
+      const renamed = proxySnapshot('p1', 'Corporate HQ', 'https://proxy.example:8080');
+      section.update([host], [renamed]);
+
+      const picker = field(section.element, 'Proxy');
+      expect(picker?.value).toBe(String(newProxyId(() => 'p1')));
+      expect(proxyMenuLabels(picker!)).toEqual(['(No proxy)', 'Corporate HQ']);
+    });
+
+    it('falls back to "(No proxy)" when the selected entry no longer exists', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], [corp]);
+
+      section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], []);
+
+      const picker = field(section.element, 'Proxy');
+      expect(picker?.value).toBe(NO_PROXY_VALUE);
+    });
+
+    it("applies a draft's chosen proxy once addServer creates the host", async () => {
+      const section = buildSection();
+      section.update([], [corp]);
+
+      section.element
+        .querySelector('.multifield__add')
+        ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      const picker = field(section.element, 'Proxy');
+      if (!picker) throw new Error('missing proxy picker');
+      chooseProxy(picker, String(newProxyId(() => 'p1')));
+
+      const address = field(section.element, 'Address');
+      if (!address) throw new Error('missing address field');
+      type(address, 'https://draft.example');
+      await settle();
+
+      expect(addServer).toHaveBeenCalledTimes(1);
+      expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'created'),
+        changes: { proxyId: newProxyId(() => 'p1') },
+      });
+    });
   });
 });

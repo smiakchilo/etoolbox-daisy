@@ -103,8 +103,8 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: randomUUID(),
         label: 'Echo fixture',
@@ -213,9 +213,9 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
           () => {
             if (!existsSync(settingsPath)) return false;
             const parsed = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-              servers?: Array<{ origin: string }>;
+              hosts?: Array<{ origin: string }>;
             };
-            return (parsed.servers ?? []).some(
+            return (parsed.hosts ?? []).some(
               (server) => server.origin === 'https://unconfigured.example',
             );
           },
@@ -227,12 +227,12 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
         ? (
             (
               JSON.parse(readFileSync(settingsPath, 'utf8')) as {
-                servers?: Array<{ origin: string }>;
+                hosts?: Array<{ origin: string }>;
               }
-            ).servers ?? []
+            ).hosts ?? []
           )
             .map((server) => server.origin)
-            .join(', ') || '(servers: [])'
+            .join(', ') || '(hosts: [])'
         : '(settings.json missing)';
       const state = await message.getAttribute('open');
       const bannerText = (await message.textContent()) ?? '';
@@ -281,8 +281,8 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: randomUUID(),
         label: 'Echo fixture',

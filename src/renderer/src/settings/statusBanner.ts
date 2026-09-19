@@ -57,7 +57,12 @@ type BannerSlot = 'status' | 'error' | 'prompt';
 
 const SLOT_RANK: Readonly<Record<BannerSlot, number>> = { status: 1, error: 2, prompt: 3 };
 
-export const STATUS_AUTO_CLEAR_MS = 3000;
+/**
+ * How long a transient status ("Settings saved", "Host added", ...) stays
+ * visible before it auto-clears. Deliberately short: it is only an
+ * acknowledgement, and errors/prompts are sticky and unaffected by this.
+ */
+export const STATUS_AUTO_CLEAR_MS = 1500;
 
 /** How long the strip's fade in/out runs; also fed to the banner's CSS as
  * `--settings-banner-fade-duration` so the JS timer and the keyframes agree. */

@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   APP_SETTINGS_SCHEMA_VERSION,
   appSettingsSchema,
-} from '../../../../src/shared/contracts/appSettings';
-import { newServerId } from '../../../../src/shared/contracts/ids';
-import { serverConfigSchema } from '../../../../src/shared/contracts/serverConfig';
-import {
   appSettingsSnapshotSchema,
+  newProxyId,
+  newServerId,
+  proxyConfigSchema,
+  serverConfigSchema,
   serverSnapshotSchema,
   toAppSettingsSnapshot,
-} from '../../../../src/shared/contracts/settingsSnapshot';
+} from '../../../../src/shared';
 
 const CANARY_SECRET_REF = 'CANARY-SECRETREF-8f14e45fceea167a';
 
@@ -33,8 +33,9 @@ function settingsWithServerProxyCredentials(secretRef: string) {
   });
   return appSettingsSchema.parse({
     schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-    servers: [serverA],
-    activeServerId: serverA.id,
+    hosts: [serverA],
+    activeHostId: serverA.id,
+    proxies: [],
     defaultModel: null,
     defaultReasoningEffort: null,
   });
@@ -55,7 +56,7 @@ describe('toAppSettingsSnapshot', () => {
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    const proxy = snapshot.servers[0]?.proxy;
+    const proxy = snapshot.hosts[0]?.proxy;
     expect(proxy).toBeDefined();
     expect(proxy?.credentials).toEqual({ username: 'alice', hasPassword: true });
     // Exactly these two keys - no secretRef, no password, nothing else.
@@ -67,7 +68,30 @@ describe('toAppSettingsSnapshot', () => {
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
 
-    expect(snapshot.servers[0]?.proxy?.credentials?.hasPassword).toBe(false);
+    expect(snapshot.hosts[0]?.proxy?.credentials?.hasPassword).toBe(false);
+  });
+
+  it('projects a host proxy-library reference (proxyId) through unchanged', () => {
+    const proxyEntry = proxyConfigSchema.parse({
+      id: newProxyId(() => 'proxy-1'),
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
+    const serverA = server('server-a', 'https://a.example', { proxyId: proxyEntry.id });
+    const settings = appSettingsSchema.parse({
+      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+      hosts: [serverA],
+      activeHostId: serverA.id,
+      proxies: [proxyEntry],
+      defaultModel: null,
+      defaultReasoningEffort: null,
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => false);
+
+    expect(snapshot.hosts[0]?.proxyId).toBe(proxyEntry.id);
+    // The projected host re-parses under the snapshot schema.
+    expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
   });
 
   it('calls the predicate with the exact secretRef recorded for that proxy', () => {
@@ -86,37 +110,46 @@ describe('toAppSettingsSnapshot', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
       schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-      servers: [serverA],
-      activeServerId: serverA.id,
+      hosts: [serverA],
+      activeHostId: serverA.id,
+      proxies: [],
       defaultModel: null,
       defaultReasoningEffort: null,
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    expect(snapshot.servers[0]?.proxy).toBeUndefined();
+    expect(snapshot.hosts[0]?.proxy).toBeUndefined();
   });
 
-  it('maps the global Copilot proxy credentials the same way as a server proxy', () => {
+  it('maps a proxy-library entry with its id and label, and hashes its password', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
       schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-      servers: [serverA],
-      activeServerId: serverA.id,
-      copilotProxy: {
-        url: 'https://copilot-proxy.example',
-        credentials: { username: 'bob', secretRef: CANARY_SECRET_REF },
-      },
+      hosts: [serverA],
+      activeHostId: serverA.id,
+      proxies: [
+        {
+          id: newProxyId(() => 'proxy-a'),
+          label: 'Corporate',
+          url: 'https://copilot-proxy.example',
+          credentials: { username: 'bob', secretRef: CANARY_SECRET_REF },
+        },
+      ],
       defaultModel: null,
       defaultReasoningEffort: null,
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    expect(snapshot.copilotProxy).toEqual({
-      url: 'https://copilot-proxy.example',
-      credentials: { username: 'bob', hasPassword: true },
-    });
+    expect(snapshot.proxies).toEqual([
+      {
+        id: 'proxy-a',
+        label: 'Corporate',
+        url: 'https://copilot-proxy.example',
+        credentials: { username: 'bob', hasPassword: true },
+      },
+    ]);
     expect(JSON.stringify(snapshot)).not.toContain(CANARY_SECRET_REF);
   });
 
@@ -130,15 +163,16 @@ describe('toAppSettingsSnapshot', () => {
     });
     const settings = appSettingsSchema.parse({
       schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-      servers: [serverA],
-      activeServerId: serverA.id,
+      hosts: [serverA],
+      activeHostId: serverA.id,
+      proxies: [],
       defaultModel: null,
       defaultReasoningEffort: null,
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
 
-    expect(snapshot.servers[0]?.tlsException).toEqual({
+    expect(snapshot.hosts[0]?.tlsException).toEqual({
       origin: 'https://a.example',
       certificateSha256Fingerprint: 'a'.repeat(64),
       errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
@@ -191,8 +225,9 @@ describe('serverSnapshotSchema / appSettingsSnapshotSchema (.strict())', () => {
     expect(() =>
       appSettingsSnapshotSchema.parse({
         schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-        servers: [],
-        activeServerId: null,
+        hosts: [],
+        activeHostId: null,
+        proxies: [],
         defaultModel: null,
         defaultReasoningEffort: null,
         secretsDir: '/should/not/be/here',

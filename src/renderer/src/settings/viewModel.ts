@@ -2,8 +2,6 @@ import {
   parseOrigin,
   serverColorSchema,
   serverLabelSchema,
-  type AemProxySnapshot,
-  type CopilotProxySnapshot,
   type OriginRejectionReason,
   type ServerColor,
 } from '../../../shared';
@@ -79,15 +77,4 @@ export function validateHostColorInput(
     return { ok: false, error: result.error.issues[0]?.message ?? 'invalid colour' };
   }
   return { ok: true, value: result.data };
-}
-
-/** Renders an optional proxy snapshot (per-server AEM proxy, or the global Copilot proxy) as one display line. */
-export function describeProxySnapshot(
-  proxy: AemProxySnapshot | CopilotProxySnapshot | undefined,
-): string {
-  if (!proxy) return 'Not configured (direct connection)';
-  const credentials = proxy.credentials;
-  if (!credentials) return `${proxy.url} (no proxy credentials)`;
-  const passwordState = credentials.hasPassword ? 'password stored' : 'no password stored';
-  return `${proxy.url} - user "${credentials.username}" (${passwordState})`;
 }

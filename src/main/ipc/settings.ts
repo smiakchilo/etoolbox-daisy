@@ -1,42 +1,53 @@
 import { randomUUID } from 'node:crypto';
 import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 import {
+  SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
   SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL,
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
+  SETTINGS_REMOVE_PROXY_CHANNEL,
   SETTINGS_REMOVE_SERVER_CHANNEL,
+  SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
-  SETTINGS_SET_COPILOT_PROXY_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
+  SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
 } from '../../shared';
 import {
+  addProxyRequestSchema,
   addServerRequestSchema,
   clearProxyPasswordRequestSchema,
+  removeProxyRequestSchema,
   removeServerRequestSchema,
+  reorderProxiesRequestSchema,
   reorderServersRequestSchema,
-  setCopilotProxyRequestSchema,
   setModelPreferencesRequestSchema,
   setProxyPasswordRequestSchema,
+  updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
+  type AddProxyRequest,
+  type AddProxyResult,
   type AddServerRequest,
   type AddServerResult,
   type ClearProxyPasswordRequest,
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
   type ProxyPasswordTarget,
+  type ProxySnapshot,
+  type RemoveProxyRequest,
   type RemoveServerRequest,
+  type ReorderProxiesRequest,
   type ReorderServersRequest,
   type ServerTargetingMutationKind,
-  type SetCopilotProxyRequest,
   type SetModelPreferencesRequest,
   type SetProxyPasswordRequest,
   type SettingsIpcError,
   type SettingsIpcVoidResult,
+  type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
   type UpdateServerPresentationResult,
   type UpdateServerTargetingRequest,
@@ -46,24 +57,28 @@ import { toAppSettingsSnapshot, type ServerSnapshot } from '../../shared';
 import { defaultAppSettings, type AppSettings } from '../../shared';
 import { isReasoningEffortValidFor, type ModelCatalogEntry } from '../../shared';
 import type {
+  ProxyConfig,
   ProxyCredentials,
   ServerConfig,
   ServerPresentationChanges,
   ServerTargetingChanges,
 } from '../../shared';
-import { newServerId } from '../../shared';
+import { newProxyId, newServerId } from '../../shared';
 import { err, ok, type Result } from '../../shared';
 import {
+  addProxy as createProxyEntry,
   addServer as createServerEntry,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
   loadSettings,
+  removeProxy as deleteProxyEntry,
   removeServer as deleteServerEntry,
+  reorderProxies as reorderProxyEntries,
   reorderServers as reorderServerEntries,
   saveSettings,
-  updateCopilotProxy as updateCopilotProxyEntry,
   updateModelPreferences as updateModelPreferencesEntry,
+  updateProxy as updateProxyEntry,
   type ServerMutationKind,
 } from '../settingsStore';
 import type { SecretStore } from '../secretStore';
@@ -96,7 +111,7 @@ import { isAllowedAppNavigation } from '../security';
  * here yet: choosing the active server is tied to actually switching the
  * live AEM view (`browser:switch-server` in `ipc/browser.ts`), which this
  * module must not reach into (see that module's own `BrowserController`).
- * `removeServer` below still clears `activeServerId` itself when the removed
+ * `removeServer` below still clears `activeHostId` itself when the removed
  * server was active, since an invalid dangling reference is a settings
  * document validity concern regardless of the browser layer - see its own
  * doc comment.
@@ -110,10 +125,10 @@ function findProxyCredentials(
   settings: AppSettings,
   target: ProxyPasswordTarget,
 ): ProxyCredentials | undefined {
-  if (target.kind === 'copilotProxy') {
-    return settings.copilotProxy?.credentials;
+  if (target.kind === 'proxy') {
+    return settings.proxies.find((proxy) => proxy.id === target.proxyId)?.credentials;
   }
-  return settings.servers.find((server) => server.id === target.serverId)?.proxy?.credentials;
+  return settings.hosts.find((server) => server.id === target.serverId)?.proxy?.credentials;
 }
 
 /**
@@ -135,7 +150,7 @@ export function resolveProxySecretRef(
       message:
         target.kind === 'server'
           ? `Server "${target.serverId}" has no proxy credentials configured yet.`
-          : 'The global Copilot proxy has no credentials configured yet.',
+          : `Proxy "${target.proxyId}" has no username configured yet.`,
     });
   }
   return ok(credentials.secretRef);
@@ -143,10 +158,12 @@ export function resolveProxySecretRef(
 
 function collectSecretRefs(settings: AppSettings): readonly string[] {
   const refs: string[] = [];
-  if (settings.copilotProxy?.credentials) {
-    refs.push(settings.copilotProxy.credentials.secretRef);
+  for (const proxy of settings.proxies) {
+    if (proxy.credentials) {
+      refs.push(proxy.credentials.secretRef);
+    }
   }
-  for (const server of settings.servers) {
+  for (const server of settings.hosts) {
     if (server.proxy?.credentials) {
       refs.push(server.proxy.credentials.secretRef);
     }
@@ -287,12 +304,12 @@ async function toServerSnapshot(
     ? await secretStore.has(server.proxy.credentials.secretRef)
     : false;
   const snapshot = toAppSettingsSnapshot(
-    { ...defaultAppSettings(), servers: [server], activeServerId: server.id },
+    { ...defaultAppSettings(), hosts: [server], activeHostId: server.id },
     () => hasStoredPassword,
   );
-  const projected = snapshot.servers[0];
+  const projected = snapshot.hosts[0];
   if (!projected) {
-    // `server` was just placed into `servers` above, so this is unreachable;
+    // `server` was just placed into `hosts` above, so this is unreachable;
     // thrown (not returned as a `Result`) because it signals a bug in this
     // function itself, not a caller-triggerable failure.
     throw new Error('toServerSnapshot: projection lost the server');
@@ -388,7 +405,7 @@ export async function reorderServers(
  * under `exactOptionalPropertyTypes`. A zod `.optional()` field is inferred
  * as `T | undefined`, kept even when the key itself is absent; the target
  * interfaces (`ServerPresentationChanges`, `ServerTargetingChanges`,
- * `SetCopilotProxyInput`) declare `field?: T` with no such explicit
+ * `NewProxyInput`) declare `field?: T` with no such explicit
  * `undefined` in the value type, so a present-but-`undefined` key and an
  * absent key are not the same type to the compiler even though they behave
  * identically at runtime. Conditional spread - contributing the key only
@@ -439,6 +456,7 @@ function targetingChangesFrom(
   return {
     ...(changes.origin !== undefined ? { origin: changes.origin } : {}),
     ...(changes.proxy !== undefined ? { proxy: changes.proxy } : {}),
+    ...(changes.proxyId !== undefined ? { proxyId: changes.proxyId } : {}),
     ...(changes.tlsException !== undefined ? { tlsException: changes.tlsException } : {}),
   };
 }
@@ -487,23 +505,80 @@ export async function updateServerTargeting(
 }
 
 /**
- * Implements `settings:set-copilot-proxy`. Best-effort deletes an orphaned
- * password (see `settingsStore.ts`'s `UpdateCopilotProxyOutcome.orphanedSecretRef`)
+ * Projects one proxy-library entry the same secret-free way
+ * {@link getSettingsSnapshot} projects every proxy, so `settings:add-proxy`
+ * returns the freshly-created entry in the shape the renderer already knows
+ * how to render - without a second round trip back through `get-snapshot`.
+ */
+async function toProxySnapshot(
+  proxy: ProxyConfig,
+  secretStore: SecretStore,
+): Promise<ProxySnapshot> {
+  const hasStoredPassword = proxy.credentials
+    ? await secretStore.has(proxy.credentials.secretRef)
+    : false;
+  const snapshot = toAppSettingsSnapshot(
+    { ...defaultAppSettings(), proxies: [proxy] },
+    () => hasStoredPassword,
+  );
+  const projected = snapshot.proxies[0];
+  if (!projected) {
+    // `proxy` was just placed into `proxies` above, so this is unreachable;
+    // thrown (not returned as a `Result`) because it signals a bug in this
+    // function itself, not a caller-triggerable failure.
+    throw new Error('toProxySnapshot: projection lost the proxy');
+  }
+  return projected;
+}
+
+/** Implements `settings:add-proxy`. */
+export async function addProxy(
+  settingsDir: string,
+  secretStore: SecretStore,
+  request: AddProxyRequest,
+): Promise<AddProxyResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const newId = newProxyId(() => randomUUID());
+  const created = createProxyEntry(loaded.value, newId, {
+    label: request.label,
+    url: request.url,
+    ...(request.username !== undefined ? { username: request.username } : {}),
+  });
+  if (!created.ok) {
+    return { ok: false, error: { code: created.error.kind, message: created.error.message } };
+  }
+
+  const saved = await persist(settingsDir, created.value.settings);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+
+  return { ok: true, proxy: await toProxySnapshot(created.value.proxy, secretStore) };
+}
+
+/**
+ * Implements `settings:update-proxy`. Best-effort deletes an orphaned
+ * password (see `settingsStore.ts`'s `UpdateProxyOutcome.orphanedSecretRef`)
  * the same way `clearProxyPassword` already does for an explicit clear - a
  * failure to delete the now-unreachable secret does not fail the save that
  * already succeeded.
  */
-export async function setCopilotProxy(
+export async function updateProxy(
   settingsDir: string,
   secretStore: SecretStore,
-  request: SetCopilotProxyRequest,
+  request: UpdateProxyRequest,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
   if (!loaded.ok) {
     return { ok: false, error: loaded.error };
   }
 
-  const updated = updateCopilotProxyEntry(loaded.value, {
+  const updated = updateProxyEntry(loaded.value, request.proxyId, {
+    label: request.label,
     url: request.url,
     ...(request.username !== undefined ? { username: request.username } : {}),
   });
@@ -518,6 +593,55 @@ export async function setCopilotProxy(
 
   if (updated.value.orphanedSecretRef !== undefined) {
     await secretStore.delete(updated.value.orphanedSecretRef).catch(() => undefined);
+  }
+  return { ok: true };
+}
+
+/** Implements `settings:remove-proxy`. Best-effort deletes the removed entry's orphaned password. */
+export async function removeProxy(
+  settingsDir: string,
+  secretStore: SecretStore,
+  request: RemoveProxyRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const removed = deleteProxyEntry(loaded.value, request.proxyId);
+  if (!removed.ok) {
+    return { ok: false, error: { code: removed.error.kind, message: removed.error.message } };
+  }
+
+  const saved = await persist(settingsDir, removed.value.settings);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+
+  if (removed.value.orphanedSecretRef !== undefined) {
+    await secretStore.delete(removed.value.orphanedSecretRef).catch(() => undefined);
+  }
+  return { ok: true };
+}
+
+/** Implements `settings:reorder-proxies`. The requested order is validated as a permutation by `settingsStore.ts`'s `reorderProxies`. */
+export async function reorderProxies(
+  settingsDir: string,
+  request: ReorderProxiesRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const reordered = reorderProxyEntries(loaded.value, request.proxyIds);
+  if (!reordered.ok) {
+    return { ok: false, error: { code: reordered.error.kind, message: reordered.error.message } };
+  }
+
+  const saved = await persist(settingsDir, reordered.value);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
   }
   return { ok: true };
 }
@@ -904,16 +1028,58 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
   );
 
   ipcMain.handle(
-    SETTINGS_SET_COPILOT_PROXY_CHANNEL,
+    SETTINGS_ADD_PROXY_CHANNEL,
+    async (event, rawRequest: unknown): Promise<AddProxyResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = addProxyRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return addProxy(deps.settingsDir, deps.secretStore, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_UPDATE_PROXY_CHANNEL,
     async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
       if (!checkSender(event)) {
         return { ok: false, error: UNTRUSTED_SENDER_ERROR };
       }
-      const parsed = setCopilotProxyRequestSchema.safeParse(rawRequest);
+      const parsed = updateProxyRequestSchema.safeParse(rawRequest);
       if (!parsed.success) {
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
-      return setCopilotProxy(deps.settingsDir, deps.secretStore, parsed.data);
+      return updateProxy(deps.settingsDir, deps.secretStore, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_REMOVE_PROXY_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = removeProxyRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return removeProxy(deps.settingsDir, deps.secretStore, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_REORDER_PROXIES_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = reorderProxiesRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return reorderProxies(deps.settingsDir, parsed.data);
     },
   );
 

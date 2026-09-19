@@ -2,22 +2,25 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { newServerId } from '../../../../src/shared';
+import { APP_SETTINGS_SCHEMA_VERSION, newProxyId, newServerId } from '../../../../src/shared';
 import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
 import { serverConfigSchema } from '../../../../src/shared';
 import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
 import { createSecretStore, type SecretCipher } from '../../../../src/main/secretStore';
 import {
+  addProxy,
   addServer,
   clearProxyPassword,
   getSettingsSnapshot,
   isTrustedLocalSettingsSender,
+  removeProxy,
   removeServer,
+  reorderProxies,
   reorderServers,
   resolveProxySecretRef,
-  setCopilotProxy,
   setProxyPassword,
+  updateProxy,
   updateServerPresentation,
   updateServerTargeting,
   type SettingsIpcSenderInfo,
@@ -80,9 +83,10 @@ function serverWithProxy(secretRef: string, options: { username?: string } = {})
     },
   });
   return {
-    schemaVersion: 1,
-    servers: [server],
-    activeServerId: server.id,
+    schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+    hosts: [server],
+    activeHostId: server.id,
+    proxies: [],
     defaultModel: null,
     defaultReasoningEffort: null,
   };
@@ -113,7 +117,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
     expect(snapshotResult.ok).toBe(true);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.servers[0]?.proxy?.credentials).toEqual({
+    expect(snapshotResult.snapshot.hosts[0]?.proxy?.credentials).toEqual({
       username: 'alice',
       hasPassword: true,
     });
@@ -135,7 +139,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
 
     expect(snapshotResult.ok).toBe(true);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.servers[0]?.proxy?.credentials).toEqual({
+    expect(snapshotResult.snapshot.hosts[0]?.proxy?.credentials).toEqual({
       username: 'alice',
       hasPassword: false,
     });
@@ -158,31 +162,36 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     await expect(secretStore.get('server:server-a:proxy')).resolves.toBeUndefined();
     const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.servers[0]?.proxy?.credentials?.hasPassword).toBe(false);
+    expect(snapshotResult.snapshot.hosts[0]?.proxy?.credentials?.hasPassword).toBe(false);
   });
 
-  it('round-trips a password for the global Copilot proxy target', async () => {
+  it('round-trips a password for a proxy-library target', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const proxyId = newProxyId(() => 'proxy-a');
     const settings: AppSettings = {
       ...defaultAppSettings(),
-      copilotProxy: {
-        url: 'https://copilot-proxy.example',
-        credentials: { username: 'bob', secretRef: 'copilot:global-proxy' },
-      },
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://copilot-proxy.example',
+          credentials: { username: 'bob', secretRef: 'proxy:proxy-a' },
+        },
+      ],
     };
     await writeSettings(settingsDir, settings);
 
     const setResult = await setProxyPassword(settingsDir, secretStore, {
-      target: { kind: 'copilotProxy' },
+      target: { kind: 'proxy', proxyId },
       password: CANARY_PASSWORD,
     });
     expect(setResult).toEqual({ ok: true });
 
-    await expect(secretStore.get('copilot:global-proxy')).resolves.toBe(CANARY_PASSWORD);
+    await expect(secretStore.get('proxy:proxy-a')).resolves.toBe(CANARY_PASSWORD);
     const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.copilotProxy?.credentials).toEqual({
+    expect(snapshotResult.snapshot.proxies[0]?.credentials).toEqual({
       username: 'bob',
       hasPassword: true,
     });
@@ -200,8 +209,8 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
     });
     await writeSettings(settingsDir, {
       ...defaultAppSettings(),
-      servers: [server],
-      activeServerId: server.id,
+      hosts: [server],
+      activeHostId: server.id,
     });
 
     const result = await setProxyPassword(settingsDir, secretStore, {
@@ -249,7 +258,7 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
       path.join(settingsDir, 'settings.json'),
       JSON.stringify({
         schemaVersion: 1,
-        servers: [
+        hosts: [
           {
             id: SERVER_ID,
             label: 'Production',
@@ -264,7 +273,8 @@ describe('getSettingsSnapshot / setProxyPassword / clearProxyPassword (round tri
             },
           },
         ],
-        activeServerId: SERVER_ID,
+        activeHostId: SERVER_ID,
+        proxies: [],
         defaultModel: null,
         defaultReasoningEffort: null,
       }),
@@ -322,7 +332,7 @@ describe('addServer', () => {
 
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.servers).toHaveLength(1);
+    expect(snapshot.snapshot.hosts).toHaveLength(1);
   });
 
   it('returns duplicate_origin, not a raw throw, for an origin already in use', async () => {
@@ -387,7 +397,7 @@ describe('removeServer', () => {
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.servers).toHaveLength(0);
+    expect(snapshot.snapshot.hosts).toHaveLength(0);
   });
 
   it('returns server_not_found, not a raw throw, for an unknown server id', async () => {
@@ -403,7 +413,7 @@ describe('removeServer', () => {
     expect(result.error.code).toBe('server_not_found');
   });
 
-  it('clears activeServerId, rather than leaving a dangling reference, when the removed server was active', async () => {
+  it('clears activeHostId, rather than leaving a dangling reference, when the removed server was active', async () => {
     const settingsDir = createScratchRoot();
     await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
 
@@ -413,7 +423,7 @@ describe('removeServer', () => {
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.activeServerId).toBeNull();
+    expect(snapshot.snapshot.activeHostId).toBeNull();
   });
 });
 
@@ -434,9 +444,10 @@ describe('reorderServers', () => {
       revision: 0,
     });
     return {
-      schemaVersion: 1,
-      servers: [a, b],
-      activeServerId: a.id,
+      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+      hosts: [a, b],
+      activeHostId: a.id,
+      proxies: [],
       defaultModel: null,
       defaultReasoningEffort: null,
     };
@@ -454,7 +465,7 @@ describe('reorderServers', () => {
     expect(result).toEqual({ ok: true });
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.servers.map((server) => server.id)).toEqual([
+    expect(snapshot.snapshot.hosts.map((server) => server.id)).toEqual([
       newServerId(() => 'server-b'),
       newServerId(() => 'server-a'),
     ]);
@@ -556,52 +567,130 @@ describe('updateServerTargeting', () => {
   });
 });
 
-describe('setCopilotProxy', () => {
-  it('sets a brand new global Copilot proxy with a username', async () => {
+describe('addProxy / updateProxy / removeProxy / reorderProxies', () => {
+  it('addProxy creates and persists an entry, returning it as a secret-free snapshot', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const result = await setCopilotProxy(settingsDir, secretStore, {
+    const result = await addProxy(settingsDir, secretStore, {
+      label: 'Corporate',
       url: 'https://copilot-proxy.example',
       username: 'alice',
     });
 
-    expect(result).toEqual({ ok: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    expect(result.proxy.label).toBe('Corporate');
+    expect(result.proxy.url).toBe('https://copilot-proxy.example');
+    expect(result.proxy.credentials).toEqual({ username: 'alice', hasPassword: false });
+    expect(JSON.stringify(result)).not.toContain('secretRef');
+
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.copilotProxy?.credentials).toEqual({
-      username: 'alice',
-      hasPassword: false,
-    });
+    expect(snapshot.snapshot.proxies).toHaveLength(1);
   });
 
-  it('deletes the orphaned password from the secret store when the username is omitted', async () => {
+  it('updateProxy deletes the orphaned password from the secret store when the username is omitted', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const proxyId = newProxyId(() => 'proxy-a');
     const settings: AppSettings = {
       ...defaultAppSettings(),
-      copilotProxy: {
-        url: 'https://copilot-proxy.example',
-        credentials: { username: 'alice', secretRef: 'copilot:global-proxy' },
-      },
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://copilot-proxy.example',
+          credentials: { username: 'alice', secretRef: 'proxy:proxy-a' },
+        },
+      ],
     };
     await writeSettings(settingsDir, settings);
     await setProxyPassword(settingsDir, secretStore, {
-      target: { kind: 'copilotProxy' },
+      target: { kind: 'proxy', proxyId },
       password: CANARY_PASSWORD,
     });
 
-    const result = await setCopilotProxy(settingsDir, secretStore, {
+    const result = await updateProxy(settingsDir, secretStore, {
+      proxyId,
+      label: 'Corporate',
       url: 'https://new-copilot-proxy.example',
     });
 
     expect(result).toEqual({ ok: true });
-    await expect(secretStore.get('copilot:global-proxy')).resolves.toBeUndefined();
+    await expect(secretStore.get('proxy:proxy-a')).resolves.toBeUndefined();
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.copilotProxy?.credentials).toBeUndefined();
-    expect(snapshot.snapshot.copilotProxy?.url).toBe('https://new-copilot-proxy.example');
+    expect(snapshot.snapshot.proxies[0]?.credentials).toBeUndefined();
+    expect(snapshot.snapshot.proxies[0]?.url).toBe('https://new-copilot-proxy.example');
+  });
+
+  it('updateProxy returns proxy_not_found for an unknown id', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const result = await updateProxy(settingsDir, secretStore, {
+      proxyId: newProxyId(() => 'ghost-proxy'),
+      label: 'Corporate',
+      url: 'https://copilot-proxy.example',
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('proxy_not_found');
+  });
+
+  it('removeProxy deletes the entry and its orphaned password', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const proxyId = newProxyId(() => 'proxy-a');
+    const settings: AppSettings = {
+      ...defaultAppSettings(),
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://copilot-proxy.example',
+          credentials: { username: 'alice', secretRef: 'proxy:proxy-a' },
+        },
+      ],
+    };
+    await writeSettings(settingsDir, settings);
+    await setProxyPassword(settingsDir, secretStore, {
+      target: { kind: 'proxy', proxyId },
+      password: CANARY_PASSWORD,
+    });
+
+    const result = await removeProxy(settingsDir, secretStore, { proxyId });
+
+    expect(result).toEqual({ ok: true });
+    await expect(secretStore.get('proxy:proxy-a')).resolves.toBeUndefined();
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected ok snapshot result');
+    expect(snapshot.snapshot.proxies).toEqual([]);
+  });
+
+  it('reorderProxies persists the new order', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const proxyIdA = newProxyId(() => 'proxy-a');
+    const proxyIdB = newProxyId(() => 'proxy-b');
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      proxies: [
+        { id: proxyIdA, label: 'A', url: 'https://a.example' },
+        { id: proxyIdB, label: 'B', url: 'https://b.example' },
+      ],
+    });
+
+    const result = await reorderProxies(settingsDir, { proxyIds: [proxyIdB, proxyIdA] });
+
+    expect(result).toEqual({ ok: true });
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected ok snapshot result');
+    expect(snapshot.snapshot.proxies.map((proxy) => proxy.id)).toEqual([proxyIdB, proxyIdA]);
   });
 
   it('returns storage_error rather than throwing when the settings file is corrupt', async () => {
@@ -610,7 +699,8 @@ describe('setCopilotProxy', () => {
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(path.join(settingsDir, 'settings.json'), '{ not valid json', 'utf8');
 
-    const result = await setCopilotProxy(settingsDir, secretStore, {
+    const result = await addProxy(settingsDir, secretStore, {
+      label: 'Corporate',
       url: 'https://copilot-proxy.example',
     });
 
@@ -629,22 +719,30 @@ describe('resolveProxySecretRef', () => {
     expect(result).toEqual({ ok: true, value: 'server:server-a:proxy' });
   });
 
-  it('resolves the secretRef already recorded for the copilotProxy target', () => {
+  it('resolves the secretRef already recorded for a proxy-library target', () => {
+    const proxyId = newProxyId(() => 'proxy-a');
     const settings: AppSettings = {
       ...defaultAppSettings(),
-      copilotProxy: {
-        url: 'https://copilot-proxy.example',
-        credentials: { username: 'bob', secretRef: 'copilot:global-proxy' },
-      },
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://copilot-proxy.example',
+          credentials: { username: 'bob', secretRef: 'proxy:proxy-a' },
+        },
+      ],
     };
 
-    const result = resolveProxySecretRef(settings, { kind: 'copilotProxy' });
+    const result = resolveProxySecretRef(settings, { kind: 'proxy', proxyId });
 
-    expect(result).toEqual({ ok: true, value: 'copilot:global-proxy' });
+    expect(result).toEqual({ ok: true, value: 'proxy:proxy-a' });
   });
 
   it('never mints a new secretRef for a target with no proxy configured', () => {
-    const result = resolveProxySecretRef(defaultAppSettings(), { kind: 'copilotProxy' });
+    const result = resolveProxySecretRef(defaultAppSettings(), {
+      kind: 'proxy',
+      proxyId: newProxyId(() => 'proxy-a'),
+    });
 
     expect(result.ok).toBe(false);
   });

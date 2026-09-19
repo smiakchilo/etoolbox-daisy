@@ -49,6 +49,12 @@ sp-theme {
   --mod-textfield-border-color-focus: var(--spectrum-gray-500);
   --mod-textfield-border-color-keyboard-focus: var(--spectrum-gray-500);
   --mod-textfield-border-color-focus-hover: var(--spectrum-gray-500);
+
+  /* Placeholder text is gray, deliberately lighter than the value text.
+     Spectrum's textfield has no placeholder-colour hook (its placeholder rule
+     reuses the value's colour token), so this is applied per field's shadow
+     root by `lib/textfieldPlaceholder.ts`, which reads this property */
+  --daisy-textfield-placeholder-color: var(--spectrum-gray-500);
 }
 
 /*

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { serverIdSchema } from './ids';
+import { proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 
 /**
@@ -189,6 +189,16 @@ export const serverConfigSchema = z
     origin: originSchema,
     color: serverColorSchema,
     proxy: aemProxyConfigSchema.optional(),
+    /**
+     * Which entry of the settings `proxies` library this host reaches AEM
+     * through, by id (the Settings "Hosts" multifield's Proxy combobox stores
+     * this; the label is only ever a display concern). Absent means "no
+     * proxy". Unlike the legacy inline {@link proxy} it carries no credentials
+     * of its own - a library entry owns those. Referential integrity (the id
+     * naming a configured proxy) is enforced by `appSettingsSchema`, not here,
+     * because only the whole document can see the library.
+     */
+    proxyId: proxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
     revision: serverRevisionSchema,
   })
@@ -237,6 +247,8 @@ export function updatePresentation(
 export interface ServerTargetingChanges {
   readonly origin?: ServerConfig['origin'];
   readonly proxy?: AemProxyConfig | null;
+  /** Which proxy-library entry to use; `null` clears it ("No proxy"), omitting leaves it unchanged. */
+  readonly proxyId?: ServerConfig['proxyId'] | null;
   readonly tlsException?: TlsException | null;
 }
 
@@ -272,6 +284,16 @@ export function bumpRevision(
   const nextProxy =
     'proxy' in changes ? (changes.proxy === null ? undefined : changes.proxy) : config.proxy;
 
+  // The proxy *reference* is independent of the origin: a host that moves
+  // address keeps using the same library entry, and only an explicit
+  // `proxyId: null` clears it.
+  const nextProxyId =
+    'proxyId' in changes
+      ? changes.proxyId === null
+        ? undefined
+        : changes.proxyId
+      : config.proxyId;
+
   const nextTlsException =
     'tlsException' in changes
       ? changes.tlsException === null
@@ -290,6 +312,9 @@ export function bumpRevision(
   };
   if (nextProxy !== undefined) {
     next.proxy = nextProxy;
+  }
+  if (nextProxyId !== undefined) {
+    next.proxyId = nextProxyId;
   }
   if (nextTlsException !== undefined) {
     next.tlsException = nextTlsException;

@@ -22,21 +22,26 @@ import {
   BROWSER_STOP_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
+  SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
   SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL,
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
+  SETTINGS_REMOVE_PROXY_CHANNEL,
   SETTINGS_REMOVE_SERVER_CHANNEL,
+  SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
-  SETTINGS_SET_COPILOT_PROXY_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PROXY_PASSWORD_CHANNEL,
+  SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  addProxyRequestSchema,
   addServerRequestSchema,
   approveCertificateExceptionRequestSchema,
   clearProxyPasswordRequestSchema,
   navigateRequestSchema,
+  parseAddProxyResult,
   parseAddServerResult,
   parseAgentChatByIdRequest,
   parseAgentChatEvent,
@@ -60,15 +65,19 @@ import {
   parseSettingsIpcVoidResult,
   parseUpdateServerPresentationResult,
   parseUpdateServerTargetingResult,
+  removeProxyRequestSchema,
   removeServerRequestSchema,
+  reorderProxiesRequestSchema,
   reorderServersRequestSchema,
-  setCopilotProxyRequestSchema,
   setModelPreferencesRequestSchema,
   setProxyPasswordRequestSchema,
   switchServerRequestSchema,
+  updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
   viewBoundsSchema,
+  type AddProxyRequest,
+  type AddProxyResult,
   type AddServerRequest,
   type AddServerResult,
   type AgentChatByIdRequest,
@@ -92,11 +101,13 @@ import {
   type LoginOutcome,
   type LogoutResult,
   type ProxyPasswordTarget,
+  type RemoveProxyRequest,
   type RemoveServerRequest,
+  type ReorderProxiesRequest,
   type ReorderServersRequest,
-  type SetCopilotProxyRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
+  type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
   type UpdateServerPresentationResult,
   type UpdateServerTargetingRequest,
@@ -190,10 +201,25 @@ const daisyApi: DaisyAppApi = {
       );
       return parseReorderServersResult(raw);
     },
-    async setCopilotProxy(request: SetCopilotProxyRequest): Promise<SettingsIpcVoidResult> {
-      const parsedRequest = setCopilotProxyRequestSchema.parse(request);
+    async addProxy(request: AddProxyRequest): Promise<AddProxyResult> {
+      const parsedRequest = addProxyRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_ADD_PROXY_CHANNEL, parsedRequest);
+      return parseAddProxyResult(raw);
+    },
+    async updateProxy(request: UpdateProxyRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = updateProxyRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_UPDATE_PROXY_CHANNEL, parsedRequest);
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async removeProxy(request: RemoveProxyRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = removeProxyRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_REMOVE_PROXY_CHANNEL, parsedRequest);
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async reorderProxies(request: ReorderProxiesRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = reorderProxiesRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(
-        SETTINGS_SET_COPILOT_PROXY_CHANNEL,
+        SETTINGS_REORDER_PROXIES_CHANNEL,
         parsedRequest,
       );
       return parseSettingsIpcVoidResult(raw);

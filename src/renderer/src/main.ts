@@ -40,6 +40,7 @@ import './styles/banner.css';
 import './styles/browser.css';
 import './styles/chat.css';
 import './styles/settings.css';
+import { installTextfieldPlaceholderColor } from './lib/textfieldPlaceholder';
 import { mountMainShell } from './shell/mainShell';
 
 async function render(): Promise<void> {
@@ -47,6 +48,10 @@ async function render(): Promise<void> {
   if (!root) {
     throw new Error('Renderer root element #app is missing');
   }
+
+  // Every text field's placeholder reads as gray, distinct from the value.
+  // Installed before the shell mounts so the first render already has it.
+  installTextfieldPlaceholderColor();
 
   const theme = document.createElement('sp-theme');
   theme.setAttribute('system', 'spectrum');

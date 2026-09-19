@@ -96,8 +96,8 @@ test('a whole-size panel cannot be dismissed until a page sits under it, then ev
     home,
     appSettingsSchema.parse({
       ...base,
-      servers: [
-        ...base.servers,
+      hosts: [
+        ...base.hosts,
         {
           id: randomUUID(),
           label: 'Echo',

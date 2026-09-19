@@ -1,15 +1,18 @@
-import { el } from '../lib/dom';
-import { createMultifield } from '../lib/multifield';
+import {el} from '../lib/dom';
+import {createMultifield} from '../lib/multifield';
 import {
+  type ProxyId,
+  type ProxySnapshot,
   type ServerColor,
   type ServerId,
   type ServerSnapshot,
   type ServerSwatch,
 } from '../../../shared';
-import { colorKey, createColorPicker } from './colorPicker';
-import { createAutoSave } from './autoSave';
-import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
-import { resolveHostLabelInput, validateHostColorInput, validateOriginInput } from './viewModel';
+import {colorKey, createColorPicker} from './colorPicker';
+import {createProxyPicker} from './proxyPicker';
+import {createAutoSave} from './autoSave';
+import type {SaveOutcome, StatusBannerAction, StatusBannerSink} from './statusBanner';
+import {resolveHostLabelInput, validateHostColorInput, validateOriginInput} from './viewModel';
 
 type TextField = HTMLElement & { value: string };
 
@@ -24,6 +27,8 @@ interface HostItemContext {
   onSettingsChanged(): void;
   /** Removes the item's row from the multifield (after confirmation, for a saved host). */
   removeRow(key: string): void;
+  /** The live proxy library, for the item's Proxy combobox. */
+  proxies(): readonly ProxySnapshot[];
 }
 
 interface HostItemHandle {
@@ -32,6 +37,8 @@ interface HostItemHandle {
   readonly element: HTMLElement;
   /** The persisted server id, or `undefined` while this is an unsaved draft. */
   serverId(): ServerId | undefined;
+  /** Re-derives the Proxy combobox options from a changed proxy library. */
+  setProxyOptions(proxies: readonly ProxySnapshot[]): void;
   /** Asks for removal (drafts remove immediately; saved hosts arm the banner confirmation). */
   requestRemoval(): void;
   /** True while this item has unsaved input or an unconfirmed action pending. */
@@ -95,6 +102,7 @@ function buildHostItem(
   const addressFieldId = `${fieldIdBase}-address`;
   const labelFieldId = `${fieldIdBase}-label`;
   const colorFieldId = `${fieldIdBase}-color`;
+  const proxyFieldId = `${fieldIdBase}-proxy`;
 
   const addressField = el('sp-textfield', {
     attrs: {
@@ -126,6 +134,13 @@ function buildHostItem(
     onInput: armItemSave,
   });
 
+  const proxyPicker = createProxyPicker({
+    fieldId: proxyFieldId,
+    initialProxyId: server?.proxyId,
+    proxies: ctx.proxies(),
+    onChange: onProxySelectionChange,
+  });
+
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
@@ -152,6 +167,13 @@ function buildHostItem(
           colorPicker.element,
         ],
       }),
+      el('div', {
+        attrs: { class: 'host-field' },
+        children: [
+          el('sp-field-label', { attrs: { for: proxyFieldId }, text: 'Proxy' }),
+          proxyPicker.element,
+        ],
+      }),
     ],
   });
 
@@ -161,6 +183,9 @@ function buildHostItem(
   let savedOrigin = server?.origin ?? '';
   let savedLabel = server?.label ?? '';
   let savedColorKey = colorKey(server?.color ?? DEFAULT_COLOR);
+  let savedProxyId: ProxyId | undefined = server?.proxyId;
+  /** A draft's chosen proxy, applied once the host exists (see `runSave`). */
+  let pendingProxyId: ProxyId | undefined;
 
   /** The exact origin the user has been warned about; the OK click persists it. */
   let pendingOrigin: string | undefined;
@@ -190,6 +215,44 @@ function buildHostItem(
     return result.ok
       ? { ok: true, color: result.value, error: undefined }
       : { ok: false, color: undefined, error: result.error };
+  }
+
+  /**
+   * The Proxy combobox changed. A saved host persists it immediately as a
+   * targeting change (which proxy reaches AEM is targeting, so it bumps the
+   * revision - but it needs no confirmation, unlike an origin change). A draft
+   * has no host to target yet, so its choice is remembered and applied once
+   * `addServer` succeeds.
+   */
+  function onProxySelectionChange(): void {
+    if (busy) return;
+    if (removeArmed) {
+      removeArmed = false;
+      ctx.status.clear();
+    }
+
+    const next = proxyPicker.read();
+    if (serverId === undefined) {
+      pendingProxyId = next;
+      return;
+    }
+    if (next === savedProxyId) return;
+
+    reportMutation(
+      window.daisy.settings
+        .updateServerTargeting({ serverId, changes: { proxyId: next ?? null } })
+        .then(
+          (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
+          (error: unknown) => ({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Could not change the proxy',
+          }),
+        ),
+      () => undefined,
+      () => {
+        savedProxyId = next;
+      },
+    );
   }
 
   // The confirming action: a single OK click persists the staged origin.
@@ -243,10 +306,34 @@ function buildHostItem(
         .then(
           (result) => {
             if (!result.ok) return { ok: false, error: result.error.message };
-            serverId = result.server.id;
+            const createdId = result.server.id;
+            serverId = createdId;
             savedOrigin = result.server.origin;
             savedLabel = result.server.label;
             savedColorKey = colorKey(result.server.color);
+            savedProxyId = result.server.proxyId;
+            // Apply a proxy chosen while this row was still a draft.
+            if (pendingProxyId !== undefined) {
+              const targetProxyId = pendingProxyId;
+              pendingProxyId = undefined;
+              const proxyOutcome: Promise<SaveOutcome> = window.daisy.settings
+                .updateServerTargeting({
+                  serverId: createdId,
+                  changes: { proxyId: targetProxyId },
+                })
+                .then(
+                  (proxyResult) =>
+                    proxyResult.ok ? { ok: true } : { ok: false, error: proxyResult.error.message },
+                  (error: unknown) => ({
+                    ok: false,
+                    error: error instanceof Error ? error.message : 'Could not change the proxy',
+                  }),
+                );
+              ctx.reportSave(proxyOutcome);
+              void proxyOutcome.then((proxyResult) => {
+                if (proxyResult.ok) savedProxyId = targetProxyId;
+              });
+            }
             return { ok: true };
           },
           (error: unknown) => ({
@@ -430,6 +517,9 @@ function buildHostItem(
     key,
     element: fields,
     serverId: () => serverId,
+    setProxyOptions(proxies): void {
+      proxyPicker.setOptions(proxies);
+    },
     requestRemoval,
     isInProgress(): boolean {
       // A draft is unsaved work by definition - it must not be clobbered by a
@@ -457,7 +547,8 @@ export interface HostsSectionOptions {
 
 export interface HostsSection {
   readonly element: HTMLElement;
-  update(servers: readonly ServerSnapshot[]): void;
+  /** `proxies` defaults to none, i.e. the Proxy combobox offers only "(No proxy)". */
+  update(servers: readonly ServerSnapshot[], proxies?: readonly ProxySnapshot[]): void;
   flushNow(): Promise<void>;
   hasPendingEdits(): boolean;
   dispose(): void;
@@ -474,13 +565,17 @@ export interface HostsSection {
  * order of the *persisted* hosts to `settings:reorder-servers` (a draft has no
  * id yet, and the first valid save creates it at the end of the list).
  *
- * AEM proxy configuration is deliberately absent here for now: the field set
- * is Address/Label/Color tag only, and the proxy UI will be reintroduced
- * separately.
+ * The item's fifth field, "Proxy", is a combobox over the settings "Proxies"
+ * library: it shows each entry's label and stores its id (absent = "No
+ * proxy"). The options come from the live library, so a change made on the
+ * Proxies tab is reflected here; a selection whose entry was removed falls
+ * back to "No proxy" (main also clears the dangling reference in the same
+ * write - see `removeProxy` in `settingsStore.ts`).
  */
 export function createHostsSection(options: HostsSectionOptions): HostsSection {
   let items = new Map<string, HostItemHandle>();
   let lastPersistedOrder: readonly ServerId[] = [];
+  let currentProxies: readonly ProxySnapshot[] = [];
   let draftSeq = 0;
   let fieldSeq = 0;
 
@@ -489,6 +584,7 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
     reportSave: (outcome) => options.reportSave(outcome),
     onSettingsChanged: () => options.onSettingsChanged(),
     removeRow,
+    proxies: () => currentProxies,
   };
 
   const multifield = createMultifield({
@@ -583,8 +679,14 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
 
   return {
     element,
-    update(servers: readonly ServerSnapshot[]): void {
+    update(servers: readonly ServerSnapshot[], proxies: readonly ProxySnapshot[] = []): void {
+      currentProxies = proxies;
       lastPersistedOrder = servers.map((server) => server.id);
+      // Refresh the Proxy combobox options on every item even when edits are
+      // pending elsewhere, so a proxy added/renamed/removed on the Proxies tab
+      // is reflected here in parallel (a rebuild below would clobber pending
+      // input, so it is skipped in that case).
+      for (const item of items.values()) item.setProxyOptions(proxies);
       if (hasPendingEdits()) return;
       replaceItems(servers);
     },

@@ -22,15 +22,24 @@ export const SETTINGS_CLEAR_PROXY_PASSWORD_CHANNEL = 'settings:clear-proxy-passw
 // Settings mutation (step 05) - see src/main/ipc/settingsMutation.ts and
 // src/main/settingsStore.ts. Presentation/targeting edits for an existing
 // server reuse `applyServerPresentationChange`/`applyServerTargetingChange`;
-// these four cover what those two do not: creating/removing a server entry,
-// choosing which one is active, and the separate global Copilot proxy.
+// these cover what those two do not: creating/removing a server entry,
+// choosing which one is active, and the separate proxies library below.
 export const SETTINGS_ADD_SERVER_CHANNEL = 'settings:add-server' as const;
 export const SETTINGS_REMOVE_SERVER_CHANNEL = 'settings:remove-server' as const;
 export const SETTINGS_SET_ACTIVE_SERVER_CHANNEL = 'settings:set-active-server' as const;
 export const SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL =
   'settings:update-server-presentation' as const;
 export const SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL = 'settings:update-server-targeting' as const;
-export const SETTINGS_SET_COPILOT_PROXY_CHANNEL = 'settings:set-copilot-proxy' as const;
+/**
+ * The proxies library (`settings.json`'s `proxies` array), edited through the
+ * Settings "Proxies" multifield. `add-proxy` creates one entry (the
+ * multifield's "Add item"), `update-proxy` replaces its label/address/username,
+ * `remove-proxy` deletes it, and `reorder-proxies` persists the list order.
+ */
+export const SETTINGS_ADD_PROXY_CHANNEL = 'settings:add-proxy' as const;
+export const SETTINGS_UPDATE_PROXY_CHANNEL = 'settings:update-proxy' as const;
+export const SETTINGS_REMOVE_PROXY_CHANNEL = 'settings:remove-proxy' as const;
+export const SETTINGS_REORDER_PROXIES_CHANNEL = 'settings:reorder-proxies' as const;
 /**
  * Persists the host list's order (the rows in the Settings "Hosts" multifield
  * can be moved up/down; the order is meaningful because it drives the browser

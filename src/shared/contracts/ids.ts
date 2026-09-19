@@ -43,6 +43,8 @@ type Branded<TBrand extends string> = string & { readonly [brand]: TBrand };
 
 /** Stable identifier of a configured AEM server entry. */
 export type ServerId = Branded<'ServerId'>;
+/** Stable identifier of a configured proxy entry. */
+export type ProxyId = Branded<'ProxyId'>;
 /** Stable identifier of a conversation, owned by this application. */
 export type ChatId = Branded<'ChatId'>;
 /** Identifier of the Copilot SDK session backing a chat. Owned by the SDK. */
@@ -61,6 +63,7 @@ function brandedSchema<TId extends string>(label: string): z.ZodType<TId> {
 }
 
 export const serverIdSchema = brandedSchema<ServerId>('serverId');
+export const proxyIdSchema = brandedSchema<ProxyId>('proxyId');
 export const chatIdSchema = brandedSchema<ChatId>('chatId');
 export const sdkSessionIdSchema = brandedSchema<SdkSessionId>('sdkSessionId');
 export const turnIdSchema = brandedSchema<TurnId>('turnId');
@@ -90,6 +93,8 @@ function mint<TId extends string>(
 
 export const newServerId = (generate: IdGenerator): ServerId =>
   mint(serverIdSchema, generate, 'serverId');
+export const newProxyId = (generate: IdGenerator): ProxyId =>
+  mint(proxyIdSchema, generate, 'proxyId');
 export const newChatId = (generate: IdGenerator): ChatId => mint(chatIdSchema, generate, 'chatId');
 export const newTurnId = (generate: IdGenerator): TurnId => mint(turnIdSchema, generate, 'turnId');
 export const newMessageId = (generate: IdGenerator): MessageId =>

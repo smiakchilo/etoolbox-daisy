@@ -58,7 +58,7 @@
    `settings-banner--closing` class for `--settings-banner-fade-duration` and
    tears the row down after. The JS timer and these keyframes share the
    duration through the same custom property. */
-/*.settings-banner[open] {
+.settings-banner[open] {
   animation: settings-banner-fade-in var(--settings-banner-fade-duration, 150ms) ease-out;
 }
 
@@ -89,7 +89,7 @@
   .settings-banner.settings-banner--closing {
     animation: none;
   }
-}*/
+}
 
 /* The panel's prompt rows' `_copy` span and `_actions` span are the shared
    `.banner-row__copy` / `.banner-row__actions` rules in banner.css. */
@@ -210,6 +210,7 @@
    address/label fields are direct children; the colour field is nested inside
    its combo and is sized by flex instead (see `.color-picker__field`). */
 .host-field > sp-textfield,
+.host-field > sp-picker,
 .host-field .color-picker-field {
   width: 100%;
 }
@@ -374,17 +375,17 @@
   align-self: center;
 }
 
-.password-entry {
+/* The password field and its two quiet Set/Clear action buttons on one line;
+   the field takes the remaining width, the buttons sit beside it. */
+.proxy-password {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
 }
 
-.proxy-section__fields {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+.proxy-password > sp-textfield {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .models-section__pickers {

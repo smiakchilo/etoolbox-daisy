@@ -74,9 +74,17 @@ test('servers added in the Settings panel persist, and removal persists too', as
     const draft = items.last();
     await expect(draft).toHaveCount(1);
 
-    await draft
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://canary-author.example');
+    // The placeholder is 50% gray, distinct from the value colour (which
+    // Spectrum's textfield otherwise shares with the placeholder).
+    const draftAddress = draft.locator('sp-textfield[aria-label="Address"] input');
+    const placeholderColor = await draftAddress.evaluate(
+      (el) => getComputedStyle(el, '::placeholder').color,
+    );
+    const valueColor = await draftAddress.evaluate((el) => getComputedStyle(el).color);
+    expect(placeholderColor).toBe('rgb(128, 128, 128)');
+    expect(valueColor).not.toBe(placeholderColor);
+
+    await draftAddress.fill('https://canary-author.example');
     await draft.locator('sp-textfield[aria-label="Label"] input').fill('Canary Author');
 
     // The draft's first valid address creates the host. The disk read is the
@@ -103,9 +111,13 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await first.app.close();
   }
 
-  // Persisted to disk, not just held in renderer memory.
+  // Persisted to disk, not just held in renderer memory. The document node
+  // is `hosts` (schema v2), never `servers`.
   const afterAdd: unknown = JSON.parse(readFileSync(settingsFile, 'utf8'));
   expect(JSON.stringify(afterAdd)).toContain('https://canary-author.example');
+  expect(JSON.stringify(afterAdd)).toContain('"hosts"');
+  expect(JSON.stringify(afterAdd)).not.toContain('"servers"');
+  expect(JSON.stringify(afterAdd)).not.toContain('"activeServerId"');
 
   // --- Launch 2: the server is still there, rename it, move it, remove it --
   const second = await openSettings();
@@ -275,9 +287,9 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
   const readOrigins = (): string[] => {
     try {
       const doc = JSON.parse(readFileSync(settingsFile, 'utf8')) as {
-        servers?: { origin?: string }[];
+        hosts?: { origin?: string }[];
       };
-      return (doc.servers ?? []).map((server) => server.origin ?? '');
+      return (doc.hosts ?? []).map((server) => server.origin ?? '');
     } catch {
       return [];
     }

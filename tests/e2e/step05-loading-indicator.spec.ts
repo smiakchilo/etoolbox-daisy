@@ -88,8 +88,8 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: serverId,
         label: 'Slow fixture',
@@ -208,8 +208,8 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: serverId,
         label: 'Slow fixture',
@@ -296,8 +296,8 @@ test('a navigation that finishes inside the 200ms debounce window shows no loadi
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
     ...base,
-    servers: [
-      ...base.servers,
+    hosts: [
+      ...base.hosts,
       {
         id: serverId,
         label: 'Fast fixture',

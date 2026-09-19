@@ -22,10 +22,10 @@ export interface MountMainShellOptions {
 
 /** Applies one loaded settings snapshot to the already-mounted browser pane. */
 function applySnapshot(browserPane: BrowserPane, snapshot: AppSettingsSnapshot): void {
-  const { servers, activeServerId } = snapshot;
+  const { hosts, activeHostId } = snapshot;
   browserPane.update({
     addressValue: computeAddressBarValue(),
-    hostOptions: buildHostOptions(servers, activeServerId),
+    hostOptions: buildHostOptions(hosts, activeHostId),
   });
 }
 
@@ -99,7 +99,7 @@ export async function mountMainShell(
     // Startup affordance: with configured hosts the picker leads with the
     // list ready to choose from (it replaces the otherwise blank page-view
     // region); with none, Settings is where the first server gets added.
-    if (result.snapshot.servers.length > 0) {
+    if (result.snapshot.hosts.length > 0) {
       browserPane.openHostsPicker();
     } else {
       browserPane.panelHost.open(settingsPanel);

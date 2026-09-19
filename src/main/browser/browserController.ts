@@ -128,7 +128,7 @@ function storageError(message: string): BrowserIpcError {
   return { code: 'storage_error', message };
 }
 
-function toActiveServer(server: AppSettings['servers'][number]): ActiveAemServer {
+function toActiveServer(server: AppSettings['hosts'][number]): ActiveAemServer {
   return { serverId: server.id, origin: server.origin, revision: server.revision };
 }
 
@@ -146,7 +146,7 @@ async function resolvePlainProxyCredentials(
   serverId: ServerId,
   secretStore: SecretStore,
 ): Promise<ProxyPlainCredentials | undefined> {
-  const server = settings.servers.find((candidate) => candidate.id === serverId);
+  const server = settings.hosts.find((candidate) => candidate.id === serverId);
   const credentials = server?.proxy?.credentials;
   if (!credentials) return undefined;
   const password = await secretStore.get(credentials.secretRef);
@@ -245,7 +245,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     } catch (error) {
       return fail(storageError(error instanceof Error ? error.message : String(error)));
     }
-    const decision = decideAddressNavigation(rawValue, settings.servers);
+    const decision = decideAddressNavigation(rawValue, settings.hosts);
     if (decision.kind === 'invalid_address') {
       return fail({ code: 'invalid_address', message: `not a valid address: ${rawValue}` });
     }
@@ -272,7 +272,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     } catch (error) {
       return fail(storageError(error instanceof Error ? error.message : String(error)));
     }
-    const server = settings.servers.find((candidate) => candidate.id === serverId);
+    const server = settings.hosts.find((candidate) => candidate.id === serverId);
     if (!server) {
       return fail({ code: 'server_not_found', message: `no server with id ${serverId}` });
     }
@@ -363,7 +363,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // made right after approving a certificate exception is stamped with
       // the revision that is actually now in effect, not a value that is one
       // change stale.
-      const updatedServer = outcome.value.settings.servers.find(
+      const updatedServer = outcome.value.settings.hosts.find(
         (candidate) => candidate.id === serverId,
       );
       if (updatedServer !== undefined) {
@@ -410,7 +410,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       logger.error('SETTINGS_FILE_CORRUPT', { outcome: 'failure' });
       return;
     }
-    for (const server of settings.servers) {
+    for (const server of settings.hosts) {
       if (server.tlsException) {
         await aemSession.approveCertificateException(server.tlsException);
       }

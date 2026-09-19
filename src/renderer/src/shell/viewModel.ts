@@ -29,15 +29,15 @@ export interface HostOption {
 
 /** Builds the hosts panel's option list from the settings snapshot. */
 export function buildHostOptions(
-  servers: readonly ServerSnapshot[],
-  activeServerId: ServerId | null,
+  hosts: readonly ServerSnapshot[],
+  activeHostId: ServerId | null,
 ): readonly HostOption[] {
-  return servers.map((server) => ({
+  return hosts.map((server) => ({
     id: server.id,
     label: server.label,
     origin: server.origin,
     colorCss: resolveServerColorCss(server.color),
-    selected: server.id === activeServerId,
+    selected: server.id === activeHostId,
   }));
 }
 

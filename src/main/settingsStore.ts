@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 // Imported as the default (the real, mutable `fs.promises` object) rather
 // than as named imports: tests spy on individual methods of this same object
 // (`vi.spyOn(fsp, "rename")`, etc.) to simulate a write failing partway
@@ -14,12 +14,14 @@ import {
   defaultAppSettings,
   parseAppSettings,
   type AppSettings,
-  type CopilotProxyConfig,
+  type ProxyConfig,
 } from '../shared';
-import type { ServerId } from '../shared';
+import type { ProxyId, ServerId } from '../shared';
+import { newProxyId, originSchema, proxyIdSchema, serverLabelSchema } from '../shared';
 import { err, ok, type Result } from '../shared';
 import {
   bumpRevision,
+  proxyConfigSchema,
   serverConfigSchema,
   updatePresentation,
   type ServerColor,
@@ -84,20 +86,38 @@ export interface SchemaMigration {
 /**
  * The real migration registry used by {@link loadSettings}.
  *
- * Empty today, and that is honest rather than a placeholder: schema version 1
- * (`APP_SETTINGS_SCHEMA_VERSION`) is the first version this application has
- * ever written. There is no version 0 to migrate away from, so there is
- * nothing to register yet - inventing a no-op "version 0 -> 1" entry would
- * misrepresent history and give a false impression that a v0 file format ever
- * existed.
+ * Version 1 -> 2 renames the host-list fields. It is deliberately tolerant of
+ * a file that was *manually* renamed already (a hand-edit that changed
+ * `servers`/`activeServerId` to `hosts`/`activeHostId` without bumping the
+ * version still loads): each field is read from its new name first, then its
+ * old one, and `proxies` is defaulted to `[]` for a v1 file written before the
+ * proxy library existed.
  *
- * When a future change bumps `APP_SETTINGS_SCHEMA_VERSION` to 2, add
- * `{ fromVersion: 1, toVersion: 2, migrate: (old) => ({ ...old, schemaVersion: 2, ... }) }`
- * here. `migrateSettingsData` below chains entries automatically (it looks up
- * the next step by the current version, not by array position), so multiple
- * hops in one load work with no further changes to this module.
+ * `migrateSettingsData` below chains entries automatically (it looks up the
+ * next step by the current version, not by array position), so multiple hops
+ * in one load work with no further changes to this module.
  */
-export const SETTINGS_MIGRATIONS: readonly SchemaMigration[] = [];
+export const SETTINGS_MIGRATIONS: readonly SchemaMigration[] = [
+  {
+    fromVersion: 1,
+    toVersion: 2,
+    migrate: (data) => {
+      const rest: Record<string, unknown> = { ...data };
+      const hosts = Array.isArray(rest['hosts'])
+        ? rest['hosts']
+        : Array.isArray(rest['servers'])
+          ? rest['servers']
+          : [];
+      const activeHostId = rest['activeHostId'] ?? rest['activeServerId'] ?? null;
+      const proxies = Array.isArray(rest['proxies']) ? rest['proxies'] : [];
+
+      delete rest['servers'];
+      delete rest['activeServerId'];
+
+      return { ...rest, schemaVersion: 2, hosts, activeHostId, proxies };
+    },
+  },
+];
 
 /**
  * Chains explicit migrations from `fromVersion` up to
@@ -192,6 +212,76 @@ export interface LoadSettingsOptions {
 }
 
 /**
+ * Deterministic `ProxyId` for a proxy entry whose own `id` could not be read.
+ * Derived from the address and position rather than minted randomly so the
+ * same repaired file yields the same id on every launch: `loadSettings` never
+ * writes, so a random id would change on each start until some other change
+ * happened to persist the document.
+ */
+function repairedProxyId(url: string, index: number): ProxyId {
+  const digest = createHash('sha256')
+    .update(`${url}#${String(index)}`)
+    .digest('hex')
+    .slice(0, 32);
+  return newProxyId(() => `repaired-${digest}`);
+}
+
+/**
+ * Fills in the identity fields (`id`, `label`) a proxy-library entry is
+ * missing, so a hand-edited file that moved the old single `copilotProxy`
+ * node into `proxies` (keeping `url`/`credentials` but not the newer
+ * `id`/`label`) still loads instead of failing the whole document.
+ *
+ * Deliberately narrow and non-destructive:
+ *
+ *  - Only `id` and `label` are repaired. `label` defaults to the entry's
+ *    address, exactly as a blank label does in the Settings UI; a missing
+ *    `id` is derived deterministically (see {@link repairedProxyId}).
+ *  - Every other key is left exactly as written, so a file smuggling an
+ *    unexpected field (e.g. a plaintext `password`) still fails the strict
+ *    schema rather than being silently stripped and accepted.
+ *  - An entry that is not an object, or whose `url` is not a valid origin, is
+ *    dropped: there is no address to label it with and nothing usable to keep.
+ *
+ * Pure and I/O-free. Returns the input untouched when there is nothing to
+ * repair, so a healthy document is byte-for-byte the same value.
+ */
+export function repairProxyEntries(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
+  const document = raw as Record<string, unknown>;
+  const proxies = document['proxies'];
+  if (!Array.isArray(proxies)) return raw;
+
+  let changed = false;
+  const repaired: unknown[] = [];
+  proxies.forEach((entry, index) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      changed = true;
+      return;
+    }
+    const record = entry as Record<string, unknown>;
+    const url = originSchema.safeParse(record['url']);
+    if (!url.success) {
+      changed = true;
+      return;
+    }
+    const next: Record<string, unknown> = { ...record };
+    if (!proxyIdSchema.safeParse(next['id']).success) {
+      next['id'] = repairedProxyId(url.data, index);
+      changed = true;
+    }
+    if (!serverLabelSchema.safeParse(next['label']).success) {
+      next['label'] = url.data;
+      changed = true;
+    }
+    repaired.push(next);
+  });
+
+  if (!changed) return raw;
+  return { ...document, proxies: repaired };
+}
+
+/**
  * Loads settings from `settingsDir`, or reports defaults for a legitimate
  * first run.
  *
@@ -201,6 +291,11 @@ export interface LoadSettingsOptions {
  * about a damaged file (show the user an error, offer to reset, keep a
  * backup copy) is left to the caller, who now has an explicit, distinguishable
  * error to act on instead of an exception or a silent empty document.
+ *
+ * The one exception to "the file is loaded exactly as written" is
+ * {@link repairProxyEntries}: missing proxy `id`/`label` fields are filled in
+ * memory (never written back here), so a legacy-shaped proxy entry cannot make
+ * the whole settings load fail.
  */
 export async function loadSettings(
   settingsDir: string,
@@ -266,6 +361,10 @@ export async function loadSettings(
     candidate = migrated.value;
     migratedFrom = fileVersion;
   }
+
+  // Fill in missing proxy identity fields (never strips anything) so a
+  // hand-edited/legacy-shaped proxy entry cannot fail the whole load.
+  candidate = repairProxyEntries(candidate);
 
   const parsedSettings = parseAppSettings(candidate);
   if (!parsedSettings.ok) {
@@ -409,6 +508,8 @@ export const SERVER_MUTATION_ERROR_KINDS = [
   'origin_change_requires_confirmation',
   /** The requested change does not produce a valid settings document. */
   'invalid_change',
+  /** No proxy-library entry with the given id exists in these settings. */
+  'proxy_not_found',
 ] as const;
 
 export type ServerMutationErrorKind = (typeof SERVER_MUTATION_ERROR_KINDS)[number];
@@ -419,7 +520,7 @@ export interface ServerMutationError {
 }
 
 function findServer(settings: AppSettings, serverId: ServerId): ServerConfig | undefined {
-  return settings.servers.find((server) => server.id === serverId);
+  return settings.hosts.find((server) => server.id === serverId);
 }
 
 /**
@@ -433,10 +534,8 @@ function withUpdatedServer(
   settings: AppSettings,
   updated: ServerConfig,
 ): Result<AppSettings, string> {
-  const nextServers = settings.servers.map((server) =>
-    server.id === updated.id ? updated : server,
-  );
-  const candidate = { ...settings, servers: nextServers };
+  const nextServers = settings.hosts.map((server) => (server.id === updated.id ? updated : server));
+  const candidate = { ...settings, hosts: nextServers };
   const parsed = appSettingsSchema.safeParse(candidate);
   if (!parsed.success) {
     return err(
@@ -588,7 +687,7 @@ export function addServer(
   newId: ServerId,
   input: NewServerInput,
 ): Result<AddServerOutcome, AddServerError> {
-  if (settings.servers.some((server) => server.origin === input.origin)) {
+  if (settings.hosts.some((server) => server.origin === input.origin)) {
     return err({
       kind: 'duplicate_origin',
       message: `a server with origin "${input.origin}" is already configured`,
@@ -610,7 +709,7 @@ export function addServer(
 
   const parsed = appSettingsSchema.safeParse({
     ...settings,
-    servers: [...settings.servers, candidate],
+    hosts: [...settings.hosts, candidate],
   });
   if (!parsed.success) {
     return err({
@@ -658,11 +757,11 @@ export function removeServer(
     return err({ kind: 'server_not_found', message: `no server with id ${serverId}` });
   }
 
-  const wasActive = settings.activeServerId === serverId;
+  const wasActive = settings.activeHostId === serverId;
   const candidate = {
     ...settings,
-    servers: settings.servers.filter((existing) => existing.id !== serverId),
-    activeServerId: wasActive ? null : settings.activeServerId,
+    hosts: settings.hosts.filter((existing) => existing.id !== serverId),
+    activeHostId: wasActive ? null : settings.activeHostId,
   };
 
   const parsed = appSettingsSchema.safeParse(candidate);
@@ -698,16 +797,16 @@ export function reorderServers(
   settings: AppSettings,
   orderedIds: readonly ServerId[],
 ): Result<AppSettings, ServerMutationError> {
-  if (orderedIds.length !== settings.servers.length) {
+  if (orderedIds.length !== settings.hosts.length) {
     return err({
       kind: 'invalid_change',
       message:
         `the requested order lists ${String(orderedIds.length)} server(s), but ` +
-        `${String(settings.servers.length)} are configured; the order must list every server exactly once`,
+        `${String(settings.hosts.length)} are configured; the order must list every server exactly once`,
     });
   }
 
-  const byId = new Map(settings.servers.map((server) => [server.id, server]));
+  const byId = new Map(settings.hosts.map((server) => [server.id, server]));
   const seen = new Set<string>();
   const reordered: ServerConfig[] = [];
   for (const id of orderedIds) {
@@ -725,7 +824,7 @@ export function reorderServers(
     reordered.push(server);
   }
 
-  const parsed = appSettingsSchema.safeParse({ ...settings, servers: reordered });
+  const parsed = appSettingsSchema.safeParse({ ...settings, hosts: reordered });
   if (!parsed.success) {
     return err({
       kind: 'invalid_change',
@@ -738,25 +837,73 @@ export function reorderServers(
 }
 
 // ---------------------------------------------------------------------------
-// Global Copilot proxy (step 05)
+// Proxy library (the `proxies` array)
 // ---------------------------------------------------------------------------
 
 /**
- * Stable secretRef for the single global Copilot proxy's credentials. Unlike
- * a server's AEM proxy - scoped by that server's own permanent id - there is
- * only ever one Copilot proxy, so one fixed key is enough; nothing needs to
- * mint or look up a per-instance ref for it.
+ * Deterministic `secretRef` for one proxy-library entry's credentials. Unlike
+ * the old single fixed key, each entry needs its own: scoping it by the
+ * entry's permanent id (mirroring how a server's AEM proxy is scoped by the
+ * server id) keeps it stable across label/address edits and reorders, and
+ * means a freshly-created entry can name its secret before any password is
+ * stored.
  */
-export const COPILOT_PROXY_SECRET_REF = 'copilotProxy';
+export function proxySecretRef(proxyId: ProxyId): string {
+  return `proxy:${proxyId}`;
+}
 
-export interface SetCopilotProxyInput {
+export interface NewProxyInput {
+  readonly label: string;
   readonly url: string;
-  /** `undefined` means "no username configured" - see {@link updateCopilotProxy} for what that does to any existing credentials. */
+  /** `undefined` means "no username configured" (no credentials object). */
   readonly username?: string;
 }
 
-export interface UpdateCopilotProxyOutcome {
+/**
+ * Creates a new proxy-library entry at the end of the list, optionally with
+ * credentials (and so a fresh `secretRef`). The password itself is stored
+ * separately through `settings:set-proxy-password`; a credentials object with
+ * no secret stored under its ref is a valid intermediate state (`hasPassword`
+ * simply reads `false`).
+ */
+export function addProxy(
+  settings: AppSettings,
+  newId: ProxyId,
+  input: NewProxyInput,
+): Result<{ readonly settings: AppSettings; readonly proxy: ProxyConfig }, ServerMutationError> {
+  let candidate: ProxyConfig;
+  try {
+    candidate = proxyConfigSchema.parse({
+      id: newId,
+      label: input.label,
+      url: input.url,
+      ...(input.username !== undefined
+        ? { credentials: { username: input.username, secretRef: proxySecretRef(newId) } }
+        : {}),
+    });
+  } catch (error) {
+    return err({ kind: 'invalid_change', message: describeThrown(error) });
+  }
+
+  const parsed = appSettingsSchema.safeParse({
+    ...settings,
+    proxies: [...settings.proxies, candidate],
+  });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+
+  return ok({ settings: parsed.data, proxy: candidate });
+}
+
+export interface UpdateProxyOutcome {
   readonly settings: AppSettings;
+  readonly proxy: ProxyConfig;
   /**
    * Set when this call just removed credentials that existed before (no
    * `username` supplied this time): the secretRef they used to point at,
@@ -769,36 +916,49 @@ export interface UpdateCopilotProxyOutcome {
 }
 
 /**
- * Replaces the global Copilot proxy's address and (optionally) username.
+ * Replaces one proxy-library entry's label, address and (optionally) username.
  * This is a full replace, not a partial patch - matching
- * `setCopilotProxyRequestSchema`'s shape, which carries the whole proxy
- * configuration on every call, not a diff. Omitting `username` therefore
- * removes any existing credentials entirely, not merely "leaves them
- * unchanged"; the password itself is set separately, through
- * `settings:set-proxy-password` targeting `{ kind: "copilotProxy" }`.
+ * `updateProxyRequestSchema`'s shape. Omitting `username` therefore removes
+ * any existing credentials entirely, not merely "leaves them unchanged"; the
+ * password itself is set separately, through `settings:set-proxy-password`
+ * targeting `{ kind: "proxy", proxyId }`.
  *
  * A pre-existing `secretRef` is preserved when a username is supplied (so a
  * simple username edit does not orphan and re-prompt for a password that is
- * otherwise unchanged); a brand new one uses {@link COPILOT_PROXY_SECRET_REF}.
+ * otherwise unchanged).
  */
-export function updateCopilotProxy(
+export function updateProxy(
   settings: AppSettings,
-  input: SetCopilotProxyInput,
-): Result<UpdateCopilotProxyOutcome, ServerMutationError> {
-  const existingCredentials = settings.copilotProxy?.credentials;
+  proxyId: ProxyId,
+  input: NewProxyInput,
+): Result<UpdateProxyOutcome, ServerMutationError> {
+  const existing = settings.proxies.find((proxy) => proxy.id === proxyId);
+  if (!existing) {
+    return err({ kind: 'proxy_not_found', message: `no proxy with id ${proxyId}` });
+  }
+  const existingCredentials = existing.credentials;
 
-  const nextCopilotProxy: CopilotProxyConfig =
-    input.username !== undefined
-      ? {
-          url: input.url,
-          credentials: {
-            username: input.username,
-            secretRef: existingCredentials?.secretRef ?? COPILOT_PROXY_SECRET_REF,
-          },
-        }
-      : { url: input.url };
+  let updated: ProxyConfig;
+  try {
+    updated = proxyConfigSchema.parse({
+      id: proxyId,
+      label: input.label,
+      url: input.url,
+      ...(input.username !== undefined
+        ? {
+            credentials: {
+              username: input.username,
+              secretRef: existingCredentials?.secretRef ?? proxySecretRef(proxyId),
+            },
+          }
+        : {}),
+    });
+  } catch (error) {
+    return err({ kind: 'invalid_change', message: describeThrown(error) });
+  }
 
-  const parsed = appSettingsSchema.safeParse({ ...settings, copilotProxy: nextCopilotProxy });
+  const nextProxies = settings.proxies.map((proxy) => (proxy.id === proxyId ? updated : proxy));
+  const parsed = appSettingsSchema.safeParse({ ...settings, proxies: nextProxies });
   if (!parsed.success) {
     return err({
       kind: 'invalid_change',
@@ -813,8 +973,106 @@ export function updateCopilotProxy(
 
   return ok({
     settings: parsed.data,
+    proxy: updated,
     ...(orphanedSecretRef !== undefined ? { orphanedSecretRef } : {}),
   });
+}
+
+export interface RemoveProxyOutcome {
+  readonly settings: AppSettings;
+  /** The removed entry's secretRef, if it had credentials, for best-effort secret cleanup. */
+  readonly orphanedSecretRef?: string;
+}
+
+/** Removes one proxy-library entry. */
+export function removeProxy(
+  settings: AppSettings,
+  proxyId: ProxyId,
+): Result<RemoveProxyOutcome, ServerMutationError> {
+  const existing = settings.proxies.find((proxy) => proxy.id === proxyId);
+  if (!existing) {
+    return err({ kind: 'proxy_not_found', message: `no proxy with id ${proxyId}` });
+  }
+
+  // Clear the reference from every host that named it, in the same write:
+  // `appSettingsSchema` rejects a host whose `proxyId` names a missing proxy,
+  // so removing the entry without this would make the document invalid. The
+  // UI then shows those hosts as "No proxy".
+  const nextHosts: unknown[] = settings.hosts.map((host) => {
+    if (host.proxyId !== proxyId) return host;
+    const cleared: Record<string, unknown> = { ...host };
+    delete cleared['proxyId'];
+    return cleared;
+  });
+
+  const parsed = appSettingsSchema.safeParse({
+    ...settings,
+    hosts: nextHosts,
+    proxies: settings.proxies.filter((proxy) => proxy.id !== proxyId),
+  });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+
+  const orphanedSecretRef = existing.credentials?.secretRef;
+  return ok({
+    settings: parsed.data,
+    ...(orphanedSecretRef !== undefined ? { orphanedSecretRef } : {}),
+  });
+}
+
+/**
+ * Reorders the proxy library to exactly the order given by `orderedIds`.
+ * Mirrors {@link reorderServers}: the whole desired order, validated as a
+ * permutation (every configured id exactly once, no unknown id, none missing)
+ * so a mismatch is rejected rather than partially applied.
+ */
+export function reorderProxies(
+  settings: AppSettings,
+  orderedIds: readonly ProxyId[],
+): Result<AppSettings, ServerMutationError> {
+  if (orderedIds.length !== settings.proxies.length) {
+    return err({
+      kind: 'invalid_change',
+      message:
+        `the requested order lists ${String(orderedIds.length)} proxy(ies), but ` +
+        `${String(settings.proxies.length)} are configured; the order must list every proxy exactly once`,
+    });
+  }
+
+  const byId = new Map(settings.proxies.map((proxy) => [proxy.id, proxy]));
+  const seen = new Set<string>();
+  const reordered: ProxyConfig[] = [];
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      return err({
+        kind: 'invalid_change',
+        message: `duplicate proxy id in the requested order: ${id}`,
+      });
+    }
+    seen.add(id);
+    const proxy = byId.get(id);
+    if (!proxy) {
+      return err({ kind: 'invalid_change', message: `no proxy with id ${id}` });
+    }
+    reordered.push(proxy);
+  }
+
+  const parsed = appSettingsSchema.safeParse({ ...settings, proxies: reordered });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
 }
 
 /**
@@ -834,7 +1092,7 @@ export interface ModelPreferencesInput {
  * Pure and I/O-free, like every other mutation helper in this module: the
  * caller loads, applies, and saves. The whole document is re-validated through
  * `appSettingsSchema` rather than only the two changed fields, matching
- * `updateCopilotProxy` above - a settings document is accepted or rejected as
+ * `updateProxy` above - a settings document is accepted or rejected as
  * a whole, never field by field.
  *
  * Note what this function deliberately does *not* do: it never checks the

@@ -227,8 +227,8 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1605 passed / 14 skipped**;
-**Playwright → 58 tests**. (The Hosts multifield follow-on moved the unit
+Current baseline: **`npm run verify` → 1658 passed / 14 skipped**;
+**Playwright → 59 tests**. (The Hosts multifield follow-on moved the unit
 baseline from 1583 and the Playwright count from 56 — see
 `docs/verification.md` "Settings \"Hosts\" tab is now a real multifield".)
 `app.spec.ts` no longer collides with a running `npm run dev`: it now

@@ -8,22 +8,26 @@ import {
   defaultAppSettings,
   type AppSettings,
 } from '../../../src/shared';
-import { newServerId } from '../../../src/shared';
+import { newProxyId, newServerId } from '../../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../../src/shared';
 import {
+  addProxy,
   addServer,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
-  COPILOT_PROXY_SECRET_REF,
   loadSettings,
   migrateSettingsData,
+  proxySecretRef,
+  removeProxy,
+  repairProxyEntries,
   removeServer,
+  reorderProxies,
   reorderServers,
   saveSettings,
   settingsFilePath,
-  updateCopilotProxy,
   updateModelPreferences,
+  updateProxy,
   type SchemaMigration,
 } from '../../../src/main/settingsStore';
 
@@ -64,11 +68,12 @@ function makeServer(
   });
 }
 
-function makeSettings(servers: ServerConfig[], activeServerId: string | null = null): AppSettings {
+function makeSettings(hosts: ServerConfig[], activeHostId: string | null = null): AppSettings {
   return appSettingsSchema.parse({
     schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-    servers,
-    activeServerId,
+    hosts,
+    activeHostId,
+    proxies: [],
     defaultModel: null,
     defaultReasoningEffort: null,
   });
@@ -97,25 +102,29 @@ describe('saveSettings / loadSettings round trip', () => {
       },
     });
     const settings = makeSettings([server], server.id);
-    const withCopilotProxy = appSettingsSchema.parse({
+    const withProxy = appSettingsSchema.parse({
       ...settings,
-      servers: settings.servers,
-      copilotProxy: {
-        url: 'https://copilot-proxy.example:3128',
-        credentials: { username: 'bob', secretRef: 'vault://copilot/bob' },
-      },
+      hosts: settings.hosts,
+      proxies: [
+        {
+          id: newProxyId(() => 'proxy-a'),
+          label: 'Corporate',
+          url: 'https://copilot-proxy.example:3128',
+          credentials: { username: 'bob', secretRef: 'vault://proxy/bob' },
+        },
+      ],
       defaultModel: 'gpt-5',
       defaultReasoningEffort: 'high',
     });
 
-    const saveResult = await saveSettings(dir, withCopilotProxy);
+    const saveResult = await saveSettings(dir, withProxy);
     expect(saveResult.ok).toBe(true);
 
     const loadResult = await loadSettings(dir);
     expect(loadResult.ok).toBe(true);
     if (loadResult.ok) {
       expect(loadResult.value.status).toBe('loaded');
-      expect(loadResult.value.settings).toEqual(withCopilotProxy);
+      expect(loadResult.value.settings).toEqual(withProxy);
     }
   });
 });
@@ -156,7 +165,7 @@ describe('loadSettings: corruption handling', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       settingsFilePath(dir),
-      JSON.stringify({ schemaVersion: APP_SETTINGS_SCHEMA_VERSION, servers: 'not an array' }),
+      JSON.stringify({ schemaVersion: APP_SETTINGS_SCHEMA_VERSION, hosts: 'not an array' }),
       'utf8',
     );
 
@@ -189,8 +198,9 @@ describe('loadSettings: corruption handling', () => {
       settingsFilePath(dir),
       JSON.stringify({
         schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-        servers: [server],
-        activeServerId: server.id,
+        hosts: [server],
+        activeHostId: server.id,
+        proxies: [],
         defaultModel: null,
         defaultReasoningEffort: null,
       }),
@@ -221,8 +231,8 @@ describe('loadSettings: corruption handling', () => {
       settingsFilePath(dir),
       JSON.stringify({
         schemaVersion: APP_SETTINGS_SCHEMA_VERSION + 1,
-        servers: [],
-        activeServerId: null,
+        hosts: [],
+        activeHostId: null,
         defaultModel: null,
         defaultReasoningEffort: null,
       }),
@@ -280,7 +290,7 @@ describe('loadSettings: migrations', () => {
     const legacyDocument = {
       schemaVersion: 0,
       entries: [],
-      activeServerId: null,
+      activeHostId: null,
       defaultModel: null,
       defaultReasoningEffort: null,
     };
@@ -294,7 +304,8 @@ describe('loadSettings: migrations', () => {
         return {
           ...rest,
           schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-          servers: entries ?? [],
+          hosts: entries ?? [],
+          proxies: [],
         };
       },
     };
@@ -313,6 +324,15 @@ describe('loadSettings: migrations', () => {
   it('chains multiple migration hops in one load', () => {
     const migrations: SchemaMigration[] = [
       { fromVersion: 0, toVersion: 1, migrate: (data) => ({ ...data, schemaVersion: 1, hop: 1 }) },
+      {
+        fromVersion: 1,
+        toVersion: APP_SETTINGS_SCHEMA_VERSION,
+        migrate: (data) => ({
+          ...data,
+          schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+          hop2: true,
+        }),
+      },
     ];
 
     const result = migrateSettingsData({ schemaVersion: 0 }, 0, migrations);
@@ -320,7 +340,69 @@ describe('loadSettings: migrations', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.hop).toBe(1);
-      expect(result.value.schemaVersion).toBe(1);
+      expect(result.value.hop2).toBe(true);
+      expect(result.value.schemaVersion).toBe(APP_SETTINGS_SCHEMA_VERSION);
+    }
+  });
+
+  it('migrates a real v1 file: servers/activeHostId become hosts/activeHostId', async () => {
+    const dir = createScratchRoot();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      settingsFilePath(dir),
+      JSON.stringify({
+        schemaVersion: 1,
+        hosts: [
+          {
+            id: 'server-a',
+            label: 'A',
+            origin: 'https://a.example',
+            color: { kind: 'swatch', swatch: 'blue' },
+            revision: 0,
+          },
+        ],
+        activeHostId: 'server-a',
+        defaultModel: null,
+        defaultReasoningEffort: null,
+      }),
+      'utf8',
+    );
+
+    const result = await loadSettings(dir);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe('migrated');
+      expect(result.value.settings.hosts).toHaveLength(1);
+      expect(result.value.settings.hosts[0]?.origin).toBe('https://a.example');
+      expect(result.value.settings.activeHostId).toBe('server-a');
+      // A v1 file predates the proxy library, so it comes back with none.
+      expect(result.value.settings.proxies).toEqual([]);
+    }
+  });
+
+  it('loads a manually-renamed v1 file (hosts key, old version number)', async () => {
+    const dir = createScratchRoot();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      settingsFilePath(dir),
+      JSON.stringify({
+        schemaVersion: 1,
+        hosts: [],
+        activeHostId: null,
+        defaultModel: null,
+        defaultReasoningEffort: null,
+      }),
+      'utf8',
+    );
+
+    const result = await loadSettings(dir);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe('migrated');
+      expect(result.value.settings.hosts).toEqual([]);
+      expect(result.value.settings.activeHostId).toBeNull();
     }
   });
 
@@ -329,7 +411,7 @@ describe('loadSettings: migrations', () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       settingsFilePath(dir),
-      JSON.stringify({ schemaVersion: 0, servers: [], activeServerId: null }),
+      JSON.stringify({ schemaVersion: 0, hosts: [], activeHostId: null }),
       'utf8',
     );
 
@@ -339,6 +421,42 @@ describe('loadSettings: migrations', () => {
     if (!result.ok) {
       expect(result.error.kind).toBe('schema_invalid');
     }
+  });
+});
+
+describe('loadSettings: repairs a legacy-shaped proxy entry instead of failing', () => {
+  it('loads a file whose proxy entry carries url/credentials but no id/label', async () => {
+    const dir = createScratchRoot();
+    mkdirSync(dir, { recursive: true });
+    // The exact shape a hand-edit of the old single `copilotProxy` node
+    // produces: the address and credentials survive, the newer identity
+    // fields do not.
+    const onDisk = JSON.stringify({
+      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+      hosts: [],
+      proxies: [
+        {
+          url: 'http://109.207.79.171:3128',
+          credentials: { username: 'proxyuser', secretRef: 'copilotProxy' },
+        },
+      ],
+      activeHostId: null,
+      defaultModel: null,
+      defaultReasoningEffort: null,
+    });
+    writeFileSync(settingsFilePath(dir), onDisk, 'utf8');
+
+    const result = await loadSettings(dir);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.status).toBe('loaded');
+    const proxy = result.value.settings.proxies[0];
+    expect(proxy?.label).toBe('http://109.207.79.171:3128');
+    expect(proxy?.id).toMatch(/^repaired-[0-9a-f]{32}$/);
+    expect(proxy?.credentials).toEqual({ username: 'proxyuser', secretRef: 'copilotProxy' });
+    // The file on disk is not rewritten by the read.
+    expect(readFileSync(settingsFilePath(dir), 'utf8')).toBe(onDisk);
   });
 });
 
@@ -444,8 +562,8 @@ describe('applyServerTargetingChange: origin changes', () => {
     const reload = await loadSettings(dir);
     expect(reload.ok).toBe(true);
     if (reload.ok) {
-      expect(reload.value.settings.servers[0]?.origin).toBe('https://a.example');
-      expect(reload.value.settings.servers[0]?.revision).toBe(0);
+      expect(reload.value.settings.hosts[0]?.origin).toBe('https://a.example');
+      expect(reload.value.settings.hosts[0]?.revision).toBe(0);
     }
   });
 
@@ -555,7 +673,7 @@ describe('addServer', () => {
       expect(result.value.server.revision).toBe(0);
       expect(result.value.server.proxy).toBeUndefined();
       expect(result.value.server.tlsException).toBeUndefined();
-      expect(result.value.settings.servers).toHaveLength(1);
+      expect(result.value.settings.hosts).toHaveLength(1);
     }
   });
 
@@ -609,9 +727,9 @@ describe('removeServer', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.settings.servers.map((s) => s.id)).toEqual([other.id]);
+      expect(result.value.settings.hosts.map((s) => s.id)).toEqual([other.id]);
       expect(result.value.wasActive).toBe(false);
-      expect(result.value.settings.activeServerId).toBe(other.id);
+      expect(result.value.settings.activeHostId).toBe(other.id);
     }
   });
 
@@ -629,7 +747,7 @@ describe('removeServer', () => {
     }
   });
 
-  it('clears activeServerId (rather than leaving a dangling reference) when the removed server was active', () => {
+  it('clears activeHostId (rather than leaving a dangling reference) when the removed server was active', () => {
     const server = makeServer('server-a', 'https://a.example');
     const settings = makeSettings([server], server.id);
 
@@ -638,10 +756,10 @@ describe('removeServer', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.wasActive).toBe(true);
-      expect(result.value.settings.activeServerId).toBeNull();
-      expect(result.value.settings.servers).toHaveLength(0);
+      expect(result.value.settings.activeHostId).toBeNull();
+      expect(result.value.settings.hosts).toHaveLength(0);
       // The resulting document must itself still validate - the whole
-      // reason activeServerId is cleared rather than left dangling.
+      // reason activeHostId is cleared rather than left dangling.
       expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
     }
   });
@@ -658,9 +776,9 @@ describe('reorderServers', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.servers.map((server) => server.id)).toEqual([c.id, a.id, b.id]);
-      expect(result.value.servers.map((server) => server.revision)).toEqual([0, 0, 0]);
-      expect(result.value.activeServerId).toBe(a.id);
+      expect(result.value.hosts.map((server) => server.id)).toEqual([c.id, a.id, b.id]);
+      expect(result.value.hosts.map((server) => server.revision)).toEqual([0, 0, 0]);
+      expect(result.value.activeHostId).toBe(a.id);
     }
   });
 
@@ -705,42 +823,64 @@ describe('reorderServers', () => {
   });
 });
 
-describe('updateCopilotProxy', () => {
-  it('sets a brand new proxy with a username, minting COPILOT_PROXY_SECRET_REF', () => {
-    const settings = defaultAppSettings();
+describe('proxy library mutations', () => {
+  const proxyId = newProxyId(() => 'proxy-a');
 
-    const result = updateCopilotProxy(settings, {
+  it('addProxy appends an entry and mints a deterministic secretRef when a username is given', () => {
+    const result = addProxy(defaultAppSettings(), proxyId, {
+      label: 'Corporate',
       url: 'https://proxy.example:8080',
       username: 'alice',
     });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.settings.copilotProxy).toEqual({
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: COPILOT_PROXY_SECRET_REF },
-      });
-      expect(result.value.orphanedSecretRef).toBeUndefined();
+      expect(result.value.settings.proxies).toEqual([
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: proxySecretRef(proxyId) },
+        },
+      ]);
+      expect(result.value.proxy.id).toBe(proxyId);
     }
   });
 
-  it('preserves the existing secretRef when only the username changes', () => {
+  it('addProxy without a username creates no credentials', () => {
+    const result = addProxy(defaultAppSettings(), proxyId, {
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.proxies[0]?.credentials).toBeUndefined();
+    }
+  });
+
+  it('updateProxy preserves the existing secretRef when only the username changes', () => {
     const settings: AppSettings = {
       ...defaultAppSettings(),
-      copilotProxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'existing-ref' },
-      },
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: 'existing-ref' },
+        },
+      ],
     };
 
-    const result = updateCopilotProxy(settings, {
+    const result = updateProxy(settings, proxyId, {
+      label: 'Corporate',
       url: 'https://proxy.example:8080',
       username: 'bob',
     });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.settings.copilotProxy?.credentials).toEqual({
+      expect(result.value.settings.proxies[0]?.credentials).toEqual({
         username: 'bob',
         secretRef: 'existing-ref',
       });
@@ -748,31 +888,201 @@ describe('updateCopilotProxy', () => {
     }
   });
 
-  it('removes credentials and reports the orphaned secretRef when username is omitted', () => {
+  it('updateProxy removes credentials and reports the orphaned secretRef when username is omitted', () => {
     const settings: AppSettings = {
       ...defaultAppSettings(),
-      copilotProxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'existing-ref' },
-      },
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: 'existing-ref' },
+        },
+      ],
     };
 
-    const result = updateCopilotProxy(settings, { url: 'https://new-proxy.example:8080' });
+    const result = updateProxy(settings, proxyId, {
+      label: 'Corporate',
+      url: 'https://new-proxy.example:8080',
+    });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.settings.copilotProxy).toEqual({ url: 'https://new-proxy.example:8080' });
+      expect(result.value.settings.proxies[0]).toEqual({
+        id: proxyId,
+        label: 'Corporate',
+        url: 'https://new-proxy.example:8080',
+      });
       expect(result.value.orphanedSecretRef).toBe('existing-ref');
     }
   });
 
-  it('does not report an orphaned secretRef when there were no prior credentials', () => {
-    const result = updateCopilotProxy(defaultAppSettings(), { url: 'https://proxy.example:8080' });
+  it('updateProxy rejects an unknown id', () => {
+    const result = updateProxy(defaultAppSettings(), proxyId, {
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('proxy_not_found');
+  });
+
+  it('removeProxy deletes the entry and reports its orphaned secretRef', () => {
+    const settings: AppSettings = {
+      ...defaultAppSettings(),
+      proxies: [
+        {
+          id: proxyId,
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: 'existing-ref' },
+        },
+      ],
+    };
+
+    const result = removeProxy(settings, proxyId);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.orphanedSecretRef).toBeUndefined();
+      expect(result.value.settings.proxies).toEqual([]);
+      expect(result.value.orphanedSecretRef).toBe('existing-ref');
     }
+  });
+
+  it('removeProxy rejects an unknown id', () => {
+    const result = removeProxy(defaultAppSettings(), proxyId);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('proxy_not_found');
+  });
+
+  it('removeProxy clears the reference from every host that named it, keeping the document valid', () => {
+    const referencing = makeServer('server-a', 'https://a.example', { proxyId });
+    const other = makeServer('server-b', 'https://b.example');
+    const settings: AppSettings = {
+      ...defaultAppSettings(),
+      hosts: [referencing, other],
+      proxies: [{ id: proxyId, label: 'Corporate', url: 'https://proxy.example:8080' }],
+    };
+    // Sanity: a host naming a configured proxy is valid before removal.
+    expect(() => appSettingsSchema.parse(settings)).not.toThrow();
+
+    const result = removeProxy(settings, proxyId);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.hosts[0]?.proxyId).toBeUndefined();
+      expect(result.value.settings.hosts[1]?.proxyId).toBeUndefined();
+      expect(result.value.settings.proxies).toEqual([]);
+      expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
+    }
+  });
+
+  it('reorderProxies accepts a full permutation', () => {
+    const proxyIdB = newProxyId(() => 'proxy-b');
+    const settings: AppSettings = {
+      ...defaultAppSettings(),
+      proxies: [
+        { id: proxyId, label: 'A', url: 'https://a.example' },
+        { id: proxyIdB, label: 'B', url: 'https://b.example' },
+      ],
+    };
+
+    const result = reorderProxies(settings, [proxyIdB, proxyId]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.proxies.map((proxy) => proxy.id)).toEqual([proxyIdB, proxyId]);
+  });
+
+  it('reorderProxies rejects an order that is not a permutation', () => {
+    const settings: AppSettings = {
+      ...defaultAppSettings(),
+      proxies: [{ id: proxyId, label: 'A', url: 'https://a.example' }],
+    };
+
+    const result = reorderProxies(settings, [newProxyId(() => 'ghost')]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('invalid_change');
+  });
+});
+
+describe('repairProxyEntries', () => {
+  it('fills a missing id and label from the address, preserving url and credentials', () => {
+    const raw = {
+      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+      hosts: [],
+      activeHostId: null,
+      proxies: [
+        {
+          url: 'http://109.207.79.171:3128',
+          credentials: { username: 'proxyuser', secretRef: 'copilotProxy' },
+        },
+      ],
+      defaultModel: null,
+      defaultReasoningEffort: null,
+    };
+
+    const repaired = repairProxyEntries(raw) as Record<string, unknown>;
+    const entry = (repaired['proxies'] as Record<string, unknown>[])[0];
+    expect(entry?.['label']).toBe('http://109.207.79.171:3128');
+    expect(entry?.['id']).toMatch(/^repaired-[0-9a-f]{32}$/);
+    expect(entry?.['credentials']).toEqual({
+      username: 'proxyuser',
+      secretRef: 'copilotProxy',
+    });
+    // The repaired document now passes the strict contract.
+    expect(() => appSettingsSchema.parse(repaired)).not.toThrow();
+  });
+
+  it('is deterministic across calls, so a repaired id is stable while the file is not rewritten', () => {
+    const raw = {
+      proxies: [{ url: 'https://proxy.example:8080' }],
+    };
+    const first = repairProxyEntries(raw) as Record<string, unknown>;
+    const second = repairProxyEntries(raw) as Record<string, unknown>;
+    expect((first['proxies'] as Record<string, unknown>[])[0]?.['id']).toBe(
+      (second['proxies'] as Record<string, unknown>[])[0]?.['id'],
+    );
+  });
+
+  it('drops entries that are not objects, and entries with no usable address', () => {
+    const raw = {
+      proxies: ['nope', null, { url: 'not a url', label: 'x' }, { url: 'https://ok.example' }],
+    };
+    const repaired = repairProxyEntries(raw) as Record<string, unknown>;
+    const proxies = repaired['proxies'] as Record<string, unknown>[];
+    expect(proxies).toHaveLength(1);
+    expect(proxies[0]?.['url']).toBe('https://ok.example');
+  });
+
+  it('does not strip unknown keys, so a smuggled field still fails strict validation', () => {
+    const raw = {
+      proxies: [
+        {
+          id: 'proxy-a',
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: 'vault://alice', password: 'hunter2' },
+        },
+      ],
+    };
+    const repaired = repairProxyEntries(raw) as Record<string, unknown>;
+    const credentials = (repaired['proxies'] as Record<string, unknown>[])[0]?.['credentials'];
+    expect(credentials).toHaveProperty('password');
+  });
+
+  it('returns the input untouched when there is nothing to repair', () => {
+    const raw = {
+      proxies: [{ id: 'proxy-a', label: 'Corporate', url: 'https://proxy.example:8080' }],
+    };
+    expect(repairProxyEntries(raw)).toBe(raw);
+  });
+
+  it('leaves a document with no proxies array untouched', () => {
+    const raw = { hosts: [] };
+    expect(repairProxyEntries(raw)).toBe(raw);
   });
 });
 
@@ -782,14 +1092,18 @@ describe('canary: plaintext secrets never reach settings', () => {
   it('proxyCredentialsSchema (via appSettingsSchema) rejects a password field carrying the canary', () => {
     const raw = {
       schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-      servers: [],
-      activeServerId: null,
+      hosts: [],
+      activeHostId: null,
+      proxies: [
+        {
+          id: 'proxy-a',
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
+        },
+      ],
       defaultModel: null,
       defaultReasoningEffort: null,
-      copilotProxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
-      },
     };
 
     expect(() => appSettingsSchema.parse(raw)).toThrow();
@@ -800,14 +1114,18 @@ describe('canary: plaintext secrets never reach settings', () => {
     mkdirSync(dir, { recursive: true });
     const rawWithCanary = {
       schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-      servers: [],
-      activeServerId: null,
+      hosts: [],
+      activeHostId: null,
+      proxies: [
+        {
+          id: 'proxy-a',
+          label: 'Corporate',
+          url: 'https://proxy.example:8080',
+          credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
+        },
+      ],
       defaultModel: null,
       defaultReasoningEffort: null,
-      copilotProxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
-      },
     };
     writeFileSync(settingsFilePath(dir), JSON.stringify(rawWithCanary), 'utf8');
 
@@ -891,8 +1209,8 @@ describe('updateModelPreferences', () => {
     const result = updateModelPreferences(before, { model: 'model-a', reasoningEffort: null });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.servers).toEqual(before.servers);
-    expect(result.value.copilotProxy).toEqual(before.copilotProxy);
+    expect(result.value.hosts).toEqual(before.hosts);
+    expect(result.value.proxies).toEqual(before.proxies);
   });
 
   it('rejects a model id the settings contract will not accept', () => {

@@ -4,9 +4,9 @@ import {
   agentEventSchema,
   sessionStreamStateSchema,
   type AgentEvent,
-} from './contracts/agentEvents';
-import { chatIdSchema, sdkSessionIdSchema, turnIdSchema } from './contracts/ids';
-import { requiredActionSchema, toolErrorCodeSchema } from './contracts/errors';
+} from './contracts';
+import { chatIdSchema, sdkSessionIdSchema, turnIdSchema } from './contracts';
+import { requiredActionSchema, toolErrorCodeSchema } from './contracts';
 
 /**
  * Wire contracts for the `agent-chat:*` IPC surface (implementation-plan.md
@@ -85,7 +85,7 @@ export const agentServiceLifecycleStateSchema = z.enum(AGENT_SERVICE_LIFECYCLE_S
  * Enough for a chat pane to render its initial state: sign-in status, which
  * conversation (if any) main currently owns, and that conversation's
  * streaming state. `activeChatId` is `null`, not omitted, when no
- * conversation is open - mirroring `AppSettings.activeServerId`'s convention
+ * conversation is open - mirroring `AppSettings.activeHostId`'s convention
  * for "there is currently none" over an optional field. While
  * `serviceState` is `"starting"`, `auth`/`activeChatId`/`sessionState` are
  * placeholder values (no real `AgentService` has been asked yet) - a caller

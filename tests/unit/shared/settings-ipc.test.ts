@@ -1,30 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { newServerId } from '../../../src/shared';
+import { APP_SETTINGS_SCHEMA_VERSION, newProxyId, newServerId } from '../../../src/shared';
 import {
+  addProxyRequestSchema,
   addServerRequestSchema,
   clearProxyPasswordRequestSchema,
   getSettingsSnapshotResultSchema,
+  parseAddProxyResult,
   parseGetSettingsSnapshotResult,
   parseSettingsIpcVoidResult,
   proxyPasswordTargetSchema,
+  removeProxyRequestSchema,
   removeServerRequestSchema,
+  reorderProxiesRequestSchema,
   reorderServersRequestSchema,
-  setCopilotProxyRequestSchema,
   setProxyPasswordRequestSchema,
   settingsIpcVoidResultSchema,
+  updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
 } from '../../../src/shared';
 
 const serverId = newServerId(() => 'server-a');
+const proxyId = newProxyId(() => 'proxy-a');
 
 describe('proxyPasswordTargetSchema', () => {
   it('accepts a server target', () => {
     expect(() => proxyPasswordTargetSchema.parse({ kind: 'server', serverId })).not.toThrow();
   });
 
-  it('accepts the copilotProxy target', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'copilotProxy' })).not.toThrow();
+  it('accepts a proxy-library target', () => {
+    expect(() => proxyPasswordTargetSchema.parse({ kind: 'proxy', proxyId })).not.toThrow();
   });
 
   it('rejects an unknown kind', () => {
@@ -35,8 +40,12 @@ describe('proxyPasswordTargetSchema', () => {
     expect(() => proxyPasswordTargetSchema.parse({ kind: 'server' })).toThrow();
   });
 
-  it('rejects a copilotProxy target carrying an extra key', () => {
-    expect(() => proxyPasswordTargetSchema.parse({ kind: 'copilotProxy', serverId })).toThrow();
+  it('rejects a proxy target missing proxyId', () => {
+    expect(() => proxyPasswordTargetSchema.parse({ kind: 'proxy' })).toThrow();
+  });
+
+  it('rejects a proxy target carrying an extra key', () => {
+    expect(() => proxyPasswordTargetSchema.parse({ kind: 'proxy', proxyId, serverId })).toThrow();
   });
 });
 
@@ -60,7 +69,7 @@ describe('setProxyPasswordRequestSchema', () => {
 
   it('rejects a password over the length limit', () => {
     const result = setProxyPasswordRequestSchema.safeParse({
-      target: { kind: 'copilotProxy' },
+      target: { kind: 'proxy', proxyId },
       password: 'x'.repeat(1001),
     });
     expect(result.success).toBe(false);
@@ -73,7 +82,7 @@ describe('setProxyPasswordRequestSchema', () => {
 
   it('rejects a payload with an unknown top-level key', () => {
     const result = setProxyPasswordRequestSchema.safeParse({
-      target: { kind: 'copilotProxy' },
+      target: { kind: 'proxy', proxyId },
       password: 'hunter2',
       extra: 'nope',
     });
@@ -91,7 +100,7 @@ describe('setProxyPasswordRequestSchema', () => {
 describe('clearProxyPasswordRequestSchema', () => {
   it('accepts a well-formed request', () => {
     expect(() =>
-      clearProxyPasswordRequestSchema.parse({ target: { kind: 'copilotProxy' } }),
+      clearProxyPasswordRequestSchema.parse({ target: { kind: 'proxy', proxyId } }),
     ).not.toThrow();
   });
 
@@ -105,9 +114,10 @@ describe('getSettingsSnapshotResultSchema', () => {
     const result = getSettingsSnapshotResultSchema.safeParse({
       ok: true,
       snapshot: {
-        schemaVersion: 1,
-        servers: [],
-        activeServerId: null,
+        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+        hosts: [],
+        activeHostId: null,
+        proxies: [],
         defaultModel: null,
         defaultReasoningEffort: null,
       },
@@ -127,9 +137,10 @@ describe('getSettingsSnapshotResultSchema', () => {
     const result = getSettingsSnapshotResultSchema.safeParse({
       ok: true,
       snapshot: {
-        schemaVersion: 1,
-        servers: [],
-        activeServerId: null,
+        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
+        hosts: [],
+        activeHostId: null,
+        proxies: [],
         defaultModel: null,
         defaultReasoningEffort: null,
       },
@@ -318,6 +329,20 @@ describe('updateServerTargetingRequestSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('accepts setting and clearing a proxy-library reference', () => {
+    const set = updateServerTargetingRequestSchema.safeParse({
+      serverId,
+      changes: { proxyId: newProxyId(() => 'proxy-1') },
+    });
+    expect(set.success).toBe(true);
+
+    const cleared = updateServerTargetingRequestSchema.safeParse({
+      serverId,
+      changes: { proxyId: null },
+    });
+    expect(cleared.success).toBe(true);
+  });
+
   it('rejects an invalid origin', () => {
     const result = updateServerTargetingRequestSchema.safeParse({
       serverId,
@@ -352,27 +377,43 @@ describe('reorderServersRequestSchema', () => {
   });
 });
 
-describe('setCopilotProxyRequestSchema', () => {
-  it('accepts a url with a username', () => {
-    const result = setCopilotProxyRequestSchema.safeParse({
+describe('addProxyRequestSchema', () => {
+  it('accepts a label, url and username', () => {
+    const result = addProxyRequestSchema.safeParse({
+      label: 'Corporate',
       url: 'https://proxy.example:8080',
       username: 'alice',
     });
     expect(result.success).toBe(true);
   });
 
-  it('accepts a url with no username - a full replace that drops any existing credentials', () => {
-    const result = setCopilotProxyRequestSchema.safeParse({ url: 'https://proxy.example:8080' });
+  it('accepts a url with no username', () => {
+    const result = addProxyRequestSchema.safeParse({
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
     expect(result.success).toBe(true);
   });
 
   it('rejects an invalid address', () => {
-    const result = setCopilotProxyRequestSchema.safeParse({ url: 'not a url' });
+    const result = addProxyRequestSchema.safeParse({
+      label: 'Corporate',
+      url: 'not a url',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an empty label', () => {
+    const result = addProxyRequestSchema.safeParse({
+      label: '',
+      url: 'https://proxy.example:8080',
+    });
     expect(result.success).toBe(false);
   });
 
   it('rejects an empty username', () => {
-    const result = setCopilotProxyRequestSchema.safeParse({
+    const result = addProxyRequestSchema.safeParse({
+      label: 'Corporate',
       url: 'https://proxy.example:8080',
       username: '',
     });
@@ -380,8 +421,88 @@ describe('setCopilotProxyRequestSchema', () => {
   });
 
   it('rejects a completely malformed payload', () => {
-    expect(setCopilotProxyRequestSchema.safeParse('not an object').success).toBe(false);
-    expect(setCopilotProxyRequestSchema.safeParse(null).success).toBe(false);
-    expect(setCopilotProxyRequestSchema.safeParse(undefined).success).toBe(false);
+    expect(addProxyRequestSchema.safeParse('not an object').success).toBe(false);
+    expect(addProxyRequestSchema.safeParse(null).success).toBe(false);
+    expect(addProxyRequestSchema.safeParse(undefined).success).toBe(false);
+  });
+});
+
+describe('parseAddProxyResult', () => {
+  it('accepts a success result carrying a valid proxy snapshot', () => {
+    const result = parseAddProxyResult({
+      ok: true,
+      proxy: {
+        id: proxyId,
+        label: 'Corporate',
+        url: 'https://proxy.example:8080',
+        credentials: { username: 'alice', hasPassword: false },
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('throws on a malformed candidate', () => {
+    expect(() => parseAddProxyResult({ ok: true })).toThrow();
+  });
+});
+
+describe('updateProxyRequestSchema', () => {
+  it('accepts a well-formed full replace', () => {
+    const result = updateProxyRequestSchema.safeParse({
+      proxyId,
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+      username: 'alice',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an omitted username (drops any existing credentials)', () => {
+    const result = updateProxyRequestSchema.safeParse({
+      proxyId,
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a payload missing proxyId', () => {
+    expect(
+      updateProxyRequestSchema.safeParse({
+        label: 'Corporate',
+        url: 'https://proxy.example:8080',
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('removeProxyRequestSchema', () => {
+  it('accepts a well-formed request', () => {
+    expect(removeProxyRequestSchema.safeParse({ proxyId }).success).toBe(true);
+  });
+
+  it('rejects a payload missing proxyId', () => {
+    expect(removeProxyRequestSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('reorderProxiesRequestSchema', () => {
+  const proxyIdB = newProxyId(() => 'proxy-b');
+
+  it('accepts a full permutation of proxy ids', () => {
+    expect(reorderProxiesRequestSchema.safeParse({ proxyIds: [proxyIdB, proxyId] }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects an unknown key', () => {
+    expect(
+      reorderProxiesRequestSchema.safeParse({ proxyIds: [proxyId], extra: true }).success,
+    ).toBe(false);
+  });
+
+  it('rejects a non-array of ids', () => {
+    expect(reorderProxiesRequestSchema.safeParse({ proxyIds: 'proxy-a' }).success).toBe(false);
+    expect(reorderProxiesRequestSchema.safeParse({ proxyIds: [42] }).success).toBe(false);
   });
 });

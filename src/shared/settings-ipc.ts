@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import {
   appSettingsSnapshotSchema,
+  proxySnapshotSchema,
   serverSnapshotSchema,
   type AppSettingsSnapshot,
+  type ProxySnapshot,
   type ServerSnapshot,
 } from './contracts';
-import { serverIdSchema } from './contracts';
+import { proxyIdSchema, serverIdSchema } from './contracts';
 import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
 import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
@@ -37,11 +39,12 @@ import {
  * Identifies *which* proxy a password belongs to, without ever naming a
  * `secretRef` - the renderer is never told one (see `settingsSnapshot.ts`),
  * so it can only refer to a proxy by the same handles the snapshot already
- * exposes: a server id, or the fixed "the global Copilot proxy" case.
+ * exposes: a server id (the per-server AEM proxy), or a proxy-library entry
+ * id.
  */
 export const proxyPasswordTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('server'), serverId: serverIdSchema }).strict(),
-  z.object({ kind: z.literal('copilotProxy') }).strict(),
+  z.object({ kind: z.literal('proxy'), proxyId: proxyIdSchema }).strict(),
 ]);
 
 export type ProxyPasswordTarget = z.infer<typeof proxyPasswordTargetSchema>;
@@ -85,6 +88,8 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'storage_error',
   /** No server with the given id exists (mutation channels, step 05). */
   'server_not_found',
+  /** No proxy-library entry with the given id exists. */
+  'proxy_not_found',
   /** An origin change was requested without the matching confirmation for that exact origin. */
   'origin_change_requires_confirmation',
   /** A configured server already uses the requested origin. */
@@ -239,6 +244,7 @@ export const updateServerTargetingRequestSchema = z
       .object({
         origin: originSchema.optional(),
         proxy: aemProxyConfigSchema.nullable().optional(),
+        proxyId: proxyIdSchema.nullable().optional(),
         tlsException: tlsExceptionSchema.nullable().optional(),
       })
       .strict(),
@@ -250,22 +256,81 @@ export type UpdateServerTargetingRequest = Readonly<
   z.infer<typeof updateServerTargetingRequestSchema>
 >;
 
-/** `settings:set-copilot-proxy`. The password itself is set separately via `settings:set-proxy-password` with target `{ kind: "copilotProxy" }`. */
-export const setCopilotProxyRequestSchema = z
+/**
+ * `settings:add-proxy` - creates one entry in the proxies library ("Add item"
+ * in the Settings "Proxies" multifield). Presentation/identity only, matching
+ * `addServerRequestSchema`'s split: the entry starts with no password, which
+ * is set separately via `settings:set-proxy-password` with target
+ * `{ kind: "proxy", proxyId }`.
+ *
+ * `username` is optional; when supplied the entry is created with
+ * credentials (a username and a freshly-minted `secretRef`), even though no
+ * password has been stored under that ref yet.
+ */
+export const addProxyRequestSchema = z
   .object({
+    label: serverLabelSchema,
     url: originSchema,
     username: z.string().min(1).max(200).optional(),
   })
   .strict();
 
-export type SetCopilotProxyRequest = Readonly<z.infer<typeof setCopilotProxyRequestSchema>>;
+export type AddProxyRequest = Readonly<z.infer<typeof addProxyRequestSchema>>;
+
+export const addProxyResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), proxy: proxySnapshotSchema }).strict(),
+  z.object({ ok: z.literal(false), error: settingsIpcErrorSchema }).strict(),
+]);
+
+export type AddProxyResult =
+  | { readonly ok: true; readonly proxy: ProxySnapshot }
+  | { readonly ok: false; readonly error: SettingsIpcError };
+
+export function parseAddProxyResult(candidate: unknown): AddProxyResult {
+  return addProxyResultSchema.parse(candidate);
+}
+
+/**
+ * `settings:update-proxy` - replaces one entry's label, address and username.
+ * A full replace, not a patch: omitting `username` removes any configured
+ * credentials entirely (and orphans their secret, which main best-effort
+ * deletes), rather than leaving them unchanged.
+ */
+export const updateProxyRequestSchema = z
+  .object({
+    proxyId: proxyIdSchema,
+    label: serverLabelSchema,
+    url: originSchema,
+    username: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+
+export type UpdateProxyRequest = Readonly<z.infer<typeof updateProxyRequestSchema>>;
+
+/** `settings:remove-proxy`. */
+export const removeProxyRequestSchema = z.object({ proxyId: proxyIdSchema }).strict();
+export type RemoveProxyRequest = Readonly<z.infer<typeof removeProxyRequestSchema>>;
+
+/**
+ * `settings:reorder-proxies` - the Settings "Proxies" multifield's up/down
+ * actions. The whole desired order, not one step, exactly like
+ * `reorderServersRequestSchema`; main validates it is a permutation.
+ */
+export const reorderProxiesRequestSchema = z
+  .object({
+    proxyIds: z.array(proxyIdSchema),
+  })
+  .strict();
+
+export type ReorderProxiesRequest = Readonly<z.infer<typeof reorderProxiesRequestSchema>>;
 
 // ---------------------------------------------------------------------------
 // Settings mutation results (step 05)
 // ---------------------------------------------------------------------------
 
 /**
- * Result of `settings:remove-server` and `settings:set-copilot-proxy`. Both
+ * Result of `settings:remove-server`, `settings:update-proxy`,
+ * `settings:remove-proxy` and `settings:reorder-proxies`. All
  * mutations have nothing more specific to report back than success/failure -
  * the renderer already re-fetches the whole snapshot afterward (see
  * `settingsPanel.ts`'s `reload`) - so, like `settings:set-proxy-password`,

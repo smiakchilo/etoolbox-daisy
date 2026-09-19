@@ -79,8 +79,8 @@ function makeServer(overrides: Partial<Record<string, unknown>> = {}): ServerCon
 function settingsWithOneServer(server: ServerConfig): AppSettings {
   return {
     ...defaultAppSettings(),
-    servers: [server],
-    activeServerId: server.id,
+    hosts: [server],
+    activeHostId: server.id,
   };
 }
 
@@ -344,7 +344,7 @@ describe('browserController.navigate', () => {
     // was persisted.
     expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
     const reloaded = await loadSettings(harness.settingsDir);
-    expect(reloaded.ok && reloaded.value.settings.servers).toEqual([]);
+    expect(reloaded.ok && reloaded.value.settings.hosts).toEqual([]);
   });
 
   it('fails with storage_error when the settings file cannot be read, rather than throwing', async () => {
@@ -456,8 +456,8 @@ describe('browserController.switchServer', () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, {
       ...defaultAppSettings(),
-      servers: [serverA, serverB],
-      activeServerId: serverA.id,
+      hosts: [serverA, serverB],
+      activeHostId: serverA.id,
     });
 
     let releaseFirstLoad!: () => void;
@@ -592,7 +592,7 @@ describe('browserController certificate exceptions persist through the settings 
     expect(harness.aemSessionControls.approveCertificateException).toHaveBeenCalledWith(exception);
     const reloaded = await loadSettings(harness.settingsDir);
     if (!reloaded.ok) throw new Error('expected settings to reload');
-    expect(reloaded.value.settings.servers[0]?.tlsException).toEqual(exception);
+    expect(reloaded.value.settings.hosts[0]?.tlsException).toEqual(exception);
   });
 
   it('approveCertificateException auto-retries the exact blocked URL when the approved origin matches it', async () => {
@@ -829,8 +829,8 @@ describe('browserController.activeServer', () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, {
       ...defaultAppSettings(),
-      servers: [serverA, serverB],
-      activeServerId: serverA.id,
+      hosts: [serverA, serverB],
+      activeHostId: serverA.id,
     });
     await harness.controller.switchServer(serverA.id);
     expect(harness.controller.activeServer()?.serverId).toBe(serverA.id);
@@ -883,8 +883,8 @@ describe('browserController.activeServer', () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, {
       ...defaultAppSettings(),
-      servers: [serverA, serverB],
-      activeServerId: serverA.id,
+      hosts: [serverA, serverB],
+      activeHostId: serverA.id,
     });
     await harness.controller.switchServer(serverA.id);
     const before = harness.controller.activeServer();

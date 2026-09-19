@@ -79,8 +79,8 @@ test('closing Settings with its close button restores the AEM view and Settings 
     home,
     appSettingsSchema.parse({
       ...base,
-      servers: [
-        ...base.servers,
+      hosts: [
+        ...base.hosts,
         {
           id: randomUUID(),
           label: 'Echo',

@@ -28,11 +28,11 @@ const httpServer: ServerSnapshot = {
   revision: 3,
 };
 
-const servers: readonly ServerSnapshot[] = [httpsServer, httpServer];
+const hosts: readonly ServerSnapshot[] = [httpsServer, httpServer];
 
 describe('buildHostOptions', () => {
   it('maps every server, marking the active one as selected', () => {
-    const options = buildHostOptions(servers, httpServerId);
+    const options = buildHostOptions(hosts, httpServerId);
     expect(options).toEqual([
       {
         id: httpsServerId,
@@ -52,7 +52,7 @@ describe('buildHostOptions', () => {
   });
 
   it('marks nothing selected when there is no active server', () => {
-    const options = buildHostOptions(servers, null);
+    const options = buildHostOptions(hosts, null);
     expect(options.every((option) => !option.selected)).toBe(true);
   });
 

@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  describeProxySnapshot,
   resolveHostLabelInput,
   validateHostColorInput,
   validateOriginInput,
 } from '../../../src/renderer/src/settings/viewModel';
-import type { AemProxySnapshot, CopilotProxySnapshot } from '../../../src/shared';
 
 describe('resolveHostLabelInput', () => {
   it('accepts a valid label unchanged', () => {
@@ -94,36 +92,5 @@ describe('validateOriginInput', () => {
     const result = validateOriginInput('https://author.example/login');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toMatch(/path/);
-  });
-});
-
-describe('describeProxySnapshot', () => {
-  it('reports direct connection when no proxy is configured', () => {
-    expect(describeProxySnapshot(undefined)).toBe('Not configured (direct connection)');
-  });
-
-  it('reports the proxy address when there are no credentials', () => {
-    const proxy: AemProxySnapshot = { url: 'https://proxy.example:8080' };
-    expect(describeProxySnapshot(proxy)).toBe('https://proxy.example:8080 (no proxy credentials)');
-  });
-
-  it('reports the username and that a password is stored', () => {
-    const proxy: CopilotProxySnapshot = {
-      url: 'https://proxy.example:8080',
-      credentials: { username: 'alice', hasPassword: true },
-    };
-    expect(describeProxySnapshot(proxy)).toBe(
-      'https://proxy.example:8080 - user "alice" (password stored)',
-    );
-  });
-
-  it('reports when no password is stored', () => {
-    const proxy: AemProxySnapshot = {
-      url: 'https://proxy.example:8080',
-      credentials: { username: 'alice', hasPassword: false },
-    };
-    expect(describeProxySnapshot(proxy)).toBe(
-      'https://proxy.example:8080 - user "alice" (no password stored)',
-    );
   });
 });

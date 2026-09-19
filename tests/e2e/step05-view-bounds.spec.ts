@@ -63,8 +63,8 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
     JSON.stringify(
       appSettingsSchema.parse({
         ...base,
-        servers: [
-          ...base.servers,
+        hosts: [
+          ...base.hosts,
           {
             id: randomUUID(),
             label: 'View-bounds fixture',
