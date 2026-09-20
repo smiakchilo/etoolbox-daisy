@@ -6,14 +6,17 @@ import {
   type AuthStatus,
   type ModelSelectionState,
   type ProxyId,
+  type ProxySnapshot,
 } from '../../../shared';
 import { createAutoSave } from './autoSave';
 import {
   buildAgentsViewModel,
   catalogueFailureMessage,
+  type AgentItemViewModel,
   type PendingModelSelection,
 } from './agentsViewModel';
 import { fromPickerValue } from './modelsViewModel';
+import { syncPickerOptions } from './pickerOptions';
 import { createProxyPicker } from './proxyPicker';
 import type { SaveOutcome, StatusBannerSink } from './statusBanner';
 
@@ -84,9 +87,11 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   let auth: AuthStatus | undefined;
   let modelSelection: ModelSelectionState | undefined;
   let pending: PendingModelSelection | undefined;
+  /** The provider rows, kept alive across re-reads (see `ItemHandle`). */
+  const itemHandles = new Map<AgentId, ItemHandle>();
   /** True once the user has touched a model/effort picker since the last read. */
   let pickersDirty = false;
-  /** Guards re-render against the `change` events a rebuild itself can emit. */
+  /** Guards the pickers' `change` handlers while a render applies stored state. */
   let rendering = false;
   /**
    * Set while the panel banner is already showing this session's catalogue
@@ -110,24 +115,6 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     const stored = storedSelection();
     const current = pending ?? stored;
     return current.model !== stored.model || current.reasoningEffort !== stored.reasoningEffort;
-  }
-
-  function renderOptions(
-    picker: PickerElement,
-    options: readonly { value: string; label: string }[],
-    selected: string,
-  ): void {
-    picker.replaceChildren(
-      ...options.map((option) =>
-        el('sp-menu-item', {
-          attrs: { value: option.value },
-          // `text`, never innerHTML: a model id/name comes from the Copilot
-          // runtime, which is not this application's own content.
-          text: option.label,
-        }),
-      ),
-    );
-    picker.value = selected;
   }
 
   function persistActive(agentId: AgentId): void {
@@ -228,69 +215,78 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     await refresh();
   }
 
-  function buildItem(view: ReturnType<typeof buildAgentsViewModel>['items'][number]): HTMLElement {
+  /**
+   * One provider's row, built once and updated in place. Rebuilding the row on
+   * every re-read (the previous `buildItem` + `group.replaceChildren` approach)
+   * re-created the row's `sp-picker`s, and a freshly inserted picker paints its
+   * shadow content a frame late - an empty, 0-height flash in all three
+   * comboboxes right as a save's banner appeared. The row's pickers are
+   * therefore kept alive for the section's lifetime; only their options,
+   * selection and disabled state change (see `syncPickerOptions`), and the two
+   * small non-picker parts that can genuinely toggle (the active badge vs the
+   * "Set active" control, and the auth action button) are attached/detached.
+   */
+  interface ItemHandle {
+    readonly element: HTMLElement;
+    update(view: AgentItemViewModel, proxies: readonly ProxySnapshot[]): void;
+  }
+
+  function createItemHandle(initial: AgentItemViewModel): ItemHandle {
+    const id = initial.id;
+
     // The header: the provider's name, then either the "(active)" badge (which
     // only states a fact) or the one control that would make it active. The
     // control is right-aligned and shares its width with the auth action below
     // (`.agent-item__button`), so the two line up in one column.
-    const header = el('div', { attrs: { class: 'agent-item__header' } });
-    header.append(el('span', { attrs: { class: 'agent-item__title' }, text: view.label }));
-    if (view.isActive) {
-      header.append(el('span', { attrs: { class: 'agent-item__active' }, text: '(active)' }));
-    } else {
-      const setActive = el('sp-action-button', {
-        attrs: { class: 'agent-item__set-active agent-item__button' },
-        text: 'Set active',
-      });
-      setActive.addEventListener('click', () => persistActive(view.id));
-      header.append(setActive);
-    }
+    const title = el('span', { attrs: { class: 'agent-item__title' }, text: initial.label });
+    const header = el('div', { attrs: { class: 'agent-item__header' }, children: [title] });
+    const activeBadge = el('span', { attrs: { class: 'agent-item__active' }, text: '(active)' });
+    const setActive = el('sp-action-button', {
+      attrs: { class: 'agent-item__set-active agent-item__button' },
+      text: 'Set active',
+    });
+    setActive.addEventListener('click', () => persistActive(id));
 
     const statusLight = el('sp-status-light', {
-      attrs: { variant: view.authVariant },
-      text: view.authText,
+      attrs: { variant: initial.authVariant },
+      text: initial.authText,
     });
 
     // Exactly one action, and only for the provider that has a runtime: "Sign
     // in" while signed out (or while the status is still unknown), "Sign out"
     // while signed in. The row carries no visible label - the status light's own
-    // text says what it is.
-    const authControl = el('div', { attrs: { class: 'agent-item__auth' } });
-    authControl.append(statusLight);
-    if (view.authAction !== undefined) {
-      const action = view.authAction;
-      const actionButton = el('sp-action-button', {
-        attrs: { class: 'agent-item__action agent-item__button' },
-        text: action === 'sign-in' ? 'Sign in' : 'Sign out',
-      });
-      if (view.authActionDisabled) actionButton.setAttribute('disabled', '');
-      actionButton.addEventListener('click', () => {
-        void (action === 'sign-in' ? startSignIn(actionButton) : startSignOut());
-      });
-      authControl.append(actionButton);
-    }
-
-    const proxyFieldId = `agent-${view.id}-proxy`;
-    const proxyPicker = createProxyPicker({
-      fieldId: proxyFieldId,
-      initialProxyId: view.proxyId,
-      proxies: snapshot?.proxies ?? [],
-      onChange: () => persistProxy(view.id, proxyPicker.read()),
+    // text says what it is. The button is created once; the sign-in/sign-out
+    // choice is read from the mutable `authAction` when it is clicked.
+    const actionButton = el('sp-action-button', {
+      attrs: { class: 'agent-item__action agent-item__button' },
+    });
+    let authAction: AgentItemViewModel['authAction'];
+    actionButton.addEventListener('click', () => {
+      if (authAction === 'sign-in') void startSignIn(actionButton);
+      else if (authAction === 'sign-out') void startSignOut();
     });
 
-    const modelFieldId = `agent-${view.id}-model`;
+    const authControl = el('div', {
+      attrs: { class: 'agent-item__auth' },
+      children: [statusLight],
+    });
+
+    const proxyFieldId = `agent-${id}-proxy`;
+    const proxyPicker = createProxyPicker({
+      fieldId: proxyFieldId,
+      initialProxyId: initial.proxyId,
+      proxies: snapshot?.proxies ?? [],
+      onChange: () => persistProxy(id, proxyPicker.read()),
+    });
+
+    const modelFieldId = `agent-${id}-model`;
     const modelPicker = el('sp-picker', {
       attrs: { id: modelFieldId, class: 'host-field__input', 'aria-label': 'Model' },
     }) as PickerElement;
-    const effortFieldId = `agent-${view.id}-effort`;
+    const effortFieldId = `agent-${id}-effort`;
     const effortPicker = el('sp-picker', {
       attrs: { id: effortFieldId, class: 'host-field__input', 'aria-label': 'Reasoning effort' },
     }) as PickerElement;
-
-    renderOptions(modelPicker, view.modelOptions, view.selectedModelValue);
-    renderOptions(effortPicker, view.effortOptions, view.selectedEffortValue);
-    modelPicker.disabled = !view.modelEnabled;
-    effortPicker.disabled = view.effortDisabled;
 
     modelPicker.addEventListener('change', () => {
       if (rendering) return;
@@ -311,7 +307,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       armModelSave();
     });
 
-    return el('div', {
+    const element = el('div', {
       attrs: { class: 'agent-item' },
       children: [
         header,
@@ -328,6 +324,53 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
         }),
       ],
     });
+
+    let headerActive: boolean | undefined;
+    let actionAttached = false;
+
+    function update(view: AgentItemViewModel, proxies: readonly ProxySnapshot[]): void {
+      if (title.textContent !== view.label) title.textContent = view.label;
+
+      if (view.isActive !== headerActive) {
+        for (const node of [...header.children]) {
+          if (node !== title) node.remove();
+        }
+        header.append(view.isActive ? activeBadge : setActive);
+        headerActive = view.isActive;
+      }
+
+      if (statusLight.getAttribute('variant') !== view.authVariant) {
+        statusLight.setAttribute('variant', view.authVariant);
+      }
+      if (statusLight.textContent !== view.authText) statusLight.textContent = view.authText;
+
+      authAction = view.authAction;
+      if (view.authAction === undefined) {
+        actionButton.remove();
+        actionAttached = false;
+      } else {
+        const label = view.authAction === 'sign-in' ? 'Sign in' : 'Sign out';
+        if (actionButton.textContent !== label) actionButton.textContent = label;
+        if (view.authActionDisabled) actionButton.setAttribute('disabled', '');
+        else actionButton.removeAttribute('disabled');
+        if (!actionAttached) {
+          authControl.append(actionButton);
+          actionAttached = true;
+        }
+      }
+
+      // The options come from the live proxy library; the selection from the
+      // snapshot's stored id (a dangling one repairs to "(No proxy)").
+      proxyPicker.setOptions(proxies);
+      proxyPicker.select(view.proxyId);
+
+      syncPickerOptions(modelPicker, view.modelOptions, view.selectedModelValue);
+      syncPickerOptions(effortPicker, view.effortOptions, view.selectedEffortValue);
+      modelPicker.disabled = !view.modelEnabled;
+      effortPicker.disabled = view.effortDisabled;
+    }
+
+    return { element, update };
   }
 
   function render(): void {
@@ -343,7 +386,32 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     );
     rendering = true;
     try {
-      group.replaceChildren(...view.items.map((item) => buildItem(item)));
+      const present = new Set<AgentId>();
+      const elements: HTMLElement[] = [];
+      for (const item of view.items) {
+        present.add(item.id);
+        let handle = itemHandles.get(item.id);
+        if (handle === undefined) {
+          handle = createItemHandle(item);
+          itemHandles.set(item.id, handle);
+        }
+        handle.update(item, snapshot.proxies);
+        elements.push(handle.element);
+      }
+      for (const [id, handle] of itemHandles) {
+        if (!present.has(id)) {
+          itemHandles.delete(id);
+          handle.element.remove();
+        }
+      }
+      // Only touch the group's children when the visible set/order actually
+      // changed: `replaceChildren` re-inserts even nodes it already holds, and
+      // a re-insertion would blank the pickers for a frame (the flicker this
+      // in-place update exists to remove).
+      const current = [...group.children];
+      const settled =
+        current.length === elements.length && current.every((node, i) => node === elements[i]);
+      if (!settled) group.replaceChildren(...elements);
     } finally {
       rendering = false;
     }

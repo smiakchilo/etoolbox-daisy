@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAgentsSection } from '../../../../src/renderer/src/settings/agentsSection';
+import { NO_PREFERENCE_VALUE } from '../../../../src/renderer/src/settings/modelsViewModel';
 import type {
   SaveOutcome,
   StatusBannerSink,
@@ -174,5 +175,74 @@ describe('createAgentsSection', () => {
         (label) => label.textContent,
       ),
     ).toEqual(['Proxy', 'Model', 'Reasoning effort']);
+  });
+
+  it('updates the provider row in place instead of rebuilding its pickers', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const item = section.element.querySelector('.agent-item');
+    const pickers = [...section.element.querySelectorAll('sp-picker')];
+    expect(pickers).toHaveLength(3);
+
+    // The panel reloads after every save, so a refresh is the common path. It
+    // must reuse the row and its pickers: re-creating a Spectrum picker blanks
+    // it for a frame - the flicker this in-place update exists to remove.
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    expect(section.element.querySelector('.agent-item')).toBe(item);
+    const again = [...section.element.querySelectorAll('sp-picker')];
+    expect(again).toHaveLength(pickers.length);
+    for (const [index, node] of again.entries()) {
+      expect(node).toBe(pickers[index]);
+    }
+  });
+
+  it('applies a changed live selection to the existing pickers', async () => {
+    getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: true, login: 'octocat' });
+    getModelSelection.mockResolvedValue({
+      ok: true,
+      state: {
+        models: [
+          { id: 'model-a', name: 'Model A', supportedReasoningEfforts: ['low', 'high'] },
+          { id: 'model-b', name: 'Model B', supportedReasoningEfforts: [] },
+        ],
+        selectedModel: 'model-a',
+        selectedReasoningEffort: 'high',
+        changesLocked: false,
+        catalogUnavailable: false,
+      },
+    });
+
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const modelPicker = section.element.querySelector('sp-picker[aria-label="Model"]');
+    const reasoningPicker = section.element.querySelector(
+      'sp-picker[aria-label="Reasoning effort"]',
+    );
+
+    getModelSelection.mockResolvedValue({
+      ok: true,
+      state: {
+        models: [
+          { id: 'model-a', name: 'Model A', supportedReasoningEfforts: ['low', 'high'] },
+          { id: 'model-b', name: 'Model B', supportedReasoningEfforts: [] },
+        ],
+        selectedModel: 'model-b',
+        selectedReasoningEffort: null,
+        changesLocked: false,
+        catalogUnavailable: false,
+      },
+    });
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    // Same elements, new values: the selection moved without a rebuild.
+    expect(section.element.querySelector('sp-picker[aria-label="Model"]')).toBe(modelPicker);
+    expect(section.element.querySelector('sp-picker[aria-label="Reasoning effort"]')).toBe(
+      reasoningPicker,
+    );
+    expect((modelPicker as HTMLElement & { value: string }).value).toBe('model-b');
+    expect((reasoningPicker as HTMLElement & { value: string }).value).toBe(NO_PREFERENCE_VALUE);
   });
 });

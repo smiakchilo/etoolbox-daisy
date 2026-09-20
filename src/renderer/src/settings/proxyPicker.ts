@@ -1,5 +1,6 @@
 import { el } from '../lib/dom';
 import type { ProxyId, ProxySnapshot } from '../../../shared';
+import { syncPickerOptions, type PickerLike } from './pickerOptions';
 
 /** Sentinel id for the "(No proxy)" choice; real ids are generated uuids. */
 export const NO_PROXY_VALUE = '__no_proxy__';
@@ -10,6 +11,8 @@ export interface ProxyPickerHandle {
   read(): ProxyId | undefined;
   /** Rebuilds the options from the current proxy library, keeping/repairing the selection. */
   setOptions(proxies: readonly ProxySnapshot[]): void;
+  /** Sets the selection from stored state, repairing a dangling id to "(No proxy)". */
+  select(id: ProxyId | undefined): void;
 }
 
 export interface CreateProxyPickerOptions {
@@ -39,7 +42,7 @@ export function createProxyPicker(options: CreateProxyPickerOptions): ProxyPicke
       class: 'host-field__input proxy-picker',
       'aria-label': 'Proxy',
     },
-  }) as HTMLElement & { value: string };
+  }) as PickerLike;
 
   let proxies = options.proxies;
   let selected: string = options.initialProxyId ?? NO_PROXY_VALUE;
@@ -50,13 +53,14 @@ export function createProxyPicker(options: CreateProxyPickerOptions): ProxyPicke
   }
 
   function render(): void {
-    picker.replaceChildren(
-      el('sp-menu-item', { attrs: { value: NO_PROXY_VALUE }, text: '(No proxy)' }),
-      ...proxies.map((proxy) =>
-        el('sp-menu-item', { attrs: { value: proxy.id }, text: proxy.label }),
-      ),
+    syncPickerOptions(
+      picker,
+      [
+        { value: NO_PROXY_VALUE, label: '(No proxy)' },
+        ...proxies.map((proxy) => ({ value: proxy.id, label: proxy.label })),
+      ],
+      selected,
     );
-    picker.value = selected;
   }
 
   selected = reconcile(selected);
@@ -75,6 +79,10 @@ export function createProxyPicker(options: CreateProxyPickerOptions): ProxyPicke
     setOptions(next): void {
       proxies = next;
       selected = reconcile(selected);
+      render();
+    },
+    select(id): void {
+      selected = reconcile(id ?? NO_PROXY_VALUE);
       render();
     },
   };

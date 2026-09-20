@@ -9,6 +9,7 @@ import '@spectrum-web-components/action-button/sp-action-button.js';
 import '@spectrum-web-components/picker-button/sp-picker-button.js';
 import '@spectrum-web-components/split-view/sp-split-view.js';
 import '@spectrum-web-components/alert-banner/sp-alert-banner.js';
+import '@spectrum-web-components/progress-circle/sp-progress-circle.js';
 import '@spectrum-web-components/table/sp-table.js';
 import '@spectrum-web-components/table/sp-table-head.js';
 import '@spectrum-web-components/table/sp-table-head-cell.js';
