@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  APP_SETTINGS_SCHEMA_VERSION,
+  DEFAULT_AGENT_ID,
   parseAppSettingsSnapshot,
   type BrowserNavigationState,
 } from '../../../src/shared';
@@ -23,12 +23,9 @@ import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPan
  */
 
 const snapshotStub = parseAppSettingsSnapshot({
-  schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
   hosts: [],
-  activeHostId: null,
   proxies: [],
-  defaultModel: null,
-  defaultReasoningEffort: null,
+  agents: { [DEFAULT_AGENT_ID]: { active: true } },
 });
 
 const modelStateStub = {

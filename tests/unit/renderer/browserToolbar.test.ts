@@ -485,7 +485,6 @@ function hostOption(overrides: Partial<HostOption> = {}): HostOption {
     label: 'Author',
     origin: 'https://author.example',
     colorCss: 'color: rgb(20, 115, 230)',
-    selected: true,
     ...overrides,
   };
 }

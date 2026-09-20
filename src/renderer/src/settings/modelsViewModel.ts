@@ -1,12 +1,15 @@
 import { supportedReasoningEffortsFor, type ModelSelectionState } from '../../../shared';
 
 /**
- * Pure presentation logic for the Settings panel's Models section
- * (implementation-plan.md step 09). Separated from `modelsSection.ts` for the
- * same reason `transcriptViewModel.ts` is separated from `transcriptView.ts`:
- * every decision worth testing - which options appear, what is preselected,
- * whether the controls are disabled, what the status line says - is decided
- * here, against plain data, with no DOM and no custom elements involved.
+ * Pure presentation logic for the active agent's Model/Effort pickers
+ * (implementation-plan.md step 09), consumed by the Settings panel's Agents
+ * tab through `agentsViewModel.ts`. Separated from the DOM for the same reason
+ * `transcriptViewModel.ts` is separated from `transcriptView.ts`:
+ * every decision worth testing - which options appear, what is preselected and
+ * whether the controls are disabled - is decided here, against plain data, with
+ * no DOM and no custom elements involved. What the user is *told* about a
+ * failure is deliberately not decided here: the panel's one banner owns that,
+ * and `agentsViewModel.ts` decides which failures deserve a word at all.
  */
 
 /** One option in either picker. */
@@ -21,7 +24,7 @@ export interface ModelOption {
  * A non-empty sentinel rather than `""`, because Spectrum's `<sp-picker>`
  * treats an empty `value` as "nothing selected" and would then render its
  * placeholder instead of this option's own label - leaving the user unable to
- * see that "let Copilot decide" is the current, deliberate state.
+ * see that "(Auto)" (let the agent decide) is the current, deliberate state.
  */
 export const NO_PREFERENCE_VALUE = '__none__';
 
@@ -34,7 +37,6 @@ export interface ModelsViewModel {
   readonly reasoningDisabled: boolean;
   /** True when both pickers and the save button must be disabled. */
   readonly controlsDisabled: boolean;
-  readonly statusMessage: string;
 }
 
 /**
@@ -51,12 +53,12 @@ export function buildModelsViewModel(
   pending: { readonly model: string | null; readonly reasoningEffort: string | null },
 ): ModelsViewModel {
   const modelOptions: ModelOption[] = [
-    { value: NO_PREFERENCE_VALUE, label: 'Let Copilot decide' },
+    { value: NO_PREFERENCE_VALUE, label: '(Auto)' },
     ...state.models.map((model) => ({ value: model.id, label: model.name })),
   ];
 
   // A stored model missing from the catalogue is still shown, and still
-  // selected, rather than silently falling back to "Let Copilot decide".
+  // selected, rather than silently falling back to "(Auto)".
   // Dropping it would misreport the user's own setting as unset, and a
   // catalogue can be temporarily incomplete (Copilot still starting, a
   // transient outage) without the stored choice having become invalid.
@@ -66,7 +68,7 @@ export function buildModelsViewModel(
 
   const supported = supportedReasoningEffortsFor(state.models, pending.model);
   const reasoningOptions: ModelOption[] = [
-    { value: NO_PREFERENCE_VALUE, label: 'Default for this model' },
+    { value: NO_PREFERENCE_VALUE, label: '(Auto)' },
     ...supported.map((effort) => ({ value: effort, label: effort })),
   ];
 
@@ -86,27 +88,7 @@ export function buildModelsViewModel(
     selectedReasoningValue: reasoningSelected,
     reasoningDisabled: supported.length === 0,
     controlsDisabled: state.changesLocked,
-    statusMessage: buildStatusMessage(state),
   };
-}
-
-/**
- * The single status line under the pickers.
- *
- * Ordered most-blocking-first: an active turn is why the controls are greyed
- * out right now, so it must be explained before anything else, and an
- * unreadable catalogue explains an empty model list. Only when neither applies
- * does the line state the rule that is otherwise invisible - that a change
- * applies from the next prompt, not to the response already on screen.
- */
-function buildStatusMessage(state: ModelSelectionState): string {
-  if (state.changesLocked) {
-    return 'Model changes disabled while a response is in progress';
-  }
-  if (state.catalogUnavailable) {
-    return 'Could not retrieve the list of models';
-  }
-  return 'Changes will apply to the next prompt';
 }
 
 /**

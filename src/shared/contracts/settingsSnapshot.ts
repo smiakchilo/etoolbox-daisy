@@ -1,12 +1,6 @@
 import { z } from 'zod';
-import {
-  APP_SETTINGS_SCHEMA_VERSION,
-  modelIdSchema,
-  reasoningEffortSchema,
-  type AppSettings,
-  type ProxyConfig,
-} from './appSettings';
-import { proxyIdSchema, serverIdSchema } from './ids';
+import { agentSettingsSchema, type AppSettings, type ProxyConfig } from './appSettings';
+import { agentIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 import {
   serverColorSchema,
@@ -94,14 +88,24 @@ export const serverSnapshotSchema = z
 
 export type ServerSnapshot = Readonly<z.infer<typeof serverSnapshotSchema>>;
 
+/**
+ * The renderer-safe projection of the `agents` map. It is structurally
+ * identical to the persisted {@link agentSettingsSchema} - an agent's active
+ * flag, proxy reference, model and effort carry no secret material - so it
+ * reuses that schema rather than duplicating it and risking the two drifting
+ * apart. The only thing projection changes is *where* the proxy's password
+ * check lives: the referenced entry's `hasPassword` is read from `proxies`
+ * below, exactly as a host's is.
+ */
+export const agentSettingsSnapshotSchema = agentSettingsSchema;
+
+export type AgentSettingsSnapshot = Readonly<z.infer<typeof agentSettingsSnapshotSchema>>;
+
 export const appSettingsSnapshotSchema = z
   .object({
-    schemaVersion: z.literal(APP_SETTINGS_SCHEMA_VERSION),
     hosts: z.array(serverSnapshotSchema),
-    activeHostId: serverIdSchema.nullable(),
     proxies: z.array(proxySnapshotSchema),
-    defaultModel: modelIdSchema.nullable(),
-    defaultReasoningEffort: reasoningEffortSchema.nullable(),
+    agents: z.record(agentIdSchema, agentSettingsSnapshotSchema),
   })
   .strict();
 
@@ -188,12 +192,9 @@ export function toAppSettingsSnapshot(
   const proxies = settings.proxies.map((proxy) => toProxySnapshot(proxy, hasStoredSecret));
 
   const document: Record<string, unknown> = {
-    schemaVersion: settings.schemaVersion,
     hosts,
-    activeHostId: settings.activeHostId,
     proxies,
-    defaultModel: settings.defaultModel,
-    defaultReasoningEffort: settings.defaultReasoningEffort,
+    agents: settings.agents,
   };
 
   return appSettingsSnapshotSchema.parse(document);

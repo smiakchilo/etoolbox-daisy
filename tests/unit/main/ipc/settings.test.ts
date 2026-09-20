@@ -2,8 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { APP_SETTINGS_SCHEMA_VERSION, newProxyId, newServerId } from '../../../../src/shared';
-import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
+import { newProxyId, newServerId } from '../../../../src/shared';
+import { defaultAppSettings, DEFAULT_AGENT_ID, type AppSettings } from '../../../../src/shared';
 import { serverConfigSchema } from '../../../../src/shared';
 import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
@@ -83,12 +83,9 @@ function serverWithProxy(secretRef: string, options: { username?: string } = {})
     },
   });
   return {
-    schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
     hosts: [server],
-    activeHostId: server.id,
     proxies: [],
-    defaultModel: null,
-    defaultReasoningEffort: null,
+    agents: { [DEFAULT_AGENT_ID]: { active: true } },
   };
 }
 
@@ -210,7 +207,6 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     await writeSettings(settingsDir, {
       ...defaultAppSettings(),
       hosts: [server],
-      activeHostId: server.id,
     });
 
     const result = await setPassword(settingsDir, secretStore, {
@@ -250,14 +246,13 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     expect(result.error.code).toBe('storage_error');
   });
 
-  it('returns storage_error, never a snapshot with the exception treated as approved, for a legacy tlsException missing errorClass', async () => {
+  it('drops a legacy tlsException missing errorClass rather than presenting it as approved', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     mkdirSync(settingsDir, { recursive: true });
     writeFileSync(
       path.join(settingsDir, 'settings.json'),
       JSON.stringify({
-        schemaVersion: 1,
         hosts: [
           {
             id: SERVER_ID,
@@ -273,24 +268,21 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
             },
           },
         ],
-        activeHostId: SERVER_ID,
         proxies: [],
-        defaultModel: null,
-        defaultReasoningEffort: null,
+        agents: { [DEFAULT_AGENT_ID]: { active: true } },
       }),
       'utf8',
     );
 
     const result = await getSettingsSnapshot(settingsDir, secretStore);
 
-    // A snapshot carrying that tlsException at all - approved or not - would
-    // mean the exception survived a failed validation, which is the one
-    // dangerous outcome. Failing the whole snapshot is blunt but safe: there
-    // is no `result.snapshot` here for a caller to read a certificate
-    // exception out of.
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected an error result');
-    expect(result.error.code).toBe('storage_error');
+    // Fail closed: the unapprovable exception is discarded, so the snapshot
+    // still loads and carries no trace of it - never a certificate treated as
+    // approved.
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok snapshot result');
+    expect(result.snapshot.hosts).toHaveLength(1);
+    expect(result.snapshot.hosts[0]?.tlsException).toBeUndefined();
   });
 
   it('returns secret_storage_unavailable, not a silent success, when secure storage is unavailable', async () => {
@@ -412,19 +404,6 @@ describe('removeServer', () => {
     if (result.ok) throw new Error('expected an error result');
     expect(result.error.code).toBe('server_not_found');
   });
-
-  it('clears activeHostId, rather than leaving a dangling reference, when the removed server was active', async () => {
-    const settingsDir = createScratchRoot();
-    await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
-
-    const result = await removeServer(settingsDir, { serverId: SERVER_ID });
-    expect(result).toEqual({ ok: true });
-
-    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
-    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
-    if (!snapshot.ok) throw new Error('expected ok snapshot result');
-    expect(snapshot.snapshot.activeHostId).toBeNull();
-  });
 });
 
 describe('reorderServers', () => {
@@ -444,12 +423,9 @@ describe('reorderServers', () => {
       revision: 0,
     });
     return {
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [a, b],
-      activeHostId: a.id,
       proxies: [],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     };
   }
 

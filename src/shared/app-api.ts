@@ -12,6 +12,7 @@ import type {
   RemoveServerRequest,
   ReorderProxiesRequest,
   ReorderServersRequest,
+  SetAgentSettingsRequest,
   SetModelPreferencesRequest,
   SettingsIpcVoidResult,
   UpdateProxyRequest,
@@ -51,8 +52,8 @@ export interface DaisyAppApi {
   getAppInfo(): Promise<AppInfo>;
   /**
    * The Copilot sign-in/out API: auth status, login, cancel-login, and
-   * logout. Backs the Settings panel's authentication section
-   * (`src/renderer/src/settings/authenticationSection.ts`).
+   * logout. Backs the Settings panel's Agents tab
+   * (`src/renderer/src/settings/agentsSection.ts`).
    */
   readonly agent: DaisyAgentAuthApi;
   /**
@@ -133,6 +134,12 @@ export interface DaisySettingsApi {
    */
   getModelSelection(): Promise<GetModelSelectionResult>;
   setModelPreferences(request: SetModelPreferencesRequest): Promise<SettingsIpcVoidResult>;
+  /**
+   * Persists one provider's active flag, proxy, model and/or reasoning effort
+   * (the Settings "Agents" surface). A partial patch - see
+   * `SETTINGS_SET_AGENT_SETTINGS_CHANNEL`.
+   */
+  setAgentSettings(request: SetAgentSettingsRequest): Promise<SettingsIpcVoidResult>;
 }
 
 export interface DaisyAgentAuthApi {

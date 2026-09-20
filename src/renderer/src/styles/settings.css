@@ -235,11 +235,6 @@
   height: 14px;
 }
 
-.authentication-section__actions {
-  display: flex;
-  gap: 8px;
-}
-
 .color-picker {
   display: flex;
   align-items: center;
@@ -388,18 +383,51 @@
   min-width: 0;
 }
 
-.models-section__pickers {
+.agent-item {
   display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--spectrum-gray-200, #e1e1e1);
+  border-radius: 4px;
+}
+
+.agents-section__group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.agent-item__header {
+  display: flex;
+  align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  align-items: flex-end;
 }
 
-.models-section__status {
-  color: var(--spectrum-gray-600, #6e6e6e);
+.agent-item__title {
+  font-weight: bold;
 }
 
-.models-placeholder__notice {
-  font-style: italic;
-  color: var(--spectrum-gray-600, #6e6e6e);
+/* The "this provider is the active one" badge, immediately after its name. */
+.agent-item__active {
+  color: var(--spectrum-accent-color-900, rgb(2, 101, 220));
+  font-weight: bold;
+}
+
+/* The provider's auth row: the status light (dot + text) and its one action
+   button share a single line. */
+.agent-item__auth {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Both of an item's action buttons - "Set active" in the header, "Sign in" /
+   "Sign out" in the auth row - are pushed to the item's right edge and given
+   one width, so the two line up in a single column whatever their labels say.
+   `min-width`, not `width`: a larger text size must still fit the label, and
+   the two labels are short enough that they stay equal in practice. */
+.agent-item__button {
+  margin-left: auto;
+  min-width: 7rem;
 }

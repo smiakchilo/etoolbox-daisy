@@ -9,6 +9,7 @@ import {
   type ModelSelectionDependencies,
 } from '../../../../src/main/ipc/settings';
 import { err, ok } from '../../../../src/shared';
+import { DEFAULT_AGENT_ID } from '../../../../src/shared';
 import type { ModelCatalogEntry } from '../../../../src/shared';
 
 /**
@@ -125,8 +126,8 @@ describe('setModelPreferences', () => {
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.defaultModel).toBe('model-a');
-    expect(loaded.value.settings.defaultReasoningEffort).toBe('high');
+    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBe('model-a');
+    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBe('high');
   });
 
   it('refuses while a turn is in flight', async () => {
@@ -192,7 +193,7 @@ describe('setModelPreferences', () => {
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.defaultModel).toBeNull();
+    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBeUndefined();
   });
 
   it('refuses a model the SDK does not offer', async () => {
@@ -236,9 +237,9 @@ describe('setModelPreferences', () => {
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.defaultModel).toBeNull();
+    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBeUndefined();
     // An orphaned effort would be re-applied to whatever model Copilot picks.
-    expect(loaded.value.settings.defaultReasoningEffort).toBeNull();
+    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBeUndefined();
   });
 
   it('notifies the cache only AFTER a successful persist', async () => {

@@ -9,7 +9,6 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import {
-  APP_SETTINGS_SCHEMA_VERSION,
   appSettingsSchema,
   defaultAppSettings,
   parseAppSettings,
@@ -17,8 +16,25 @@ import {
   type ProxyConfig,
 } from '../shared';
 import type { ProxyId, ServerId } from '../shared';
-import { newProxyId, originSchema, proxyIdSchema, serverLabelSchema } from '../shared';
+import { DEFAULT_AGENT_ID } from '../shared';
+import type { AgentId } from '../shared';
+import {
+  newProxyId,
+  originSchema,
+  parseOrigin,
+  proxyIdSchema,
+  serverIdSchema,
+  serverLabelSchema,
+} from '../shared';
 import { err, ok, type Result } from '../shared';
+import {
+  agentIdSchema,
+  modelIdSchema,
+  reasoningEffortSchema,
+  serverColorSchema,
+  serverRevisionSchema,
+  tlsExceptionSchema,
+} from '../shared';
 import {
   bumpRevision,
   proxyConfigSchema,
@@ -37,8 +53,8 @@ import {
  * edits are already implemented in `src/shared/contracts/appSettings.ts` and
  * `serverConfig.ts`; this module is only responsible for turning those into a
  * safely-persisted file and for the additional rules that only make sense at
- * the storage boundary (schema migrations, atomic writes, corruption
- * handling, and origin-change confirmation).
+ * the storage boundary (atomic writes, corruption handling, and origin-change
+ * confirmation).
  *
  * The settings directory is taken as a plain injected `string` everywhere
  * below, never resolved here: this module does not import `appPaths.ts` or
@@ -67,97 +83,6 @@ function isEnoent(error: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Explicit schema migrations
-// ---------------------------------------------------------------------------
-
-/**
- * One explicit step from `fromVersion` to `toVersion`. `migrate` receives the
- * raw parsed JSON (not yet schema-validated) and must return a document
- * shaped for `toVersion`; the final result is validated by
- * `parseAppSettings` regardless, so a migration cannot itself smuggle an
- * invalid document past validation.
- */
-export interface SchemaMigration {
-  readonly fromVersion: number;
-  readonly toVersion: number;
-  readonly migrate: (data: Record<string, unknown>) => Record<string, unknown>;
-}
-
-/**
- * The real migration registry used by {@link loadSettings}.
- *
- * Version 1 -> 2 renames the host-list fields. It is deliberately tolerant of
- * a file that was *manually* renamed already (a hand-edit that changed
- * `servers`/`activeServerId` to `hosts`/`activeHostId` without bumping the
- * version still loads): each field is read from its new name first, then its
- * old one, and `proxies` is defaulted to `[]` for a v1 file written before the
- * proxy library existed.
- *
- * `migrateSettingsData` below chains entries automatically (it looks up the
- * next step by the current version, not by array position), so multiple hops
- * in one load work with no further changes to this module.
- */
-export const SETTINGS_MIGRATIONS: readonly SchemaMigration[] = [
-  {
-    fromVersion: 1,
-    toVersion: 2,
-    migrate: (data) => {
-      const rest: Record<string, unknown> = { ...data };
-      const hosts = Array.isArray(rest['hosts'])
-        ? rest['hosts']
-        : Array.isArray(rest['servers'])
-          ? rest['servers']
-          : [];
-      const activeHostId = rest['activeHostId'] ?? rest['activeServerId'] ?? null;
-      const proxies = Array.isArray(rest['proxies']) ? rest['proxies'] : [];
-
-      delete rest['servers'];
-      delete rest['activeServerId'];
-
-      return { ...rest, schemaVersion: 2, hosts, activeHostId, proxies };
-    },
-  },
-];
-
-/**
- * Chains explicit migrations from `fromVersion` up to
- * `APP_SETTINGS_SCHEMA_VERSION`. `migrations` defaults to the real registry;
- * tests pass a substitute registry to exercise the chaining mechanism itself
- * without waiting for a real version 2 to exist.
- */
-export function migrateSettingsData(
-  data: Record<string, unknown>,
-  fromVersion: number,
-  migrations: readonly SchemaMigration[] = SETTINGS_MIGRATIONS,
-): Result<Record<string, unknown>, string> {
-  let current = data;
-  let currentVersion = fromVersion;
-  while (currentVersion < APP_SETTINGS_SCHEMA_VERSION) {
-    const step = migrations.find((candidate) => candidate.fromVersion === currentVersion);
-    if (!step) {
-      return err(
-        `no migration registered from schema version ${String(currentVersion)} to ` +
-          `${String(APP_SETTINGS_SCHEMA_VERSION)}`,
-      );
-    }
-    current = step.migrate(current);
-    currentVersion = step.toVersion;
-  }
-  return ok(current);
-}
-
-function peekSchemaVersion(raw: unknown): Result<number, string> {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return err('settings file does not contain a JSON object');
-  }
-  const version = (raw as Record<string, unknown>).schemaVersion;
-  if (typeof version !== 'number' || !Number.isInteger(version)) {
-    return err('settings file is missing a numeric schemaVersion');
-  }
-  return ok(version);
-}
-
-// ---------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------
 
@@ -173,10 +98,8 @@ export const SETTINGS_LOAD_ERROR_KINDS = [
   'unreadable',
   /** The file's bytes are not valid JSON. */
   'unparseable',
-  /** Valid JSON, but it fails `parseAppSettings` (or has no migration path). */
+  /** Valid JSON, but it fails `parseAppSettings`. */
   'schema_invalid',
-  /** `schemaVersion` is newer than this build understands. */
-  'version_too_new',
 ] as const;
 
 export type SettingsLoadErrorKind = (typeof SETTINGS_LOAD_ERROR_KINDS)[number];
@@ -187,28 +110,12 @@ export interface SettingsLoadError {
   readonly filePath: string;
 }
 
-export type SettingsLoadStatus = 'defaults' | 'loaded' | 'migrated';
+export type SettingsLoadStatus = 'defaults' | 'loaded';
 
 export interface SettingsLoadOutcome {
   readonly settings: AppSettings;
-  /**
-   * `"defaults"`: no file existed (first run). `"loaded"`: the file already
-   * matched `APP_SETTINGS_SCHEMA_VERSION`. `"migrated"`: the file was an
-   * older version and was upgraded; `fromVersion` records what it was.
-   */
+  /** `"defaults"`: no file existed (first run). `"loaded"`: a file was read and validated. */
   readonly status: SettingsLoadStatus;
-  readonly fromVersion?: number;
-}
-
-export interface LoadSettingsOptions {
-  /**
-   * Overrides the migration registry used for this call. Defaults to the
-   * real {@link SETTINGS_MIGRATIONS}. This exists for tests: it lets the
-   * migration-chaining mechanism be proven end-to-end (a crafted old-version
-   * file really does come out valid at the current version) without that
-   * test being invalidated the day a real version 2 migration is added.
-   */
-  readonly migrations?: readonly SchemaMigration[];
 }
 
 /**
@@ -282,6 +189,255 @@ export function repairProxyEntries(raw: unknown): unknown {
 }
 
 /**
+ * Keys this build recognises in each object of the persisted document. Anything
+ * else is stripped by {@link normalizeSettingsDocument} so a hand-edit that
+ * introduces an unrecognised key (a typo, a leftover from an older shape) does
+ * not fail the whole load.
+ */
+const SETTINGS_DOCUMENT_KEYS = ['hosts', 'proxies', 'agents'] as const;
+const SERVER_ENTRY_KEYS = [
+  'id',
+  'label',
+  'origin',
+  'color',
+  'proxy',
+  'proxyId',
+  'tlsException',
+  'revision',
+] as const;
+const AEM_PROXY_KEYS = ['url', 'credentials'] as const;
+const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
+const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort'] as const;
+
+/** Matches the Settings UI default and a fresh entry's colour. */
+const DEFAULT_SERVER_COLOR: ServerColor = { kind: 'swatch', swatch: 'blue' };
+const LABEL_MAX_LENGTH = 100;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A shallow copy of `source` carrying only `keys` — unknown keys are dropped. */
+function pickKnownKeys(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(source, key)) {
+      picked[key] = source[key];
+    }
+  }
+  return picked;
+}
+
+/** A default label for a host, derived from its origin exactly as the toolbar's "add host" flow does. */
+function labelFromOrigin(origin: string): string {
+  try {
+    return new URL(origin).host.slice(0, LABEL_MAX_LENGTH);
+  } catch {
+    return origin.slice(0, LABEL_MAX_LENGTH);
+  }
+}
+
+/** Trims a usable label out of a hand-written value, falling back to the origin's host. */
+function normalizeLabel(value: unknown, origin: string): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim().slice(0, LABEL_MAX_LENGTH);
+    if (trimmed.length > 0) return trimmed;
+  }
+  return labelFromOrigin(origin);
+}
+
+/**
+ * Normalizes the optional inline proxy of a host. Unknown keys are stripped,
+ * but the `credentials` object is copied through untouched on purpose: the
+ * strict `proxyCredentialsSchema` must still reject a `password` key, so a bug
+ * that writes a plaintext secret cannot be silently accepted. An unparseable
+ * address drops the whole proxy (falling back to a direct connection) rather
+ * than failing the load.
+ */
+function normalizeAemProxy(value: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const record = pickKnownKeys(value, AEM_PROXY_KEYS);
+  if (typeof record['url'] !== 'string') return undefined;
+  const url = parseOrigin(record['url']);
+  if (!url.ok) return undefined;
+  const next: Record<string, unknown> = { url: url.origin };
+  if (record['credentials'] !== undefined) next['credentials'] = record['credentials'];
+  return next;
+}
+
+/**
+ * Normalizes one host entry, or returns `undefined` when it cannot be made
+ * usable (no valid `id` or `origin`) — the caller drops it. Every other field
+ * gets a default: a missing colour is blue, a missing revision is 0, a missing
+ * or unusable label is derived from the origin.
+ */
+function normalizeServerEntry(
+  entry: unknown,
+  proxyIds: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(entry)) return undefined;
+  const record = pickKnownKeys(entry, SERVER_ENTRY_KEYS);
+
+  const id = serverIdSchema.safeParse(record['id']);
+  if (!id.success) return undefined;
+
+  if (typeof record['origin'] !== 'string') return undefined;
+  const origin = parseOrigin(record['origin']);
+  if (!origin.ok) return undefined;
+
+  const color = serverColorSchema.safeParse(record['color']);
+  const revision = serverRevisionSchema.safeParse(record['revision']);
+
+  const next: Record<string, unknown> = {
+    id: id.data,
+    origin: origin.origin,
+    label: normalizeLabel(record['label'], origin.origin),
+    color: color.success ? color.data : DEFAULT_SERVER_COLOR,
+    revision: revision.success ? revision.data : 0,
+  };
+
+  const proxy = normalizeAemProxy(record['proxy']);
+  if (proxy !== undefined) next['proxy'] = proxy;
+
+  const proxyId = proxyIdSchema.safeParse(record['proxyId']);
+  if (proxyId.success && proxyIds.has(proxyId.data)) next['proxyId'] = proxyId.data;
+
+  const tlsException = tlsExceptionSchema.safeParse(record['tlsException']);
+  if (tlsException.success) next['tlsException'] = tlsException.data;
+
+  return next;
+}
+
+/**
+ * Strips unknown keys from one proxy-library entry after
+ * {@link repairProxyEntries} has supplied its identity fields. `credentials`
+ * is copied through untouched so the strict credentials schema still rejects a
+ * smuggled plaintext `password`.
+ */
+function normalizeProxyEntry(entry: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(entry)) return undefined;
+  return pickKnownKeys(entry, PROXY_ENTRY_KEYS);
+}
+
+/**
+ * Normalizes one agent node. `active` defaults to `false`; a dangling `proxy`
+ * reference is cleared; a `reasoningEffort` with no `model` to attach to is
+ * dropped (the strict schema requires the pair).
+ */
+function normalizeAgentEntry(
+  value: unknown,
+  proxyIds: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  if (!isPlainObject(value)) return undefined;
+  const record = pickKnownKeys(value, AGENT_ENTRY_KEYS);
+
+  const next: Record<string, unknown> = { active: record['active'] === true };
+
+  const proxy = proxyIdSchema.safeParse(record['proxy']);
+  if (proxy.success && proxyIds.has(proxy.data)) next['proxy'] = proxy.data;
+
+  const model = modelIdSchema.safeParse(record['model']);
+  if (model.success) next['model'] = model.data;
+
+  const effort = reasoningEffortSchema.safeParse(record['reasoningEffort']);
+  if (model.success && effort.success) next['reasoningEffort'] = effort.data;
+
+  return next;
+}
+
+/**
+ * Makes a hand-edited settings document loadable by filling every missing
+ * field with a default and discarding what cannot be made usable, so that any
+ * JSON-valid file remains loadable. This is the *only* place the application
+ * is forgiving about the persisted document's shape: the contract schemas
+ * themselves stay strict, and the result of this function is still validated
+ * by {@link parseAppSettings} before it is trusted.
+ *
+ * What it does, in order:
+ *
+ *  - Deletes unrecognised keys at every level it manages, except inside a
+ *    `credentials` object — that stays untouched so a plaintext `password`
+ *    still fails the strict schema rather than being silently stripped.
+ *  - Defaults the top-level `hosts`/`proxies` to `[]` and `agents` to the
+ *    default provider when they are missing or the wrong shape.
+ *  - Repairs proxy entries (via {@link repairProxyEntries}) and drops entries
+ *    with no usable address.
+ *  - Drops a host with no usable `id`/`origin`, and fills its label, colour
+ *    and revision.
+ *  - Clears a host's or agent's reference to a proxy that does not exist, and
+ *    an agent's `reasoningEffort` that has no `model`.
+ *  - Keeps only the first active agent and the first of any duplicated host id,
+ *    host origin, or proxy id, so an integrity slip cannot fail the load.
+ *
+ * Never writes anything. A healthy document is reconstructed (key order is not
+ * preserved), but its values are unchanged.
+ */
+export function normalizeSettingsDocument(raw: unknown): unknown {
+  if (!isPlainObject(raw)) return raw;
+  const repaired = repairProxyEntries(raw);
+  if (!isPlainObject(repaired)) return repaired;
+  const document = pickKnownKeys(repaired, SETTINGS_DOCUMENT_KEYS);
+
+  const proxies: Record<string, unknown>[] = [];
+  const proxyIds = new Set<string>();
+  const proxiesRaw = Array.isArray(document['proxies']) ? document['proxies'] : [];
+  for (const entry of proxiesRaw) {
+    const normalized = normalizeProxyEntry(entry);
+    const id = normalized?.['id'];
+    if (!normalized || typeof id !== 'string' || proxyIds.has(id)) continue;
+    proxyIds.add(id);
+    proxies.push(normalized);
+  }
+
+  const hosts: Record<string, unknown>[] = [];
+  const serverIds = new Set<string>();
+  const serverOrigins = new Set<string>();
+  const hostsRaw = Array.isArray(document['hosts']) ? document['hosts'] : [];
+  for (const entry of hostsRaw) {
+    const normalized = normalizeServerEntry(entry, proxyIds);
+    const id = normalized?.['id'];
+    const origin = normalized?.['origin'];
+    if (
+      !normalized ||
+      typeof id !== 'string' ||
+      typeof origin !== 'string' ||
+      serverIds.has(id) ||
+      serverOrigins.has(origin)
+    ) {
+      continue;
+    }
+    serverIds.add(id);
+    serverOrigins.add(origin);
+    hosts.push(normalized);
+  }
+
+  const agentsSource: Record<string, unknown> = isPlainObject(document['agents'])
+    ? document['agents']
+    : { [DEFAULT_AGENT_ID]: { active: true } };
+  const agents: Record<string, Record<string, unknown>> = {};
+  let activeSeen = false;
+  for (const [key, value] of Object.entries(agentsSource)) {
+    const id = agentIdSchema.safeParse(key);
+    const normalized = normalizeAgentEntry(value, proxyIds);
+    if (!id.success || !normalized) continue;
+    if (normalized['active'] === true) {
+      if (activeSeen) normalized['active'] = false;
+      else activeSeen = true;
+    }
+    agents[id.data] = normalized;
+  }
+
+  return {
+    hosts,
+    proxies,
+    agents,
+  };
+}
+
+/**
  * Loads settings from `settingsDir`, or reports defaults for a legitimate
  * first run.
  *
@@ -293,16 +449,16 @@ export function repairProxyEntries(raw: unknown): unknown {
  * error to act on instead of an exception or a silent empty document.
  *
  * The one exception to "the file is loaded exactly as written" is
- * {@link repairProxyEntries}: missing proxy `id`/`label` fields are filled in
- * memory (never written back here), so a legacy-shaped proxy entry cannot make
- * the whole settings load fail.
+ * {@link normalizeSettingsDocument}: missing fields are defaulted, unknown
+ * keys are stripped, and unusable entries are dropped in memory (never written
+ * back here), so a hand-edited file cannot make the whole settings load fail.
+ * A `credentials` object is left untouched so a plaintext `password` still
+ * fails the strict schema.
  */
 export async function loadSettings(
   settingsDir: string,
-  options: LoadSettingsOptions = {},
 ): Promise<Result<SettingsLoadOutcome, SettingsLoadError>> {
   const filePath = settingsFilePath(settingsDir);
-  const migrations = options.migrations ?? SETTINGS_MIGRATIONS;
 
   let raw: string;
   try {
@@ -329,44 +485,11 @@ export async function loadSettings(
     });
   }
 
-  const versionResult = peekSchemaVersion(parsedJson);
-  if (!versionResult.ok) {
-    return err({ kind: 'schema_invalid', message: versionResult.error, filePath });
-  }
-  const fileVersion = versionResult.value;
-
-  if (fileVersion > APP_SETTINGS_SCHEMA_VERSION) {
-    return err({
-      kind: 'version_too_new',
-      message:
-        `settings file is schema version ${String(fileVersion)}, but this build only ` +
-        `understands up to version ${String(APP_SETTINGS_SCHEMA_VERSION)}. Refusing to load ` +
-        `it: a newer version of the application may have written fields this build does not ` +
-        `know about, and loading (and potentially re-saving) it here would destroy them.`,
-      filePath,
-    });
-  }
-
-  let candidate: unknown = parsedJson;
-  let migratedFrom: number | undefined;
-  if (fileVersion < APP_SETTINGS_SCHEMA_VERSION) {
-    const migrated = migrateSettingsData(
-      parsedJson as Record<string, unknown>,
-      fileVersion,
-      migrations,
-    );
-    if (!migrated.ok) {
-      return err({ kind: 'schema_invalid', message: migrated.error, filePath });
-    }
-    candidate = migrated.value;
-    migratedFrom = fileVersion;
-  }
-
-  // Fill in missing proxy identity fields (never strips anything) so a
-  // hand-edited/legacy-shaped proxy entry cannot fail the whole load.
-  candidate = repairProxyEntries(candidate);
-
-  const parsedSettings = parseAppSettings(candidate);
+  // Fill in missing fields with defaults, strip unknown keys, and drop whatever
+  // cannot be made usable, so a hand-edited file does not fail the whole load.
+  // A `credentials` object is never stripped, so a smuggled plaintext password
+  // still fails in `parseAppSettings` below.
+  const parsedSettings = parseAppSettings(normalizeSettingsDocument(parsedJson));
   if (!parsedSettings.ok) {
     return err({
       kind: 'schema_invalid',
@@ -375,9 +498,6 @@ export async function loadSettings(
     });
   }
 
-  if (migratedFrom !== undefined) {
-    return ok({ status: 'migrated', settings: parsedSettings.value, fromVersion: migratedFrom });
-  }
   return ok({ status: 'loaded', settings: parsedSettings.value });
 }
 
@@ -723,45 +843,19 @@ export function addServer(
   return ok({ settings: parsed.data, server: candidate });
 }
 
-export interface RemoveServerOutcome {
-  readonly settings: AppSettings;
-  /**
-   * Whether the removed server was also the active one.
-   *
-   * Decision (documenting the "handled deliberately" behaviour a removal of
-   * the active server requires): removing the active server clears
-   * `activeServerId` to `null` in the very same settings write, rather than
-   * leaving it pointing at a server id that no longer exists. This is not
-   * merely tidy - `appSettingsSchema`'s own `superRefine` already rejects a
-   * document whose `activeServerId` does not refer to a configured server,
-   * so *not* clearing it here would make every removal of the active server
-   * fail validation outright. It also mirrors `setActiveServerRequestSchema`'s
-   * own documented use ("`serverId: null` clears the active server, e.g.
-   * before removing it"): a caller that forgets that step, or removes a
-   * server directly, still ends up in the same safe state. Reacting to that
-   * change at the browser layer (stopping the live view, closing auxiliary
-   * windows) is out of scope for this module - see `ServerMutationOutcome`'s
-   * `requires_safe_transition` for the analogous split on an existing
-   * server's targeting change.
-   */
-  readonly wasActive: boolean;
-}
-
-/** Removes a server entry. See {@link RemoveServerOutcome.wasActive} for what happens when it was the active server. */
+/** Removes a server entry, returning the updated settings for the caller to persist. */
 export function removeServer(
   settings: AppSettings,
   serverId: ServerId,
-): Result<RemoveServerOutcome, ServerMutationError> {
+): Result<AppSettings, ServerMutationError> {
   const server = findServer(settings, serverId);
   if (!server) {
     return err({ kind: 'server_not_found', message: `no server with id ${serverId}` });
   }
 
-  const wasActive = settings.activeHostId === serverId;
   const candidate = {
     ...settings,
     hosts: settings.hosts.filter((existing) => existing.id !== serverId),
-    activeHostId: wasActive ? null : settings.activeHostId,
   };
 
   const parsed = appSettingsSchema.safeParse(candidate);
@@ -774,7 +868,7 @@ export function removeServer(
     });
   }
 
-  return ok({ settings: parsed.data, wasActive });
+  return ok(parsed.data);
 }
 
 /**
@@ -1087,13 +1181,136 @@ export interface ModelPreferencesInput {
 }
 
 /**
- * Replaces `defaultModel`/`defaultReasoningEffort`.
+ * The provider a prompt currently targets: the single node in `agents` whose
+ * `active` flag is set, or {@link DEFAULT_AGENT_ID} when the document has no
+ * active node at all (a freshly hand-edited file, or a user who turned every
+ * provider's radio off). Falling back rather than returning `undefined` keeps
+ * every reader - the prompt path, the model-selection channel, the runtime -
+ * total, and matches `defaultAppSettings()`'s own seed.
+ */
+export function activeAgentId(settings: AppSettings): AgentId {
+  for (const [id, node] of Object.entries(settings.agents)) {
+    if (node.active) return id as AgentId;
+  }
+  return DEFAULT_AGENT_ID;
+}
+
+/**
+ * A partial patch to one provider's settings, following the same three-state
+ * convention `updateServerTargetingRequestSchema` uses: an omitted key means
+ * "leave unchanged", `null` means "clear" (for `proxy`/`model`/
+ * `reasoningEffort`), and a value means "replace".
+ */
+export interface AgentSettingsChanges {
+  readonly active?: boolean;
+  readonly proxy?: ProxyId | null;
+  readonly model?: string | null;
+  readonly reasoningEffort?: string | null;
+}
+
+/** Distinguishable reasons {@link updateAgentSettings} can fail. */
+export const AGENT_MUTATION_ERROR_KINDS = [
+  /** No node for this provider exists in `agents`. */
+  'agent_not_found',
+  /** The change does not produce a valid settings document. */
+  'invalid_change',
+] as const;
+
+export type AgentMutationErrorKind = (typeof AGENT_MUTATION_ERROR_KINDS)[number];
+
+export interface AgentMutationError {
+  readonly kind: AgentMutationErrorKind;
+  readonly message: string;
+}
+
+/**
+ * Applies one provider's active/proxy/model/effort change and re-validates the
+ * whole document (like every other mutation helper here).
  *
- * Pure and I/O-free, like every other mutation helper in this module: the
- * caller loads, applies, and saves. The whole document is re-validated through
- * `appSettingsSchema` rather than only the two changed fields, matching
- * `updateProxy` above - a settings document is accepted or rejected as
- * a whole, never field by field.
+ * Two cross-field rules are enforced by construction on top of the schema's own
+ * `superRefine`, so the two can never disagree:
+ *
+ *  - Activating one provider clears every other node's `active` in the same
+ *    write. The schema permits *at most* one active node; this is what makes
+ *    the intended one win rather than turning the write into `invalid_change`.
+ *  - Clearing `model` also clears `reasoningEffort`. The schema rejects an
+ *    effort with no model, and an effort left behind after its model was
+ *    cleared would silently apply to whatever model is picked next.
+ *
+ * Pure and I/O-free: the caller loads, applies, and saves.
+ */
+export function updateAgentSettings(
+  settings: AppSettings,
+  agentId: AgentId,
+  changes: AgentSettingsChanges,
+): Result<AppSettings, AgentMutationError> {
+  const existing = settings.agents[agentId];
+  if (!existing) {
+    return err({ kind: 'agent_not_found', message: `no agent with id ${agentId}` });
+  }
+
+  const nextNode: Record<string, unknown> = { ...existing };
+
+  if (changes.active !== undefined) {
+    nextNode['active'] = changes.active;
+  }
+
+  if (changes.proxy !== undefined) {
+    if (changes.proxy === null) {
+      delete nextNode['proxy'];
+    } else {
+      nextNode['proxy'] = changes.proxy;
+    }
+  }
+
+  if (changes.model !== undefined) {
+    if (changes.model === null) {
+      delete nextNode['model'];
+      // An effort is only meaningful relative to a model - see this
+      // function's own doc comment.
+      delete nextNode['reasoningEffort'];
+    } else {
+      nextNode['model'] = changes.model;
+      if (changes.reasoningEffort === null) {
+        delete nextNode['reasoningEffort'];
+      } else if (changes.reasoningEffort !== undefined) {
+        nextNode['reasoningEffort'] = changes.reasoningEffort;
+      }
+    }
+  } else if (changes.reasoningEffort !== undefined) {
+    if (changes.reasoningEffort === null) {
+      delete nextNode['reasoningEffort'];
+    } else {
+      nextNode['reasoningEffort'] = changes.reasoningEffort;
+    }
+  }
+
+  const nextAgents: Record<string, unknown> = { ...settings.agents };
+  nextAgents[agentId] = nextNode;
+  if (changes.active === true) {
+    for (const [id, node] of Object.entries(settings.agents)) {
+      if (id === agentId) continue;
+      nextAgents[id] = { ...node, active: false };
+    }
+  }
+
+  const parsed = appSettingsSchema.safeParse({ ...settings, agents: nextAgents });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
+}
+
+/**
+ * Replaces the *active* provider's model/reasoning-effort pair. The persisted
+ * pair moved from a top-level `defaultModel`/`defaultReasoningEffort` to each
+ * agent's own node, so this now targets {@link activeAgentId} - the provider a
+ * prompt would actually go to - rather than the document as a whole.
  *
  * Note what this function deliberately does *not* do: it never checks the
  * model against the SDK catalogue. That check belongs to the IPC layer, which
@@ -1106,19 +1323,9 @@ export interface ModelPreferencesInput {
 export function updateModelPreferences(
   settings: AppSettings,
   input: ModelPreferencesInput,
-): Result<AppSettings, ServerMutationError> {
-  const parsed = appSettingsSchema.safeParse({
-    ...settings,
-    defaultModel: input.model,
-    defaultReasoningEffort: input.model === null ? null : input.reasoningEffort,
+): Result<AppSettings, AgentMutationError> {
+  return updateAgentSettings(settings, activeAgentId(settings), {
+    model: input.model,
+    reasoningEffort: input.model === null ? null : input.reasoningEffort,
   });
-  if (!parsed.success) {
-    return err({
-      kind: 'invalid_change',
-      message: parsed.error.issues
-        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
-        .join('; '),
-    });
-  }
-  return ok(parsed.data);
 }

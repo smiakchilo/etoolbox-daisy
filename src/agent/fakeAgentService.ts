@@ -1,21 +1,33 @@
-import { err, ok, type Result } from '../shared/result';
-import type { AgentEvent, JsonValue } from '../shared/contracts/agentEvents';
-import type { ChatId, IdGenerator, MessageId, ToolCallId, TurnId } from '../shared/contracts/ids';
-import { newMessageId, newRequestId, newToolCallId } from '../shared/contracts/ids';
-import type { RequiredAction, ToolErrorCode } from '../shared/contracts/errors';
-import { createToolError } from '../shared/contracts/errors';
+import type {
+  AgentEvent,
+  ChatId,
+  IdGenerator,
+  JsonValue,
+  MessageId,
+  RequiredAction,
+  ToolCallId,
+  ToolErrorCode,
+  TurnId,
+} from '../shared';
 import {
   applyAgentEvent,
-  canSendMessage,
   type CanSendBlockReason,
+  canSendMessage,
+  createToolError,
+  err,
+  newMessageId,
+  newRequestId,
+  newToolCallId,
+  ok,
+  type Result,
   type SessionStatus,
   type SessionStreamState,
-} from '../shared/contracts/sessionState';
+} from '../shared';
 import {
-  createAgentServiceError,
   type AgentAuthState,
   type AgentService,
   type AgentServiceError,
+  createAgentServiceError,
   type OpenConversationRequest,
   type SendPromptRequest,
   type Unsubscribe,
@@ -229,8 +241,7 @@ function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
         'A turn is already in progress on this conversation.',
       );
     default: {
-      const exhaustive: never = reason;
-      return exhaustive;
+      return reason;
     }
   }
 }
@@ -240,16 +251,27 @@ function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
 // ---------------------------------------------------------------------------
 
 /**
+ * The sign-in status a fake reports unless a test says otherwise.
+ *
+ * Exported rather than inlined because it is also the answer the *auth* surface
+ * must give while the deterministic fake is selected (`src/main/index.ts`'s
+ * `getFakeAuthStatus`): the fake is the authority on "signed in" in that mode -
+ * it already answers `agentChat.getStatus().authenticated` - so a second,
+ * hand-written copy of this default would be free to drift from it.
+ */
+export const DEFAULT_FAKE_AUTH_STATE: AgentAuthState = {
+  apiVersion: 1,
+  isAuthenticated: true,
+};
+
+/**
  * Creates a fresh `FakeAgentService`. Every instance is independent: no
  * module-level state is shared between two fakes created in the same
  * process (important for parallel test files).
  */
 export function createFakeAgentService(options: FakeAgentServiceOptions = {}): FakeAgentService {
   const idGenerator = options.idGenerator ?? defaultIdGenerator();
-  let authState: AgentAuthState = options.initialAuthState ?? {
-    apiVersion: 1,
-    isAuthenticated: true,
-  };
+  let authState: AgentAuthState = options.initialAuthState ?? { ...DEFAULT_FAKE_AUTH_STATE };
 
   const eventListeners = new Set<(event: AgentEvent) => void>();
   const authListeners = new Set<(state: AgentAuthState) => void>();

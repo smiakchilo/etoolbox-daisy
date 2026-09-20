@@ -1,23 +1,5 @@
 import type { AgentService, AgentServiceError } from '../agent/agentService';
 import type { CurrentAemToolContext } from '../agent/aemTool';
-import {
-  applyAgentEvent,
-  canSendMessage,
-  type CanSendBlockReason,
-} from '../shared/contracts/sessionState';
-import type { SessionStatus } from '../shared/contracts/sessionState';
-import type { AgentEvent } from '../shared/contracts/agentEvents';
-import {
-  newTurnId,
-  type ChatId,
-  type IdGenerator,
-  type MessageId,
-  type ServerId,
-  type ToolCallId,
-  type TurnId,
-} from '../shared/contracts/ids';
-import type { RequiredAction, ToolErrorCode } from '../shared/contracts/errors';
-import type { Logger } from './logger';
 import type {
   AgentChatByIdRequest,
   AgentChatError,
@@ -27,7 +9,24 @@ import type {
   AgentChatSendResult,
   AgentChatStatus,
   AgentChatVoidResult,
-} from '../shared/agent-chat-ipc';
+  AgentEvent,
+  RequiredAction,
+  SessionStatus,
+  ToolErrorCode,
+} from '../shared';
+import {
+  applyAgentEvent,
+  type CanSendBlockReason,
+  canSendMessage,
+  type ChatId,
+  type IdGenerator,
+  type MessageId,
+  newTurnId,
+  type ServerId,
+  type ToolCallId,
+  type TurnId,
+} from '../shared';
+import type { Logger } from './logger';
 
 /**
  * Puts the application-owned `AgentService` (implementation-plan.md step 07)
@@ -221,8 +220,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
           (activeTurn !== undefined && event.turnId === activeTurn.turnId)
         );
       default: {
-        const exhaustive: never = event;
-        return exhaustive;
+        return event;
       }
     }
   }
@@ -450,22 +448,29 @@ function agentServiceStartingError(): AgentChatError {
 
 /**
  * Returned by `createStartupGatedAgentChatController` in addition to the
- * full `AgentChatController` surface: `markReady` is how the composition
- * root (`src/main/index.ts`, via `agentComposition.ts`'s
- * `startAgentServiceInBackground`) swaps in the fully-initialized controller
- * once the background Copilot startup finishes, without the IPC handlers
- * (`ipc/agentChat.ts`) or the tool-context binding
- * (`agentComposition.ts`'s `createLateBoundAemToolContext`) ever having to
- * be re-wired - they were already pointed at this same object.
+ * full `AgentChatController` surface: `replaceDelegate` is how the composition
+ * root swaps in a fully-initialized controller - first once the background
+ * Copilot startup finishes, and again whenever the Copilot runtime is recycled
+ * (a proxy or active-provider change; see `copilotRuntimeManager.ts`) -
+ * without the IPC handlers (`ipc/agentChat.ts`) or the tool-context binding
+ * (`agentComposition.ts`'s `createLateBoundAemToolContext`) ever having to be
+ * re-wired: they were already pointed at this same object.
  */
 export interface StartupGatedAgentChatController extends AgentChatController {
   /**
-   * Swaps in `real` as the delegate for every call from this point on, and
+   * Installs `controller` as the delegate for every call from this point on,
    * starts forwarding its events to any listener already registered via
-   * `onEvent`. Call at most once - a second call is a composition-root
-   * ordering bug, not a condition this method silently tolerates.
+   * `onEvent`, and - when it replaces an earlier delegate - unsubscribes and
+   * disposes that previous one.
+   *
+   * Calling this more than once is a deliberate, supported operation, not a
+   * bug: recycling the Copilot runtime necessarily replaces the
+   * `AgentService` (and so the chat controller built from it) while the
+   * request never moves off this one long-lived gated object. The previous
+   * delegate is disposed *after* the new one is installed, so a listener
+   * registered at any point sees no gap in coverage.
    */
-  markReady(real: AgentChatController): void;
+  replaceDelegate(controller: AgentChatController): Promise<void>;
 }
 
 /**
@@ -485,9 +490,9 @@ export interface StartupGatedAgentChatController extends AgentChatController {
  * is refused outright with `agentServiceStartingError()` rather than queued:
  * queuing would mean silently reordering or replaying a user's request
  * against whichever `AgentService`/policy/tool-handler set happens to exist
- * once `markReady` runs, for a window (a few seconds, once, at cold start)
- * where refusing and letting the caller retry is simple and unsurprising
- * instead. `abort`/`closeConversation` resolve `{ ok: true }` instead of
+ * once `replaceDelegate` runs, for a window (a few seconds, once, at cold
+ * start) where refusing and letting the caller retry is simple and
+ * unsurprising instead. `abort`/`closeConversation` resolve `{ ok: true }` instead of
  * refusing: there is by construction no conversation open yet for either to
  * act on, so "already in the state you asked for" is the honest answer, not
  * a refusal.
@@ -559,14 +564,20 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     if (real) await real.dispose();
   }
 
-  function markReady(controller: AgentChatController): void {
-    if (real !== undefined) {
-      throw new Error('StartupGatedAgentChatController.markReady called more than once.');
-    }
+  function replaceDelegate(controller: AgentChatController): Promise<void> {
+    const previous = real;
+    const previousUnsubscribe = unsubscribeRealEvents;
+    // New delegate first, old listener second: between these two statements a
+    // listener registered on this gated object is genuinely fanned out to the
+    // new controller, and the old delegate's teardown (emitted by `dispose`
+    // below) is excluded by its own now-detached subscription.
     real = controller;
     unsubscribeRealEvents = controller.onEvent((event) => {
       for (const listener of [...forwardListeners]) listener(event);
     });
+    if (previous === undefined) return Promise.resolve();
+    previousUnsubscribe?.();
+    return previous.dispose();
   }
 
   return {
@@ -579,7 +590,7 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     currentAemToolContext,
     handleAemContextInvalidated,
     dispose,
-    markReady,
+    replaceDelegate,
   };
 }
 

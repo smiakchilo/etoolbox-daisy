@@ -1,8 +1,7 @@
 import { el } from '../lib/dom';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
 import type { AppSettingsSnapshot } from '../../../shared';
-import { createAuthenticationSection } from '../settings/authenticationSection';
-import { createModelsSection } from '../settings/modelsSection';
+import { createAgentsSection } from '../settings/agentsSection';
 import { createProxiesSection } from '../settings/proxiesSection';
 import { createHostsSection } from '../settings/hostsSection';
 import {
@@ -17,11 +16,11 @@ import { createPanel, type Panel } from './panel';
  * The Settings surface as a whole-size panel (`panel.ts`), superseding the
  * separate Settings child window (`requirements-decisions.md` section 8, as
  * deviated - see `docs/handoff-steps-09-12.md`). It reuses the same section
- * components the window used to mount (hosts, proxies, authentication,
- * models) and the same re-fetch-on-change rhythm:
+ * components the window used to mount (hosts, agents, proxies) and the same
+ * re-fetch-on-change rhythm:
  * every section that mutates settings calls back into `reload`, which
  * re-reads the snapshot, re-renders the host/proxy sections,
- * refreshes the model pickers, and reports the fresh snapshot to the caller
+ * refreshes the Agents tab, and reports the fresh snapshot to the caller
  * so the shell's browser pane follows along in real time.
  *
  * The panel occupies the browser pane's page-view region while open (the
@@ -83,6 +82,11 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     reportSave(saveReporter, outcome);
   }
 
+  const agentsSection = createAgentsSection({
+    status: banner,
+    reportSave: reportWith,
+    onSettingsChanged: () => void reload(),
+  });
   const hostsSection = createHostsSection({
     status: banner,
     reportSave: reportWith,
@@ -93,8 +97,6 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     status: banner,
     reportSave: reportWith,
   });
-  const authenticationSection = createAuthenticationSection(banner);
-  const modelsSection = createModelsSection({ status: banner, reportSave: reportWith });
 
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
@@ -110,29 +112,25 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     // combobox must reflect library changes even when a host edit is pending.
     hostsSection.update(result.snapshot.hosts, result.snapshot.proxies);
     if (!proxiesSection.hasPendingEdits()) proxiesSection.update(result.snapshot.proxies);
-    // These two do their own IPC reads rather than rendering a projection of
-    // the snapshot: the authentication section needs the live sign-in status,
-    // and the models section needs the SDK catalogue and the live turn lock.
-    //
-    // The authentication status is read through `agent:get-auth-status`,
-    // whose first call starts the real Copilot runtime and takes seconds,
-    // so it must not gate the model catalogue or the snapshot callback. Its
-    // refresh is kicked off here and awaited last; the section repaints
-    // itself whenever it resolves.
-    const authRefresh = authenticationSection.refresh();
-    if (!modelsSection.hasPendingEdits()) await modelsSection.refresh();
+    // The Agents tab does its own IPC reads rather than rendering a projection
+    // of the snapshot: it needs the live sign-in status and the active agent's
+    // SDK catalogue. That first auth read starts the real Copilot runtime and
+    // takes seconds, so it must not gate the snapshot callback; it is kicked
+    // off here and awaited last, and the section repaints itself whenever it
+    // resolves.
+    const agentsRefresh = agentsSection.refresh(result.snapshot);
     options.onSnapshotApplied(result.snapshot);
-    await authRefresh;
+    await agentsRefresh;
   }
 
   /** Close-and-persist: surfaces what was about to be lost, then hands over to the panel. */
   async function flushPendingEdits(): Promise<void> {
     await hostsSection.flushNow();
     await proxiesSection.flushNow();
-    await modelsSection.flushNow();
+    await agentsSection.flushNow();
   }
 
-  // The four sections become tab panels (AGENTS.md rule 1: Spectrum Web
+  // The sections become tab panels (AGENTS.md rule 1: Spectrum Web
   // Components only), their headings promoted to `<sp-tab>` labels so the
   // panel body no longer repeats the tab's title. The Hosts tab is the
   // default selection, matching the previous stacked layout's top position.
@@ -142,9 +140,8 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     readonly element: HTMLElement;
   }> = [
     { value: 'hosts', label: 'Hosts', element: hostsSection.element },
+    { value: 'agents', label: 'Agents', element: agentsSection.element },
     { value: 'proxies', label: 'Proxies', element: proxiesSection.element },
-    { value: 'authentication', label: 'Authentication', element: authenticationSection.element },
-    { value: 'models', label: 'Models', element: modelsSection.element },
   ];
 
   const tabs = el('sp-tabs', {
@@ -210,7 +207,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     dispose(): void {
       hostsSection.dispose();
       proxiesSection.dispose();
-      modelsSection.dispose();
+      agentsSection.dispose();
       banner.dispose();
       panel.dispose();
     },

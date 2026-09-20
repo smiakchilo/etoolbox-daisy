@@ -121,7 +121,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/errors.ts` | The error taxonomy and `requiredAction` values |
 | `contracts/origin.ts` | Origin normalization and comparison |
 | `contracts/serverConfig.ts` | An AEM server entry (id, label, colour, address, revision) |
-| `contracts/appSettings.ts` | Versioned persisted settings |
+| `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
 | `contracts/chatMetadata.ts` | Chat list entries (title, date, server, selection) |
 | `contracts/toolContracts.ts` | Tool **argument** schemas (`aemGetJsonArgsSchema`, `aemQueryArgsSchema`) and descriptors |
@@ -134,9 +134,17 @@ Non-contract shared files: `result.ts` (the `Result` type), `ipc-channels.ts`,
 and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 `settings-ipc.ts`, `app-api.ts`, `agent-auth.ts`).
 
-> **Treat Step 03 contracts as frozen.** Exactly one has been changed since —
-> `toolResult.ts`, documented in §8. If you must change another, say so
-> explicitly and search for the blast radius **outside `tests/unit`** too.
+> **Treat Step 03 contracts as frozen.** A few have been changed since —
+> `toolResult.ts` (§8) and the settings contracts `appSettings.ts` /
+> `settingsSnapshot.ts`. **There is deliberately no `schemaVersion` field and no
+> migration code anywhere**: the project has no deployed users and no
+> backward-compatibility obligation, so the persisted shape may change freely.
+> Do not add a version field or a migration. Loading a hand-edited
+> `settings.json` stays forgiving — missing fields default, unknown keys are
+> stripped, unusable entries are dropped — but that lives only in
+> `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
+> schemas themselves stay `.strict()`. If you must change another contract, say
+> so explicitly and search for the blast radius **outside `tests/unit`** too.
 
 ### `src/agent/` — the only SDK boundary
 
@@ -178,7 +186,7 @@ central to correctness), `serverSwitch.ts`, `certificatePrompt.ts`,
 ### `src/renderer/`
 
 **Adobe Spectrum Web Components for all UI** —
-<https://opensource.adobe.com/spectrum-web-components/>. Eighteen packages, all
+<https://opensource.adobe.com/spectrum-web-components/>. Nineteen packages, all
 pinned to `1.12.2` (including `alert-banner`, which renders the browser pane's
 status/message row); add new ones at that same version. Elements are registered
 by side-effect import in `src/renderer/src/main.ts`.
@@ -227,16 +235,18 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1658 passed / 14 skipped**;
-**Playwright → 59 tests**. (The Hosts multifield follow-on moved the unit
-baseline from 1583 and the Playwright count from 56 — see
-`docs/verification.md` "Settings \"Hosts\" tab is now a real multifield".)
+Current baseline: **`npm run verify` → 1702 passed / 14 skipped**;
+**Playwright → 59 tests**. (The Session "Authentication"/"Models" → "Agents"
+tab merge moved the unit baseline from 1658 — see
+`docs/verification.md` "Settings \"Authentication\" + \"Models\" tabs merged into
+one \"Agents\" tab".)
 `app.spec.ts` no longer collides with a running `npm run dev`: it now
 provisions a scratch storage home like every sibling spec (see
-`docs/verification.md` "Settings Servers renamed to Hosts", traps). One
-residual, load-correlated, now-self-diagnosing E2E flake in
+`docs/verification.md` "Settings Servers renamed to Hosts", traps). Two
+residual, load-correlated, now-self-diagnosing E2E flakes:
 `step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
-closeability section).
+closeability section) and `settings-color-picker.spec.ts` (its 1–2 px geometry
+assertions, seen once, green in isolation and in the next full run).
 
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's
@@ -391,9 +401,10 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 | Item | State |
 | --- | --- |
 | Step 07 manual smoke checklist | **Written, never run by a human.** Needs real Copilot + real AEM. |
-| Two Copilot clients | `src/main/ipc/agent.ts` keeps its own `cachedClient`, separate from `index.ts`'s composition client. Opening Settings may spawn a **second** `copilot-runtime.exe`; one leak is proven (fake path spawns a real runtime — 8 s+ hang measured). **Handoff and measurement plan: `docs/handoff-two-copilot-clients.md`.** Measure before Step 10's shutdown work; the design choice goes back to the user. |
+| Two Copilot clients | **Design fixed.** `src/main/copilotRuntimeManager.ts` owns one `CopilotClient` for auth and chat (`replaceDelegate`), replacing `ipc/agent.ts`'s separate `cachedClient`; fake mode answers auth from the fake, so it spawns no runtime at all. The **real-path process count is still unmeasured** — measure before Step 10's shutdown work. Plan: `docs/handoff-two-copilot-clients.md`. |
 | `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — covered by the same handoff. |
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory. |
+| Host `proxyId` | Persisted, integrity-checked and projected, but **not applied** to the live AEM session/bridge fetch. (The *active agent's* proxy is applied to the Copilot runtime and sign-in.) |
 | `step05-address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | Git | Zero commits. `.idea/` is staged. |
 

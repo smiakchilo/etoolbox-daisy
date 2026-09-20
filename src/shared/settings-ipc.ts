@@ -8,6 +8,7 @@ import {
   type ServerSnapshot,
 } from './contracts';
 import { proxyIdSchema, serverIdSchema } from './contracts';
+import { agentIdSchema } from './contracts';
 import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
 import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
@@ -90,6 +91,8 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'server_not_found',
   /** No proxy-library entry with the given id exists. */
   'proxy_not_found',
+  /** No agent with the given id exists in the agent registry. */
+  'agent_not_found',
   /** An origin change was requested without the matching confirmation for that exact origin. */
   'origin_change_requires_confirmation',
   /** A configured server already uses the requested origin. */
@@ -199,12 +202,6 @@ export function parseAddServerResult(candidate: unknown): AddServerResult {
 /** `settings:remove-server`. */
 export const removeServerRequestSchema = z.object({ serverId: serverIdSchema }).strict();
 export type RemoveServerRequest = Readonly<z.infer<typeof removeServerRequestSchema>>;
-
-/** `settings:set-active-server`. `serverId: null` clears the active server (e.g. before removing it). */
-export const setActiveServerRequestSchema = z
-  .object({ serverId: serverIdSchema.nullable() })
-  .strict();
-export type SetActiveServerRequest = Readonly<z.infer<typeof setActiveServerRequestSchema>>;
 
 /** `settings:update-server-presentation` - label/colour only, never bumps `revision`. */
 export const updateServerPresentationRequestSchema = z
@@ -483,3 +480,49 @@ export const setModelPreferencesRequestSchema = z
   });
 
 export type SetModelPreferencesRequest = Readonly<z.infer<typeof setModelPreferencesRequestSchema>>;
+
+// ---------------------------------------------------------------------------
+// Agent settings (the "Agents" surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * `settings:set-agent-settings`. Every field of `changes` follows the same
+ * three-state convention as `updateServerTargetingRequestSchema`: omitted means
+ * "leave unchanged", `null` means "clear" (for `proxy`/`model`/
+ * `reasoningEffort`; `active` is a plain boolean and is never cleared), and a
+ * value means "replace". At least one key must be present - a request that
+ * changes nothing is refused rather than silently writing the same document
+ * back.
+ *
+ * `agentId` is validated as an identifier, and the handler additionally
+ * requires it to name a provider in the compiled-in registry (reported as
+ * `agent_not_found`). A not-yet-known provider id from a newer settings file is
+ * therefore still *loadable* (see `agents.ts`) while remaining un-addressable
+ * here, which is the conservative direction for a write.
+ */
+export const setAgentSettingsRequestSchema = z
+  .object({
+    agentId: agentIdSchema,
+    changes: z
+      .object({
+        active: z.boolean().optional(),
+        proxy: proxyIdSchema.nullable().optional(),
+        model: modelIdSchema.nullable().optional(),
+        reasoningEffort: reasoningEffortSchema.nullable().optional(),
+      })
+      .strict()
+      .refine((changes) => Object.keys(changes).length > 0, {
+        message: 'at least one setting must be supplied',
+      }),
+  })
+  .strict();
+
+export type SetAgentSettingsRequest = Readonly<z.infer<typeof setAgentSettingsRequestSchema>>;
+
+/** `settings:set-agent-settings` result - the same shape as every other settings mutation. */
+export const setAgentSettingsResultSchema = settingsIpcVoidResultSchema;
+export type SetAgentSettingsResult = SettingsIpcVoidResult;
+
+export function parseSetAgentSettingsResult(candidate: unknown): SetAgentSettingsResult {
+  return settingsIpcVoidResultSchema.parse(candidate);
+}

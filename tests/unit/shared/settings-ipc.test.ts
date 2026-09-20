@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APP_SETTINGS_SCHEMA_VERSION, newProxyId, newServerId } from '../../../src/shared';
+import { DEFAULT_AGENT_ID, newProxyId, newServerId } from '../../../src/shared';
 import {
   addProxyRequestSchema,
   addServerRequestSchema,
@@ -114,12 +114,9 @@ describe('getSettingsSnapshotResultSchema', () => {
     const result = getSettingsSnapshotResultSchema.safeParse({
       ok: true,
       snapshot: {
-        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
         hosts: [],
-        activeHostId: null,
         proxies: [],
-        defaultModel: null,
-        defaultReasoningEffort: null,
+        agents: { [DEFAULT_AGENT_ID]: { active: true } },
       },
     });
     expect(result.success).toBe(true);
@@ -137,12 +134,9 @@ describe('getSettingsSnapshotResultSchema', () => {
     const result = getSettingsSnapshotResultSchema.safeParse({
       ok: true,
       snapshot: {
-        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
         hosts: [],
-        activeHostId: null,
         proxies: [],
-        defaultModel: null,
-        defaultReasoningEffort: null,
+        agents: { [DEFAULT_AGENT_ID]: { active: true } },
       },
       error: { code: 'storage_error', message: 'x' },
     });

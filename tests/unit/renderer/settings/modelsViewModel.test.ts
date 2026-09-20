@@ -7,8 +7,9 @@ import {
 import type { ModelSelectionState } from '../../../../src/shared';
 
 /**
- * Pure presentation tests for the Settings panel's Models section
- * (implementation-plan.md step 09).
+ * Pure presentation tests for the active agent's Model/Effort pickers
+ * (implementation-plan.md step 09). What the user is told about a failure is
+ * the panel banner's business - see `agentsViewModel.test.ts`.
  */
 
 function stateWith(overrides: Partial<ModelSelectionState> = {}): ModelSelectionState {
@@ -26,7 +27,7 @@ function stateWith(overrides: Partial<ModelSelectionState> = {}): ModelSelection
 }
 
 describe('buildModelsViewModel', () => {
-  it("offers 'let Copilot decide' first, then every catalogue model", () => {
+  it("offers '(Auto)' first, then every catalogue model", () => {
     const vm = buildModelsViewModel(stateWith(), { model: null, reasoningEffort: null });
     expect(vm.modelOptions.map((option) => option.value)).toEqual([
       NO_PREFERENCE_VALUE,
@@ -86,36 +87,29 @@ describe('buildModelsViewModel', () => {
     expect(vm.modelOptions.filter((option) => option.value === 'model-a')).toHaveLength(1);
   });
 
-  it('disables the controls while a turn is in flight and says why', () => {
+  it('disables the controls while a turn is in flight', () => {
     const vm = buildModelsViewModel(stateWith({ changesLocked: true }), {
       model: null,
       reasoningEffort: null,
     });
     expect(vm.controlsDisabled).toBe(true);
-    expect(vm.statusMessage).toContain('in progress');
   });
 
   it('leaves the controls enabled when idle', () => {
     const vm = buildModelsViewModel(stateWith(), { model: null, reasoningEffort: null });
     expect(vm.controlsDisabled).toBe(false);
-    expect(vm.statusMessage).toContain('next prompt');
   });
 
-  it('explains an unreadable catalogue without implying the choice was lost', () => {
+  it('keeps a stored selection when the catalogue could not be read', () => {
+    // The caller (agentsViewModel.ts) disables both pickers for this state and
+    // sends the failure to the panel banner; what matters here is that an
+    // unreadable catalogue never silently reports the user's choice as unset.
+    // Where that is reported is the banner's business, not this view model's.
     const vm = buildModelsViewModel(
       stateWith({ models: [], catalogUnavailable: true, selectedModel: 'model-a' }),
       { model: 'model-a', reasoningEffort: null },
     );
-    expect(vm.statusMessage).toBe('Could not retrieve the list of models');
     expect(vm.selectedModelValue).toBe('model-a');
-  });
-
-  it('prefers the lock message over the catalogue message when both apply', () => {
-    const vm = buildModelsViewModel(
-      stateWith({ models: [], catalogUnavailable: true, changesLocked: true }),
-      { model: null, reasoningEffort: null },
-    );
-    expect(vm.statusMessage).toContain('in progress');
   });
 });
 

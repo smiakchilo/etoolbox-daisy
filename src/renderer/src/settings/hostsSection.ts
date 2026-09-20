@@ -505,9 +505,9 @@ function buildHostItem(
       ctx.removeRow(key);
       return;
     }
-    // Removing the currently-active server is handled on the main side
-    // (`settingsStore.ts`'s `removeServer`): it clears `activeServerId` rather
-    // than leaving a dangling reference.
+    // Removing the currently-active server needs no special settings handling:
+    // the active host is tracked in the browser controller's memory, not in
+    // the settings document.
     pendingOrigin = undefined;
     removeArmed = true;
     ctx.status.showPrompt('Confirm removing the host. This action cannot be undone', removeAction);

@@ -15,11 +15,11 @@ import type { CurrentAemToolContext } from '../agent/aemTool';
 import type { CopilotClient } from '../agent';
 import type { FakeAgentService } from '../agent/fakeAgentService';
 import type { ModelPreference } from '../agent/sdkAgentService';
-import type { ModelCatalogEntry } from '../shared/contracts/modelCatalog';
-import type { IdGenerator } from '../shared/contracts/ids';
-import type { CurrentAemContext } from '../shared/contracts/toolContracts';
-import type { SessionStreamState } from '../shared/contracts/sessionState';
-import type { ToolResult } from '../shared/contracts/toolResult';
+import type { ModelCatalogEntry } from '../shared';
+import type { IdGenerator } from '../shared';
+import type { CurrentAemContext } from '../shared';
+import type { SessionStreamState } from '../shared';
+import type { ToolResult } from '../shared';
 
 /**
  * The production composition root (`src/main/index.ts`) wires together every
@@ -363,7 +363,7 @@ export interface StartAgentServiceInBackgroundDeps {
   readonly idGenerator: IdGenerator;
   readonly currentAemServerContext: () => AemServerContext | undefined;
   readonly navigationEpoch: () => number;
-  /** Swapped in via `markReady` once the real controller exists - see that method's own doc comment. */
+  /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
 
@@ -371,7 +371,7 @@ export interface StartAgentServiceInBackgroundDeps {
  * Runs the slow part of standing up the agent chat surface -
  * `copilotClient.start()` and `agentService.initialize()`, seconds on the
  * real path - and, once both succeed, builds the real `AgentChatController`
- * and hands it to `deps.gatedController.markReady`. The composition root
+ * and hands it to `deps.gatedController.replaceDelegate`. The composition root
  * (`index.ts`) calls this without awaiting it (`void
  * startAgentServiceInBackground(...).catch(...)`), so none of this can ever
  * delay registering any other IPC handler or the window becoming
@@ -399,7 +399,7 @@ export async function startAgentServiceInBackground(
     currentAemServerContext: deps.currentAemServerContext,
     navigationEpoch: deps.navigationEpoch,
   });
-  deps.gatedController.markReady(controller);
+  await deps.gatedController.replaceDelegate(controller);
 }
 
 /**

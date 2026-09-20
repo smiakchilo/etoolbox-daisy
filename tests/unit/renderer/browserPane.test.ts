@@ -308,7 +308,6 @@ describe('createBrowserPane closeability', () => {
           label: 'Author',
           origin: 'https://author.example',
           colorCss: '#0f0',
-          selected: false,
         },
       ],
     });

@@ -22,10 +22,10 @@ export interface MountMainShellOptions {
 
 /** Applies one loaded settings snapshot to the already-mounted browser pane. */
 function applySnapshot(browserPane: BrowserPane, snapshot: AppSettingsSnapshot): void {
-  const { hosts, activeHostId } = snapshot;
+  const { hosts } = snapshot;
   browserPane.update({
     addressValue: computeAddressBarValue(),
-    hostOptions: buildHostOptions(hosts, activeHostId),
+    hostOptions: buildHostOptions(hosts),
   });
 }
 

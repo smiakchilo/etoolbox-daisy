@@ -17,9 +17,9 @@ import type {
   OpenConversationRequest,
   Unsubscribe,
 } from '../../../src/agent/agentService';
-import { ok, type Result } from '../../../src/shared/result';
-import type { AgentEvent } from '../../../src/shared/contracts/agentEvents';
-import type { ChatId, ServerId } from '../../../src/shared/contracts/ids';
+import { ok, type Result } from '../../../src/shared';
+import type { AgentEvent } from '../../../src/shared';
+import type { ChatId, ServerId } from '../../../src/shared';
 
 /**
  * Unit tests for `agentChatController.ts` against `fakeAgentService.ts` -
@@ -446,7 +446,7 @@ describe('agentChatController', () => {
 // ---------------------------------------------------------------------------
 
 describe('createStartupGatedAgentChatController', () => {
-  it('reports serviceState "starting" - never a bare "not authenticated" - before markReady is called', () => {
+  it('reports serviceState "starting" - never a bare "not authenticated" - before a delegate is installed', () => {
     const gated = createStartupGatedAgentChatController();
     const status = gated.getStatus();
 
@@ -462,7 +462,7 @@ describe('createStartupGatedAgentChatController', () => {
     expect(status.sessionState).toBe('idle');
   });
 
-  it('refuses openConversation/sendMessage with a clear, retryable-sounding reason before markReady, never crashing the handler', async () => {
+  it('refuses openConversation/sendMessage with a clear, retryable-sounding reason before a delegate is installed, never crashing the handler', async () => {
     const gated = createStartupGatedAgentChatController();
 
     const openResult = await gated.openConversation({ chatId: newChatId('chat-1') });
@@ -480,7 +480,7 @@ describe('createStartupGatedAgentChatController', () => {
     expect(sendResult.error.code).toBe('PRECONDITION_FAILED');
   });
 
-  it('treats abort/closeConversation as already-satisfied (ok: true) before markReady, since there is no conversation yet to act on', async () => {
+  it('treats abort/closeConversation as already-satisfied (ok: true) before a delegate is installed, since there is no conversation yet to act on', async () => {
     const gated = createStartupGatedAgentChatController();
 
     await expect(gated.abort({ chatId: newChatId('chat-1') })).resolves.toEqual({ ok: true });
@@ -489,18 +489,18 @@ describe('createStartupGatedAgentChatController', () => {
     });
   });
 
-  it('throws a clear error from currentAemToolContext before markReady, rather than fabricating one', () => {
+  it('throws a clear error from currentAemToolContext before a delegate is installed, rather than fabricating one', () => {
     const gated = createStartupGatedAgentChatController();
     expect(() => gated.currentAemToolContext()).toThrow(/starting/);
   });
 
-  it('is a no-op for handleAemContextInvalidated/dispose before markReady', async () => {
+  it('is a no-op for handleAemContextInvalidated/dispose before a delegate is installed', async () => {
     const gated = createStartupGatedAgentChatController();
     await expect(gated.handleAemContextInvalidated()).resolves.toBeUndefined();
     await expect(gated.dispose()).resolves.toBeUndefined();
   });
 
-  it('delegates every call to the real controller once markReady runs, and forwards its events to listeners registered earlier', async () => {
+  it('delegates every call to the real controller once replaceDelegate runs, and forwards its events to listeners registered earlier', async () => {
     const gated = createStartupGatedAgentChatController();
     const received: AgentEvent[] = [];
     gated.onEvent((event) => received.push(event));
@@ -511,7 +511,7 @@ describe('createStartupGatedAgentChatController', () => {
 
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller: real } = buildController(agentService);
-    gated.markReady(real);
+    await gated.replaceDelegate(real);
 
     expect(gated.getStatus().serviceState).toBe('ready');
 
@@ -532,12 +532,34 @@ describe('createStartupGatedAgentChatController', () => {
     expect(received.length).toBeGreaterThan(0);
   });
 
-  it('throws if markReady is called more than once', () => {
+  it("swaps the delegate on a second replaceDelegate call, disposing the previous one and forwarding the new delegate's events", async () => {
     const gated = createStartupGatedAgentChatController();
-    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-    const { controller: real } = buildController(agentService);
+    const received: AgentEvent[] = [];
+    gated.onEvent((event) => received.push(event));
 
-    gated.markReady(real);
-    expect(() => gated.markReady(real)).toThrow(/more than once/);
+    const firstService = createFakeAgentService({ idGenerator: counterIdGenerator('first') });
+    const firstDispose = vi.spyOn(firstService, 'dispose');
+    const { controller: first } = buildController(firstService);
+    await gated.replaceDelegate(first);
+
+    const chatId = newChatId('chat-1');
+    await expect(gated.openConversation({ chatId })).resolves.toEqual({ ok: true, chatId });
+
+    // Recycling the runtime - e.g. a proxy change - replaces the service and
+    // the controller built from it while the request stays on `gated`.
+    const secondService = createFakeAgentService({ idGenerator: counterIdGenerator('second') });
+    const { controller: second } = buildController(secondService);
+    await gated.replaceDelegate(second);
+
+    // The old delegate was torn down exactly once...
+    expect(firstDispose).toHaveBeenCalledTimes(1);
+    // ...and the new one answers subsequent calls.
+    await expect(gated.openConversation({ chatId })).resolves.toEqual({ ok: true, chatId });
+    secondService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'again' }] });
+    const sendResult = await gated.sendMessage({ chatId, prompt: 'hello again' });
+    expect(sendResult.ok).toBe(true);
+    secondService.flush();
+    // ...and its events reach a listener registered before either delegate.
+    expect(received.length).toBeGreaterThan(0);
   });
 });

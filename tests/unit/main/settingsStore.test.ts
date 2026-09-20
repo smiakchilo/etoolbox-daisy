@@ -3,21 +3,22 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  APP_SETTINGS_SCHEMA_VERSION,
   appSettingsSchema,
   defaultAppSettings,
+  DEFAULT_AGENT_ID,
   type AppSettings,
 } from '../../../src/shared';
 import { newProxyId, newServerId } from '../../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../../src/shared';
 import {
+  activeAgentId,
   addProxy,
   addServer,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
   loadSettings,
-  migrateSettingsData,
+  normalizeSettingsDocument,
   proxySecretRef,
   removeProxy,
   repairProxyEntries,
@@ -28,7 +29,6 @@ import {
   settingsFilePath,
   updateModelPreferences,
   updateProxy,
-  type SchemaMigration,
 } from '../../../src/main/settingsStore';
 
 /**
@@ -68,14 +68,11 @@ function makeServer(
   });
 }
 
-function makeSettings(hosts: ServerConfig[], activeHostId: string | null = null): AppSettings {
+function makeSettings(hosts: ServerConfig[]): AppSettings {
   return appSettingsSchema.parse({
-    schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
     hosts,
-    activeHostId,
     proxies: [],
-    defaultModel: null,
-    defaultReasoningEffort: null,
+    agents: { [DEFAULT_AGENT_ID]: { active: true } },
   });
 }
 
@@ -101,7 +98,7 @@ describe('saveSettings / loadSettings round trip', () => {
         errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
       },
     });
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
     const withProxy = appSettingsSchema.parse({
       ...settings,
       hosts: settings.hosts,
@@ -113,8 +110,9 @@ describe('saveSettings / loadSettings round trip', () => {
           credentials: { username: 'bob', secretRef: 'vault://proxy/bob' },
         },
       ],
-      defaultModel: 'gpt-5',
-      defaultReasoningEffort: 'high',
+      agents: {
+        [DEFAULT_AGENT_ID]: { active: true, model: 'gpt-5', reasoningEffort: 'high' },
+      },
     });
 
     const saveResult = await saveSettings(dir, withProxy);
@@ -143,6 +141,33 @@ describe('loadSettings: first run', () => {
   });
 });
 
+describe('loadSettings: tolerant agent node', () => {
+  it('loads a document whose agent node omits active, defaulting it to false and falling back to the default agent', async () => {
+    const dir = createScratchRoot();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      settingsFilePath(dir),
+      JSON.stringify({
+        hosts: [],
+        proxies: [],
+        agents: { [DEFAULT_AGENT_ID]: { model: 'gpt-5' } },
+      }),
+      'utf8',
+    );
+
+    const result = await loadSettings(dir);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe('loaded');
+      expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.active).toBe(false);
+      expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBe('gpt-5');
+      // "No stored node is active" is well-defined: the default provider.
+      expect(activeAgentId(result.value.settings)).toBe(DEFAULT_AGENT_ID);
+    }
+  });
+});
+
 describe('loadSettings: corruption handling', () => {
   it('reports an explicit error for unparseable JSON and leaves the file untouched', async () => {
     const dir = createScratchRoot();
@@ -160,24 +185,21 @@ describe('loadSettings: corruption handling', () => {
     expect(readFileSync(filePath, 'utf8')).toBe(damagedContent);
   });
 
-  it('reports an explicit error for schema-invalid JSON', async () => {
+  it('coerces a wrong-shaped hosts value to an empty list instead of failing the load', async () => {
     const dir = createScratchRoot();
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      settingsFilePath(dir),
-      JSON.stringify({ schemaVersion: APP_SETTINGS_SCHEMA_VERSION, hosts: 'not an array' }),
-      'utf8',
-    );
+    writeFileSync(settingsFilePath(dir), JSON.stringify({ hosts: 'not an array' }), 'utf8');
 
     const result = await loadSettings(dir);
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.kind).toBe('schema_invalid');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe('loaded');
+      expect(result.value.settings.hosts).toEqual([]);
     }
   });
 
-  it('fails closed - never silently trusted - for a legacy tlsException persisted before errorClass was required', async () => {
+  it('drops a legacy tlsException missing errorClass and loads the host, failing closed', async () => {
     const dir = createScratchRoot();
     mkdirSync(dir, { recursive: true });
     const server = {
@@ -197,53 +219,23 @@ describe('loadSettings: corruption handling', () => {
     writeFileSync(
       settingsFilePath(dir),
       JSON.stringify({
-        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
         hosts: [server],
-        activeHostId: server.id,
         proxies: [],
-        defaultModel: null,
-        defaultReasoningEffort: null,
+        agents: { [DEFAULT_AGENT_ID]: { active: true } },
       }),
       'utf8',
     );
 
     const result = await loadSettings(dir);
 
-    // The one genuinely dangerous outcome would be this failing entry being
-    // dropped while the rest of the document (and, worse, some trace of the
-    // exception itself) still loaded as if it were approved. There is no
-    // per-entry recovery anywhere in this module (`parseAppSettings`
-    // validates the whole document at once via `.safeParse`), so the actual
-    // behaviour is blunter but safe: the entire load fails, and `result.ok`
-    // being `false` means there is no `result.value.settings` at all for a
-    // caller to (mis)read a certificate exception out of.
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.kind).toBe('schema_invalid');
-      expect(result.error.message).toContain('errorClass');
-    }
-  });
-
-  it('reports an explicit error, rather than defaults, for a version newer than this build understands', async () => {
-    const dir = createScratchRoot();
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      settingsFilePath(dir),
-      JSON.stringify({
-        schemaVersion: APP_SETTINGS_SCHEMA_VERSION + 1,
-        hosts: [],
-        activeHostId: null,
-        defaultModel: null,
-        defaultReasoningEffort: null,
-      }),
-      'utf8',
-    );
-
-    const result = await loadSettings(dir);
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.kind).toBe('version_too_new');
+    // The unapprovable exception is discarded, never silently trusted: the
+    // host loads with no exception at all, so the next navigation to it raises
+    // a fresh decision. That is the "fail closed" direction - nothing in
+    // `result.value.settings` claims a certificate was approved.
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.hosts).toHaveLength(1);
+      expect(result.value.settings.hosts[0]?.tlsException).toBeUndefined();
     }
   });
 
@@ -277,153 +269,6 @@ describe('loadSettings: corruption handling', () => {
   });
 });
 
-describe('loadSettings: migrations', () => {
-  it('migrates an older version explicitly and produces a valid current-version document', async () => {
-    const dir = createScratchRoot();
-    mkdirSync(dir, { recursive: true });
-
-    // A hypothetical schema version 0 that stored `servers` under the name
-    // `entries` instead of `servers`. This version never really existed
-    // (there is no real version 0 - see SETTINGS_MIGRATIONS's doc comment),
-    // but it proves the chaining mechanism a real "1 -> 2" migration would
-    // rely on.
-    const legacyDocument = {
-      schemaVersion: 0,
-      entries: [],
-      activeHostId: null,
-      defaultModel: null,
-      defaultReasoningEffort: null,
-    };
-    writeFileSync(settingsFilePath(dir), JSON.stringify(legacyDocument), 'utf8');
-
-    const fakeMigration: SchemaMigration = {
-      fromVersion: 0,
-      toVersion: APP_SETTINGS_SCHEMA_VERSION,
-      migrate: (data) => {
-        const { entries, ...rest } = data;
-        return {
-          ...rest,
-          schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-          hosts: entries ?? [],
-          proxies: [],
-        };
-      },
-    };
-
-    const result = await loadSettings(dir, { migrations: [fakeMigration] });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.status).toBe('migrated');
-      expect(result.value.fromVersion).toBe(0);
-      expect(result.value.settings.schemaVersion).toBe(APP_SETTINGS_SCHEMA_VERSION);
-      expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
-    }
-  });
-
-  it('chains multiple migration hops in one load', () => {
-    const migrations: SchemaMigration[] = [
-      { fromVersion: 0, toVersion: 1, migrate: (data) => ({ ...data, schemaVersion: 1, hop: 1 }) },
-      {
-        fromVersion: 1,
-        toVersion: APP_SETTINGS_SCHEMA_VERSION,
-        migrate: (data) => ({
-          ...data,
-          schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-          hop2: true,
-        }),
-      },
-    ];
-
-    const result = migrateSettingsData({ schemaVersion: 0 }, 0, migrations);
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.hop).toBe(1);
-      expect(result.value.hop2).toBe(true);
-      expect(result.value.schemaVersion).toBe(APP_SETTINGS_SCHEMA_VERSION);
-    }
-  });
-
-  it('migrates a real v1 file: servers/activeHostId become hosts/activeHostId', async () => {
-    const dir = createScratchRoot();
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      settingsFilePath(dir),
-      JSON.stringify({
-        schemaVersion: 1,
-        hosts: [
-          {
-            id: 'server-a',
-            label: 'A',
-            origin: 'https://a.example',
-            color: { kind: 'swatch', swatch: 'blue' },
-            revision: 0,
-          },
-        ],
-        activeHostId: 'server-a',
-        defaultModel: null,
-        defaultReasoningEffort: null,
-      }),
-      'utf8',
-    );
-
-    const result = await loadSettings(dir);
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.status).toBe('migrated');
-      expect(result.value.settings.hosts).toHaveLength(1);
-      expect(result.value.settings.hosts[0]?.origin).toBe('https://a.example');
-      expect(result.value.settings.activeHostId).toBe('server-a');
-      // A v1 file predates the proxy library, so it comes back with none.
-      expect(result.value.settings.proxies).toEqual([]);
-    }
-  });
-
-  it('loads a manually-renamed v1 file (hosts key, old version number)', async () => {
-    const dir = createScratchRoot();
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      settingsFilePath(dir),
-      JSON.stringify({
-        schemaVersion: 1,
-        hosts: [],
-        activeHostId: null,
-        defaultModel: null,
-        defaultReasoningEffort: null,
-      }),
-      'utf8',
-    );
-
-    const result = await loadSettings(dir);
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.status).toBe('migrated');
-      expect(result.value.settings.hosts).toEqual([]);
-      expect(result.value.settings.activeHostId).toBeNull();
-    }
-  });
-
-  it('reports an explicit error when no migration path exists for an older version', async () => {
-    const dir = createScratchRoot();
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      settingsFilePath(dir),
-      JSON.stringify({ schemaVersion: 0, hosts: [], activeHostId: null }),
-      'utf8',
-    );
-
-    const result = await loadSettings(dir, { migrations: [] });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.kind).toBe('schema_invalid');
-    }
-  });
-});
-
 describe('loadSettings: repairs a legacy-shaped proxy entry instead of failing', () => {
   it('loads a file whose proxy entry carries url/credentials but no id/label', async () => {
     const dir = createScratchRoot();
@@ -432,7 +277,6 @@ describe('loadSettings: repairs a legacy-shaped proxy entry instead of failing',
     // produces: the address and credentials survive, the newer identity
     // fields do not.
     const onDisk = JSON.stringify({
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [],
       proxies: [
         {
@@ -440,9 +284,7 @@ describe('loadSettings: repairs a legacy-shaped proxy entry instead of failing',
           credentials: { username: 'proxyuser', secretRef: 'copilotProxy' },
         },
       ],
-      activeHostId: null,
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     });
     writeFileSync(settingsFilePath(dir), onDisk, 'utf8');
 
@@ -460,6 +302,148 @@ describe('loadSettings: repairs a legacy-shaped proxy entry instead of failing',
   });
 });
 
+describe('normalizeSettingsDocument', () => {
+  function normalize(raw: unknown): Record<string, unknown> {
+    return normalizeSettingsDocument(raw) as Record<string, unknown>;
+  }
+
+  it('defaults missing hosts, proxies and agents', () => {
+    const normalized = normalize({});
+
+    expect(normalized['hosts']).toEqual([]);
+    expect(normalized['proxies']).toEqual([]);
+    expect(
+      (normalized['agents'] as Record<string, Record<string, unknown>>)[DEFAULT_AGENT_ID],
+    ).toEqual({ active: true });
+  });
+
+  it('strips unrecognised keys at every level but never inside credentials', () => {
+    const normalized = normalize({
+      extra: 'gone',
+      hosts: [],
+      proxies: [
+        {
+          id: 'proxy-a',
+          label: 'Corporate',
+          url: 'https://proxy.example',
+          extra: 'gone',
+          credentials: { username: 'u', secretRef: 's', password: 'hunter2' },
+        },
+      ],
+      agents: { [DEFAULT_AGENT_ID]: { active: true, extra: 'gone' } },
+    });
+
+    expect(normalized).not.toHaveProperty('extra');
+    const proxy = (normalized['proxies'] as Record<string, unknown>[])[0];
+    expect(proxy).not.toHaveProperty('extra');
+    // The credentials object is copied through so the strict schema can still
+    // reject the smuggled password.
+    expect(proxy?.['credentials']).toEqual({
+      username: 'u',
+      secretRef: 's',
+      password: 'hunter2',
+    });
+    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[
+      DEFAULT_AGENT_ID
+    ];
+    expect(agent).not.toHaveProperty('extra');
+  });
+
+  it('drops a host with no usable id or origin', () => {
+    const normalized = normalize({
+      hosts: [
+        {
+          id: 'server-a',
+          origin: 'https://a.example',
+          label: 'A',
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+        { id: 'server-b' },
+        { origin: 'https://c.example' },
+        { id: 'server-d', origin: 'not a url' },
+      ],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    });
+
+    const hosts = normalized['hosts'] as Record<string, unknown>[];
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]?.['id']).toBe('server-a');
+  });
+
+  it("fills a host's missing label, colour and revision", () => {
+    const normalized = normalize({
+      hosts: [{ id: 'server-a', origin: 'https://author.example:4502' }],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    });
+
+    expect((normalized['hosts'] as Record<string, unknown>[])[0]).toMatchObject({
+      id: 'server-a',
+      origin: 'https://author.example:4502',
+      label: 'author.example:4502',
+      color: { kind: 'swatch', swatch: 'blue' },
+      revision: 0,
+    });
+  });
+
+  it('clears references that no longer resolve and an effort with no model', () => {
+    const normalized = normalize({
+      hosts: [
+        {
+          id: 'server-a',
+          origin: 'https://a.example',
+          label: 'A',
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+          proxyId: 'ghost',
+        },
+      ],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true, proxy: 'ghost', reasoningEffort: 'high' } },
+    });
+
+    expect((normalized['hosts'] as Record<string, unknown>[])[0]).not.toHaveProperty('proxyId');
+    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[
+      DEFAULT_AGENT_ID
+    ];
+    expect(agent).not.toHaveProperty('proxy');
+    expect(agent).not.toHaveProperty('reasoningEffort');
+  });
+
+  it('keeps only the first of a duplicated host and the first active agent', () => {
+    const normalized = normalize({
+      hosts: [
+        {
+          id: 'server-a',
+          origin: 'https://a.example',
+          label: 'A',
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+        {
+          id: 'server-a',
+          origin: 'https://b.example',
+          label: 'B',
+          color: { kind: 'swatch', swatch: 'red' },
+          revision: 0,
+        },
+      ],
+      proxies: [],
+      agents: {
+        [DEFAULT_AGENT_ID]: { active: true },
+        opencode: { active: true },
+      },
+    });
+
+    expect(normalized['hosts']).toHaveLength(1);
+    const agents = normalized['agents'] as Record<string, Record<string, unknown>>;
+    expect(agents[DEFAULT_AGENT_ID]?.['active']).toBe(true);
+    expect(agents['opencode']?.['active']).toBe(false);
+  });
+});
+
 describe('saveSettings: atomic writes and failures', () => {
   it('leaves no partial or temp file behind after a successful write', async () => {
     const dir = createScratchRoot();
@@ -474,7 +458,7 @@ describe('saveSettings: atomic writes and failures', () => {
   it('does not destroy the previous good file when the rename step fails mid-write', async () => {
     const dir = createScratchRoot();
     const server = makeServer('server-a', 'https://a.example');
-    const goodSettings = makeSettings([server], server.id);
+    const goodSettings = makeSettings([server]);
     const firstSave = await saveSettings(dir, goodSettings);
     expect(firstSave.ok).toBe(true);
 
@@ -512,7 +496,7 @@ describe('saveSettings: atomic writes and failures', () => {
 describe('applyServerPresentationChange', () => {
   it('updates label/colour without changing the revision', () => {
     const server = makeServer('server-a', 'https://a.example', { revision: 3 });
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
 
     const result = applyServerPresentationChange(settings, server.id, {
       label: 'Renamed',
@@ -546,7 +530,7 @@ describe('applyServerTargetingChange: origin changes', () => {
   it('rejects an origin change with no confirmation, and nothing is persisted', async () => {
     const dir = createScratchRoot();
     const server = makeServer('server-a', 'https://a.example');
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
     const saveResult = await saveSettings(dir, settings);
     expect(saveResult.ok).toBe(true);
 
@@ -569,7 +553,7 @@ describe('applyServerTargetingChange: origin changes', () => {
 
   it('rejects an origin change whose confirmation names a different origin', () => {
     const server = makeServer('server-a', 'https://a.example');
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
 
     const mutation = applyServerTargetingChange(
       settings,
@@ -593,7 +577,7 @@ describe('applyServerTargetingChange: origin changes', () => {
         errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
       },
     });
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
 
     const mutation = applyServerTargetingChange(
       settings,
@@ -615,7 +599,7 @@ describe('applyServerTargetingChange: origin changes', () => {
   it("rejects an origin change that collides with another configured server's origin", () => {
     const serverA = makeServer('server-a', 'https://a.example');
     const serverB = makeServer('server-b', 'https://b.example');
-    const settings = makeSettings([serverA, serverB], serverA.id);
+    const settings = makeSettings([serverA, serverB]);
 
     const mutation = applyServerTargetingChange(
       settings,
@@ -634,7 +618,7 @@ describe('applyServerTargetingChange: origin changes', () => {
 describe('applyServerTargetingChange: proxy changes', () => {
   it('reports that a safe transition is required for a proxy change on the active server', () => {
     const server = makeServer('server-a', 'https://a.example');
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
 
     const mutation = applyServerTargetingChange(settings, server.id, {
       proxy: {
@@ -721,15 +705,13 @@ describe('removeServer', () => {
   it('removes the server entry', () => {
     const server = makeServer('server-a', 'https://a.example');
     const other = makeServer('server-b', 'https://b.example');
-    const settings = makeSettings([server, other], other.id);
+    const settings = makeSettings([server, other]);
 
     const result = removeServer(settings, server.id);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.settings.hosts.map((s) => s.id)).toEqual([other.id]);
-      expect(result.value.wasActive).toBe(false);
-      expect(result.value.settings.activeHostId).toBe(other.id);
+      expect(result.value.hosts.map((s) => s.id)).toEqual([other.id]);
     }
   });
 
@@ -747,20 +729,16 @@ describe('removeServer', () => {
     }
   });
 
-  it('clears activeHostId (rather than leaving a dangling reference) when the removed server was active', () => {
+  it('returns a document that still validates after removing a server', () => {
     const server = makeServer('server-a', 'https://a.example');
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
 
     const result = removeServer(settings, server.id);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.value.wasActive).toBe(true);
-      expect(result.value.settings.activeHostId).toBeNull();
-      expect(result.value.settings.hosts).toHaveLength(0);
-      // The resulting document must itself still validate - the whole
-      // reason activeHostId is cleared rather than left dangling.
-      expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
+      expect(result.value.hosts).toHaveLength(0);
+      expect(() => appSettingsSchema.parse(result.value)).not.toThrow();
     }
   });
 });
@@ -770,7 +748,7 @@ describe('reorderServers', () => {
     const a = makeServer('server-a', 'https://a.example');
     const b = makeServer('server-b', 'https://b.example');
     const c = makeServer('server-c', 'https://c.example');
-    const settings = makeSettings([a, b, c], a.id);
+    const settings = makeSettings([a, b, c]);
 
     const result = reorderServers(settings, [c.id, a.id, b.id]);
 
@@ -778,7 +756,6 @@ describe('reorderServers', () => {
     if (result.ok) {
       expect(result.value.hosts.map((server) => server.id)).toEqual([c.id, a.id, b.id]);
       expect(result.value.hosts.map((server) => server.revision)).toEqual([0, 0, 0]);
-      expect(result.value.activeHostId).toBe(a.id);
     }
   });
 
@@ -1011,17 +988,14 @@ describe('proxy library mutations', () => {
 describe('repairProxyEntries', () => {
   it('fills a missing id and label from the address, preserving url and credentials', () => {
     const raw = {
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [],
-      activeHostId: null,
       proxies: [
         {
           url: 'http://109.207.79.171:3128',
           credentials: { username: 'proxyuser', secretRef: 'copilotProxy' },
         },
       ],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     };
 
     const repaired = repairProxyEntries(raw) as Record<string, unknown>;
@@ -1091,9 +1065,7 @@ describe('canary: plaintext secrets never reach settings', () => {
 
   it('proxyCredentialsSchema (via appSettingsSchema) rejects a password field carrying the canary', () => {
     const raw = {
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [],
-      activeHostId: null,
       proxies: [
         {
           id: 'proxy-a',
@@ -1102,8 +1074,7 @@ describe('canary: plaintext secrets never reach settings', () => {
           credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
         },
       ],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     };
 
     expect(() => appSettingsSchema.parse(raw)).toThrow();
@@ -1113,9 +1084,7 @@ describe('canary: plaintext secrets never reach settings', () => {
     const dir = createScratchRoot();
     mkdirSync(dir, { recursive: true });
     const rawWithCanary = {
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [],
-      activeHostId: null,
       proxies: [
         {
           id: 'proxy-a',
@@ -1124,8 +1093,7 @@ describe('canary: plaintext secrets never reach settings', () => {
           credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
         },
       ],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     };
     writeFileSync(settingsFilePath(dir), JSON.stringify(rawWithCanary), 'utf8');
 
@@ -1150,7 +1118,7 @@ describe('canary: plaintext secrets never reach settings', () => {
         credentials: { username: 'alice', secretRef: 'vault://server-a/proxy' },
       },
     });
-    const settings = makeSettings([server], server.id);
+    const settings = makeSettings([server]);
 
     await saveSettings(dir, settings);
 
@@ -1168,8 +1136,8 @@ describe('updateModelPreferences', () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.defaultModel).toBe('model-a');
-    expect(result.value.defaultReasoningEffort).toBe('high');
+    expect(result.value.agents[DEFAULT_AGENT_ID]?.model).toBe('model-a');
+    expect(result.value.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBe('high');
   });
 
   it('forces the reasoning effort to null when the model is cleared', () => {
@@ -1183,8 +1151,8 @@ describe('updateModelPreferences', () => {
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.defaultModel).toBeNull();
-    expect(result.value.defaultReasoningEffort).toBeNull();
+    expect(result.value.agents[DEFAULT_AGENT_ID]?.model).toBeUndefined();
+    expect(result.value.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBeUndefined();
   });
 
   it('clears a previously stored effort when the model is cleared', () => {
@@ -1201,7 +1169,7 @@ describe('updateModelPreferences', () => {
     });
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
-    expect(cleared.value.defaultReasoningEffort).toBeNull();
+    expect(cleared.value.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBeUndefined();
   });
 
   it('leaves every other setting untouched', () => {

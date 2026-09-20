@@ -80,7 +80,6 @@ function settingsWithOneServer(server: ServerConfig): AppSettings {
   return {
     ...defaultAppSettings(),
     hosts: [server],
-    activeHostId: server.id,
   };
 }
 
@@ -457,7 +456,6 @@ describe('browserController.switchServer', () => {
     await writeSettings(harness.settingsDir, {
       ...defaultAppSettings(),
       hosts: [serverA, serverB],
-      activeHostId: serverA.id,
     });
 
     let releaseFirstLoad!: () => void;
@@ -830,7 +828,6 @@ describe('browserController.activeServer', () => {
     await writeSettings(harness.settingsDir, {
       ...defaultAppSettings(),
       hosts: [serverA, serverB],
-      activeHostId: serverA.id,
     });
     await harness.controller.switchServer(serverA.id);
     expect(harness.controller.activeServer()?.serverId).toBe(serverA.id);
@@ -884,7 +881,6 @@ describe('browserController.activeServer', () => {
     await writeSettings(harness.settingsDir, {
       ...defaultAppSettings(),
       hosts: [serverA, serverB],
-      activeHostId: serverA.id,
     });
     await harness.controller.switchServer(serverA.id);
     const before = harness.controller.activeServer();

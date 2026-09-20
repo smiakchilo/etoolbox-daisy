@@ -74,14 +74,14 @@ test('servers added in the Settings panel persist, and removal persists too', as
     const draft = items.last();
     await expect(draft).toHaveCount(1);
 
-    // The placeholder is 50% gray, distinct from the value colour (which
-    // Spectrum's textfield otherwise shares with the placeholder).
+    // The placeholder is the theme's gray-500, distinct from the value colour
+    // (which Spectrum's textfield otherwise shares with the placeholder).
     const draftAddress = draft.locator('sp-textfield[aria-label="Address"] input');
     const placeholderColor = await draftAddress.evaluate(
       (el) => getComputedStyle(el, '::placeholder').color,
     );
     const valueColor = await draftAddress.evaluate((el) => getComputedStyle(el).color);
-    expect(placeholderColor).toBe('rgb(128, 128, 128)');
+    expect(placeholderColor).toBe('rgb(144, 144, 144)');
     expect(valueColor).not.toBe(placeholderColor);
 
     await draftAddress.fill('https://canary-author.example');

@@ -59,9 +59,9 @@ export type ModelCatalogEntry = Readonly<z.infer<typeof modelCatalogEntrySchema>
 export const modelSelectionStateSchema = z
   .object({
     models: z.array(modelCatalogEntrySchema),
-    /** The persisted `defaultModel`, or `null` when the user has not chosen one. */
+    /** The active agent's stored `model`, or `null` when none is chosen. */
     selectedModel: modelIdSchema.nullable(),
-    /** The persisted `defaultReasoningEffort`, or `null`. */
+    /** The active agent's stored `reasoningEffort`, or `null`. */
     selectedReasoningEffort: reasoningEffortSchema.nullable(),
     /** True while a turn is in flight: the pickers must be disabled. */
     changesLocked: z.boolean(),

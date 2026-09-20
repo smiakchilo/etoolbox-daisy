@@ -146,6 +146,11 @@ beforeEach(() => {
       loadCatalog: () => Promise.resolve(err({ message: 'catalogue not available in this suite' })),
       isTurnInFlight: () => false,
     },
+    agentSettings: {
+      loadCatalog: () => Promise.resolve(err({ message: 'catalogue not available in this suite' })),
+      isTurnInFlight: () => false,
+      onAgentSettingsSaved: vi.fn(),
+    },
   });
 
   const record = (name: string) => {

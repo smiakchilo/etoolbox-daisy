@@ -81,8 +81,8 @@ export const agentServiceLifecycleStateSchema = z.enum(AGENT_SERVICE_LIFECYCLE_S
  * Enough for a chat pane to render its initial state: sign-in status, which
  * conversation (if any) main currently owns, and that conversation's
  * streaming state. `activeChatId` is `null`, not omitted, when no
- * conversation is open - mirroring `AppSettings.activeHostId`'s convention
- * for "there is currently none" over an optional field. While
+ * conversation is open - the app's convention for "there is currently none"
+ * is an explicit `null` rather than an optional field. While
  * `serviceState` is `"starting"`, `auth`/`activeChatId`/`sessionState` are
  * placeholder values (no real `AgentService` has been asked yet) - a caller
  * must check `serviceState` first, never infer readiness from those fields.

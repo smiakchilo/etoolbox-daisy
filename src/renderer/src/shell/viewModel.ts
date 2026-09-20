@@ -24,20 +24,15 @@ export interface HostOption {
   readonly origin: string;
   /** CSS colour for the paired swatch dot - never the only signal, see `resolveServerColorCss`. */
   readonly colorCss: string;
-  readonly selected: boolean;
 }
 
 /** Builds the hosts panel's option list from the settings snapshot. */
-export function buildHostOptions(
-  hosts: readonly ServerSnapshot[],
-  activeHostId: ServerId | null,
-): readonly HostOption[] {
+export function buildHostOptions(hosts: readonly ServerSnapshot[]): readonly HostOption[] {
   return hosts.map((server) => ({
     id: server.id,
     label: server.label,
     origin: server.origin,
     colorCss: resolveServerColorCss(server.color),
-    selected: server.id === activeHostId,
   }));
 }
 

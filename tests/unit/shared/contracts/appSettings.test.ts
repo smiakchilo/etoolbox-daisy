@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  APP_SETTINGS_SCHEMA_VERSION,
   appSettingsSchema,
   defaultAppSettings,
+  DEFAULT_AGENT_ID,
   newProxyId,
   newServerId,
   parseAppSettings,
@@ -31,12 +31,9 @@ function proxy(id: string) {
 function validSettings() {
   const serverA = server('server-a', 'https://a.example');
   return {
-    schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
     hosts: [serverA],
-    activeHostId: serverA.id,
     proxies: [],
-    defaultModel: null,
-    defaultReasoningEffort: null,
+    agents: { [DEFAULT_AGENT_ID]: { active: true } },
   };
 }
 
@@ -49,31 +46,27 @@ describe('appSettingsSchema', () => {
   it('accepts a model/reasoning-effort string that is not on any hard-coded list', () => {
     const input = {
       ...validSettings(),
-      defaultModel: 'some-brand-new-model-2099',
-      defaultReasoningEffort: 'ultra-deep-think',
+      agents: {
+        [DEFAULT_AGENT_ID]: {
+          active: true,
+          model: 'some-brand-new-model-2099',
+          reasoningEffort: 'ultra-deep-think',
+        },
+      },
     };
     expect(appSettingsSchema.parse(input)).toEqual(input);
   });
 
-  describe('schema version', () => {
-    it('rejects a document missing schemaVersion', () => {
-      const withoutSchemaVersion: Record<string, unknown> = { ...validSettings() };
-      delete withoutSchemaVersion.schemaVersion;
-      expect(() => appSettingsSchema.parse(withoutSchemaVersion)).toThrow();
-    });
+  it('defaults a missing agent `active` to false instead of rejecting the document', () => {
+    const input = {
+      ...validSettings(),
+      agents: { [DEFAULT_AGENT_ID]: { model: 'gpt-5' } },
+    };
 
-    it('rejects an older schema version', () => {
-      expect(() => appSettingsSchema.parse({ ...validSettings(), schemaVersion: 0 })).toThrow();
-    });
+    const parsed = appSettingsSchema.parse(input);
 
-    it('rejects a newer, unknown schema version', () => {
-      expect(() =>
-        appSettingsSchema.parse({
-          ...validSettings(),
-          schemaVersion: APP_SETTINGS_SCHEMA_VERSION + 1,
-        }),
-      ).toThrow();
-    });
+    expect(parsed.agents[DEFAULT_AGENT_ID]?.active).toBe(false);
+    expect(parsed.agents[DEFAULT_AGENT_ID]?.model).toBe('gpt-5');
   });
 
   describe('server list integrity', () => {
@@ -82,12 +75,9 @@ describe('appSettingsSchema', () => {
       const duplicate = serverConfigSchema.parse({ ...serverA, origin: 'https://b.example' });
       expect(() =>
         appSettingsSchema.parse({
-          schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
           hosts: [serverA, duplicate],
-          activeHostId: serverA.id,
           proxies: [],
-          defaultModel: null,
-          defaultReasoningEffort: null,
+          agents: { [DEFAULT_AGENT_ID]: { active: true } },
         }),
       ).toThrow();
     });
@@ -97,41 +87,11 @@ describe('appSettingsSchema', () => {
       const serverB = server('server-b', 'https://a.example');
       expect(() =>
         appSettingsSchema.parse({
-          schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
           hosts: [serverA, serverB],
-          activeHostId: serverA.id,
           proxies: [],
-          defaultModel: null,
-          defaultReasoningEffort: null,
+          agents: { [DEFAULT_AGENT_ID]: { active: true } },
         }),
       ).toThrow();
-    });
-
-    it('rejects a dangling activeHostId', () => {
-      const serverA = server('server-a', 'https://a.example');
-      const danglingId = newServerId(() => 'server-ghost');
-      expect(() =>
-        appSettingsSchema.parse({
-          schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-          hosts: [serverA],
-          activeHostId: danglingId,
-          proxies: [],
-          defaultModel: null,
-          defaultReasoningEffort: null,
-        }),
-      ).toThrow();
-    });
-
-    it('accepts a null activeHostId with no servers configured', () => {
-      const input = {
-        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
-        hosts: [],
-        activeHostId: null,
-        proxies: [],
-        defaultModel: null,
-        defaultReasoningEffort: null,
-      };
-      expect(appSettingsSchema.parse(input)).toEqual(input);
     });
 
     it('accepts a host whose proxyId names a configured proxy', () => {
@@ -204,10 +164,8 @@ describe('appSettingsSchema', () => {
 describe('defaultAppSettings', () => {
   it('produces a valid, empty document', () => {
     const settings = defaultAppSettings();
-    expect(settings.schemaVersion).toBe(APP_SETTINGS_SCHEMA_VERSION);
     expect(settings.hosts).toEqual([]);
     expect(settings.proxies).toEqual([]);
-    expect(settings.activeHostId).toBeNull();
     expect(() => appSettingsSchema.parse(settings)).not.toThrow();
   });
 });
@@ -222,11 +180,11 @@ describe('parseAppSettings', () => {
   });
 
   it('returns a structured error instead of throwing for a malformed document', () => {
-    const result = parseAppSettings({ ...validSettings(), schemaVersion: 99 });
+    const result = parseAppSettings({ ...validSettings(), hosts: 'not an array' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.length).toBeGreaterThan(0);
-      expect(result.error[0]?.path).toBe('schemaVersion');
+      expect(result.error[0]?.path).toBe('hosts');
     }
   });
 

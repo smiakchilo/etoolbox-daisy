@@ -31,6 +31,7 @@ import {
   SETTINGS_REMOVE_SERVER_CHANNEL,
   SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
+  SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
@@ -69,6 +70,7 @@ import {
   removeServerRequestSchema,
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
+  setAgentSettingsRequestSchema,
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
   switchServerRequestSchema,
@@ -105,6 +107,7 @@ import {
   type RemoveServerRequest,
   type ReorderProxiesRequest,
   type ReorderServersRequest,
+  type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
   type UpdateProxyRequest,
@@ -229,6 +232,14 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = setModelPreferencesRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(
         SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
+        parsedRequest,
+      );
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async setAgentSettings(request: SetAgentSettingsRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = setAgentSettingsRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
         parsedRequest,
       );
       return parseSettingsIpcVoidResult(raw);

@@ -76,8 +76,12 @@ test('Settings sections are real tab panels, switching their content', async () 
 
     // Every section is one tab, labelled with its former heading. (The
     // certificate-exceptions tab was removed when approval moved into the
-    // browser pane's banner - see handoff-steps-09-12.md's deviation note.)
-    const labels = ['Hosts', 'Proxies', 'Authentication', 'Models'];
+    // browser pane's banner - see handoff-steps-09-12.md's deviation note.
+    // The standalone Authentication and Models tabs were folded into the
+    // single Agents tab, which hosts the provider's active badge/set-active
+    // control, sign-in and model/effort pickers together - see
+    // agentsSection.ts.)
+    const labels = ['Hosts', 'Agents', 'Proxies'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
@@ -90,26 +94,86 @@ test('Settings sections are real tab panels, switching their content', async () 
     const selectedPanel = settings.locator('.settings-panel__tab-panel[selected]');
     await expect(selectedPanel).toHaveCount(1);
     await expect(selectedPanel.first()).toHaveAttribute('value', 'hosts');
-    for (const panelValue of ['proxies', 'authentication', 'models']) {
+    for (const panelValue of ['agents', 'proxies']) {
       await expect(
         settings.locator(`.settings-panel__tab-panel[value="${panelValue}"]`),
       ).toBeHidden();
     }
 
     // Switching tabs swaps the visible content.
-    await settings.locator('sp-tab', { hasText: 'Models' }).click();
-    await expect(settings.locator('section[aria-label="Models"]')).toBeVisible();
+    await settings.locator('sp-tab', { hasText: 'Agents' }).click();
+    await expect(settings.locator('section[aria-label="Agents"]')).toBeVisible();
     await expect(settings.locator('section[aria-label="Hosts"]')).toBeHidden();
+    const agentsSection = settings.locator('section[aria-label="Agents"]');
+    await expect(agentsSection.locator('sp-picker[aria-label="Model"]')).toHaveCount(1);
 
-    await settings.locator('sp-tab', { hasText: 'Authentication' }).click();
-    await expect(settings.locator('section[aria-label="Authentication"]')).toBeVisible();
-    await expect(settings.locator('sp-button', { hasText: 'Sign in' })).toBeVisible();
-    await expect(settings.locator('section[aria-label="Models"]')).toBeHidden();
+    // Which provider is active is stated, not chosen: a fresh profile seeds
+    // GitHub Copilot as active, so its item shows the badge and no control.
+    // (The "Set active" half of that pair is unreachable in this build - one
+    // provider, always active - so it is covered by agentsSection.test.ts.)
+    await expect(agentsSection.locator('.agent-item__active')).toHaveCount(1);
+    await expect(agentsSection.locator('.agent-item__active')).toHaveText('(active)');
+    await expect(agentsSection.locator('.agent-item__set-active')).toHaveCount(0);
+    await expect(agentsSection.locator('sp-radio')).toHaveCount(0);
+
+    // The auth row carries no visible label - its own status light says what it
+    // is - and offers one action at a time: an `sp-action-button`, on the same
+    // line as the light. A scratch profile has no Copilot session, so the offer
+    // is "Sign in".
+    await expect(agentsSection).not.toContainText('Authentication');
+    const authAction = agentsSection.locator('.agent-item__action');
+    await expect(authAction).toHaveCount(1);
+    await expect(authAction).toHaveText('Sign in');
+    expect(await authAction.evaluate((node) => node.tagName.toLowerCase())).toBe(
+      'sp-action-button',
+    );
+    const authRow = agentsSection.locator('.agent-item__auth');
+    expect(
+      await authRow.evaluate((node) => {
+        const light = node.querySelector('sp-status-light');
+        const button = node.querySelector('.agent-item__action');
+        if (light === null || button === null) return false;
+        // Same line: identical vertical centre, light first.
+        const a = light.getBoundingClientRect();
+        const b = button.getBoundingClientRect();
+        return Math.abs(a.top + a.height / 2 - (b.top + b.height / 2)) < 2 && a.right <= b.left + 1;
+      }),
+    ).toBe(true);
+
+    // The action is right-aligned, and it is the shared `.agent-item__button`
+    // that gives it (and "Set active" when it appears) one width - so the two
+    // would line up in a single column at the item's right edge. A 1px
+    // tolerance: sub-pixel layout rounds the button's right edge.
+    expect(
+      await authAction.evaluate((node) => {
+        const item = node.closest('.agent-item');
+        if (item === null) return null;
+        const button = node.getBoundingClientRect();
+        const padding = Number.parseFloat(getComputedStyle(item).paddingRight);
+        const itemRight = item.getBoundingClientRect().right - padding;
+        return {
+          rightAligned: Math.abs(itemRight - button.right) <= 1,
+          minWidth: getComputedStyle(node).minWidth,
+        };
+      }),
+    ).toEqual({ rightAligned: true, minWidth: '112px' });
+
+    // Signed out means no model list exists, so neither picker is offered -
+    // the defect this asserts against left the model picker looking usable.
+    const modelPicker = agentsSection.locator('sp-picker[aria-label="Model"]');
+    const effortPicker = agentsSection.locator('sp-picker[aria-label="Reasoning effort"]');
+    expect(
+      await modelPicker.evaluate((node) => (node as HTMLElement & { disabled: boolean }).disabled),
+    ).toBe(true);
+    expect(
+      await effortPicker.evaluate((node) => (node as HTMLElement & { disabled: boolean }).disabled),
+    ).toBe(true);
 
     // The Proxies tab is a multifield too: its "Add item" and the per-item
     // quiet Set/Clear password actions are present.
     await settings.locator('sp-tab', { hasText: 'Proxies' }).click();
     await expect(settings.locator('section[aria-label="Proxies"]')).toBeVisible();
+    await expect(settings.locator('section[aria-label="Agents"]')).toBeHidden();
     await settings.locator('section[aria-label="Proxies"] .multifield__add').click();
     await expect(settings.locator('section[aria-label="Proxies"] .password-control')).toHaveCount(
       1,

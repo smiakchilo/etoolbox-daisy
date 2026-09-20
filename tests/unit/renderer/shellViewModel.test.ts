@@ -31,33 +31,26 @@ const httpServer: ServerSnapshot = {
 const hosts: readonly ServerSnapshot[] = [httpsServer, httpServer];
 
 describe('buildHostOptions', () => {
-  it('maps every server, marking the active one as selected', () => {
-    const options = buildHostOptions(hosts, httpServerId);
+  it('maps every server to its id, label, origin and colour', () => {
+    const options = buildHostOptions(hosts);
     expect(options).toEqual([
       {
         id: httpsServerId,
         label: 'Production',
         origin: 'https://author.example',
         colorCss: '#2680eb',
-        selected: false,
       },
       {
         id: httpServerId,
         label: 'Internal staging',
         origin: 'http://staging.internal',
         colorCss: '#abcdef',
-        selected: true,
       },
     ]);
   });
 
-  it('marks nothing selected when there is no active server', () => {
-    const options = buildHostOptions(hosts, null);
-    expect(options.every((option) => !option.selected)).toBe(true);
-  });
-
   it('returns an empty list for no configured servers', () => {
-    expect(buildHostOptions([], null)).toEqual([]);
+    expect(buildHostOptions([])).toEqual([]);
   });
 });
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  APP_SETTINGS_SCHEMA_VERSION,
   appSettingsSchema,
   appSettingsSnapshotSchema,
+  DEFAULT_AGENT_ID,
   newProxyId,
   newServerId,
   proxyConfigSchema,
@@ -32,12 +32,9 @@ function settingsWithServerProxyCredentials(secretRef: string) {
     },
   });
   return appSettingsSchema.parse({
-    schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
     hosts: [serverA],
-    activeHostId: serverA.id,
     proxies: [],
-    defaultModel: null,
-    defaultReasoningEffort: null,
+    agents: { [DEFAULT_AGENT_ID]: { active: true } },
   });
 }
 
@@ -79,12 +76,9 @@ describe('toAppSettingsSnapshot', () => {
     });
     const serverA = server('server-a', 'https://a.example', { proxyId: proxyEntry.id });
     const settings = appSettingsSchema.parse({
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [serverA],
-      activeHostId: serverA.id,
       proxies: [proxyEntry],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
@@ -109,12 +103,9 @@ describe('toAppSettingsSnapshot', () => {
   it('omits proxy.credentials entirely when the server has no proxy credentials configured', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [serverA],
-      activeHostId: serverA.id,
       proxies: [],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
@@ -125,9 +116,7 @@ describe('toAppSettingsSnapshot', () => {
   it('maps a proxy-library entry with its id and label, and hashes its password', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [serverA],
-      activeHostId: serverA.id,
       proxies: [
         {
           id: newProxyId(() => 'proxy-a'),
@@ -136,8 +125,7 @@ describe('toAppSettingsSnapshot', () => {
           credentials: { username: 'bob', secretRef: CANARY_SECRET_REF },
         },
       ],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
@@ -162,12 +150,9 @@ describe('toAppSettingsSnapshot', () => {
       },
     });
     const settings = appSettingsSchema.parse({
-      schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
       hosts: [serverA],
-      activeHostId: serverA.id,
       proxies: [],
-      defaultModel: null,
-      defaultReasoningEffort: null,
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
@@ -224,12 +209,9 @@ describe('serverSnapshotSchema / appSettingsSnapshotSchema (.strict())', () => {
   it('rejects an app settings snapshot with an unknown top-level key', () => {
     expect(() =>
       appSettingsSnapshotSchema.parse({
-        schemaVersion: APP_SETTINGS_SCHEMA_VERSION,
         hosts: [],
-        activeHostId: null,
         proxies: [],
-        defaultModel: null,
-        defaultReasoningEffort: null,
+        agents: { [DEFAULT_AGENT_ID]: { active: true } },
         secretsDir: '/should/not/be/here',
       }),
     ).toThrow();

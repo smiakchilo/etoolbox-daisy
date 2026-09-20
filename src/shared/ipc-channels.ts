@@ -5,8 +5,8 @@
  */
 export const APP_INFO_CHANNEL = 'app:get-app-info' as const;
 
-// Copilot sign-in/out surface, presented in the Settings panel's
-// authentication section (src/renderer/src/settings/authenticationSection.ts).
+// Copilot sign-in/out surface, presented in the Settings panel's Agents tab
+// (src/renderer/src/settings/agentsSection.ts).
 export const AGENT_GET_AUTH_STATUS_CHANNEL = 'agent:get-auth-status' as const;
 export const AGENT_LOGIN_CHANNEL = 'agent:login' as const;
 export const AGENT_CANCEL_LOGIN_CHANNEL = 'agent:cancel-login' as const;
@@ -22,11 +22,10 @@ export const SETTINGS_CLEAR_PASSWORD_CHANNEL = 'settings:clear-password' as cons
 // Settings mutation (step 05) - see src/main/ipc/settingsMutation.ts and
 // src/main/settingsStore.ts. Presentation/targeting edits for an existing
 // server reuse `applyServerPresentationChange`/`applyServerTargetingChange`;
-// these cover what those two do not: creating/removing a server entry,
-// choosing which one is active, and the separate proxies library below.
+// these cover what those two do not: creating/removing a server entry and the
+// separate proxies library below.
 export const SETTINGS_ADD_SERVER_CHANNEL = 'settings:add-server' as const;
 export const SETTINGS_REMOVE_SERVER_CHANNEL = 'settings:remove-server' as const;
-export const SETTINGS_SET_ACTIVE_SERVER_CHANNEL = 'settings:set-active-server' as const;
 export const SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL =
   'settings:update-server-presentation' as const;
 export const SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL = 'settings:update-server-targeting' as const;
@@ -57,6 +56,14 @@ export const SETTINGS_REORDER_SERVERS_CHANNEL = 'settings:reorder-servers' as co
 // starting and produce an enabled picker for a locked selection.
 export const SETTINGS_GET_MODEL_SELECTION_CHANNEL = 'settings:get-model-selection' as const;
 export const SETTINGS_SET_MODEL_PREFERENCES_CHANNEL = 'settings:set-model-preferences' as const;
+
+/**
+ * Persists one provider's active flag, proxy reference, model and/or reasoning
+ * effort (the Settings "Agents" surface). A partial patch whose omitted keys
+ * mean "leave unchanged" - see `setAgentSettingsRequestSchema` for the
+ * three-state convention and why `agentId` must name a registered provider.
+ */
+export const SETTINGS_SET_AGENT_SETTINGS_CHANNEL = 'settings:set-agent-settings' as const;
 
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.

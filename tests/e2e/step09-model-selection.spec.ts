@@ -58,6 +58,24 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
   };
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
+  // The persisted model/reasoning pair moved from two top-level keys to the
+  // active agent's own node. This reads that node straight off disk; a missing
+  // file is "not persisted yet", not an error (expect.poll retries on matcher
+  // mismatch only, never on a thrown callback, so never throw here).
+  const readAgentNode = (): {
+    readonly model?: unknown;
+    readonly reasoningEffort?: unknown;
+  } => {
+    try {
+      const doc = JSON.parse(readFileSync(settingsFile, 'utf8')) as {
+        readonly agents?: Record<string, { model?: unknown; reasoningEffort?: unknown }>;
+      };
+      return doc.agents?.['copilot'] ?? {};
+    } catch {
+      return {};
+    }
+  };
+
   const openSettings = async () => {
     const app = await electron.launch({ args: [mainEntry], env });
     const settings = await app.firstWindow();
@@ -68,10 +86,10 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
     // Settings is tabbed and the Hosts tab is selected by default, so the
-    // Models panel is only visible once its tab is chosen.
-    await settings.locator('sp-tab', { hasText: 'Models' }).click();
+    // Agents panel is only visible once its tab is chosen.
+    await settings.locator('sp-tab', { hasText: 'Agents' }).click();
     await settings
-      .locator('section[aria-label="Models"]')
+      .locator('section[aria-label="Agents"]')
       .waitFor({ state: 'visible', timeout: 60_000 });
     return { app, settings };
   };
@@ -79,7 +97,7 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
   // --- Launch 1: the section is real, and a choice can be saved -----------
   const first = await openSettings();
   try {
-    const section = first.settings.locator('section[aria-label="Models"]');
+    const section = first.settings.locator('section[aria-label="Agents"]');
 
     // The step-07 deferral placeholder must be gone, not merely supplemented.
     await expect(section).not.toContainText('deferred to a later step');
@@ -96,8 +114,8 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       .evaluate((node) => node.shadowRoot !== null);
     expect(hasShadowRoot).toBe(true);
 
-    const modelPicker = section.locator('sp-picker[label="Model"]');
-    const reasoningPicker = section.locator('sp-picker[label="Reasoning effort"]');
+    const modelPicker = section.locator('sp-picker[aria-label="Model"]');
+    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]');
     await expect(modelPicker).toHaveCount(1);
     await expect(reasoningPicker).toHaveCount(1);
 
@@ -106,8 +124,14 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
     await expect(modelPicker.locator('sp-menu-item')).toHaveCount(3);
     await expect(section).toContainText('Fake Model (reasoning)');
 
-    // Nothing is chosen yet, and the section says a change applies next prompt.
-    await expect(section).toContainText('next prompt');
+    // The fake reports a signed-in provider, so both pickers are live (a
+    // signed-out one disables them both - see settings-tabs.spec.ts).
+    await expect(modelPicker).toBeEnabled();
+    await expect(reasoningPicker).toBeEnabled();
+
+    // One auth action at a time, and it is the sign-out half of the pair.
+    await expect(section.locator('.agent-item__action')).toHaveCount(1);
+    await expect(section.locator('.agent-item__action')).toHaveText('Sign out');
 
     // Choosing the reasoning-capable model must populate the second picker
     // with that model's own levels - "show only supported reasoning levels".
@@ -125,43 +149,23 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
     // The selection auto-saves ~1s after the last pick (no Save button); the
     // settings document on disk is the sync point, and a freshly-read file
     // on a restart is covered by Launch 2.
-    const readModelsDoc = (): {
-      readonly defaultModel?: unknown;
-      readonly defaultReasoningEffort?: unknown;
-    } => {
-      try {
-        return JSON.parse(readFileSync(settingsFile, 'utf8')) as {
-          readonly defaultModel?: unknown;
-          readonly defaultReasoningEffort?: unknown;
-        };
-      } catch {
-        // The file is first written by this very auto-save; a missing file is
-        // "not persisted yet", not an error. expect.poll only retries on
-        // matcher mismatch, never on a thrown callback, so do not throw.
-        return {};
-      }
-    };
     await expect
-      .poll(() => readModelsDoc().defaultModel, { timeout: 60_000 })
+      .poll(() => readAgentNode().model, { timeout: 60_000 })
       .toBe('fake-model-reasoning');
   } finally {
     await first.app.close();
   }
 
   // Persisted to disk, not merely held in renderer memory.
-  const saved = JSON.parse(readFileSync(settingsFile, 'utf8')) as {
-    defaultModel?: unknown;
-    defaultReasoningEffort?: unknown;
-  };
-  expect(saved.defaultModel).toBe('fake-model-reasoning');
-  expect(saved.defaultReasoningEffort).toBe('high');
+  expect(readAgentNode().model).toBe('fake-model-reasoning');
+  expect(readAgentNode().reasoningEffort).toBe('high');
 
   // --- Launch 2: the saved choice comes back, and can be cleared ----------
   const second = await openSettings();
   try {
-    const section = second.settings.locator('section[aria-label="Models"]');
-    const modelPicker = section.locator('sp-picker[label="Model"]');
-    const reasoningPicker = section.locator('sp-picker[label="Reasoning effort"]');
+    const section = second.settings.locator('section[aria-label="Agents"]');
+    const modelPicker = section.locator('sp-picker[aria-label="Model"]');
+    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]');
 
     await expect
       .poll(
@@ -184,32 +188,13 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
 
     // The same auto-save path persists the plain model (and clears the
     // reasoning level); the on-disk document is the sync point.
-    const readModelsDoc = (): {
-      readonly defaultModel?: unknown;
-      readonly defaultReasoningEffort?: unknown;
-    } => {
-      try {
-        return JSON.parse(readFileSync(settingsFile, 'utf8')) as {
-          readonly defaultModel?: unknown;
-          readonly defaultReasoningEffort?: unknown;
-        };
-      } catch {
-        return {};
-      }
-    };
-    await expect
-      .poll(() => readModelsDoc().defaultModel, { timeout: 60_000 })
-      .toBe('fake-model-plain');
+    await expect.poll(() => readAgentNode().model, { timeout: 60_000 }).toBe('fake-model-plain');
   } finally {
     await second.app.close();
   }
 
   // Changing to a model with no levels must clear the stored level too, not
   // leave "high" orphaned against a model that cannot accept it.
-  const afterSwitch = JSON.parse(readFileSync(settingsFile, 'utf8')) as {
-    defaultModel?: unknown;
-    defaultReasoningEffort?: unknown;
-  };
-  expect(afterSwitch.defaultModel).toBe('fake-model-plain');
-  expect(afterSwitch.defaultReasoningEffort).toBeNull();
+  expect(readAgentNode().model).toBe('fake-model-plain');
+  expect(readAgentNode().reasoningEffort).toBeUndefined();
 });

@@ -57,6 +57,12 @@ export type MessageId = Branded<'MessageId'>;
 export type ToolCallId = Branded<'ToolCallId'>;
 /** One application-issued AEM request, used end to end for correlation. */
 export type RequestId = Branded<'RequestId'>;
+/**
+ * Stable identifier of a coding-agent provider (`copilot`, …). Unlike the
+ * other identifiers this one is *not* minted at runtime: it is a fixed key in
+ * the agent registry, so it is validated as an identifier but never generated.
+ */
+export type AgentId = Branded<'AgentId'>;
 
 function brandedSchema<TId extends string>(label: string): z.ZodType<TId> {
   return identifierSchema.describe(label) as unknown as z.ZodType<TId>;
@@ -70,6 +76,7 @@ export const turnIdSchema = brandedSchema<TurnId>('turnId');
 export const messageIdSchema = brandedSchema<MessageId>('messageId');
 export const toolCallIdSchema = brandedSchema<ToolCallId>('toolCallId');
 export const requestIdSchema = brandedSchema<RequestId>('requestId');
+export const agentIdSchema = brandedSchema<AgentId>('agentId');
 
 /**
  * Supplies fresh identifiers. Production wires this to `crypto.randomUUID`;

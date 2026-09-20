@@ -10,6 +10,7 @@ import {
   SETTINGS_REMOVE_SERVER_CHANNEL,
   SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
+  SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
@@ -24,6 +25,7 @@ import {
   removeServerRequestSchema,
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
+  setAgentSettingsRequestSchema,
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
   updateProxyRequestSchema,
@@ -43,6 +45,7 @@ import {
   type ReorderProxiesRequest,
   type ReorderServersRequest,
   type ServerTargetingMutationKind,
+  type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SetPasswordRequest,
   type SettingsIpcError,
@@ -64,8 +67,10 @@ import type {
   ServerTargetingChanges,
 } from '../../shared';
 import { newProxyId, newServerId } from '../../shared';
+import { isKnownAgentId } from '../../shared';
 import { err, ok, type Result } from '../../shared';
 import {
+  activeAgentId,
   addProxy as createProxyEntry,
   addServer as createServerEntry,
   applyServerPresentationChange,
@@ -77,8 +82,10 @@ import {
   reorderProxies as reorderProxyEntries,
   reorderServers as reorderServerEntries,
   saveSettings,
+  updateAgentSettings as updateAgentSettingsEntry,
   updateModelPreferences as updateModelPreferencesEntry,
   updateProxy as updateProxyEntry,
+  type AgentSettingsChanges,
   type ServerMutationKind,
 } from '../settingsStore';
 import type { SecretStore } from '../secretStore';
@@ -108,13 +115,11 @@ import { isAllowedAppNavigation } from '../security';
  *    the turn lock, and replace the stored model/reasoning-effort pair.
  *
  * There is deliberately no `settings:set-active-server` handler registered
- * here yet: choosing the active server is tied to actually switching the
- * live AEM view (`browser:switch-server` in `ipc/browser.ts`), which this
- * module must not reach into (see that module's own `BrowserController`).
- * `removeServer` below still clears `activeHostId` itself when the removed
- * server was active, since an invalid dangling reference is a settings
- * document validity concern regardless of the browser layer - see its own
- * doc comment.
+ * here: choosing the active server is tied to actually switching the live AEM
+ * view (`browser:switch-server` in `ipc/browser.ts`), which this module must
+ * not reach into (see that module's own `BrowserController`). The active host
+ * is not persisted at all - it lives in the browser controller's memory - so
+ * there is no settings field for a removal to keep consistent.
  */
 
 // ---------------------------------------------------------------------------
@@ -304,7 +309,7 @@ async function toServerSnapshot(
     ? await secretStore.has(server.proxy.credentials.secretRef)
     : false;
   const snapshot = toAppSettingsSnapshot(
-    { ...defaultAppSettings(), hosts: [server], activeHostId: server.id },
+    { ...defaultAppSettings(), hosts: [server] },
     () => hasStoredPassword,
   );
   const projected = snapshot.hosts[0];
@@ -350,7 +355,7 @@ export async function addServer(
   return { ok: true, server: await toServerSnapshot(created.value.server, secretStore) };
 }
 
-/** Implements `settings:remove-server`. See `settingsStore.ts`'s `RemoveServerOutcome.wasActive` for what happens when the removed server was the active one. */
+/** Implements `settings:remove-server`. */
 export async function removeServer(
   settingsDir: string,
   request: RemoveServerRequest,
@@ -365,7 +370,7 @@ export async function removeServer(
     return { ok: false, error: { code: removed.error.kind, message: removed.error.message } };
   }
 
-  const saved = await persist(settingsDir, removed.value.settings);
+  const saved = await persist(settingsDir, removed.value);
   if (!saved.ok) {
     return { ok: false, error: saved.error };
   }
@@ -412,6 +417,17 @@ export async function reorderServers(
  * when the value is not `undefined` - is the only way to build an object
  * literal the compiler accepts as one type without the other, without a cast.
  */
+
+function agentSettingsChangesFrom(
+  changes: SetAgentSettingsRequest['changes'],
+): AgentSettingsChanges {
+  return {
+    ...(changes.active !== undefined ? { active: changes.active } : {}),
+    ...(changes.proxy !== undefined ? { proxy: changes.proxy } : {}),
+    ...(changes.model !== undefined ? { model: changes.model } : {}),
+    ...(changes.reasoningEffort !== undefined ? { reasoningEffort: changes.reasoningEffort } : {}),
+  };
+}
 
 function presentationChangesFrom(
   changes: UpdateServerPresentationRequest['changes'],
@@ -699,13 +715,14 @@ export async function getModelSelection(
   }
   const settings = loaded.value;
   const catalog = await deps.loadCatalog();
+  const activeNode = settings.agents[activeAgentId(settings)];
 
   return {
     ok: true,
     state: {
       models: catalog.ok ? catalog.value : [],
-      selectedModel: settings.defaultModel,
-      selectedReasoningEffort: settings.defaultReasoningEffort,
+      selectedModel: activeNode?.model ?? null,
+      selectedReasoningEffort: activeNode?.reasoningEffort ?? null,
       changesLocked: deps.isTurnInFlight(),
       catalogUnavailable: !catalog.ok,
     },
@@ -795,10 +812,168 @@ export async function setModelPreferences(
   }
   // After the write, never before: a cache updated ahead of a failed save
   // would send the next prompt to a model the settings file does not record.
+  const savedNode = updated.value.agents[activeAgentId(updated.value)];
   deps.onPreferencesSaved?.({
-    model: updated.value.defaultModel,
-    reasoningEffort: updated.value.defaultReasoningEffort,
+    model: savedNode?.model ?? null,
+    reasoningEffort: savedNode?.reasoningEffort ?? null,
   });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Agent settings (the "Agents" surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * How the agent-settings channel reaches the two things the settings file
+ * cannot tell it: whether a turn currently locks changes, and what the runtime
+ * layer must do about a yes/no/proxy/recycle decision. Both are functions
+ * evaluated per request, for the same reasons as
+ * {@link ModelSelectionDependencies}.
+ */
+export interface AgentSettingsDependencies {
+  /** Reads the SDK model catalogue - in practice `loadModelCatalog(copilotClient)`. */
+  readonly loadCatalog: () => Promise<
+    Result<readonly ModelCatalogEntry[], { readonly message: string }>
+  >;
+  /** True while a chat turn is streaming or running a tool. */
+  readonly isTurnInFlight: () => boolean;
+  /**
+   * Called after - and only after - an agent-settings change has been
+   * persisted successfully, with the whole new document. The composition root
+   * decides whether the change requires recycling the Copilot runtime (a proxy
+   * or active-provider change does; a model/effort change does not) - see
+   * `copilotRuntimeManager.ts`. Never called on a failed save, so the runtime
+   * is never recycled for a change the file does not record.
+   */
+  readonly onAgentSettingsSaved: (settings: AppSettings) => void;
+}
+
+/**
+ * Implements `settings:set-agent-settings`.
+ *
+ * Refusals, in this order, and the order matters:
+ *
+ *  1. `turn_in_flight` - step 09's "disable changes during an active turn"
+ *     applies to the agent item as a whole (the proxy picker locks with the
+ *     rest); the renderer disabling the controls is a courtesy, this is the
+ *     enforcement.
+ *  2. `agent_not_found` - the id must name a provider this build actually
+ *     implements, not merely one a (possibly newer) settings file mentions.
+ *  3. `proxy_not_found` - a named proxy must exist, or the document would fail
+ *     its own schema as `invalid_change` for a reason the user cannot act on.
+ *  4. `model_catalog_unavailable` / `model_not_available` /
+ *     `unsupported_reasoning_effort` - the same catalogue validation
+ *     `settings:set-model-preferences` performs, against the model/effort the
+ *     document would hold *after* this change (so setting an effort alone is
+ *     checked against the model already stored).
+ *
+ * Clearing (`model: null`, `proxy: null`) skips catalogue validation for that
+ * field: reverting to "let Copilot choose" must stay possible even when the
+ * runtime is unreachable, which is when a user is most likely to want to undo.
+ */
+export async function setAgentSettings(
+  settingsDir: string,
+  deps: AgentSettingsDependencies,
+  request: SetAgentSettingsRequest,
+): Promise<SettingsIpcVoidResult> {
+  if (deps.isTurnInFlight()) {
+    return {
+      ok: false,
+      error: {
+        code: 'turn_in_flight',
+        message: 'Finish or stop the current response before changing agent settings.',
+      },
+    };
+  }
+
+  if (!isKnownAgentId(request.agentId)) {
+    return {
+      ok: false,
+      error: {
+        code: 'agent_not_found',
+        message: `"${request.agentId}" is not an agent this build supports.`,
+      },
+    };
+  }
+
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+  const existingNode = loaded.value.agents[request.agentId];
+
+  const { changes } = request;
+  if (changes.proxy !== undefined && changes.proxy !== null) {
+    if (!loaded.value.proxies.some((proxy) => proxy.id === changes.proxy)) {
+      return {
+        ok: false,
+        error: {
+          code: 'proxy_not_found',
+          message: `No proxy with id "${changes.proxy}" is configured.`,
+        },
+      };
+    }
+  }
+
+  // The model/effort the document would hold after this change, so a change to
+  // either alone is validated against the other as it currently stands.
+  const effectiveModel =
+    changes.model === undefined
+      ? existingNode?.model
+      : changes.model === null
+        ? undefined
+        : changes.model;
+  const effectiveEffort =
+    changes.reasoningEffort === undefined
+      ? existingNode?.reasoningEffort
+      : changes.reasoningEffort === null
+        ? undefined
+        : changes.reasoningEffort;
+
+  if (effectiveModel !== undefined) {
+    const catalog = await deps.loadCatalog();
+    if (!catalog.ok) {
+      return {
+        ok: false,
+        error: { code: 'model_catalog_unavailable', message: catalog.error.message },
+      };
+    }
+    const models = catalog.value;
+    if (!models.some((model) => model.id === effectiveModel)) {
+      return {
+        ok: false,
+        error: {
+          code: 'model_not_available',
+          message: `Copilot does not currently offer the model "${effectiveModel}".`,
+        },
+      };
+    }
+    if (!isReasoningEffortValidFor(models, effectiveModel, effectiveEffort ?? null)) {
+      return {
+        ok: false,
+        error: {
+          code: 'unsupported_reasoning_effort',
+          message: `The model "${effectiveModel}" does not support the reasoning effort "${String(effectiveEffort)}".`,
+        },
+      };
+    }
+  }
+
+  const updated = updateAgentSettingsEntry(
+    loaded.value,
+    request.agentId,
+    agentSettingsChangesFrom(changes),
+  );
+  if (!updated.ok) {
+    return { ok: false, error: { code: updated.error.kind, message: updated.error.message } };
+  }
+
+  const saved = await persist(settingsDir, updated.value);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  deps.onAgentSettingsSaved(updated.value);
   return { ok: true };
 }
 
@@ -896,6 +1071,8 @@ export interface SettingsIpcDependencies {
   readonly isTrustedWebContentsId: (webContentsId: number) => boolean;
   /** Backs the step-09 model/reasoning-effort channels. See {@link ModelSelectionDependencies}. */
   readonly modelSelection: ModelSelectionDependencies;
+  /** Backs the agent-settings channel. See {@link AgentSettingsDependencies}. */
+  readonly agentSettings: AgentSettingsDependencies;
 }
 
 /**
@@ -1104,6 +1281,20 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
       return setModelPreferences(deps.settingsDir, deps.modelSelection, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = setAgentSettingsRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return setAgentSettings(deps.settingsDir, deps.agentSettings, parsed.data);
     },
   );
 }
