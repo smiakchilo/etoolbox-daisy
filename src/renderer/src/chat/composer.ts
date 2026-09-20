@@ -1,9 +1,5 @@
-import { el } from '../lib/dom';
-import {
-  describeCanSendBlockReason,
-  shouldSubmitOnEnter,
-  type ComposerButtonState,
-} from './composerViewModel';
+import {el} from '../lib/dom';
+import {type ComposerButtonState, describeCanSendBlockReason, shouldSubmitOnEnter,} from './composerViewModel';
 
 type TextFieldElement = HTMLElement & { value: string };
 
@@ -41,9 +37,6 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   }) as TextFieldElement;
 
   const sendButton = el('sp-button', { attrs: { variant: 'accent' }, text: 'Send' });
-  const spinner = el('sp-progress-circle', {
-    attrs: { indeterminate: '', size: 's', label: 'Connecting to Copilot' },
-  });
   const notice = el('p', { attrs: { class: 'chat-composer__notice' } });
 
   let current: ComposerButtonState = { kind: 'connecting' };
@@ -66,30 +59,25 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       case 'connecting':
         sendButton.textContent = 'Send';
         sendButton.setAttribute('disabled', '');
-        spinner.hidden = false;
         notice.textContent = 'Connecting to Copilot...';
         return;
       case 'stop':
         sendButton.textContent = 'Stop';
         sendButton.removeAttribute('disabled');
-        spinner.hidden = true;
         notice.textContent = '';
         return;
       case 'send-enabled':
         sendButton.textContent = 'Send';
         sendButton.removeAttribute('disabled');
-        spinner.hidden = true;
         notice.textContent = '';
         return;
       case 'send-disabled':
         sendButton.textContent = 'Send';
         sendButton.setAttribute('disabled', '');
-        spinner.hidden = true;
         notice.textContent = describeCanSendBlockReason(current.reason);
         return;
       default: {
-        const exhaustive: never = current;
-        return exhaustive;
+        return current;
       }
     }
   }
@@ -143,7 +131,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
   const row = el('div', {
     attrs: { class: 'chat-composer__row' },
-    children: [field, spinner, sendButton],
+    children: [field, sendButton],
   });
   const element = el('div', { attrs: { class: 'chat-composer' }, children: [row, notice] });
 

@@ -55,15 +55,13 @@ function readyComposer(onSend = vi.fn<(prompt: string) => Promise<ComposerSendOu
 }
 
 describe('createComposer', () => {
-  it("starts in the 'connecting' presentation: disabled Send, visible spinner, honest notice", () => {
+  it("starts in the 'connecting' presentation: disabled Send and honest notice", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     const sendButton = query(composer.element, 'sp-button');
-    const spinner = query(composer.element, 'sp-progress-circle');
     const notice = query(composer.element, '.chat-composer__notice');
 
     expect(sendButton.textContent).toBe('Send');
     expect(sendButton.hasAttribute('disabled')).toBe(true);
-    expect(spinner.hidden).toBe(false);
     expect(notice.textContent).toBe('Connecting to Copilot...');
   });
 

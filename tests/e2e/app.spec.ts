@@ -1,9 +1,16 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
-import { defaultAppSettings } from '../../src/shared';
+import { defaultAppSettings, type DaisyAppApi } from '../../src/shared';
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
+
+// `tsconfig.test.json` does not include the renderer's `global.d.ts`, so this
+// file declares the minimal renderer-side shape its `page.evaluate` callbacks
+// need - real at runtime (that callback body re-executes inside the actual
+// renderer), just not ambiently declared for this project's Node-side check.
+// Mirrors `step07-agent-chat.spec.ts`'s own `TestWindow` note.
+declare const window: { readonly daisy: DaisyAppApi };
 
 /**
  * A scratch storage root, exactly like every sibling spec uses. Without it
@@ -40,21 +47,24 @@ function provisionScratchEnv(): Record<string, string> {
   };
 }
 
-test.describe('EToolbox Daisy skeleton', () => {
-  test('opens a window, renders a Spectrum button, exposes app info, and grants no Node access', async () => {
+test.describe('EToolbox Daisy shell', () => {
+  test('opens a window, renders the Spectrum shell, exposes app info, and grants no Node access', async () => {
     const app = await electron.launch({ args: [mainEntry], env: provisionScratchEnv() });
 
     try {
-      const window = await app.firstWindow();
-      await window.waitForSelector('#daisy-hello-button');
+      const page = await app.firstWindow();
+      await page.waitForSelector('.main-shell');
 
-      const buttonText = await window.locator('#daisy-hello-button').innerText();
-      expect(buttonText).toContain('EToolbox Daisy skeleton');
+      // A real Spectrum element must be registered, not merely present as an
+      // unknown tag: jsdom cannot tell the difference, so this is asserted
+      // against the built app in an Electron renderer.
+      const themeRegistered = await page.evaluate(() => Boolean(customElements.get('sp-theme')));
+      expect(themeRegistered).toBe(true);
 
       // The real security check: the renderer must have zero Node access,
       // even though contextIsolation + sandbox are on and a preload script
       // ran. `require`/`process` must be entirely undefined in page context.
-      const nodeAccess = await window.evaluate(() => ({
+      const nodeAccess = await page.evaluate(() => ({
         hasRequire: typeof (globalThis as unknown as { require?: unknown }).require,
         hasProcess: typeof (globalThis as unknown as { process?: unknown }).process,
       }));
@@ -63,9 +73,8 @@ test.describe('EToolbox Daisy skeleton', () => {
 
       // The versioned preload bridge must still work despite the isolation
       // above: it round-trips through IPC and shared Zod validation.
-      await window.waitForSelector('#daisy-app-info');
-      const appInfoText = await window.locator('#daisy-app-info').innerText();
-      expect(appInfoText).toContain('EToolbox Daisy');
+      const appInfo = await page.evaluate(() => window.daisy.getAppInfo());
+      expect(appInfo.name).toBe('EToolbox Daisy');
     } finally {
       await app.close();
     }

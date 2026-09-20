@@ -8,18 +8,6 @@ import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
 import { buildHostOptions, computeAddressBarValue } from './viewModel';
 
-export interface MountMainShellOptions {
-  /**
-   * Extra elements appended into the chat pane's one internally-scrolling
-   * region (see `chatPane.ts`), rather than after the shell as document-level
-   * siblings. Used by `main.ts` to keep its hello-button/app-info elements
-   * mounted without letting them grow the document past the viewport - see
-   * `styles/base.css` for the "document never scrolls" layout contract this
-   * depends on.
-   */
-  readonly chatFooterContent?: readonly HTMLElement[];
-}
-
 /** Applies one loaded settings snapshot to the already-mounted browser pane. */
 function applySnapshot(browserPane: BrowserPane, snapshot: AppSettingsSnapshot): void {
   const { hosts } = snapshot;
@@ -33,15 +21,11 @@ function applySnapshot(browserPane: BrowserPane, snapshot: AppSettingsSnapshot):
  * Mounts the two-pane main window shell (requirements-decisions.md section
  * 8) into `root` and loads the initial settings snapshot.
  *
- * All DOM construction and insertion (the shell and any `chatFooterContent`)
- * happens synchronously, before the settings snapshot is awaited: nothing in
- * this function should delay `tests/e2e/app.spec.ts`'s visibility waits on
- * the hello-button/app-info elements behind an IPC round trip.
+ * All DOM construction and insertion happens synchronously, before the
+ * settings snapshot is awaited: nothing in this function should delay the
+ * shell's first paint behind an IPC round trip.
  */
-export async function mountMainShell(
-  root: HTMLElement,
-  options?: MountMainShellOptions,
-): Promise<void> {
+export async function mountMainShell(root: HTMLElement): Promise<void> {
   const browserPane = createBrowserPane();
 
   // Settings live in a whole-size panel on the browser pane (superseding the
@@ -67,9 +51,6 @@ export async function mountMainShell(
       browserPane.panelHost.open(settingsPanel);
     },
   });
-  if (options?.chatFooterContent) {
-    chatPane.appendFooterContent(...options.chatFooterContent);
-  }
 
   // The boundary the user can drag. Its position is restored from the last
   // run before the shell is inserted, so the window never renders at the

@@ -13,10 +13,7 @@
   padding: 12px;
 }
 
-/* Fully replaced on every repaint (see transcriptView.ts) - footer content
-   (the step-01/02 diagnostics panel) is appended as a sibling of this
-   element within .chat-transcript, never inside it, so repaint never wipes
-   it. */
+/* Fully replaced on every repaint (see transcriptView.ts). */
 .chat-transcript__messages {
   display: flex;
   flex-direction: column;

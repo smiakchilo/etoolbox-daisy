@@ -14,16 +14,6 @@ import {
 
 export interface ChatPane {
   readonly element: HTMLElement;
-  /**
-   * Appends content into the pane's one internally-scrolling region. Used to
-   * host `main.ts`'s hello-button/app-info elements (see `main.ts`) so they
-   * cannot grow the document past the viewport - only this region scrolls,
-   * the document itself never does (see `styles/base.css`). Appended as a
-   * sibling of the transcript's own message list, which is fully replaced on
-   * every repaint (see `transcriptView.ts`) - so this content is never
-   * touched by it.
-   */
-  appendFooterContent(...nodes: readonly HTMLElement[]): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -192,9 +182,6 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   return {
     element,
-    appendFooterContent(...nodes: readonly HTMLElement[]): void {
-      transcript.append(...nodes);
-    },
     dispose(): void {
       unsubscribeEvents?.();
       clearInterval(repaintTimer);
