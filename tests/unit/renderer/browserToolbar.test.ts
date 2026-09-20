@@ -131,7 +131,7 @@ function findNavButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLEl
 }
 
 describe('createBrowserToolbar loading state machine', () => {
-  it('shows "Loading…" + Stop only after a chrome-arm and the 200ms debounce, and restores on did-stop-loading', () => {
+  it('swaps to Stop immediately while the banner stays debounced, and restores on did-stop-loading', () => {
     vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
@@ -141,9 +141,10 @@ describe('createBrowserToolbar loading state machine', () => {
     findNavButton(toolbar).click();
     stateListeners[0]?.(loadingState(true));
 
-    // Debounce: the banner waits 200ms of sustained load before appearing.
+    // The Refresh→Stop swap is immediate (same moment the address target is
+    // committed); only the banner waits 200ms of sustained load.
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
     vi.advanceTimersByTime(1000);
 
@@ -154,6 +155,8 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.hasAttribute('dismissible')).toBe(false);
     expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    // The stop affordance is a cross, not the media "stop playback" glyph.
+    expect(findNavButton(toolbar).querySelector('sp-icon-cross400')).not.toBeNull();
     expect(browser.reload).toHaveBeenCalledTimes(1);
 
     stateListeners[0]?.(loadingState(false));
@@ -253,7 +256,7 @@ describe('createBrowserToolbar loading state machine', () => {
     address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     stateListeners[0]?.(loadingState(true));
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
@@ -289,10 +292,9 @@ describe('createBrowserToolbar loading state machine', () => {
     address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     stateListeners[0]?.(loadingState(true));
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
-    // The load persists past the debounce, so the banner and the Stop
-    // affordance appear.
+    // The load persists past the debounce, so the banner appears too.
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
@@ -389,6 +391,80 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(message.classList.contains('browser-toolbar-message--loading')).toBe(false);
+  });
+
+  it('keeps the address field enabled through a server switch while back/forward disable', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement;
+    const back = toolbar.element.querySelector('[aria-label="Back"]') as HTMLElement;
+
+    switchListeners[0]?.({ switching: true });
+    expect(address.hasAttribute('disabled')).toBe(false);
+    expect(back.hasAttribute('disabled')).toBe(true);
+
+    switchListeners[0]?.({ switching: false });
+    expect(address.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('tracks an unarmed in-page navigation in the address field immediately', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+
+    // No chrome action armed this push (an in-page link fired it): the pushed
+    // URL must land in the field straight away, loading or not.
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html#section',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: true,
+    });
+
+    expect(address.value).toBe('https://author.example/content/page.html#section');
+  });
+
+  it('keeps the armed target in the address field instead of blinking through intermediate pushes', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+
+    // A picker selection writes the chosen host and arms the navigation.
+    toolbar.navigateTo('https://author.example/');
+    expect(address.value).toBe('https://author.example/');
+    // The Refresh→Stop swap lands at this same moment - not on the debounced
+    // loading banner.
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+
+    // did-start-loading reports the *previously* committed URL - empty on a
+    // first load. It must not wipe the chosen address.
+    stateListeners[0]?.({
+      url: '',
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: true,
+    });
+    expect(address.value).toBe('https://author.example/');
+
+    // A later intermediate push (did-navigate) while still loading is likewise
+    // not yet authoritative.
+    stateListeners[0]?.({
+      url: 'https://author.example/',
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: true,
+    });
+    expect(address.value).toBe('https://author.example/');
+
+    // Only the completed load's final URL is applied.
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    });
+    expect(address.value).toBe('https://author.example/content/page.html');
   });
 
   it('re-opens seamlessly when a new external load starts right after the previous one ended', () => {

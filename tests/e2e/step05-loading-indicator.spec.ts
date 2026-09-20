@@ -322,20 +322,17 @@ test('a navigation that finishes inside the 200ms debounce window shows no loadi
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   const toolbar = page.locator('.browser-toolbar');
 
-  // Sample across the whole first-load duration plus the debounce window:
-  // neither the banner nor the Stop swap may appear at any point. A Stop
-  // button would mean the debounce fired and the banner was shown.
+  // Sample across the whole first-load duration plus the debounce window: the
+  // banner must never appear (it would move layout). The Refresh→Stop swap is
+  // deliberately immediate now, independent of the banner debounce, so Stop
+  // showing is expected and is no longer a proxy for "the banner showed".
   await expect
-    .poll(
-      async () => {
-        const visible = await banner.isVisible().catch(() => false);
-        const stopCount = await toolbar.locator('[aria-label="Stop"]').count();
-        return !visible && stopCount === 0;
-      },
-      { intervals: [100, 100, 100, 100, 100, 100], timeout: 2000 },
-    )
-    .toBe(true);
-  // The load completed: still Refresh, still no banner.
+    .poll(async () => banner.isVisible().catch(() => false), {
+      intervals: [100, 100, 100, 100, 100, 100],
+      timeout: 2000,
+    })
+    .toBe(false);
+  // The load completed: Refresh restored, still no banner.
   await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
   await expect(banner).not.toBeVisible();
   await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(0);

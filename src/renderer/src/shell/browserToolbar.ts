@@ -128,10 +128,10 @@ const LOADING_LABEL = 'Loading\u2026';
 export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): BrowserToolbar {
   const toolbar = el('div', { attrs: { class: 'toolbar browser-toolbar', role: 'toolbar' } });
 
-  // "Back" reuses Forward's sp-icon-arrow100 glyph, rotated 180deg via CSS
+  // "Back" reuses Forward's sp-icon-arrow400 glyph, rotated 180deg via CSS
   // (see .nav-icon--back in browser.css) rather than a separate icon asset.
-  const backButton = buildNavButton('Back', 'sp-icon-arrow100', { iconClass: 'nav-icon--back' });
-  const forwardButton = buildNavButton('Forward', 'sp-icon-arrow100');
+  const backButton = buildNavButton('Back', 'sp-icon-arrow400', { iconClass: 'nav-icon--back' });
+  const forwardButton = buildNavButton('Forward', 'sp-icon-arrow400');
   const refreshButton = buildNavButton('Refresh', 'sp-icon-refresh');
   // Nothing is loaded yet (no navigation state has been reported), so there
   // is nothing to go back/forward to until the first `onStateChanged` event.
@@ -353,7 +353,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       applyPresentation();
       return;
     }
-    markExternalNavigation();
+    beginExternalNavigation();
     const navigation: BrowserIpcVoidResult = await window.daisy.browser.navigate(prompt.url);
     handleVoidResult(navigation);
   }
@@ -370,6 +370,16 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   function applyPresentation(): void {
     const isLoading = lastNavigationState?.isLoading === true;
     const loading = switching || (isLoading && pendingExternalNav > 0);
+
+    // The Refresh/Stop swap is deliberately NOT debounced with the banner: a
+    // real browser swaps the control the instant a navigation starts. A
+    // committed address target swaps it synchronously (`beginExternalNavigation`);
+    // every other transition (Back/Forward/Refresh, and the restore on
+    // completion) is derived here from the same `loading` condition that
+    // drives the banner, so the two can never drift apart. Only the banner's
+    // appearance waits `LOADING_BANNER_DELAY_MS` (so a quick load moves no
+    // layout).
+    setNavMode(loading ? 'stop' : 'refresh');
 
     // ── Banner ───────────────────────────────────────────────────────────
     // Loading is the only presentation with a delay: the banner appears
@@ -406,11 +416,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
 
     // ── Toolbar controls ────────────────────────────────────────────────
-    // Switching disables every control until the transition completes
-    // (requirements-decisions.md section 4). When not switching, back/
-    // forward reflect the live history; address field is always enabled so
-    // the user can type a new address.
-    const controls = [backButton, forwardButton, addressField];
+    // Switching disables back/forward until the transition completes
+    // (requirements-decisions.md section 4). The address field is always
+    // enabled so the user can type a new address - a normal browser's
+    // address bar never disables on load (and gating it on `switching`
+    // alone made refresh/in-page navigations inconsistent, which never set
+    // that flag).
+    const controls = [backButton, forwardButton];
     for (const control of controls) {
       if (switching) {
         control.setAttribute('disabled', '');
@@ -459,7 +471,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       navClickHandler = null;
     }
     if (mode === 'stop') {
-      const icon = document.createElement('sp-icon-stop');
+      const icon = document.createElement('sp-icon-cross400');
       icon.setAttribute('slot', 'icon');
       refreshButton.append(icon);
       refreshButton.setAttribute('title', 'Stop');
@@ -512,6 +524,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // fired yet.
   function markExternalNavigation(): void {
     pendingExternalNav += 1;
+  }
+
+  // A chrome-initiated navigation the user just committed by putting a new
+  // target in the address field (a typed address, a picked host, or the
+  // retry after adding an unknown origin): arms the pending counter AND swaps
+  // Refresh→Stop in the same tick, so the control changes at the exact moment
+  // the address target lands. Back/Forward/Refresh arm via
+  // `markExternalNavigation` alone - their address target only changes when
+  // main pushes the newly committed URL, and `applyPresentation` swaps the
+  // control on that same push.
+  function beginExternalNavigation(): void {
+    markExternalNavigation();
+    setNavMode('stop');
   }
 
   // ── IPC result handler ───────────────────────────────────────────────────
@@ -606,7 +631,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     if (value === '') return;
     event.preventDefault();
     keydownNavigated = true;
-    markExternalNavigation();
+    beginExternalNavigation();
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
 
@@ -617,7 +642,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
     const value = addressField.value.trim();
     if (value === '') return;
-    markExternalNavigation();
+    beginExternalNavigation();
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
 
@@ -677,7 +702,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
     hasLiveNavigationState = true;
     lastNavigationState = state;
-    addressField.value = state.url;
+    // While a chrome-armed navigation is in flight, the address field already
+    // holds the URL the user asked for (a typed address, or the host the
+    // picker selected). The intermediate pushes carry the *previously
+    // committed* URL - `getURL()` at `did-start-loading` still returns the old
+    // page, which is empty on a first load - so re-applying them here would
+    // visibly blink the address away and only restore it once the load
+    // settles. Skip those; the armed navigation's own completion
+    // (`isLoading:false`) is the first push whose URL is authoritative.
+    // Unarmed pushes (an in-page link, a redirect after the arm cleared) are
+    // applied immediately so the field still tracks live navigation.
+    if (!state.isLoading || pendingExternalNav === 0) {
+      addressField.value = state.url;
+    }
     // A navigation to a new page has begun — any stale error text is now
     // superseded by the live load state; clearing it here lets the banner
     // show "Loading…" instead of a stale error. A failed navigation
@@ -755,7 +792,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
     navigateTo(origin: string): void {
       addressField.value = origin;
-      markExternalNavigation();
+      beginExternalNavigation();
       void window.daisy.browser.navigate(origin).then(handleVoidResult);
     },
     dispose(): void {

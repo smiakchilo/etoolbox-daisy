@@ -88,7 +88,7 @@
 /* The picker button never hides any more (it stays visible but disabled with
    zero servers), so there is no `[hidden]` override for it here. */
 
-/* Back reuses Forward's sp-icon-arrow100 glyph, mirrored via rotation. */
+/* Back reuses Forward's sp-icon-arrow400 glyph, mirrored via rotation. */
 .nav-icon--back {
   transform: rotate(180deg);
 }
