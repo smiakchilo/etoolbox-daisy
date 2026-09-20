@@ -11,8 +11,13 @@
  * glyph). The button is an `sp-picker-button` at its default `position="right"`
  * (its `border-radius-sided` tokens square the button's left corners); see
  * browserToolbar.ts / requirements-decisions.md section 8.
+ *
+ * `position: relative` makes the group the containing block for the paired
+ * colour swatch, which is absolutely positioned inside the field's left edge
+ * (see `.address-bar__swatch`) so it never disturbs the field/button seam.
  */
 .browser-toolbar__address-group {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 1 1 auto;
@@ -22,6 +27,11 @@
 .browser-toolbar__address-group .address-bar {
   flex: 1 1 auto;
   min-width: 0;
+
+  /* Room for the paired swatch rendered inside the field's left edge. The far
+     side is padded too, harmlessly: the textfield exposes only a single
+     inline-spacing token. */
+  --mod-textfield-spacing-inline: 28px;
 
   /* The field's shadow `.input` accepts only a single radius token
      (`--mod-textfield-corner-radius`), so its four corners are squared and
@@ -65,6 +75,33 @@
   border: 1px solid var(--spectrum-gray-500);
   border-start-start-radius: var(--spectrum-corner-radius-100, 4px);
   border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
+}
+
+/* The colour swatch paired with the address: inside the field's left padding
+   (see `--mod-textfield-spacing-inline` above), above the field's 1px frame
+   overlay (`::before`, z-index 1), and never absorbing a click meant for the
+   input. Its colour is set inline by `refreshAddressSwatch` when the address
+   matches a configured host; with no match the inline colour is cleared and
+   this default - a stroke-free, lighter Spectrum gray-200 - shows through. */
+.address-bar__swatch {
+  position: absolute;
+  inset-inline-start: 8px;
+  /* Optically centred on the field's text, not the raw box: the textfield's
+     32px line box sits a hair above the geometric centre of the field block. */
+  top: calc(50% - 1px);
+  transform: translateY(-50%);
+  z-index: 2;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+  background-color: var(--spectrum-gray-200, rgb(230, 230, 230));
+  border: none;
+}
+
+/* A known host's colour restores the shared swatch stroke (which defines pale
+   colours like yellow); only the default "no host" state is stroke-free. */
+.address-bar__swatch--known {
+  border: 1px solid rgb(0 0 0 / 20%);
 }
 
 .browser-toolbar__address-group #hosts-button {

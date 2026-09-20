@@ -37,6 +37,27 @@ export function buildHostOptions(hosts: readonly ServerSnapshot[]): readonly Hos
 }
 
 /**
+ * The address bar's paired colour swatch: the CSS colour of the configured
+ * host whose origin matches the address currently shown, or `undefined` when
+ * the address is empty/unparseable or its origin matches no configured host -
+ * the toolbar then lets the swatch fall back to its CSS default (a light
+ * gray). Colour is never the only signal: the host's label is the address
+ * text itself, and the hosts picker pairs every dot with its label.
+ */
+export function resolveAddressSwatchColor(
+  address: string,
+  hosts: readonly HostOption[],
+): string | undefined {
+  let origin: string;
+  try {
+    origin = new URL(address).origin;
+  } catch {
+    return undefined;
+  }
+  return hosts.find((host) => host.origin === origin)?.colorCss;
+}
+
+/**
  * Address-bar text. Always empty: this deliberately does not fall back to
  * the active server's *configured* origin. Until main reports the
  * `WebContentsView`'s live navigated URL (see `browserViewHost.ts`'s TODO),

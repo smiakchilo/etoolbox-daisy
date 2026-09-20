@@ -12,6 +12,7 @@ import {
   describeBlockedCertificate,
   describeUnknownOrigin,
   deriveServerLabelFromOrigin,
+  resolveAddressSwatchColor,
 } from './viewModel';
 
 /**
@@ -170,7 +171,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // ── State ────────────────────────────────────────────────────────────────
   let lastNavigationState: BrowserNavigationState | null = null;
   let switching = false;
-  let pendingExternalNav = 0;
+  // Set when a navigation IPC call reports a failure. That call settles only
+  // once the load it awaited has ended (a rejected `loadURL`, or a
+  // goBack/goForward/reload that settled), so a still-buffered
+  // `isLoading:true` push must not keep the Stop/banner up or mask the error.
+  // Cleared by the next navigation-state push.
+  let failedNavigation = false;
   let errorText: string | null = null;
   // The blocked-certificate decision main most recently pushed via
   // `browser:certificate-blocked`, or null when no prompt is pending. Cleared
@@ -187,26 +193,26 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   let unknownOriginPrompt: { readonly url: string; readonly origin: string } | null = null;
 
   // How long a loading state must persist before the loading banner appears.
-  // A chrome-armed external navigation that finishes within this window (fast
-  // reload, near-instant local server) never shows the banner, so no layout
+  // A load that finishes within this window (fast reload, near-instant local
+  // server, quick in-page navigation) never shows the banner, so no layout
   // shift happens for the common quick case.
   const LOADING_BANNER_DELAY_MS = 200;
   let loadingBannerTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Banner ───────────────────────────────────────────────────────────────
   // The banner shows (in priority order):
-  //  1. "Loading…"+spinner (plus a progress line at the top edge) — any
-  //     external load is in progress (either a server switch, or a
-  //     toolbar-initiated reload/back/forward/address submit while
-  //     `isLoading` is true). Pending certificate and unknown-origin prompts
-  //     are cleared the moment a new load starts - approving/adding's
-  //     auto-retry and any manual navigation both supersede them.
+  //  1. "Loading…"+spinner (plus a progress line at the top edge) — any load
+  //     is in progress (a server switch, or any navigation the view reports
+  //     while `isLoading` is true, whether the toolbar or the page started
+  //     it). Pending certificate and unknown-origin prompts are cleared the
+  //     moment a new load starts - approving/adding's auto-retry and any
+  //     manual navigation both supersede them.
   //  2. The untrusted-certificate prompt — set by `onCertificateBlocked`.
   //  3. The unknown-origin prompt — set by `browser:navigate`'s
   //     `unknown_origin` error.
   //  4. Error copy — set by `handleVoidResult` (network failures, storage
   //     errors).
-  //  5. Closed (idle) — no active external load and nothing to display.
+  //  5. Closed (idle) — no active load and nothing to display.
   //
   // Opening and closing are instant (`open` toggles `display` on the
   // component) - no slide animation. Loading is debounced by
@@ -353,30 +359,37 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       applyPresentation();
       return;
     }
-    beginExternalNavigation();
     const navigation: BrowserIpcVoidResult = await window.daisy.browser.navigate(prompt.url);
     handleVoidResult(navigation);
   }
 
-  function applyIdlePresentation(): void {
-    cancelLoadingBanner();
+  /** Clears the banner's open state, class and content without touching the Refresh/Stop mode. */
+  function clearBannerContent(): void {
     messageElement.classList.remove('browser-toolbar-message--loading');
     messageElement.removeAttribute('dismissible');
     messageElement.removeAttribute('open');
     messageElement.replaceChildren();
+  }
+
+  function applyIdlePresentation(): void {
+    cancelLoadingBanner();
+    clearBannerContent();
     setNavMode('refresh');
   }
 
   function applyPresentation(): void {
-    const isLoading = lastNavigationState?.isLoading === true;
-    const loading = switching || (isLoading && pendingExternalNav > 0);
+    const isLoading = lastNavigationState?.isLoading === true && !failedNavigation;
+    // Every load is treated the same, whether the toolbar initiated it
+    // (address bar, picker, Back/Forward/Refresh) or the page did (clicking a
+    // link or button): the view's own `isLoading` is the only authority, plus
+    // a server switch's teardown phase before its `loadURL` starts and a
+    // failure result that has already settled the load.
+    const loading = switching || isLoading;
 
     // The Refresh/Stop swap is deliberately NOT debounced with the banner: a
-    // real browser swaps the control the instant a navigation starts. A
-    // committed address target swaps it synchronously (`beginExternalNavigation`);
-    // every other transition (Back/Forward/Refresh, and the restore on
-    // completion) is derived here from the same `loading` condition that
-    // drives the banner, so the two can never drift apart. Only the banner's
+    // real browser swaps the control the instant a navigation starts. Every
+    // transition is derived here from the same `loading` condition that drives
+    // the banner, so the two can never drift apart. Only the banner's
     // appearance waits `LOADING_BANNER_DELAY_MS` (so a quick load moves no
     // layout).
     setNavMode(loading ? 'stop' : 'refresh');
@@ -384,17 +397,22 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // ── Banner ───────────────────────────────────────────────────────────
     // Loading is the only presentation with a delay: the banner appears
     // only after `LOADING_BANNER_DELAY_MS` of sustained load, then stays
-    // until the load ends.  Fast external navigations finish inside the
+    // until the load ends.  Fast navigations finish inside the
     // window and never move the layout.  Anything else (error, idle,
     // dismiss) applies / cancels immediately.
     if (loading) {
       if (isLoadingPresentationShown()) {
         // Banner already visible — nothing to do.
       } else if (loadingBannerTimer === null) {
+        // A stale error/prompt row is superseded by this load and must go the
+        // instant it starts, even though the loading presentation itself is
+        // debounced (a quick load then leaves the banner area empty, not
+        // showing the previous row).
+        clearBannerContent();
         loadingBannerTimer = setTimeout(() => {
           loadingBannerTimer = null;
-          const stillIsLoading = lastNavigationState?.isLoading === true;
-          const stillLoading = switching || (stillIsLoading && pendingExternalNav > 0);
+          const stillLoading =
+            switching || (lastNavigationState?.isLoading === true && !failedNavigation);
           if (stillLoading) {
             applyLoadingPresentation();
           } else {
@@ -471,7 +489,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       navClickHandler = null;
     }
     if (mode === 'stop') {
-      const icon = document.createElement('sp-icon-cross400');
+      const icon = document.createElement('sp-icon-cross600');
       icon.setAttribute('slot', 'icon');
       refreshButton.append(icon);
       refreshButton.setAttribute('title', 'Stop');
@@ -499,10 +517,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         const value = (addressField.value ?? '').trim();
         const currentUrl = lastNavigationState?.url;
         if (value !== '' && value !== currentUrl) {
-          markExternalNavigation();
           void window.daisy.browser.navigate(value).then(handleVoidResult);
         } else {
-          markExternalNavigation();
           void window.daisy.browser.reload().then(handleVoidResult);
         }
       };
@@ -510,47 +526,18 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     refreshButton.addEventListener('click', navClickHandler);
   }
 
-  // ── External navigation flag ─────────────────────────────────────────────
-  // The toolbar is the only thing in the renderer that knows a navigation
-  // was initiated outside the webview (address-bar, picker, back, forward,
-  // refresh). Every chrome action arms `pendingExternalNav` right before
-  // the IPC call. The counter is disarmed on the next `isLoading:false`
-  // push (did-stop-loading), or when a non-ok IPC result arrives (the
-  // navigation never actually started). This is sufficient because every
-  // user-initiated server switch also sets `switching=true` via the
-  // `ServerSwitchController` — so a switch's teardown phase (proxy setup,
-  // before any `loadURL`) is covered by the `switching` condition in
-  // `applyPresentation` regardless of whether `did-start-loading` has
-  // fired yet.
-  function markExternalNavigation(): void {
-    pendingExternalNav += 1;
-  }
-
-  // A chrome-initiated navigation the user just committed by putting a new
-  // target in the address field (a typed address, a picked host, or the
-  // retry after adding an unknown origin): arms the pending counter AND swaps
-  // Refresh→Stop in the same tick, so the control changes at the exact moment
-  // the address target lands. Back/Forward/Refresh arm via
-  // `markExternalNavigation` alone - their address target only changes when
-  // main pushes the newly committed URL, and `applyPresentation` swaps the
-  // control on that same push.
-  function beginExternalNavigation(): void {
-    markExternalNavigation();
-    setNavMode('stop');
-  }
-
   // ── IPC result handler ───────────────────────────────────────────────────
   function handleVoidResult(result: BrowserIpcVoidResult): void {
     if (!result.ok) {
-      pendingExternalNav = 0;
+      // The awaited load has settled; a buffered `isLoading:true` push must not
+      // keep the Stop/banner up past the failure.
+      failedNavigation = true;
       // A Stop clicked during a load makes `loadURL` reject. Verified on
       // Electron 44.3.0 (probe in the Step 05 verification records): the
-      // rejection arrives as ERR_FAILED; `did-stop-loading` arrives first in
-      // the renderer and disarms the arm, so the only reliable signal is the
-      // error code itself. ERR_ABORTED covers other cancellation paths and
-      // earlier Chromium versions. Neither code is produced by a genuine
-      // server-side failure here or AEM QueryBuilder traffic (those map to
-      // ERR_CONNECTION_REFUSED, ERR_TIMED_OUT, ERR_NAME_NOT_RESOLVED…), so
+      // rejection arrives as ERR_FAILED. ERR_ABORTED covers other cancellation
+      // paths and earlier Chromium versions. Neither code is produced by a
+      // genuine server-side failure here or AEM QueryBuilder traffic (those map
+      // to ERR_CONNECTION_REFUSED, ERR_TIMED_OUT, ERR_NAME_NOT_RESOLVED…), so
       // suppressing them cannot hide a real "couldn't display content"
       // condition.
       const isCancellation =
@@ -580,14 +567,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // ── Chrome action click handlers ─────────────────────────────────────────
   // Back/Forward are chrome-initiated but NOT sourced from a fetch-against
   // the server — they replay a browser history entry that the view already
-  // knows. `markExternalNavigation()` is still called for consistency so
-  // the trio (banner + stop) shows for the resulting load.
+  // knows. No arming is needed: the view's own `isLoading` push drives the
+  // same banner + Stop presentation as any other load.
   backButton.addEventListener('click', () => {
-    markExternalNavigation();
     void window.daisy.browser.goBack().then(handleVoidResult);
   });
   forwardButton.addEventListener('click', () => {
-    markExternalNavigation();
     void window.daisy.browser.goForward().then(handleVoidResult);
   });
 
@@ -631,7 +616,6 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     if (value === '') return;
     event.preventDefault();
     keydownNavigated = true;
-    beginExternalNavigation();
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
 
@@ -642,9 +626,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
     const value = addressField.value.trim();
     if (value === '') return;
-    beginExternalNavigation();
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
+
+  // Keep the paired swatch tracking whatever the field shows, whether typed
+  // here or written programmatically (the state pushes below call
+  // `refreshAddressSwatch` explicitly, since assigning `.value` fires no
+  // `input` event).
+  addressField.addEventListener('input', refreshAddressSwatch);
 
   // `sp-picker-button` default `position="right"` removes its left border
   // radius so it sits flush against the address field's right edge as a
@@ -664,9 +653,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   });
   hostsButton.addEventListener('click', () => callbacks.onHostsPickerClick());
 
+  // The colour swatch paired with the address: it shows the configured host's
+  // colour when the address in the field belongs to that host, and the CSS
+  // default (light gray) when the address is empty or matches no host. It is
+  // positioned absolutely inside the field's left edge by CSS, so it never
+  // affects the field/button seam geometry. Colour is never the only signal -
+  // the address text itself names the host.
+  const addressSwatch = el('span', {
+    attrs: { class: 'server-swatch address-bar__swatch', role: 'presentation' },
+  });
+
   const addressGroup = el('div', {
     attrs: { class: 'browser-toolbar__address-group' },
-    children: [addressField, hostsButton],
+    children: [addressField, addressSwatch, hostsButton],
   });
 
   toolbar.append(backButton, forwardButton, refreshButton, addressGroup);
@@ -680,9 +679,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // component's `shouldClose()` dispatches a cancelable `close` and removes
   // `open` itself; the default is prevented so this module keeps full
   // control over visibility through `applyPresentation`. Any error text goes
-  // away with the dismissal - but if an external load is still in progress
-  // the loading presentation stays (or, if it had not been shown yet,
-  // re-appears after the debounce window).
+  // away with the dismissal - but if a load is still in progress the loading
+  // presentation stays (or, if it had not been shown yet, re-appears after the
+  // debounce window).
   messageElement.addEventListener('close', (event) => {
     event.preventDefault();
     blockedCertificate = null;
@@ -702,37 +701,29 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
     hasLiveNavigationState = true;
     lastNavigationState = state;
-    // While a chrome-armed navigation is in flight, the address field already
-    // holds the URL the user asked for (a typed address, or the host the
-    // picker selected). The intermediate pushes carry the *previously
-    // committed* URL - `getURL()` at `did-start-loading` still returns the old
-    // page, which is empty on a first load - so re-applying them here would
-    // visibly blink the address away and only restore it once the load
-    // settles. Skip those; the armed navigation's own completion
-    // (`isLoading:false`) is the first push whose URL is authoritative.
-    // Unarmed pushes (an in-page link, a redirect after the arm cleared) are
-    // applied immediately so the field still tracks live navigation.
-    if (!state.isLoading || pendingExternalNav === 0) {
-      addressField.value = state.url;
-    }
+    // The address field tracks the live navigation unconditionally. Main
+    // reports the destination of a main-frame navigation from
+    // `did-start-navigation` (see `aemBrowserView.ts`), so this shows an
+    // in-page link's target at the moment the click starts the load - exactly
+    // as it shows a toolbar-typed target - instead of waiting for the new
+    // document to commit.
+    addressField.value = state.url;
     // A navigation to a new page has begun — any stale error text is now
     // superseded by the live load state; clearing it here lets the banner
     // show "Loading…" instead of a stale error. A failed navigation
     // re-sets `errorText` via `handleVoidResult`; a successful one should
     // never resurrect text from a previous page.
     if (state.isLoading) {
+      // A genuinely new load: any failure flag from the previous navigation
+      // no longer applies.
+      failedNavigation = false;
       errorText = null;
       // A navigation to a new page has begun — any pending prompts (and
       // main's matching auto-retry target) are superseded by it.
       blockedCertificate = null;
       unknownOriginPrompt = null;
-    } else {
-      // A load finished with `isLoading:false` (did-stop-loading): every
-      // pending external navigation is now complete, so the counter resets.
-      // This also guards a later *in-webview* navigation (isLoading true,
-      // no chrome had armed a counter) from wrongly showing the banner.
-      pendingExternalNav = 0;
     }
+    refreshAddressSwatch();
     applyPresentation();
   });
 
@@ -742,10 +733,28 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   let hasHosts = false;
   // The full host option list, kept for the certificate prompt's
   // matching-host check (Allow is enabled only when a configured host's
-  // origin equals the blocked origin). Mirrors `hasHosts` (which only feeds
-  // the picker's disabled state) but cannot be merged into it: `hasHosts`
-  // is a boolean, and matching needs the actual origins.
+  // origin equals the blocked origin) and for the address bar's paired
+  // swatch. Mirrors `hasHosts` (which only feeds the picker's disabled state)
+  // but cannot be merged into it: `hasHosts` is a boolean, and matching needs
+  // the actual origins.
   let hostOptions: readonly HostOption[] = [];
+
+  /**
+   * Re-derives the address bar's paired swatch from the field's current value
+   * and the configured hosts. A host match sets its colour inline and restores
+   * the shared swatch stroke; no match (empty, unparseable, or unknown origin)
+   * clears both, so the CSS default - a stroke-free, lighter gray - shows.
+   */
+  function refreshAddressSwatch(): void {
+    const colorCss = resolveAddressSwatchColor(addressField.value, hostOptions);
+    if (colorCss === undefined) {
+      addressSwatch.style.removeProperty('background-color');
+      addressSwatch.classList.remove('address-bar__swatch--known');
+    } else {
+      addressSwatch.style.backgroundColor = colorCss;
+      addressSwatch.classList.add('address-bar__swatch--known');
+    }
+  }
 
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
     switching = state.switching;
@@ -768,17 +777,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     setAddressValue(value: string): void {
       if (hasLiveNavigationState) return;
       addressField.value = value;
+      refreshAddressSwatch();
     },
     setHostOptions(options: readonly HostOption[]): void {
       // Never touches `addressField.value`: the address bar's displayed
       // text is owned exclusively by `setAddressValue`/the live
       // navigation-state event above, and must not be reset just because
       // the configured host list reloaded (e.g. the window regaining
-      // focus). The picker's disabled state and the certificate prompt's
-      // matching-host state both depend on the snapshot, so both are
-      // re-derived here.
+      // focus). The picker's disabled state, the certificate prompt's
+      // matching-host state and the address swatch all depend on the
+      // snapshot, so all are re-derived here.
       hasHosts = options.length > 0;
       hostOptions = options;
+      refreshAddressSwatch();
       applyPresentation();
     },
     setHostsPickerOpen(open: boolean): void {
@@ -792,7 +803,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
     navigateTo(origin: string): void {
       addressField.value = origin;
-      beginExternalNavigation();
+      refreshAddressSwatch();
       void window.daisy.browser.navigate(origin).then(handleVoidResult);
     },
     dispose(): void {

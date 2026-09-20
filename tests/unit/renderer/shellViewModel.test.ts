@@ -6,6 +6,7 @@ import {
   deriveServerLabelFromOrigin,
   describeBlockedCertificate,
   describeUnknownOrigin,
+  resolveAddressSwatchColor,
 } from '../../../src/renderer/src/shell/viewModel';
 import { newServerId, type ServerSnapshot } from '../../../src/shared';
 
@@ -57,6 +58,30 @@ describe('buildHostOptions', () => {
 describe('computeAddressBarValue', () => {
   it('is always empty: navigation is not wired yet, so it must never present a configured-but-unnavigated origin as the real current page', () => {
     expect(computeAddressBarValue()).toBe('');
+  });
+});
+
+describe('resolveAddressSwatchColor', () => {
+  const options = buildHostOptions(hosts);
+
+  it('returns the matching host colour for a URL on a configured origin, ignoring path and query', () => {
+    expect(resolveAddressSwatchColor('https://author.example/content/page.html?a=1', options)).toBe(
+      '#2680eb',
+    );
+  });
+
+  it('matches over the origin alone, so a different port or scheme does not match', () => {
+    expect(resolveAddressSwatchColor('https://author.example:8443/', options)).toBeUndefined();
+    expect(resolveAddressSwatchColor('http://author.example/', options)).toBeUndefined();
+  });
+
+  it('returns undefined for an empty or unparseable address so the CSS default shows', () => {
+    expect(resolveAddressSwatchColor('', options)).toBeUndefined();
+    expect(resolveAddressSwatchColor('not a url', options)).toBeUndefined();
+  });
+
+  it('returns undefined when no hosts are configured', () => {
+    expect(resolveAddressSwatchColor('https://author.example/', [])).toBeUndefined();
   });
 });
 

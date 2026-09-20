@@ -215,12 +215,14 @@
   width: 100%;
 }
 
-/* The colour control is the live preview dot plus the field/button combobox,
-   which takes the remaining width. */
+/* The colour control is the field/button combobox at full width; the live
+   preview dot is absolutely positioned *inside* the field's left edge (see
+   `.color-picker__preview` below), so the field's box aligns with every other
+   host field instead of being pushed right by an external dot. */
 .color-picker-field {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
 .color-picker-field .color-picker {
@@ -229,10 +231,21 @@
 }
 
 /* Same dot as the browser pane's server swatch, a touch larger here so the
-   selected colour reads at a glance beside the field. */
+   selected colour reads at a glance. It sits inside the field's left padding
+   (the field carries `--mod-textfield-spacing-inline` for the room), is above
+   the field's 1px frame overlay (`::before`, z-index 1), and never absorbs a
+   click meant for the input. */
 .color-picker__preview {
+  position: absolute;
+  inset-inline-start: 9px;
+  /* Optically centred on the field's text, not the raw box: the textfield's
+     32px line box sits a hair above the geometric centre of the field block. */
+  top: calc(50% - 1px);
+  transform: translateY(-50%);
+  z-index: 2;
   width: 14px;
   height: 14px;
+  pointer-events: none;
 }
 
 .color-picker {
@@ -274,6 +287,11 @@
      button does not. */
   flex: 1 1 auto;
   min-width: 0;
+
+  /* Room for the preview dot rendered inside the field's left edge (see
+     `.color-picker__preview`). The near side is padded too, harmlessly: the
+     textfield exposes only a single inline-spacing token. */
+  --mod-textfield-spacing-inline: 30px;
 
   --mod-textfield-corner-radius: 0;
   --mod-textfield-border-color: transparent;

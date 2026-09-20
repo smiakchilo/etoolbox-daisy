@@ -96,6 +96,22 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
       ),
     ).toBeLessThanOrEqual(2);
 
+    // The live preview dot is rendered *inside* the field's left edge, so the
+    // colour field's box itself lines up with the other host fields instead of
+    // being pushed right by an external dot.
+    const previewBox = await colorPreview.boundingBox();
+    expect(previewBox).not.toBeNull();
+    expect(previewBox?.x ?? 0).toBeGreaterThan(fieldBox?.x ?? 0);
+    expect((previewBox?.x ?? 0) + (previewBox?.width ?? 0)).toBeLessThanOrEqual(
+      (fieldBox?.x ?? 0) + (fieldBox?.width ?? 0),
+    );
+    const addressFieldBox = await item
+      .locator('sp-textfield[aria-label="Address"]')
+      .first()
+      .boundingBox();
+    expect(addressFieldBox).not.toBeNull();
+    expect(Math.abs((addressFieldBox?.x ?? 0) - (fieldBox?.x ?? 0))).toBeLessThanOrEqual(1);
+
     // Picking a swatch from the menu writes its hex into the field; the menu
     // shows the capitalised label.
     const chevron = colorMenuButton.locator('sp-icon-chevron-down');

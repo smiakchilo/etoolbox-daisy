@@ -83,7 +83,10 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
   // The live preview dot: always shows the currently selected colour (typed
   // swatch name/hex or picked from the menu), so the colour is visible without
   // opening the menu. It is the same `.server-swatch` dot the browser pane
-  // uses, sized up a little for a standalone field.
+  // uses, sized up a little for a standalone field. It is positioned
+  // absolutely *inside* the field's left edge by CSS (`.color-picker__preview`
+  // in settings.css), over the field's extra inline padding, so the field's
+  // box itself stays flush with the other host fields.
   const preview = el('span', {
     attrs: { class: 'server-swatch color-picker__preview', role: 'presentation' },
   });
@@ -180,8 +183,9 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
 
   setValue(options.initial);
 
-  // The preview dot sits outside the field+button combobox (prepend as a
-  // sibling), so the seamless seam geometry between those two is untouched.
+  // The preview dot is positioned absolutely inside the combo's field (see
+  // settings.css `.color-picker__preview`), so it is a DOM sibling purely for
+  // ordering; it never participates in the field+button seam geometry.
   const combo = el('div', {
     attrs: { class: 'color-picker' },
     children: [colorField, colorMenuButton],

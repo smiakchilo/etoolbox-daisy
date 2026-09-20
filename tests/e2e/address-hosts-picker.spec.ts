@@ -135,7 +135,14 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     const pickerButton = page.locator('#hosts-button');
     const panel = page.locator('.hosts-panel');
     const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const addressSwatch = page.locator('.address-bar__swatch');
     await expect(pickerButton).toBeVisible({ timeout: 10_000 });
+
+    // Nothing is loaded yet, so the paired swatch shows its CSS default - a
+    // stroke-free, lighter gray - rather than any host's colour.
+    await expect(addressSwatch).toBeVisible();
+    await expect(addressSwatch).toHaveCSS('background-color', 'rgb(230, 230, 230)');
+    await expect(addressSwatch).toHaveCSS('border-top-width', '0px');
 
     // A seeded profile means the hosts panel is already open at startup.
     // Because no page sits under it yet, the panel is not closeable: its
@@ -160,6 +167,10 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     await expect(panel).toBeHidden();
     await expect(viewHost).toBeVisible();
     await expect(pickerButton).not.toHaveAttribute('open', '');
+    // Server A's page is loaded, so the paired swatch now shows its blue and
+    // carries the shared swatch stroke again.
+    await expect(addressSwatch).toHaveCSS('background-color', 'rgb(38, 128, 235)');
+    await expect(addressSwatch).toHaveCSS('border-top-width', '1px');
     // A real custom element registry entry is the only proof the
     // register-imports step ran - see AGENTS.md's "jsdom cannot prove a custom
     // element is registered" rule.
@@ -215,6 +226,9 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     await expect(pickerButton).not.toHaveAttribute('open', '');
     await page.waitForTimeout(300);
     expect(await pickerPressedBackground(page)).toBe(restingBackground);
+
+    // The swatch follows the loaded host: Server B's green now.
+    await expect(addressSwatch).toHaveCSS('background-color', 'rgb(45, 157, 120)');
 
     const message = page.locator('.browser-toolbar-message');
     await expect(message).toBeHidden();

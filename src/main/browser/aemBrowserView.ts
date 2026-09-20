@@ -107,10 +107,20 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     applyBounds();
   }
 
+  // The URL a main-frame navigation is heading to, captured from
+  // `did-start-navigation` while the new document has not committed yet.
+  // `getURL()` keeps reporting the *committed* document until then, so without
+  // this an in-page link's target could not reach the address bar until the
+  // navigation had effectively finished - unlike a toolbar-initiated
+  // navigation, whose target the toolbar already knows. Cleared once the
+  // navigation commits or the load settles, so the address bar falls back to
+  // the live URL.
+  let pendingNavigationUrl: string | undefined;
+
   function getNavigationState(): BrowserNavigationState {
     const history = view.webContents.navigationHistory;
     return {
-      url: view.webContents.getURL(),
+      url: pendingNavigationUrl ?? view.webContents.getURL(),
       canGoBack: history.canGoBack(),
       canGoForward: history.canGoForward(),
       isLoading: view.webContents.isLoading(),
@@ -122,10 +132,30 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     options.onNavigationStateChange(getNavigationState());
   }
 
-  view.webContents.on('did-navigate', pushNavigationState);
-  view.webContents.on('did-navigate-in-page', pushNavigationState);
+  function onStartNavigation(
+    details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+  ): void {
+    // Sub-frame navigation does not change the address bar's document, and the
+    // same scheme-only http(s) rule that guards the view's own top-level
+    // navigation keeps an empty/about:blank start from surfacing as an address.
+    if (!details.isMainFrame || decideAuxiliaryWindowOpen(details.url).kind !== 'allow') return;
+    pendingNavigationUrl = details.url;
+    pushNavigationState();
+  }
+
+  // The new document has committed (did-navigate/did-navigate-in-page) or the
+  // load has settled (did-stop-loading): the live URL is authoritative again,
+  // so the pending target is dropped before the state is pushed.
+  function onNavigationSettled(): void {
+    pendingNavigationUrl = undefined;
+    pushNavigationState();
+  }
+
+  view.webContents.on('did-start-navigation', onStartNavigation);
+  view.webContents.on('did-navigate', onNavigationSettled);
+  view.webContents.on('did-navigate-in-page', onNavigationSettled);
   view.webContents.on('did-start-loading', pushNavigationState);
-  view.webContents.on('did-stop-loading', pushNavigationState);
+  view.webContents.on('did-stop-loading', onNavigationSettled);
 
   // How long a chrome-initiated goBack/goForward/reload waits to see whether
   // it produced any navigation at all before giving up and reporting `ok`.

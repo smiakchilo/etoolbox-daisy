@@ -19,7 +19,7 @@ import '@spectrum-web-components/table/sp-table-row.js';
 import '@spectrum-web-components/table/sp-table-cell.js';
 import '@spectrum-web-components/icons-ui/icons/sp-icon-arrow400.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-refresh.js';
-import '@spectrum-web-components/icons-ui/icons/sp-icon-cross400.js';
+import '@spectrum-web-components/icons-ui/icons/sp-icon-cross600.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chat-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-history.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-settings.js';

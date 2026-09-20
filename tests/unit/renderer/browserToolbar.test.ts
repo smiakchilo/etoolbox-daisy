@@ -16,14 +16,14 @@ import type { HostOption } from '../../../src/renderer/src/shell/viewModel';
  * the "Loading…" banner + Refresh/Stop swap appear for a given `isLoading`
  * push. Rules under test:
  *
- * - Only chrome-armed loads (`pendingExternalNav > 0`) or active switches
- *   show the banner; a plain in-webview `isLoading:true` push does not.
+ * - Any load (`isLoading`), or an active switch, shows the banner and the
+ *   Refresh→Stop swap - a navigation the page started (a link/button click)
+ *   is treated exactly like a toolbar-initiated one.
  * - A sustained load is debounced by 200ms: the banner appears only after
  *   the load has outlived the debounce window, and a load that finishes
  *   inside the window never shows it (no layout shift for quick reloads).
- * - The banner clears when the armed load ends (`isLoading:false`), which
- *   also disarms the counter so a later in-webview navigation can't
- *   resurrect it.
+ * - The banner clears when the load ends (`isLoading:false`), and a failed
+ *   navigation result settles the load immediately (no stale Stop/banner).
  * - Opening/closing is instant (no slide animation) and the loading banner
  *   is never dismissible (no close control); error/prompt rows are.
  * - A user-initiated Stop swaps Refresh→Stop, and its ERR_ABORTED rejection
@@ -156,7 +156,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
     // The stop affordance is a cross, not the media "stop playback" glyph.
-    expect(findNavButton(toolbar).querySelector('sp-icon-cross400')).not.toBeNull();
+    expect(findNavButton(toolbar).querySelector('sp-icon-cross600')).not.toBeNull();
     expect(browser.reload).toHaveBeenCalledTimes(1);
 
     stateListeners[0]?.(loadingState(false));
@@ -168,14 +168,22 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
 
-  it('leaves the banner closed for an in-webview navigation (no chrome arm)', () => {
+  it('treats an in-webview navigation exactly like a chrome-initiated one', () => {
+    vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
 
+    // No toolbar action started this load - the page did (a link or button).
     stateListeners[0]?.(loadingState(true));
-    stateListeners[0]?.(loadingState(false));
+    // The Refresh→Stop swap is immediate; the banner waits out the debounce.
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expect(message.hasAttribute('open')).toBe(false);
 
-    expect(browser.reload).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toBe('Loading\u2026');
+
+    stateListeners[0]?.(loadingState(false));
     expect(message.hasAttribute('open')).toBe(false);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
@@ -201,7 +209,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.hasAttribute('open')).toBe(false);
   });
 
-  it('disarms after did-stop-loading so a later in-webview load stays silent', () => {
+  it('shows the banner for a later in-webview load after a chrome load ended', () => {
     vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
@@ -214,10 +222,13 @@ describe('createBrowserToolbar loading state machine', () => {
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(false);
 
-    // A later in-webview navigation (no arm) must not resurrect the banner.
+    // A later in-webview navigation is not "silent": it drives the same
+    // loading presentation as any other load.
     stateListeners[0]?.(loadingState(true));
-    expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    vi.advanceTimersByTime(1000);
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.textContent).toBe('Loading\u2026');
   });
 
   it('never shows the banner when the armed load finishes inside the 200ms debounce window', () => {
@@ -242,9 +253,9 @@ describe('createBrowserToolbar loading state machine', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
 
-    // An address submit arms an external navigation (source: the address bar,
-    // routed through `browser:navigate`). The load briefly starts — inside
-    // the 200ms debounce window, so no banner has appeared yet.
+    // An address submit navigates (source: the address bar, routed through
+    // `browser:navigate`). The load briefly starts — inside the 200ms debounce
+    // window, so no banner has appeared yet.
     browser.navigate.mockResolvedValueOnce({
       ok: false,
       error: { code: 'network_error', message: 'net::ERR_ABORTED', errorCode: 'ERR_ABORTED' },
@@ -277,8 +288,8 @@ describe('createBrowserToolbar loading state machine', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
 
-    // An address submit arms an external navigation whose in-flight promise
-    // we resolve later (the load is slow).
+    // An address submit starts a navigation whose in-flight promise we
+    // resolve later (the load is slow).
     let resolveNavigation: ((value: unknown) => void) | undefined;
     const pendingNavigation = new Promise((resolve) => {
       resolveNavigation = resolve;
@@ -366,8 +377,7 @@ describe('createBrowserToolbar loading state machine', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
 
-    // A picker selection both arms an external navigation (pendingExternalNav)
-    // and begins a server switch.
+    // A picker selection starts a navigation and begins a server switch.
     toolbar.navigateTo('https://author.example/');
     switchListeners[0]?.({ switching: true });
     // Debounce: loading presentation waits 200ms.
@@ -378,15 +388,15 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.textContent).toBe('Loading\u2026');
 
     // The load starts; then the switch controller reports done while the page
-    // is still loading — the banner must not close early (armed load still
-    // in progress).
+    // is still loading — the banner must not close early (the load is still in
+    // progress).
     stateListeners[0]?.(loadingState(true));
     switchListeners[0]?.({ switching: false });
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
     expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
 
-    // did-stop-loading disarms and closes (instant - no slide-out).
+    // did-stop-loading closes it (instant - no slide-out).
     stateListeners[0]?.(loadingState(false));
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
@@ -406,14 +416,14 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(address.hasAttribute('disabled')).toBe(false);
   });
 
-  it('tracks an unarmed in-page navigation in the address field immediately', () => {
+  it('tracks an in-page navigation in the address field immediately', () => {
     const toolbar = build();
     const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
       value: string;
     };
 
-    // No chrome action armed this push (an in-page link fired it): the pushed
-    // URL must land in the field straight away, loading or not.
+    // An in-page link fired this push: the pushed URL must land in the field
+    // straight away, loading or not.
     stateListeners[0]?.({
       url: 'https://author.example/content/page.html#section',
       canGoBack: true,
@@ -424,31 +434,18 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(address.value).toBe('https://author.example/content/page.html#section');
   });
 
-  it('keeps the armed target in the address field instead of blinking through intermediate pushes', () => {
+  it('applies every pushed URL so the address tracks the live navigation', () => {
     const toolbar = build();
     const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
       value: string;
     };
 
-    // A picker selection writes the chosen host and arms the navigation.
+    // A picker selection writes the chosen host; no synchronous arm is needed.
     toolbar.navigateTo('https://author.example/');
     expect(address.value).toBe('https://author.example/');
-    // The Refresh→Stop swap lands at this same moment - not on the debounced
-    // loading banner.
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
-    // did-start-loading reports the *previously* committed URL - empty on a
-    // first load. It must not wipe the chosen address.
-    stateListeners[0]?.({
-      url: '',
-      canGoBack: false,
-      canGoForward: false,
-      isLoading: true,
-    });
-    expect(address.value).toBe('https://author.example/');
-
-    // A later intermediate push (did-navigate) while still loading is likewise
-    // not yet authoritative.
+    // did-start-navigation now reports the navigation's destination (see
+    // `aemBrowserView.ts`), so the field keeps showing it while the load runs.
     stateListeners[0]?.({
       url: 'https://author.example/',
       canGoBack: false,
@@ -457,7 +454,16 @@ describe('createBrowserToolbar loading state machine', () => {
     });
     expect(address.value).toBe('https://author.example/');
 
-    // Only the completed load's final URL is applied.
+    // A redirect while still loading updates the field immediately.
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: true,
+    });
+    expect(address.value).toBe('https://author.example/content/page.html');
+
+    // The completed load's final URL is applied too.
     stateListeners[0]?.({
       url: 'https://author.example/content/page.html',
       canGoBack: true,
@@ -515,8 +521,8 @@ describe('createBrowserToolbar loading state machine', () => {
     };
     address.value = 'https://dead.example';
     address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    // The chrome arm also fires a loading push that arms the 200ms timer;
-    // the error arrives first and supersedes it.
+    // A loading push arms the 200ms timer; the error arrives first and
+    // supersedes it.
     stateListeners[0]?.(loadingState(true));
 
     await vi.waitFor(() => {
@@ -1017,5 +1023,73 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+function addressSwatch(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement | null {
+  return toolbar.element.querySelector<HTMLElement>('.address-bar__swatch');
+}
+
+describe('createBrowserToolbar address swatch', () => {
+  const authorHost: HostOption = {
+    id: AUTHOR_SERVER_ID,
+    label: 'Author',
+    origin: 'https://author.example',
+    colorCss: '#2680eb',
+  };
+
+  function navigationState(url: string): BrowserNavigationState {
+    return { url, canGoBack: false, canGoForward: false, isLoading: false };
+  }
+
+  it('shows the matching host colour once a URL on that origin is loaded', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    stateListeners[0]?.(navigationState('https://author.example/content/page.html'));
+
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('rgb(38, 128, 235)');
+    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(true);
+  });
+
+  it('leaves the inline colour unset (CSS default gray) when the address matches no host', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    stateListeners[0]?.(navigationState('https://unknown.example/content/page.html'));
+
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
+    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
+  });
+
+  it('leaves the inline colour unset before any address is loaded', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
+    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
+  });
+
+  it('re-derives the swatch when the host list arrives after the address (snapshot reload)', () => {
+    const toolbar = build();
+    stateListeners[0]?.(navigationState('https://author.example/'));
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
+
+    toolbar.setHostOptions([authorHost]);
+
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('rgb(38, 128, 235)');
+    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(true);
+  });
+
+  it('clears a previously matched colour when a later address matches nothing', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+    stateListeners[0]?.(navigationState('https://author.example/'));
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('rgb(38, 128, 235)');
+
+    stateListeners[0]?.(navigationState('https://unknown.example/'));
+
+    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
+    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
   });
 });
