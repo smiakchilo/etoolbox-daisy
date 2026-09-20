@@ -446,14 +446,20 @@ test('a page-initiated navigation drives the same address, Stop, Loading and Bac
 
   // Click the in-page link with a genuine user-gesture input event (script
   // `.click()` and `location.href` produce skippable client redirects that a
-  // real browser's Back would skip too - not what a human click does).
-  const viewId = await app.evaluate(({ webContents }, prefix: string) => {
-    const view = webContents
-      .getAllWebContents()
-      .find((candidate) => candidate.getURL().startsWith(prefix));
-    if (!view) throw new Error('AEM view not found');
-    return view.id;
-  }, origin);
+  // real browser's Back would skip too - not what a human click does). The view
+  // is looked up by polling: its webContents can be briefly absent or still
+  // report a pre-commit URL while the first navigation settles.
+  let viewId = -1;
+  for (let attempt = 0; attempt < 40 && viewId === -1; attempt += 1) {
+    viewId = await app.evaluate(({ webContents }, prefix: string) => {
+      const view = webContents
+        .getAllWebContents()
+        .find((candidate) => candidate.getURL().startsWith(prefix));
+      return view?.id ?? -1;
+    }, origin);
+    if (viewId === -1) await page.waitForTimeout(500);
+  }
+  if (viewId === -1) throw new Error('AEM view not found');
   await app.evaluate(({ webContents }, id: number) => {
     const view = webContents.fromId(id);
     if (!view) throw new Error('AEM view no longer exists');

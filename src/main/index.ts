@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
+import { mergeDisabledFeatures } from './disabledFeatures';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
@@ -78,6 +79,26 @@ registerAppProtocolPrivileges();
 // so without this it falls back to the generic "Electron" name. Set it
 // explicitly so it always matches electron-builder's productName.
 app.setName('EToolbox Daisy');
+
+// By default Chromium on Windows forwards WebAuthn/FIDO2 requests to the
+// native Windows WebAuthn API, which raises the "Windows Security" security-key
+// dialog. Adobe's IMS login page (and other IdPs) fire a WebAuthn call as part
+// of signing in, so simply reaching the AEM login page and pressing "Sign in
+// with Adobe" makes that dialog appear - labelled "unverified app" because the
+// calling process is an unsigned `electron.exe`. Electron has no in-app
+// WebAuthn UI and offers no per-session switch, so the native-API path is
+// disabled process-wide: Chromium then handles the request itself and, with no
+// platform authenticator, the call simply fails, which the IdP page tolerates.
+// The app has no legitimate WebAuthn use - the embedded AEM pane authenticates
+// with a password or the IdP's own SSO - so nothing is lost by turning it off.
+// Must run before `app.whenReady()`.
+app.commandLine.appendSwitch(
+  'disable-features',
+  mergeDisabledFeatures(
+    app.commandLine.getSwitchValue('disable-features'),
+    'WebAuthenticationUseNativeWinApi',
+  ),
+);
 
 // Resolving paths is pure (os.homedir + path.join): it performs no filesystem
 // access, so it is safe to do before this process owns the single-instance

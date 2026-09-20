@@ -22,25 +22,26 @@ function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return out;
 }
 
+function provisionScratchEnv(): Record<string, string> {
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+  return {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+}
+
 test.describe('EToolbox Daisy skeleton', () => {
   test('opens a window, renders a Spectrum button, exposes app info, and grants no Node access', async () => {
-    mkdirSync(scratchBase, { recursive: true });
-    const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-    const home = path.join(root, 'home');
-    const appData = path.join(home, 'AppData', 'Roaming');
-    const localAppData = path.join(home, 'AppData', 'Local');
-    mkdirSync(appData, { recursive: true });
-    mkdirSync(localAppData, { recursive: true });
-
-    const env = {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    };
-
-    const app = await electron.launch({ args: [mainEntry], env });
+    const app = await electron.launch({ args: [mainEntry], env: provisionScratchEnv() });
 
     try {
       const window = await app.firstWindow();
@@ -64,6 +65,25 @@ test.describe('EToolbox Daisy skeleton', () => {
       await window.waitForSelector('#daisy-app-info');
       const appInfoText = await window.locator('#daisy-app-info').innerText();
       expect(appInfoText).toContain('EToolbox Daisy');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // Windows-only in effect, but the switch is asserted on every platform: the
+  // point is that the app always asks Chromium to handle WebAuthn itself, so
+  // the native Windows API (and its "unverified app" security-key dialog,
+  // which Adobe's IMS login page triggers) is never used. See
+  // `mergeDisabledFeatures` and its call site in `src/main/index.ts`.
+  test('disables the native Windows WebAuthn API at startup', async () => {
+    const app = await electron.launch({ args: [mainEntry], env: provisionScratchEnv() });
+
+    try {
+      await app.firstWindow();
+      const disabledFeatures = await app.evaluate(({ app: electronApp }) =>
+        electronApp.commandLine.getSwitchValue('disable-features'),
+      );
+      expect(disabledFeatures.split(',')).toContain('WebAuthenticationUseNativeWinApi');
     } finally {
       await app.close();
     }
