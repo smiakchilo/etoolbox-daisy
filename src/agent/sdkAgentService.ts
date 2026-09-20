@@ -1,6 +1,6 @@
-import {randomUUID} from 'node:crypto';
-import {z} from 'zod';
-import type {SessionConfig, SessionEvent, Tool, ToolInvocation} from '@github/copilot-sdk';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import type { SessionConfig, SessionEvent, Tool, ToolInvocation } from '@github/copilot-sdk';
 
 import {
   type AgentEvent,
@@ -33,7 +33,7 @@ import {
   toolCallIdSchema,
   type ToolDescriptor,
   type ToolError,
-  type TurnId
+  type TurnId,
 } from '../shared';
 import {
   type AgentAuthState,

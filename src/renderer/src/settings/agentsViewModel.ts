@@ -7,7 +7,12 @@ import {
   type ModelSelectionState,
   type ProxyId,
 } from '../../../shared';
-import { buildModelsViewModel, NO_PREFERENCE_VALUE, type ModelOption } from './modelsViewModel';
+import {
+  buildModelsViewModel,
+  modelPreferenceValue,
+  NO_PREFERENCE_VALUE,
+  type ModelOption,
+} from './modelsViewModel';
 
 /**
  * Pure presentation logic for the Settings panel's Agents tab. Separated from
@@ -126,7 +131,7 @@ function buildItem(
       ...base,
       modelEnabled: false,
       modelOptions: storedModelOptions(node?.model),
-      selectedModelValue: node?.model ?? NO_PREFERENCE_VALUE,
+      selectedModelValue: modelPreferenceValue(node?.model ?? null) ?? NO_PREFERENCE_VALUE,
       effortOptions: [{ value: NO_PREFERENCE_VALUE, label: AUTO_LABEL }],
       selectedEffortValue: NO_PREFERENCE_VALUE,
       effortDisabled: true,
@@ -177,10 +182,11 @@ export function catalogueFailureMessage(
  * catalogue that has omitted the model, and this item has no catalogue at all.
  */
 function storedModelOptions(model: string | undefined): readonly ModelOption[] {
-  if (model === undefined) return [{ value: NO_PREFERENCE_VALUE, label: AUTO_LABEL }];
+  const value = modelPreferenceValue(model ?? null);
+  if (value === null) return [{ value: NO_PREFERENCE_VALUE, label: AUTO_LABEL }];
   return [
     { value: NO_PREFERENCE_VALUE, label: AUTO_LABEL },
-    { value: model, label: model },
+    { value, label: value },
   ];
 }
 

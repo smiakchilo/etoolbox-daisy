@@ -28,6 +28,32 @@ export interface ModelOption {
  */
 export const NO_PREFERENCE_VALUE = '__none__';
 
+/**
+ * The id Copilot gives its own "Auto" model choice.
+ *
+ * The picker already offers a generic `(Auto)` option - the
+ * {@link NO_PREFERENCE_VALUE} sentinel, meaning "let the runtime choose" -
+ * which is exactly what Copilot's own `auto` entry means. So the provider's
+ * entry is dropped from the option list, and a stored `auto` is shown as the
+ * generic `(Auto)`, rather than rendering the same choice twice.
+ */
+export const PROVIDER_AUTO_MODEL_ID = 'auto';
+
+/** Whether a catalogue entry is Copilot's own "Auto". */
+export function isProviderAutoModel(model: { readonly id: string }): boolean {
+  return model.id.toLowerCase() === PROVIDER_AUTO_MODEL_ID;
+}
+
+/**
+ * Collapses a stored or pending model id to this picker's representation:
+ * Copilot's own `auto` becomes `null` ("no preference"), everything else is
+ * passed through.
+ */
+export function modelPreferenceValue(modelId: string | null): string | null {
+  if (modelId === null) return null;
+  return modelId.toLowerCase() === PROVIDER_AUTO_MODEL_ID ? null : modelId;
+}
+
 export interface ModelsViewModel {
   readonly modelOptions: readonly ModelOption[];
   readonly selectedModelValue: string;
@@ -52,9 +78,12 @@ export function buildModelsViewModel(
   state: ModelSelectionState,
   pending: { readonly model: string | null; readonly reasoningEffort: string | null },
 ): ModelsViewModel {
+  const pendingModel = modelPreferenceValue(pending.model);
   const modelOptions: ModelOption[] = [
     { value: NO_PREFERENCE_VALUE, label: '(Auto)' },
-    ...state.models.map((model) => ({ value: model.id, label: model.name })),
+    ...state.models
+      .filter((model) => !isProviderAutoModel(model))
+      .map((model) => ({ value: model.id, label: model.name })),
   ];
 
   // A stored model missing from the catalogue is still shown, and still
@@ -62,11 +91,11 @@ export function buildModelsViewModel(
   // Dropping it would misreport the user's own setting as unset, and a
   // catalogue can be temporarily incomplete (Copilot still starting, a
   // transient outage) without the stored choice having become invalid.
-  if (pending.model !== null && !state.models.some((model) => model.id === pending.model)) {
-    modelOptions.push({ value: pending.model, label: `${pending.model} (not currently offered)` });
+  if (pendingModel !== null && !state.models.some((model) => model.id === pendingModel)) {
+    modelOptions.push({ value: pendingModel, label: `${pendingModel} (not currently offered)` });
   }
 
-  const supported = supportedReasoningEffortsFor(state.models, pending.model);
+  const supported = supportedReasoningEffortsFor(state.models, pendingModel);
   const reasoningOptions: ModelOption[] = [
     { value: NO_PREFERENCE_VALUE, label: '(Auto)' },
     ...supported.map((effort) => ({ value: effort, label: effort })),
@@ -83,7 +112,7 @@ export function buildModelsViewModel(
 
   return {
     modelOptions,
-    selectedModelValue: pending.model ?? NO_PREFERENCE_VALUE,
+    selectedModelValue: pendingModel ?? NO_PREFERENCE_VALUE,
     reasoningOptions,
     selectedReasoningValue: reasoningSelected,
     reasoningDisabled: supported.length === 0,

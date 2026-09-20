@@ -87,6 +87,29 @@ describe('buildModelsViewModel', () => {
     expect(vm.modelOptions.filter((option) => option.value === 'model-a')).toHaveLength(1);
   });
 
+  it("drops Copilot's own 'auto' so the generic '(Auto)' is offered only once", () => {
+    const vm = buildModelsViewModel(
+      stateWith({
+        models: [
+          { id: 'auto', name: 'Auto', supportedReasoningEfforts: [] },
+          { id: 'model-a', name: 'Model A', supportedReasoningEfforts: [] },
+        ],
+      }),
+      { model: null, reasoningEffort: null },
+    );
+    expect(vm.modelOptions.map((option) => option.value)).toEqual([NO_PREFERENCE_VALUE, 'model-a']);
+    expect(vm.modelOptions.filter((option) => option.label === '(Auto)')).toHaveLength(1);
+  });
+
+  it("shows a stored Copilot 'auto' as the generic '(Auto)', not as an extra option", () => {
+    const vm = buildModelsViewModel(
+      stateWith({ models: [{ id: 'auto', name: 'Auto', supportedReasoningEfforts: [] }] }),
+      { model: 'auto', reasoningEffort: null },
+    );
+    expect(vm.selectedModelValue).toBe(NO_PREFERENCE_VALUE);
+    expect(vm.modelOptions).toEqual([{ value: NO_PREFERENCE_VALUE, label: '(Auto)' }]);
+  });
+
   it('disables the controls while a turn is in flight', () => {
     const vm = buildModelsViewModel(stateWith({ changesLocked: true }), {
       model: null,

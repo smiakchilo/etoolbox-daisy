@@ -133,6 +133,17 @@ describe('buildAgentsViewModel', () => {
     expect(item?.effortDisabled).toBe(true);
   });
 
+  it("collapses a stored Copilot 'auto' to the generic '(Auto)' on an inert item", () => {
+    const [item] = buildAgentsViewModel(
+      inputWith({
+        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'auto' } },
+      }),
+      undefined,
+    ).items;
+    expect(item?.modelOptions).toEqual([{ value: NO_PREFERENCE_VALUE, label: AUTO_LABEL }]);
+    expect(item?.selectedModelValue).toBe(NO_PREFERENCE_VALUE);
+  });
+
   it('disables both pickers while the active provider is signed out', () => {
     // The reported defect: one picker looked usable (the catalogue IPC can
     // still answer, with no models) while the other was dead. Signed out means
