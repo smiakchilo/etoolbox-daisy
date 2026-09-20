@@ -1,25 +1,12 @@
 import { BrowserWindow } from 'electron';
 import type { HandlerDetails, Session, WebContents, WindowOpenHandlerResponse } from 'electron';
+import { APP_ICON_PATH, applyTaskbarAppDetails } from '../windows';
 import { decideAuxiliaryWindowOpen } from './auxiliaryWindowPolicy';
 
 /**
  * Manages HTTP(S) auxiliary windows opened by the AEM view (login popups,
  * SSO redirect windows) - implementation-plan.md step 05;
  * requirements-decisions.md section 3.
- *
- * Every window this manager creates:
- *  - shares the AEM session (`aemSession`), never a separate/default one, so
- *    it sees the same cookies/proxy/certificate exceptions as the main AEM
- *    view;
- *  - gets no `preload` at all - not even the AEM preload - because an
- *    auxiliary sign-in window is IdP-hosted content the app does not control,
- *    and the AEM preload's small bridge surface has no reason to be exposed
- *    to a third-party login page;
- *  - is tracked in {@link openWindows} so {@link closeAll} (called by
- *    `serverSwitch.ts` before the proxy switch) can close every one of them
- *    on a server switch, so no auxiliary window survives into the new
- *    server's proxy/session context.
- *
  * `decideAuxiliaryWindowOpen` is applied both to the initial `window.open`
  * call and, recursively, to every window an auxiliary window itself opens -
  * some SSO flows chain through more than one popup - so the same http(s)-only
@@ -44,6 +31,10 @@ export function createAuxiliaryWindowManager(aemSession: Session): AuxiliaryWind
       return {
         action: 'allow',
         overrideBrowserWindowOptions: {
+          // Same window icon as the main window (see `windows.ts`), otherwise
+          // Electron's default is used and a login/SSO popup shows the
+          // Electron icon in the taskbar.
+          ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
           webPreferences: {
             session: aemSession,
             contextIsolation: true,
@@ -57,6 +48,7 @@ export function createAuxiliaryWindowManager(aemSession: Session): AuxiliaryWind
 
     webContents.on('did-create-window', (childWindow) => {
       openWindows.add(childWindow);
+      applyTaskbarAppDetails(childWindow);
       // Deny by default was already the app-wide baseline before this
       // manager existed (`security.ts`); re-applying the same narrow policy
       // here (rather than leaving the child window's own handler unset,

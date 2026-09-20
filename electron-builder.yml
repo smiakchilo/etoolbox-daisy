@@ -63,7 +63,10 @@ extraResources:
   - from: resources
     to: resources
 win:
-  icon: build/icon.ico
+  # Single source of truth: the same file the app reads for its window/taskbar
+  # icon at runtime (`src/main/appIcon.ts`), shipped by the extraResources entry
+  # below as well as embedded into the exe/installer here.
+  icon: resources/icon.ico
   target:
     - target: nsis
       arch:

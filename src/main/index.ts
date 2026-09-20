@@ -20,7 +20,7 @@ import { createAemBridgeBroker } from './aem/bridgeBroker';
 import { createAemBridgeTransport } from './aem/bridgeTransport';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
-import { createMainWindow } from './windows';
+import { APP_USER_MODEL_ID, createMainWindow } from './windows';
 import { createStartupGatedAgentChatController } from './agentChatController';
 import {
   createBridgeCurrentContext,
@@ -79,6 +79,16 @@ registerAppProtocolPrivileges();
 // so without this it falls back to the generic "Electron" name. Set it
 // explicitly so it always matches electron-builder's productName.
 app.setName('EToolbox Daisy');
+
+// Windows taskbar identity. Without this an unpackaged (dev/e2e) run has no
+// AppUserModelID, so Windows groups the app under the generic `electron.exe`
+// identity and its taskbar jump-list/context menu shows Electron's icon.
+// Must match electron-builder.yml's `appId`, which registers the installed
+// build's shortcut under the same identity - so installed and dev runs are one
+// taskbar entry, not two. Set before any window is created.
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
 
 // Resolving paths is pure (os.homedir + path.join): it performs no filesystem
 // access, so it is safe to do before this process owns the single-instance
