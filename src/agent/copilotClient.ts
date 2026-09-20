@@ -9,6 +9,7 @@ import type {
 } from '@github/copilot-sdk';
 import { getCopilotHomeDir } from './copilotHome';
 import { resolveSdkRuntimeExePath, type RuntimePathsEnv } from './runtimePaths';
+import type { AuthStatus } from '../shared';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -143,6 +144,30 @@ export function createHardenedCopilotClient(
 
 export async function getAuthStatus(client: CopilotClient): Promise<GetAuthStatusResponse> {
   return client.getAuthStatus();
+}
+
+/**
+ * Projects the SDK's raw `auth.getStatus` response onto this app's
+ * `AuthStatus` DTO.
+ *
+ * The two are deliberately NOT the same shape: the runtime response carries no
+ * `apiVersion`, which is an app/IPC version marker added by this projection
+ * (see `src/shared/agent-auth.ts`). Feeding the raw response straight into
+ * `parseAuthStatus` therefore always fails with `expected 1` at
+ * `path: ["apiVersion"]` - which, before this projection existed, meant the
+ * real adapter never once read its initial auth state successfully. Typed
+ * against `GetAuthStatusResponse` so the compiler keeps the field mapping
+ * honest; the SDK boundary is the right home for knowledge of the raw shape.
+ */
+export function toAuthStatus(status: GetAuthStatusResponse): AuthStatus {
+  return {
+    apiVersion: 1,
+    isAuthenticated: status.isAuthenticated,
+    ...(status.authType !== undefined ? { authType: status.authType } : {}),
+    ...(status.host !== undefined ? { host: status.host } : {}),
+    ...(status.login !== undefined ? { login: status.login } : {}),
+    ...(status.statusMessage !== undefined ? { statusMessage: status.statusMessage } : {}),
+  };
 }
 
 export async function getRuntimeStatus(client: CopilotClient): Promise<GetStatusResponse> {

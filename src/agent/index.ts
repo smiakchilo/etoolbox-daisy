@@ -19,6 +19,7 @@ export {
   buildRuntimeChildEnv,
   getAuthStatus,
   getRuntimeStatus,
+  toAuthStatus,
   type CopilotClient,
   type CreateHardenedClientOptions,
   type ProxyEnvOverrides,

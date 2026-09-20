@@ -31,8 +31,36 @@ vi.mock('@github/copilot-sdk', () => {
 });
 
 // Imported after the mock so the mocked module is what copilotClient.ts sees.
-const { buildRuntimeChildEnv, createHardenedCopilotClient } =
+const { buildRuntimeChildEnv, createHardenedCopilotClient, toAuthStatus } =
   await import('../../../src/agent/copilotClient');
+const { parseAuthStatus } = await import('../../../src/shared/agent-auth');
+
+describe('toAuthStatus', () => {
+  it('adds the apiVersion the raw SDK auth response does not carry', () => {
+    // Regression: the composition root used to hand the bare CopilotClient to
+    // the adapter as its auth source, whose getAuthStatus() returns the SDK's
+    // raw `{ isAuthenticated }` with no apiVersion. parseAuthStatus then threw
+    // `expected 1` at path ["apiVersion"] on every real initialize().
+    const raw = { isAuthenticated: false };
+    expect(toAuthStatus(raw)).toEqual({ apiVersion: 1, isAuthenticated: false });
+  });
+
+  it('produces a value the IPC-facing schema accepts', () => {
+    const projected = toAuthStatus({
+      isAuthenticated: true,
+      authType: 'user',
+      host: 'github.com',
+      login: 'octocat',
+      statusMessage: 'Signed in',
+    });
+    expect(parseAuthStatus(projected)).toEqual(projected);
+  });
+
+  it('omits absent optional fields rather than setting them to undefined', () => {
+    const projected = toAuthStatus({ isAuthenticated: true });
+    expect(Object.keys(projected).sort()).toEqual(['apiVersion', 'isAuthenticated']);
+  });
+});
 
 describe('buildRuntimeChildEnv', () => {
   it('spreads the base environment first (never starts from an empty object)', () => {

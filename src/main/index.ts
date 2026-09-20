@@ -38,7 +38,12 @@ import {
   startAppRuntime,
   wireNavigationEpochCancellation,
 } from './agentComposition';
-import { createHardenedCopilotClient, loadModelCatalog, type CopilotClient } from '../agent';
+import {
+  createHardenedCopilotClient,
+  loadModelCatalog,
+  toAuthStatus,
+  type CopilotClient,
+} from '../agent';
 import { createCopilotRuntimeManager, type CopilotRuntimeManager } from './copilotRuntimeManager';
 import { resolveAgentProxyOverrides } from './agentRuntimeProxy';
 import {
@@ -478,7 +483,14 @@ if (!gotSingleInstanceLock) {
               return createSdkAgentService({
                 client,
                 policy: buildAemToolPolicy([bundledSkillsDirectory]),
-                authSource: client,
+                // The SDK's raw `auth.getStatus` response carries no
+                // `apiVersion`; `toAuthStatus` projects it onto this app's
+                // `AuthStatus` DTO. Passing the bare `client` here (whose
+                // `getAuthStatus()` returns the raw shape) made every real
+                // `initialize()` fail its `apiVersion` validation.
+                authSource: {
+                  getAuthStatus: async () => toAuthStatus(await client.getAuthStatus()),
+                },
                 toolHandlers: {
                   [AEM_GET_JSON_TOOL_NAME]: aemGetJsonExecutor,
                   [AEM_QUERY_TOOL_NAME]: aemQueryExecutor,

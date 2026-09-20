@@ -1,8 +1,8 @@
-import type { Result } from '../shared/result';
-import type { AgentEvent } from '../shared/contracts/agentEvents';
-import type { ChatId, SdkSessionId, TurnId } from '../shared/contracts/ids';
-import type { RequiredAction, ToolErrorCode } from '../shared/contracts/errors';
-import type { AuthStatus } from '../shared/agent-auth';
+import type { Result } from '../shared';
+import type { AgentEvent } from '../shared';
+import type { ChatId, SdkSessionId, TurnId } from '../shared';
+import type { RequiredAction, ToolErrorCode } from '../shared';
+import type { AuthStatus } from '../shared';
 
 /**
  * The application-owned agent boundary (implementation-plan.md step 07:
@@ -37,14 +37,14 @@ export type Unsubscribe = () => void;
  * describe sign-in status only"). Reused verbatim from
  * `src/shared/agent-auth.ts` rather than re-declared here: `AuthStatus` is
  * already the exact normalized, IPC-safe projection of the SDK's
- * `GetAuthStatusResponse` (see `src/agent/copilotClient.ts`'s `getAuthStatus`
- * and the current diagnostic IPC handler in `src/main/ipc/agent.ts`, which
- * builds one by hand from that response today). Introducing a second,
- * differently-shaped "auth state" type here would give the adapter two
- * incompatible ideas of what "signed in" means to reconcile at the IPC
- * boundary; aliasing it instead means `getAuthStatus()` plus a `parseAuthStatus`
- * call is already a complete, schema-validated implementation of
- * `getAuthState()` for the real adapter.
+ * `GetAuthStatusResponse` (see `src/agent/copilotClient.ts`'s `toAuthStatus`,
+ * which performs that projection at the SDK boundary, and the current
+ * diagnostic IPC handler in `src/main/ipc/agent.ts`, which reuses it).
+ * Introducing a second, differently-shaped "auth state" type here would give
+ * the adapter two incompatible ideas of what "signed in" means to reconcile
+ * at the IPC boundary; aliasing it instead means a projected `AuthStatus`
+ * plus a `parseAuthStatus` call is already a complete, schema-validated
+ * implementation of `getAuthState()` for the real adapter.
  */
 export type AgentAuthState = AuthStatus;
 

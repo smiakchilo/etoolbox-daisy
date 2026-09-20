@@ -1,54 +1,54 @@
-import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
-import type { SessionConfig, SessionEvent, Tool, ToolInvocation } from '@github/copilot-sdk';
+import {randomUUID} from 'node:crypto';
+import {z} from 'zod';
+import type {SessionConfig, SessionEvent, Tool, ToolInvocation} from '@github/copilot-sdk';
 
-import { err, ok, type Result } from '../shared/result';
 import {
-  agentEventSchema,
-  createDeltaFoldState,
-  foldTextDelta,
-  jsonValueSchema,
-  renderFoldedText,
   type AgentEvent,
+  agentEventSchema,
+  applyAgentEvent,
   type AssistantTextDeltaEvent,
+  type CanSendBlockReason,
+  canSendMessage,
+  type ChatId,
+  createDeltaFoldState,
+  createToolError,
   type DeltaFoldState,
+  err,
+  foldTextDelta,
+  type IdGenerator,
   type JsonValue,
-} from '../shared/contracts/agentEvents';
-import {
+  jsonValueSchema,
+  type MessageId,
   messageIdSchema,
   newRequestId,
-  toolCallIdSchema,
-  type ChatId,
-  type IdGenerator,
-  type MessageId,
-  type ToolCallId,
-  type TurnId,
-} from '../shared/contracts/ids';
-import { createToolError, type ToolError } from '../shared/contracts/errors';
-import { TOOL_DESCRIPTORS, type ToolDescriptor } from '../shared/contracts/toolContracts';
-import { renderToolResultForModel } from '../shared/contracts/toolResult';
-import {
-  applyAgentEvent,
-  canSendMessage,
-  type CanSendBlockReason,
+  ok,
+  parseAuthStatus,
+  renderFoldedText,
+  renderToolResultForModel,
+  type Result,
   type SessionStatus,
   type SessionStreamState,
-} from '../shared/contracts/sessionState';
-import { parseAuthStatus } from '../shared/agent-auth';
+  TOOL_DESCRIPTORS,
+  type ToolCallId,
+  toolCallIdSchema,
+  type ToolDescriptor,
+  type ToolError,
+  type TurnId
+} from '../shared';
 import {
-  createAgentServiceError,
   type AgentAuthState,
   type AgentService,
   type AgentServiceError,
+  createAgentServiceError,
   type OpenConversationRequest,
   type SendPromptRequest,
   type Unsubscribe,
 } from './agentService';
 import {
   createHardenedSession,
-  resumeHardenedSession,
   type HardenedSessionClient,
   type HardenedToolPolicy,
+  resumeHardenedSession,
 } from './toolPolicy';
 
 /**
@@ -67,9 +67,9 @@ import {
  * `createHardenedCopilotClient` - that would make this module untestable
  * without live Copilot auth and a real runtime child process, which is the
  * opposite of what a unit-testable adapter needs. A production caller wires
- * a real `CopilotClient` in for both parameters (it structurally satisfies
- * both interfaces); `tests/unit/agent/sdkAgentService.test.ts` wires in
- * fakes for both.
+ * a real `CopilotClient` in for the session client and a projected
+ * `AgentAuthState` source (see `AgentAuthStatusSource`) for auth;
+ * `tests/unit/agent/sdkAgentService.test.ts` wires in fakes for both.
  *
  * SELF-CHECKING COHERENCE: exactly like the fake, every event this adapter
  * is about to hand to a listener first goes through two independent checks -
@@ -149,13 +149,18 @@ import {
  * Supplies the sign-in status this service seeds and opportunistically
  * refreshes `getAuthState()` from. Deliberately a separate constructor
  * option from `client` (not a method added to `HardenedSessionClient`),
- * per the brief's "a client ... plus an injectable auth-status provider":
- * a real caller can still pass the same `CopilotClient` instance for both
- * (its `getAuthStatus(): Promise<GetAuthStatusResponse>` structurally
- * satisfies this), but a test is free to fake only the one it needs.
+ * per the brief's "a client ... plus an injectable auth-status provider".
+ *
+ * Returns this app's own {@link AgentAuthState} DTO, not the SDK's raw
+ * `GetAuthStatusResponse`: the two are not the same shape. The raw response
+ * has no `apiVersion`, so a caller that wired a bare `CopilotClient` in here
+ * (as this adapter used to expect) produced an `apiVersion` validation
+ * failure on every real start. The SDK boundary owns the conversion -
+ * `toAuthStatus` in `copilotClient.ts` - and the composition root passes the
+ * projected value in. A test fake therefore supplies the DTO directly.
  */
 export interface AgentAuthStatusSource {
-  getAuthStatus(): Promise<unknown>;
+  getAuthStatus(): Promise<AgentAuthState>;
 }
 
 /**
@@ -323,8 +328,7 @@ function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
         'A turn is already in progress on this conversation.',
       );
     default: {
-      const exhaustive: never = reason;
-      return exhaustive;
+      return reason;
     }
   }
 }
@@ -634,9 +638,8 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     }
     currentTurn = undefined;
     pendingPermissionsByRequestId.clear();
-    const session = openSession;
     try {
-      await session?.abort();
+      await openSession?.abort();
     } catch (error) {
       console.error(
         'sdkAgentService: session.abort() rejected; proceeding with cancelling -> idle regardless',

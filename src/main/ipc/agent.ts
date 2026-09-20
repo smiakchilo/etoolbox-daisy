@@ -16,6 +16,7 @@ import {
   resolveCliExePath,
   resolveDefaultRuntimePathsEnv,
   startWebFlowLogin,
+  toAuthStatus,
   type CopilotClient,
   type LoginProcessHandle,
   type ProxyEnvOverrides,
@@ -92,15 +93,7 @@ export function registerAgentAuthHandlers(deps: AgentAuthDependencies): void {
     // what starts one lazily when sign-in is attempted before the chat
     // runtime's own background startup has run.
     await client.start();
-    const status = await getSdkAuthStatus(client);
-    return {
-      apiVersion: 1,
-      isAuthenticated: status.isAuthenticated,
-      authType: status.authType,
-      host: status.host,
-      login: status.login,
-      statusMessage: status.statusMessage,
-    };
+    return toAuthStatus(await getSdkAuthStatus(client));
   });
 
   ipcMain.handle(AGENT_LOGIN_CHANNEL, async (): Promise<LoginOutcome> => {
