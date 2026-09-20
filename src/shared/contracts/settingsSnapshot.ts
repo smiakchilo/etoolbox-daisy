@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { agentSettingsSchema, type AppSettings, type ProxyConfig } from './appSettings';
+import {
+  agentSettingsSchema,
+  browserSettingsSchema,
+  type AppSettings,
+  type ProxyConfig,
+} from './appSettings';
 import { agentIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 import {
@@ -106,6 +111,12 @@ export const appSettingsSnapshotSchema = z
     hosts: z.array(serverSnapshotSchema),
     proxies: z.array(proxySnapshotSchema),
     agents: z.record(agentIdSchema, agentSettingsSnapshotSchema),
+    /**
+     * Structurally identical to the persisted {@link browserSettingsSchema} -
+     * the Browser tab's flags carry no secret material - so it is reused
+     * rather than duplicated.
+     */
+    browser: browserSettingsSchema,
   })
   .strict();
 
@@ -195,6 +206,7 @@ export function toAppSettingsSnapshot(
     hosts,
     proxies,
     agents: settings.agents,
+    browser: settings.browser,
   };
 
   return appSettingsSnapshotSchema.parse(document);

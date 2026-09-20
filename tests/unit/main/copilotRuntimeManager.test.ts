@@ -42,6 +42,7 @@ function settingsWith(overrides: { active?: AgentId; proxy?: ProxyId } = {}): Ap
         ? {}
         : { [active]: { active: true, proxy: overrides.proxy } }),
     },
+    browser: { disableNativeWebAuthn: true },
   };
 }
 

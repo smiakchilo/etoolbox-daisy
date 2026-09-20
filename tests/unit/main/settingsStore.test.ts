@@ -14,10 +14,12 @@ import {
   activeAgentId,
   addProxy,
   addServer,
+  applyBrowserSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
   loadSettings,
+  loadSettingsSync,
   normalizeSettingsDocument,
   proxySecretRef,
   removeProxy,
@@ -317,6 +319,16 @@ describe('normalizeSettingsDocument', () => {
     ).toEqual({ active: true });
   });
 
+  it('keeps a boolean browser flag and drops an unrecognised or non-boolean one', () => {
+    expect(
+      normalize({ browser: { disableNativeWebAuthn: false, extra: 'gone' } })['browser'],
+    ).toEqual({ disableNativeWebAuthn: false });
+    // The schema restores the default afterwards, so a bad value cannot fail
+    // the whole load.
+    expect(normalize({ browser: { disableNativeWebAuthn: 'yes' } })['browser']).toEqual({});
+    expect(normalize({})['browser']).toEqual({});
+  });
+
   it('strips unrecognised keys at every level but never inside credentials', () => {
     const normalized = normalize({
       extra: 'gone',
@@ -441,6 +453,40 @@ describe('normalizeSettingsDocument', () => {
     const agents = normalized['agents'] as Record<string, Record<string, unknown>>;
     expect(agents[DEFAULT_AGENT_ID]?.['active']).toBe(true);
     expect(agents['opencode']?.['active']).toBe(false);
+  });
+});
+
+describe('applyBrowserSettingsChange', () => {
+  it('replaces the flag when supplied and leaves it when omitted', () => {
+    const disabled = applyBrowserSettingsChange(defaultAppSettings(), {
+      disableNativeWebAuthn: false,
+    });
+    expect(disabled.browser.disableNativeWebAuthn).toBe(false);
+
+    const unchanged = applyBrowserSettingsChange(disabled, {});
+    expect(unchanged.browser.disableNativeWebAuthn).toBe(false);
+  });
+});
+
+describe('loadSettingsSync (startup-only read)', () => {
+  it('returns defaults when the settings file does not exist', () => {
+    expect(loadSettingsSync(createScratchRoot()).browser.disableNativeWebAuthn).toBe(true);
+  });
+
+  it('returns the persisted flag', async () => {
+    const dir = createScratchRoot();
+    const saved = await saveSettings(dir, {
+      ...defaultAppSettings(),
+      browser: { disableNativeWebAuthn: false },
+    });
+    expect(saved.ok).toBe(true);
+    expect(loadSettingsSync(dir).browser.disableNativeWebAuthn).toBe(false);
+  });
+
+  it('returns defaults on a corrupt file rather than throwing', () => {
+    const dir = createScratchRoot();
+    writeFileSync(settingsFilePath(dir), '{ not json', 'utf8');
+    expect(loadSettingsSync(dir).browser.disableNativeWebAuthn).toBe(true);
   });
 });
 

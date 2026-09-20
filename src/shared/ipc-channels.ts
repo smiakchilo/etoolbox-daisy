@@ -65,6 +65,13 @@ export const SETTINGS_SET_MODEL_PREFERENCES_CHANNEL = 'settings:set-model-prefer
  */
 export const SETTINGS_SET_AGENT_SETTINGS_CHANNEL = 'settings:set-agent-settings' as const;
 
+/**
+ * Persists the browser-pane flags (the Settings "Browser" tab). A partial
+ * patch, like {@link SETTINGS_SET_AGENT_SETTINGS_CHANNEL}. The flag is read
+ * before Electron is ready, so a change takes effect on the next launch.
+ */
+export const SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL = 'settings:update-browser-settings' as const;
+
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.
 export const BROWSER_GO_BACK_CHANNEL = 'browser:go-back' as const;

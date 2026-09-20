@@ -15,6 +15,7 @@ import type {
   SetAgentSettingsRequest,
   SetModelPreferencesRequest,
   SettingsIpcVoidResult,
+  UpdateBrowserSettingsRequest,
   UpdateProxyRequest,
   UpdateServerPresentationRequest,
   UpdateServerPresentationResult,
@@ -140,6 +141,12 @@ export interface DaisySettingsApi {
    * `SETTINGS_SET_AGENT_SETTINGS_CHANNEL`.
    */
   setAgentSettings(request: SetAgentSettingsRequest): Promise<SettingsIpcVoidResult>;
+  /**
+   * Persists the browser-pane flags (the Settings "Browser" tab). A partial
+   * patch - see `SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL`. Takes effect on the
+   * next launch.
+   */
+  updateBrowserSettings(request: UpdateBrowserSettingsRequest): Promise<SettingsIpcVoidResult>;
 }
 
 export interface DaisyAgentAuthApi {

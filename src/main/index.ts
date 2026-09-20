@@ -12,7 +12,7 @@ import { registerSettingsIpcHandlers } from './ipc/settings';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
-import { loadSettings, activeAgentId } from './settingsStore';
+import { loadSettings, loadSettingsSync, activeAgentId } from './settingsStore';
 import { installContentSecurityPolicy } from './csp';
 import { installWebContentsSecurityGuard } from './security';
 import { createAemSession } from './aem';
@@ -80,6 +80,11 @@ registerAppProtocolPrivileges();
 // explicitly so it always matches electron-builder's productName.
 app.setName('EToolbox Daisy');
 
+// Resolving paths is pure (os.homedir + path.join): it performs no filesystem
+// access, so it is safe to do before this process owns the single-instance
+// lock. Creating the directories is NOT, and stays below the lock check.
+const appPaths = resolveAppPaths(getOsHomeDirectory());
+
 // By default Chromium on Windows forwards WebAuthn/FIDO2 requests to the
 // native Windows WebAuthn API, which raises the "Windows Security" security-key
 // dialog. Adobe's IMS login page (and other IdPs) fire a WebAuthn call as part
@@ -89,21 +94,21 @@ app.setName('EToolbox Daisy');
 // WebAuthn UI and offers no per-session switch, so the native-API path is
 // disabled process-wide: Chromium then handles the request itself and, with no
 // platform authenticator, the call simply fails, which the IdP page tolerates.
-// The app has no legitimate WebAuthn use - the embedded AEM pane authenticates
-// with a password or the IdP's own SSO - so nothing is lost by turning it off.
-// Must run before `app.whenReady()`.
-app.commandLine.appendSwitch(
-  'disable-features',
-  mergeDisabledFeatures(
-    app.commandLine.getSwitchValue('disable-features'),
-    'WebAuthenticationUseNativeWinApi',
-  ),
-);
-
-// Resolving paths is pure (os.homedir + path.join): it performs no filesystem
-// access, so it is safe to do before this process owns the single-instance
-// lock. Creating the directories is NOT, and stays below the lock check.
-const appPaths = resolveAppPaths(getOsHomeDirectory());
+//
+// Gated by the Settings "Browser" tab (`browser.disableNativeWebAuthn`, default
+// true). Chromium reads its feature switches once, before `whenReady()`, so the
+// persisted flag is read synchronously here and a change takes effect on the
+// next launch. A missing/corrupt file yields defaults (suppress).
+const startupSettings = loadSettingsSync(appPaths.settings);
+if (startupSettings.browser.disableNativeWebAuthn) {
+  app.commandLine.appendSwitch(
+    'disable-features',
+    mergeDisabledFeatures(
+      app.commandLine.getSwitchValue('disable-features'),
+      'WebAuthenticationUseNativeWinApi',
+    ),
+  );
+}
 
 // These must run before BOTH `app.requestSingleInstanceLock()` and any
 // window/session creation, for two independent reasons:

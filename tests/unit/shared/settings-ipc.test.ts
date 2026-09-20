@@ -117,6 +117,7 @@ describe('getSettingsSnapshotResultSchema', () => {
         hosts: [],
         proxies: [],
         agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        browser: { disableNativeWebAuthn: true },
       },
     });
     expect(result.success).toBe(true);
@@ -137,6 +138,7 @@ describe('getSettingsSnapshotResultSchema', () => {
         hosts: [],
         proxies: [],
         agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        browser: { disableNativeWebAuthn: true },
       },
       error: { code: 'storage_error', message: 'x' },
     });

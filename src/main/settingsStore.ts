@@ -5,6 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 // through, and that only intercepts calls made through a shared object
 // reference - not calls made through named-import bindings resolved at
 // module-load time.
+import { readFileSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
@@ -13,6 +14,7 @@ import {
   defaultAppSettings,
   parseAppSettings,
   type AppSettings,
+  type BrowserSettings,
   type ProxyConfig,
 } from '../shared';
 import type { ProxyId, ServerId } from '../shared';
@@ -194,7 +196,7 @@ export function repairProxyEntries(raw: unknown): unknown {
  * introduces an unrecognised key (a typo, a leftover from an older shape) does
  * not fail the whole load.
  */
-const SETTINGS_DOCUMENT_KEYS = ['hosts', 'proxies', 'agents'] as const;
+const SETTINGS_DOCUMENT_KEYS = ['hosts', 'proxies', 'agents', 'browser'] as const;
 const SERVER_ENTRY_KEYS = [
   'id',
   'label',
@@ -208,6 +210,7 @@ const SERVER_ENTRY_KEYS = [
 const AEM_PROXY_KEYS = ['url', 'credentials'] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort'] as const;
+const BROWSER_ENTRY_KEYS = ['disableNativeWebAuthn'] as const;
 
 /** Matches the Settings UI default and a fresh entry's colour. */
 const DEFAULT_SERVER_COLOR: ServerColor = { kind: 'swatch', swatch: 'blue' };
@@ -430,10 +433,23 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
     agents[id.data] = normalized;
   }
 
+  // The browser flags are a flat object of booleans. A non-boolean value is
+  // dropped rather than passed on, so a hand-edit that writes a string here
+  // cannot fail the whole load - the schema then restores the default.
+  const browserSource = pickKnownKeys(
+    isPlainObject(document['browser']) ? document['browser'] : {},
+    BROWSER_ENTRY_KEYS,
+  );
+  const browser: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(browserSource)) {
+    if (typeof value === 'boolean') browser[key] = value;
+  }
+
   return {
     hosts,
     proxies,
     agents,
+    browser,
   };
 }
 
@@ -499,6 +515,48 @@ export async function loadSettings(
   }
 
   return ok({ status: 'loaded', settings: parsedSettings.value });
+}
+
+/**
+ * Synchronous counterpart of {@link loadSettings}, for the one decision that
+ * must be made before Electron is ready: whether to disable the native Windows
+ * WebAuthn API (`src/main/index.ts`). Chromium reads its feature switches once,
+ * at process start, so the persisted flag cannot be read asynchronously.
+ *
+ * Never fails: a missing or damaged file yields {@link defaultAppSettings},
+ * because a settings file must not be able to block startup, and the default
+ * (`disableNativeWebAuthn: true`) is the safe direction. Any real problem is
+ * still reported by the ordinary async {@link loadSettings} path.
+ */
+export function loadSettingsSync(settingsDir: string): AppSettings {
+  let raw: string;
+  try {
+    raw = readFileSync(settingsFilePath(settingsDir), 'utf8');
+  } catch {
+    return defaultAppSettings();
+  }
+  try {
+    const parsed = parseAppSettings(normalizeSettingsDocument(JSON.parse(raw)));
+    return parsed.ok ? parsed.value : defaultAppSettings();
+  } catch {
+    return defaultAppSettings();
+  }
+}
+
+/**
+ * Applies a `settings:update-browser-settings` patch to a document and returns
+ * the updated document. Pure: the caller persists it. An omitted key means
+ * "leave unchanged".
+ */
+export function applyBrowserSettingsChange(
+  settings: AppSettings,
+  changes: { readonly disableNativeWebAuthn?: boolean | undefined },
+): AppSettings {
+  const browser: BrowserSettings =
+    changes.disableNativeWebAuthn === undefined
+      ? settings.browser
+      : { ...settings.browser, disableNativeWebAuthn: changes.disableNativeWebAuthn };
+  return { ...settings, browser };
 }
 
 // ---------------------------------------------------------------------------

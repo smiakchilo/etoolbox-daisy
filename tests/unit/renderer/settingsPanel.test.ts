@@ -26,6 +26,7 @@ const snapshotStub = parseAppSettingsSnapshot({
   hosts: [],
   proxies: [],
   agents: { [DEFAULT_AGENT_ID]: { active: true } },
+  browser: { disableNativeWebAuthn: true },
 });
 
 const modelStateStub = {

@@ -81,11 +81,13 @@ test('Settings sections are real tab panels, switching their content', async () 
     // single Agents tab, which hosts the provider's active badge/set-active
     // control, sign-in and model/effort pickers together - see
     // agentsSection.ts.)
-    const labels = ['Hosts', 'Agents', 'Proxies'];
+    const labels = ['Hosts', 'Agents', 'Proxies', 'Browser'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
     }
+    // Browser sits last (position 4).
+    await expect(tabs.locator('sp-tab').nth(3)).toHaveText('Browser');
 
     // Hosts is selected by default; every other panel is hidden. The panel's
     // node value is `hosts` (not `servers`) - the surface language was renamed
@@ -94,11 +96,26 @@ test('Settings sections are real tab panels, switching their content', async () 
     const selectedPanel = settings.locator('.settings-panel__tab-panel[selected]');
     await expect(selectedPanel).toHaveCount(1);
     await expect(selectedPanel.first()).toHaveAttribute('value', 'hosts');
-    for (const panelValue of ['agents', 'proxies']) {
+    for (const panelValue of ['browser', 'agents', 'proxies']) {
       await expect(
         settings.locator(`.settings-panel__tab-panel[value="${panelValue}"]`),
       ).toBeHidden();
     }
+
+    // The Browser tab carries the WebAuthn suppression checkbox - checked by
+    // default - with the restart caveat beneath it.
+    await settings.locator('sp-tab', { hasText: 'Browser' }).click();
+    const browserSection = settings.locator('section[aria-label="Browser"]');
+    await expect(browserSection).toBeVisible();
+    const webauthnCheckbox = browserSection.locator('sp-checkbox#browser-disable-native-webauthn');
+    await expect(webauthnCheckbox).toHaveCount(1);
+    await expect(webauthnCheckbox).toHaveText('Suppress the Windows security-key prompt');
+    await expect(browserSection).toContainText('Takes effect after restarting the app.');
+    expect(
+      await webauthnCheckbox.evaluate(
+        (node) => (node as HTMLElement & { checked: boolean }).checked,
+      ),
+    ).toBe(true);
 
     // Switching tabs swaps the visible content.
     await settings.locator('sp-tab', { hasText: 'Agents' }).click();

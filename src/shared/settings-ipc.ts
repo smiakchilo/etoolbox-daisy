@@ -524,5 +524,37 @@ export const setAgentSettingsResultSchema = settingsIpcVoidResultSchema;
 export type SetAgentSettingsResult = SettingsIpcVoidResult;
 
 export function parseSetAgentSettingsResult(candidate: unknown): SetAgentSettingsResult {
-  return settingsIpcVoidResultSchema.parse(candidate);
+  return setAgentSettingsResultSchema.parse(candidate);
 }
+
+// ---------------------------------------------------------------------------
+// Browser-pane settings (the "Browser" surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * `settings:update-browser-settings`. A partial patch following the same
+ * convention as {@link setAgentSettingsRequestSchema}: an omitted key means
+ * "leave unchanged", and a request that changes nothing is refused. The values
+ * are persisted immediately but only take effect on the next launch, because
+ * Chromium reads its feature switches once, before the app is ready.
+ */
+export const updateBrowserSettingsRequestSchema = z
+  .object({
+    changes: z
+      .object({
+        disableNativeWebAuthn: z.boolean().optional(),
+      })
+      .strict()
+      .refine((changes) => Object.keys(changes).length > 0, {
+        message: 'at least one setting must be supplied',
+      }),
+  })
+  .strict();
+
+export type UpdateBrowserSettingsRequest = Readonly<
+  z.infer<typeof updateBrowserSettingsRequestSchema>
+>;
+
+/** `settings:update-browser-settings` result - the same shape as every other settings mutation. */
+export const updateBrowserSettingsResultSchema = settingsIpcVoidResultSchema;
+export type UpdateBrowserSettingsResult = SettingsIpcVoidResult;

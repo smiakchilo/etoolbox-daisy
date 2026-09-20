@@ -36,9 +36,14 @@ let status: StatusBannerSink;
 let reportSave: (outcome: Promise<SaveOutcome>) => void;
 let onSettingsChanged: () => void;
 
-/** A snapshot with only the providers named - hosts and proxies are irrelevant here. */
+/** A snapshot with only the providers named - hosts, proxies and browser flags are irrelevant here. */
 function snapshotWith(agents: Record<string, { active: boolean }>): AppSettingsSnapshot {
-  return parseAppSettingsSnapshot({ hosts: [], proxies: [], agents });
+  return parseAppSettingsSnapshot({
+    hosts: [],
+    proxies: [],
+    agents,
+    browser: { disableNativeWebAuthn: true },
+  });
 }
 
 /** Flushes the promise chain behind a click (the save's own `.then`s). */

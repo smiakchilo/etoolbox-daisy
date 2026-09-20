@@ -20,6 +20,7 @@ import {
   reorderServers,
   resolvePasswordSecretRef,
   setPassword,
+  updateBrowserSettings,
   updateProxy,
   updateServerPresentation,
   updateServerTargeting,
@@ -86,6 +87,7 @@ function serverWithProxy(secretRef: string, options: { username?: string } = {})
     hosts: [server],
     proxies: [],
     agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    browser: { disableNativeWebAuthn: true },
   };
 }
 
@@ -426,6 +428,7 @@ describe('reorderServers', () => {
       hosts: [a, b],
       proxies: [],
       agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      browser: { disableNativeWebAuthn: true },
     };
   }
 
@@ -458,6 +461,37 @@ describe('reorderServers', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');
     expect(result.error.code).toBe('invalid_change');
+  });
+});
+
+describe('updateBrowserSettings', () => {
+  it('persists the flag and reads it back through the snapshot', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const result = await updateBrowserSettings(settingsDir, {
+      changes: { disableNativeWebAuthn: false },
+    });
+    expect(result).toEqual({ ok: true });
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    expect(snapshot.ok).toBe(true);
+    if (!snapshot.ok) throw new Error('expected a snapshot');
+    expect(snapshot.snapshot.browser.disableNativeWebAuthn).toBe(false);
+  });
+
+  it('reports a storage error when the settings file cannot be read', async () => {
+    const settingsDir = createScratchRoot();
+    writeFileSync(path.join(settingsDir, 'settings.json'), '{ not json', 'utf8');
+
+    const result = await updateBrowserSettings(settingsDir, {
+      changes: { disableNativeWebAuthn: false },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('storage_error');
   });
 });
 

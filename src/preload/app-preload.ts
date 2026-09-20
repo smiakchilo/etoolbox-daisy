@@ -34,6 +34,7 @@ import {
   SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
+  SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
@@ -74,6 +75,7 @@ import {
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
   switchServerRequestSchema,
+  updateBrowserSettingsRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
@@ -110,6 +112,7 @@ import {
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
+  type UpdateBrowserSettingsRequest,
   type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
   type UpdateServerPresentationResult,
@@ -240,6 +243,16 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = setAgentSettingsRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(
         SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
+        parsedRequest,
+      );
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async updateBrowserSettings(
+      request: UpdateBrowserSettingsRequest,
+    ): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = updateBrowserSettingsRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
         parsedRequest,
       );
       return parseSettingsIpcVoidResult(raw);

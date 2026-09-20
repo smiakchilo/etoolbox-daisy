@@ -1,6 +1,7 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
+import { defaultAppSettings } from '../../src/shared';
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 
@@ -84,6 +85,39 @@ test.describe('EToolbox Daisy skeleton', () => {
         electronApp.commandLine.getSwitchValue('disable-features'),
       );
       expect(disabledFeatures.split(',')).toContain('WebAuthenticationUseNativeWinApi');
+    } finally {
+      await app.close();
+    }
+  });
+
+  // The switch is driven by the Settings "Browser" tab's checkbox, read
+  // synchronously before Electron is ready (a change takes effect next launch).
+  test('omits the native WebAuthn suppression when the persisted flag is off', async () => {
+    const env = provisionScratchEnv();
+    const settingsPath = path.join(
+      env['USERPROFILE'] ?? '',
+      'etoolbox-daisy',
+      'settings',
+      'settings.json',
+    );
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        { ...defaultAppSettings(), browser: { disableNativeWebAuthn: false } },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    const app = await electron.launch({ args: [mainEntry], env });
+    try {
+      await app.firstWindow();
+      const disabledFeatures = await app.evaluate(({ app: electronApp }) =>
+        electronApp.commandLine.getSwitchValue('disable-features'),
+      );
+      expect(disabledFeatures.split(',')).not.toContain('WebAuthenticationUseNativeWinApi');
     } finally {
       await app.close();
     }

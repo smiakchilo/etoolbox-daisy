@@ -13,6 +13,7 @@ import {
   SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
+  SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
@@ -28,6 +29,7 @@ import {
   setAgentSettingsRequestSchema,
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
+  updateBrowserSettingsRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
@@ -50,6 +52,7 @@ import {
   type SetPasswordRequest,
   type SettingsIpcError,
   type SettingsIpcVoidResult,
+  type UpdateBrowserSettingsRequest,
   type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
   type UpdateServerPresentationResult,
@@ -73,6 +76,7 @@ import {
   activeAgentId,
   addProxy as createProxyEntry,
   addServer as createServerEntry,
+  applyBrowserSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
@@ -977,6 +981,32 @@ export async function setAgentSettings(
   return { ok: true };
 }
 
+/**
+ * Implements `settings:update-browser-settings`.
+ *
+ * Persists the Browser tab's flags. Unlike the agent-settings channel there is
+ * nothing to validate against a live runtime and nothing to recycle: the flag
+ * is consumed at the next startup (`src/main/index.ts`), so this is a plain
+ * load -> patch -> save. A no-op patch is already refused by the request schema.
+ */
+export async function updateBrowserSettings(
+  settingsDir: string,
+  request: UpdateBrowserSettingsRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+  const saved = await persist(
+    settingsDir,
+    applyBrowserSettingsChange(loaded.value, request.changes),
+  );
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Sender validation - the security core of this module
 // ---------------------------------------------------------------------------
@@ -1295,6 +1325,20 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
       return setAgentSettings(deps.settingsDir, deps.agentSettings, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = updateBrowserSettingsRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return updateBrowserSettings(deps.settingsDir, parsed.data);
     },
   );
 }

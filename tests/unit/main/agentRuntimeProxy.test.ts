@@ -39,6 +39,7 @@ function settingsWith(proxyId: ProxyId | undefined): AppSettings {
       [DEFAULT_AGENT_ID]:
         proxyId === undefined ? { active: true } : { active: true, proxy: proxyId },
     },
+    browser: { disableNativeWebAuthn: true },
   };
 }
 

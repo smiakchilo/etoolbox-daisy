@@ -34,6 +34,7 @@ function validSettings() {
     hosts: [serverA],
     proxies: [],
     agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    browser: { disableNativeWebAuthn: true },
   };
 }
 
@@ -67,6 +68,18 @@ describe('appSettingsSchema', () => {
 
     expect(parsed.agents[DEFAULT_AGENT_ID]?.active).toBe(false);
     expect(parsed.agents[DEFAULT_AGENT_ID]?.model).toBe('gpt-5');
+  });
+
+  it('defaults a missing `browser` object to suppressing the native WebAuthn API', () => {
+    const withoutBrowser: Record<string, unknown> = { ...validSettings() };
+    delete withoutBrowser['browser'];
+    const parsed = appSettingsSchema.parse(withoutBrowser);
+    expect(parsed.browser).toEqual({ disableNativeWebAuthn: true });
+  });
+
+  it('defaults a missing `disableNativeWebAuthn` flag to true', () => {
+    const parsed = appSettingsSchema.parse({ ...validSettings(), browser: {} });
+    expect(parsed.browser.disableNativeWebAuthn).toBe(true);
   });
 
   describe('server list integrity', () => {

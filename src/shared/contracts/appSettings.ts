@@ -104,11 +104,31 @@ export const agentSettingsSchema = z
 
 export type AgentSettings = Readonly<z.infer<typeof agentSettingsSchema>>;
 
+/**
+ * Browser-pane settings (the Settings "Browser" tab). Today a single flag:
+ * `disableNativeWebAuthn` defaults to `true` and asks Chromium to handle
+ * WebAuthn itself instead of forwarding to the native Windows WebAuthn API -
+ * the API that raises the "Windows Security / Insert your security key" dialog
+ * on IdP login pages such as Adobe's IMS. See `mergeDisabledFeatures` and its
+ * call site in `src/main/index.ts`.
+ *
+ * This is read *before* Electron is ready (Chromium reads its feature switches
+ * once), so a change takes effect on the next launch.
+ */
+export const browserSettingsSchema = z
+  .object({
+    disableNativeWebAuthn: z.boolean().default(true),
+  })
+  .strict();
+
+export type BrowserSettings = Readonly<z.infer<typeof browserSettingsSchema>>;
+
 export const appSettingsSchema = z
   .object({
     hosts: z.array(serverConfigSchema),
     proxies: z.array(proxyConfigSchema),
     agents: z.record(agentIdSchema, agentSettingsSchema),
+    browser: browserSettingsSchema.default({ disableNativeWebAuthn: true }),
   })
   .strict()
   .superRefine((settings, ctx) => {
@@ -200,12 +220,16 @@ export type AppSettings = Readonly<Omit<z.infer<typeof appSettingsSchema>, 'host
   readonly proxies: readonly ProxyConfig[];
 };
 
-/** A valid, empty settings document: no hosts, no proxies, and the default provider active. */
+/**
+ * A valid, empty settings document: no hosts, no proxies, the default provider
+ * active, and the browser defaults (`browser.disableNativeWebAuthn: true`).
+ */
 export function defaultAppSettings(): AppSettings {
   return appSettingsSchema.parse({
     hosts: [],
     proxies: [],
     agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    browser: {},
   });
 }
 

@@ -4,6 +4,7 @@ import type { AppSettingsSnapshot } from '../../../shared';
 import { createAgentsSection } from '../settings/agentsSection';
 import { createProxiesSection } from '../settings/proxiesSection';
 import { createHostsSection } from '../settings/hostsSection';
+import { createBrowserSection } from '../settings/browserSection';
 import {
   createSaveReporter,
   createStatusBanner,
@@ -97,6 +98,11 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     status: banner,
     reportSave: reportWith,
   });
+  const browserSection = createBrowserSection({
+    status: banner,
+    reportSave: reportWith,
+    onSettingsChanged: () => void reload(),
+  });
 
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
@@ -112,6 +118,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     // combobox must reflect library changes even when a host edit is pending.
     hostsSection.update(result.snapshot.hosts, result.snapshot.proxies);
     if (!proxiesSection.hasPendingEdits()) proxiesSection.update(result.snapshot.proxies);
+    browserSection.update(result.snapshot);
     // The Agents tab does its own IPC reads rather than rendering a projection
     // of the snapshot: it needs the live sign-in status and the active agent's
     // SDK catalogue. That first auth read starts the real Copilot runtime and
@@ -142,6 +149,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     { value: 'hosts', label: 'Hosts', element: hostsSection.element },
     { value: 'agents', label: 'Agents', element: agentsSection.element },
     { value: 'proxies', label: 'Proxies', element: proxiesSection.element },
+    { value: 'browser', label: 'Browser', element: browserSection.element },
   ];
 
   const tabs = el('sp-tabs', {
@@ -208,6 +216,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       hostsSection.dispose();
       proxiesSection.dispose();
       agentsSection.dispose();
+      browserSection.dispose();
       banner.dispose();
       panel.dispose();
     },
