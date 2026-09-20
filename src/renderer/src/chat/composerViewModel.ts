@@ -1,7 +1,7 @@
 import {
-  canSendMessage,
   type AgentServiceLifecycleState,
   type CanSendBlockReason,
+  canSendMessage,
   type SessionStatus,
   type SessionStreamState,
 } from '../../../shared';
@@ -39,6 +39,17 @@ const IN_FLIGHT_STATES: ReadonlySet<SessionStreamState> = new Set([
 ]);
 
 /**
+ * Whether `state` is one of the in-flight states, i.e. a turn is running that
+ * Stop (`abort`) could cancel. Exposed so the transcript's own "Thinking"
+ * indicator (`transcriptStore.ts`'s `setTurnInFlight`) is driven by the exact
+ * same set the composer's Stop button is - the two must appear and disappear
+ * together (implementation-plan.md step 10).
+ */
+export function isTurnInFlight(state: SessionStreamState): boolean {
+  return IN_FLIGHT_STATES.has(state);
+}
+
+/**
  * Derives what the composer's Send/Stop button should show right now.
  *
  * Checked in this order, each one short-circuiting the rest:
@@ -64,7 +75,7 @@ const IN_FLIGHT_STATES: ReadonlySet<SessionStreamState> = new Set([
  */
 export function computeComposerButtonState(status: ComposerStatus): ComposerButtonState {
   if (status.serviceState === 'starting') return { kind: 'connecting' };
-  if (IN_FLIGHT_STATES.has(status.session.state)) return { kind: 'stop' };
+  if (isTurnInFlight(status.session.state)) return { kind: 'stop' };
 
   const gate = canSendMessage(status.session);
   if (!gate.canSend) return { kind: 'send-disabled', reason: gate.reason };
@@ -83,8 +94,7 @@ export function describeCanSendBlockReason(reason: CanSendBlockReason): string {
     case 'turn_in_progress':
       return 'A response is already in progress.';
     default: {
-      const exhaustive: never = reason;
-      return exhaustive;
+      return reason;
     }
   }
 }
@@ -92,6 +102,9 @@ export function describeCanSendBlockReason(reason: CanSendBlockReason): string {
 export interface SubmitOnEnterInput {
   readonly key: string;
   readonly shiftKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly metaKey: boolean;
   /**
    * Whether an IME composition session is currently open on the field. Must
    * come from tracking `compositionstart`/`compositionend` and/or the
@@ -101,9 +114,9 @@ export interface SubmitOnEnterInput {
 }
 
 /**
- * Whether a `keydown` should submit the composer. Enter submits;
- * Shift+Enter inserts a newline (the field's own default multiline
- * behaviour, left untouched here).
+ * Whether a `keydown` should submit the composer. Only a plain Enter
+ * submits; any modifier (Shift, Ctrl, Alt or Meta) inserts a newline via the
+ * field's own default multiline behaviour, left untouched here.
  *
  * Enter fired while `isComposing` is `true` must never submit: many IMEs
  * report `key: "Enter"` for the very keystroke that only confirms a
@@ -113,7 +126,6 @@ export interface SubmitOnEnterInput {
  */
 export function shouldSubmitOnEnter(input: SubmitOnEnterInput): boolean {
   if (input.key !== 'Enter') return false;
-  if (input.shiftKey) return false;
-  if (input.isComposing) return false;
-  return true;
+  if (input.shiftKey || input.ctrlKey || input.altKey || input.metaKey) return false;
+  return !input.isComposing;
 }

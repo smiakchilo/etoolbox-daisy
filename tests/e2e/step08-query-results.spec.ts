@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import { _electron as electron, expect, type Page, test } from '@playwright/test';
 import { AEM_QUERY_TOOL_NAME } from '../../src/agent/aemTool';
 import type { ScriptedTurn } from '../../src/agent/fakeAgentService';
 import {
@@ -97,32 +97,32 @@ function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
 
 /** Drains every queued event of the scripted turn - see `FakeAgentService.advance`. */
 async function flushFake(app: ElectronApp): Promise<void> {
-  const globalKey = TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY;
   for (let guard = 0; guard < 200; guard += 1) {
     const delivered = await app.evaluate((_electronNamespace, key: string) => {
       const fake = (globalThis as Record<string, unknown>)[key] as {
         readonly advance: () => boolean;
       };
       return fake.advance();
-    }, globalKey);
+    }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
     if (!delivered) return;
   }
   throw new Error('flushFake exceeded its guard - the fake never drained.');
 }
 
-const COMPOSER_BUTTON = '.chat-composer sp-button';
+const COMPOSER_SEND = '.chat-composer__send';
 const COMPOSER_NOTICE = '.chat-composer__notice';
 const COMPOSER_FIELD = '.chat-composer textarea';
 
 async function waitForComposerReady(shell: Page): Promise<void> {
   await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
   await expect(shell.locator(COMPOSER_NOTICE)).toHaveText('', { timeout: 60_000 });
-  await expect(shell.locator(COMPOSER_BUTTON)).toHaveText('Send');
+  await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
+  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
 }
 
 async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  const button = shell.locator(COMPOSER_BUTTON);
-  await expect(button).toHaveText('Send');
+  const button = shell.locator(COMPOSER_SEND);
+  await expect(button).toBeVisible();
   await shell.locator(COMPOSER_FIELD).fill(prompt);
   await button.click();
 }
@@ -155,7 +155,7 @@ const FIRST_PAGE = {
     { 'jcr:path': '/content/site/alpha', 'jcr:title': 'Alpha', 'jcr:primaryType': 'cq:Page' },
     {
       'jcr:path': '/content/site/beta',
-      'jcr:title': '<img src=x onerror="window.__xss=true">',
+      'jcr:title': '<img src=x onerror="window.__xss=true" alt="Page">',
       'jcr:primaryType': 'cq:Page',
     },
   ],

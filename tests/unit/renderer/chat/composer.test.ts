@@ -33,17 +33,30 @@ function query(root: HTMLElement, selector: string): HTMLElement {
 
 function pressEnter(
   field: HTMLElement,
-  options: { shiftKey?: boolean; isComposing?: boolean } = {},
+  options: {
+    shiftKey?: boolean;
+    ctrlKey?: boolean;
+    altKey?: boolean;
+    metaKey?: boolean;
+    isComposing?: boolean;
+  } = {},
 ): void {
   field.dispatchEvent(
     new dom.window.KeyboardEvent('keydown', {
       key: 'Enter',
       shiftKey: options.shiftKey ?? false,
+      ctrlKey: options.ctrlKey ?? false,
+      altKey: options.altKey ?? false,
+      metaKey: options.metaKey ?? false,
       isComposing: options.isComposing ?? false,
       bubbles: true,
       cancelable: true,
     }),
   );
+}
+
+function isShown(element: HTMLElement): boolean {
+  return element.style.display !== 'none';
 }
 
 /** Builds a composer already told it may send, with its field handle exposed. */
@@ -55,13 +68,51 @@ function readyComposer(onSend = vi.fn<(prompt: string) => Promise<ComposerSendOu
 }
 
 describe('createComposer', () => {
+  it('builds a borderless field inside a frame, with normal Send and Stop action buttons', () => {
+    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+
+    const frame = query(composer.element, '.chat-composer__frame');
+    const field = query(composer.element, 'sp-textfield');
+    const sendButton = query(composer.element, '.chat-composer__send');
+    const stopButton = query(composer.element, '.chat-composer__stop');
+
+    // A new composer starts on an empty conversation, so its field is taller.
+    expect(field.getAttribute('rows')).toBe('8');
+    expect(field.hasAttribute('multiline')).toBe(true);
+    expect(field.getAttribute('placeholder')).toBe('Type your message or command here');
+    expect(field.classList.contains('chat-composer__field')).toBe(true);
+    expect(frame.contains(sendButton)).toBe(true);
+    expect(frame.contains(stopButton)).toBe(true);
+    expect(sendButton.tagName.toLowerCase()).toBe('sp-action-button');
+    expect(sendButton.hasAttribute('icon-only')).toBe(false);
+    expect(sendButton.getAttribute('aria-label')).toBe('Send');
+    expect(sendButton.querySelector('sp-icon-send')).not.toBeNull();
+    expect(stopButton.tagName.toLowerCase()).toBe('sp-action-button');
+    expect(stopButton.hasAttribute('icon-only')).toBe(false);
+    expect(stopButton.getAttribute('aria-label')).toBe('Stop');
+    expect(stopButton.querySelector('sp-icon-stop')).not.toBeNull();
+  });
+
+  it('shrinks the field from the empty height to the ordinary height once the conversation has content', () => {
+    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+    const field = query(composer.element, 'sp-textfield');
+
+    composer.setConversationEmpty(false);
+    expect(field.getAttribute('rows')).toBe('4');
+
+    composer.setConversationEmpty(true);
+    expect(field.getAttribute('rows')).toBe('8');
+  });
+
   it("starts in the 'connecting' presentation: disabled Send and honest notice", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
-    const sendButton = query(composer.element, 'sp-button');
+    const sendButton = query(composer.element, '.chat-composer__send');
+    const stopButton = query(composer.element, '.chat-composer__stop');
     const notice = query(composer.element, '.chat-composer__notice');
 
-    expect(sendButton.textContent).toBe('Send');
+    expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(true);
+    expect(isShown(stopButton)).toBe(false);
     expect(notice.textContent).toBe('Connecting to Copilot...');
   });
 
@@ -75,10 +126,12 @@ describe('createComposer', () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'send-enabled' });
 
-    const sendButton = query(composer.element, 'sp-button');
+    const sendButton = query(composer.element, '.chat-composer__send');
+    const stopButton = query(composer.element, '.chat-composer__stop');
     const notice = query(composer.element, '.chat-composer__notice');
-    expect(sendButton.textContent).toBe('Send');
+    expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(false);
+    expect(isShown(stopButton)).toBe(false);
     expect(notice.textContent).toBe('');
   });
 
@@ -86,28 +139,30 @@ describe('createComposer', () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'send-disabled', reason: 'not_authenticated' });
 
-    const sendButton = query(composer.element, 'sp-button');
+    const sendButton = query(composer.element, '.chat-composer__send');
     const notice = query(composer.element, '.chat-composer__notice');
     expect(sendButton.hasAttribute('disabled')).toBe(true);
     expect(notice.textContent).toBe('Sign in to Copilot to send a message.');
   });
 
-  it("relabels the button 'Stop' and enables it when a turn is in flight", () => {
+  it('swaps to the enabled Stop control (and hides Send) when a turn is in flight', () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'stop' });
 
-    const sendButton = query(composer.element, 'sp-button');
-    expect(sendButton.textContent).toBe('Stop');
-    expect(sendButton.hasAttribute('disabled')).toBe(false);
+    const sendButton = query(composer.element, '.chat-composer__send');
+    const stopButton = query(composer.element, '.chat-composer__stop');
+    expect(isShown(sendButton)).toBe(false);
+    expect(isShown(stopButton)).toBe(true);
+    expect(stopButton.hasAttribute('disabled')).toBe(false);
   });
 
-  it("calls onStop, not onSend, when the button is clicked in the 'stop' state", () => {
+  it("calls onStop, not onSend, when the Stop control is clicked in the 'stop' state", () => {
     const onSend = vi.fn();
     const onStop = vi.fn();
     const composer = createComposer({ onSend, onStop });
     composer.setButtonState({ kind: 'stop' });
 
-    query(composer.element, 'sp-button').click();
+    query(composer.element, '.chat-composer__stop').click();
 
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(onSend).not.toHaveBeenCalled();
@@ -131,7 +186,7 @@ describe('createComposer', () => {
       const { composer, field } = readyComposer(onSend);
       field.value = 'click to send';
 
-      query(composer.element, 'sp-button').click();
+      query(composer.element, '.chat-composer__send').click();
       await Promise.resolve();
 
       expect(onSend).toHaveBeenCalledWith('click to send');
@@ -146,12 +201,15 @@ describe('createComposer', () => {
       expect(onSend).not.toHaveBeenCalled();
     });
 
-    it("does not insert a newline's worth of submission on Shift+Enter", () => {
+    it('does not submit on a modified Enter (Shift/Ctrl/Alt/Meta all insert a newline)', () => {
       const onSend = vi.fn();
       const { field } = readyComposer(onSend);
       field.value = 'line one';
 
       pressEnter(field, { shiftKey: true });
+      pressEnter(field, { ctrlKey: true });
+      pressEnter(field, { altKey: true });
+      pressEnter(field, { metaKey: true });
 
       expect(onSend).not.toHaveBeenCalled();
     });
@@ -223,7 +281,7 @@ describe('createComposer', () => {
         const { composer, field } = readyComposer(onSend);
         field.value = 'first';
 
-        const sendButton = query(composer.element, 'sp-button');
+        const sendButton = query(composer.element, '.chat-composer__send');
         sendButton.click();
         // The field was cleared by the first submit; simulate the user
         // typing again before the first call has resolved.

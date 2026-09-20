@@ -1,7 +1,7 @@
 import { el } from '../lib/dom';
 import { createChatToolbar } from './chatToolbar';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
-import { computeComposerButtonState } from '../chat/composerViewModel';
+import { computeComposerButtonState, isTurnInFlight } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
 import {
@@ -61,13 +61,36 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   let sessionStatus: SessionStatus = { state: 'idle', authenticated: false, browserReady: false };
   let serviceState: AgentServiceLifecycleState = 'starting';
   let chatId: ChatId | undefined;
+  // A fresh pane is an empty conversation; flipped on the first transcript
+  // item (the user's own prompt, or any assistant/tool event).
+  let conversationEmpty = false;
 
   let unsubscribeEvents: (() => void) | undefined;
   let startingPollHandle: ReturnType<typeof setInterval> | undefined;
   let readyPollHandle: ReturnType<typeof setInterval> | undefined;
 
-  function repaintComposerButton(): void {
+  /**
+   * Projects the authoritative `sessionStatus` onto the two UI surfaces that
+   * depend on "is a turn in flight": the composer's Stop/Send button, and the
+   * transcript's trailing "Thinking" indicator. Both read the same
+   * `isTurnInFlight` predicate so they can never disagree.
+   */
+  function refreshSessionPresentation(): void {
+    transcriptStore.setTurnInFlight(isTurnInFlight(sessionStatus.state));
     composer.setButtonState(computeComposerButtonState({ serviceState, session: sessionStatus }));
+  }
+
+  /**
+   * Keeps the composer's empty/non-empty presentation in sync with the
+   * transcript: an empty conversation gets the taller, centred prompt, and
+   * the first transcript item sends it to the bottom at its ordinary height.
+   */
+  function refreshEmptyState(): void {
+    const empty = transcriptStore.items().length === 0;
+    if (empty === conversationEmpty) return;
+    conversationEmpty = empty;
+    element.classList.toggle('chat-pane--empty', empty);
+    composer.setConversationEmpty(empty);
   }
 
   function subscribeToEvents(): void {
@@ -78,6 +101,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (chatId !== undefined && event.chatId !== chatId) return;
 
       transcriptStore.applyEvent(event);
+      refreshEmptyState();
       const applied = applyAgentEvent(sessionStatus, event);
       if (applied.ok) {
         sessionStatus = applied.value;
@@ -87,7 +111,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         // rather than surfaced to the user, who cannot act on it.
         console.error('[daisy]', applied.error.message);
       }
-      repaintComposerButton();
+      refreshSessionPresentation();
     });
   }
 
@@ -133,7 +157,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       }
     }
 
-    repaintComposerButton();
+    refreshSessionPresentation();
   }
 
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
@@ -145,6 +169,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       return { ok: false, message: result.error.message };
     }
     transcriptStore.applyUserPrompt(result.turnId, prompt);
+    refreshEmptyState();
     return { ok: true };
   }
 
@@ -170,6 +195,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       composer.element,
     ],
   });
+
+  // A new pane starts on an empty conversation: taller, centred prompt.
+  refreshEmptyState();
 
   const repaintTimer = setInterval(() => {
     if (transcriptStore.takeDirty()) {

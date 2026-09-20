@@ -213,6 +213,57 @@ describe('createTranscriptView', () => {
     });
   });
 
+  describe('thinking indicator', () => {
+    it('renders a trailing thinking item with a prepended spinner and label while a turn is in flight', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+
+      view.repaint(store);
+
+      const node = view.element.querySelector('.chat-message--thinking');
+      expect(node).not.toBeNull();
+      const spinner = node?.querySelector('sp-progress-circle');
+      expect(spinner).not.toBeNull();
+      expect(spinner?.hasAttribute('indeterminate')).toBe(true);
+      expect(node?.textContent).toContain('Thinking');
+      // Prepended: the spinner is the thinking node's first child.
+      expect(node?.firstElementChild).toBe(spinner);
+    });
+
+    it('removes the thinking item once assistant text starts streaming', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message--thinking')).not.toBeNull();
+
+      store.applyEvent(delta(0, 'Here is the answer'));
+      view.repaint(store);
+
+      expect(view.element.querySelector('.chat-message--thinking')).toBeNull();
+      expect(view.element.querySelector('.chat-message--assistant')?.textContent?.trim()).toBe(
+        'Here is the answer',
+      );
+    });
+
+    it('removes the thinking item when the turn leaves the in-flight state', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message--thinking')).not.toBeNull();
+
+      store.setTurnInFlight(false);
+      view.repaint(store);
+
+      expect(view.element.querySelector('.chat-message--thinking')).toBeNull();
+    });
+  });
+
   describe('ordering and cache reuse across repaints', () => {
     it('keeps items in first-seen order across repeated repaints', () => {
       const view = createTranscriptView(markdownRenderer);
@@ -254,7 +305,7 @@ describe('createTranscriptView - aem_query result table (Step 08)', () => {
     operation: 'aem_query',
     rows: [
       { 'jcr:path': '/content/site/a', 'jcr:title': 'Alpha' },
-      { 'jcr:path': '/content/site/b', 'jcr:title': '<img src=x onerror=alert(1)>' },
+      { 'jcr:path': '/content/site/b', 'jcr:title': '<img src=x onerror=alert(1) alt="Image">' },
     ],
     pagination: {
       offset: 0,
@@ -315,7 +366,7 @@ describe('createTranscriptView - aem_query result table (Step 08)', () => {
   it('never parses a property value as HTML', () => {
     const element = renderQuery(queryData);
     // The literal text must survive, and it must not have become an element.
-    expect(element.textContent).toContain('<img src=x onerror=alert(1)>');
+    expect(element.textContent).toContain('<img src=x onerror=alert(1) alt="Image">');
     expect(element.querySelector('img')).toBeNull();
   });
 

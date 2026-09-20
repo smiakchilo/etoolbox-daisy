@@ -1,12 +1,5 @@
-import { createMessageStream, type MessageStream } from './messageStream';
-import type {
-  AgentEvent,
-  JsonValue,
-  MessageId,
-  ToolCallId,
-  ToolError,
-  TurnId,
-} from '../../../shared';
+import {createMessageStream, type MessageStream} from './messageStream';
+import type {AgentEvent, JsonValue, MessageId, ToolCallId, ToolError, TurnId,} from '../../../shared';
 
 /**
  * One transcript entry in first-seen order. A user's own prompt is not part
@@ -24,7 +17,8 @@ import type {
 export type TranscriptItem =
   | { readonly kind: 'userPrompt'; readonly turnId: TurnId }
   | { readonly kind: 'message'; readonly messageId: MessageId }
-  | { readonly kind: 'toolCall'; readonly toolCallId: ToolCallId };
+  | { readonly kind: 'toolCall'; readonly toolCallId: ToolCallId }
+  | { readonly kind: 'thinking' };
 
 export type ToolCallStatus =
   | { readonly kind: 'requested' }
@@ -58,6 +52,17 @@ export interface TranscriptStore {
   textForUserPrompt(turnId: TurnId): string;
   /** The current view of one tool call, or `undefined` if `toolCallId` has not been observed. */
   toolCallFor(toolCallId: ToolCallId): ToolCallView | undefined;
+  /**
+   * Marks whether a turn is currently in flight. The transcript shows a
+   * trailing `thinking` item while this is `true` AND the current turn has
+   * not yet produced any assistant text - the moment the first
+   * `assistant.text.delta`/`assistant.message.completed` arrives, the
+   * indicator disappears for the rest of the turn even though the turn is
+   * still running. Callers should drive this from the same state the
+   * composer's Stop button uses (`composerViewModel.ts`'s
+   * `isTurnInFlight`), so the two can never disagree.
+   */
+  setTurnInFlight(inFlight: boolean): void;
   /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
   takeDirty(): boolean;
 }
@@ -72,6 +77,26 @@ export function createTranscriptStore(
   const userPrompts = new Map<TurnId, string>();
   const toolCalls = new Map<ToolCallId, ToolCallView>();
   let dirty = false;
+  // The turn currently being answered, set by `applyUserPrompt`; used to
+  // ignore a late text event belonging to a previous turn when deciding
+  // whether the current turn has produced text yet.
+  let currentTurnId: TurnId | undefined;
+  // Whether the current turn still has no assistant text. Reset when the
+  // user's prompt is recorded (a turn begins with no text) and cleared by the
+  // first text event for that turn.
+  let awaitingAssistantText = false;
+  let turnInFlight = false;
+
+  /** The trailing "Thinking" indicator is visible exactly while both are true. */
+  function thinkingVisible(): boolean {
+    return turnInFlight && awaitingAssistantText;
+  }
+
+  function setAwaitingAssistantText(next: boolean): void {
+    if (awaitingAssistantText === next) return;
+    awaitingAssistantText = next;
+    dirty = true;
+  }
 
   function ensureMessageItem(messageId: MessageId): void {
     if (knownMessageIds.has(messageId)) return;
@@ -104,8 +129,16 @@ export function createTranscriptStore(
       messageStream.applyEvent(event);
       switch (event.type) {
         case 'assistant.message.started':
+          ensureMessageItem(event.messageId);
+          return;
         case 'assistant.text.delta':
         case 'assistant.message.completed':
+          // The first text of the current turn ends the "Thinking" phase. A
+          // late text event belonging to a previous turn must not silence the
+          // indicator for a turn that has not spoken yet.
+          if (currentTurnId === undefined || event.turnId === currentTurnId) {
+            setAwaitingAssistantText(false);
+          }
           ensureMessageItem(event.messageId);
           return;
         case 'tool.call.requested':
@@ -145,8 +178,7 @@ export function createTranscriptStore(
           // `SessionStatus`, which `chatPane.ts` derives independently.
           return;
         default: {
-          const exhaustive: never = event;
-          return exhaustive;
+          return event;
         }
       }
     },
@@ -155,10 +187,21 @@ export function createTranscriptStore(
         order.push({ kind: 'userPrompt', turnId });
       }
       userPrompts.set(turnId, prompt);
+      // A new turn begins with no assistant text yet - see
+      // `awaitingAssistantText`'s doc comment.
+      currentTurnId = turnId;
+      awaitingAssistantText = true;
+      dirty = true;
+    },
+    setTurnInFlight(inFlight) {
+      if (turnInFlight === inFlight) return;
+      turnInFlight = inFlight;
       dirty = true;
     },
     items() {
-      return order;
+      if (!thinkingVisible()) return order;
+      const thinkingItem: TranscriptItem = { kind: 'thinking' };
+      return [...order, thinkingItem];
     },
     textForMessage(messageId) {
       return messageStream.textFor(messageId);

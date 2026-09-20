@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeComposerButtonState,
   describeCanSendBlockReason,
+  isTurnInFlight,
   shouldSubmitOnEnter,
   type ComposerStatus,
 } from '../../../../src/renderer/src/chat/composerViewModel';
@@ -72,6 +73,17 @@ describe('computeComposerButtonState', () => {
   });
 });
 
+describe('isTurnInFlight', () => {
+  it('is true exactly for the four in-flight states the composer shows Stop for', () => {
+    for (const state of ['sending', 'streaming', 'runningTool', 'cancelling'] as const) {
+      expect(isTurnInFlight(state)).toBe(true);
+    }
+    for (const state of ['idle', 'error', 'closed'] as const) {
+      expect(isTurnInFlight(state)).toBe(false);
+    }
+  });
+});
+
 describe('describeCanSendBlockReason', () => {
   it('describes every reason with distinct, non-empty text', () => {
     const reasons = [
@@ -89,24 +101,40 @@ describe('describeCanSendBlockReason', () => {
 });
 
 describe('shouldSubmitOnEnter', () => {
+  function enter(overrides: Partial<Parameters<typeof shouldSubmitOnEnter>[0]> = {}) {
+    return {
+      key: 'Enter',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      isComposing: false,
+      ...overrides,
+    };
+  }
+
   it('submits on a plain Enter press', () => {
-    expect(shouldSubmitOnEnter({ key: 'Enter', shiftKey: false, isComposing: false })).toBe(true);
+    expect(shouldSubmitOnEnter(enter())).toBe(true);
   });
 
-  it('does not submit on Shift+Enter (inserts a newline instead)', () => {
-    expect(shouldSubmitOnEnter({ key: 'Enter', shiftKey: true, isComposing: false })).toBe(false);
+  it('does not submit on any modified Enter (inserts a newline instead)', () => {
+    expect(shouldSubmitOnEnter(enter({ shiftKey: true }))).toBe(false);
+    expect(shouldSubmitOnEnter(enter({ ctrlKey: true }))).toBe(false);
+    expect(shouldSubmitOnEnter(enter({ altKey: true }))).toBe(false);
+    expect(shouldSubmitOnEnter(enter({ metaKey: true }))).toBe(false);
   });
 
   it('does not submit on Enter while an IME composition is active', () => {
     // The named plan requirement: Enter during composition must never send.
-    expect(shouldSubmitOnEnter({ key: 'Enter', shiftKey: false, isComposing: true })).toBe(false);
+    expect(shouldSubmitOnEnter(enter({ isComposing: true }))).toBe(false);
   });
 
-  it('does not submit on Shift+Enter while composing either', () => {
-    expect(shouldSubmitOnEnter({ key: 'Enter', shiftKey: true, isComposing: true })).toBe(false);
+  it('does not submit on a modified Enter while composing either', () => {
+    expect(shouldSubmitOnEnter(enter({ shiftKey: true, isComposing: true }))).toBe(false);
+    expect(shouldSubmitOnEnter(enter({ ctrlKey: true, isComposing: true }))).toBe(false);
   });
 
   it('does not submit on a non-Enter key', () => {
-    expect(shouldSubmitOnEnter({ key: 'a', shiftKey: false, isComposing: false })).toBe(false);
+    expect(shouldSubmitOnEnter(enter({ key: 'a' }))).toBe(false);
   });
 });

@@ -240,6 +240,76 @@ describe('createTranscriptStore', () => {
     });
   });
 
+  describe('thinking indicator', () => {
+    it('adds a trailing thinking item while a turn is in flight and no text has arrived', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }, { kind: 'thinking' }]);
+    });
+
+    it('does not show thinking while no turn is in flight', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+    });
+
+    it('drops the thinking item as soon as the first assistant text arrives, while the turn is still in flight', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.takeDirty();
+
+      store.applyEvent(delta(0, 'Here'));
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'message', messageId },
+      ]);
+      expect(store.takeDirty()).toBe(true);
+    });
+
+    it('drops the thinking item when the turn leaves the in-flight state', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.setTurnInFlight(false);
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+    });
+
+    it('shows thinking again for a new turn even after the previous turn produced text', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'first');
+      store.setTurnInFlight(true);
+      store.applyEvent(delta(0, 'answer'));
+      store.setTurnInFlight(false);
+
+      const secondTurn: TurnId = turnIdSchema.parse('turn-2');
+      store.applyUserPrompt(secondTurn, 'second');
+      store.setTurnInFlight(true);
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'message', messageId },
+        { kind: 'userPrompt', turnId: secondTurn },
+        { kind: 'thinking' },
+      ]);
+    });
+
+    it('ignores a late text event belonging to a previous turn when deciding the current turn has text', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'first');
+      const secondTurn: TurnId = turnIdSchema.parse('turn-2');
+      store.applyUserPrompt(secondTurn, 'second');
+      store.setTurnInFlight(true);
+
+      // `delta` carries `turnId` (the first turn), not `secondTurn`.
+      store.applyEvent(delta(0, 'late previous text'));
+
+      expect(store.items()).toContainEqual({ kind: 'thinking' });
+    });
+  });
+
   describe('ordering', () => {
     it('preserves first-seen order across mixed item kinds', () => {
       const store = createTranscriptStore();

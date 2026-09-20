@@ -261,7 +261,8 @@ declare const document: {
 };
 declare const MutationObserver: new (callback: () => void) => MinimalMutationObserver;
 
-const COMPOSER_BUTTON = '.chat-composer sp-button';
+const COMPOSER_SEND = '.chat-composer__send';
+const COMPOSER_STOP = '.chat-composer__stop';
 const COMPOSER_NOTICE = '.chat-composer__notice';
 const COMPOSER_FIELD = '.chat-composer textarea';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
@@ -271,7 +272,8 @@ const TOOL_CALL = '.chat-tool-call';
 async function waitForComposerReady(shell: Page): Promise<void> {
   await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
   await expect(shell.locator(COMPOSER_NOTICE)).toHaveText('', { timeout: 60_000 });
-  await expect(shell.locator(COMPOSER_BUTTON)).toHaveText('Send');
+  await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
+  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
 }
 
 /**
@@ -323,8 +325,8 @@ async function armNextRepaintWatch(shell: Page, selector: string): Promise<() =>
 
 /** Sends `prompt` through the real composer UI - fill, then click the real Send button. */
 async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  const button = shell.locator(COMPOSER_BUTTON);
-  await expect(button).toHaveText('Send');
+  const button = shell.locator(COMPOSER_SEND);
+  await expect(button).toBeVisible();
   await expect(button).not.toHaveAttribute('disabled', '');
   await shell.locator(COMPOSER_FIELD).fill(prompt);
   await button.click();
@@ -332,8 +334,8 @@ async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
 
 /** Clicks the composer's Stop button - only valid while a turn is in flight. */
 async function clickStop(shell: Page): Promise<void> {
-  const button = shell.locator(COMPOSER_BUTTON);
-  await expect(button).toHaveText('Stop');
+  const button = shell.locator(COMPOSER_STOP);
+  await expect(button).toBeVisible();
   await expect(button).not.toHaveAttribute('disabled', '');
   await button.click();
 }
@@ -372,6 +374,11 @@ test.describe('Milestone A #3: streaming correctness', () => {
   });
 
   test('the fully-streamed text is visible before completion, and completion replaces it rather than duplicating it', async () => {
+    // Still an empty conversation here (this is the first send in this app
+    // instance): taller prompt, centred by the pane's empty-state class.
+    await expect(shell.locator('.chat-pane')).toHaveClass(/chat-pane--empty/);
+    await expect(shell.locator('.chat-composer__field')).toHaveAttribute('rows', '8');
+
     await scriptTurn(app, {
       steps: [
         { kind: 'delta', text: 'Hello' },
@@ -381,13 +388,18 @@ test.describe('Milestone A #3: streaming correctness', () => {
     });
     await sendViaComposer(shell, 'say hello');
 
+    // The first send ends the empty state: the prompt moves to the bottom at
+    // its ordinary height.
+    await expect(shell.locator('.chat-pane')).not.toHaveClass(/chat-pane--empty/);
+    await expect(shell.locator('.chat-composer__field')).toHaveAttribute('rows', '4');
+
     // Deliver message-started + all three deltas, but NOT the completion:
     // the queue is [started, delta, delta, delta, completed, idle].
     await advanceFakeTimes(app, 4);
     const assistantMessage = shell.locator(ASSISTANT_MESSAGE).first();
     await expect(assistantMessage).toHaveText('Hello, world!');
     // Still mid-turn - proves the text above arrived strictly BEFORE completion.
-    await expect(shell.locator(COMPOSER_BUTTON)).toHaveText('Stop');
+    await expect(shell.locator(COMPOSER_STOP)).toBeVisible();
 
     // Arm a repaint watch on message 1's node BEFORE delivering completion.
     const repainted = await armNextRepaintWatch(shell, ASSISTANT_MESSAGE);
@@ -401,7 +413,7 @@ test.describe('Milestone A #3: streaming correctness', () => {
     // so here would hang forever under perfectly correct code, not reveal
     // a bug.
     await advanceFakeTimes(app, 2);
-    await expect(shell.locator(COMPOSER_BUTTON)).toHaveText('Send');
+    await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
 
     // Force a SECOND, unrelated, and unconditionally dirty-marking event -
     // a brand-new message id is always dirty regardless of its content
@@ -623,7 +635,7 @@ test.describe('Milestone A #6: cancellation without leakage', () => {
     await expect(assistantMessage).toHaveText('Working on it');
 
     await clickStop(shell);
-    await expect(shell.locator(COMPOSER_BUTTON)).toHaveText('Send');
+    await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
 
     // `performAbort` (fakeAgentService.ts) discards the rest of this turn's
     // queue unconditionally - nothing is left to ever deliver.
@@ -742,7 +754,7 @@ test.describe('Milestone A #7: rendered table and XSS safety', () => {
 
     const xssMarkdown = [
       '<script>window.__xssMarker = true;</script>',
-      '<img src="https://attacker.example/beacon.png" onerror="window.__xssMarker = true">',
+      '<img src="https://attacker.example/beacon.png" onerror="window.__xssMarker = true" alt="Image">',
       '[click me](javascript:window.__xssMarker=true)',
     ].join('\n\n');
     await scriptTurn(app, { steps: [{ kind: 'delta', text: xssMarkdown }] });

@@ -35,6 +35,21 @@
   background: var(--spectrum-gray-100, #f5f5f5);
 }
 
+/* The trailing "Thinking" indicator shown while a turn is in flight and has
+   not produced text yet (transcriptStore.ts's `setTurnInFlight`). Same
+   surface as an assistant message, with the spinner prepended inline. */
+.chat-message--thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--spectrum-gray-100, #f5f5f5);
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+.chat-message__thinking-label {
+  font-size: 13px;
+}
+
 /* Rendered by transcriptView.ts from marked + DOMPurify output (see
    renderMarkdown.ts) - a real <table> element, not literal Markdown source. */
 .chat-message--assistant table {
@@ -97,19 +112,78 @@
 
 .chat-composer {
   flex: 0 0 auto;
-  padding: 8px 12px;
-  border-top: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  padding: 8px 8px 8px 0;
 }
 
-.chat-composer__row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+/* Empty conversation: no transcript to show, and the prompt fills the free
+   space (a flex column, so its child lands at the top). */
+.chat-pane--empty .chat-transcript {
+  display: none;
 }
 
-.chat-composer__row sp-textfield {
+.chat-pane--empty .chat-composer {
   flex: 1 1 auto;
-  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+/* The one bordered surface for the whole input: the field itself draws no
+   border (see `.chat-composer__field`), so focus is shown here instead. */
+.chat-composer__frame {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 6px 6px 8px;
+  border: 1px solid var(--spectrum-gray-300, #d3d3d3);
+  border-radius: var(--spectrum-corner-radius-100, 4px);
+  background: var(--spectrum-gray-50, #ffffff);
+  transition: border-color 0.13s ease-in-out;
+}
+
+.chat-composer__frame:focus-within {
+  border-color: var(--spectrum-accent-background-color-default, #0265dc);
+}
+
+/* Strips the field's own border/background/focus ring so the frame above is
+   the only visible edge. `--mod-*` are Spectrum's documented theming hooks. */
+.chat-composer__field {
+  --mod-textfield-width: 100%;
+  --mod-textfield-min-width: 0;
+  --mod-textfield-border-width: 0;
+  --mod-textfield-background-color: transparent;
+  --mod-textfield-focus-indicator-width: 0;
+}
+
+.chat-composer__actions {
+  display: flex;
+  justify-content: flex-end;
+  /* Extra breathing room between the Send/Stop control and the frame edge,
+     on top of the frame's own padding. */
+  padding: 0 4px 4px 0;
+}
+
+/* Accent-filled Send. `sp-action-button` has no accent variant, and its
+   `emphasized` property only tints the *selected* state (and is deprecated),
+   so the accent fill is applied through Spectrum's documented `--mod-*`
+   hooks. Disabled states are deliberately left untouched: the component's
+   own `[disabled]` rules re-point these to the disabled tokens. */
+.chat-composer__send {
+  --mod-actionbutton-background-color-default: var(
+    --spectrum-accent-background-color-default,
+    #0265dc
+  );
+  --mod-actionbutton-background-color-hover: var(--spectrum-accent-background-color-hover);
+  --mod-actionbutton-background-color-down: var(--spectrum-accent-background-color-down);
+  --mod-actionbutton-background-color-focus: var(--spectrum-accent-background-color-key-focus);
+  --mod-actionbutton-border-color-default: transparent;
+  --mod-actionbutton-border-color-hover: transparent;
+  --mod-actionbutton-border-color-down: transparent;
+  --mod-actionbutton-border-color-focus: transparent;
+  --mod-actionbutton-content-color-default: var(--spectrum-white, #ffffff);
+  --mod-actionbutton-content-color-hover: var(--spectrum-white, #ffffff);
+  --mod-actionbutton-content-color-down: var(--spectrum-white, #ffffff);
+  --mod-actionbutton-content-color-focus: var(--spectrum-white, #ffffff);
 }
 
 .chat-composer__notice {

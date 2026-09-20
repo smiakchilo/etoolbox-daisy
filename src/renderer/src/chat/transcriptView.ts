@@ -1,8 +1,8 @@
-import { el } from '../lib/dom';
-import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
-import { describeToolCallStatus, describeRequiredAction } from './transcriptViewModel';
-import { readQueryResultTable, type QueryResultTable } from './queryResultViewModel';
-import type { TranscriptItem, TranscriptStore, ToolCallView } from './transcriptStore';
+import {el} from '../lib/dom';
+import {createMarkdownRenderer, type MarkdownRenderer} from './renderMarkdown';
+import {describeRequiredAction, describeToolCallStatus} from './transcriptViewModel';
+import {type QueryResultTable, readQueryResultTable} from './queryResultViewModel';
+import type {ToolCallView, TranscriptItem, TranscriptStore} from './transcriptStore';
 
 export interface TranscriptView {
   readonly element: HTMLElement;
@@ -19,9 +19,10 @@ function keyFor(item: TranscriptItem): string {
       return `message:${item.messageId}`;
     case 'toolCall':
       return `toolCall:${item.toolCallId}`;
+    case 'thinking':
+      return 'thinking';
     default: {
-      const exhaustive: never = item;
-      return exhaustive;
+      return item;
     }
   }
 }
@@ -136,9 +137,27 @@ export function createTranscriptView(
         return el('div', { attrs: { class: 'chat-message chat-message--assistant' } });
       case 'toolCall':
         return el('div', { attrs: { class: 'chat-tool-call' } });
+      case 'thinking':
+        // Static content (spinner + label), built once here rather than in
+        // `updateShell`, so a repaint triggered by an unrelated tool event
+        // does not recreate the spinner and restart its animation.
+        return el('div', {
+          attrs: { class: 'chat-message chat-message--thinking' },
+          children: [
+            // `label` is screen-reader-only here (the component renders only
+            // its track/fills plus a deprecated label slot); the visible text
+            // is the sibling span, so the two cannot duplicate.
+            el('sp-progress-circle', {
+              attrs: { size: 's', indeterminate: '', label: 'Thinking' },
+            }),
+            el('span', {
+              attrs: { class: 'chat-message__thinking-label' },
+              text: 'Thinking\u2026',
+            }),
+          ],
+        });
       default: {
-        const exhaustive: never = item;
-        return exhaustive;
+        return item;
       }
     }
   }
@@ -163,9 +182,11 @@ export function createTranscriptView(
         shell.replaceChildren(...renderToolCallBody(view));
         return;
       }
+      case 'thinking':
+        // Nothing to update - see `createShell`'s thinking case.
+        return;
       default: {
-        const exhaustive: never = item;
-        return exhaustive;
+        return item;
       }
     }
   }
