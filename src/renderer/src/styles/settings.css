@@ -18,14 +18,6 @@
   gap: 12px;
 }
 
-/* The panel surface made the containing block for the banner strip, which is
-   positioned against it (see the `.settings-banner` rules below). The
-   surface is the shared `.panel` flex column from panel.css; `position:
-   relative` alone changes nothing about that flow. */
-.settings-panel {
-  position: relative;
-}
-
 /* The panel's own status/prompt row - auto-save feedback, validation errors,
    and the two-click address/removal confirmations - the Settings surface of
    the shared banner-row base (banner.css, lib/alertBanner.ts): the row
@@ -34,62 +26,14 @@
    (`.browser-toolbar-message`) never match two elements while Settings is
    open. Only the surface-specific wiring lives here.
 
-   It is pinned to the bottom edge of the panel surface, in the same spot the
-   browser row occupies in the browser pane: the panel `.panel` is the flex
-   column, and the banner is taken out of that flow with `position: absolute`
-   and `inset-block-end: 0`, so it never displaces the tab content above or
-   reflows the panel when it appears/disappears - a floating status strip, not
-   a layout participant. `inset-inline: 0` spans the surface full width
-   (`max-inline-size: none`, the pinned height and `margin: 0` come from the
-   shared base). The strip sits above the tab content and header (`z-index`)
-   and is clipped with them (`overflow: hidden` on `.panel`). */
-.settings-banner {
-  position: absolute;
-  inset-inline: 0;
-  inset-block-end: 0;
-  z-index: 1;
-}
-
-/* The strip fades in/out instead of popping: the host's `:host{display:none}`
-   / `:host([open]){display:flex}` pair from the component's own stylesheet
-   flips display instantly (nothing here fights it - see browser.css), so the
-   fade rides on `opacity`. Fade-in replays whenever `open` is (re)set;
-   fade-out is driven by `statusBanner.ts`, which keeps `open` up under the
-   `settings-banner--closing` class for `--settings-banner-fade-duration` and
-   tears the row down after. The JS timer and these keyframes share the
-   duration through the same custom property. */
-.settings-banner[open] {
-  animation: settings-banner-fade-in var(--settings-banner-fade-duration, 150ms) ease-out;
-}
-
-.settings-banner.settings-banner--closing {
-  animation: settings-banner-fade-out var(--settings-banner-fade-duration, 150ms) ease-in forwards;
-}
-
-@keyframes settings-banner-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes settings-banner-fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .settings-banner[open],
-  .settings-banner.settings-banner--closing {
-    animation: none;
-  }
-}
+   It sits in normal flow as the panel's last flex child, directly below the
+   tab content - the same place the browser row occupies in the browser pane.
+   It is deliberately NOT absolutely positioned: the shared height
+   reveal/collapse (banner.css) then shrinks/grows the tab content above it
+   gradually, exactly like the browser pane's native-view region, instead of
+   floating over the content. `max-inline-size: none`, the pinned height,
+   `margin: 0` and the animation come from the shared base; the panel's
+   `overflow: hidden` clips the collapsing row. */
 
 /* The panel's prompt rows' `_copy` span and `_actions` span are the shared
    `.banner-row__copy` / `.banner-row__actions` rules in banner.css. */

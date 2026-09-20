@@ -10,6 +10,12 @@
  * (`.browser-toolbar-message` / `.settings-banner`) - see `lib/alertBanner.ts`.
  * Everything the two can honestly share lives here; `.banner-row` never sets
  * anything the surfaces need to contradict.
+ *
+ * The reveal/collapse animation is shared here too: both rows sit in normal
+ * flow *below* the region they describe, so animating the row's block-size
+ * moves the region above it (the native view's reserved rectangle, or the
+ * Settings tab content) smoothly. Neither row can paint above the native view,
+ * so the animation is height-only - no opacity, no slide.
  */
 
 .banner-row {
@@ -30,6 +36,59 @@
   max-inline-size: none;
   flex: 0 0 auto;
   margin: 0;
+  /* The row's block-size is animated to reveal/collapse it; clipping keeps the
+     content inside the shrinking box rather than overflowing the pane. */
+  overflow: hidden;
+}
+
+/*
+ * Shared reveal/collapse. The row is the flex sibling *below* the region it
+ * describes (the browser pane's reserved native-view rectangle; the Settings
+ * panel's tab content), so animating the row's own block-size is what shrinks
+ * or grows that region gradually - the row itself is never faded or slid, it
+ * is simply uncovered from the bottom. `--banner-row-height` is measured by
+ * `lib/alertBanner.ts` and fed to the keyframes, so a wrapped (taller) row
+ * animates to its real height. `--mod-alert-banner-min-height: 0` removes the
+ * component's 48px clamp for the animation's duration only; the resting height
+ * is restored when the class is removed.
+ */
+.banner-row--revealing,
+.banner-row--closing {
+  --mod-alert-banner-min-height: 0;
+}
+
+.banner-row--revealing {
+  animation: banner-row-reveal var(--banner-row-transition-duration, 150ms) ease-out;
+}
+
+.banner-row--closing {
+  animation: banner-row-close var(--banner-row-transition-duration, 150ms) ease-in forwards;
+}
+
+@keyframes banner-row-reveal {
+  from {
+    block-size: 0;
+  }
+  to {
+    block-size: var(--banner-row-height, auto);
+  }
+}
+
+@keyframes banner-row-close {
+  from {
+    block-size: var(--banner-row-height, auto);
+  }
+  to {
+    block-size: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-row--revealing,
+  .banner-row--closing {
+    animation: none;
+    --mod-alert-banner-min-height: var(--spectrum-alert-banner-minimum-height, 48px);
+  }
 }
 
 /* Message text block in prompt rows (the copy sits in this span). `flex: 1

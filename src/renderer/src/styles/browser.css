@@ -136,10 +136,10 @@
    browser surface of the shared banner-row base (banner.css, lib/alertBanner.ts).
    Only what the surface alone needs lives here: `position: relative` makes
    the host the containing block for the loading presentation's absolutely
-   positioned progress line at its top edge. The shared `max-inline-size:none`,
-   the pinned row height, and the `__copy`/`__actions` prompt rules are in
-   banner.css. The banner opens/closes instantly (a status strip, not a toast);
-   the fade in/out belongs to the Settings surface. */
+    positioned progress line at its top edge. The shared `max-inline-size:none`,
+    the pinned row height, the `__copy`/`__actions` prompt rules and the
+    reveal/collapse height animation (shared with the Settings surface) are in
+    banner.css. */
 .browser-toolbar-message {
   position: relative;
 }

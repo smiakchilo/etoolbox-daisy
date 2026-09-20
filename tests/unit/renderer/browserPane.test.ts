@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
+import { BANNER_TRANSITION_DURATION_MS } from '../../../src/renderer/src/lib/alertBanner';
 import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/shared';
 import { newServerId } from '../../../src/shared';
 
@@ -181,7 +182,9 @@ describe('createBrowserPane message lifecycle', () => {
     expect(message?.textContent).toBe('Loading\u2026');
 
     switchListeners[0]?.({ switching: false });
-    // The row closes instantly (no slide-out animation).
+    // The row collapses over the shared transition, then is torn down.
+    expect(message?.hasAttribute('open')).toBe(true);
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message?.hasAttribute('open')).toBe(false);
     expect(message?.textContent).toBe('');
   });
@@ -211,7 +214,8 @@ describe('createBrowserPane message lifecycle', () => {
       canGoForward: false,
       isLoading: false,
     });
-    // Both conditions cleared: the banner closes instantly.
+    // Both conditions cleared: the banner collapses, then is torn down.
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message?.hasAttribute('open')).toBe(false);
     expect(message?.textContent).toBe('');
   });

@@ -12,13 +12,23 @@ import { el } from './dom';
  * `.browser-toolbar-message` / `.settings-banner` matching exactly one
  * element. Every rule the two can honestly share lives in `styles/banner.css`
  * under `.banner-row`; the surface classes carry only what genuinely differs
- * (browser: the loading presentation, the progress line, in-flow flex;
- * settings: absolute bottom pinning, the fade-out).
+ * (browser: the loading presentation and its progress line).
  *
  * The row height is pinned by `.banner-row` in banner.css: the component's
  * `.text` slot margins (`--mod-alert-banner-*-text`) are neutralized and the
  * strip is held at the theme's 48px minimum, so a row containing a 32px
  * `sp-action-button` is exactly as tall as a plain-text row.
+ *
+ * Both rows are revealed/collapsed by animating their own `block-size`
+ * (`banner.css`'s `banner-row--revealing` / `banner-row--closing`), which is
+ * what lets the content region above the row - the native `WebContentsView`'s
+ * reserved rectangle, or the Settings tab content - shrink/grow gradually
+ * instead of snapping. The banner itself carries no opacity/slide animation:
+ * it cannot paint above the native view, so it is simply uncovered from the
+ * bottom edge as the region above it gives up the space. Because the row's
+ * resting height depends on its content (and its 48px minimum), the helpers
+ * here measure it and pass it to the keyframes through `--banner-row-height`
+ * (a fixed target would clip a wrapped message).
  */
 
 /** The shared root class every banner row carries. */
@@ -28,6 +38,74 @@ export const BANNER_ROW_COPY_CLASS = 'banner-row__copy';
 /** The shared action-button group class. */
 export const BANNER_ROW_ACTIONS_CLASS = 'banner-row__actions';
 
+/** How long the shared reveal/collapse animation runs, in milliseconds. */
+export const BANNER_TRANSITION_DURATION_MS = 150;
+
+const BANNER_REVEALING_CLASS = 'banner-row--revealing';
+const BANNER_CLOSING_CLASS = 'banner-row--closing';
+const BANNER_HEIGHT_VAR = '--banner-row-height';
+const BANNER_DURATION_VAR = '--banner-row-transition-duration';
+const PREFERS_REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+/** True when the user has asked the OS to minimize motion. */
+export function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(PREFERS_REDUCED_MOTION_QUERY).matches
+  );
+}
+
+/** Pins the shared animation duration for a row (JS timer and CSS agree). */
+export function configureBannerTransition(
+  row: HTMLElement,
+  durationMs: number = BANNER_TRANSITION_DURATION_MS,
+): void {
+  row.style.setProperty(BANNER_DURATION_VAR, `${durationMs}ms`);
+}
+
+/** True while the row is mid-collapse. */
+export function isBannerClosing(row: HTMLElement): boolean {
+  return row.classList.contains(BANNER_CLOSING_CLASS);
+}
+
+/** Unwinds any in-flight reveal/collapse, leaving the row at its natural height. */
+export function restoreBannerRow(row: HTMLElement): void {
+  row.classList.remove(BANNER_REVEALING_CLASS, BANNER_CLOSING_CLASS);
+  row.style.removeProperty(BANNER_HEIGHT_VAR);
+}
+
+/**
+ * Plays the reveal: measures the row's resting height (with `open` already
+ * set) and animates `block-size` from 0 up to it. Under reduced motion the
+ * row is left at rest, so nothing animates.
+ */
+export function revealBannerRow(row: HTMLElement): void {
+  restoreBannerRow(row);
+  if (prefersReducedMotion()) return;
+  const height = row.getBoundingClientRect().height;
+  // Zero means the row (or an ancestor) is not laid out - e.g. it lives in the
+  // browser pane's page panel while a whole-size panel covers it. There is
+  // nothing to animate and no correct target, so leave it at rest; it appears
+  // at full height when its region returns.
+  if (height <= 0) return;
+  row.style.setProperty(BANNER_HEIGHT_VAR, `${height}px`);
+  row.classList.add(BANNER_REVEALING_CLASS);
+}
+
+/**
+ * Starts the collapse from the row's current height. Returns false when there
+ * is nothing to animate (reduced motion), so the caller can tear the row down
+ * synchronously instead.
+ */
+export function collapseBannerRow(row: HTMLElement): boolean {
+  const height = row.getBoundingClientRect().height;
+  row.classList.remove(BANNER_REVEALING_CLASS);
+  if (prefersReducedMotion()) return false;
+  row.style.setProperty(BANNER_HEIGHT_VAR, `${height}px`);
+  row.classList.add(BANNER_CLOSING_CLASS);
+  return true;
+}
+
 /**
  * Builds the `sp-alert-banner` row for a given surface. `surfaceClass` names
  * the owning surface (`browser-toolbar-message` or `settings-banner`); the
@@ -36,13 +114,23 @@ export const BANNER_ROW_ACTIONS_CLASS = 'banner-row__actions';
  * for the loading row, Settings re-derives it per slot).
  */
 export function createBannerRow(surfaceClass: string): HTMLElement {
-  return el('sp-alert-banner', {
+  const row = el('sp-alert-banner', {
     attrs: {
       class: `${BANNER_ROW_CLASS} ${surfaceClass}`,
       variant: 'neutral',
       dismissible: '',
     },
   });
+  // The reveal class also removes the component's 48px minimum for the
+  // animation's duration; drop it the instant the animation ends so the
+  // resting height is restored (a lingering class would leave a plain text row
+  // shorter than its 48px minimum).
+  row.addEventListener('animationend', (event) => {
+    if (event.animationName === 'banner-row-reveal') {
+      row.classList.remove(BANNER_REVEALING_CLASS);
+    }
+  });
+  return row;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BANNER_TRANSITION_DURATION_MS } from '../../../../src/renderer/src/lib/alertBanner';
 import {
-  BANNER_FADE_DURATION_MS,
   createSaveReporter,
   createStatusBanner,
   reportSave,
@@ -25,10 +25,10 @@ import {
  *   accent `sp-button`) which invokes `onActivate`.
  * - the banner's own close control dispatches a cancelable `close` event that
  *   is prevented and turned into `hide()`.
- * - closing fades out: the row keeps `open` under the
- *   `settings-banner--closing` class for `BANNER_FADE_DURATION_MS` before the
+ * - closing collapses: the row keeps `open` under the shared
+ *   `banner-row--closing` class for `BANNER_TRANSITION_DURATION_MS` before the
  *   DOM is torn down, and `isPromptShowing` clears immediately; a message
- *   shown mid-fade cancels the fade and appears right away.
+ *   shown mid-collapse cancels the collapse and appears right away.
  * - `createSaveReporter` + `reportSave` collapse concurrent saves into one
  *   "Saving..." -> one outcome, first failure wins, and the reporter settles
  *   before the caller's own continuation (so a drained batch is announced
@@ -68,11 +68,11 @@ describe('createStatusBanner single slot', () => {
       expect(banner.element.textContent).toBe('Saving\u2026');
       expect(banner.element.hasAttribute('dismissible')).toBe(false);
 
-      // The timeout clears the slot, then the row fades out before the DOM
+      // The timeout clears the slot, then the row collapses before the DOM
       // teardown finishes.
       vi.advanceTimersByTime(STATUS_AUTO_CLEAR_MS);
-      expect(banner.element.classList.contains('settings-banner--closing')).toBe(true);
-      vi.advanceTimersByTime(BANNER_FADE_DURATION_MS);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
       expect(banner.element.hasAttribute('open')).toBe(false);
       expect(banner.element.textContent).toBe('');
     } finally {
@@ -93,12 +93,12 @@ describe('createStatusBanner single slot', () => {
       vi.advanceTimersByTime(60_000);
       expect(banner.element.hasAttribute('open')).toBe(true);
 
-      // The close control starts a fade-out: `isPromptShowing` clears at once,
-      // the row stays under the closing class for the fade, then the DOM is
-      // torn down.
+      // The close control starts a collapse: `isPromptShowing` clears at once,
+      // the row stays under the closing class for the animation, then the DOM
+      // is torn down.
       dismiss(banner);
-      expect(banner.element.classList.contains('settings-banner--closing')).toBe(true);
-      vi.advanceTimersByTime(BANNER_FADE_DURATION_MS);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
       expect(banner.element.hasAttribute('open')).toBe(false);
       expect(banner.element.textContent).toBe('');
       expect(banner.element.hasAttribute('dismissible')).toBe(false);
@@ -172,9 +172,9 @@ describe('createStatusBanner single slot', () => {
 
       expect(onActivate).not.toHaveBeenCalled();
       expect(banner.isPromptShowing()).toBe(false);
-      // The fade-out is in flight: `open`/text stay until the fade completes.
-      expect(banner.element.classList.contains('settings-banner--closing')).toBe(true);
-      vi.advanceTimersByTime(BANNER_FADE_DURATION_MS);
+      // The collapse is in flight: `open`/text stay until it completes.
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
       expect(banner.element.hasAttribute('open')).toBe(false);
       expect(banner.element.textContent).toBe('');
       expect(banner.isPromptShowing()).toBe(false);
@@ -189,8 +189,8 @@ describe('createStatusBanner single slot', () => {
       const banner = createStatusBanner();
       banner.showStatus('Saving\u2026');
       banner.clear();
-      expect(banner.element.classList.contains('settings-banner--closing')).toBe(true);
-      vi.advanceTimersByTime(BANNER_FADE_DURATION_MS);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
       expect(banner.element.hasAttribute('open')).toBe(false);
       // The auto-clear timer was cancelled along with the row.
       vi.advanceTimersByTime(STATUS_AUTO_CLEAR_MS);
@@ -200,22 +200,22 @@ describe('createStatusBanner single slot', () => {
     }
   });
 
-  it('a message shown mid-fade cancels the fade and appears immediately', () => {
+  it('a message shown mid-collapse cancels the collapse and appears immediately', () => {
     vi.useFakeTimers();
     try {
       const banner = createStatusBanner();
       banner.showError('Gone.');
       banner.clear();
-      expect(banner.element.classList.contains('settings-banner--closing')).toBe(true);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
 
       banner.showError('Back.');
-      expect(banner.element.classList.contains('settings-banner--closing')).toBe(false);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(false);
       expect(banner.element.hasAttribute('open')).toBe(true);
       expect(banner.element.textContent).toBe('Back.');
 
-      // No stale teardown is waiting: passing the fade duration never clears
-      // the second row.
-      vi.advanceTimersByTime(BANNER_FADE_DURATION_MS);
+      // No stale teardown is waiting: passing the animation duration never
+      // clears the second row.
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
       expect(banner.element.hasAttribute('open')).toBe(true);
       expect(banner.element.textContent).toBe('Back.');
     } finally {

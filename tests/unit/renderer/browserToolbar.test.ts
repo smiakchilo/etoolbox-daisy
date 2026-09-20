@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserToolbar } from '../../../src/renderer/src/shell/browserToolbar';
+import { BANNER_TRANSITION_DURATION_MS } from '../../../src/renderer/src/lib/alertBanner';
 import type {
   BrowserNavigationState,
   BrowserSwitchState,
@@ -24,8 +25,10 @@ import type { HostOption } from '../../../src/renderer/src/shell/viewModel';
  *   inside the window never shows it (no layout shift for quick reloads).
  * - The banner clears when the load ends (`isLoading:false`), and a failed
  *   navigation result settles the load immediately (no stale Stop/banner).
- * - Opening/closing is instant (no slide animation) and the loading banner
- *   is never dismissible (no close control); error/prompt rows are.
+ * - Opening/closing animates the row's block-size over
+ *   `BANNER_TRANSITION_DURATION_MS` (the native view's reserved rectangle
+ *   shrinks/grows gradually); the loading banner is never dismissible (no
+ *   close control), error/prompt rows are.
  * - A user-initiated Stop swaps Refresh→Stop, and its ERR_ABORTED rejection
  *   is suppressed rather than surfaced as an error banner.
  * - Fetch failures surface as an error banner; dismissing it clears the row.
@@ -160,8 +163,10 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(browser.reload).toHaveBeenCalledTimes(1);
 
     stateListeners[0]?.(loadingState(false));
-    // Closing is instant: `open`/children are cleared synchronously (no
-    // slide-out animation to wait out).
+    // Closing collapses the row: `open`/children stay until the animation
+    // finishes, then the DOM is torn down.
+    expect(message.hasAttribute('open')).toBe(true);
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(message.querySelector('.browser-toolbar-message__progress')).toBeNull();
@@ -184,6 +189,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.textContent).toBe('Loading\u2026');
 
     stateListeners[0]?.(loadingState(false));
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
@@ -206,6 +212,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
 
     stateListeners[0]?.(loadingState(false));
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
   });
 
@@ -331,6 +338,7 @@ describe('createBrowserToolbar loading state machine', () => {
     await Promise.resolve();
     await Promise.resolve();
 
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
@@ -366,8 +374,10 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
 
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
-    // The dismissal clears the error copy synchronously - no slide-out.
-    expect(message.hasAttribute('open')).toBe(false);
+    // The dismissal collapses the row, then tears it down.
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
     expect(message.textContent).toBe('');
     expect(message.hasAttribute('dismissible')).toBe(false);
   });
@@ -396,8 +406,9 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.textContent).toBe('Loading\u2026');
     expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
 
-    // did-stop-loading closes it (instant - no slide-out).
+    // did-stop-loading collapses it.
     stateListeners[0]?.(loadingState(false));
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(message.classList.contains('browser-toolbar-message--loading')).toBe(false);
@@ -487,6 +498,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
 
     stateListeners[0]?.(loadingState(false));
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
 
@@ -627,7 +639,9 @@ describe('createBrowserToolbar certificate prompt', () => {
         exception: BLOCKED_INFO,
       });
     });
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
     expect(message.textContent).toBe('');
   });
 
@@ -649,7 +663,7 @@ describe('createBrowserToolbar certificate prompt', () => {
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
   });
 
-  it('the banner close control dismisses the prompt without persisting anything', () => {
+  it('the banner close control dismisses the prompt without persisting anything', async () => {
     const toolbar = build();
     const message = findMessage(toolbar);
     toolbar.setHostOptions([hostOption()]);
@@ -659,11 +673,13 @@ describe('createBrowserToolbar certificate prompt', () => {
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
 
     expect(browser.approveCertificateException).not.toHaveBeenCalled();
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
     expect(message.textContent).toBe('');
   });
 
-  it('re-appears after a dismissal when the address is re-requested (Enter/Refresh re-fires the block)', () => {
+  it('re-appears after a dismissal when the address is re-requested (Enter/Refresh re-fires the block)', async () => {
     const toolbar = build();
     const message = findMessage(toolbar);
     toolbar.setHostOptions([hostOption()]);
@@ -672,7 +688,9 @@ describe('createBrowserToolbar certificate prompt', () => {
 
     // The user waves the banner away; nothing is persisted.
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
 
     // Re-requesting the address (Enter in the address bar, or Refresh)
     // re-runs navigation, `certificate-error` re-fires, and main re-pushes
@@ -684,20 +702,28 @@ describe('createBrowserToolbar certificate prompt', () => {
   });
 
   it('a new navigation supersedes the prompt', () => {
-    const toolbar = build();
-    const message = findMessage(toolbar);
-    toolbar.setHostOptions([hostOption()]);
-    blockedListeners[0]?.(BLOCKED_INFO);
-    expect(message.hasAttribute('open')).toBe(true);
+    vi.useFakeTimers();
+    try {
+      const toolbar = build();
+      const message = findMessage(toolbar);
+      toolbar.setHostOptions([hostOption()]);
+      blockedListeners[0]?.(BLOCKED_INFO);
+      expect(message.hasAttribute('open')).toBe(true);
 
-    // Approving should not be possible after the user has moved on; a new
-    // load clears the prompt at the same boundary main clears its retry
-    // target.
-    stateListeners[0]?.(loadingState(true));
+      // Approving should not be possible after the user has moved on; a new
+      // load clears the prompt at the same boundary main clears its retry
+      // target. The row collapses before the loading presentation's 200ms
+      // debounce would re-show it.
+      stateListeners[0]?.(loadingState(true));
 
-    expect(message.hasAttribute('open')).toBe(false);
-    expect(message.textContent).toBe('');
-    expect(message.querySelector('sp-action-button')).toBeNull();
+      expect(message.hasAttribute('open')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(message.hasAttribute('open')).toBe(false);
+      expect(message.textContent).toBe('');
+      expect(message.querySelector('sp-action-button')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -781,8 +807,11 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
       );
     });
     expect(browser.navigate).toHaveBeenCalledTimes(2);
-    // The prompt cleared once the auto-navigation started.
-    expect(message.hasAttribute('open')).toBe(false);
+    // The prompt cleared once the auto-navigation started (the row collapses
+    // before the DOM is torn down).
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
   });
 
   it('surfaces an add failure as an error row instead of leaving the prompt up', async () => {
@@ -823,7 +852,9 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
 
     expect(settings.addServer).not.toHaveBeenCalled();
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
     expect(message.textContent).toBe('');
   });
 
@@ -837,11 +868,20 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     });
     expect(message.hasAttribute('open')).toBe(true);
 
-    stateListeners[0]?.(loadingState(true));
+    // The prompt collapses immediately; the loading presentation would only
+    // re-show it after its 200ms debounce, which this does not reach.
+    vi.useFakeTimers();
+    try {
+      stateListeners[0]?.(loadingState(true));
 
-    expect(message.hasAttribute('open')).toBe(false);
-    expect(message.textContent).toBe('');
-    expect(message.querySelector('sp-action-button')).toBeNull();
+      expect(message.hasAttribute('open')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(message.hasAttribute('open')).toBe(false);
+      expect(message.textContent).toBe('');
+      expect(message.querySelector('sp-action-button')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pressing Enter again on the same address re-triggers the banner after dismissal', async () => {
@@ -862,7 +902,9 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
 
     // Dismiss.
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
 
     // Address bar still holds the refused URL (no state push from a failed
     // navigate). Pressing Enter via keydown — value unchanged, so `change`
@@ -909,7 +951,9 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
 
     // Dismiss. Address bar still holds the refused URL.
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
 
     // Simulate a loaded page on a different origin so the Refresh handler
     // sees address !== currentUrl.
@@ -977,7 +1021,9 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
 
     // Dismiss. Address bar still holds the refused URL; no state was pushed.
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
-    expect(message.hasAttribute('open')).toBe(false);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
 
     // Refresh with no `lastNavigationState` must still re-request the address
     // bar value (previously it fell back to `reload()` of the blank view,

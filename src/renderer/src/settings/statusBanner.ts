@@ -20,6 +20,12 @@
  * - `showPrompt` is sticky, dismissible, and replaces anything.
  * Equal kinds replace equal kinds (the latest message wins).
  *
+ * The row is revealed/collapsed by animating its block-size (the shared
+ * `lib/alertBanner.ts` helpers + `banner.css`), so the tab content above it
+ * gives up/recovers the space gradually rather than snapping - the same
+ * behaviour as the browser pane's row, which shrinks the native view's
+ * reserved rectangle.
+ *
  * `createSaveReporter` turns the concurrent auto-saves (each debounced IPC
  * call, wrapped by `reportSave`) into one "Saving\u2026" -> "Settings saved"
  * / first-error sequence, so a label save and a proxy save happening in the
@@ -27,7 +33,16 @@
  */
 
 import { el } from '../lib/dom';
-import { buildBannerPrompt, createBannerRow } from '../lib/alertBanner';
+import {
+  BANNER_TRANSITION_DURATION_MS,
+  buildBannerPrompt,
+  collapseBannerRow,
+  configureBannerTransition,
+  createBannerRow,
+  isBannerClosing,
+  restoreBannerRow,
+  revealBannerRow,
+} from '../lib/alertBanner';
 
 export interface StatusBannerAction {
   readonly label: string;
@@ -64,26 +79,13 @@ const SLOT_RANK: Readonly<Record<BannerSlot, number>> = { status: 1, error: 2, p
  */
 export const STATUS_AUTO_CLEAR_MS = 1500;
 
-/** How long the strip's fade in/out runs; also fed to the banner's CSS as
- * `--settings-banner-fade-duration` so the JS timer and the keyframes agree. */
-export const BANNER_FADE_DURATION_MS = 150;
-
-const PREFERS_REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia(PREFERS_REDUCED_MOTION_QUERY).matches
-  );
-}
-
 export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): StatusBanner {
   const banner = createBannerRow('settings-banner');
-  banner.style.setProperty('--settings-banner-fade-duration', `${BANNER_FADE_DURATION_MS}ms`);
+  configureBannerTransition(banner, BANNER_TRANSITION_DURATION_MS);
 
   let slot: BannerSlot | null = null;
   let autoClearTimer: ReturnType<typeof setTimeout> | null = null;
-  let fadeOutTimer: ReturnType<typeof setTimeout> | null = null;
+  let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
   function cancelAutoClear(): void {
     if (autoClearTimer !== null) {
@@ -93,29 +95,30 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
   }
 
   // The DOM-side closure: `open`/`dismissible` off, children cleared, any
-  // outbound fade unwound. Calling it while a fade-out is scheduled aborts
-  // that fade (the row is gone), so it doubles as the "cancel a pending
-  // hide" path in `present`.
+  // in-flight collapse unwound. Calling it while a collapse is scheduled
+  // aborts that collapse (the row is gone), so it doubles as the "cancel a
+  // pending hide" path in `present`.
   function finalizeHide(): void {
-    if (fadeOutTimer !== null) {
-      clearTimeout(fadeOutTimer);
-      fadeOutTimer = null;
+    if (collapseTimer !== null) {
+      clearTimeout(collapseTimer);
+      collapseTimer = null;
     }
-    banner.classList.remove('settings-banner--closing');
+    restoreBannerRow(banner);
     // Same contract as the browser banner (browserToolbar.ts's
-    // `applyIdlePresentation`): dismissing also drops `dismissible`, so the
+    // `finalizeBannerHide`): dismissing also drops `dismissible`, so the
     // closed row carries no leftover close control.
     banner.removeAttribute('dismissible');
     banner.removeAttribute('open');
     banner.replaceChildren();
   }
 
-  // The row fades out rather than vanishing: the `--closing` class runs the
-  // fade-out keyframes (settings.css) while `open` stays up so the host is
-  // still displayed, and the DOM is torn down when the fade completes. Under
-  // `prefers-reduced-motion` the fade is disabled in CSS, so the teardown
-  // happens synchronously instead. `isPromptShowing` clears immediately (slot
-  // is dropped first), so nothing actionable lingers for the fade.
+  // The row collapses rather than vanishing: the shared `--closing` class
+  // (banner.css) animates its block-size to 0 while `open` stays up so the
+  // host is still displayed, and the DOM is torn down when the animation
+  // completes. Under `prefers-reduced-motion` the animation is skipped, so the
+  // teardown happens synchronously instead. `isPromptShowing` clears
+  // immediately (slot is dropped first), so nothing actionable lingers for the
+  // collapse.
   function hide(): void {
     cancelAutoClear();
     slot = null;
@@ -123,14 +126,11 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
       finalizeHide();
       return;
     }
-    if (prefersReducedMotion()) {
+    if (!collapseBannerRow(banner)) {
       finalizeHide();
       return;
     }
-    banner.classList.add('settings-banner--closing');
-    if (fadeOutTimer === null) {
-      fadeOutTimer = setTimeout(finalizeHide, BANNER_FADE_DURATION_MS);
-    }
+    collapseTimer = setTimeout(finalizeHide, BANNER_TRANSITION_DURATION_MS);
   }
 
   function canShow(candidate: BannerSlot): boolean {
@@ -140,9 +140,10 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
   function present(next: BannerSlot, content: readonly Node[]): boolean {
     if (!canShow(next)) return false;
     cancelAutoClear();
-    // A row mid-fade-out is torn down first so the new message fades in from
-    // scratch (re-adding `open` replays the fade-in keyframes).
-    if (fadeOutTimer !== null) finalizeHide();
+    // A row mid-collapse is torn down first so the new message reveals from
+    // scratch (re-adding `open` replays the reveal keyframes).
+    const wasVisible = banner.hasAttribute('open') && !isBannerClosing(banner);
+    if (collapseTimer !== null) finalizeHide();
     slot = next;
     banner.replaceChildren(...content);
     // Transient statuses carry no close control (auto-clearing, nothing to
@@ -150,6 +151,9 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
     if (next === 'status') banner.removeAttribute('dismissible');
     else banner.setAttribute('dismissible', '');
     banner.setAttribute('open', '');
+    // Already showing: a same-height content swap (status -> error) must not
+    // replay the reveal. A fresh row (or one cancelled mid-collapse) reveals.
+    if (!wasVisible) revealBannerRow(banner);
     return true;
   }
 

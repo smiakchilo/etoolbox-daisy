@@ -1,5 +1,14 @@
 import { el } from '../lib/dom';
-import { buildBannerPrompt, createBannerRow } from '../lib/alertBanner';
+import {
+  BANNER_TRANSITION_DURATION_MS,
+  buildBannerPrompt,
+  collapseBannerRow,
+  configureBannerTransition,
+  createBannerRow,
+  isBannerClosing,
+  restoreBannerRow,
+  revealBannerRow,
+} from '../lib/alertBanner';
 import type {
   AddServerResult,
   BrowserIpcVoidResult,
@@ -146,6 +155,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // when `dismissible` is set and dispatches a cancelable `close` on click;
   // this module prevents the default so it keeps full control of `open`.
   const messageElement = createBannerRow('browser-toolbar-message');
+  configureBannerTransition(messageElement, BANNER_TRANSITION_DURATION_MS);
 
   // Loading text shown inside the banner — the indefinite progress bar
   // animation is rendered via CSS in browser.css, so no spinner is needed.
@@ -214,13 +224,26 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   //     errors).
   //  5. Closed (idle) — no active load and nothing to display.
   //
-  // Opening and closing are instant (`open` toggles `display` on the
-  // component) - no slide animation. Loading is debounced by
-  // `LOADING_BANNER_DELAY_MS`: a sustained load arms a timer; if the load
-  // ends before the timer fires the banner is never shown (and no layout
-  // shift occurs). Error and idle transitions apply immediately. The loading
-  // presentation is never dismissible: the close control is reserved for
-  // error/prompt rows, where dismissing clears the error copy or the prompt.
+  // Opening and closing animate the row's block-size (the shared
+  // `lib/alertBanner.ts` helpers + `banner.css`), so the native view's
+  // reserved rectangle above it shrinks/grows gradually instead of snapping.
+  // `open` stays set for the collapse's duration; the content is cleared when
+  // the animation completes. Loading is debounced by `LOADING_BANNER_DELAY_MS`:
+  // a sustained load arms a timer; if the load ends before the timer fires the
+  // banner is never shown (and no layout shift occurs). Error and idle
+  // transitions start immediately (their own reveal/collapse then runs). The
+  // loading presentation is never dismissible: the close control is reserved
+  // for error/prompt rows, where dismissing clears the error copy or the
+  // prompt.
+
+  let bannerHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cancelBannerHide(): void {
+    if (bannerHideTimer !== null) {
+      clearTimeout(bannerHideTimer);
+      bannerHideTimer = null;
+    }
+  }
 
   /** True when the `--loading` class + loading content are actively applied. */
   function isLoadingPresentationShown(): boolean {
@@ -234,21 +257,59 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
   }
 
+  /**
+   * The DOM-side closure: `open`/`dismissible` off, children cleared, any
+   * in-flight collapse unwound. Called when the collapse animation completes
+   * (or synchronously under reduced motion).
+   */
+  function finalizeBannerHide(): void {
+    cancelBannerHide();
+    messageElement.classList.remove('browser-toolbar-message--loading');
+    restoreBannerRow(messageElement);
+    messageElement.removeAttribute('dismissible');
+    messageElement.removeAttribute('open');
+    messageElement.replaceChildren();
+  }
+
+  /** Starts (or immediately completes) the collapse of the current row. */
+  function hideBanner(): void {
+    // Already collapsing: leave the animation (and its teardown timer) alone.
+    if (isBannerClosing(messageElement)) return;
+    if (!messageElement.hasAttribute('open') || !collapseBannerRow(messageElement)) {
+      finalizeBannerHide();
+      return;
+    }
+    bannerHideTimer = setTimeout(finalizeBannerHide, BANNER_TRANSITION_DURATION_MS);
+  }
+
+  /**
+   * Shows `children` in the row. The reveal plays only when the row was not
+   * already showing (a content swap - loading -> error - keeps the current
+   * height); a row caught mid-collapse is restored in place so the new content
+   * does not replay the reveal from zero.
+   */
+  function showBanner(children: readonly Node[], loading: boolean): void {
+    cancelBannerHide();
+    const wasClosing = isBannerClosing(messageElement);
+    const wasVisible = messageElement.hasAttribute('open') && !wasClosing;
+    messageElement.classList.toggle('browser-toolbar-message--loading', loading);
+    if (loading) messageElement.removeAttribute('dismissible');
+    else messageElement.setAttribute('dismissible', '');
+    messageElement.replaceChildren(...children);
+    messageElement.setAttribute('open', '');
+    if (wasClosing) restoreBannerRow(messageElement);
+    else if (!wasVisible) revealBannerRow(messageElement);
+  }
+
   function applyLoadingPresentation(): void {
     cancelLoadingBanner();
-    messageElement.classList.add('browser-toolbar-message--loading');
-    messageElement.removeAttribute('dismissible');
-    messageElement.replaceChildren(loadingSpan, progressTrack);
-    messageElement.setAttribute('open', '');
+    showBanner([loadingSpan, progressTrack], true);
     setNavMode('stop');
   }
 
   function applyErrorPresentation(): void {
     cancelLoadingBanner();
-    messageElement.classList.remove('browser-toolbar-message--loading');
-    messageElement.setAttribute('dismissible', '');
-    messageElement.replaceChildren(document.createTextNode(errorText ?? ''));
-    messageElement.setAttribute('open', '');
+    showBanner([document.createTextNode(errorText ?? '')], false);
     setNavMode('refresh');
   }
 
@@ -264,8 +325,6 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // server's persisted entry; approving never creates a server.
   function applyCertificatePromptPresentation(): void {
     cancelLoadingBanner();
-    messageElement.classList.remove('browser-toolbar-message--loading');
-    messageElement.setAttribute('dismissible', '');
     const info = blockedCertificate;
     if (info === null) return;
 
@@ -278,8 +337,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       void allowBlockedCertificate(info, matchingHost);
     });
 
-    messageElement.replaceChildren(...buildBannerPrompt(describeBlockedCertificate(), [okButton]));
-    messageElement.setAttribute('open', '');
+    showBanner(buildBannerPrompt(describeBlockedCertificate(), [okButton]), false);
     setNavMode('refresh');
   }
 
@@ -324,8 +382,6 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // status strip, not a blocking dialog.
   function applyUnknownOriginPromptPresentation(): void {
     cancelLoadingBanner();
-    messageElement.classList.remove('browser-toolbar-message--loading');
-    messageElement.setAttribute('dismissible', '');
     const prompt = unknownOriginPrompt;
     if (prompt === null) return;
 
@@ -334,8 +390,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       void addOriginServer(prompt);
     });
 
-    messageElement.replaceChildren(...buildBannerPrompt(describeUnknownOrigin(), [okButton]));
-    messageElement.setAttribute('open', '');
+    showBanner(buildBannerPrompt(describeUnknownOrigin(), [okButton]), false);
     setNavMode('refresh');
   }
 
@@ -363,17 +418,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     handleVoidResult(navigation);
   }
 
-  /** Clears the banner's open state, class and content without touching the Refresh/Stop mode. */
-  function clearBannerContent(): void {
-    messageElement.classList.remove('browser-toolbar-message--loading');
-    messageElement.removeAttribute('dismissible');
-    messageElement.removeAttribute('open');
-    messageElement.replaceChildren();
-  }
-
   function applyIdlePresentation(): void {
     cancelLoadingBanner();
-    clearBannerContent();
+    hideBanner();
     setNavMode('refresh');
   }
 
@@ -401,14 +448,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // window and never move the layout.  Anything else (error, idle,
     // dismiss) applies / cancels immediately.
     if (loading) {
-      if (isLoadingPresentationShown()) {
-        // Banner already visible — nothing to do.
+      if (isLoadingPresentationShown() && !isBannerClosing(messageElement)) {
+        // Banner already visible — nothing to do. (A row mid-collapse is not
+        // "visible": it is on its way out, so a new load re-arms below.)
       } else if (loadingBannerTimer === null) {
-        // A stale error/prompt row is superseded by this load and must go the
-        // instant it starts, even though the loading presentation itself is
-        // debounced (a quick load then leaves the banner area empty, not
-        // showing the previous row).
-        clearBannerContent();
+        // A stale error/prompt row is superseded by this load and collapses
+        // away, even though the loading presentation itself is debounced (a
+        // quick load then leaves the banner area empty, not showing the
+        // previous row).
+        hideBanner();
         loadingBannerTimer = setTimeout(() => {
           loadingBannerTimer = null;
           const stillLoading =
@@ -808,6 +856,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
     dispose(): void {
       cancelLoadingBanner();
+      cancelBannerHide();
       unsubscribeState();
       unsubscribeSwitch();
       unsubscribeBlocked();
