@@ -80,6 +80,16 @@ export interface CopilotRuntimeManager {
    * provide for itself.
    */
   getClient(): CopilotClient;
+  /**
+   * Resolves once the runtime's current install - the first `start` or the
+   * most recent `reconcile`/`refresh` - has settled, so a caller that must
+   * read through the *new* client can wait for it instead of observing a
+   * not-yet-started one mid-recycle. Never rejects: a failed install is
+   * reported through the client's own unstarted state (see `install`'s
+   * `inFlight = run.catch(...)`), and the reader's own call then fails
+   * honestly rather than the wait throwing.
+   */
+  whenReady(): Promise<void>;
   /** First startup. `settings` seeds which proxy the runtime is started with. */
   start(settings: AppSettings | undefined): Promise<void>;
   /** Recycles the runtime if - and only if - `settings` changed something that shapes it. */
@@ -136,6 +146,8 @@ export function createCopilotRuntimeManager(
 
   return {
     getClient: () => client,
+
+    whenReady: () => inFlight,
 
     start: (settings) => install(settings),
 

@@ -870,7 +870,13 @@ export interface AgentSettingsDependencies {
  *     `unsupported_reasoning_effort` - the same catalogue validation
  *     `settings:set-model-preferences` performs, against the model/effort the
  *     document would hold *after* this change (so setting an effort alone is
- *     checked against the model already stored).
+ *     checked against the model already stored). Consulted only when the
+ *     request actually chooses a model or an effort: a proxy or
+ *     active-provider change must be persistable even when the catalogue
+ *     cannot be read, because that is exactly the state a user is in when
+ *     changing the proxy to restore connectivity. Validating the *stored*
+ *     model against the *old* runtime's unreadable catalogue is what used to
+ *     refuse the very write that would have fixed the connection.
  *
  * Clearing (`model: null`, `proxy: null`) skips catalogue validation for that
  * field: reverting to "let Copilot choose" must stay possible even when the
@@ -920,6 +926,14 @@ export async function setAgentSettings(
     }
   }
 
+  // Catalogue validation applies only when this request actually chooses a
+  // model or a reasoning effort. A proxy or active-provider change is about
+  // *reaching* Copilot, not about which model to use, so it must be persistable
+  // while the catalogue is unreadable - which is precisely the state a user is
+  // in when changing the proxy to fix connectivity. Refusing the proxy write
+  // because the old runtime cannot read the catalogue is backwards.
+  const choosesModelOrEffort = changes.model !== undefined || changes.reasoningEffort !== undefined;
+
   // The model/effort the document would hold after this change, so a change to
   // either alone is validated against the other as it currently stands.
   const effectiveModel =
@@ -935,7 +949,7 @@ export async function setAgentSettings(
         ? undefined
         : changes.reasoningEffort;
 
-  if (effectiveModel !== undefined) {
+  if (choosesModelOrEffort && effectiveModel !== undefined) {
     const catalog = await deps.loadCatalog();
     if (!catalog.ok) {
       return {

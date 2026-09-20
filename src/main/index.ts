@@ -330,10 +330,13 @@ if (!gotSingleInstanceLock) {
     let fakeAgentService: FakeAgentService | undefined = undefined;
 
     // Resolved per call, not captured: the Copilot client is started - and on
-    // a proxy change, restarted - well after this registration runs, so an
-    // early Settings open legitimately finds no catalogue and must say so
-    // rather than fail (see `getModelSelection`). Shared by the step-09 model
-    // channels and the agents channel: both read the one catalogue.
+    // a proxy change, restarted - well after this registration runs. A read
+    // waits for that (re)install via `whenReady()` and then reads whatever
+    // client is current, so an early Settings open waits for the runtime
+    // rather than reporting a catalogue failure; a genuinely unreadable
+    // catalogue still comes back as `err` and is reported honestly (see
+    // `getModelSelection`). Shared by the step-09 model channels and the
+    // agents channel: both read the one catalogue.
     const loadCatalog = async (): Promise<
       Result<readonly ModelCatalogEntry[], { readonly message: string }>
     > => {
@@ -341,12 +344,20 @@ if (!gotSingleInstanceLock) {
       // catalogue to read; a fixed one keeps the section exercisable.
       // Unreachable when packaged - see `shouldUseFakeAgentService`.
       if (useFakeAgentService) return ok(fakeModelCatalog());
-      const client = runtimeManager?.getClient();
-      return client === undefined
-        ? err({
-            message: 'Copilot is still starting. Reopen Settings in a moment.',
-          })
-        : loadModelCatalog(client);
+      if (runtimeManager === undefined) {
+        return err({
+          message: 'Copilot is still starting. Reopen Settings in a moment.',
+        });
+      }
+      // Wait out an in-flight (re)install before reading. A proxy change
+      // recycles the runtime, and reading the freshly-created client before
+      // its `start()` has resolved fails the catalogue even though the runtime
+      // is seconds from being usable - which is what made a proxy switch show
+      // a spurious "could not retrieve the list of models" instead of the new
+      // runtime's catalogue. `whenReady()` never rejects, so a failed install
+      // still reaches the honest `loadModelCatalog` failure below.
+      await runtimeManager.whenReady();
+      return loadModelCatalog(runtimeManager.getClient());
     };
     // Step 09's "disable changes during an active turn". Read through the
     // gated controller so it answers honestly ("starting", hence not in a

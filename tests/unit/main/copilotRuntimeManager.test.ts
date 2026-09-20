@@ -240,6 +240,80 @@ describe('createCopilotRuntimeManager', () => {
     expect(manager.getClient()).toMatchObject({ tag: 'proxied-2' });
   });
 
+  it('whenReady resolves before any startup has been requested', async () => {
+    const h = createHarness();
+    const manager = createCopilotRuntimeManager(h.deps);
+
+    await expect(manager.whenReady()).resolves.toBeUndefined();
+  });
+
+  it('whenReady does not settle until the in-flight install has settled', async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = createHarness({
+      resolveProxyOverrides: vi.fn(async () => {
+        await gate;
+        return undefined;
+      }),
+    });
+    const manager = createCopilotRuntimeManager(h.deps);
+
+    const started = manager.start(settingsWith());
+    let ready = false;
+    const readyPromise = manager.whenReady().then(() => {
+      ready = true;
+    });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+
+    release?.();
+    await started;
+    await readyPromise;
+    expect(ready).toBe(true);
+  });
+
+  it('a reader that awaits whenReady sees the recycled client, not the replaced one', async () => {
+    // This is the model-catalogue read path: after a proxy change the runtime
+    // recycles, and reading through `getClient()` before the new client has
+    // started fails. Awaiting `whenReady()` must land on the new client.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resolveProxyOverrides = vi
+      .fn<(settings: AppSettings | undefined) => Promise<ProxyEnvOverrides | undefined>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => {
+        await gate;
+        return PROXY_ENV;
+      });
+    const h = createHarness({ resolveProxyOverrides });
+    const manager = createCopilotRuntimeManager(h.deps);
+    await manager.start(settingsWith());
+    const before = manager.getClient();
+
+    const recycle = manager.reconcile(settingsWith({ proxy: 'proxy-1' as ProxyId }));
+    const seen = manager.whenReady().then(() => manager.getClient());
+    await Promise.resolve();
+    release?.();
+    await recycle;
+
+    expect(await seen).toBe(manager.getClient());
+    expect(await seen).not.toBe(before);
+  });
+
+  it('whenReady resolves rather than rejects after a failed install', async () => {
+    const h = createHarness({
+      resolveProxyOverrides: vi.fn(() => Promise.reject(new Error('secret store unavailable'))),
+    });
+    const manager = createCopilotRuntimeManager(h.deps);
+
+    await expect(manager.start(settingsWith())).rejects.toThrow('secret store unavailable');
+    await expect(manager.whenReady()).resolves.toBeUndefined();
+  });
+
   it('serializes concurrent recycles instead of interleaving them', async () => {
     let releaseFirst: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
