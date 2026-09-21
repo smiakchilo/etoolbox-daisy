@@ -31,7 +31,12 @@
   flex: 0 0 auto;
   justify-content: space-between;
   min-height: 64px;
-  padding: 6px 16px 6px 12px;
+  /* Left padding (12px) is the title's visual inset. The close button's glyph
+     is a 32px icon carrying its own 7px inset (Spectrum's
+     `component-edge-to-visual-only-100` of 8px minus the 1px border), so the
+     right padding is trimmed to 5px to give the cross the same 12px visual
+     margin to the panel edge (verified by measuring the built app). */
+  padding: 6px 5px 6px 12px;
 }
 
 .panel__title {
