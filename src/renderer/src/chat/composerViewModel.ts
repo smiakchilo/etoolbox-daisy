@@ -18,11 +18,11 @@ export interface ComposerStatus {
   readonly serviceState: AgentServiceLifecycleState;
   readonly session: SessionStatus;
   /**
-   * Whether a *usable* agent is currently selected (see
-   * `isAgentActive` in `src/shared/contracts/agents.ts`): either a provider
-   * that needs no authentication, or one that needs it and is signed in. When
-   * false, the chat pane shows its own "activate an agent" banner instead of
-   * the composer's inline notice, so this state disables Send silently.
+   * Whether an agent is actually active right now (see
+   * `resolveEffectiveActiveAgentId` in `src/shared/contracts/agents.ts`): the
+   * configured provider when eligible, else the first eligible one, else none.
+   * When false, the chat pane shows its own "activate an agent" banner instead
+   * of the composer's inline notice, so this state disables Send silently.
    */
   readonly agentActive: boolean;
 }

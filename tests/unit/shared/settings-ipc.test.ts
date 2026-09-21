@@ -32,6 +32,20 @@ describe('passwordTargetSchema', () => {
     expect(() => passwordTargetSchema.parse({ kind: 'proxy', proxyId })).not.toThrow();
   });
 
+  it('accepts an agent target', () => {
+    expect(() => passwordTargetSchema.parse({ kind: 'agent', agentId: 'copilot' })).not.toThrow();
+  });
+
+  it('rejects an agent target missing agentId', () => {
+    expect(() => passwordTargetSchema.parse({ kind: 'agent' })).toThrow();
+  });
+
+  it('rejects an agent target carrying an extra key', () => {
+    expect(() =>
+      passwordTargetSchema.parse({ kind: 'agent', agentId: 'copilot', proxyId }),
+    ).toThrow();
+  });
+
   it('rejects an unknown kind', () => {
     expect(() => passwordTargetSchema.parse({ kind: 'somethingElse' })).toThrow();
   });

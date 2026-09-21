@@ -6,7 +6,12 @@ import type {
   SaveOutcome,
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
-import { parseAppSettingsSnapshot, type AppSettingsSnapshot } from '../../../../src/shared';
+import {
+  parseAppSettingsSnapshot,
+  type AgentDefinition,
+  type AgentId,
+  type AppSettingsSnapshot,
+} from '../../../../src/shared';
 
 /**
  * The Agents section's DOM, in jsdom.
@@ -32,13 +37,17 @@ let dom: JSDOM;
 const getAuthStatus = vi.fn();
 const getModelSelection = vi.fn();
 const setAgentSettings = vi.fn();
+const setPassword = vi.fn();
+const clearPassword = vi.fn();
 
 let status: StatusBannerSink;
 let reportSave: (outcome: Promise<SaveOutcome>) => void;
 let onSettingsChanged: () => void;
 
 /** A snapshot with only the providers named - hosts, proxies and browser flags are irrelevant here. */
-function snapshotWith(agents: Record<string, { active: boolean }>): AppSettingsSnapshot {
+function snapshotWith(
+  agents: Record<string, { active: boolean; hasToken?: boolean }>,
+): AppSettingsSnapshot {
   return parseAppSettingsSnapshot({
     hosts: [],
     proxies: [],
@@ -52,14 +61,21 @@ async function flush(): Promise<void> {
   for (let tick = 0; tick < 4; tick += 1) await Promise.resolve();
 }
 
-function buildSection() {
-  return createAgentsSection({ status, reportSave, onSettingsChanged });
+function buildSection(definitions?: readonly AgentDefinition[]) {
+  return createAgentsSection({
+    status,
+    reportSave,
+    onSettingsChanged,
+    ...(definitions === undefined ? {} : { definitions }),
+  });
 }
 
 beforeEach(() => {
   getAuthStatus.mockReset();
   getModelSelection.mockReset();
   setAgentSettings.mockReset();
+  setPassword.mockReset();
+  clearPassword.mockReset();
 
   // Signed out: the pickers are inert, and the auth action is "Sign in".
   getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: false });
@@ -74,6 +90,8 @@ beforeEach(() => {
     },
   });
   setAgentSettings.mockResolvedValue({ ok: true });
+  setPassword.mockResolvedValue({ ok: true });
+  clearPassword.mockResolvedValue({ ok: true });
 
   status = {
     showStatus: vi.fn(),
@@ -89,7 +107,7 @@ beforeEach(() => {
   Reflect.set(globalThis, 'window', dom.window);
   Reflect.set(dom.window, 'daisy', {
     agent: { getAuthStatus },
-    settings: { getModelSelection, setAgentSettings },
+    settings: { getModelSelection, setAgentSettings, setPassword, clearPassword },
   });
 });
 
@@ -100,7 +118,8 @@ afterEach(() => {
 });
 
 describe('createAgentsSection', () => {
-  it('states that the active provider is active, with a badge instead of a control', async () => {
+  it('badges the signed-in provider that is actually active', async () => {
+    getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: true, login: 'octocat' });
     const section = buildSection();
     await section.refresh(snapshotWith({ copilot: { active: true } }));
 
@@ -113,30 +132,59 @@ describe('createAgentsSection', () => {
     );
   });
 
-  it('offers the one control that would activate a provider the settings file does not', async () => {
-    // A legal hand-edited document: a provider this build does not compile in
-    // is named active, so the compiled-in one is rendered as inactive.
+  it('shows no badge and a disabled control while the provider is signed out', async () => {
+    // Signed out, the configured provider is not eligible, so nothing is
+    // active: the badge must not claim otherwise, and "Set active" stays inert
+    // until a sign-in makes it eligible. The sign-in action is still offered.
     const section = buildSection();
-    await section.refresh(snapshotWith({ copilot: { active: false }, opencode: { active: true } }));
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
 
+    expect(section.element.querySelector('.agent-item__active')).toBeNull();
     const setActive = section.element.querySelector('.agent-item__set-active');
     expect(setActive?.tagName.toLowerCase()).toBe('sp-action-button');
     expect(setActive?.textContent).toBe('Set active');
-    expect(section.element.querySelector('.agent-item__active')).toBeNull();
-    // A non-active provider has no runtime, so it offers no auth action at all.
-    expect(section.element.querySelector('.agent-item__action')).toBeNull();
+    expect(setActive?.hasAttribute('disabled')).toBe(true);
+    expect(section.element.querySelector('.agent-item__action')?.textContent).toBe('Sign in');
   });
 
-  it('persists the active choice when Set active is clicked', async () => {
+  it('does not persist an activation for a provider that cannot be active', async () => {
     const section = buildSection();
-    await section.refresh(snapshotWith({ copilot: { active: false }, opencode: { active: true } }));
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
 
     const setActive = section.element.querySelector('.agent-item__set-active');
+    // Bypasses the disabled attribute the way a stray programmatic click would;
+    // the guard, not the attribute, must be what refuses the write.
+    setActive?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    expect(setAgentSettings).not.toHaveBeenCalled();
+    expect(onSettingsChanged).not.toHaveBeenCalled();
+  });
+
+  it('activates an eligible provider that is not the active one', async () => {
+    // Two auth-free providers: the configured one is active, the other is
+    // eligible but not active - the one case where "Set active" is live.
+    const localA: AgentDefinition = {
+      id: 'local-a' as AgentId,
+      label: 'Local A',
+      requiresAuth: false,
+    };
+    const localB: AgentDefinition = {
+      id: 'local-b' as AgentId,
+      label: 'Local B',
+      requiresAuth: false,
+    };
+    const section = buildSection([localA, localB]);
+    await section.refresh(snapshotWith({ 'local-a': { active: true } }));
+
+    const second = section.element.querySelectorAll('.agent-item')[1];
+    const setActive = second?.querySelector('.agent-item__set-active');
+    expect(setActive?.hasAttribute('disabled')).toBe(false);
     setActive?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
 
     expect(setAgentSettings).toHaveBeenCalledWith({
-      agentId: 'copilot',
+      agentId: 'local-b',
       changes: { active: true },
     });
     expect(onSettingsChanged).toHaveBeenCalledTimes(1);
@@ -174,7 +222,86 @@ describe('createAgentsSection', () => {
       [...section.element.querySelectorAll('.host-field sp-field-label')].map(
         (label) => label.textContent,
       ),
-    ).toEqual(['Proxy', 'Model', 'Reasoning effort']);
+    ).toEqual(['Token', 'Proxy', 'Model', 'Reasoning effort']);
+  });
+
+  it('renders a Token field whose Set/Clear actions target the agent', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const control = section.element.querySelector('.password-control');
+    expect(control).not.toBeNull();
+    expect(control?.querySelector('sp-textfield')?.getAttribute('aria-label')).toBe('Token');
+    const buttons = [...(control?.querySelectorAll('sp-action-button') ?? [])];
+    expect(buttons.map((button) => button.textContent)).toEqual(['Set', 'Clear']);
+    for (const button of buttons) expect(button.hasAttribute('quiet')).toBe(true);
+  });
+
+  it('sets a token through setPassword targeting the agent, and clears the field', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const field = section.element.querySelector('.password-control sp-textfield') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'ghp_secret';
+    const setButton = [
+      ...section.element.querySelectorAll('.password-control sp-action-button'),
+    ].find((button) => button.textContent === 'Set');
+    setButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    expect(setPassword).toHaveBeenCalledExactlyOnceWith(
+      { kind: 'agent', agentId: 'copilot' },
+      'ghp_secret',
+    );
+    expect(field.value).toBe('');
+  });
+
+  it('clears a token through clearPassword targeting the agent', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const clearButton = [
+      ...section.element.querySelectorAll('.password-control sp-action-button'),
+    ].find((button) => button.textContent === 'Clear');
+    clearButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    expect(clearPassword).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'copilot' });
+  });
+
+  it('treats a stored token as authenticated and active, with a positive status light', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true, hasToken: true } }));
+
+    expect(section.element.querySelector('.agent-item__active')?.textContent).toBe('(active)');
+    const light = section.element.querySelector('.agent-item__auth sp-status-light');
+    expect(light?.getAttribute('variant')).toBe('positive');
+    expect(light?.textContent).toBe('Authenticated with token');
+  });
+
+  it('offers "Sign in", not "Sign out", when the stored token is what authenticates the runtime', async () => {
+    // The runtime resolves the injected COPILOT_GITHUB_TOKEN before the vault
+    // session, so a token-only setup reports `authType: "env"`. The status row
+    // still says "Authenticated with token", but the action must describe the
+    // (absent) interactive session - a local sign-out would change nothing.
+    getAuthStatus.mockResolvedValue({
+      apiVersion: 1,
+      isAuthenticated: true,
+      authType: 'env',
+      login: 'octocat',
+    });
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true, hasToken: true } }));
+
+    const light = section.element.querySelector('.agent-item__auth sp-status-light');
+    expect(light?.getAttribute('variant')).toBe('positive');
+    expect(light?.textContent).toBe('Authenticated with token');
+
+    const actions = section.element.querySelectorAll('.agent-item__action');
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.textContent).toBe('Sign in');
   });
 
   it('updates the provider row in place instead of rebuilding its pickers', async () => {

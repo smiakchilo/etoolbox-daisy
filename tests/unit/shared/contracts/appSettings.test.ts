@@ -171,6 +171,37 @@ describe('appSettingsSchema', () => {
         appSettingsSchema.parse({ ...validSettings(), proxies: [proxy, proxy] }),
       ).toThrow();
     });
+
+    it('accepts an agent token reference and rejects a plaintext token', () => {
+      const accepted = {
+        ...validSettings(),
+        agents: {
+          [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: 'agent-token:copilot' } },
+        },
+      };
+      expect(appSettingsSchema.parse(accepted)).toEqual(accepted);
+
+      expect(() =>
+        appSettingsSchema.parse({
+          ...validSettings(),
+          agents: { [DEFAULT_AGENT_ID]: { active: true, token: 'ghp_plaintext' } },
+        }),
+      ).toThrow();
+    });
+
+    it('rejects a token object carrying an extra key', () => {
+      expect(() =>
+        appSettingsSchema.parse({
+          ...validSettings(),
+          agents: {
+            [DEFAULT_AGENT_ID]: {
+              active: true,
+              token: { secretRef: 'agent-token:copilot', token: 'leak' },
+            },
+          },
+        }),
+      ).toThrow();
+    });
   });
 });
 

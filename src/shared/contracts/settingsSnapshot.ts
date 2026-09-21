@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import {
-  agentSettingsSchema,
   browserSettingsSchema,
+  modelIdSchema,
+  reasoningEffortSchema,
+  type AgentSettings,
   type AppSettings,
   type ProxyConfig,
 } from './appSettings';
@@ -94,15 +96,24 @@ export const serverSnapshotSchema = z
 export type ServerSnapshot = Readonly<z.infer<typeof serverSnapshotSchema>>;
 
 /**
- * The renderer-safe projection of the `agents` map. It is structurally
- * identical to the persisted {@link agentSettingsSchema} - an agent's active
- * flag, proxy reference, model and effort carry no secret material - so it
- * reuses that schema rather than duplicating it and risking the two drifting
- * apart. The only thing projection changes is *where* the proxy's password
- * check lives: the referenced entry's `hasPassword` is read from `proxies`
- * below, exactly as a host's is.
+ * The renderer-safe projection of the `agents` map's value. Deliberately
+ * *not* an alias of the persisted {@link agentSettingsSchema}, because one
+ * field differs: the persisted `token` is a `secretRef` pointer that must
+ * never reach the renderer, so it is replaced here by the resolved
+ * `hasToken` boolean (exactly as `ProxyCredentialsSnapshot` replaces a
+ * password `secretRef` with `hasPassword`). Every other field - `active`,
+ * `proxy`, `model`, `reasoningEffort` - is carried through unchanged; none of
+ * them is secret.
  */
-export const agentSettingsSnapshotSchema = agentSettingsSchema;
+export const agentSettingsSnapshotSchema = z
+  .object({
+    active: z.boolean(),
+    proxy: proxyIdSchema.optional(),
+    model: modelIdSchema.optional(),
+    reasoningEffort: reasoningEffortSchema.optional(),
+    hasToken: z.boolean().default(false),
+  })
+  .strict();
 
 export type AgentSettingsSnapshot = Readonly<z.infer<typeof agentSettingsSnapshotSchema>>;
 
@@ -176,6 +187,19 @@ function toProxySnapshot(proxy: ProxyConfig, hasStoredSecret: HasStoredSecret): 
 }
 
 /**
+ * Maps one persisted agent node to its secret-free snapshot: the `token`
+ * pointer is dropped and replaced by `hasToken`, resolved through the same
+ * `hasStoredSecret` predicate the proxy credentials use.
+ */
+function toAgentSnapshot(node: AgentSettings, hasStoredSecret: HasStoredSecret): unknown {
+  const { token, ...rest } = node;
+  return {
+    ...rest,
+    hasToken: token !== undefined && hasStoredSecret(token.secretRef),
+  };
+}
+
+/**
  * Maps persisted {@link AppSettings} to the secret-free {@link AppSettingsSnapshot}
  * the renderer is allowed to see. Pure: no Electron, no filesystem, no secret
  * store - `hasStoredSecret` is the one piece of information this function
@@ -202,10 +226,15 @@ export function toAppSettingsSnapshot(
 
   const proxies = settings.proxies.map((proxy) => toProxySnapshot(proxy, hasStoredSecret));
 
+  const agents: Record<string, unknown> = {};
+  for (const [id, node] of Object.entries(settings.agents)) {
+    agents[id] = toAgentSnapshot(node, hasStoredSecret);
+  }
+
   const document: Record<string, unknown> = {
     hosts,
     proxies,
-    agents: settings.agents,
+    agents,
     browser: settings.browser,
   };
 

@@ -22,10 +22,10 @@ import {
  *   Agents tab (`sp-tabs` selection is shadow-DOM behaviour).
  *
  * The fake starts signed in, so the test signs out mid-run: main hears
- * immediately (`onAuthStateChanged`), and the renderer follows on its next
- * `getStatus()` poll (up to 15s, `chatPane.ts`), which is exactly the state
- * this test is about. Deliberately no `chat-banner` assertion is made until
- * that poll has had time to run.
+ * immediately (`onAuthStateChanged`) and pushes the new status to the renderer
+ * (`agent-chat:status-changed`), so the banner/Send state follows at once -
+ * this run finishes in ~1s rather than waiting out `chatPane.ts`'s fallback
+ * status poll.
  *
  * Run against the BUILT app (this file never builds it):
  *   npm run build
@@ -81,7 +81,7 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
     // The fake starts signed in: no banner, Send enabled.
     const send = shell.locator('.chat-composer__send');
     await expect(send).not.toHaveAttribute('disabled', '', { timeout: 60_000 });
-    await expect(shell.locator('.chat-banner')).toBeHidden();
+    await expect(shell.locator('.chat-status-banner')).toBeHidden();
     const enabledBackground = await send.evaluate((node) => getComputedStyle(node).backgroundColor);
     // The enabled Send is the accent blue: its blue channel dominates red.
     expect(blueMinusRed(enabledBackground)).toBeGreaterThan(50);
@@ -95,7 +95,7 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
       fake.setAuthState({ apiVersion: 1, isAuthenticated: false });
     }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
 
-    const banner = shell.locator('.chat-banner');
+    const banner = shell.locator('.chat-status-banner');
     await expect(banner).toBeVisible({ timeout: 30_000 });
     await expect(banner).toContainText('Activate an agent in');
     await expect(banner).toContainText('to send messages');

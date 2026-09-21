@@ -57,6 +57,18 @@ function dismiss(banner: StatusBanner): void {
 }
 
 describe('createStatusBanner single slot', () => {
+  it('carries a caller-supplied surface class (the chat status row) and defaults to the Settings one', () => {
+    const settings = createStatusBanner();
+    expect(settings.element.classList.contains('settings-banner')).toBe(true);
+
+    const chat = createStatusBanner({ surfaceClassName: 'chat-status-banner' });
+    expect(chat.element.classList.contains('chat-status-banner')).toBe(true);
+    expect(chat.element.classList.contains('settings-banner')).toBe(false);
+    // The shared base class is what actually styles it; the surface class only
+    // disambiguates the row (e.g. for a Playwright locator while both are open).
+    expect(chat.element.classList.contains('banner-row')).toBe(true);
+  });
+
   it('shows a transient status without a close control and auto-clears it', () => {
     vi.useFakeTimers();
     try {
@@ -230,6 +242,77 @@ describe('createStatusBanner single slot', () => {
     document.body.append(banner.element);
     banner.dispose();
     expect(document.body.contains(banner.element)).toBe(false);
+  });
+});
+
+describe('createStatusBanner standing floor', () => {
+  it('shows standing content only while no presentation is active, and restores it after one clears', () => {
+    const banner = createStatusBanner();
+    banner.setStanding([document.createTextNode('Standing')]);
+    expect(banner.element.hasAttribute('open')).toBe(true);
+    expect(banner.element.textContent).toBe('Standing');
+    // A standing condition is not an error to wave away.
+    expect(banner.element.hasAttribute('dismissible')).toBe(false);
+
+    // The later error takes the single row and suppresses the floor.
+    banner.showError('Later');
+    expect(banner.element.textContent).toBe('Later');
+    expect(banner.element.hasAttribute('dismissible')).toBe(true);
+
+    // Dismissing it returns to the floor - on the same element, never a second
+    // banner stacked beneath it.
+    dismiss(banner);
+    expect(banner.element.textContent).toBe('Standing');
+    expect(banner.element.hasAttribute('dismissible')).toBe(false);
+  });
+
+  it('a standing prompt never displaces a live error, and clearing it leaves the error alone', () => {
+    const banner = createStatusBanner();
+    banner.showError('Later');
+    banner.setStanding([document.createTextNode('Floor')]);
+    expect(banner.element.textContent).toBe('Later');
+
+    banner.setStanding(null);
+    expect(banner.element.textContent).toBe('Later');
+  });
+
+  it('re-asserting the same standing content does not rebuild the row', () => {
+    const banner = createStatusBanner();
+    const standing: readonly Node[] = [document.createTextNode('Floor')];
+    banner.setStanding(standing);
+    const child = banner.element.firstChild;
+
+    banner.setStanding(standing);
+    expect(banner.element.firstChild).toBe(child);
+  });
+
+  it('clear() drops the standing floor and closes the row', () => {
+    vi.useFakeTimers();
+    try {
+      const banner = createStatusBanner();
+      banner.setStanding([document.createTextNode('Floor')]);
+      banner.clear();
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clearing the standing floor collapses the row', () => {
+    vi.useFakeTimers();
+    try {
+      const banner = createStatusBanner();
+      banner.setStanding([document.createTextNode('Floor')]);
+      banner.setStanding(null);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+      expect(banner.element.textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -1,30 +1,34 @@
 import { el } from '../lib/dom';
+import { buildBannerCopy, createBannerActionButton } from '../lib/alertBanner';
 import { createChatToolbar } from './chatToolbar';
 import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
-import { createAgentBanner } from '../chat/agentBanner';
+import { createStatusBanner, type StatusBanner } from '../settings/statusBanner';
 import { computeComposerButtonState, isTurnInFlight } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
 import {
+  AGENT_DEFINITIONS,
   applyAgentEvent,
-  DEFAULT_AGENT_DEFINITION,
-  isAgentActive,
-  newChatId,
-  type AgentDefinition,
+  type AgentChatStatus,
   type AgentServiceLifecycleState,
+  type AgentSettingsSnapshot,
   type ChatId,
+  newChatId,
+  resolveEffectiveActiveAgentId,
   type SessionStatus,
 } from '../../../shared';
 
 export interface ChatPane {
   readonly element: HTMLElement;
   /**
-   * Updates which provider is selected (from the settings snapshot), so the
-   * pane can decide whether a *usable* agent exists and show/hide its
-   * "activate an agent" banner accordingly.
+   * Updates the persisted per-provider flags (from the settings snapshot). The
+   * pane derives which agent is *actually* active - configured-and-eligible,
+   * else the first eligible provider, else none - on every auth change, so the
+   * banner and composer always agree with the Settings badge and with each
+   * other.
    */
-  setActiveAgent(definition: AgentDefinition): void;
+  setAgents(agents: Readonly<Record<string, AgentSettingsSnapshot>>): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -36,16 +40,27 @@ const TRANSCRIPT_REPAINT_INTERVAL_MS = 100;
 const STARTING_POLL_INTERVAL_MS = 500;
 
 /**
- * How often to re-check `getStatus()` once ready, purely to catch an
- * authentication change: there is no renderer-facing push event for it
- * either (`agentChatController.ts` only wires an auth-changed listener
- * internally, main-process side). A focus-triggered poll would catch the
- * common case of the user signing in via another window, but there is no
- * settings-style focus hook wired here yet, so this periodic poll is the
- * only mechanism for now - it also covers the case where the chat window
- * stays focused throughout.
+ * How often to re-check `getStatus()` once ready. A live auth change or a
+ * runtime recycle now arrives immediately on the `agent-chat:status-changed`
+ * push (see `unsubscribeStatus` below); this slow poll is only the fallback
+ * that heals a missed push or a push that failed to parse, so it can afford to
+ * be infrequent.
  */
 const READY_POLL_INTERVAL_MS = 15_000;
+
+/**
+ * The chat pane's single banner row's surface class. Deliberately distinct from
+ * the Settings slot's `settings-banner` and the browser pane's
+ * `browser-toolbar-message`, so the rows never collide in a Playwright
+ * strict-mode locator when Settings is open over the chat pane, and the shared
+ * `banner.css` rules can tell them apart.
+ *
+ * The chat pane owns exactly one `sp-alert-banner`: the standing "no usable
+ * agent" prompt is this row's lowest-priority presentation
+ * (`StatusBanner.setStanding`), so a later error/status suppresses it instead
+ * of stacking a second banner beneath it.
+ */
+const CHAT_STATUS_BANNER_SURFACE_CLASS = 'chat-status-banner';
 
 /**
  * The right-hand chat pane: toolbar, transcript, and composer, wired to the
@@ -65,6 +80,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const transcriptStore: TranscriptStore = createTranscriptStore();
   const transcriptView: TranscriptView = createTranscriptView();
 
+  // The standing "no usable agent" prompt, built once and reused: it is the
+  // banner row's lowest-priority presentation (see `refreshSessionPresentation`
+  // below). The Settings control sits *inside* the sentence, so the copy is a
+  // `buildBannerCopy` span rather than `buildBannerPrompt`'s trailing action
+  // group. Its click handler survives being swapped out and back in, because
+  // the same button node is reused.
+  const agentSettingsButton = createBannerActionButton('Settings');
+  agentSettingsButton.addEventListener('click', () => options.onOpenSettings('agents'));
+  const agentPromptContent: readonly Node[] = [
+    buildBannerCopy(['Activate an agent in ', agentSettingsButton, ' to send messages']),
+  ];
+
   // `browserReady` is never learned by this pane (`AgentChatStatus` does not
   // report it, and `canSendMessage` - see `composerViewModel.ts` - never
   // reads it either); this placeholder is the only field on `SessionStatus`
@@ -73,10 +100,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // the only consumer of this field, and that function is not used here.
   let sessionStatus: SessionStatus = { state: 'idle', authenticated: false, browserReady: false };
   let serviceState: AgentServiceLifecycleState = 'starting';
-  // Until the shell hands over the real snapshot, the default provider is
-  // assumed (GitHub Copilot, which needs a sign-in). `setActiveAgent` replaces
-  // it on every settings reload; the banner stays hidden while `starting`.
-  let activeAgent: AgentDefinition = DEFAULT_AGENT_DEFINITION;
+  // The persisted per-provider flags, replaced on every settings reload. Until
+  // the shell hands over the real snapshot this is empty, so no agent is active
+  // and the banner stays hidden while `starting`; the derivation below turns
+  // these flags plus the live auth status into the actually-active agent.
+  let agents: Readonly<Record<string, AgentSettingsSnapshot>> = {};
   let chatId: ChatId | undefined;
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
@@ -87,21 +115,26 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   let readyPollHandle: ReturnType<typeof setInterval> | undefined;
 
   /**
-   * Projects the authoritative `sessionStatus` onto the two UI surfaces that
-   * depend on "is a turn in flight": the composer's Stop/Send button, and the
-   * transcript's trailing "Thinking" indicator. Both read the same
-   * `isTurnInFlight` predicate so they can never disagree.
+   * Projects the authoritative `sessionStatus` onto the composer's Send/Stop
+   * state, the transcript's trailing "Thinking" indicator, and the single
+   * banner row. All read the same derived facts so they can never disagree.
    */
   function refreshSessionPresentation(): void {
-    // "Active agent" is the UI's word for a *usable* one: a provider that
-    // needs no auth, or one that needs it and is signed in. The banner takes
-    // over the explanation, so the composer is told `agentActive` and is not
-    // asked to word the block itself.
-    const agentActive = isAgentActive(activeAgent, {
+    // "Active agent" is the one derived fact the badge, the composer and the
+    // banner all read: the configured provider when it is eligible, else the
+    // first eligible provider, else none. Eligibility is the provider's own
+    // criterion (an interactive sign-in or a stored token, for Copilot), so
+    // this tracks both auth changes and token presence for free.
+    const activeAgentId = resolveEffectiveActiveAgentId(AGENT_DEFINITIONS, agents, (id) => ({
       isAuthenticated: sessionStatus.authenticated,
-    });
+      hasToken: agents[id]?.hasToken === true,
+    }));
+    const agentActive = activeAgentId !== undefined;
     transcriptStore.setTurnInFlight(isTurnInFlight(sessionStatus.state));
-    agentBanner.setVisible(serviceState === 'ready' && !agentActive);
+    // The standing "no usable agent" prompt is the banner's lowest-priority
+    // presentation: a save/send error taking the same row suppresses it, and it
+    // returns when that clears - never two rows at once.
+    statusBanner.setStanding(serviceState === 'ready' && !agentActive ? agentPromptContent : null);
     composer.setButtonState(
       computeComposerButtonState({
         serviceState,
@@ -128,6 +161,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   function subscribeToEvents(): void {
+    if (unsubscribeEvents !== undefined) return;
     unsubscribeEvents = window.daisy.agentChat.onEvent((event) => {
       // Main already filters the pushed stream to the conversation it
       // currently owns (see `agent-chat-ipc.ts`'s module doc); this check is
@@ -151,56 +185,72 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   async function ensureConversationOpen(id: ChatId): Promise<void> {
     const result = await window.daisy.agentChat.openConversation({ chatId: id });
-    if (!result.ok) {
-      console.error('[daisy] failed to open chat conversation:', result.error);
-    }
+    if (!result.ok) statusBanner.showError(result.error.message);
   }
 
   /**
-   * Re-checks `getStatus()`. On the first call where `serviceState` reads
-   * `"ready"`, this mints (or adopts) the pane's one `ChatId`, opens the
-   * conversation if none is already active, seeds `sessionStatus` from the
-   * reported state, and starts the live event subscription - mirroring
-   * `agentChatController.ts`'s own "seed once, then track via events" split.
-   * Every later call only refreshes `serviceState`/`authenticated`, never
-   * `sessionStatus.state`: that field is owned by the live event stream from
-   * this point on, and a poll response can easily be stale relative to the
-   * very latest event.
+   * Applies one `AgentChatStatus` to the pane - whether it arrived from a poll
+   * or from the `agent-chat:status-changed` push. Idempotent and safe to run
+   * while another read is in flight.
+   *
+   * Two things are reconciled here beyond the reported auth/state:
+   *
+   *  - The pane mints (or adopts) its one `ChatId` the first time the service
+   *    is ready, then opens that conversation if main has none.
+   *  - When main's `activeChatId` no longer matches ours, a runtime recycle has
+   *    disposed the controller that owned our conversation and the fresh one
+   *    starts with none. Re-opening here is what keeps the next send from
+   *    failing with "not the currently open conversation" - and the turn state
+   *    resets with it, because the recycled runtime genuinely has no turn in
+   *    flight.
    */
-  async function refreshStatus(): Promise<void> {
-    const status = await window.daisy.agentChat.getStatus();
+  async function applyStatus(status: AgentChatStatus): Promise<void> {
     serviceState = status.serviceState;
+    if (status.serviceState !== 'ready') {
+      refreshSessionPresentation();
+      return;
+    }
 
-    if (status.serviceState === 'ready') {
-      sessionStatus = { ...sessionStatus, authenticated: status.auth.isAuthenticated };
+    sessionStatus = { ...sessionStatus, authenticated: status.auth.isAuthenticated };
 
-      if (chatId === undefined) {
-        const id = status.activeChatId ?? newChatId(() => crypto.randomUUID());
-        chatId = id;
-        if (status.activeChatId === null) {
-          await ensureConversationOpen(id);
-        }
-        sessionStatus = { ...sessionStatus, state: status.sessionState };
-        subscribeToEvents();
-
-        if (startingPollHandle !== undefined) {
-          clearInterval(startingPollHandle);
-          startingPollHandle = undefined;
-        }
-        readyPollHandle = setInterval(() => void refreshStatus(), READY_POLL_INTERVAL_MS);
+    if (chatId === undefined) {
+      const id = status.activeChatId ?? newChatId(() => crypto.randomUUID());
+      chatId = id;
+      if (status.activeChatId === null) {
+        await ensureConversationOpen(id);
       }
+      sessionStatus = { ...sessionStatus, state: status.sessionState };
+      subscribeToEvents();
+
+      if (startingPollHandle !== undefined) {
+        clearInterval(startingPollHandle);
+        startingPollHandle = undefined;
+      }
+      readyPollHandle ??= setInterval(() => void refreshStatus(), READY_POLL_INTERVAL_MS);
+    } else if (status.activeChatId !== chatId) {
+      sessionStatus = { ...sessionStatus, state: 'idle' };
+      await ensureConversationOpen(chatId);
     }
 
     refreshSessionPresentation();
   }
 
+  async function refreshStatus(): Promise<void> {
+    await applyStatus(await window.daisy.agentChat.getStatus());
+  }
+
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
     if (chatId === undefined) {
-      return { ok: false, message: 'Not connected to Copilot yet.' };
+      statusBanner.showError('Not connected to Copilot yet.');
+      return { ok: false, message: '' };
     }
     const result = await window.daisy.agentChat.sendMessage({ chatId, prompt });
     if (!result.ok) {
-      return { ok: false, message: result.error.message };
+      // The panel's one banner carries the failure; the composer keeps the
+      // typed prompt (see `trySubmit`) and stays silent, so the two never say
+      // the same thing twice.
+      statusBanner.showError(result.error.message);
+      return { ok: false, message: '' };
     }
     transcriptStore.applyUserPrompt(result.turnId, prompt);
     refreshEmptyState();
@@ -210,14 +260,14 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   function onStop(): void {
     if (chatId === undefined) return;
     void window.daisy.agentChat.abort({ chatId }).then((result) => {
-      if (!result.ok) console.error('[daisy] failed to abort turn:', result.error);
+      if (!result.ok) statusBanner.showError(result.error.message);
     });
   }
 
-  const composer = createComposer({ onSend, onStop });
-  const agentBanner = createAgentBanner({
-    onOpenSettings: () => options.onOpenSettings('agents'),
+  const statusBanner: StatusBanner = createStatusBanner({
+    surfaceClassName: CHAT_STATUS_BANNER_SURFACE_CLASS,
   });
+  const composer = createComposer({ onSend, onStop });
 
   const transcript = el('div', {
     attrs: { class: 'chat-transcript' },
@@ -230,7 +280,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       createChatToolbar({ onOpenSettings: () => options.onOpenSettings() }),
       transcript,
       composer.element,
-      agentBanner.element,
+      statusBanner.element,
     ],
   });
 
@@ -243,21 +293,31 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     }
   }, TRANSCRIPT_REPAINT_INTERVAL_MS);
 
+  // A status change is not an `AgentEvent`, so it arrives on its own push
+  // channel. This is what makes a runtime recycle - a proxy/active-provider
+  // change, sign-in/out, a token set/clear - visible to the composer gate and
+  // the open-conversation bookkeeping immediately, instead of up to a poll
+  // interval later. The polls below remain the fallback that survives a missed
+  // push.
+  const unsubscribeStatus = window.daisy.agentChat.onStatusChanged((status) => {
+    void applyStatus(status);
+  });
   startingPollHandle = setInterval(() => void refreshStatus(), STARTING_POLL_INTERVAL_MS);
   void refreshStatus();
 
   return {
     element,
-    setActiveAgent(definition: AgentDefinition): void {
-      activeAgent = definition;
+    setAgents(next: Readonly<Record<string, AgentSettingsSnapshot>>): void {
+      agents = next;
       refreshSessionPresentation();
     },
     dispose(): void {
       unsubscribeEvents?.();
+      unsubscribeStatus();
       clearInterval(repaintTimer);
       if (startingPollHandle !== undefined) clearInterval(startingPollHandle);
       if (readyPollHandle !== undefined) clearInterval(readyPollHandle);
-      agentBanner.dispose();
+      statusBanner.dispose();
       composer.dispose();
     },
   };

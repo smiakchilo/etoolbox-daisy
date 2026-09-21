@@ -113,6 +113,64 @@ describe('toAppSettingsSnapshot', () => {
     expect(snapshot.hosts[0]?.proxy).toBeUndefined();
   });
 
+  it('maps an agent token to hasToken and never emits its secretRef', () => {
+    const settings = appSettingsSchema.parse({
+      hosts: [],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => true);
+
+    expect(snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain(CANARY_SECRET_REF);
+    // Exactly the non-secret fields plus the resolved flag - no `token` pointer.
+    expect(Object.keys(snapshot.agents[DEFAULT_AGENT_ID] ?? {}).sort()).toEqual([
+      'active',
+      'hasToken',
+    ]);
+  });
+
+  it('reports hasToken: false when the predicate says no token is stored', () => {
+    const settings = appSettingsSchema.parse({
+      hosts: [],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => false);
+
+    expect(snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+  });
+
+  it('calls the predicate with the agent token secretRef', () => {
+    const settings = appSettingsSchema.parse({
+      hosts: [],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
+    });
+    const seenRefs: string[] = [];
+
+    toAppSettingsSnapshot(settings, (ref) => {
+      seenRefs.push(ref);
+      return true;
+    });
+
+    expect(seenRefs).toEqual([CANARY_SECRET_REF]);
+  });
+
+  it('defaults hasToken to false for an agent with no token', () => {
+    const settings = appSettingsSchema.parse({
+      hosts: [],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => true);
+
+    expect(snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+  });
+
   it('maps a proxy-library entry with its id and label, and hashes its password', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
@@ -213,6 +271,19 @@ describe('serverSnapshotSchema / appSettingsSnapshotSchema (.strict())', () => {
         proxies: [],
         agents: { [DEFAULT_AGENT_ID]: { active: true } },
         secretsDir: '/should/not/be/here',
+      }),
+    ).toThrow();
+  });
+
+  it('rejects an agent snapshot carrying a token secretRef', () => {
+    expect(() =>
+      appSettingsSnapshotSchema.parse({
+        hosts: [],
+        proxies: [],
+        agents: {
+          [DEFAULT_AGENT_ID]: { active: true, hasToken: true, token: { secretRef: 'x' } },
+        },
+        browser: { disableNativeWebAuthn: true },
       }),
     ).toThrow();
   });

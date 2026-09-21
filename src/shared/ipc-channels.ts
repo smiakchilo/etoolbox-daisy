@@ -101,3 +101,13 @@ export const AGENT_CHAT_ABORT_CHANNEL = 'agent-chat:abort' as const;
 export const AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL = 'agent-chat:close-conversation' as const;
 /** Push channel: main -> renderer, one `AgentEvent` per event, only for the currently open conversation. */
 export const AGENT_CHAT_EVENT_CHANNEL = 'agent-chat:event' as const;
+/**
+ * Push channel: main -> renderer, an `AgentChatStatus` whenever the value
+ * `agent-chat:get-status` would return may have changed *without* a chat
+ * event: the runtime was recycled (a proxy/active-provider change, sign-in/out,
+ * a token set/clear) or the live auth state changed. Without it the pane only
+ * learns of those through its slow periodic poll, so its composer can stay
+ * enabled for far longer than the Settings panel - long enough to send into a
+ * conversation main has already torn down.
+ */
+export const AGENT_CHAT_STATUS_CHANGED_CHANNEL = 'agent-chat:status-changed' as const;

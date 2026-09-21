@@ -1,9 +1,14 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newProxyId, newServerId } from '../../../../src/shared';
-import { defaultAppSettings, DEFAULT_AGENT_ID, type AppSettings } from '../../../../src/shared';
+import {
+  defaultAppSettings,
+  DEFAULT_AGENT_ID,
+  type AgentId,
+  type AppSettings,
+} from '../../../../src/shared';
 import { serverConfigSchema } from '../../../../src/shared';
 import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
@@ -858,5 +863,206 @@ describe('toAppSettingsSnapshot via getSettingsSnapshot never leaks the canary p
     expect(JSON.stringify(result.snapshot)).not.toContain(CANARY_PASSWORD);
     expect(JSON.stringify(directSnapshot)).not.toContain(CANARY_PASSWORD);
     expect(JSON.stringify(directSnapshot)).not.toContain('server:server-a:proxy');
+  });
+});
+
+describe('agent token (setPassword / clearPassword targeting an agent)', () => {
+  const CANARY_TOKEN = 'ghp_CANARY_TOKEN_7f3a91c4';
+  const AGENT_TOKEN_REF = `agent-token:${DEFAULT_AGENT_ID}`;
+
+  it('stores a token, reports hasToken: true, and never leaks the token or its secretRef', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const setResult = await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+      password: CANARY_TOKEN,
+    });
+    expect(setResult).toEqual({ ok: true });
+    // The success result carries no data, so there is nothing to echo back.
+    expect(Object.keys(setResult)).toEqual(['ok']);
+
+    // The deterministic reference was minted and persisted so the snapshot can
+    // resolve it; the secret itself lives only in the store.
+    await expect(secretStore.get(AGENT_TOKEN_REF)).resolves.toBe(CANARY_TOKEN);
+
+    const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
+    expect(snapshotResult.snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(true);
+
+    const serialized = JSON.stringify(snapshotResult);
+    expect(serialized).not.toContain(CANARY_TOKEN);
+    expect(serialized).not.toContain(AGENT_TOKEN_REF);
+  });
+
+  it('overwrites an existing token without minting a second reference', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+      password: 'first-token',
+    });
+    const second = await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+      password: CANARY_TOKEN,
+    });
+
+    expect(second).toEqual({ ok: true });
+    await expect(secretStore.get(AGENT_TOKEN_REF)).resolves.toBe(CANARY_TOKEN);
+  });
+
+  it('clears a token: the reference is removed and the secret deleted', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+    await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+      password: CANARY_TOKEN,
+    });
+
+    const cleared = await clearPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+    });
+
+    expect(cleared).toEqual({ ok: true });
+    await expect(secretStore.get(AGENT_TOKEN_REF)).resolves.toBeUndefined();
+    const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
+    expect(snapshotResult.snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+  });
+
+  it('returns no_token_configured when clearing an agent that has none', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const cleared = await clearPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+    });
+
+    expect(cleared.ok).toBe(false);
+    if (cleared.ok) return;
+    expect(cleared.error.code).toBe('no_token_configured');
+  });
+
+  it('returns agent_not_found for a provider this build does not ship', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const setResult = await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: 'not-shipped' as AgentId },
+      password: CANARY_TOKEN,
+    });
+
+    expect(setResult.ok).toBe(false);
+    if (setResult.ok) return;
+    expect(setResult.error.code).toBe('agent_not_found');
+  });
+
+  it('does not persist a reference when the secret store is unavailable', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(
+      path.join(settingsDir, 'secrets'),
+      createFakeCipher({ available: false }),
+    );
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const setResult = await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+      password: CANARY_TOKEN,
+    });
+
+    expect(setResult.ok).toBe(false);
+    if (setResult.ok) return;
+    expect(setResult.error.code).toBe('secret_storage_unavailable');
+
+    // The failure rolled back: no pointer was left behind, so the snapshot
+    // still reports no token.
+    const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
+    expect(snapshotResult.snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+  });
+});
+
+describe('agent token change notification (onAgentTokenChanged)', () => {
+  const CANARY_TOKEN = 'ghp_CANARY_TOKEN_7f3a91c4';
+
+  it('notifies after a token is stored, so the runtime can recycle', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+    const onAgentTokenChanged = vi.fn();
+
+    const result = await setPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: DEFAULT_AGENT_ID }, password: CANARY_TOKEN },
+      onAgentTokenChanged,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(onAgentTokenChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies after a token is cleared', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+    await setPassword(settingsDir, secretStore, {
+      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
+      password: CANARY_TOKEN,
+    });
+    const onAgentTokenChanged = vi.fn();
+
+    const result = await clearPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: DEFAULT_AGENT_ID } },
+      onAgentTokenChanged,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(onAgentTokenChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not notify for a server proxy password - the runtime never consumes it', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, serverWithProxy('server:server-a:proxy'));
+    const onAgentTokenChanged = vi.fn();
+
+    const result = await setPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'server', serverId: SERVER_ID }, password: CANARY_PASSWORD },
+      onAgentTokenChanged,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(onAgentTokenChanged).not.toHaveBeenCalled();
+  });
+
+  it('does not notify when the token change fails', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(
+      path.join(settingsDir, 'secrets'),
+      createFakeCipher({ available: false }),
+    );
+    await writeSettings(settingsDir, defaultAppSettings());
+    const onAgentTokenChanged = vi.fn();
+
+    const result = await setPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: DEFAULT_AGENT_ID }, password: CANARY_TOKEN },
+      onAgentTokenChanged,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(onAgentTokenChanged).not.toHaveBeenCalled();
   });
 });

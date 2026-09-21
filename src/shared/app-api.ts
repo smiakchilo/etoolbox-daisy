@@ -84,6 +84,12 @@ export interface DaisyAgentChatApi {
   closeConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   /** Subscribes to `agent-chat:event`; returns an unsubscribe function. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
+  /**
+   * Subscribes to `agent-chat:status-changed`, which carries the fresh
+   * `AgentChatStatus` whenever it may have changed without a chat event (a
+   * runtime recycle, or a live auth change). Returns an unsubscribe function.
+   */
+  onStatusChanged(listener: (status: AgentChatStatus) => void): () => void;
 }
 
 export interface DaisyBrowserApi {

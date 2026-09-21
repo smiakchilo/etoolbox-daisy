@@ -563,3 +563,76 @@ describe('createStartupGatedAgentChatController', () => {
     expect(received.length).toBeGreaterThan(0);
   });
 });
+
+describe('AgentChatController.onStatusChanged', () => {
+  it('notifies when the service reports a new auth state', () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const listener = vi.fn();
+    controller.onStatusChanged(listener);
+
+    agentService.setAuthState({ apiVersion: 1, isAuthenticated: false });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops notifying after the listener unsubscribes', () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const listener = vi.fn();
+    const unsubscribe = controller.onStatusChanged(listener);
+
+    unsubscribe();
+    agentService.setAuthState({ apiVersion: 1, isAuthenticated: false });
+
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('notifies when the gated controller installs a delegate - the runtime-recycle signal', async () => {
+    // This is what makes a token set/clear (or a proxy/active-provider change)
+    // visible to the renderer immediately: `replaceDelegate` is the moment the
+    // fresh runtime's auth and (empty) active conversation become current.
+    const gated = createStartupGatedAgentChatController();
+    const listener = vi.fn();
+    gated.onStatusChanged(listener);
+
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller: real } = buildController(agentService);
+    await gated.replaceDelegate(real);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards a delegate's own later auth change to gated listeners", async () => {
+    const gated = createStartupGatedAgentChatController();
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller: real } = buildController(agentService);
+    await gated.replaceDelegate(real);
+    const listener = vi.fn();
+    gated.onStatusChanged(listener);
+
+    agentService.setAuthState({ apiVersion: 1, isAuthenticated: false });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the new delegate, not the replaced one, after a recycle', async () => {
+    const gated = createStartupGatedAgentChatController();
+    const firstService = createFakeAgentService({ idGenerator: counterIdGenerator('first') });
+    const { controller: first } = buildController(firstService);
+    await gated.replaceDelegate(first);
+
+    const secondService = createFakeAgentService({ idGenerator: counterIdGenerator('second') });
+    const { controller: second } = buildController(secondService);
+    await gated.replaceDelegate(second);
+
+    const listener = vi.fn();
+    gated.onStatusChanged(listener);
+    // The detached delegate must no longer reach the gated listeners...
+    firstService.setAuthState({ apiVersion: 1, isAuthenticated: false });
+    expect(listener).not.toHaveBeenCalled();
+    // ...while the current one does.
+    secondService.setAuthState({ apiVersion: 1, isAuthenticated: false });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});

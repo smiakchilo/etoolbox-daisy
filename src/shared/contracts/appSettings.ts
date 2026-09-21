@@ -74,6 +74,27 @@ export const proxyConfigSchema = z
 export type ProxyConfig = Readonly<z.infer<typeof proxyConfigSchema>>;
 
 /**
+ * A provider's stored personal-access-token *reference*. Like a proxy's
+ * {@link proxyCredentialsSchema} this is a pointer, never the token itself:
+ * the plaintext lives in the OS-backed secret store (see
+ * `src/main/secretStore.ts`), and `settings.json` records only the `secretRef`
+ * it is filed under. `.strict()` plus the absence of any `token` string field
+ * means a hand-written plaintext token is rejected by the document schema
+ * rather than silently persisted.
+ *
+ * The presence of this object does not mean a token is actually stored - the
+ * secret may have been cleared underneath it - so the renderer is told a
+ * resolved `hasToken` boolean (see `settingsSnapshot.ts`), never this pointer.
+ */
+export const agentTokenSchema = z
+  .object({
+    secretRef: z.string().min(1).max(200),
+  })
+  .strict();
+
+export type AgentToken = Readonly<z.infer<typeof agentTokenSchema>>;
+
+/**
  * The per-provider half of the Agents settings surface, stored under the
  * provider's own id in the `agents` map below.
  *
@@ -81,8 +102,9 @@ export type ProxyConfig = Readonly<z.infer<typeof proxyConfigSchema>>;
  * `proxy`/`model`/`reasoningEffort` is a natural thing to write, and the whole
  * document failing to load over one missing flag is a needlessly harsh failure
  * for a value whose only job is to answer "which provider?" - and that question
- * already has a well-defined fallback (`activeAgentId` treats "none active" as
- * {@link DEFAULT_AGENT_ID}). The field is therefore required in the parsed
+ * already has a well-defined fallback (`resolveConfiguredAgentId` treats
+ * "none active" as {@link DEFAULT_AGENT_ID}). The field is therefore required
+ * in the parsed
  * output but optional on disk. `proxy`, `model` and `reasoningEffort` are all
  * optional so a node carrying only `active` is still a valid document, and
  * absent means "let the provider choose" (rendered as the `(Auto)` option) -
@@ -92,6 +114,10 @@ export type ProxyConfig = Readonly<z.infer<typeof proxyConfigSchema>>;
  * other place a proxy is selected in this document (`ServerConfig.proxyId`).
  * The key is `proxy`, not `proxyId`, because that is the shape the settings
  * document is specified to use; the two names denote the same reference.
+ *
+ * `token` is the provider's optional personal-access-token reference (see
+ * {@link agentTokenSchema}). It too is optional: a provider authenticated
+ * interactively has no token, and the token's plaintext never appears here.
  */
 export const agentSettingsSchema = z
   .object({
@@ -99,6 +125,7 @@ export const agentSettingsSchema = z
     proxy: proxyIdSchema.optional(),
     model: modelIdSchema.optional(),
     reasoningEffort: reasoningEffortSchema.optional(),
+    token: agentTokenSchema.optional(),
   })
   .strict();
 

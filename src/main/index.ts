@@ -12,7 +12,7 @@ import { registerSettingsIpcHandlers } from './ipc/settings';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
-import { loadSettings, loadSettingsSync, activeAgentId } from './settingsStore';
+import { loadSettings, loadSettingsSync, configuredAgentId } from './settingsStore';
 import { installContentSecurityPolicy } from './csp';
 import { installWebContentsSecurityGuard } from './security';
 import { createAemSession } from './aem';
@@ -46,7 +46,7 @@ import {
   type CopilotClient,
 } from '../agent';
 import { createCopilotRuntimeManager, type CopilotRuntimeManager } from './copilotRuntimeManager';
-import { resolveAgentProxyOverrides } from './agentRuntimeProxy';
+import { resolveAgentGithubToken, resolveAgentProxyOverrides } from './agentRuntimeProxy';
 import {
   createAemGetJsonExecutor,
   createAemQueryExecutor,
@@ -291,13 +291,13 @@ if (!gotSingleInstanceLock) {
     // already uses the stored model, with no disk read on the send path. See
     // `createModelPreferenceCache`'s doc comment. A corrupt settings file
     // yields "no preference", which is the same as a fresh install - never a
-    // guessed model. Read from the *active* provider's node: the model is now
-    // per-provider, not a single global default.
+    // guessed model. Read from the *configured* provider's node: the model is
+    // now per-provider, not a single global default.
     const storedSettings = settingsLoadOutcome.ok ? settingsLoadOutcome.value.settings : undefined;
     const storedAgent =
       storedSettings === undefined
         ? undefined
-        : storedSettings.agents[activeAgentId(storedSettings)];
+        : storedSettings.agents[configuredAgentId(storedSettings)];
     const modelPreferenceCache = createModelPreferenceCache({
       model: storedAgent?.model ?? null,
       reasoningEffort: storedAgent?.reasoningEffort ?? null,
@@ -365,6 +365,21 @@ if (!gotSingleInstanceLock) {
     const isTurnInFlight = (): boolean =>
       isModelSelectionLocked(agentChatController.getStatus().sessionState);
 
+    // Recycles the Copilot runtime after a stored personal-access token has
+    // been set or cleared. The settings document is reloaded rather than
+    // reusing the captured one, because the *first* token set mints its
+    // `secretRef` into settings.json - the captured document would still
+    // describe no token, and `resolveAgentGithubToken` would find none. A
+    // failed reload falls back to the last-known document, which still names
+    // the same `secretRef`; the token's plaintext is re-read from the secret
+    // store either way.
+    const refreshRuntimeAfterTokenChange = async (): Promise<void> => {
+      const loaded = await loadSettings(appPaths.settings);
+      await (loaded.ok
+        ? runtimeManager?.refresh(loaded.value.settings)
+        : runtimeManager?.refresh());
+    };
+
     registerSettingsIpcHandlers({
       settingsDir: appPaths.settings,
       secretStore,
@@ -385,6 +400,16 @@ if (!gotSingleInstanceLock) {
         onAgentSettingsSaved: (settings) => {
           void runtimeManager?.reconcile(settings).catch(() => logger.error('COPILOT_UNAVAILABLE'));
         },
+      },
+      // A stored token is a runtime credential (handed over as
+      // `COPILOT_GITHUB_TOKEN`), so setting or clearing one has to recycle the
+      // runtime - the running process resolved its old credential at start.
+      // Skipped in fake mode: no chat runtime consumes the token there, and
+      // recycling would discard the deterministic fake's state (see
+      // `recycleOnSettingsChange` in `copilotRuntimeManager.ts`).
+      onAgentTokenChanged: () => {
+        if (useFakeAgentService) return;
+        void refreshRuntimeAfterTokenChange().catch(() => logger.error('COPILOT_UNAVAILABLE'));
       },
     });
 
@@ -575,12 +600,21 @@ if (!gotSingleInstanceLock) {
           // Already exited or never started - nothing to clean up.
         }
       },
-      createClient: (proxy) => createHardenedCopilotClient(proxy === undefined ? {} : { proxy }),
+      createClient: ({ proxy, githubToken }) =>
+        createHardenedCopilotClient({
+          ...(proxy !== undefined ? { proxy } : {}),
+          ...(githubToken !== undefined ? { githubToken } : {}),
+        }),
       // A rejection here (secret storage unavailable, ...) aborts the recycle
       // *before* the working runtime is touched - see the manager's own doc
       // comment - so the user keeps a functioning (if stale) runtime rather
       // than none.
       resolveProxyOverrides: (settings) => resolveAgentProxyOverrides(settings, secretStore),
+      // The stored personal-access token, handed to the runtime as
+      // `COPILOT_GITHUB_TOKEN` (the one supported path; ambient tokens stay
+      // stripped - see `buildRuntimeChildEnv`). `undefined` leaves the runtime
+      // to interactive sign-in.
+      resolveGithubToken: (settings) => resolveAgentGithubToken(settings, secretStore),
     });
 
     // Everything above is already fully wired and interactive - nothing the

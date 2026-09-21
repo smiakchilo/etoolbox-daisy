@@ -4,16 +4,25 @@ import { el } from './dom';
  * Shared status/prompt row builder for the shell's three `sp-alert-banner`
  * surfaces: the browser pane's toolbar message (`shell/browserToolbar.ts`),
  * the Settings panel's single status slot (`settings/statusBanner.ts`) and
- * the chat pane's standing "no usable agent" row (`chat/agentBanner.ts`).
+ * the chat pane's single status slot (also `settings/statusBanner.ts`, mounted
+ * by `shell/chatPane.ts`).
  *
- * Each surface keeps its own root class (`.browser-toolbar-message` /
- * `.settings-banner` / `.chat-banner`) as a *surface* class on top of the
- * shared `banner-row` base, because the rows are mounted in the same document
- * at once (Settings opens over the browser pane) and Playwright strict-mode
- * locators rely on each matching exactly one element. Every rule they can
- * honestly share lives in `styles/banner.css` under `.banner-row`; the
- * surface classes carry only what genuinely differs (browser: the loading
- * presentation and its progress line).
+ * Each surface owns exactly one row and keeps its own root class
+ * (`.browser-toolbar-message` / `.settings-banner` / `.chat-status-banner`) as
+ * a *surface* class on top of the shared `banner-row` base, because the rows
+ * are mounted in the same document at once (Settings opens over the browser
+ * pane) and Playwright strict-mode locators rely on each matching exactly one
+ * element. Every rule they can honestly share lives in `styles/banner.css`
+ * under `.banner-row`; the surface classes carry only what genuinely differs
+ * (browser: the loading presentation and its progress line).
+ *
+ * One row per surface is the invariant that keeps two banners from stacking: a
+ * later message *suppresses* the former by taking that single row. Within
+ * `statusBanner.ts` this is the priority slot (`prompt > error > status`) plus
+ * a persistent lowest-priority "standing" floor the chat pane uses for its
+ * "no usable agent" prompt; `browserToolbar.ts` applies its own priority
+ * (loading > certificate prompt > unknown-origin prompt > error) to the one
+ * row it owns.
  *
  * The row height is pinned by `.banner-row` in banner.css: the component's
  * `.text` slot margins (`--mod-alert-banner-*-text`) are neutralized and the

@@ -6,12 +6,13 @@ import {
   appSettingsSchema,
   defaultAppSettings,
   DEFAULT_AGENT_ID,
+  type AgentId,
   type AppSettings,
 } from '../../../src/shared';
 import { newProxyId, newServerId } from '../../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../../src/shared';
 import {
-  activeAgentId,
+  configuredAgentId,
   addProxy,
   addServer,
   applyBrowserSettingsChange,
@@ -29,6 +30,8 @@ import {
   reorderServers,
   saveSettings,
   settingsFilePath,
+  updateAgentToken,
+  agentTokenSecretRef,
   updateModelPreferences,
   updateProxy,
 } from '../../../src/main/settingsStore';
@@ -165,7 +168,7 @@ describe('loadSettings: tolerant agent node', () => {
       expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.active).toBe(false);
       expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBe('gpt-5');
       // "No stored node is active" is well-defined: the default provider.
-      expect(activeAgentId(result.value.settings)).toBe(DEFAULT_AGENT_ID);
+      expect(configuredAgentId(result.value.settings)).toBe(DEFAULT_AGENT_ID);
     }
   });
 });
@@ -359,6 +362,19 @@ describe('normalizeSettingsDocument', () => {
       DEFAULT_AGENT_ID
     ];
     expect(agent).not.toHaveProperty('extra');
+  });
+
+  it('copies an agent token reference through so the strict schema still rejects a plaintext token', () => {
+    const normalized = normalize({
+      hosts: [],
+      proxies: [],
+      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: 'agent-token:copilot' } } },
+    });
+
+    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[
+      DEFAULT_AGENT_ID
+    ];
+    expect(agent?.['token']).toEqual({ secretRef: 'agent-token:copilot' });
   });
 
   it('drops a host with no usable id or origin', () => {
@@ -1171,6 +1187,64 @@ describe('canary: plaintext secrets never reach settings', () => {
     const onDisk = readFileSync(settingsFilePath(dir), 'utf8');
     expect(onDisk).not.toContain('password');
     expect(onDisk).not.toContain(CANARY);
+  });
+});
+
+describe('agent token mutations', () => {
+  it('mints a deterministic secretRef per provider', () => {
+    expect(agentTokenSecretRef(DEFAULT_AGENT_ID)).toBe(`agent-token:${DEFAULT_AGENT_ID}`);
+    // Scoped by provider id, not a single shared key.
+    expect(agentTokenSecretRef(DEFAULT_AGENT_ID)).not.toBe(agentTokenSecretRef('other' as AgentId));
+  });
+
+  it('adds a token reference for an existing provider', () => {
+    const result = updateAgentToken(defaultAppSettings(), DEFAULT_AGENT_ID, {
+      secretRef: agentTokenSecretRef(DEFAULT_AGENT_ID),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.agents[DEFAULT_AGENT_ID]?.token).toEqual({
+      secretRef: agentTokenSecretRef(DEFAULT_AGENT_ID),
+    });
+    // The other settings are untouched.
+    expect(result.value.agents[DEFAULT_AGENT_ID]?.active).toBe(true);
+  });
+
+  it('replaces an existing token reference', () => {
+    const withToken = updateAgentToken(defaultAppSettings(), DEFAULT_AGENT_ID, {
+      secretRef: 'agent-token:old',
+    });
+    expect(withToken.ok).toBe(true);
+    if (!withToken.ok) return;
+
+    const replaced = updateAgentToken(withToken.value, DEFAULT_AGENT_ID, {
+      secretRef: 'agent-token:new',
+    });
+    expect(replaced.ok).toBe(true);
+    if (!replaced.ok) return;
+    expect(replaced.value.agents[DEFAULT_AGENT_ID]?.token?.secretRef).toBe('agent-token:new');
+  });
+
+  it('clears a token reference with null', () => {
+    const withToken = updateAgentToken(defaultAppSettings(), DEFAULT_AGENT_ID, {
+      secretRef: agentTokenSecretRef(DEFAULT_AGENT_ID),
+    });
+    expect(withToken.ok).toBe(true);
+    if (!withToken.ok) return;
+
+    const cleared = updateAgentToken(withToken.value, DEFAULT_AGENT_ID, null);
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(cleared.value.agents[DEFAULT_AGENT_ID]?.token).toBeUndefined();
+  });
+
+  it('reports agent_not_found rather than conjuring a node', () => {
+    const result = updateAgentToken(defaultAppSettings(), 'not-shipped' as AgentId, {
+      secretRef: 'agent-token:x',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('agent_not_found');
   });
 });
 

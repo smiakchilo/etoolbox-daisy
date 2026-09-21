@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildRuntimeProxyOverrides,
+  resolveAgentGithubToken,
   resolveAgentProxyOverrides,
 } from '../../../src/main/agentRuntimeProxy';
 import {
@@ -168,5 +169,67 @@ describe('resolveAgentProxyOverrides', () => {
       resolveAgentProxyOverrides(settingsWith('missing' as ProxyId), { get }),
     ).resolves.toBeUndefined();
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveAgentGithubToken', () => {
+  const AGENT_TOKEN_REF = 'agent-token:copilot';
+
+  it('resolves to no token when there is no settings document', async () => {
+    const get = vi.fn();
+    await expect(resolveAgentGithubToken(undefined, { get })).resolves.toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('resolves to no token when the active agent has none stored', async () => {
+    const get = vi.fn();
+    await expect(
+      resolveAgentGithubToken(settingsWith(undefined), { get }),
+    ).resolves.toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('reads the token plaintext from secure storage by secret reference', async () => {
+    const get = vi.fn().mockResolvedValue('ghp_stored');
+    const settings = {
+      ...settingsWith(undefined),
+      agents: {
+        [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: AGENT_TOKEN_REF } },
+      },
+    } as AppSettings;
+
+    await expect(resolveAgentGithubToken(settings, { get })).resolves.toBe('ghp_stored');
+    expect(get).toHaveBeenCalledWith(AGENT_TOKEN_REF);
+  });
+
+  it('follows the active agent, not merely the first stored node', async () => {
+    const get = vi.fn().mockResolvedValue('ghp_other');
+    const settings = {
+      ...settingsWith(undefined),
+      agents: {
+        [DEFAULT_AGENT_ID]: { active: false, token: { secretRef: 'agent-token:copilot' } },
+        ['opencode' as AgentId]: { active: true, token: { secretRef: 'agent-token:opencode' } },
+      },
+    } as AppSettings;
+
+    await expect(resolveAgentGithubToken(settings, { get })).resolves.toBe('ghp_other');
+    expect(get).toHaveBeenCalledWith('agent-token:opencode');
+  });
+
+  it('propagates a secret-store failure rather than starting without the token', async () => {
+    // A rejection aborts the runtime install before the working runtime is
+    // touched (see `copilotRuntimeManager.ts`), so it must not be swallowed
+    // into `undefined` here.
+    const get = vi.fn().mockRejectedValue(new Error('secure storage unavailable'));
+    const settings = {
+      ...settingsWith(undefined),
+      agents: {
+        [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: AGENT_TOKEN_REF } },
+      },
+    } as AppSettings;
+
+    await expect(resolveAgentGithubToken(settings, { get })).rejects.toThrow(
+      'secure storage unavailable',
+    );
   });
 });

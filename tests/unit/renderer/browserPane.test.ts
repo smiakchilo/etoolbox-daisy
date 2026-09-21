@@ -130,6 +130,9 @@ describe('createBrowserPane page panel', () => {
     // panel opened through the chat toolbar, and an error row must not
     // double as a navigation aid (see browserToolbar.ts).
     expect(pane.element.querySelector('.browser-toolbar-message__settings')).toBeNull();
+    // One row per surface: a later message suppresses the former by taking
+    // this single row, so two banners can never stack.
+    expect(pane.element.querySelectorAll('.banner-row').length).toBe(1);
   });
 
   it('hides the whole page panel while the hosts panel is open, and restores it on close', () => {

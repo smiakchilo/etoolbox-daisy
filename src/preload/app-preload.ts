@@ -10,6 +10,7 @@ import {
   AGENT_CHAT_GET_STATUS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
+  AGENT_CHAT_STATUS_CHANGED_CHANNEL,
   APP_INFO_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
@@ -298,6 +299,15 @@ const daisyApi: DaisyAppApi = {
       ipcRenderer.on(AGENT_CHAT_EVENT_CHANNEL, handler);
       return () => {
         ipcRenderer.removeListener(AGENT_CHAT_EVENT_CHANNEL, handler);
+      };
+    },
+    onStatusChanged(listener: (status: AgentChatStatus) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {
+        listener(parseAgentChatStatus(raw));
+      };
+      ipcRenderer.on(AGENT_CHAT_STATUS_CHANGED_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(AGENT_CHAT_STATUS_CHANGED_CHANNEL, handler);
       };
     },
   },

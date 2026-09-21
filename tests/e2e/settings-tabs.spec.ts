@@ -124,13 +124,22 @@ test('Settings sections are real tab panels, switching their content', async () 
     const agentsSection = settings.locator('section[aria-label="Agents"]');
     await expect(agentsSection.locator('sp-picker[aria-label="Model"]')).toHaveCount(1);
 
-    // Which provider is active is stated, not chosen: a fresh profile seeds
-    // GitHub Copilot as active, so its item shows the badge and no control.
-    // (The "Set active" half of that pair is unreachable in this build - one
-    // provider, always active - so it is covered by agentsSection.test.ts.)
-    await expect(agentsSection.locator('.agent-item__active')).toHaveCount(1);
-    await expect(agentsSection.locator('.agent-item__active')).toHaveText('(active)');
-    await expect(agentsSection.locator('.agent-item__set-active')).toHaveCount(0);
+    // The personal-access-token field is the Proxies tab's password control,
+    // labelled Token, with its Set/Clear actions.
+    const tokenControl = agentsSection.locator('.password-control');
+    await expect(tokenControl).toHaveCount(1);
+    await expect(tokenControl.locator('sp-textfield')).toHaveAttribute('aria-label', 'Token');
+    await expect(tokenControl.locator('sp-action-button')).toHaveCount(2);
+
+    // Which provider is active is derived from eligibility, not merely stored:
+    // a fresh profile seeds GitHub Copilot as the configured provider, but with
+    // no Copilot session it cannot be active - so there is no badge, and the
+    // "Set active" control is present but inert until a sign-in.
+    await expect(agentsSection.locator('.agent-item__active')).toHaveCount(0);
+    const setActive = agentsSection.locator('.agent-item__set-active');
+    await expect(setActive).toHaveCount(1);
+    await expect(setActive).toHaveText('Set active');
+    await expect(setActive).toHaveAttribute('disabled', '');
     await expect(agentsSection.locator('sp-radio')).toHaveCount(0);
 
     // The auth row carries no visible label - its own status light says what it

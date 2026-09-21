@@ -53,7 +53,7 @@ function selectionWith(overrides: Partial<ModelSelectionState> = {}): ModelSelec
 
 function inputWith(overrides: Partial<AgentsViewModelInput> = {}): AgentsViewModelInput {
   return {
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: { [DEFAULT_AGENT_ID]: { active: true, hasToken: false } },
     activeAgentId: DEFAULT_AGENT_ID,
     auth: undefined,
     modelSelection: undefined,
@@ -62,7 +62,7 @@ function inputWith(overrides: Partial<AgentsViewModelInput> = {}): AgentsViewMod
 }
 
 function nodeWith(overrides: Partial<AgentSettingsSnapshot> = {}): AgentSettingsSnapshot {
-  return { active: false, ...overrides };
+  return { active: false, hasToken: false, ...overrides };
 }
 
 describe('buildAgentsViewModel', () => {
@@ -80,8 +80,8 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         definitions: DEFINITIONS,
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true },
-          ['ghost' as AgentId]: { active: false },
+          [DEFAULT_AGENT_ID]: { active: true, hasToken: false },
+          ['ghost' as AgentId]: { active: false, hasToken: false },
         },
       }),
       undefined,
@@ -97,6 +97,9 @@ describe('buildAgentsViewModel', () => {
     // button stays inert until the read answers.
     expect(item?.authAction).toBe('sign-in');
     expect(item?.authActionDisabled).toBe(true);
+    // Unknown status also means "not eligible yet": the provider may not be
+    // made active until it is known to be signed in.
+    expect(item?.activationDisabled).toBe(true);
   });
 
   it('offers the sign-out action once the active provider is signed in', () => {
@@ -108,6 +111,7 @@ describe('buildAgentsViewModel', () => {
     expect(item?.authText).toBe('Signed in as octocat');
     expect(item?.authAction).toBe('sign-out');
     expect(item?.authActionDisabled).toBe(false);
+    expect(item?.activationDisabled).toBe(false);
   });
 
   it('offers sign-in, using the runtime text, while the active provider is signed out', () => {
@@ -119,12 +123,82 @@ describe('buildAgentsViewModel', () => {
     expect(item?.authText).toBe('Token expired');
     expect(item?.authAction).toBe('sign-in');
     expect(item?.authActionDisabled).toBe(false);
+    expect(item?.activationDisabled).toBe(true);
+  });
+
+  it('treats a stored token as authenticated and active while signed out', () => {
+    const [item] = buildAgentsViewModel(
+      inputWith({
+        agents: { [DEFAULT_AGENT_ID]: { active: true, hasToken: true } },
+        auth: authWith(),
+      }),
+      undefined,
+    ).items;
+
+    expect(item?.hasToken).toBe(true);
+    expect(item?.isActive).toBe(true);
+    expect(item?.activationDisabled).toBe(false);
+    expect(item?.authVariant).toBe('positive');
+    expect(item?.authText).toBe('Authenticated with token');
+    // No interactive session either, so the one action offered is sign-in.
+    expect(item?.authAction).toBe('sign-in');
+  });
+
+  it('offers sign-in, not sign-out, when the runtime is authenticated by the stored token', () => {
+    // The runtime resolves the injected `COPILOT_GITHUB_TOKEN` before the
+    // vault session, so with a token stored it reports authenticated with
+    // `authType: "env"` even though no SSO session exists. A local sign-out
+    // could not end that, so the row must offer sign-in instead.
+    const [item] = buildAgentsViewModel(
+      inputWith({
+        agents: { [DEFAULT_AGENT_ID]: { active: true, hasToken: true } },
+        auth: authWith({
+          isAuthenticated: true,
+          authType: 'env',
+          login: 'octocat',
+          statusMessage: 'octocat (via COPILOT_GITHUB_TOKEN)',
+        }),
+      }),
+      undefined,
+    ).items;
+
+    expect(item?.hasToken).toBe(true);
+    expect(item?.isActive).toBe(true);
+    expect(item?.activationDisabled).toBe(false);
+    expect(item?.authVariant).toBe('positive');
+    expect(item?.authText).toBe('Authenticated with token');
+    expect(item?.authAction).toBe('sign-in');
+    expect(item?.authActionDisabled).toBe(false);
+  });
+
+  it('still offers sign-out for a real interactive session (authType "user")', () => {
+    const [item] = buildAgentsViewModel(
+      inputWith({
+        auth: authWith({ isAuthenticated: true, authType: 'user', login: 'octocat' }),
+      }),
+      undefined,
+    ).items;
+    expect(item?.authAction).toBe('sign-out');
+  });
+
+  it('renders no active item, only the still-inert control, when none is active', () => {
+    // What the section passes once the effective resolver finds no eligible
+    // provider: the signed-out Copilot is not active, and cannot be made so.
+    const [item] = buildAgentsViewModel(
+      inputWith({ activeAgentId: undefined, auth: authWith() }),
+      undefined,
+    ).items;
+    expect(item?.isActive).toBe(false);
+    expect(item?.activationDisabled).toBe(true);
+    // It still offers its one action - signing in is how it becomes eligible.
+    expect(item?.authAction).toBe('sign-in');
+    expect(item?.authText).toBe('Not signed in');
   });
 
   it('keeps the stored model visible but inert before the catalogue is readable', () => {
     const [item] = buildAgentsViewModel(
       inputWith({
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model' } },
+        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -140,7 +214,7 @@ describe('buildAgentsViewModel', () => {
   it("collapses a stored Copilot 'auto' to the generic '(Auto)' on an inert item", () => {
     const [item] = buildAgentsViewModel(
       inputWith({
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'auto' } },
+        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'auto', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -156,7 +230,7 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         auth: authWith(),
         modelSelection: selectionWith(),
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model' } },
+        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -183,7 +257,7 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         auth: authWith({ isAuthenticated: true }),
         modelSelection: selectionWith({ models: [], catalogUnavailable: true }),
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model' } },
+        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -238,12 +312,12 @@ describe('buildAgentsViewModel', () => {
     expect(item?.effortDisabled).toBe(true);
   });
 
-  it('leaves a non-active provider fixed, showing its stored model and no action', () => {
+  it('leaves a non-active, auth-free provider fixed, showing its stored model and no action', () => {
     const vm = buildAgentsViewModel(
       inputWith({
         definitions: DEFINITIONS,
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true },
+          [DEFAULT_AGENT_ID]: { active: true, hasToken: false },
           [SECOND_AGENT.id]: nodeWith({ model: 'stored-model', proxy: 'proxy-1' as ProxyId }),
         },
       }),
@@ -252,9 +326,11 @@ describe('buildAgentsViewModel', () => {
     const item = vm.items[1];
     expect(item?.isActive).toBe(false);
     expect(item?.authText).toBe('Not the active agent');
-    // No button at all: there is no runtime behind a non-active provider.
+    // No auth session to manage, so no button - but the provider needs no
+    // sign-in, so it *could* be activated.
     expect(item?.authAction).toBeUndefined();
     expect(item?.authActionDisabled).toBe(true);
+    expect(item?.activationDisabled).toBe(false);
     expect(item?.modelEnabled).toBe(false);
     expect(item?.effortDisabled).toBe(true);
     expect(item?.selectedModelValue).toBe('stored-model');
@@ -269,7 +345,7 @@ describe('buildAgentsViewModel', () => {
         definitions: DEFINITIONS,
         modelSelection: selectionWith(),
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true },
+          [DEFAULT_AGENT_ID]: { active: true, hasToken: false },
           [SECOND_AGENT.id]: nodeWith(),
         },
       }),

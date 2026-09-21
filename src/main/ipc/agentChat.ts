@@ -6,7 +6,8 @@ import {
   AGENT_CHAT_GET_STATUS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
-} from '../../shared/ipc-channels';
+  AGENT_CHAT_STATUS_CHANGED_CHANNEL,
+} from '../../shared';
 import {
   agentChatByIdRequestSchema,
   agentChatOpenConversationRequestSchema,
@@ -14,7 +15,7 @@ import {
   type AgentChatOpenResult,
   type AgentChatSendResult,
   type AgentChatVoidResult,
-} from '../../shared/agent-chat-ipc';
+} from '../../shared';
 import { isAllowedAppNavigation } from '../security';
 import type { Logger } from '../logger';
 import { createAgentChatEventForwarder, type AgentChatController } from '../agentChatController';
@@ -117,10 +118,11 @@ export interface AgentChatIpcDependencies {
 
 /**
  * Registers every `agent-chat:*` handler and starts forwarding
- * `AgentEvent`s to `deps.rendererWebContents`. Returns an unsubscribe
- * function that stops that forwarding (the `ipcMain.handle` registrations
- * themselves live for the app's lifetime, matching `ipc/browser.ts` and
- * `ipc/settings.ts`, neither of which unregisters its handlers either).
+ * `AgentEvent`s (and status changes) to `deps.rendererWebContents`. Returns an
+ * unsubscribe function that stops both subscriptions (the `ipcMain.handle`
+ * registrations themselves live for the app's lifetime, matching
+ * `ipc/browser.ts` and `ipc/settings.ts`, neither of which unregisters its
+ * handlers either).
  */
 export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): () => void {
   const expectation: TrustedAgentChatSenderExpectation = {
@@ -181,7 +183,20 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
     },
   );
 
-  return deps.controller.onEvent(
+  const unsubscribeEvents = deps.controller.onEvent(
     createAgentChatEventForwarder(deps.rendererWebContents, AGENT_CHAT_EVENT_CHANNEL),
   );
+  // A status change is not an `AgentEvent`, so it needs its own push. The
+  // renderer's composer gate and its open-conversation bookkeeping both depend
+  // on the current status (`auth`, `activeChatId`), and the periodic poll alone
+  // leaves them stale for up to its whole interval after a runtime recycle -
+  // long enough to send into a conversation main has already torn down.
+  const unsubscribeStatus = deps.controller.onStatusChanged(() => {
+    if (deps.rendererWebContents.isDestroyed()) return;
+    deps.rendererWebContents.send(AGENT_CHAT_STATUS_CHANGED_CHANNEL, deps.controller.getStatus());
+  });
+  return () => {
+    unsubscribeEvents();
+    unsubscribeStatus();
+  };
 }

@@ -37,15 +37,17 @@ import {
  */
 
 /**
- * Identifies *which* target a password belongs to, without ever naming a
- * `secretRef` - the renderer is never told one (see `settingsSnapshot.ts`),
+ * Identifies *which* target a password/secret belongs to, without ever naming
+ * a `secretRef` - the renderer is never told one (see `settingsSnapshot.ts`),
  * so it can only refer to a target by the same handles the snapshot already
- * exposes: a server id (its per-server AEM proxy), or a proxy-library entry
- * id.
+ * exposes: a server id (its per-server AEM proxy), a proxy-library entry id,
+ * or an agent id (its personal-access token, the Settings "Agents" tab's
+ * Token field).
  */
 export const passwordTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('server'), serverId: serverIdSchema }).strict(),
   z.object({ kind: z.literal('proxy'), proxyId: proxyIdSchema }).strict(),
+  z.object({ kind: z.literal('agent'), agentId: agentIdSchema }).strict(),
 ]);
 
 export type PasswordTarget = z.infer<typeof passwordTargetSchema>;
@@ -85,6 +87,8 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'secret_storage_unavailable',
   /** The target has no proxy credentials configured yet, so there is no secretRef to use. */
   'no_proxy_configured',
+  /** The target agent has no token configured yet, so there is no secretRef to use. */
+  'no_token_configured',
   /** Reading or writing the settings file itself failed. */
   'storage_error',
   /** No server with the given id exists (mutation channels, step 05). */

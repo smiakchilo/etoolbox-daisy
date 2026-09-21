@@ -4,6 +4,7 @@ import {
   type AgentId,
   type AgentSettingsSnapshot,
   type AuthStatus,
+  isAgentEligible,
   type ModelSelectionState,
   type ProxyId,
 } from '../../../shared';
@@ -24,12 +25,12 @@ import {
  *
  * The tab is a list, not a special case: one item per
  * {@link AGENT_DEFINITIONS} entry, even though this build ships exactly one
- * provider. Only the *active* agent has a live runtime behind it, and
- * `settings:get-model-selection` reads that one agent's stored model and the
- * SDK catalogue that runtime advertises - so a non-active item's Model/Effort
- * controls are rendered from what is stored, disabled.
+ * provider. Only the one running runtime advertises a model catalogue, and
+ * `settings:get-model-selection` reads the *configured* provider's stored model
+ * plus that catalogue - so an item that is not the effective-active one renders
+ * its Model/Effort controls from what is stored, disabled.
  *
- * The same reasoning makes sign-in a precondition for the *active* item's
+ * The same reasoning makes sign-in a precondition for the active item's
  * pickers. Without a signed-in provider there is no catalogue to offer, so both
  * pickers are inert rather than one populated and one dead; a catalogue that
  * could not be read disables them too, and that - unlike simply being signed
@@ -44,17 +45,35 @@ export interface AgentItemViewModel {
   readonly id: AgentId;
   readonly label: string;
   readonly isActive: boolean;
+  /**
+   * True when this provider cannot become active yet - its activation
+   * criterion (sign-in, for a provider that needs auth) is unmet. Rendered as a
+   * disabled "Set active" control; a provider that is already active does not
+   * show the control at all.
+   */
+  readonly activationDisabled: boolean;
+  /**
+   * Whether a personal-access token is stored for this provider. A stored
+   * token satisfies the provider's activation criterion, so it both counts as
+   * authentication for `isActive` and changes the status light to
+   * "Authenticated with token".
+   */
+  readonly hasToken: boolean;
   /** The agent's stored proxy-library reference, if any. */
   readonly proxyId: ProxyId | undefined;
   readonly authVariant: 'neutral' | 'positive' | 'negative';
   readonly authText: string;
   /**
-   * The one action this item offers, or `undefined` when it offers none (a
-   * non-active item has no runtime to sign in or out of). Never both at once:
-   * the button is "Sign in" while signed out and "Sign out" while signed in.
+   * The one action this item offers, or `undefined` when it offers none.
+   * Sign-in/out is offered by every provider whose activation criterion is
+   * authentication - including one that is not yet active, since signing in is
+   * how it becomes able to be active. Never both at once: "Sign out" only while
+   * a real interactive session exists, otherwise "Sign in" - a stored token
+   * authenticates the runtime but is not a session a sign-out could end (see
+   * {@link hasInteractiveSession}).
    */
   readonly authAction: 'sign-in' | 'sign-out' | undefined;
-  /** True while the action must stay inert (still checking, or non-active). */
+  /** True while the action must stay inert (still checking, or no action at all). */
   readonly authActionDisabled: boolean;
   readonly modelEnabled: boolean;
   readonly modelOptions: readonly ModelOption[];
@@ -66,14 +85,16 @@ export interface AgentItemViewModel {
 
 export interface AgentsViewModel {
   readonly items: readonly AgentItemViewModel[];
-  readonly activeAgentId: AgentId;
+  /** The provider that is actually active, or `undefined` when none is. */
+  readonly activeAgentId: AgentId | undefined;
 }
 
 export interface AgentsViewModelInput {
   /** The snapshot's `agents` map, keyed by agent id. */
   readonly agents: Readonly<Record<string, AgentSettingsSnapshot>>;
-  readonly activeAgentId: AgentId;
-  /** The live runtime's sign-in status; only the active item consumes it. */
+  /** The effectively active provider, or `undefined` when none is eligible. */
+  readonly activeAgentId: AgentId | undefined;
+  /** The live runtime's sign-in status; consumed by every auth-needing item. */
   readonly auth: AuthStatus | undefined;
   /** The active agent's catalogue/selection; `undefined` until it has loaded. */
   readonly modelSelection: ModelSelectionState | undefined;
@@ -110,12 +131,19 @@ function buildItem(
 ): AgentItemViewModel {
   const node = input.agents[definition.id];
   const isActive = definition.id === input.activeAgentId;
-  const auth = isActive ? activeAuth(input.auth) : nonActiveAuth();
+  const hasToken = node?.hasToken === true;
+  const eligibility = isAgentEligible(definition, {
+    isAuthenticated: input.auth?.isAuthenticated === true,
+    hasToken,
+  });
+  const auth = authView(definition, isActive, hasToken, input.auth);
 
   const base = {
     id: definition.id,
     label: definition.label,
     isActive,
+    activationDisabled: !eligibility,
+    hasToken,
     proxyId: node?.proxy,
     ...auth,
   };
@@ -190,12 +218,72 @@ function storedModelOptions(model: string | undefined): readonly ModelOption[] {
   ];
 }
 
-function activeAuth(auth: AuthStatus | undefined): {
-  authVariant: 'neutral' | 'positive' | 'negative';
-  authText: string;
-  authAction: 'sign-in' | 'sign-out';
-  authActionDisabled: boolean;
-} {
+/**
+ * The four fields the sign-in row is built from.
+ */
+interface AuthView {
+  readonly authVariant: 'neutral' | 'positive' | 'negative';
+  readonly authText: string;
+  readonly authAction: 'sign-in' | 'sign-out' | undefined;
+  readonly authActionDisabled: boolean;
+}
+
+/**
+ * The sign-in row for one provider.
+ *
+ * A provider whose activation criterion is authentication always shows its
+ * live status and its one sign-in/out action - including while it is *not*
+ * yet active, because signing in is exactly how it becomes able to be active.
+ *
+ * When a personal-access token is stored the status is reported as
+ * authenticated with that token, whatever the interactive session says. The
+ * action, though, describes only the interactive session
+ * ({@link hasInteractiveSession}): with a token stored the runtime reports
+ * authenticated with `authType: "env"` - the app injects the token - which is
+ * not an SSO session a local sign-out could end, so the item offers "Sign in"
+ * rather than a "Sign out" that would silently do nothing. A provider that
+ * needs no authentication has no session to manage: it states that, and offers
+ * no action.
+ */
+function authView(
+  definition: AgentDefinition,
+  isActive: boolean,
+  hasToken: boolean,
+  auth: AuthStatus | undefined,
+): AuthView {
+  if (definition.requiresAuth) {
+    const session = sessionAuth(auth);
+    if (hasToken) {
+      return { ...session, authVariant: 'positive', authText: 'Authenticated with token' };
+    }
+    return session;
+  }
+  return {
+    authVariant: 'neutral',
+    authText: isActive ? 'No sign-in required' : 'Not the active agent',
+    authAction: undefined,
+    authActionDisabled: true,
+  };
+}
+
+/**
+ * Whether the runtime's current authentication is a real interactive session -
+ * the thing a local "Sign out" can actually end.
+ *
+ * The runtime reports `authType: "env"` when it authenticated from an injected
+ * environment token. This app sets `COPILOT_GITHUB_TOKEN` whenever a
+ * personal-access token is stored (see `buildRuntimeChildEnv`), and the runtime
+ * resolves that token before the app-owned vault/config session, so while a
+ * token is stored the runtime is authenticated *through the token*, not
+ * through SSO. A local sign-out (deleting only our own `config.json`) could not
+ * end that: the next runtime start injects the token again. The action must
+ * therefore describe the interactive session alone.
+ */
+function hasInteractiveSession(auth: AuthStatus | undefined): boolean {
+  return auth?.isAuthenticated === true && auth.authType !== 'env';
+}
+
+function sessionAuth(auth: AuthStatus | undefined): AuthView {
   if (auth === undefined) {
     // The status is not known yet, so the only safe offer is the signed-out
     // one, and it stays inert until the read answers.
@@ -206,7 +294,7 @@ function activeAuth(auth: AuthStatus | undefined): {
       authActionDisabled: true,
     };
   }
-  if (auth.isAuthenticated) {
+  if (hasInteractiveSession(auth)) {
     return {
       authVariant: 'positive',
       authText: `Signed in${auth.login ? ` as ${auth.login}` : ''}`,
@@ -219,19 +307,5 @@ function activeAuth(auth: AuthStatus | undefined): {
     authText: auth.statusMessage ?? 'Not signed in',
     authAction: 'sign-in',
     authActionDisabled: false,
-  };
-}
-
-function nonActiveAuth(): {
-  authVariant: 'neutral';
-  authText: string;
-  authAction: undefined;
-  authActionDisabled: true;
-} {
-  return {
-    authVariant: 'neutral',
-    authText: 'Not the active agent',
-    authAction: undefined,
-    authActionDisabled: true,
   };
 }

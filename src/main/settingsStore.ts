@@ -13,12 +13,13 @@ import {
   appSettingsSchema,
   defaultAppSettings,
   parseAppSettings,
+  type AgentToken,
   type AppSettings,
   type BrowserSettings,
   type ProxyConfig,
 } from '../shared';
 import type { ProxyId, ServerId } from '../shared';
-import { DEFAULT_AGENT_ID, resolveActiveAgentId } from '../shared';
+import { DEFAULT_AGENT_ID, resolveConfiguredAgentId } from '../shared';
 import type { AgentId } from '../shared';
 import {
   newProxyId,
@@ -209,7 +210,7 @@ const SERVER_ENTRY_KEYS = [
 ] as const;
 const AEM_PROXY_KEYS = ['url', 'credentials'] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
-const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort'] as const;
+const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
 const BROWSER_ENTRY_KEYS = ['disableNativeWebAuthn'] as const;
 
 /** Matches the Settings UI default and a fresh entry's colour. */
@@ -328,7 +329,10 @@ function normalizeProxyEntry(entry: unknown): Record<string, unknown> | undefine
 /**
  * Normalizes one agent node. `active` defaults to `false`; a dangling `proxy`
  * reference is cleared; a `reasoningEffort` with no `model` to attach to is
- * dropped (the strict schema requires the pair).
+ * dropped (the strict schema requires the pair). The `token` object is copied
+ * through untouched, like a proxy's `credentials`: the strict
+ * `agentTokenSchema` must still reject a hand-written plaintext token, so a
+ * bug that persists one cannot be silently stripped.
  */
 function normalizeAgentEntry(
   value: unknown,
@@ -347,6 +351,8 @@ function normalizeAgentEntry(
 
   const effort = reasoningEffortSchema.safeParse(record['reasoningEffort']);
   if (model.success && effort.success) next['reasoningEffort'] = effort.data;
+
+  if (record['token'] !== undefined) next['token'] = record['token'];
 
   return next;
 }
@@ -1001,6 +1007,15 @@ export function proxySecretRef(proxyId: ProxyId): string {
   return `proxy:${proxyId}`;
 }
 
+/**
+ * Deterministic `secretRef` for one provider's personal-access token. Scoping
+ * it by the provider's permanent id keeps it stable across every other edit,
+ * and lets the IPC layer name the secret before any token is stored.
+ */
+export function agentTokenSecretRef(agentId: AgentId): string {
+  return `agent-token:${agentId}`;
+}
+
 export interface NewProxyInput {
   readonly label: string;
   readonly url: string;
@@ -1236,18 +1251,21 @@ export interface ModelPreferencesInput {
 }
 
 /**
- * The provider a prompt currently targets: the single node in `agents` whose
- * `active` flag is set, or {@link DEFAULT_AGENT_ID} when the document has no
- * active node at all (a freshly hand-edited file, or a user who turned every
- * provider's radio off). Falling back rather than returning `undefined` keeps
- * every reader - the prompt path, the model-selection channel, the runtime -
- * total, and matches `defaultAppSettings()`'s own seed.
+ * The provider the document is *configured* to drive: the single node in
+ * `agents` whose `active` flag is set, or {@link DEFAULT_AGENT_ID} when the
+ * document has no active node at all (a freshly hand-edited file, or a user
+ * who turned every provider's radio off). Falling back rather than returning
+ * `undefined` keeps every reader - the runtime, its proxy, the model-selection
+ * channel - total, and matches `defaultAppSettings()`'s own seed.
+ *
+ * Deliberately *not* the renderer's notion of "the active agent": the runtime
+ * must exist (and be reachable through the configured proxy) even while the
+ * configured provider is signed out, otherwise it could never be signed in to.
+ * What the UI shows as active is gated by eligibility - see
+ * `resolveEffectiveActiveAgentId` in `src/shared/contracts/agents.ts`.
  */
-export function activeAgentId(settings: AppSettings): AgentId {
-  // Delegates to the shared resolver so the main process and the renderer
-  // (which uses the same function to decide whether a usable agent is
-  // selected) can never disagree about which provider is current.
-  return resolveActiveAgentId(settings.agents);
+export function configuredAgentId(settings: AppSettings): AgentId {
+  return resolveConfiguredAgentId(settings.agents);
 }
 
 /**
@@ -1362,10 +1380,53 @@ export function updateAgentSettings(
 }
 
 /**
+ * Adds, replaces or clears one provider's personal-access-token *reference*.
+ * The token's plaintext is never here: `token` carries only the `secretRef`
+ * the IPC layer will store it under, and `null` removes the reference. Pure
+ * and I/O-free, like every other mutation helper: the caller loads, applies,
+ * saves, and stores or deletes the actual secret.
+ *
+ * A missing node is `agent_not_found` rather than being created implicitly,
+ * matching {@link updateAgentSettings}: an agent's node is part of the
+ * document, not something a secret write conjures up.
+ */
+export function updateAgentToken(
+  settings: AppSettings,
+  agentId: AgentId,
+  token: AgentToken | null,
+): Result<AppSettings, AgentMutationError> {
+  const existing = settings.agents[agentId];
+  if (!existing) {
+    return err({ kind: 'agent_not_found', message: `no agent with id ${agentId}` });
+  }
+
+  const nextNode: Record<string, unknown> = { ...existing };
+  if (token === null) {
+    delete nextNode['token'];
+  } else {
+    nextNode['token'] = token;
+  }
+
+  const parsed = appSettingsSchema.safeParse({
+    ...settings,
+    agents: { ...settings.agents, [agentId]: nextNode },
+  });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
+}
+
+/**
  * Replaces the *active* provider's model/reasoning-effort pair. The persisted
  * pair moved from a top-level `defaultModel`/`defaultReasoningEffort` to each
- * agent's own node, so this now targets {@link activeAgentId} - the provider a
- * prompt would actually go to - rather than the document as a whole.
+ * agent's own node, so this now targets {@link configuredAgentId} - the
+ * provider the app is set up to drive - rather than the document as a whole.
  *
  * Note what this function deliberately does *not* do: it never checks the
  * model against the SDK catalogue. That check belongs to the IPC layer, which
@@ -1379,7 +1440,7 @@ export function updateModelPreferences(
   settings: AppSettings,
   input: ModelPreferencesInput,
 ): Result<AppSettings, AgentMutationError> {
-  return updateAgentSettings(settings, activeAgentId(settings), {
+  return updateAgentSettings(settings, configuredAgentId(settings), {
     model: input.model,
     reasoningEffort: input.model === null ? null : input.reasoningEffort,
   });

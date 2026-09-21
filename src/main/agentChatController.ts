@@ -110,6 +110,15 @@ export interface AgentChatController {
   /** Notifies `listener` of every `AgentEvent` that survives the ownership guard, in order. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**
+   * Notifies `listener` whenever the value `getStatus()` would return may have
+   * changed *without* an `AgentEvent`: the live auth state changed, or - on the
+   * startup-gated controller - the delegate was replaced. This is what lets the
+   * renderer learn of a runtime recycle (proxy/active-provider change,
+   * sign-in/out, token set/clear) immediately instead of waiting for its
+   * periodic status poll, so its composer gate never lags behind reality.
+   */
+  onStatusChanged(listener: () => void): () => void;
+  /**
    * Builds the `currentContext` provider `createAemGetJsonExecutor` needs.
    * Reads the AEM server context and the active chat/turn fresh on every
    * call - never captured once - so a server switch or a chat switch mid-turn
@@ -188,6 +197,16 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
   };
 
   const forwardListeners = new Set<(event: AgentEvent) => void>();
+  const statusListeners = new Set<() => void>();
+
+  /**
+   * Fires every `onStatusChanged` listener. Called from the two places a
+   * `getStatus()` read can change with no accompanying `AgentEvent`: a live
+   * auth change here, and a delegate swap in the gated controller below.
+   */
+  function notifyStatusChanged(): void {
+    for (const listener of [...statusListeners]) listener();
+  }
 
   /**
    * THE OWNERSHIP GUARD. Decides whether `event` - already known to have
@@ -244,6 +263,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 
   const unsubscribeAuth = agentService.onAuthStateChanged((state) => {
     sessionStatus = { ...sessionStatus, authenticated: state.isAuthenticated };
+    notifyStatusChanged();
   });
 
   const unsubscribeEvents = agentService.onEvent((event) => {
@@ -373,6 +393,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     };
   }
 
+  function onStatusChanged(listener: () => void): () => void {
+    statusListeners.add(listener);
+    return () => {
+      statusListeners.delete(listener);
+    };
+  }
+
   function currentAemToolContext(): CurrentAemToolContext {
     // Read fresh on every call - see this function's doc comment on
     // `AgentChatController` for why capturing any of this once would be
@@ -417,6 +444,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     abort,
     closeConversation,
     onEvent,
+    onStatusChanged,
     currentAemToolContext,
     handleAemContextInvalidated,
     dispose,
@@ -500,7 +528,13 @@ export interface StartupGatedAgentChatController extends AgentChatController {
 export function createStartupGatedAgentChatController(): StartupGatedAgentChatController {
   let real: AgentChatController | undefined;
   let unsubscribeRealEvents: (() => void) | undefined;
+  let unsubscribeRealStatus: (() => void) | undefined;
   const forwardListeners = new Set<(event: AgentEvent) => void>();
+  const statusListeners = new Set<() => void>();
+
+  function notifyStatusChanged(): void {
+    for (const listener of [...statusListeners]) listener();
+  }
 
   function getStatus(): AgentChatStatus {
     if (real) return real.getStatus();
@@ -546,6 +580,13 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     };
   }
 
+  function onStatusChanged(listener: () => void): () => void {
+    statusListeners.add(listener);
+    return () => {
+      statusListeners.delete(listener);
+    };
+  }
+
   function currentAemToolContext(): CurrentAemToolContext {
     if (!real) {
       throw new Error('AemToolContext requested before the agent service finished starting up.');
@@ -560,13 +601,16 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
 
   async function dispose(): Promise<void> {
     unsubscribeRealEvents?.();
+    unsubscribeRealStatus?.();
     forwardListeners.clear();
+    statusListeners.clear();
     if (real) await real.dispose();
   }
 
   function replaceDelegate(controller: AgentChatController): Promise<void> {
     const previous = real;
     const previousUnsubscribe = unsubscribeRealEvents;
+    const previousStatusUnsubscribe = unsubscribeRealStatus;
     // New delegate first, old listener second: between these two statements a
     // listener registered on this gated object is genuinely fanned out to the
     // new controller, and the old delegate's teardown (emitted by `dispose`
@@ -575,8 +619,14 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     unsubscribeRealEvents = controller.onEvent((event) => {
       for (const listener of [...forwardListeners]) listener(event);
     });
+    unsubscribeRealStatus = controller.onStatusChanged(notifyStatusChanged);
+    // A replacement changes which conversation main owns (the fresh controller
+    // starts with none) and its auth resolution - both are exactly what a
+    // renderer reading `getStatus()` must hear about, immediately.
+    notifyStatusChanged();
     if (previous === undefined) return Promise.resolve();
     previousUnsubscribe?.();
+    previousStatusUnsubscribe?.();
     return previous.dispose();
   }
 
@@ -587,6 +637,7 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     abort,
     closeConversation,
     onEvent,
+    onStatusChanged,
     currentAemToolContext,
     handleAemContextInvalidated,
     dispose,

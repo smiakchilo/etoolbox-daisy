@@ -13,12 +13,18 @@
  * (see the step-09/10 handoff): auto-save feedback, validation errors,
  * two-click confirmations, and password set/clear results.
  *
- * Single-slot priority, `prompt > error > status`:
+ * Single-slot priority, `prompt > error > status > standing`:
  * - `showStatus` is transient (auto-clears) and never displaces an error or
  *   a prompt - the actionable thing stays on screen.
  * - `showError` is sticky and dismissible; it never displaces a prompt.
  * - `showPrompt` is sticky, dismissible, and replaces anything.
- * Equal kinds replace equal kinds (the latest message wins).
+ * - `setStanding` is the persistent floor: shown only while no `show*`
+ *   presentation is active, and restored when one clears. The chat pane
+ *   expresses its "no usable agent" prompt this way rather than as a second
+ *   `sp-alert-banner`, so one pane can never stack two banners.
+ * Equal kinds replace equal kinds (the latest message wins). A later
+ * presentation therefore always suppresses the former one: it takes the single
+ * row, and the standing floor returns when it lets go.
  *
  * The row is revealed/collapsed by animating its block-size (the shared
  * `lib/alertBanner.ts` helpers + `banner.css`), so the tab content above it
@@ -66,6 +72,16 @@ export interface StatusBanner extends StatusBannerSink {
   readonly element: HTMLElement;
   /** True while a sticky two-click/action prompt row is showing. */
   isPromptShowing(): boolean;
+  /**
+   * Sets the banner's persistent, lowest-priority content - the row shown
+   * whenever no `showStatus`/`showError`/`showPrompt` presentation is active.
+   * `null` clears it. A later presentation takes the single row (the standing
+   * content swaps out in place); when that presentation clears, the standing
+   * content returns. Passing the same array reference again is a no-op, so a
+   * caller can re-assert its standing state on every refresh without churning
+   * the DOM.
+   */
+  setStanding(content: readonly Node[] | null): void;
   dispose(): void;
 }
 
@@ -80,11 +96,28 @@ const SLOT_RANK: Readonly<Record<BannerSlot, number>> = { status: 1, error: 2, p
  */
 export const STATUS_AUTO_CLEAR_MS = 1500;
 
-export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): StatusBanner {
-  const banner = createBannerRow('settings-banner');
+export interface StatusBannerOptions {
+  /**
+   * How long a transient `showStatus` message stays visible before
+   * auto-clearing. Defaults to {@link STATUS_AUTO_CLEAR_MS}.
+   */
+  readonly autoClearMs?: number;
+  /**
+   * The row's surface class (the second class after the shared `banner-row`).
+   * Defaults to `settings-banner`; the chat pane passes `chat-status-banner`
+   * so the two slots never collide in a Playwright strict-mode locator when
+   * Settings is open over the chat pane.
+   */
+  readonly surfaceClassName?: string;
+}
+
+export function createStatusBanner(options: StatusBannerOptions = {}): StatusBanner {
+  const autoClearMs = options.autoClearMs ?? STATUS_AUTO_CLEAR_MS;
+  const banner = createBannerRow(options.surfaceClassName ?? 'settings-banner');
   configureBannerTransition(banner, BANNER_TRANSITION_DURATION_MS);
 
   let slot: BannerSlot | null = null;
+  let standing: readonly Node[] | null = null;
   let autoClearTimer: ReturnType<typeof setTimeout> | null = null;
   let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -119,10 +152,11 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
   // completes. Under `prefers-reduced-motion` the animation is skipped, so the
   // teardown happens synchronously instead. `isPromptShowing` clears
   // immediately (slot is dropped first), so nothing actionable lingers for the
-  // collapse.
-  function hide(): void {
+  // collapse. This only ever tears the row down; it does not touch `slot`, so
+  // it can be reused both for "nothing left to show" and as the fallback when
+  // the standing floor is empty.
+  function hideRow(): void {
     cancelAutoClear();
-    slot = null;
     if (!banner.hasAttribute('open')) {
       finalizeHide();
       return;
@@ -132,6 +166,33 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
       return;
     }
     collapseTimer = setTimeout(finalizeHide, BANNER_TRANSITION_DURATION_MS);
+  }
+
+  // Paints the standing content (the persistent floor) into the single row, or
+  // tears the row down when there is none. Never dismissible: it describes a
+  // standing condition, not an error to wave away.
+  function showStanding(): void {
+    if (standing === null) {
+      hideRow();
+      return;
+    }
+    cancelAutoClear();
+    const wasVisible = banner.hasAttribute('open') && !isBannerClosing(banner);
+    // A row caught mid-collapse is unwound first so new content reveals from
+    // scratch rather than resuming a half-finished collapse.
+    if (collapseTimer !== null) finalizeHide();
+    banner.replaceChildren(...standing);
+    banner.removeAttribute('dismissible');
+    banner.setAttribute('open', '');
+    if (!wasVisible) revealBannerRow(banner);
+  }
+
+  // Drops whatever `show*` presentation is active and falls back to the
+  // standing floor (if any).
+  function dismissSlot(): void {
+    slot = null;
+    if (standing !== null) showStanding();
+    else hideRow();
   }
 
   function canShow(candidate: BannerSlot): boolean {
@@ -172,7 +233,7 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
   // default so this module keeps full control of `open`, then reclaim the row.
   banner.addEventListener('close', (event) => {
     event.preventDefault();
-    hide();
+    dismissSlot();
   });
 
   return {
@@ -185,7 +246,7 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
     showStatus(message: string): void {
       if (!present('status', [buildBannerCopy([message])])) return;
       autoClearTimer = setTimeout(() => {
-        if (slot === 'status') hide();
+        if (slot === 'status') dismissSlot();
       }, autoClearMs);
     },
     showError(message: string): void {
@@ -194,8 +255,17 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
     showPrompt(copy: string, action: StatusBannerAction): void {
       present('prompt', promptContent(copy, action));
     },
+    setStanding(content: readonly Node[] | null): void {
+      if (standing === content) return;
+      standing = content;
+      // A live presentation owns the row; the floor is repainted when it
+      // clears (dismissSlot). Otherwise the floor is what shows.
+      if (slot === null) showStanding();
+    },
     clear(): void {
-      if (slot !== null) hide();
+      standing = null;
+      slot = null;
+      hideRow();
     },
     dispose(): void {
       cancelAutoClear();

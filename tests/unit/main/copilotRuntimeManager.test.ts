@@ -3,6 +3,7 @@ import type { CopilotClient, ProxyEnvOverrides } from '../../../src/agent';
 import {
   createCopilotRuntimeManager,
   type CopilotRuntimeManagerDeps,
+  type RuntimeClientOptions,
 } from '../../../src/main/copilotRuntimeManager';
 import {
   DEFAULT_AGENT_ID,
@@ -52,17 +53,24 @@ function createHarness(overrides: Partial<CopilotRuntimeManagerDeps> = {}): {
   readonly startRuntime: Mock;
   readonly stopClient: Mock;
   readonly resolveProxyOverrides: Mock;
+  readonly resolveGithubToken: Mock;
   readonly tags: string[];
 } {
   const tags: string[] = [];
-  const createClient = vi.fn((proxy: ProxyEnvOverrides | undefined) => {
-    const tag = proxy === undefined ? `direct-${tags.length}` : `proxied-${tags.length}`;
+  const createClient = vi.fn((options: RuntimeClientOptions) => {
+    const tag =
+      options.githubToken !== undefined
+        ? `token-${tags.length}`
+        : options.proxy === undefined
+          ? `direct-${tags.length}`
+          : `proxied-${tags.length}`;
     tags.push(tag);
     return { tag } as unknown as TaggedClient;
   });
   const startRuntime = vi.fn(() => Promise.resolve(undefined));
   const stopClient = vi.fn(() => Promise.resolve(undefined));
   const resolveProxyOverrides = vi.fn(() => Promise.resolve(undefined));
+  const resolveGithubToken = vi.fn(() => Promise.resolve(undefined));
 
   const deps: CopilotRuntimeManagerDeps = {
     recycleOnSettingsChange: true,
@@ -70,6 +78,7 @@ function createHarness(overrides: Partial<CopilotRuntimeManagerDeps> = {}): {
     stopClient,
     createClient,
     resolveProxyOverrides,
+    resolveGithubToken,
     ...overrides,
   };
   // The overrides are what the manager actually calls, so the assertions must
@@ -81,18 +90,19 @@ function createHarness(overrides: Partial<CopilotRuntimeManagerDeps> = {}): {
     startRuntime: deps.startRuntime as unknown as Mock,
     stopClient: deps.stopClient as unknown as Mock,
     resolveProxyOverrides: deps.resolveProxyOverrides as unknown as Mock,
+    resolveGithubToken: deps.resolveGithubToken as unknown as Mock,
     tags,
   };
 }
 
 describe('createCopilotRuntimeManager', () => {
-  it('has a client immediately, before any startup, created without a proxy', () => {
+  it('has a client immediately, before any startup, created without credentials', () => {
     const h = createHarness();
     const manager = createCopilotRuntimeManager(h.deps);
 
     // The auth handlers may run before the chat runtime's background startup.
     expect(manager.getClient()).toBeDefined();
-    expect(h.createClient).toHaveBeenCalledWith(undefined);
+    expect(h.createClient).toHaveBeenCalledWith({});
   });
 
   it('starts the runtime with the active provider proxy and stops the eager client', async () => {
@@ -108,6 +118,71 @@ describe('createCopilotRuntimeManager', () => {
     expect(started.tag).toBe('proxied-1');
     expect(manager.getClient()).toBe(started);
     expect(h.stopClient).toHaveBeenCalledWith(eager);
+  });
+
+  it('passes the resolved token to the client, alongside the proxy', async () => {
+    const h = createHarness({
+      resolveProxyOverrides: vi.fn(() => Promise.resolve(PROXY_ENV)),
+      resolveGithubToken: vi.fn(() => Promise.resolve('ghp_stored_token')),
+    });
+    const manager = createCopilotRuntimeManager(h.deps);
+
+    await manager.start(settingsWith({ proxy: 'proxy-1' as ProxyId }));
+
+    expect(h.createClient).toHaveBeenLastCalledWith({
+      proxy: PROXY_ENV,
+      githubToken: 'ghp_stored_token',
+    });
+  });
+
+  it('omits the token from the client when none is stored', async () => {
+    const h = createHarness({
+      resolveProxyOverrides: vi.fn(() => Promise.resolve(PROXY_ENV)),
+    });
+    const manager = createCopilotRuntimeManager(h.deps);
+
+    await manager.start(settingsWith({ proxy: 'proxy-1' as ProxyId }));
+
+    expect(h.createClient).toHaveBeenLastCalledWith({ proxy: PROXY_ENV });
+  });
+
+  it('refresh(settings) resolves both credentials from the supplied document', async () => {
+    // A token set/clear passes a freshly-reloaded document: the first set
+    // mints the secretRef into settings.json, so recycling from the captured
+    // document would resolve no token at all.
+    const h = createHarness({
+      resolveProxyOverrides: vi.fn(() => Promise.resolve(PROXY_ENV)),
+      resolveGithubToken: vi.fn(() => Promise.resolve('ghp_stored_token')),
+    });
+    const manager = createCopilotRuntimeManager(h.deps);
+    await manager.start(settingsWith());
+    const fresh = settingsWith({ proxy: 'proxy-1' as ProxyId });
+
+    await manager.refresh(fresh);
+
+    expect(h.resolveProxyOverrides).toHaveBeenLastCalledWith(fresh);
+    expect(h.resolveGithubToken).toHaveBeenLastCalledWith(fresh);
+    expect(h.createClient).toHaveBeenLastCalledWith({
+      proxy: PROXY_ENV,
+      githubToken: 'ghp_stored_token',
+    });
+  });
+
+  it('leaves the working runtime untouched when the token cannot be resolved', async () => {
+    const h = createHarness();
+    const manager = createCopilotRuntimeManager(h.deps);
+    await manager.start(settingsWith());
+    const before = manager.getClient();
+    const stopsBefore = h.stopClient.mock.calls.length;
+    h.resolveGithubToken.mockRejectedValueOnce(new Error('secret store unavailable'));
+
+    await expect(manager.refresh(settingsWith({ proxy: 'proxy-1' as ProxyId }))).rejects.toThrow(
+      'secret store unavailable',
+    );
+
+    expect(manager.getClient()).toBe(before);
+    expect(h.startRuntime).toHaveBeenCalledTimes(1);
+    expect(h.stopClient).toHaveBeenCalledTimes(stopsBefore);
   });
 
   it('does not recycle when only the model or effort changed', async () => {

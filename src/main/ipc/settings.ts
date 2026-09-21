@@ -37,6 +37,7 @@ import {
   type AddProxyResult,
   type AddServerRequest,
   type AddServerResult,
+  type AgentId,
   type ClearPasswordRequest,
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
@@ -73,7 +74,8 @@ import { newProxyId, newServerId } from '../../shared';
 import { isKnownAgentId } from '../../shared';
 import { err, ok, type Result } from '../../shared';
 import {
-  activeAgentId,
+  configuredAgentId,
+  agentTokenSecretRef,
   addProxy as createProxyEntry,
   addServer as createServerEntry,
   applyBrowserSettingsChange,
@@ -87,6 +89,7 @@ import {
   reorderServers as reorderServerEntries,
   saveSettings,
   updateAgentSettings as updateAgentSettingsEntry,
+  updateAgentToken as updateAgentTokenEntry,
   updateModelPreferences as updateModelPreferencesEntry,
   updateProxy as updateProxyEntry,
   type AgentSettingsChanges,
@@ -137,21 +140,36 @@ function findProxyCredentials(
   if (target.kind === 'proxy') {
     return settings.proxies.find((proxy) => proxy.id === target.proxyId)?.credentials;
   }
-  return settings.hosts.find((server) => server.id === target.serverId)?.proxy?.credentials;
+  if (target.kind === 'server') {
+    return settings.hosts.find((server) => server.id === target.serverId)?.proxy?.credentials;
+  }
+  return undefined;
 }
 
 /**
- * Resolves a {@link PasswordTarget} to the `secretRef` already recorded
- * in `settings` for it. Never mints a new `secretRef`: assigning one to a
- * proxy is part of configuring that proxy (username + `secretRef` together),
- * which is a settings mutation reserved for step 05. A target with no proxy
- * credentials configured yet is reported as {@link SettingsIpcError}
- * `"no_proxy_configured"`, not silently created.
+ * Resolves a {@link PasswordTarget} to the `secretRef` already recorded in
+ * `settings` for it. Never mints a new `secretRef`: assigning one to a proxy
+ * is part of configuring that proxy (username + `secretRef` together), and an
+ * agent's token reference is minted by the set call itself (see
+ * {@link setAgentTokenSecret}). A target with nothing recorded yet is reported
+ * as a typed `SettingsIpcError` (`"no_proxy_configured"` /
+ * `"no_token_configured"`), not silently created.
  */
 export function resolvePasswordSecretRef(
   settings: AppSettings,
   target: PasswordTarget,
 ): Result<string, SettingsIpcError> {
+  if (target.kind === 'agent') {
+    const secretRef = settings.agents[target.agentId]?.token?.secretRef;
+    if (secretRef === undefined) {
+      return err({
+        code: 'no_token_configured',
+        message: `Agent "${target.agentId}" has no token configured yet.`,
+      });
+    }
+    return ok(secretRef);
+  }
+
   const credentials = findProxyCredentials(settings, target);
   if (!credentials) {
     return err({
@@ -175,6 +193,11 @@ function collectSecretRefs(settings: AppSettings): readonly string[] {
   for (const server of settings.hosts) {
     if (server.proxy?.credentials) {
       refs.push(server.proxy.credentials.secretRef);
+    }
+  }
+  for (const node of Object.values(settings.agents)) {
+    if (node.token) {
+      refs.push(node.token.secretRef);
     }
   }
   return refs;
@@ -235,16 +258,137 @@ export async function getSettingsSnapshot(
   return { ok: true, snapshot };
 }
 
-/** Implements `settings:set-password`. Never returns the password. */
+/**
+ * Stores an agent's personal-access token. On the first set the persisted
+ * `token` reference is minted (deterministically, from the agent id) and
+ * saved, so the snapshot can resolve `hasToken` for it; later sets just
+ * overwrite the secret. The token is never validated - the app deliberately
+ * does not check it - and never echoed back.
+ *
+ * Ordering matters: the secret is written first, then the reference is
+ * persisted, and a failed persist rolls the freshly-written secret back, so
+ * neither a crash nor a failure can leave a reference pointing at a missing
+ * secret while also losing the token.
+ */
+async function setAgentTokenSecret(
+  settingsDir: string,
+  settings: AppSettings,
+  secretStore: SecretStore,
+  agentId: AgentId,
+  token: string,
+): Promise<SettingsIpcVoidResult> {
+  if (!isKnownAgentId(agentId)) {
+    return {
+      ok: false,
+      error: {
+        code: 'agent_not_found',
+        message: `"${agentId}" is not an agent this build supports.`,
+      },
+    };
+  }
+
+  const existingRef = settings.agents[agentId]?.token?.secretRef;
+
+  if (existingRef !== undefined) {
+    try {
+      await secretStore.set(existingRef, token);
+    } catch (error) {
+      return { ok: false, error: secretStorageUnavailableErrorFrom(error) };
+    }
+    return { ok: true };
+  }
+
+  const secretRef = agentTokenSecretRef(agentId);
+  try {
+    await secretStore.set(secretRef, token);
+  } catch (error) {
+    return { ok: false, error: secretStorageUnavailableErrorFrom(error) };
+  }
+
+  const updated = updateAgentTokenEntry(settings, agentId, { secretRef });
+  if (!updated.ok) {
+    await secretStore.delete(secretRef).catch(() => undefined);
+    return { ok: false, error: { code: updated.error.kind, message: updated.error.message } };
+  }
+  const saved = await persist(settingsDir, updated.value);
+  if (!saved.ok) {
+    await secretStore.delete(secretRef).catch(() => undefined);
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
+/** Removes an agent's token reference and its stored secret (best effort). */
+async function clearAgentTokenSecret(
+  settingsDir: string,
+  settings: AppSettings,
+  secretStore: SecretStore,
+  agentId: AgentId,
+): Promise<SettingsIpcVoidResult> {
+  if (!isKnownAgentId(agentId)) {
+    return {
+      ok: false,
+      error: {
+        code: 'agent_not_found',
+        message: `"${agentId}" is not an agent this build supports.`,
+      },
+    };
+  }
+
+  const existingRef = settings.agents[agentId]?.token?.secretRef;
+  if (existingRef === undefined) {
+    return {
+      ok: false,
+      error: {
+        code: 'no_token_configured',
+        message: `Agent "${agentId}" has no token configured yet.`,
+      },
+    };
+  }
+
+  const updated = updateAgentTokenEntry(settings, agentId, null);
+  if (!updated.ok) {
+    return { ok: false, error: { code: updated.error.kind, message: updated.error.message } };
+  }
+  const saved = await persist(settingsDir, updated.value);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  await secretStore.delete(existingRef).catch(() => undefined);
+  return { ok: true };
+}
+
+/**
+ * Implements `settings:set-password`. Never returns the password.
+ *
+ * `onAgentTokenChanged` is invoked only after an agent token has actually been
+ * stored. The Copilot runtime resolves its credential once, at process start,
+ * so the caller (the composition root) recycles it - a plain proxied password
+ * needs no such notice, because the runtime does not consume it.
+ */
 export async function setPassword(
   settingsDir: string,
   secretStore: SecretStore,
   request: SetPasswordRequest,
+  onAgentTokenChanged?: () => void,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
   if (!loaded.ok) {
     return { ok: false, error: loaded.error };
   }
+
+  if (request.target.kind === 'agent') {
+    const result = await setAgentTokenSecret(
+      settingsDir,
+      loaded.value,
+      secretStore,
+      request.target.agentId,
+      request.password,
+    );
+    if (result.ok) onAgentTokenChanged?.();
+    return result;
+  }
+
   const secretRef = resolvePasswordSecretRef(loaded.value, request.target);
   if (!secretRef.ok) {
     return { ok: false, error: secretRef.error };
@@ -258,16 +402,33 @@ export async function setPassword(
   return { ok: true };
 }
 
-/** Implements `settings:clear-password`. */
+/**
+ * Implements `settings:clear-password`. `onAgentTokenChanged` mirrors
+ * {@link setPassword}: the runtime must be recycled so the cleared token is
+ * not still in the running process's environment.
+ */
 export async function clearPassword(
   settingsDir: string,
   secretStore: SecretStore,
   request: ClearPasswordRequest,
+  onAgentTokenChanged?: () => void,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
   if (!loaded.ok) {
     return { ok: false, error: loaded.error };
   }
+
+  if (request.target.kind === 'agent') {
+    const result = await clearAgentTokenSecret(
+      settingsDir,
+      loaded.value,
+      secretStore,
+      request.target.agentId,
+    );
+    if (result.ok) onAgentTokenChanged?.();
+    return result;
+  }
+
   const secretRef = resolvePasswordSecretRef(loaded.value, request.target);
   if (!secretRef.ok) {
     return { ok: false, error: secretRef.error };
@@ -719,14 +880,14 @@ export async function getModelSelection(
   }
   const settings = loaded.value;
   const catalog = await deps.loadCatalog();
-  const activeNode = settings.agents[activeAgentId(settings)];
+  const configuredNode = settings.agents[configuredAgentId(settings)];
 
   return {
     ok: true,
     state: {
       models: catalog.ok ? catalog.value : [],
-      selectedModel: activeNode?.model ?? null,
-      selectedReasoningEffort: activeNode?.reasoningEffort ?? null,
+      selectedModel: configuredNode?.model ?? null,
+      selectedReasoningEffort: configuredNode?.reasoningEffort ?? null,
       changesLocked: deps.isTurnInFlight(),
       catalogUnavailable: !catalog.ok,
     },
@@ -816,7 +977,7 @@ export async function setModelPreferences(
   }
   // After the write, never before: a cache updated ahead of a failed save
   // would send the next prompt to a model the settings file does not record.
-  const savedNode = updated.value.agents[activeAgentId(updated.value)];
+  const savedNode = updated.value.agents[configuredAgentId(updated.value)];
   deps.onPreferencesSaved?.({
     model: savedNode?.model ?? null,
     reasoningEffort: savedNode?.reasoningEffort ?? null,
@@ -1117,6 +1278,15 @@ export interface SettingsIpcDependencies {
   readonly modelSelection: ModelSelectionDependencies;
   /** Backs the agent-settings channel. See {@link AgentSettingsDependencies}. */
   readonly agentSettings: AgentSettingsDependencies;
+  /**
+   * Called after an agent personal-access token has been successfully set or
+   * cleared. The Copilot runtime resolves its credential once, at process
+   * start, so a token change needs an unconditional recycle - which the
+   * composition root performs (`CopilotRuntimeManager.refresh`). Deliberately
+   * not called for a server/proxy password (the runtime does not consume one),
+   * nor on a failed change.
+   */
+  readonly onAgentTokenChanged?: () => void;
 }
 
 /**
@@ -1160,7 +1330,7 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
       if (!parsed.success) {
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
-      return setPassword(deps.settingsDir, deps.secretStore, parsed.data);
+      return setPassword(deps.settingsDir, deps.secretStore, parsed.data, deps.onAgentTokenChanged);
     },
   );
 
@@ -1174,7 +1344,12 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
       if (!parsed.success) {
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
-      return clearPassword(deps.settingsDir, deps.secretStore, parsed.data);
+      return clearPassword(
+        deps.settingsDir,
+        deps.secretStore,
+        parsed.data,
+        deps.onAgentTokenChanged,
+      );
     },
   );
 

@@ -1,5 +1,5 @@
 import type { CopilotClient, ProxyEnvOverrides } from '../agent';
-import { activeAgentId } from './settingsStore';
+import { configuredAgentId } from './settingsStore';
 import type { AppSettings } from '../shared';
 
 /**
@@ -33,10 +33,30 @@ import type { AppSettings } from '../shared';
  * change to the active provider or its proxy does. The comparison is on a
  * cheap descriptor string, so an unchanged write is a no-op rather than a
  * redundant restart.
+ *
+ * A stored personal-access token is resolved into the child's environment on
+ * every install, exactly like the proxy. It is deliberately *not* part of the
+ * descriptor: overwriting a token reuses the same `secretRef`, so the settings
+ * document is unchanged and a descriptor comparison would miss it. A token
+ * set/clear therefore calls {@link CopilotRuntimeManager.refresh}, which
+ * recycles unconditionally - the same treatment sign-in/out gets, and for the
+ * same reason (the running process resolved its credential once, at start).
  */
 
 /** Descriptor used before any provider-bearing runtime has been installed, and after `stop()`. */
 const NO_RUNTIME_DESCRIPTOR = '<none>';
+
+/**
+ * Everything a freshly-built client needs to be shaped correctly. Both fields
+ * are credentials the child process resolves once, at start: the proxy it
+ * tunnels through and the personal-access token it authenticates with. They
+ * are resolved together, per install, so a recycle can never apply one and
+ * forget the other.
+ */
+export interface RuntimeClientOptions {
+  readonly proxy?: ProxyEnvOverrides;
+  readonly githubToken?: string;
+}
 
 export interface CopilotRuntimeManagerDeps {
   /**
@@ -58,8 +78,8 @@ export interface CopilotRuntimeManagerDeps {
   readonly startRuntime: (client: CopilotClient | undefined) => Promise<void>;
   /** Stops a client that is no longer serving the app. Never throws. */
   readonly stopClient: (client: CopilotClient) => Promise<void>;
-  /** Builds a client with the given proxy environment, or none when `undefined`. */
-  readonly createClient: (proxy: ProxyEnvOverrides | undefined) => CopilotClient;
+  /** Builds a client with the given runtime credentials, or none. */
+  readonly createClient: (options: RuntimeClientOptions) => CopilotClient;
   /**
    * Resolves the active provider's configured proxy into environment
    * overrides, reading the entry's password from `secretStore`. Returns
@@ -69,6 +89,13 @@ export interface CopilotRuntimeManagerDeps {
   readonly resolveProxyOverrides: (
     settings: AppSettings | undefined,
   ) => Promise<ProxyEnvOverrides | undefined>;
+  /**
+   * Resolves the active provider's stored personal-access token, reading its
+   * plaintext from `secretStore`. `undefined` when none is stored, which
+   * leaves the runtime to interactive sign-in. A rejection here aborts the
+   * recycle, exactly like {@link resolveProxyOverrides}.
+   */
+  readonly resolveGithubToken: (settings: AppSettings | undefined) => Promise<string | undefined>;
 }
 
 export interface CopilotRuntimeManager {
@@ -95,13 +122,20 @@ export interface CopilotRuntimeManager {
   /** Recycles the runtime if - and only if - `settings` changed something that shapes it. */
   reconcile(settings: AppSettings): Promise<void>;
   /**
-   * Unconditionally recycles the runtime - used after a sign-in/out, where
-   * the *running* process's cached credential resolution is stale regardless
-   * of settings (see `ipc/agent.ts`'s former `resetClient`). Not gated on
+   * Unconditionally recycles the runtime - used after a credential change
+   * (sign-in/out, or a token being set/cleared), where the *running*
+   * process's cached credential resolution is stale regardless of settings
+   * (see `ipc/agent.ts`'s former `resetClient`). Not gated on
    * {@link CopilotRuntimeManagerDeps.recycleOnSettingsChange}: auth is real
    * even on the fake-agent path, so its client must be recycled there too.
+   *
+   * `settings` overrides the document the recycle is resolved against. The
+   * auth path omits it, recycling from the settings the runtime was last
+   * started with; a token change passes a freshly-reloaded document, because
+   * the *first* token set mints the `secretRef` into `settings.json` and the
+   * captured document would still be the token-less one.
    */
-  refresh(): Promise<void>;
+  refresh(settings?: AppSettings): Promise<void>;
   /** Stops the runtime without starting a replacement (window teardown). */
   stop(): Promise<void>;
 }
@@ -112,15 +146,17 @@ export function createCopilotRuntimeManager(
   // Created eagerly and unstarted: cheap and synchronous (see
   // `createHardenedCopilotClient`'s own doc comment), and it makes
   // `getClient()` non-nullable for the auth handlers, which may run before
-  // `start()` has resolved its proxy.
-  let client: CopilotClient = deps.createClient(undefined);
+  // `start()` has resolved its proxy. Carries no credentials: resolving a
+  // stored proxy/token is asynchronous, and this client exists only to answer
+  // auth before the first real install completes.
+  let client: CopilotClient = deps.createClient({});
   let descriptor = NO_RUNTIME_DESCRIPTOR;
   let currentSettings: AppSettings | undefined;
   let inFlight: Promise<void> = Promise.resolve();
 
   function describe(settings: AppSettings | undefined): string {
     if (settings === undefined) return NO_RUNTIME_DESCRIPTOR;
-    const agentId = activeAgentId(settings);
+    const agentId = configuredAgentId(settings);
     return `${agentId}|${settings.agents[agentId]?.proxy ?? ''}`;
   }
 
@@ -132,7 +168,11 @@ export function createCopilotRuntimeManager(
     // usable, so one unresolvable proxy cannot wedge every later recycle.
     const run = inFlight.then(async () => {
       const proxy = await deps.resolveProxyOverrides(settings);
-      const next = deps.createClient(proxy);
+      const githubToken = await deps.resolveGithubToken(settings);
+      const next = deps.createClient({
+        ...(proxy !== undefined ? { proxy } : {}),
+        ...(githubToken !== undefined ? { githubToken } : {}),
+      });
       const previous = client;
       client = next;
       currentSettings = settings;
@@ -157,7 +197,7 @@ export function createCopilotRuntimeManager(
       return install(settings);
     },
 
-    refresh: () => install(currentSettings),
+    refresh: (settings) => install(settings ?? currentSettings),
 
     stop: () => {
       const previous = client;

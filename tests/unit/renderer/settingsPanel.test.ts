@@ -183,4 +183,9 @@ describe('createSettingsPanel dismissal', () => {
     settings.selectTab('agents');
     expect(tabs?.getAttribute('selected')).toBe('agents');
   });
+
+  it('owns exactly one banner row, so a later message suppresses the former', () => {
+    const { settings } = build();
+    expect(settings.element.querySelectorAll('.banner-row').length).toBe(1);
+  });
 });

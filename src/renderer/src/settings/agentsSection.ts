@@ -1,12 +1,16 @@
 import { el } from '../lib/dom';
 import {
+  AGENT_DEFINITIONS,
+  type AgentDefinition,
   type AgentId,
   type AgentSettingsSnapshot,
   type AppSettingsSnapshot,
   type AuthStatus,
+  isAgentEligible,
   type ModelSelectionState,
   type ProxyId,
   type ProxySnapshot,
+  resolveEffectiveActiveAgentId,
 } from '../../../shared';
 import { createAutoSave } from './autoSave';
 import {
@@ -16,6 +20,7 @@ import {
   type PendingModelSelection,
 } from './agentsViewModel';
 import { fromPickerValue } from './modelsViewModel';
+import { createPasswordControl } from './passwordEntry';
 import { syncPickerOptions } from './pickerOptions';
 import { createProxyPicker } from './proxyPicker';
 import type { SaveOutcome, StatusBannerSink } from './statusBanner';
@@ -54,6 +59,13 @@ export interface AgentsSectionOptions {
   reportSave(outcome: Promise<SaveOutcome>): void;
   /** Fired after any mutation that changes the snapshot (active agent, proxy). */
   onSettingsChanged(): void;
+  /**
+   * The providers to render, one item each. Defaults to the compiled-in
+   * {@link AGENT_DEFINITIONS}; overridable so a two-provider interaction (an
+   * eligible provider that is *not* the active one, whose "Set active" control
+   * is therefore live) can be exercised while this build ships one provider.
+   */
+  readonly definitions?: readonly AgentDefinition[];
 }
 
 export interface AgentsSection {
@@ -82,6 +94,7 @@ function labelledField(fieldId: string, label: string, control: HTMLElement): HT
 export function createAgentsSection(options: AgentsSectionOptions): AgentsSection {
   const group = el('div', { attrs: { class: 'agents-section__group' } });
   const autoSave = createAutoSave();
+  const definitions = options.definitions ?? AGENT_DEFINITIONS;
 
   let snapshot: AppSettingsSnapshot | undefined;
   let auth: AuthStatus | undefined;
@@ -118,6 +131,12 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   }
 
   function persistActive(agentId: AgentId): void {
+    const definition = definitions.find((candidate) => candidate.id === agentId);
+    if (definition === undefined || !isAgentEligible(definition, auth)) {
+      // The control is disabled while its provider cannot be active; a stray
+      // activation request must not write a flag the provider cannot honour.
+      return;
+    }
     const outcome = window.daisy.settings
       .setAgentSettings({ agentId, changes: { active: true } })
       .then(
@@ -271,6 +290,18 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       children: [statusLight],
     });
 
+    // The personal-access-token control, exactly the Proxies tab's password
+    // control with `noun: 'token'`: an explicit Set/Clear pair backed by the
+    // OS secret store, never a debounced field a later save could sweep up.
+    const tokenControl = createPasswordControl(
+      {
+        target: () => ({ kind: 'agent', agentId: id }),
+        onChanged: () => options.onSettingsChanged(),
+        noun: 'token',
+      },
+      options.status,
+    );
+
     const proxyFieldId = `agent-${id}-proxy`;
     const proxyPicker = createProxyPicker({
       fieldId: proxyFieldId,
@@ -317,6 +348,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
             // No label above this row: the status light says what it is, and
             // the user's own wording for it is the light's text.
             authControl,
+            labelledField('', 'Token', tokenControl.element),
             labelledField(proxyFieldId, 'Proxy', proxyPicker.element),
             labelledField(modelFieldId, 'Model', modelPicker),
             labelledField(effortFieldId, 'Reasoning effort', effortPicker),
@@ -338,6 +370,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
         header.append(view.isActive ? activeBadge : setActive);
         headerActive = view.isActive;
       }
+      // A provider that cannot be active yet shows the control, but inert:
+      // signing in is the step that makes it activatable.
+      if (view.activationDisabled) setActive.setAttribute('disabled', '');
+      else setActive.removeAttribute('disabled');
 
       if (statusLight.getAttribute('variant') !== view.authVariant) {
         statusLight.setAttribute('variant', view.authVariant);
@@ -381,6 +417,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
         activeAgentId: activeAgentIdFrom(snapshot),
         auth,
         modelSelection,
+        definitions,
       },
       pending,
     );
@@ -418,16 +455,17 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   }
 
   /**
-   * The active agent as the snapshot records it. `ModelSelectionState` also
-   * carries it once loaded, but the radio must be correct before that first
-   * read resolves, and a non-active item's Proxy must be usable regardless.
+   * The provider that is actually active, as the snapshot plus the live auth
+   * status decide it: the configured provider when it is eligible, else the
+   * first eligible provider, else `undefined`. The badge and the "Set active"
+   * control both read this, so the row can never claim a provider is active
+   * while the composer and banner treat it as unusable.
    */
-  function activeAgentIdFrom(document: AppSettingsSnapshot): AgentId {
-    for (const [id, node] of Object.entries(document.agents)) {
-      if (node.active) return id as AgentId;
-    }
-    const [first] = Object.keys(document.agents);
-    return (first ?? 'copilot') as AgentId;
+  function activeAgentIdFrom(document: AppSettingsSnapshot): AgentId | undefined {
+    return resolveEffectiveActiveAgentId(definitions, document.agents, (id) => ({
+      isAuthenticated: auth?.isAuthenticated === true,
+      hasToken: document.agents[id]?.hasToken === true,
+    }));
   }
 
   /**

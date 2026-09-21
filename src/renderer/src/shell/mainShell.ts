@@ -1,23 +1,12 @@
 import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLayoutStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
-import {
-  agentDefinition,
-  DEFAULT_AGENT_DEFINITION,
-  resolveActiveAgentId,
-  type AgentDefinition,
-  type AppSettingsSnapshot,
-} from '../../../shared';
+import { type AppSettingsSnapshot } from '../../../shared';
 import { createBrowserPane } from './browserPane';
 import { createChatPane } from './chatPane';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
 import { buildHostOptions, computeAddressBarValue } from './viewModel';
-
-/** The provider a snapshot names as selected, defaulting like the main process. */
-function activeAgentFor(snapshot: AppSettingsSnapshot): AgentDefinition {
-  return agentDefinition(resolveActiveAgentId(snapshot.agents)) ?? DEFAULT_AGENT_DEFINITION;
-}
 
 /**
  * Mounts the two-pane main window shell (requirements-decisions.md section
@@ -58,11 +47,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   });
 
   /**
-   * Applies one loaded settings snapshot to the browser pane and tells the
-   * chat pane which provider is selected, so it can decide whether a usable
-   * agent exists (see `chatPane.setActiveAgent`). Declared after both panes
-   * are constructed but hoisted, so `onSnapshotApplied` above can reference
-   * it; it only runs once a snapshot actually arrives.
+   * Applies one loaded settings snapshot to the browser pane and hands the
+   * chat pane the persisted per-provider flags. The chat pane derives which
+   * agent is *actually* active (configured-and-eligible, else first eligible)
+   * from those flags plus the live sign-in status, so it stays correct as auth
+   * changes without the shell having to know the rule.
    */
   function applySnapshot(snapshot: AppSettingsSnapshot): void {
     const { hosts } = snapshot;
@@ -70,7 +59,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       addressValue: computeAddressBarValue(),
       hostOptions: buildHostOptions(hosts),
     });
-    chatPane.setActiveAgent(activeAgentFor(snapshot));
+    chatPane.setAgents(snapshot.agents);
   }
 
   // The boundary the user can drag. Its position is restored from the last

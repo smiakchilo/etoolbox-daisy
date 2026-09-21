@@ -1,9 +1,13 @@
 import type { ProxyEnvOverrides } from '../agent';
 import type { AppSettings, ProxyConfig } from '../shared';
-import { activeAgentId } from './settingsStore';
+import { configuredAgentId } from './settingsStore';
 import type { SecretStore } from './secretStore';
 
 /**
+ * Resolves the credentials the Copilot runtime child process is started with,
+ * both read from settings and secure storage: the active provider's proxy
+ * password and its optional personal-access token.
+ *
  * Turns a proxies-library entry plus its already-resolved password into the
  * environment overrides the Copilot runtime child process is started with.
  *
@@ -56,7 +60,7 @@ export async function resolveAgentProxyOverrides(
   secretStore: Pick<SecretStore, 'get'>,
 ): Promise<ProxyEnvOverrides | undefined> {
   if (settings === undefined) return undefined;
-  const proxyId = settings.agents[activeAgentId(settings)]?.proxy;
+  const proxyId = settings.agents[configuredAgentId(settings)]?.proxy;
   if (proxyId === undefined) return undefined;
   const proxy = settings.proxies.find((entry) => entry.id === proxyId);
   if (proxy === undefined) return undefined;
@@ -65,4 +69,31 @@ export async function resolveAgentProxyOverrides(
       ? undefined
       : await secretStore.get(proxy.credentials.secretRef);
   return buildRuntimeProxyOverrides(proxy, password);
+}
+
+/**
+ * Resolves the *active* provider's stored personal-access token, reading its
+ * plaintext from secure storage. `undefined` means no token is stored, which
+ * is the normal interactive-sign-in case - not an error.
+ *
+ * The token is deliberately not validated here: `settings:set-password` never
+ * calls GitHub to check it either (see `ipc/settings.ts`'s
+ * `setAgentTokenSecret`), and the runtime is the only component that can
+ * legitimately decide whether a token works. A malformed one is reported by
+ * the runtime itself ("No GitHub OAuth token or Copilot HMAC key provided.")
+ * rather than being guessed at here.
+ *
+ * Like the proxy, a missing entry resolves to no token rather than failing: a
+ * settings file is hand-editable, and refusing to start the runtime over a
+ * reference the document already considers invalid would be worse than
+ * falling back to interactive sign-in.
+ */
+export async function resolveAgentGithubToken(
+  settings: AppSettings | undefined,
+  secretStore: Pick<SecretStore, 'get'>,
+): Promise<string | undefined> {
+  if (settings === undefined) return undefined;
+  const secretRef = settings.agents[configuredAgentId(settings)]?.token?.secretRef;
+  if (secretRef === undefined) return undefined;
+  return secretStore.get(secretRef);
 }
