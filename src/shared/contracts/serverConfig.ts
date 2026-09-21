@@ -132,7 +132,7 @@ export const sha256FingerprintSchema = z.string().transform((value, ctx) => {
  * defeats the point of asking the user to approve one specific self-signed
  * certificate (requirements-decisions.md section 4).
  *
- * This lives on `ServerConfig` itself, as a sibling of `proxy`, rather than
+ * This lives on `ServerConfig` itself, as a sibling of `proxyId`, rather than
  * nested inside it: a self-signed AEM certificate is a property of the AEM
  * server's own origin and applies to a direct HTTPS connection just as much
  * as a proxied one, so it must stay expressible with no proxy configured at
@@ -169,15 +169,30 @@ export const tlsExceptionSchema = z
 
 export type TlsException = Readonly<z.infer<typeof tlsExceptionSchema>>;
 
-/** The optional proxy used to reach one specific AEM server. */
-export const aemProxyConfigSchema = z
-  .object({
-    url: originSchema,
-    credentials: proxyCredentialsSchema.optional(),
-  })
-  .strict();
+/**
+ * The literal a host's `proxyId` carries to mean "explicitly no proxy" -
+ * overriding any `browser.proxy` default. A host whose `proxyId` is *absent*
+ * inherits the default proxy; a host whose `proxyId` is `"none"` connects
+ * directly. `"none"` is a reserved value, never a proxy-library id (ids are
+ * generated uuids), so it can never collide with a real entry.
+ *
+ * This is the one non-id value `proxyId` accepts; see
+ * {@link hostProxyIdSchema}. The name is deliberately not `null`: with
+ * `exactOptionalPropertyTypes` an optional property cannot be set to
+ * `undefined`, and a JSON `null` would read as "absent" to a hand-editor, so a
+ * distinct sentinel string is what makes the three states unambiguous in the
+ * persisted document.
+ */
+export const HOST_PROXY_NONE = 'none' as const;
 
-export type AemProxyConfig = Readonly<z.infer<typeof aemProxyConfigSchema>>;
+/**
+ * A host's proxy selection as persisted: a proxy-library entry id, or the
+ * {@link HOST_PROXY_NONE} sentinel for "No proxy". Absence of the whole
+ * `proxyId` key means "(Default)" - inherit `browser.proxy`.
+ */
+export const hostProxyIdSchema = z.union([proxyIdSchema, z.literal(HOST_PROXY_NONE)]);
+
+export type HostProxyId = z.infer<typeof hostProxyIdSchema>;
 
 /** Non-negative: a fresh server entry starts at revision 0. */
 export const serverRevisionSchema = z.number().int().nonnegative();
@@ -188,17 +203,22 @@ export const serverConfigSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
-    proxy: aemProxyConfigSchema.optional(),
     /**
      * Which entry of the settings `proxies` library this host reaches AEM
      * through, by id (the Settings "Hosts" multifield's Proxy combobox stores
-     * this; the label is only ever a display concern). Absent means "no
-     * proxy". Unlike the legacy inline {@link proxy} it carries no credentials
-     * of its own - a library entry owns those. Referential integrity (the id
-     * naming a configured proxy) is enforced by `appSettingsSchema`, not here,
-     * because only the whole document can see the library.
+     * this; the label is only ever a display concern). The three states are:
+     *
+     *  - **absent** - "(Default)": inherit `browser.proxy` (the default proxy);
+     *  - {@link HOST_PROXY_NONE} - "No proxy": connect directly, overriding any
+     *    `browser.proxy` default (useful for e.g. localhost);
+     *  - a {@link proxyIdSchema} id - that library entry.
+     *
+     * A library entry owns its credentials; the host carries none of its own.
+     * Referential integrity (a real id naming a configured proxy) is enforced
+     * by `appSettingsSchema`, not here, because only the whole document can see
+     * the library.
      */
-    proxyId: proxyIdSchema.optional(),
+    proxyId: hostProxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
     revision: serverRevisionSchema,
   })
@@ -236,18 +256,21 @@ export function updatePresentation(
  * be changed (a server's identity is permanent) and `revision` is never set
  * directly - {@link bumpRevision} owns incrementing it.
  *
- * `proxy` and `tlsException` are `T | null`, not `Partial`'s usual "omit to
+ * `proxyId` and `tlsException` are `T | null`, not `Partial`'s usual "omit to
  * leave unchanged": with `exactOptionalPropertyTypes`, an optional property
  * cannot be explicitly set to `undefined`, so `undefined` is unavailable as a
  * "remove this" signal. Omitting the key means "leave as-is"; `null` means
  * "remove it"; a value means "replace it with this" - three states that a
- * plain `Partial<Pick<ServerConfig, "proxy" | "tlsException">>` cannot tell
+ * plain `Partial<Pick<ServerConfig, "proxyId" | "tlsException">>` cannot tell
  * apart (it can only express "unchanged" or "replace").
  */
 export interface ServerTargetingChanges {
   readonly origin?: ServerConfig['origin'];
-  readonly proxy?: AemProxyConfig | null;
-  /** Which proxy-library entry to use; `null` clears it ("No proxy"), omitting leaves it unchanged. */
+  /**
+   * Which proxy-library entry to use, `HOST_PROXY_NONE` for "No proxy", or
+   * `null` to reset to "(Default)" (inherit `browser.proxy`); omitting leaves
+   * it unchanged.
+   */
   readonly proxyId?: ServerConfig['proxyId'] | null;
   readonly tlsException?: TlsException | null;
 }
@@ -281,12 +304,9 @@ export function bumpRevision(
   const nextOrigin = changes.origin ?? config.origin;
   const originChanged = nextOrigin !== config.origin;
 
-  const nextProxy =
-    'proxy' in changes ? (changes.proxy === null ? undefined : changes.proxy) : config.proxy;
-
   // The proxy *reference* is independent of the origin: a host that moves
   // address keeps using the same library entry, and only an explicit
-  // `proxyId: null` clears it.
+  // `proxyId: null` resets it to "(Default)".
   const nextProxyId =
     'proxyId' in changes
       ? changes.proxyId === null
@@ -310,9 +330,6 @@ export function bumpRevision(
     color: config.color,
     revision: config.revision + 1,
   };
-  if (nextProxy !== undefined) {
-    next.proxy = nextProxy;
-  }
   if (nextProxyId !== undefined) {
     next.proxyId = nextProxyId;
   }

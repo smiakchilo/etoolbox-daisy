@@ -5,7 +5,14 @@ import type {
   SaveOutcome,
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
-import { parseAppSettingsSnapshot, type AppSettingsSnapshot } from '../../../../src/shared';
+import {
+  newProxyId,
+  parseAppSettingsSnapshot,
+  proxySnapshotSchema,
+  type AppSettingsSnapshot,
+  type ProxySnapshot,
+} from '../../../../src/shared';
+import { PROXY_NONE_VALUE } from '../../../../src/renderer/src/settings/proxyPicker';
 
 /**
  * The Browser section's DOM, in jsdom. The real custom-element upgrade is
@@ -25,13 +32,40 @@ let status: StatusBannerSink;
 let reportSave: (outcome: Promise<SaveOutcome>) => void;
 let onSettingsChanged: () => void;
 
-function snapshotWith(disableNativeWebAuthn: boolean): AppSettingsSnapshot {
+function proxySnapshot(id: string, label: string): ProxySnapshot {
+  return proxySnapshotSchema.parse({
+    id: newProxyId(() => id),
+    label,
+    url: 'https://proxy.example:8080',
+  });
+}
+
+function snapshotWith(
+  disableNativeWebAuthn: boolean,
+  options: { proxy?: string; proxies?: readonly ProxySnapshot[] } = {},
+): AppSettingsSnapshot {
   return parseAppSettingsSnapshot({
     hosts: [],
-    proxies: [],
+    proxies: options.proxies ?? [],
     agents: {},
-    browser: { disableNativeWebAuthn },
+    browser: {
+      disableNativeWebAuthn,
+      ...(options.proxy !== undefined ? { proxy: options.proxy } : {}),
+    },
   });
+}
+
+function proxyPickerOf(section: ReturnType<typeof createBrowserSection>): HTMLElement & {
+  value: string;
+} {
+  const picker = section.element.querySelector('[aria-label="Proxy"]');
+  if (picker === null) throw new Error('proxy picker not found');
+  return picker as HTMLElement & { value: string };
+}
+
+function chooseProxy(picker: HTMLElement & { value: string }, value: string): void {
+  picker.value = value;
+  picker.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 }
 
 async function flush(): Promise<void> {
@@ -129,5 +163,48 @@ describe('createBrowserSection', () => {
     section.dispose();
     toggle(checkboxOf(section), false);
     expect(updateBrowserSettings).not.toHaveBeenCalled();
+  });
+
+  describe('Default proxy', () => {
+    const corp = proxySnapshot('p1', 'Corporate');
+    const home = proxySnapshot('p2', 'Home');
+
+    it('renders the Default proxy field first, labelled, with "(No proxy)" plus the library', () => {
+      const section = buildSection();
+      section.update(snapshotWith(true, { proxies: [corp, home] }));
+
+      const labels = [...section.element.querySelectorAll('sp-field-label')].map(
+        (node) => node.textContent,
+      );
+      expect(labels[0]).toBe('Default proxy');
+
+      const picker = proxyPickerOf(section);
+      const menuLabels = [...picker.querySelectorAll('sp-menu-item')].map(
+        (item) => item.textContent,
+      );
+      // No "(Default)" choice: this *is* the default.
+      expect(menuLabels).toEqual(['(No proxy)', 'Corporate', 'Home']);
+      expect(picker.value).toBe(PROXY_NONE_VALUE);
+    });
+
+    it('preselects the stored default proxy id', () => {
+      const section = buildSection();
+      section.update(snapshotWith(true, { proxy: 'p1', proxies: [corp, home] }));
+
+      expect(proxyPickerOf(section).value).toBe(String(newProxyId(() => 'p1')));
+    });
+
+    it('persists the chosen entry, then null when "(No proxy)" is chosen', () => {
+      const section = buildSection();
+      section.update(snapshotWith(true, { proxies: [corp, home] }));
+
+      chooseProxy(proxyPickerOf(section), String(newProxyId(() => 'p1')));
+      expect(updateBrowserSettings).toHaveBeenCalledWith({
+        changes: { proxy: newProxyId(() => 'p1') },
+      });
+
+      chooseProxy(proxyPickerOf(section), PROXY_NONE_VALUE);
+      expect(updateBrowserSettings).toHaveBeenLastCalledWith({ changes: { proxy: null } });
+    });
   });
 });

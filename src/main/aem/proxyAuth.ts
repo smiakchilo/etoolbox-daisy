@@ -1,5 +1,5 @@
 import { extractProxyTarget } from './proxyPolicy';
-import type { AemProxyConfig } from '../../shared/contracts/serverConfig';
+import type { ProxyConfig } from '../../shared';
 
 /**
  * Proxy-vs-origin authentication disambiguation
@@ -42,7 +42,7 @@ export type ProxyAuthDecision =
  */
 export function decideProxyAuth(
   challenge: ProxyLoginChallenge,
-  selectedProxy: AemProxyConfig | undefined,
+  selectedProxy: ProxyConfig | undefined,
 ): ProxyAuthDecision {
   if (!challenge.isProxy) {
     return { supply: false, reason: 'not_a_proxy_challenge' };
@@ -94,7 +94,7 @@ export type ProxyLoginListener = (
 ) => void;
 
 export interface ProxyLoginListenerDeps {
-  readonly selectedProxy: AemProxyConfig | undefined;
+  readonly selectedProxy: ProxyConfig | undefined;
   /** Resolved lazily (not eagerly at listener-creation time) so a rotated secret is always read fresh for each challenge. */
   readonly resolveCredentials: () => ProxyPlainCredentials | undefined;
 }

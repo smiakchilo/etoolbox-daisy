@@ -14,7 +14,10 @@ import {
   type ProxySnapshot,
   type ServerSnapshot,
 } from '../../../../src/shared';
-import { NO_PROXY_VALUE } from '../../../../src/renderer/src/settings/proxyPicker';
+import {
+  PROXY_DEFAULT_VALUE,
+  PROXY_NONE_VALUE,
+} from '../../../../src/renderer/src/settings/proxyPicker';
 
 const previousDocument = Reflect.get(globalThis, 'document') as unknown;
 const previousWindow = Reflect.get(globalThis, 'window') as unknown;
@@ -37,7 +40,7 @@ function snapshot(
     label,
     origin,
     color: { kind: 'swatch', swatch: options.swatch ?? 'blue' },
-    ...(options.proxyId !== undefined ? { proxyId: newProxyId(() => options.proxyId!) } : {}),
+    ...(options.proxyId !== undefined ? { proxyId: options.proxyId } : {}),
     revision: 0,
   });
 }
@@ -342,22 +345,23 @@ describe('createHostsSection', () => {
     const corp = proxySnapshot('p1', 'Corporate', 'https://proxy.example:8080');
     const home = proxySnapshot('p2', 'Home', 'https://home.example:3128');
 
-    it('offers "(No proxy)" plus every library label, and stores ids', () => {
+    it('offers "(Default)" and "(No proxy)" plus every library label, and stores ids', () => {
       const section = buildSection();
       section.update([snapshot('a', 'https://a.example', 'A')], [corp, home]);
 
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
       // Labels are shown...
-      expect(proxyMenuLabels(picker)).toEqual(['(No proxy)', 'Corporate', 'Home']);
-      // ...but the item values (what is stored) are the library ids.
+      expect(proxyMenuLabels(picker)).toEqual(['(Default)', '(No proxy)', 'Corporate', 'Home']);
+      // ...but the item values (what is stored) are the sentinels and ids.
       expect(proxyMenuValues(picker)).toEqual([
-        NO_PROXY_VALUE,
+        PROXY_DEFAULT_VALUE,
+        PROXY_NONE_VALUE,
         String(newProxyId(() => 'p1')),
         String(newProxyId(() => 'p2')),
       ]);
-      // Host 'a' has no proxy, so the sentinel is selected.
-      expect(picker.value).toBe(NO_PROXY_VALUE);
+      // Host 'a' has no explicit selection, so "(Default)" is selected.
+      expect(picker.value).toBe(PROXY_DEFAULT_VALUE);
     });
 
     it('preselects the stored library id', () => {
@@ -366,6 +370,14 @@ describe('createHostsSection', () => {
 
       const picker = field(section.element, 'Proxy');
       expect(picker?.value).toBe(String(newProxyId(() => 'p1')));
+    });
+
+    it('preselects "(No proxy)" for the explicit no-proxy sentinel', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'none' })], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      expect(picker?.value).toBe(PROXY_NONE_VALUE);
     });
 
     it('persists the chosen id via updateServerTargeting', async () => {
@@ -383,13 +395,28 @@ describe('createHostsSection', () => {
       });
     });
 
-    it('clears the selection with null when "(No proxy)" is chosen', async () => {
+    it('persists the "No proxy" sentinel when that choice is made', async () => {
       const section = buildSection();
       section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], [corp, home]);
 
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
-      chooseProxy(picker, NO_PROXY_VALUE);
+      chooseProxy(picker, PROXY_NONE_VALUE);
+      await Promise.resolve();
+
+      expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'a'),
+        changes: { proxyId: 'none' },
+      });
+    });
+
+    it('resets to "(Default)" with null when that choice is made', async () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], [corp, home]);
+
+      const picker = field(section.element, 'Proxy');
+      if (!picker) throw new Error('missing proxy picker');
+      chooseProxy(picker, PROXY_DEFAULT_VALUE);
       await Promise.resolve();
 
       expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
@@ -406,7 +433,7 @@ describe('createHostsSection', () => {
       section.update([host], [corp, home]);
 
       const picker = field(section.element, 'Proxy');
-      expect(proxyMenuLabels(picker!)).toEqual(['(No proxy)', 'Corporate', 'Home']);
+      expect(proxyMenuLabels(picker!)).toEqual(['(Default)', '(No proxy)', 'Corporate', 'Home']);
     });
 
     it('reflects a renamed entry without changing the stored id', () => {
@@ -419,17 +446,17 @@ describe('createHostsSection', () => {
 
       const picker = field(section.element, 'Proxy');
       expect(picker?.value).toBe(String(newProxyId(() => 'p1')));
-      expect(proxyMenuLabels(picker!)).toEqual(['(No proxy)', 'Corporate HQ']);
+      expect(proxyMenuLabels(picker!)).toEqual(['(Default)', '(No proxy)', 'Corporate HQ']);
     });
 
-    it('falls back to "(No proxy)" when the selected entry no longer exists', () => {
+    it('falls back to "(Default)" when the selected entry no longer exists', () => {
       const section = buildSection();
       section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], [corp]);
 
       section.update([snapshot('a', 'https://a.example', 'A', { proxyId: 'p1' })], []);
 
       const picker = field(section.element, 'Proxy');
-      expect(picker?.value).toBe(NO_PROXY_VALUE);
+      expect(picker?.value).toBe(PROXY_DEFAULT_VALUE);
     });
 
     it("applies a draft's chosen proxy once addServer creates the host", async () => {
@@ -452,6 +479,28 @@ describe('createHostsSection', () => {
       expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
         serverId: newServerId(() => 'created'),
         changes: { proxyId: newProxyId(() => 'p1') },
+      });
+    });
+
+    it('applies a draft\'s explicit "No proxy" choice once addServer creates the host', async () => {
+      const section = buildSection();
+      section.update([], [corp]);
+
+      section.element
+        .querySelector('.multifield__add')
+        ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      const picker = field(section.element, 'Proxy');
+      if (!picker) throw new Error('missing proxy picker');
+      chooseProxy(picker, PROXY_NONE_VALUE);
+
+      const address = field(section.element, 'Address');
+      if (!address) throw new Error('missing address field');
+      type(address, 'https://draft.example');
+      await settle();
+
+      expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'created'),
+        changes: { proxyId: 'none' },
       });
     });
   });

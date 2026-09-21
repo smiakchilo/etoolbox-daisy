@@ -1,5 +1,5 @@
-import type { ProxyConfig } from 'electron';
-import type { AemProxyConfig } from '../../shared/contracts/serverConfig';
+import type { ProxyConfig as ElectronProxyConfig } from 'electron';
+import type { ProxyConfig } from '../../shared';
 
 /**
  * AEM proxy configuration and the sequential-switch requirement
@@ -33,7 +33,7 @@ export interface ProxySwitchOptions {
 }
 
 /** The raw `proxyRules` string for one AEM proxy. Pure, so it is unit-testable without Electron. */
-export function buildProxyRules(proxy: AemProxyConfig): string {
+export function buildProxyRules(proxy: ProxyConfig): string {
   // No scheme prefix: an un-prefixed rule applies to every URL scheme,
   // including HTTPS via CONNECT, matching requirements-decisions.md section 4
   // ("An explicit HTTP proxy, HTTPS through CONNECT"). `proxy.url` is already
@@ -50,9 +50,9 @@ export function buildProxyRules(proxy: AemProxyConfig): string {
  * would do the opposite of "explicit".
  */
 export function buildProxyConfig(
-  proxy: AemProxyConfig | undefined,
+  proxy: ProxyConfig | undefined,
   options: ProxySwitchOptions = {},
-): ProxyConfig {
+): ElectronProxyConfig {
   if (proxy === undefined) {
     return { mode: 'direct' };
   }
@@ -78,7 +78,7 @@ export interface ProxyTarget {
  * which omits the port when it is the scheme's default - so the default must
  * be reconstructed here rather than assumed present.
  */
-export function extractProxyTarget(proxy: AemProxyConfig): ProxyTarget {
+export function extractProxyTarget(proxy: ProxyConfig): ProxyTarget {
   const url = new URL(proxy.url);
   const port = url.port !== '' ? Number(url.port) : url.protocol === 'https:' ? 443 : 80;
   return { host: url.hostname, port };
@@ -90,7 +90,7 @@ export function extractProxyTarget(proxy: AemProxyConfig): ProxyTarget {
  * tests. A real `Session` satisfies this structurally without any cast.
  */
 export interface ProxySwitchSession {
-  setProxy(config: ProxyConfig): Promise<void>;
+  setProxy(config: ElectronProxyConfig): Promise<void>;
   closeAllConnections(): Promise<void>;
 }
 
@@ -111,9 +111,30 @@ export interface ProxySwitchSession {
  */
 export async function applyProxySwitch(
   session: ProxySwitchSession,
-  proxy: AemProxyConfig | undefined,
+  proxy: ProxyConfig | undefined,
   options: ProxySwitchOptions = {},
 ): Promise<void> {
   await session.setProxy(buildProxyConfig(proxy, options));
   await session.closeAllConnections();
+}
+
+/**
+ * The `setProxy`-only half of {@link applyProxySwitch}, for the
+ * per-navigation proxy reconciliation `browserController.ts` performs when the
+ * view lands on an origin whose effective proxy differs from the one currently
+ * applied (a cross-origin SSO redirect, or a page-initiated navigation away
+ * from a configured host).
+ *
+ * Deliberately does NOT call `closeAllConnections()`: this runs while a
+ * navigation is in flight, and closing every connection would abort the very
+ * load it is trying to steer. The full sequential switch (which *does* close
+ * connections, per requirements-decisions.md section 4) remains
+ * {@link applyProxySwitch}, used for explicit server switches.
+ */
+export async function applySessionProxy(
+  session: Pick<ProxySwitchSession, 'setProxy'>,
+  proxy: ProxyConfig | undefined,
+  options: ProxySwitchOptions = {},
+): Promise<void> {
+  await session.setProxy(buildProxyConfig(proxy, options));
 }

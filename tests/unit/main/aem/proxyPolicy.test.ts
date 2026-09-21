@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyProxySwitch,
+  applySessionProxy,
   buildProxyConfig,
   buildProxyRules,
   extractProxyTarget,
   type ProxySwitchSession,
-} from '../../../../src/main/aem/proxyPolicy';
-import type { AemProxyConfig } from '../../../../src/shared/contracts/serverConfig';
-import { aemProxyConfigSchema } from '../../../../src/shared/contracts/serverConfig';
+} from '../../../../src/main/aem';
+import { newProxyId, proxyConfigSchema, type ProxyConfig } from '../../../../src/shared';
 
-function proxy(url: string): AemProxyConfig {
-  return aemProxyConfigSchema.parse({ url });
+function proxy(url: string): ProxyConfig {
+  return proxyConfigSchema.parse({ id: newProxyId(() => 'proxy-1'), label: 'Proxy', url });
 }
 
 describe('buildProxyRules', () => {
@@ -159,5 +159,43 @@ describe('applyProxySwitch', () => {
 
     expect(setProxyResolved).toBe(true);
     expect(closeResolved).toBe(true);
+  });
+});
+
+describe('applySessionProxy', () => {
+  function createSessionSpy(): Pick<ProxySwitchSession, 'setProxy'> & {
+    calls: string[];
+    setProxyArgs: unknown[];
+  } {
+    const calls: string[] = [];
+    const setProxyArgs: unknown[] = [];
+    return {
+      calls,
+      setProxyArgs,
+      setProxy(config) {
+        setProxyArgs.push(config);
+        calls.push('setProxy');
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('applies the proxy without closing connections, so an in-flight navigation is not aborted', async () => {
+    const session = createSessionSpy();
+
+    await applySessionProxy(session, proxy('http://proxy.example.test:8080'));
+
+    expect(session.calls).toEqual(['setProxy']);
+    expect(session.setProxyArgs).toEqual([
+      { mode: 'fixed_servers', proxyRules: 'http://proxy.example.test:8080' },
+    ]);
+  });
+
+  it('switches to direct mode when the resolved proxy is undefined', async () => {
+    const session = createSessionSpy();
+
+    await applySessionProxy(session, undefined);
+
+    expect(session.setProxyArgs).toEqual([{ mode: 'direct' }]);
   });
 });

@@ -9,8 +9,8 @@ import {
   type AgentId,
   type AppSettings,
 } from '../../../src/shared';
-import { newProxyId, newServerId } from '../../../src/shared';
-import { serverConfigSchema, type ServerConfig } from '../../../src/shared';
+import { HOST_PROXY_NONE, newProxyId, newServerId } from '../../../src/shared';
+import { proxyConfigSchema, serverConfigSchema, type ServerConfig } from '../../../src/shared';
 import {
   configuredAgentId,
   addProxy,
@@ -73,10 +73,10 @@ function makeServer(
   });
 }
 
-function makeSettings(hosts: ServerConfig[]): AppSettings {
+function makeSettings(hosts: ServerConfig[], proxies: readonly unknown[] = []): AppSettings {
   return appSettingsSchema.parse({
     hosts,
-    proxies: [],
+    proxies,
     agents: { [DEFAULT_AGENT_ID]: { active: true } },
   });
 }
@@ -92,29 +92,24 @@ function listDirEntries(dir: string): string[] {
 describe('saveSettings / loadSettings round trip', () => {
   it('preserves every field across a save then load', async () => {
     const dir = createScratchRoot();
+    const proxyEntry = {
+      id: newProxyId(() => 'proxy-a'),
+      label: 'Corporate',
+      url: 'https://copilot-proxy.example:3128',
+      credentials: { username: 'bob', secretRef: 'vault://proxy/bob' },
+    };
     const server = makeServer('server-a', 'https://a.example', {
-      proxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'vault://server-a/proxy' },
-      },
+      proxyId: proxyEntry.id,
       tlsException: {
         origin: 'https://a.example',
         certificateSha256Fingerprint: 'a'.repeat(64),
         errorClass: 'net::ERR_CERT_AUTHORITY_INVALID',
       },
     });
-    const settings = makeSettings([server]);
     const withProxy = appSettingsSchema.parse({
-      ...settings,
-      hosts: settings.hosts,
-      proxies: [
-        {
-          id: newProxyId(() => 'proxy-a'),
-          label: 'Corporate',
-          url: 'https://copilot-proxy.example:3128',
-          credentials: { username: 'bob', secretRef: 'vault://proxy/bob' },
-        },
-      ],
+      hosts: [server],
+      proxies: [proxyEntry],
+      browser: { disableNativeWebAuthn: true, proxy: proxyEntry.id },
       agents: {
         [DEFAULT_AGENT_ID]: { active: true, model: 'gpt-5', reasoningEffort: 'high' },
       },
@@ -332,6 +327,37 @@ describe('normalizeSettingsDocument', () => {
     expect(normalize({})['browser']).toEqual({});
   });
 
+  it('keeps a browser default proxy that names a configured entry and drops a dangling one', () => {
+    const base = {
+      hosts: [],
+      proxies: [{ id: 'proxy-a', label: 'Corporate', url: 'https://proxy.example' }],
+    };
+    expect(normalize({ ...base, browser: { proxy: 'proxy-a' } })['browser']).toEqual({
+      proxy: 'proxy-a',
+    });
+    expect(normalize({ ...base, browser: { proxy: 'proxy-ghost' } })['browser']).toEqual({});
+    // The "No proxy" sentinel is a host-only value; as a default it means
+    // "no default", i.e. it is dropped.
+    expect(normalize({ ...base, browser: { proxy: HOST_PROXY_NONE } })['browser']).toEqual({});
+  });
+
+  it('keeps a host\'s "No proxy" sentinel, resolves a real reference, and treats a falsy or dangling value as "(Default)"', () => {
+    const base = {
+      hosts: [
+        { id: 'server-a', origin: 'https://a.example', proxyId: HOST_PROXY_NONE },
+        { id: 'server-b', origin: 'https://b.example', proxyId: 'proxy-a' },
+        { id: 'server-c', origin: 'https://c.example', proxyId: null },
+        { id: 'server-d', origin: 'https://d.example', proxyId: 'proxy-ghost' },
+      ],
+      proxies: [{ id: 'proxy-a', label: 'Corporate', url: 'https://proxy.example' }],
+    };
+    const hosts = normalize(base)['hosts'] as Record<string, unknown>[];
+    expect(hosts[0]?.['proxyId']).toBe(HOST_PROXY_NONE);
+    expect(hosts[1]?.['proxyId']).toBe('proxy-a');
+    expect(hosts[2]?.['proxyId']).toBeUndefined();
+    expect(hosts[3]?.['proxyId']).toBeUndefined();
+  });
+
   it('strips unrecognised keys at every level but never inside credentials', () => {
     const normalized = normalize({
       extra: 'gone',
@@ -481,6 +507,24 @@ describe('applyBrowserSettingsChange', () => {
 
     const unchanged = applyBrowserSettingsChange(disabled, {});
     expect(unchanged.browser.disableNativeWebAuthn).toBe(false);
+  });
+
+  it('sets and clears the default proxy', () => {
+    const proxyEntry = proxyConfigSchema.parse({
+      id: newProxyId(() => 'proxy-a'),
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
+    const settings = makeSettings([], [proxyEntry]);
+
+    const set = applyBrowserSettingsChange(settings, { proxy: proxyEntry.id });
+    expect(set.browser.proxy).toBe(proxyEntry.id);
+
+    const cleared = applyBrowserSettingsChange(set, { proxy: null });
+    expect(cleared.browser.proxy).toBeUndefined();
+
+    // Omitted means unchanged.
+    expect(applyBrowserSettingsChange(set, {}).browser.proxy).toBe(proxyEntry.id);
   });
 });
 
@@ -677,23 +721,39 @@ describe('applyServerTargetingChange: origin changes', () => {
   });
 });
 
-describe('applyServerTargetingChange: proxy changes', () => {
-  it('reports that a safe transition is required for a proxy change on the active server', () => {
+describe('applyServerTargetingChange: proxy selection changes', () => {
+  it('reports that a safe transition is required for a proxy selection change', () => {
+    const proxyEntry = proxyConfigSchema.parse({
+      id: newProxyId(() => 'proxy-1'),
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+    });
     const server = makeServer('server-a', 'https://a.example');
-    const settings = makeSettings([server]);
+    const settings = makeSettings([server], [proxyEntry]);
 
     const mutation = applyServerTargetingChange(settings, server.id, {
-      proxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'vault://server-a/proxy' },
-      },
+      proxyId: proxyEntry.id,
     });
 
     expect(mutation.ok).toBe(true);
     if (mutation.ok) {
       expect(mutation.value.kind).toBe('requires_safe_transition');
-      expect(mutation.value.server.origin).toBe('https://a.example');
+      expect(mutation.value.server.proxyId).toBe(proxyEntry.id);
       expect(mutation.value.server.revision).toBe(1);
+    }
+  });
+
+  it('stores the "No proxy" sentinel as an explicit override', () => {
+    const server = makeServer('server-a', 'https://a.example');
+    const settings = makeSettings([server]);
+
+    const mutation = applyServerTargetingChange(settings, server.id, {
+      proxyId: HOST_PROXY_NONE,
+    });
+
+    expect(mutation.ok).toBe(true);
+    if (mutation.ok) {
+      expect(mutation.value.server.proxyId).toBe(HOST_PROXY_NONE);
     }
   });
 });
@@ -717,7 +777,7 @@ describe('addServer', () => {
       expect(result.value.server.label).toBe('New server');
       expect(result.value.server.origin).toBe('https://new.example');
       expect(result.value.server.revision).toBe(0);
-      expect(result.value.server.proxy).toBeUndefined();
+      expect(result.value.server.proxyId).toBeUndefined();
       expect(result.value.server.tlsException).toBeUndefined();
       expect(result.value.settings.hosts).toHaveLength(1);
     }
@@ -1017,6 +1077,27 @@ describe('proxy library mutations', () => {
     }
   });
 
+  it('removeProxy clears the browser default and every agent that named it, rather than refusing', () => {
+    const settings: AppSettings = appSettingsSchema.parse({
+      hosts: [],
+      proxies: [{ id: proxyId, label: 'Corporate', url: 'https://proxy.example:8080' }],
+      agents: {
+        [DEFAULT_AGENT_ID]: { active: true, proxy: proxyId },
+      },
+      browser: { disableNativeWebAuthn: true, proxy: proxyId },
+    });
+    expect(() => appSettingsSchema.parse(settings)).not.toThrow();
+
+    const result = removeProxy(settings, proxyId);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.browser.proxy).toBeUndefined();
+      expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.proxy).toBeUndefined();
+      expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
+    }
+  });
+
   it('reorderProxies accepts a full permutation', () => {
     const proxyIdB = newProxyId(() => 'proxy-b');
     const settings: AppSettings = {
@@ -1174,13 +1255,14 @@ describe('canary: plaintext secrets never reach settings', () => {
 
   it('a normal save/load round trip never writes a `password` key to disk', async () => {
     const dir = createScratchRoot();
-    const server = makeServer('server-a', 'https://a.example', {
-      proxy: {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'vault://server-a/proxy' },
-      },
+    const proxyEntry = proxyConfigSchema.parse({
+      id: newProxyId(() => 'proxy-a'),
+      label: 'Corporate',
+      url: 'https://proxy.example:8080',
+      credentials: { username: 'alice', secretRef: 'vault://proxy/alice' },
     });
-    const settings = makeSettings([server]);
+    const server = makeServer('server-a', 'https://a.example', { proxyId: proxyEntry.id });
+    const settings = makeSettings([server], [proxyEntry]);
 
     await saveSettings(dir, settings);
 

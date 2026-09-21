@@ -1,7 +1,8 @@
 import { el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import {
-  type ProxyId,
+  HOST_PROXY_NONE,
+  type HostProxyId,
   type ProxySnapshot,
   type ServerColor,
   type ServerId,
@@ -9,7 +10,7 @@ import {
   type ServerSwatch,
 } from '../../../shared';
 import { colorKey, createColorPicker } from './colorPicker';
-import { createProxyPicker } from './proxyPicker';
+import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import { createAutoSave } from './autoSave';
 import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
 import { resolveHostLabelInput, validateHostColorInput, validateOriginInput } from './viewModel';
@@ -19,6 +20,20 @@ type TextField = HTMLElement & { value: string };
 /** A fresh host's colour, per the settings UI's agreed default swatch. */
 const DEFAULT_SWATCH: ServerSwatch = 'blue';
 const DEFAULT_COLOR: ServerColor = { kind: 'swatch', swatch: DEFAULT_SWATCH };
+
+/** The stored three-way host selection as the picker's value. */
+function selectionFromHostProxyId(proxyId: HostProxyId | undefined): ProxySelection {
+  if (proxyId === undefined) return { kind: 'default' };
+  if (proxyId === HOST_PROXY_NONE) return { kind: 'none' };
+  return { kind: 'proxy', proxyId };
+}
+
+/** The picker's value as the stored selection; `undefined` means "(Default)" (inherit `browser.proxy`). */
+function hostProxyIdFromSelection(selection: ProxySelection): HostProxyId | undefined {
+  if (selection.kind === 'default') return undefined;
+  if (selection.kind === 'none') return HOST_PROXY_NONE;
+  return selection.proxyId;
+}
 
 /** Everything a host item needs from the section (and, one level up, the panel). */
 interface HostItemContext {
@@ -136,8 +151,9 @@ function buildHostItem(
 
   const proxyPicker = createProxyPicker({
     fieldId: proxyFieldId,
-    initialProxyId: server?.proxyId,
+    initial: selectionFromHostProxyId(server?.proxyId),
     proxies: ctx.proxies(),
+    includeDefault: true,
     onChange: onProxySelectionChange,
   });
 
@@ -183,9 +199,9 @@ function buildHostItem(
   let savedOrigin = server?.origin ?? '';
   let savedLabel = server?.label ?? '';
   let savedColorKey = colorKey(server?.color ?? DEFAULT_COLOR);
-  let savedProxyId: ProxyId | undefined = server?.proxyId;
-  /** A draft's chosen proxy, applied once the host exists (see `runSave`). */
-  let pendingProxyId: ProxyId | undefined;
+  let savedProxyId: HostProxyId | undefined = server?.proxyId;
+  /** A draft's explicit proxy choice, applied once the host exists (see `runSave`). */
+  let pendingProxyId: HostProxyId | undefined;
 
   /** The exact origin the user has been warned about; the OK click persists it. */
   let pendingOrigin: string | undefined;
@@ -221,8 +237,12 @@ function buildHostItem(
    * The Proxy combobox changed. A saved host persists it immediately as a
    * targeting change (which proxy reaches AEM is targeting, so it bumps the
    * revision - but it needs no confirmation, unlike an origin change). A draft
-   * has no host to target yet, so its choice is remembered and applied once
-   * `addServer` succeeds.
+   * has no host to target yet, so its explicit choice is remembered and
+   * applied once `addServer` succeeds; leaving it on "(Default)" is a no-op.
+   *
+   * "(Default)" is stored by *omitting* `proxyId` (so the request sends
+   * `null`), "No proxy" as the `HOST_PROXY_NONE` sentinel, and an entry as its
+   * id.
    */
   function onProxySelectionChange(): void {
     if (busy) return;
@@ -231,7 +251,7 @@ function buildHostItem(
       ctx.status.clear();
     }
 
-    const next = proxyPicker.read();
+    const next = hostProxyIdFromSelection(proxyPicker.read());
     if (serverId === undefined) {
       pendingProxyId = next;
       return;
@@ -547,7 +567,7 @@ export interface HostsSectionOptions {
 
 export interface HostsSection {
   readonly element: HTMLElement;
-  /** `proxies` defaults to none, i.e. the Proxy combobox offers only "(No proxy)". */
+  /** `proxies` defaults to none, i.e. the Proxy combobox offers "(Default)" and "(No proxy)" but no entries. */
   update(servers: readonly ServerSnapshot[], proxies?: readonly ProxySnapshot[]): void;
   flushNow(): Promise<void>;
   hasPendingEdits(): boolean;
@@ -565,12 +585,15 @@ export interface HostsSection {
  * order of the *persisted* hosts to `settings:reorder-servers` (a draft has no
  * id yet, and the first valid save creates it at the end of the list).
  *
- * The item's fifth field, "Proxy", is a combobox over the settings "Proxies"
- * library: it shows each entry's label and stores its id (absent = "No
- * proxy"). The options come from the live library, so a change made on the
- * Proxies tab is reflected here; a selection whose entry was removed falls
- * back to "No proxy" (main also clears the dangling reference in the same
- * write - see `removeProxy` in `settingsStore.ts`).
+ * The item's fifth field, "Proxy", is a combobox with three kinds of choice:
+ * "(Default)" (stored by omitting `proxyId`, so the host inherits
+ * `browser.proxy`), "No proxy" (stored as the `HOST_PROXY_NONE` sentinel, an
+ * explicit direct connection), and one option per entry of the settings
+ * "Proxies" library (stored as that entry's id). The options come from the
+ * live library, so a change made on the Proxies tab is reflected here; a
+ * selection whose entry was removed falls back to "(Default)" (main also
+ * clears the dangling reference in the same write - see `removeProxy` in
+ * `settingsStore.ts`).
  */
 export function createHostsSection(options: HostsSectionOptions): HostsSection {
   let items = new Map<string, HostItemHandle>();

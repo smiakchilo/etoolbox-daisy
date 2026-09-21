@@ -13,7 +13,7 @@ import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
 import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
 import {
-  aemProxyConfigSchema,
+  hostProxyIdSchema,
   serverColorSchema,
   serverLabelSchema,
   tlsExceptionSchema,
@@ -40,12 +40,12 @@ import {
  * Identifies *which* target a password/secret belongs to, without ever naming
  * a `secretRef` - the renderer is never told one (see `settingsSnapshot.ts`),
  * so it can only refer to a target by the same handles the snapshot already
- * exposes: a server id (its per-server AEM proxy), a proxy-library entry id,
- * or an agent id (its personal-access token, the Settings "Agents" tab's
- * Token field).
+ * exposes: a proxy-library entry id, or an agent id (its personal-access
+ * token, the Settings "Agents" tab's Token field). A host has no proxy
+ * credentials of its own - it selects a library entry, whose password is set
+ * through the `proxy` target.
  */
 export const passwordTargetSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('server'), serverId: serverIdSchema }).strict(),
   z.object({ kind: z.literal('proxy'), proxyId: proxyIdSchema }).strict(),
   z.object({ kind: z.literal('agent'), agentId: agentIdSchema }).strict(),
 ]);
@@ -225,10 +225,12 @@ export type UpdateServerPresentationRequest = Readonly<
 >;
 
 /**
- * `settings:update-server-targeting` - origin/proxy/TLS-exception, via
- * `applyServerTargetingChange`. A key omitted from `changes` means "leave
+ * `settings:update-server-targeting` - origin/proxy-selection/TLS-exception,
+ * via `applyServerTargetingChange`. A key omitted from `changes` means "leave
  * unchanged"; `null` means "remove it"; a value means "replace it" - the
- * same three-state convention `ServerTargetingChanges` itself uses.
+ * same three-state convention `ServerTargetingChanges` itself uses. For
+ * `proxyId`, `null` resets the host to "(Default)" (inherit `browser.proxy`)
+ * and the string `"none"` is the explicit "No proxy" selection.
  *
  * `originChangeConfirmed` is a plain boolean, not a caller-supplied
  * confirmation object: the confirmation
@@ -244,8 +246,7 @@ export const updateServerTargetingRequestSchema = z
     changes: z
       .object({
         origin: originSchema.optional(),
-        proxy: aemProxyConfigSchema.nullable().optional(),
-        proxyId: proxyIdSchema.nullable().optional(),
+        proxyId: hostProxyIdSchema.nullable().optional(),
         tlsException: tlsExceptionSchema.nullable().optional(),
       })
       .strict(),
@@ -538,15 +539,20 @@ export function parseSetAgentSettingsResult(candidate: unknown): SetAgentSetting
 /**
  * `settings:update-browser-settings`. A partial patch following the same
  * convention as {@link setAgentSettingsRequestSchema}: an omitted key means
- * "leave unchanged", and a request that changes nothing is refused. The values
- * are persisted immediately but only take effect on the next launch, because
- * Chromium reads its feature switches once, before the app is ready.
+ * "leave unchanged", and a request that changes nothing is refused.
+ *
+ * `disableNativeWebAuthn` is persisted immediately but only takes effect on
+ * the next launch, because Chromium reads its feature switches once, before
+ * the app is ready. `proxy` is the default proxy - a library entry id, or
+ * `null` to clear it - and takes effect on the AEM pane's next navigation
+ * (see `browserController.ts`).
  */
 export const updateBrowserSettingsRequestSchema = z
   .object({
     changes: z
       .object({
         disableNativeWebAuthn: z.boolean().optional(),
+        proxy: proxyIdSchema.nullable().optional(),
       })
       .strict()
       .refine((changes) => Object.keys(changes).length > 0, {

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { newProxyId, newServerId } from '../../../../src/shared';
 import {
+  HOST_PROXY_NONE,
   SERVER_SWATCHES,
-  aemProxyConfigSchema,
   bumpRevision,
   customHexColorSchema,
   isStaleRevision,
@@ -110,33 +110,10 @@ describe('serverConfigSchema', () => {
     it('rejects a config carrying a password field', () => {
       expect(() => serverConfigSchema.parse({ ...validConfig(), password: 'hunter2' })).toThrow();
     });
-
-    it('rejects proxy credentials carrying a password field', () => {
-      expect(() =>
-        aemProxyConfigSchema.parse({
-          url: 'https://proxy.example:8080',
-          credentials: { username: 'alice', secretRef: 'vault://proxy/alice', password: 'hunter2' },
-        }),
-      ).toThrow();
-    });
-
-    it('rejects a proxy config carrying a bare secret field', () => {
-      expect(() =>
-        aemProxyConfigSchema.parse({ url: 'https://proxy.example:8080', secret: 'hunter2' }),
-      ).toThrow();
-    });
   });
 
-  describe('proxy and TLS exception', () => {
-    it('accepts a proxy with credentials', () => {
-      const proxy = {
-        url: 'https://proxy.example:8080',
-        credentials: { username: 'alice', secretRef: 'vault://proxy/alice' },
-      };
-      expect(aemProxyConfigSchema.parse(proxy)).toEqual(proxy);
-    });
-
-    it('accepts a server with a TLS exception and no proxy configured (direct HTTPS)', () => {
+  describe('proxy selection and TLS exception', () => {
+    it('accepts a host with a TLS exception and no proxy configured (direct HTTPS)', () => {
       const config = {
         ...validConfig(),
         tlsException: {
@@ -260,15 +237,6 @@ describe('serverConfigSchema', () => {
       expect(bumped.revision).toBe(config.revision + 1);
     });
 
-    it('bumps the revision when a proxy is added', () => {
-      const config = serverConfigSchema.parse(validConfig());
-      const bumped = bumpRevision(config, {
-        proxy: { url: 'https://proxy.example:8080' },
-      });
-      expect(bumped.proxy).toEqual({ url: 'https://proxy.example:8080' });
-      expect(bumped.revision).toBe(config.revision + 1);
-    });
-
     it('bumps the revision when a proxy-library reference is set', () => {
       const config = serverConfigSchema.parse(validConfig());
       const proxyId = newProxyId(() => 'proxy-1');
@@ -276,16 +244,21 @@ describe('serverConfigSchema', () => {
       expect(bumped.proxyId).toBe(proxyId);
       expect(bumped.revision).toBe(config.revision + 1);
     });
+
+    it('accepts the "No proxy" sentinel as a host selection', () => {
+      const config = serverConfigSchema.parse({ ...validConfig(), proxyId: HOST_PROXY_NONE });
+      expect(config.proxyId).toBe(HOST_PROXY_NONE);
+    });
   });
 
   describe('removing an optional targeting field', () => {
-    it('removes a configured proxy when bumpRevision is called with proxy: null, and still bumps the revision', () => {
+    it('resets to "(Default)" when bumpRevision is called with proxyId: null, and still bumps the revision', () => {
       const config = serverConfigSchema.parse({
         ...validConfig(),
-        proxy: { url: 'https://proxy.example:8080' },
+        proxyId: newProxyId(() => 'proxy-1'),
       });
-      const bumped = bumpRevision(config, { proxy: null });
-      expect(bumped.proxy).toBeUndefined();
+      const bumped = bumpRevision(config, { proxyId: null });
+      expect(bumped.proxyId).toBeUndefined();
       expect(bumped.revision).toBe(config.revision + 1);
     });
 
@@ -302,13 +275,11 @@ describe('serverConfigSchema', () => {
       expect(bumped.tlsException).toBeUndefined();
     });
 
-    it('leaves an existing proxy untouched when bumpRevision is called without mentioning proxy', () => {
-      const config = serverConfigSchema.parse({
-        ...validConfig(),
-        proxy: { url: 'https://proxy.example:8080' },
-      });
+    it('leaves an existing proxy selection untouched when bumpRevision is called without mentioning it', () => {
+      const proxyId = newProxyId(() => 'proxy-1');
+      const config = serverConfigSchema.parse({ ...validConfig(), proxyId });
       const bumped = bumpRevision(config, { origin: 'https://author2.example' });
-      expect(bumped.proxy).toEqual({ url: 'https://proxy.example:8080' });
+      expect(bumped.proxyId).toBe(proxyId);
     });
 
     it('removes a proxy-library reference when bumpRevision is called with proxyId: null', () => {

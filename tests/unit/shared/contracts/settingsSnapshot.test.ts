@@ -3,6 +3,7 @@ import {
   appSettingsSchema,
   appSettingsSnapshotSchema,
   DEFAULT_AGENT_ID,
+  HOST_PROXY_NONE,
   newProxyId,
   newServerId,
   proxyConfigSchema,
@@ -24,23 +25,24 @@ function server(id: string, origin: string, overrides: Record<string, unknown> =
   });
 }
 
-function settingsWithServerProxyCredentials(secretRef: string) {
-  const serverA = server('server-a', 'https://a.example', {
-    proxy: {
-      url: 'https://proxy.example',
-      credentials: { username: 'alice', secretRef },
-    },
+function settingsWithProxyCredentials(secretRef: string) {
+  const proxyEntry = proxyConfigSchema.parse({
+    id: newProxyId(() => 'proxy-a'),
+    label: 'Corporate',
+    url: 'https://proxy.example',
+    credentials: { username: 'alice', secretRef },
   });
+  const serverA = server('server-a', 'https://a.example', { proxyId: proxyEntry.id });
   return appSettingsSchema.parse({
     hosts: [serverA],
-    proxies: [],
+    proxies: [proxyEntry],
     agents: { [DEFAULT_AGENT_ID]: { active: true } },
   });
 }
 
 describe('toAppSettingsSnapshot', () => {
   it('never emits the secretRef, even though it is present on the input', () => {
-    const settings = settingsWithServerProxyCredentials(CANARY_SECRET_REF);
+    const settings = settingsWithProxyCredentials(CANARY_SECRET_REF);
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
@@ -49,23 +51,22 @@ describe('toAppSettingsSnapshot', () => {
   });
 
   it('maps proxy credentials to only username and hasPassword', () => {
-    const settings = settingsWithServerProxyCredentials(CANARY_SECRET_REF);
+    const settings = settingsWithProxyCredentials(CANARY_SECRET_REF);
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    const proxy = snapshot.hosts[0]?.proxy;
-    expect(proxy).toBeDefined();
-    expect(proxy?.credentials).toEqual({ username: 'alice', hasPassword: true });
+    const credentials = snapshot.proxies[0]?.credentials;
+    expect(credentials).toEqual({ username: 'alice', hasPassword: true });
     // Exactly these two keys - no secretRef, no password, nothing else.
-    expect(Object.keys(proxy?.credentials ?? {}).sort()).toEqual(['hasPassword', 'username']);
+    expect(Object.keys(credentials ?? {}).sort()).toEqual(['hasPassword', 'username']);
   });
 
   it('reports hasPassword: false when the predicate says there is no stored secret', () => {
-    const settings = settingsWithServerProxyCredentials(CANARY_SECRET_REF);
+    const settings = settingsWithProxyCredentials(CANARY_SECRET_REF);
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
 
-    expect(snapshot.hosts[0]?.proxy?.credentials?.hasPassword).toBe(false);
+    expect(snapshot.proxies[0]?.credentials?.hasPassword).toBe(false);
   });
 
   it('projects a host proxy-library reference (proxyId) through unchanged', () => {
@@ -89,7 +90,7 @@ describe('toAppSettingsSnapshot', () => {
   });
 
   it('calls the predicate with the exact secretRef recorded for that proxy', () => {
-    const settings = settingsWithServerProxyCredentials(CANARY_SECRET_REF);
+    const settings = settingsWithProxyCredentials(CANARY_SECRET_REF);
     const seenRefs: string[] = [];
 
     toAppSettingsSnapshot(settings, (ref) => {
@@ -100,7 +101,7 @@ describe('toAppSettingsSnapshot', () => {
     expect(seenRefs).toEqual([CANARY_SECRET_REF]);
   });
 
-  it('omits proxy.credentials entirely when the server has no proxy credentials configured', () => {
+  it('omits proxyId entirely when the host has no explicit proxy selection', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
       hosts: [serverA],
@@ -110,7 +111,8 @@ describe('toAppSettingsSnapshot', () => {
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    expect(snapshot.hosts[0]?.proxy).toBeUndefined();
+    expect(snapshot.hosts[0]?.proxyId).toBeUndefined();
+    expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('proxy');
   });
 
   it('maps an agent token to hasToken and never emits its secretRef', () => {
@@ -223,7 +225,7 @@ describe('toAppSettingsSnapshot', () => {
   });
 
   it('produces a value that re-validates against appSettingsSnapshotSchema', () => {
-    const settings = settingsWithServerProxyCredentials(CANARY_SECRET_REF);
+    const settings = settingsWithProxyCredentials(CANARY_SECRET_REF);
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
@@ -240,28 +242,22 @@ describe('serverSnapshotSchema / appSettingsSnapshotSchema (.strict())', () => {
     revision: 0,
   };
 
-  it('rejects a server snapshot carrying a secretRef', () => {
+  it('rejects a server snapshot carrying the removed inline `proxy` key', () => {
     expect(() =>
       serverSnapshotSchema.parse({
         ...validServerSnapshot,
         proxy: {
           url: 'https://proxy.example',
-          credentials: { username: 'alice', hasPassword: true, secretRef: 'server:x' },
+          credentials: { username: 'alice', hasPassword: true },
         },
       }),
     ).toThrow();
   });
 
-  it('rejects a server snapshot carrying a password field', () => {
-    expect(() =>
-      serverSnapshotSchema.parse({
-        ...validServerSnapshot,
-        proxy: {
-          url: 'https://proxy.example',
-          credentials: { username: 'alice', hasPassword: true, password: 'hunter2' },
-        },
-      }),
-    ).toThrow();
+  it('accepts the "No proxy" sentinel as a server snapshot proxyId', () => {
+    expect(
+      serverSnapshotSchema.parse({ ...validServerSnapshot, proxyId: HOST_PROXY_NONE }).proxyId,
+    ).toBe(HOST_PROXY_NONE);
   });
 
   it('rejects an app settings snapshot with an unknown top-level key', () => {

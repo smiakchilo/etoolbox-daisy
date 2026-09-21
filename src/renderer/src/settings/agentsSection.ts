@@ -22,7 +22,7 @@ import {
 import { fromPickerValue } from './modelsViewModel';
 import { createPasswordControl } from './passwordEntry';
 import { syncPickerOptions } from './pickerOptions';
-import { createProxyPicker } from './proxyPicker';
+import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import type { SaveOutcome, StatusBannerSink } from './statusBanner';
 
 /**
@@ -89,6 +89,16 @@ function labelledField(fieldId: string, label: string, control: HTMLElement): HT
     attrs: { class: 'host-field' },
     children: [el('sp-field-label', { attrs: { for: fieldId }, text: label }), control],
   });
+}
+
+/** An agent's stored proxy id as the picker's value; absent means "(No proxy)". */
+function agentProxySelection(proxyId: ProxyId | undefined): ProxySelection {
+  return proxyId === undefined ? { kind: 'none' } : { kind: 'proxy', proxyId };
+}
+
+/** The picker's value as the stored proxy id; "(No proxy)" (and, defensively, "(Default)") means absent. */
+function agentProxyId(selection: ProxySelection): ProxyId | undefined {
+  return selection.kind === 'proxy' ? selection.proxyId : undefined;
 }
 
 export function createAgentsSection(options: AgentsSectionOptions): AgentsSection {
@@ -305,9 +315,11 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     const proxyFieldId = `agent-${id}-proxy`;
     const proxyPicker = createProxyPicker({
       fieldId: proxyFieldId,
-      initialProxyId: initial.proxyId,
+      initial: agentProxySelection(initial.proxyId),
       proxies: snapshot?.proxies ?? [],
-      onChange: () => persistProxy(id, proxyPicker.read()),
+      // An agent has no "inherit a default" state: no selection means no proxy.
+      includeDefault: false,
+      onChange: () => persistProxy(id, agentProxyId(proxyPicker.read())),
     });
 
     const modelFieldId = `agent-${id}-model`;
@@ -398,7 +410,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       // The options come from the live proxy library; the selection from the
       // snapshot's stored id (a dangling one repairs to "(No proxy)").
       proxyPicker.setOptions(proxies);
-      proxyPicker.select(view.proxyId);
+      proxyPicker.select(agentProxySelection(view.proxyId));
 
       syncPickerOptions(modelPicker, view.modelOptions, view.selectedModelValue);
       syncPickerOptions(effortPicker, view.effortOptions, view.selectedEffortValue);

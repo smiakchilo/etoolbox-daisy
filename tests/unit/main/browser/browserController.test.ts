@@ -12,9 +12,9 @@ import { computeCertificateFingerprintHex } from '../../../../src/main/aem';
 import type { SecretStore } from '../../../../src/main/secretStore';
 import type { Logger } from '../../../../src/main/logger';
 import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
-import { newServerId } from '../../../../src/shared';
+import { newProxyId, newServerId } from '../../../../src/shared';
 import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
-import { serverConfigSchema, type ServerConfig } from '../../../../src/shared';
+import { proxyConfigSchema, serverConfigSchema, type ServerConfig } from '../../../../src/shared';
 import type { BrowserNavigationState } from '../../../../src/shared';
 import {
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
@@ -221,6 +221,7 @@ function makeFakeAemView(): FakeAemViewControls {
 interface FakeAemSessionControls {
   readonly aemSession: AemSession;
   readonly switchProxy: ReturnType<typeof vi.fn>;
+  readonly applyProxy: ReturnType<typeof vi.fn>;
   readonly approveCertificateException: ReturnType<typeof vi.fn>;
   switchProxyImpl: () => Promise<void>;
 }
@@ -229,16 +230,19 @@ function makeFakeAemSession(): FakeAemSessionControls {
   const switchProxy = vi.fn(async () => {
     await controls.switchProxyImpl();
   });
+  const applyProxy = vi.fn(() => Promise.resolve());
   const approveCertificateException = vi.fn(() => Promise.resolve());
   const aemSession: AemSession = {
     session: {} as Session,
     switchProxy,
+    applyProxy,
     approveCertificateException,
     listCertificateExceptions: vi.fn((): readonly CertificateExceptionRecord[] => []),
   };
   const controls: FakeAemSessionControls = {
     aemSession,
     switchProxy,
+    applyProxy,
     approveCertificateException,
     switchProxyImpl: () => Promise.resolve(),
   };
@@ -534,9 +538,7 @@ describe('browserController.switchServer', () => {
   });
 
   it('surfaces a rejected switchProxy as a structured network_error result (Task 1)', async () => {
-    const server = makeServer({
-      proxy: { url: 'https://proxy.example' },
-    });
+    const server = makeServer();
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
     harness.aemSessionControls.switchProxyImpl = () => {
@@ -795,6 +797,132 @@ describe('browserController navigation epoch', () => {
     });
 
     expect(harness.controller.navigationEpoch.current()).toBe(afterDestroy);
+  });
+});
+
+describe('browserController per-origin proxy reconciliation', () => {
+  const corporate = proxyConfigSchema.parse({
+    id: newProxyId(() => 'proxy-corp'),
+    label: 'Corporate',
+    url: 'https://proxy.example:8080',
+  });
+  const fallback = proxyConfigSchema.parse({
+    id: newProxyId(() => 'proxy-default'),
+    label: 'Default',
+    url: 'https://default-proxy.example:3128',
+  });
+  const serverA = makeServer({
+    id: newServerId(() => 'server-a'),
+    origin: 'https://a.example',
+    proxyId: corporate.id,
+  });
+  const serverB = makeServer({
+    id: newServerId(() => 'server-b'),
+    origin: 'https://b.example',
+    proxyId: 'none',
+  });
+  const settingsWithProxies: AppSettings = {
+    ...defaultAppSettings(),
+    hosts: [serverA, serverB],
+    proxies: [corporate, fallback],
+    browser: { disableNativeWebAuthn: true, proxy: fallback.id },
+  };
+
+  function driveMainFrameNavigation(
+    harness: ReturnType<typeof makeControllerHarness>,
+    url: string,
+  ): void {
+    harness.aemViewControls.webContents.emit('did-start-navigation', {
+      isMainFrame: true,
+      isSameDocument: false,
+      url,
+    });
+  }
+
+  it('applies the browser default proxy for an origin that is not a configured host', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithProxies);
+
+    driveMainFrameNavigation(harness, 'https://ims.example/oauth');
+
+    await vi.waitFor(() => {
+      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+        fallback,
+        expect.any(Function),
+      );
+    });
+  });
+
+  it('honours a host\'s explicit entry and its explicit "No proxy"', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithProxies);
+
+    driveMainFrameNavigation(harness, 'https://a.example/editor.html');
+    await vi.waitFor(() => {
+      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+        corporate,
+        expect.any(Function),
+      );
+    });
+
+    driveMainFrameNavigation(harness, 'https://b.example/editor.html');
+    await vi.waitFor(() => {
+      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+        undefined,
+        expect.any(Function),
+      );
+    });
+  });
+
+  it('does not re-apply when the origin resolves to the proxy already in effect', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithProxies);
+
+    driveMainFrameNavigation(harness, 'https://ims.example/one');
+    await vi.waitFor(() => {
+      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledTimes(1);
+    });
+
+    driveMainFrameNavigation(harness, 'https://other-ims.example/two');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows a cross-origin redirect through will-redirect', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithProxies);
+
+    harness.aemViewControls.webContents.emit('will-redirect', {
+      isMainFrame: true,
+      isSameDocument: false,
+      url: 'https://ims.example/after-redirect',
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+        fallback,
+        expect.any(Function),
+      );
+    });
+  });
+
+  it('sets the applied proxy on a successful switch, so a navigation to the same host is a no-op', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithProxies);
+
+    await harness.controller.switchServer(serverA.id);
+    expect(harness.aemSessionControls.switchProxy).toHaveBeenCalledWith(
+      corporate,
+      expect.any(Function),
+    );
+
+    driveMainFrameNavigation(harness, 'https://a.example/other');
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(harness.aemSessionControls.applyProxy).not.toHaveBeenCalled();
   });
 });
 

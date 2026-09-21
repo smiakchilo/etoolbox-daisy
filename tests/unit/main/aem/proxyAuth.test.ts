@@ -3,14 +3,11 @@ import {
   createProxyLoginListener,
   decideProxyAuth,
   type ProxyLoginChallenge,
-} from '../../../../src/main/aem/proxyAuth';
-import {
-  aemProxyConfigSchema,
-  type AemProxyConfig,
-} from '../../../../src/shared/contracts/serverConfig';
+} from '../../../../src/main/aem';
+import { newProxyId, proxyConfigSchema, type ProxyConfig } from '../../../../src/shared';
 
-function proxy(url: string): AemProxyConfig {
-  return aemProxyConfigSchema.parse({ url });
+function proxy(url: string): ProxyConfig {
+  return proxyConfigSchema.parse({ id: newProxyId(() => 'proxy-1'), label: 'Proxy', url });
 }
 
 function challenge(overrides: Partial<ProxyLoginChallenge> = {}): ProxyLoginChallenge {

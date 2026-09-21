@@ -81,13 +81,15 @@ test('Settings sections are real tab panels, switching their content', async () 
     // single Agents tab, which hosts the provider's active badge/set-active
     // control, sign-in and model/effort pickers together - see
     // agentsSection.ts.)
-    const labels = ['Hosts', 'Agents', 'Proxies', 'Browser'];
+    const labels = ['Hosts', 'Agents', 'Browser', 'Proxies'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
     }
-    // Browser sits last (position 4).
-    await expect(tabs.locator('sp-tab').nth(3)).toHaveText('Browser');
+    // Browser sits ahead of Proxies (position 3), because a host's Proxy
+    // combobox offers "(Default)" pointing at the browser's default proxy.
+    await expect(tabs.locator('sp-tab').nth(2)).toHaveText('Browser');
+    await expect(tabs.locator('sp-tab').nth(3)).toHaveText('Proxies');
 
     // Hosts is selected by default; every other panel is hidden. The panel's
     // node value is `hosts` (not `servers`) - the surface language was renamed
@@ -107,6 +109,12 @@ test('Settings sections are real tab panels, switching their content', async () 
     await settings.locator('sp-tab', { hasText: 'Browser' }).click();
     const browserSection = settings.locator('section[aria-label="Browser"]');
     await expect(browserSection).toBeVisible();
+    // The Default proxy is the first field on the tab, with "(No proxy)" plus
+    // the library's entries (no "(Default)" - this *is* the default).
+    await expect(browserSection.locator('sp-field-label').first()).toHaveText('Default proxy');
+    const defaultProxy = browserSection.locator('sp-picker[aria-label="Proxy"]');
+    await expect(defaultProxy).toHaveCount(1);
+    await expect(defaultProxy.locator('sp-menu-item').first()).toHaveText('(No proxy)');
     const webauthnCheckbox = browserSection.locator('sp-checkbox#browser-disable-native-webauthn');
     await expect(webauthnCheckbox).toHaveCount(1);
     await expect(webauthnCheckbox).toHaveText('Suppress the Windows security-key prompt');

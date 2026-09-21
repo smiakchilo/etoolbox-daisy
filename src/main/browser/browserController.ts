@@ -12,10 +12,12 @@ import type {
   ViewBounds,
 } from '../../shared';
 import type { AppSettings } from '../../shared';
-import type { ServerId } from '../../shared';
+import type { ProxyConfig, ServerId } from '../../shared';
+import { parseNavigationTarget } from '../../shared';
 import { applyServerTargetingChange, loadSettings, saveSettings } from '../settingsStore';
 import type { AemSession } from '../aem';
 import type { ProxyPlainCredentials } from '../aem';
+import { resolveEffectiveProxy } from '../aem';
 import type { SecretStore } from '../secretStore';
 import type { Logger } from '../logger';
 import {
@@ -28,6 +30,7 @@ import { ServerSwitchController } from './serverSwitch';
 import { describeNetworkError } from './networkErrorCopy';
 import { decideAddressNavigation } from './unknownOrigin';
 import { createCertificateBlockedListener } from './certificatePrompt';
+import { attachProxyReconciliation } from './proxyReconciliation';
 import {
   attachNavigationEpochTracking,
   createNavigationEpochTracker,
@@ -133,21 +136,19 @@ function toActiveServer(server: AppSettings['hosts'][number]): ActiveAemServer {
 }
 
 /**
- * Resolves a server's proxy password into plaintext, if one is configured.
- * `secretStore.get` is async, which is why this exists as its own step run
- * *before* `ServerSwitchController.switchTo` rather than inline in
+ * Resolves a proxy-library entry's password into plaintext, if one is
+ * configured. `secretStore.get` is async, which is why this exists as its own
+ * step run *before* `ServerSwitchController.switchTo` rather than inline in
  * `resolveProxyCredentials` below - `AemSession.switchProxy`'s
  * `resolveCredentials` parameter must be callable synchronously (Electron's
  * `login` event callback is synchronous), so the plaintext value has to
  * already be sitting in memory by the time that closure is invoked.
  */
-async function resolvePlainProxyCredentials(
-  settings: AppSettings,
-  serverId: ServerId,
+async function resolveProxyCredentials(
+  proxy: ProxyConfig | undefined,
   secretStore: SecretStore,
 ): Promise<ProxyPlainCredentials | undefined> {
-  const server = settings.hosts.find((candidate) => candidate.id === serverId);
-  const credentials = server?.proxy?.credentials;
+  const credentials = proxy?.credentials;
   if (!credentials) return undefined;
   const password = await secretStore.get(credentials.secretRef);
   if (password === undefined) return undefined;
@@ -168,6 +169,19 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // server id - not implemented by this module itself, which only owns the
   // switch mechanism, not settings-mutation IPC.
   let currentCredentials: ProxyPlainCredentials | undefined;
+
+  // The proxy-library entry currently applied to the AEM session, or
+  // `undefined` for a direct connection. `switchProxy`/`applyProxy` store the
+  // credentials closure, not the value, so this cell is what that closure
+  // reads; it is also what `resolveProxy` hands to `ServerSwitchController`.
+  let currentProxy: ProxyConfig | undefined;
+
+  // Which proxy is actually in effect on the session: a library id, `""` for
+  // an explicit direct connection, or `undefined` when nothing has been
+  // applied yet (the session is then still on Chromium's own default, so the
+  // first navigation always reconciles). Compared before every per-navigation
+  // re-application so a navigation that stays on the same proxy costs nothing.
+  let appliedProxyKey: string | undefined;
 
   // The full URL of the navigation that was most recently blocked by an
   // untrusted certificate, if any. Set by the observational
@@ -199,12 +213,23 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const navigationEpoch = createNavigationEpochTracker();
   const detachNavigationEpoch = attachNavigationEpochTracking(aemView.webContents, navigationEpoch);
 
+  // Per-origin proxy reconciliation (requirement 4): whenever the main frame
+  // navigates - including a cross-origin SSO redirect - the session proxy is
+  // brought in line with the effective proxy for the destination origin, so
+  // the view observes the proxy that matches the origin of the current request
+  // (a configured host's own selection, or the `browser.proxy` default for an
+  // origin that is not a host, e.g. Adobe's IMS).
+  const detachProxyReconciliation = attachProxyReconciliation(aemView.webContents, (url) => {
+    reconcileProxyForUrl(url);
+  });
+
   const switchController = new ServerSwitchController({
     getView: () => aemView,
     closeAuxiliaryWindows: () => aemView.auxiliaryWindows.closeAll(),
     aemSession: {
       switchProxy: (proxy, resolveCredentials) => aemSession.switchProxy(proxy, resolveCredentials),
     },
+    resolveProxy: () => currentProxy,
     resolveProxyCredentials: () => () => currentCredentials,
     onStateChange: (state) => {
       rendererWebContents.send(BROWSER_SWITCH_STATE_CHANGED_CHANNEL, {
@@ -233,6 +258,51 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       throw new Error(loaded.error.message);
     }
     return loaded.value.settings;
+  }
+
+  /**
+   * Re-applies the session proxy if `origin` resolves to a different proxy than
+   * the one currently in effect (requirement 4). Reads settings fresh, so a
+   * proxy changed in Settings is honoured on the view's next navigation without
+   * a restart. Best-effort: a failed settings read or `setProxy` leaves the
+   * previous proxy in place rather than aborting the navigation.
+   *
+   * Deliberately does not `closeAllConnections()` (see `applyProxy` in
+   * `session.ts`): this runs mid-navigation, and closing every connection would
+   * abort the very load being steered.
+   */
+  async function reconcileProxyForOrigin(origin: string): Promise<void> {
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch {
+      return;
+    }
+    const proxy = resolveEffectiveProxy(settings, origin);
+    const key = proxy?.id ?? '';
+    if (key === appliedProxyKey) return;
+
+    const credentials = await resolveProxyCredentials(proxy, secretStore);
+    currentProxy = proxy;
+    currentCredentials = credentials;
+    try {
+      await aemSession.applyProxy(proxy, () => currentCredentials);
+      appliedProxyKey = key;
+    } catch {
+      // Unknown state: force the next navigation to re-apply rather than
+      // trusting a proxy that may not have taken effect.
+      appliedProxyKey = undefined;
+    }
+  }
+
+  /** {@link reconcileProxyForOrigin} for a raw navigation URL; a non-URL value is ignored. */
+  function reconcileProxyForUrl(rawUrl: string): void {
+    // Defensive: an event payload without a URL (an odd emitter, a future
+    // Electron shape) must not throw inside an event listener.
+    if (typeof rawUrl !== 'string') return;
+    const target = parseNavigationTarget(rawUrl);
+    if (!target.ok) return;
+    void reconcileProxyForOrigin(target.origin);
   }
 
   async function navigate(rawValue: string): Promise<BrowserIpcVoidResult> {
@@ -277,7 +347,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       return fail({ code: 'server_not_found', message: `no server with id ${serverId}` });
     }
 
-    currentCredentials = await resolvePlainProxyCredentials(settings, serverId, secretStore);
+    // The effective proxy for this host: its own `proxyId` selection, or the
+    // `browser.proxy` default when the host has no explicit one. `undefined`
+    // means a direct connection.
+    currentProxy = resolveEffectiveProxy(settings, server.origin);
+    currentCredentials = await resolveProxyCredentials(currentProxy, secretStore);
+    // The switch below is about to apply exactly this proxy, so record it as
+    // in effect *before* the load starts: the switch's own
+    // `did-start-navigation` would otherwise see an unknown key and issue a
+    // redundant `applyProxy`. A failure resets it to unknown, so the next
+    // navigation re-applies rather than trusting a proxy that may not have
+    // taken effect.
+    appliedProxyKey = currentProxy?.id ?? '';
 
     // Bumped *before* the switch is attempted, not after it succeeds. From this
     // point the view is no longer reliably showing the document that any
@@ -298,6 +379,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // in-flight requests untrustworthy makes the "which server is this"
       // answer untrustworthy too.
       activeServerState = undefined;
+      // The proxy may or may not have been applied before the failure, so
+      // forget what is in effect and let the next navigation reconcile it.
+      appliedProxyKey = undefined;
       if (outcome.reason === 'network_error') {
         // Checked first (rather than last) because "network_error" is the
         // only union member with a single-literal `reason`; narrowing on it
@@ -332,6 +416,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       return fail({ code: 'no_active_view', message: 'no AEM view is available' });
     }
     activeServerState = toActiveServer(server);
+    appliedProxyKey = currentProxy?.id ?? '';
     return ok();
   }
 
@@ -457,6 +542,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // from it is invalidated rather than left pending against a dead frame.
     navigationEpoch.bump('view_destroyed');
     detachNavigationEpoch();
+    detachProxyReconciliation();
     aemView.destroy();
   }
 

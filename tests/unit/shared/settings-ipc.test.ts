@@ -15,6 +15,7 @@ import {
   reorderServersRequestSchema,
   setPasswordRequestSchema,
   settingsIpcVoidResultSchema,
+  updateBrowserSettingsRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
@@ -24,10 +25,6 @@ const serverId = newServerId(() => 'server-a');
 const proxyId = newProxyId(() => 'proxy-a');
 
 describe('passwordTargetSchema', () => {
-  it('accepts a server target', () => {
-    expect(() => passwordTargetSchema.parse({ kind: 'server', serverId })).not.toThrow();
-  });
-
   it('accepts a proxy-library target', () => {
     expect(() => passwordTargetSchema.parse({ kind: 'proxy', proxyId })).not.toThrow();
   });
@@ -50,8 +47,8 @@ describe('passwordTargetSchema', () => {
     expect(() => passwordTargetSchema.parse({ kind: 'somethingElse' })).toThrow();
   });
 
-  it('rejects a server target missing serverId', () => {
-    expect(() => passwordTargetSchema.parse({ kind: 'server' })).toThrow();
+  it('rejects the removed server target kind', () => {
+    expect(() => passwordTargetSchema.parse({ kind: 'server', serverId })).toThrow();
   });
 
   it('rejects a proxy target missing proxyId', () => {
@@ -67,7 +64,7 @@ describe('setPasswordRequestSchema', () => {
   it('accepts a well-formed request', () => {
     expect(() =>
       setPasswordRequestSchema.parse({
-        target: { kind: 'server', serverId },
+        target: { kind: 'proxy', proxyId },
         password: 'hunter2',
       }),
     ).not.toThrow();
@@ -75,7 +72,7 @@ describe('setPasswordRequestSchema', () => {
 
   it('rejects an empty password', () => {
     const result = setPasswordRequestSchema.safeParse({
-      target: { kind: 'server', serverId },
+      target: { kind: 'proxy', proxyId },
       password: '',
     });
     expect(result.success).toBe(false);
@@ -339,18 +336,24 @@ describe('updateServerTargetingRequestSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts setting and clearing a proxy-library reference', () => {
+  it('accepts setting, resetting and explicitly disabling a host proxy selection', () => {
     const set = updateServerTargetingRequestSchema.safeParse({
       serverId,
       changes: { proxyId: newProxyId(() => 'proxy-1') },
     });
     expect(set.success).toBe(true);
 
-    const cleared = updateServerTargetingRequestSchema.safeParse({
+    const resetToDefault = updateServerTargetingRequestSchema.safeParse({
       serverId,
       changes: { proxyId: null },
     });
-    expect(cleared.success).toBe(true);
+    expect(resetToDefault.success).toBe(true);
+
+    const explicitNone = updateServerTargetingRequestSchema.safeParse({
+      serverId,
+      changes: { proxyId: 'none' },
+    });
+    expect(explicitNone.success).toBe(true);
   });
 
   it('rejects an invalid origin', () => {
@@ -514,5 +517,29 @@ describe('reorderProxiesRequestSchema', () => {
   it('rejects a non-array of ids', () => {
     expect(reorderProxiesRequestSchema.safeParse({ proxyIds: 'proxy-a' }).success).toBe(false);
     expect(reorderProxiesRequestSchema.safeParse({ proxyIds: [42] }).success).toBe(false);
+  });
+});
+
+describe('updateBrowserSettingsRequestSchema', () => {
+  it('accepts the WebAuthn flag and/or the default proxy', () => {
+    expect(
+      updateBrowserSettingsRequestSchema.safeParse({
+        changes: { disableNativeWebAuthn: false },
+      }).success,
+    ).toBe(true);
+    expect(
+      updateBrowserSettingsRequestSchema.safeParse({ changes: { proxy: proxyId } }).success,
+    ).toBe(true);
+    expect(updateBrowserSettingsRequestSchema.safeParse({ changes: { proxy: null } }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects an empty patch and an unknown key', () => {
+    expect(updateBrowserSettingsRequestSchema.safeParse({ changes: {} }).success).toBe(false);
+    expect(
+      updateBrowserSettingsRequestSchema.safeParse({ changes: { proxy: proxyId, extra: 1 } })
+        .success,
+    ).toBe(false);
   });
 });

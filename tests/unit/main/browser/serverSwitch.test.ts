@@ -5,11 +5,12 @@ import {
   type AemSwitchSession,
   type SwitchableAemView,
 } from '../../../../src/main/browser/serverSwitch';
-import { newServerId } from '../../../../src/shared/contracts/ids';
+import { newProxyId, newServerId } from '../../../../src/shared';
 import {
   serverConfigSchema,
   type ServerConfig,
-} from '../../../../src/shared/contracts/serverConfig';
+} from '../../../../src/shared';
+import { proxyConfigSchema } from '../../../../src/shared';
 
 /**
  * The requirement (requirements-decisions.md section 4) is an *order*, not
@@ -65,6 +66,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     const server = makeServer({ origin: 'https://second.example' });
@@ -86,6 +88,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     const server = makeServer({ origin: 'https://second.example' });
@@ -110,6 +113,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     const server = makeServer({ origin: 'https://second.example' });
@@ -122,19 +126,22 @@ describe('ServerSwitchController', () => {
     expect(controller.getState()).toBe('idle');
   });
 
-  it('reports the proxy URL used for switchProxy when the target server has one configured', async () => {
+  it('reports the proxy URL used for switchProxy when the target server resolves to one', async () => {
     const harness = makeRecordingHarness();
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () =>
+        proxyConfigSchema.parse({
+          id: newProxyId(() => 'proxy-1'),
+          label: 'Corporate',
+          url: 'https://proxy.example',
+        }),
     });
 
-    const server = makeServer({
-      origin: 'https://proxied.example',
-      proxy: { url: 'https://proxy.example' },
-    });
+    const server = makeServer({ origin: 'https://proxied.example' });
     await controller.switchTo(server);
 
     expect(harness.calls).toEqual([
@@ -162,6 +169,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
       onStateChange: (state) => states.push(state),
     });
 
@@ -193,6 +201,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     const firstSwitch = controller.switchTo(makeServer({ origin: 'https://first.example' }));
@@ -226,6 +235,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     const outcome = await controller.switchTo(makeServer());
@@ -246,6 +256,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     await expect(controller.switchTo(makeServer())).rejects.toThrow('boom');
@@ -274,6 +285,7 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
     const outcome = await controller.switchTo(makeServer());
@@ -303,11 +315,10 @@ describe('ServerSwitchController', () => {
       closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
       aemSession: rejectingSession,
       resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
     });
 
-    const outcome = await controller.switchTo(
-      makeServer({ proxy: { url: 'https://proxy.example' } }),
-    );
+    const outcome = await controller.switchTo(makeServer());
 
     expect(outcome).toEqual({
       ok: false,

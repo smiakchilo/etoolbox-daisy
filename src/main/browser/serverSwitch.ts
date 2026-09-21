@@ -1,4 +1,4 @@
-import type { AemProxyConfig, ServerConfig } from '../../shared';
+import type { ProxyConfig, ServerConfig } from '../../shared';
 import { originsMatch, parseNavigationTarget } from '../../shared';
 import type { ProxyPlainCredentials } from '../aem';
 
@@ -25,7 +25,7 @@ import type { ProxyPlainCredentials } from '../aem';
 /** The one `AemSession` capability this module needs - already sequential internally (`proxyPolicy.ts`'s `applyProxySwitch`: awaits `setProxy` then `closeAllConnections`). */
 export interface AemSwitchSession {
   switchProxy(
-    proxy: AemProxyConfig | undefined,
+    proxy: ProxyConfig | undefined,
     resolveCredentials: () => ProxyPlainCredentials | undefined,
   ): Promise<void>;
 }
@@ -89,6 +89,15 @@ export interface ServerSwitchDeps {
   /** Closes every open auxiliary window (login popups, SSO windows) - see `auxiliaryWindows.ts`. Must not itself touch the AEM view or session. */
   readonly closeAuxiliaryWindows: () => void;
   readonly aemSession: AemSwitchSession;
+  /**
+   * Resolves the proxy-library entry (or `undefined` for a direct connection)
+   * that applies to `server`, by combining the host's `proxyId` selection with
+   * the `browser.proxy` default - see `resolveEffectiveProxy` in
+   * `proxyResolution.ts`. Read through a closure (not a snapshot) for the same
+   * reason `resolveProxyCredentials` is: the controller holds the value in a
+   * cell that the switch itself is what updates.
+   */
+  readonly resolveProxy: (server: ServerConfig) => ProxyConfig | undefined;
   /** Resolves the plaintext proxy credentials for `server`, if any are configured. Never called eagerly - see `AemSession.switchProxy`'s own doc comment on why the resolver, not a snapshot, is what gets stored. */
   readonly resolveProxyCredentials: (
     server: ServerConfig,
@@ -176,7 +185,7 @@ export class ServerSwitchController {
       //    `closeAllConnections`, in that order (proxyPolicy.ts), and this
       //    step does not return until both have resolved.
       await this.deps.aemSession.switchProxy(
-        server.proxy,
+        this.deps.resolveProxy(server),
         this.deps.resolveProxyCredentials(server),
       );
 

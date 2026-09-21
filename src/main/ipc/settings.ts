@@ -140,9 +140,6 @@ function findProxyCredentials(
   if (target.kind === 'proxy') {
     return settings.proxies.find((proxy) => proxy.id === target.proxyId)?.credentials;
   }
-  if (target.kind === 'server') {
-    return settings.hosts.find((server) => server.id === target.serverId)?.proxy?.credentials;
-  }
   return undefined;
 }
 
@@ -174,10 +171,7 @@ export function resolvePasswordSecretRef(
   if (!credentials) {
     return err({
       code: 'no_proxy_configured',
-      message:
-        target.kind === 'server'
-          ? `Server "${target.serverId}" has no proxy credentials configured yet.`
-          : `Proxy "${target.proxyId}" has no username configured yet.`,
+      message: `Proxy "${target.proxyId}" has no username configured yet.`,
     });
   }
   return ok(credentials.secretRef);
@@ -188,11 +182,6 @@ function collectSecretRefs(settings: AppSettings): readonly string[] {
   for (const proxy of settings.proxies) {
     if (proxy.credentials) {
       refs.push(proxy.credentials.secretRef);
-    }
-  }
-  for (const server of settings.hosts) {
-    if (server.proxy?.credentials) {
-      refs.push(server.proxy.credentials.secretRef);
     }
   }
   for (const node of Object.values(settings.agents)) {
@@ -460,23 +449,15 @@ async function persist(
 
 /**
  * Projects one {@link ServerConfig} the same way {@link getSettingsSnapshot}
- * projects every server for `settings:get-snapshot` - secret-free, with only
- * a `hasStoredPassword` boolean standing in for its proxy credentials, if
- * any. Reused here so every mutation handler below returns the freshly
- * changed server in exactly the shape the renderer already knows how to
- * render, without a second round trip back through `get-snapshot`.
+ * projects every server for `settings:get-snapshot`. A host carries no secret
+ * of its own - its proxy selection is a library entry id, and any password
+ * belongs to that entry - so no `secretStore` lookup is needed here. Reused so
+ * every mutation handler below returns the freshly changed server in exactly
+ * the shape the renderer already knows how to render, without a second round
+ * trip back through `get-snapshot`.
  */
-async function toServerSnapshot(
-  server: ServerConfig,
-  secretStore: SecretStore,
-): Promise<ServerSnapshot> {
-  const hasStoredPassword = server.proxy?.credentials
-    ? await secretStore.has(server.proxy.credentials.secretRef)
-    : false;
-  const snapshot = toAppSettingsSnapshot(
-    { ...defaultAppSettings(), hosts: [server] },
-    () => hasStoredPassword,
-  );
+function toServerSnapshot(server: ServerConfig): ServerSnapshot {
+  const snapshot = toAppSettingsSnapshot({ ...defaultAppSettings(), hosts: [server] }, () => false);
   const projected = snapshot.hosts[0];
   if (!projected) {
     // `server` was just placed into `hosts` above, so this is unreachable;
@@ -517,7 +498,7 @@ export async function addServer(
     return { ok: false, error: saved.error };
   }
 
-  return { ok: true, server: await toServerSnapshot(created.value.server, secretStore) };
+  return { ok: true, server: toServerSnapshot(created.value.server) };
 }
 
 /** Implements `settings:remove-server`. */
@@ -628,7 +609,7 @@ export async function updateServerPresentation(
     return { ok: false, error: saved.error };
   }
 
-  return { ok: true, server: await toServerSnapshot(updated.value.server, secretStore) };
+  return { ok: true, server: toServerSnapshot(updated.value.server) };
 }
 
 function targetingChangesFrom(
@@ -636,7 +617,6 @@ function targetingChangesFrom(
 ): ServerTargetingChanges {
   return {
     ...(changes.origin !== undefined ? { origin: changes.origin } : {}),
-    ...(changes.proxy !== undefined ? { proxy: changes.proxy } : {}),
     ...(changes.proxyId !== undefined ? { proxyId: changes.proxyId } : {}),
     ...(changes.tlsException !== undefined ? { tlsException: changes.tlsException } : {}),
   };
@@ -680,7 +660,7 @@ export async function updateServerTargeting(
 
   return {
     ok: true,
-    server: await toServerSnapshot(updated.value.server, secretStore),
+    server: toServerSnapshot(updated.value.server),
     kind: targetingKind(updated.value.kind),
   };
 }
@@ -1172,6 +1152,23 @@ export async function updateBrowserSettings(
   if (!loaded.ok) {
     return { ok: false, error: loaded.error };
   }
+
+  // A named default proxy must exist, or the document would fail its own
+  // schema as `invalid_change` for a reason the user cannot act on - the same
+  // guard `setAgentSettings` applies to an agent's proxy.
+  const { proxy } = request.changes;
+  if (proxy !== undefined && proxy !== null) {
+    if (!loaded.value.proxies.some((entry) => entry.id === proxy)) {
+      return {
+        ok: false,
+        error: {
+          code: 'proxy_not_found',
+          message: `No proxy with id "${proxy}" is configured.`,
+        },
+      };
+    }
+  }
+
   const saved = await persist(
     settingsDir,
     applyBrowserSettingsChange(loaded.value, request.changes),

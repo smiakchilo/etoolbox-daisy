@@ -10,11 +10,11 @@ import {
 import { agentIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 import {
+  hostProxyIdSchema,
   serverColorSchema,
   serverLabelSchema,
   serverRevisionSchema,
   tlsExceptionSchema,
-  type AemProxyConfig,
   type ProxyCredentials,
 } from './serverConfig';
 
@@ -52,21 +52,10 @@ export const proxyCredentialsSnapshotSchema = z
 
 export type ProxyCredentialsSnapshot = Readonly<z.infer<typeof proxyCredentialsSnapshotSchema>>;
 
-/** Shared shape for the per-server AEM proxy snapshot. */
-const aemProxySnapshotShape = z
-  .object({
-    url: originSchema,
-    credentials: proxyCredentialsSnapshotSchema.optional(),
-  })
-  .strict();
-
-export const aemProxySnapshotSchema = aemProxySnapshotShape;
-export type AemProxySnapshot = Readonly<z.infer<typeof aemProxySnapshotSchema>>;
-
 /**
- * The renderer-safe projection of one proxy-library entry. Unlike the AEM
- * proxy snapshot it also carries the entry's `id` (so the UI can target its
- * password and persist its order) and its `label`.
+ * The renderer-safe projection of one proxy-library entry. It carries the
+ * entry's `id` (so the UI can target its password and persist its order), its
+ * `label` and its resolved credentials.
  */
 export const proxySnapshotSchema = z
   .object({
@@ -85,9 +74,12 @@ export const serverSnapshotSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
-    proxy: aemProxySnapshotSchema.optional(),
-    /** Which proxy-library entry this host uses, by id; absent means "none". */
-    proxyId: proxyIdSchema.optional(),
+    /**
+     * The host's proxy selection: a library entry id, `HOST_PROXY_NONE` for
+     * "No proxy", or absent for "(Default)" (inherit `browser.proxy`). No
+     * credentials live here - they belong to the library entry.
+     */
+    proxyId: hostProxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
     revision: serverRevisionSchema,
   })
@@ -164,17 +156,6 @@ function credentialsSnapshot(
   };
 }
 
-function toAemProxySnapshot(
-  proxy: AemProxyConfig | undefined,
-  hasStoredSecret: HasStoredSecret,
-): AemProxySnapshot | undefined {
-  if (!proxy) return undefined;
-  const snapshot: Record<string, unknown> = { url: proxy.url };
-  const credentials = credentialsSnapshot(proxy.credentials, hasStoredSecret);
-  if (credentials) snapshot.credentials = credentials;
-  return aemProxySnapshotSchema.parse(snapshot);
-}
-
 function toProxySnapshot(proxy: ProxyConfig, hasStoredSecret: HasStoredSecret): ProxySnapshot {
   const snapshot: Record<string, unknown> = {
     id: proxy.id,
@@ -217,8 +198,6 @@ export function toAppSettingsSnapshot(
       color: server.color,
       revision: server.revision,
     };
-    const proxySnapshot = toAemProxySnapshot(server.proxy, hasStoredSecret);
-    if (proxySnapshot) snapshot.proxy = proxySnapshot;
     if (server.proxyId !== undefined) snapshot.proxyId = server.proxyId;
     if (server.tlsException) snapshot.tlsException = server.tlsException;
     return serverSnapshotSchema.parse(snapshot);

@@ -1,12 +1,12 @@
 import { app, session } from 'electron';
 import type { Session } from 'electron';
-import type { AemProxyConfig } from '../../shared';
+import type { ProxyConfig } from '../../shared';
 import {
   createCertificateErrorListener,
   createCertificateExceptionStore,
   type CertificateExceptionRecord,
 } from './certificateExceptions';
-import { applyProxySwitch, type ProxySwitchOptions } from './proxyPolicy';
+import { applyProxySwitch, applySessionProxy, type ProxySwitchOptions } from './proxyPolicy';
 import { createProxyLoginListener, type ProxyPlainCredentials } from './proxyAuth';
 
 /**
@@ -46,7 +46,21 @@ export interface AemSession {
    * takes effect without a further `switchProxy` call.
    */
   switchProxy(
-    proxy: AemProxyConfig | undefined,
+    proxy: ProxyConfig | undefined,
+    resolveCredentials: () => ProxyPlainCredentials | undefined,
+    options?: ProxySwitchOptions,
+  ): Promise<void>;
+
+  /**
+   * Re-applies the proxy without closing connections, for the per-navigation
+   * reconciliation `browserController.ts` performs when the view lands on an
+   * origin whose effective proxy differs from the one currently applied.
+   * `switchProxy` remains the sequential switch used for explicit server
+   * changes (it closes connections); this is the lightweight sibling that
+   * must not abort an in-flight navigation.
+   */
+  applyProxy(
+    proxy: ProxyConfig | undefined,
     resolveCredentials: () => ProxyPlainCredentials | undefined,
     options?: ProxySwitchOptions,
   ): Promise<void>;
@@ -67,7 +81,7 @@ export function createAemSession(): AemSession {
   const aemSession = session.fromPartition(AEM_SESSION_PARTITION);
   const certificateStore = createCertificateExceptionStore(aemSession);
 
-  let currentProxy: AemProxyConfig | undefined;
+  let currentProxy: ProxyConfig | undefined;
   let currentResolveCredentials: () => ProxyPlainCredentials | undefined = () => undefined;
 
   app.on(
@@ -94,6 +108,12 @@ export function createAemSession(): AemSession {
 
     async switchProxy(proxy, resolveCredentials, options) {
       await applyProxySwitch(aemSession, proxy, options);
+      currentProxy = proxy;
+      currentResolveCredentials = resolveCredentials;
+    },
+
+    async applyProxy(proxy, resolveCredentials, options) {
+      await applySessionProxy(aemSession, proxy, options);
       currentProxy = proxy;
       currentResolveCredentials = resolveCredentials;
     },

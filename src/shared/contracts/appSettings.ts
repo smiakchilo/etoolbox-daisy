@@ -3,6 +3,7 @@ import { agentIdSchema, proxyIdSchema } from './ids';
 import { DEFAULT_AGENT_ID } from './agents';
 import { originSchema } from './origin';
 import {
+  HOST_PROXY_NONE,
   proxyCredentialsSchema,
   serverConfigSchema,
   serverLabelSchema,
@@ -48,10 +49,11 @@ const REASONING_EFFORT_MAX_LENGTH = 50;
 export const reasoningEffortSchema = z.string().min(1).max(REASONING_EFFORT_MAX_LENGTH);
 
 /**
- * One configured proxy entry in the proxies library. Distinct from a
- * per-server `AemProxyConfig` (requirements-decisions.md section 4 is explicit
- * that the two must not be merged or implicitly inherited from one another)
- * even though both accept the same credential-reference shape. It has no
+ * One configured proxy entry in the proxies library. Hosts, the active agent
+ * and the browser default all select an entry from this one library by id
+ * (requirements-decisions.md section 4: a proxy is never implicitly inherited
+ * between the AEM side and the Copilot side), and each selection accepts the
+ * same credential-reference shape. It has no
  * `tlsException` field: unlike an AEM server, proxy TLS only ever accepts
  * correctly trusted certificates, so there is nothing here for an exception
  * to apply to.
@@ -132,19 +134,27 @@ export const agentSettingsSchema = z
 export type AgentSettings = Readonly<z.infer<typeof agentSettingsSchema>>;
 
 /**
- * Browser-pane settings (the Settings "Browser" tab). Today a single flag:
+ * Browser-pane settings (the Settings "Browser" tab).
+ *
  * `disableNativeWebAuthn` defaults to `true` and asks Chromium to handle
  * WebAuthn itself instead of forwarding to the native Windows WebAuthn API -
  * the API that raises the "Windows Security / Insert your security key" dialog
  * on IdP login pages such as Adobe's IMS. See `mergeDisabledFeatures` and its
- * call site in `src/main/index.ts`.
+ * call site in `src/main/index.ts`. It is read *before* Electron is ready
+ * (Chromium reads its feature switches once), so a change takes effect on the
+ * next launch.
  *
- * This is read *before* Electron is ready (Chromium reads its feature switches
- * once), so a change takes effect on the next launch.
+ * `proxy` is the **default proxy** - the entry of the `proxies` library the
+ * AEM pane uses for any origin that is not one of the configured hosts (for
+ * example Adobe's IMS login origin during an SSO redirect). It is a library
+ * entry id; absent means "no default proxy" (direct). A host can override it
+ * per-origin with its own `proxyId` (see `serverConfig.ts`): a host with an
+ * explicit entry or {@link HOST_PROXY_NONE} does not inherit this default.
  */
 export const browserSettingsSchema = z
   .object({
     disableNativeWebAuthn: z.boolean().default(true),
+    proxy: proxyIdSchema.optional(),
   })
   .strict();
 
@@ -196,9 +206,14 @@ export const appSettingsSchema = z
     // A host may only name a proxy that exists: a dangling reference would
     // silently stop proxying (or, worse, resolve to the wrong entry later).
     // Removing a proxy is expected to clear it from every host that named it
-    // (see `removeProxy` in `settingsStore.ts`).
+    // (see `removeProxy` in `settingsStore.ts`). `HOST_PROXY_NONE` is the
+    // sentinel for "No proxy", not a reference, so it is always valid.
     settings.hosts.forEach((host, index) => {
-      if (host.proxyId !== undefined && !seenProxyIds.has(host.proxyId)) {
+      if (
+        host.proxyId !== undefined &&
+        host.proxyId !== HOST_PROXY_NONE &&
+        !seenProxyIds.has(host.proxyId)
+      ) {
         ctx.addIssue({
           code: 'custom',
           message: `proxyId "${host.proxyId}" does not refer to a configured proxy`,
@@ -206,6 +221,16 @@ export const appSettingsSchema = z
         });
       }
     });
+    // The browser default proxy must resolve for the same reason a host's
+    // reference must: it is applied to every origin that is not a configured
+    // host, so a dangling reference would silently stop proxying them.
+    if (settings.browser.proxy !== undefined && !seenProxyIds.has(settings.browser.proxy)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `proxy "${settings.browser.proxy}" does not refer to a configured proxy`,
+        path: ['browser', 'proxy'],
+      });
+    }
     // Exactly one provider may be active: the Agents surface is a single-choice
     // control, and two active nodes would make "which provider does a prompt
     // go to?" an ordering accident rather than a stored fact.

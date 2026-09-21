@@ -3,6 +3,7 @@ import {
   appSettingsSchema,
   defaultAppSettings,
   DEFAULT_AGENT_ID,
+  HOST_PROXY_NONE,
   newProxyId,
   newServerId,
   parseAppSettings,
@@ -133,6 +134,42 @@ describe('appSettingsSchema', () => {
           proxies: [],
         }),
       ).toThrow(/does not refer to a configured proxy/);
+    });
+
+    it('accepts the "No proxy" sentinel even with no proxy library configured', () => {
+      const serverA = serverConfigSchema.parse({
+        ...server('server-a', 'https://a.example'),
+        proxyId: HOST_PROXY_NONE,
+      });
+      const input = { ...validSettings(), hosts: [serverA], proxies: [] };
+      expect(appSettingsSchema.parse(input)).toEqual(input);
+    });
+  });
+
+  describe('browser default proxy', () => {
+    it('accepts a browser default proxy that names a configured entry', () => {
+      const proxyEntry = proxy('proxy-1');
+      const input = {
+        ...validSettings(),
+        proxies: [proxyEntry],
+        browser: { disableNativeWebAuthn: true, proxy: proxyEntry.id },
+      };
+      expect(appSettingsSchema.parse(input)).toEqual(input);
+    });
+
+    it('rejects a browser default proxy that does not name a configured entry', () => {
+      expect(() =>
+        appSettingsSchema.parse({
+          ...validSettings(),
+          proxies: [],
+          browser: { disableNativeWebAuthn: true, proxy: newProxyId(() => 'proxy-ghost') },
+        }),
+      ).toThrow(/does not refer to a configured proxy/);
+    });
+
+    it('accepts a browser default proxy that is absent (direct)', () => {
+      const parsed = appSettingsSchema.parse(validSettings());
+      expect(parsed.browser.proxy).toBeUndefined();
     });
   });
 

@@ -237,17 +237,20 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1857 passed / 14 skipped**;
-**Playwright → 65 tests**. (The Session "Authentication"/"Models" → "Agents"
+Current baseline: **`npm run verify` → 1889 passed / 14 skipped**;
+**Playwright → 66 tests**. (The Session "Authentication"/"Models" → "Agents"
 tab merge moved the unit baseline from 1658, and later work moved it on — see
-`docs/verification.md`, whose latest section records 1857/65.)
+`docs/verification.md`, whose latest section records 1889/66.)
 `app.spec.ts` no longer collides with a running `npm run dev`: it now
 provisions a scratch storage home like every sibling spec (see
-`docs/verification.md` "Settings Servers renamed to Hosts", traps). Two
-residual, load-correlated, now-self-diagnosing E2E flakes:
+`docs/verification.md` "Settings Servers renamed to Hosts", traps). Residual E2E
+flakes, all load-correlated and green in isolation:
 `step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
-closeability section) and `settings-color-picker.spec.ts` (its 1–2 px geometry
-assertions, seen once, green in isolation and in the next full run).
+closeability section), `settings-color-picker.spec.ts` (its 1–2 px geometry
+assertions), and `agent-token-canary.spec.ts`. One **pre-existing, consistent**
+failure is *not* a flake: `step05-settings-servers.spec.ts` (the banner OK
+button detaches mid-click); it reproduces on the clean baseline and is recorded
+in `docs/handoff-steps-09-12.md` as an open item.
 
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's

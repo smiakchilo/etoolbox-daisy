@@ -11,6 +11,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import {
   appSettingsSchema,
+  browserSettingsSchema,
   defaultAppSettings,
   parseAppSettings,
   type AgentToken,
@@ -22,6 +23,8 @@ import type { ProxyId, ServerId } from '../shared';
 import { DEFAULT_AGENT_ID, resolveConfiguredAgentId } from '../shared';
 import type { AgentId } from '../shared';
 import {
+  HOST_PROXY_NONE,
+  hostProxyIdSchema,
   newProxyId,
   originSchema,
   parseOrigin,
@@ -203,15 +206,13 @@ const SERVER_ENTRY_KEYS = [
   'label',
   'origin',
   'color',
-  'proxy',
   'proxyId',
   'tlsException',
   'revision',
 ] as const;
-const AEM_PROXY_KEYS = ['url', 'credentials'] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
-const BROWSER_ENTRY_KEYS = ['disableNativeWebAuthn'] as const;
+const BROWSER_ENTRY_KEYS = ['disableNativeWebAuthn', 'proxy'] as const;
 
 /** Matches the Settings UI default and a fresh entry's colour. */
 const DEFAULT_SERVER_COLOR: ServerColor = { kind: 'swatch', swatch: 'blue' };
@@ -254,22 +255,24 @@ function normalizeLabel(value: unknown, origin: string): string {
 }
 
 /**
- * Normalizes the optional inline proxy of a host. Unknown keys are stripped,
- * but the `credentials` object is copied through untouched on purpose: the
- * strict `proxyCredentialsSchema` must still reject a `password` key, so a bug
- * that writes a plaintext secret cannot be silently accepted. An unparseable
- * address drops the whole proxy (falling back to a direct connection) rather
- * than failing the load.
+ * Normalizes one host's proxy selection. The three persisted states are
+ * "absent" (Default), the literal {@link HOST_PROXY_NONE} ("No proxy"), and a
+ * proxy-library entry id. A hand-edit that writes a falsy value (`null`, `""`)
+ * is treated as "absent" (Default), exactly as the reader is forgiving
+ * elsewhere; `"none"` is kept; a real id is kept only when it names a
+ * configured entry, otherwise the whole reference is dropped - which reverts
+ * the host to "(Default)" rather than failing the load.
  */
-function normalizeAemProxy(value: unknown): Record<string, unknown> | undefined {
-  if (!isPlainObject(value)) return undefined;
-  const record = pickKnownKeys(value, AEM_PROXY_KEYS);
-  if (typeof record['url'] !== 'string') return undefined;
-  const url = parseOrigin(record['url']);
-  if (!url.ok) return undefined;
-  const next: Record<string, unknown> = { url: url.origin };
-  if (record['credentials'] !== undefined) next['credentials'] = record['credentials'];
-  return next;
+function normalizeHostProxyId(
+  value: unknown,
+  proxyIds: ReadonlySet<string>,
+): Record<string, unknown> {
+  if (value === HOST_PROXY_NONE) return { proxyId: HOST_PROXY_NONE };
+  const proxyId = hostProxyIdSchema.safeParse(value);
+  if (proxyId.success && proxyId.data !== HOST_PROXY_NONE && proxyIds.has(proxyId.data)) {
+    return { proxyId: proxyId.data };
+  }
+  return {};
 }
 
 /**
@@ -301,13 +304,8 @@ function normalizeServerEntry(
     label: normalizeLabel(record['label'], origin.origin),
     color: color.success ? color.data : DEFAULT_SERVER_COLOR,
     revision: revision.success ? revision.data : 0,
+    ...normalizeHostProxyId(record['proxyId'], proxyIds),
   };
-
-  const proxy = normalizeAemProxy(record['proxy']);
-  if (proxy !== undefined) next['proxy'] = proxy;
-
-  const proxyId = proxyIdSchema.safeParse(record['proxyId']);
-  if (proxyId.success && proxyIds.has(proxyId.data)) next['proxyId'] = proxyId.data;
 
   const tlsException = tlsExceptionSchema.safeParse(record['tlsException']);
   if (tlsException.success) next['tlsException'] = tlsException.data;
@@ -439,16 +437,22 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
     agents[id.data] = normalized;
   }
 
-  // The browser flags are a flat object of booleans. A non-boolean value is
-  // dropped rather than passed on, so a hand-edit that writes a string here
-  // cannot fail the whole load - the schema then restores the default.
+  // The browser flags are a flat object of booleans plus the optional default
+  // proxy. A non-boolean flag is dropped rather than passed on, and a default
+  // proxy naming a missing entry is dropped (no default), so a hand-edit
+  // cannot fail the whole load - the schema then restores the defaults.
   const browserSource = pickKnownKeys(
     isPlainObject(document['browser']) ? document['browser'] : {},
     BROWSER_ENTRY_KEYS,
   );
   const browser: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(browserSource)) {
+    if (key === 'proxy') continue;
     if (typeof value === 'boolean') browser[key] = value;
+  }
+  const browserProxy = proxyIdSchema.safeParse(browserSource['proxy']);
+  if (browserProxy.success && proxyIds.has(browserProxy.data)) {
+    browser['proxy'] = browserProxy.data;
   }
 
   return {
@@ -552,16 +556,31 @@ export function loadSettingsSync(settingsDir: string): AppSettings {
 /**
  * Applies a `settings:update-browser-settings` patch to a document and returns
  * the updated document. Pure: the caller persists it. An omitted key means
- * "leave unchanged".
+ * "leave unchanged"; `proxy: null` clears the default proxy (direct), a
+ * {@link ProxyId} sets it.
  */
 export function applyBrowserSettingsChange(
   settings: AppSettings,
-  changes: { readonly disableNativeWebAuthn?: boolean | undefined },
+  changes: {
+    readonly disableNativeWebAuthn?: boolean | undefined;
+    readonly proxy?: ProxyId | null | undefined;
+  },
 ): AppSettings {
-  const browser: BrowserSettings =
+  let browser: BrowserSettings =
     changes.disableNativeWebAuthn === undefined
       ? settings.browser
       : { ...settings.browser, disableNativeWebAuthn: changes.disableNativeWebAuthn };
+
+  if (changes.proxy !== undefined) {
+    const next: Record<string, unknown> = { ...browser };
+    if (changes.proxy === null) {
+      delete next['proxy'];
+    } else {
+      next['proxy'] = changes.proxy;
+    }
+    browser = browserSettingsSchema.parse(next);
+  }
+
   return { ...settings, browser };
 }
 
@@ -1161,7 +1180,8 @@ export function removeProxy(
   // Clear the reference from every host that named it, in the same write:
   // `appSettingsSchema` rejects a host whose `proxyId` names a missing proxy,
   // so removing the entry without this would make the document invalid. The
-  // UI then shows those hosts as "No proxy".
+  // host reverts to "(Default)" (the `proxyId` key is deleted), which is the
+  // documented meaning of an absent reference.
   const nextHosts: unknown[] = settings.hosts.map((host) => {
     if (host.proxyId !== proxyId) return host;
     const cleared: Record<string, unknown> = { ...host };
@@ -1169,9 +1189,32 @@ export function removeProxy(
     return cleared;
   });
 
+  // The browser default proxy must not dangle either: clearing it reverts to
+  // "no default proxy" (direct), the same as an absent key.
+  const nextBrowser: Record<string, unknown> = { ...settings.browser };
+  if (settings.browser.proxy === proxyId) {
+    delete nextBrowser['proxy'];
+  }
+
+  // An agent's `proxy` reference is validated the same way, so it must be
+  // cleared in the same write too - otherwise removing an entry the active
+  // agent uses would be refused as `invalid_change` rather than applied.
+  const nextAgents: Record<string, unknown> = {};
+  for (const [agentId, node] of Object.entries(settings.agents)) {
+    if (node.proxy !== proxyId) {
+      nextAgents[agentId] = node;
+      continue;
+    }
+    const cleared: Record<string, unknown> = { ...node };
+    delete cleared['proxy'];
+    nextAgents[agentId] = cleared;
+  }
+
   const parsed = appSettingsSchema.safeParse({
     ...settings,
     hosts: nextHosts,
+    browser: nextBrowser,
+    agents: nextAgents,
     proxies: settings.proxies.filter((proxy) => proxy.id !== proxyId),
   });
   if (!parsed.success) {
