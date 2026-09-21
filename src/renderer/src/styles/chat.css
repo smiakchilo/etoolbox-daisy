@@ -196,9 +196,3 @@
   --mod-actionbutton-content-color-down: var(--spectrum-white, #ffffff);
   --mod-actionbutton-content-color-focus: var(--spectrum-white, #ffffff);
 }
-
-.chat-composer__notice {
-  margin: 4px 0 0;
-  color: var(--spectrum-gray-600, #6e6e6e);
-  font-size: 12px;
-}

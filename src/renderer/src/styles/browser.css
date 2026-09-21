@@ -131,92 +131,22 @@
 }
 
 /* The pane's status/prompt row (navigation errors, the "unknown origin"
-   add-server prompt, and the external-loading presentation: "Loading…" with
-   a progress circle when any chrome-initiated navigation is in flight) - the
-   browser surface of the shared banner-row base (banner.css, lib/alertBanner.ts).
-   Only what the surface alone needs lives here: `position: relative` makes
-   the host the containing block for the loading presentation's absolutely
-    positioned progress line at its top edge. The shared `max-inline-size:none`,
-    the pinned row height, the `__copy`/`__actions` prompt rules and the
-    reveal/collapse height animation (shared with the Settings surface) are in
-    banner.css. */
-.browser-toolbar-message {
-  position: relative;
-}
+   add-server prompt, and the loading presentation: "Loading\u2026" with a
+   progress line when any navigation is in flight) - the browser surface of the
+   shared banner-row base (banner.css, lib/alertBanner.ts). The shared
+   `max-inline-size:none`, the pinned row height, the `__copy`/`__actions`
+   prompt rules, the loading presentation (`.banner-row--loading` + its
+   progress line) and the reveal/collapse height animation are all in
+   banner.css; the `browser-toolbar-message` surface class here carries no
+   rules of its own and exists only to disambiguate the row for a Playwright
+   locator. */
 
-/* The loading presentation pins a narrow, indeterminate progress line to the
-   banner's top edge: a hand-copied rendering of Spectrum's
-   `sp-progress-bar` size="s" sweep. Copied rather than instantiated because
-   `@spectrum-web-components/progress-bar` is not a project dependency (every
-   SWC package is pinned to 1.12.2; adding one would be a reportable
-   deviation). Tokens resolved from the installed `theme` package: thickness
-   4px (`--spectrum-progress-bar-thickness-small`), pill radius 4px
-   (`--spectrum-corner-radius-100`), track `--spectrum-gray-300`
-   (rgb 213,213,213), fill `--spectrum-accent-color-900`
-   (= `--spectrum-blue-900`, rgb 2,101,220), loop of 1s
-   (`--spectrum-animation-duration-2000`) on `--spectrum-animation-ease-in-out`
-   (cubic-bezier(.45,0,.4,1)), fill width 70%
-   (`--system-progress-bar-fill-size-indeterminate`). */
-.browser-toolbar-message__progress {
-  position: absolute;
-  inset-inline: 0;
-  inset-block-start: 0;
-  height: var(--spectrum-progress-bar-thickness-small, 4px);
-  border-radius: var(--spectrum-corner-radius-100, 4px);
-  overflow: hidden;
-  background: var(--spectrum-gray-300, rgb(213, 213, 213));
-}
-
-.browser-toolbar-message__progress-fill {
-  position: absolute;
-  inset-block: 0;
-  width: var(--system-progress-bar-fill-size-indeterminate, 70%);
-  background: var(--spectrum-accent-color-900, rgb(2, 101, 220));
-  animation: browser-toolbar-message-progress-indeterminate
-    var(--spectrum-animation-duration-2000, 1s)
-    var(--spectrum-animation-ease-in-out, cubic-bezier(0.45, 0, 0.4, 1)) infinite;
-}
-
-/* The sweep: `left` percentages resolve against the track (the banner's full
-   width), so the 70%-wide fill travels completely across at any width.
-   Spectrum's own keyframes are absolute (translate(-100%) → translate(192px))
-   and only fit the component's fixed 192px default size. */
-@keyframes browser-toolbar-message-progress-indeterminate {
-  from {
-    left: -70%;
-  }
-  to {
-    left: 100%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .browser-toolbar-message__progress-fill {
-    animation: none;
-  }
-}
-
-/* The loading presentation is light-gray, not the neutral dark-gray. SWC
-   exposes `--mod-alert-banner-*` custom properties on the host for exactly
-   this; the neutral variant's fill is `--mod-alert-banner-neutral-background`
-   (dark `--system-alert-banner-neutral-background` by default) with white
-   text, so both background and text are overridden here. Only the loading
-   presentation is light — error/prompt rows keep the neutral styling. */
-.browser-toolbar-message--loading {
-  --mod-alert-banner-neutral-background: var(--spectrum-gray-200);
-  --mod-alert-banner-font-color: var(--spectrum-gray-800);
-}
-
-/* Wraps the progress circle + text inside the loading banner so the two sit
-   on one row with consistent vertical alignment and spacing. */
+/* Wraps the loading text inside the loading row. */
 .browser-toolbar-message__loading {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
-
-/* Prompt rows' `_copy` span and `_actions` span are the shared
-   `.banner-row__copy` / `.banner-row__actions` rules in banner.css. */
 
 /* Groups the toolbar's status/message row with the reserved page-view region
    it describes (browserPane.ts), so the picker suspension hiding the

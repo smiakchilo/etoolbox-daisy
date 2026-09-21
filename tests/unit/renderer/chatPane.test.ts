@@ -229,10 +229,53 @@ describe('createChatPane status push', () => {
 
     const statusBanner = pane.element.querySelector('.chat-status-banner');
     expect(statusBanner?.textContent).toBe('boom');
-    // The prompt is not lost: the composer restores the field and stays silent
-    // (the banner is the one place the message is shown).
+    // The prompt is not lost: the composer restores the field and owns no
+    // message of its own (the banner is the one place it is shown).
     expect(field.value).toBe('hello');
-    expect(pane.element.querySelector('.chat-composer__notice')?.textContent).toBe('');
+    expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
+
+    pane.dispose();
+  });
+
+  it("routes the composer's connecting state to the banner as a loading row", () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+
+    // `"starting"` is the service's pre-ready lifecycle state: the composer
+    // must say "Connecting to agent...", and the message must live on the pane's
+    // single banner, styled as the browser pane's "Loading…" row.
+    pushStatus(definedStatus({ serviceState: 'starting' }));
+
+    const banner = agentBanner(pane);
+    expect(banner?.hasAttribute('open')).toBe(true);
+    expect(banner?.textContent).toBe('Connecting to agent...');
+    expect(banner?.classList.contains('banner-row--loading')).toBe(true);
+    expect(banner?.querySelector('.banner-row__progress')).not.toBeNull();
+    // No duplicate message in the composer.
+    expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
+
+    pane.dispose();
+  });
+
+  it('routes a send-blocked reason to the banner once an agent is active and the session is closed', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+
+    // Authenticated (so an agent is active) but the session is closed: the
+    // composer disables Send and the reason is the banner's standing row.
+    pushStatus(
+      definedStatus({
+        auth: { apiVersion: 1, isAuthenticated: true },
+        sessionState: 'closed',
+      }),
+    );
+    await flush();
+
+    const banner = agentBanner(pane);
+    expect(sendButton(pane)?.hasAttribute('disabled')).toBe(true);
+    expect(banner?.textContent).toBe('This conversation is closed');
+    // A plain row, not the loading presentation.
+    expect(banner?.classList.contains('banner-row--loading')).toBe(false);
+    expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
 
     pane.dispose();
   });

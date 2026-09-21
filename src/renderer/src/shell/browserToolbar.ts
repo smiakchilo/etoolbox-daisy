@@ -1,11 +1,13 @@
 import { el } from '../lib/dom';
 import {
+  BANNER_ROW_LOADING_CLASS,
   BANNER_TRANSITION_DURATION_MS,
   buildBannerCopy,
   buildBannerPrompt,
   collapseBannerRow,
   configureBannerTransition,
   createBannerActionButton,
+  createBannerProgressLine,
   createBannerRow,
   isBannerClosing,
   restoreBannerRow,
@@ -160,25 +162,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   configureBannerTransition(messageElement, BANNER_TRANSITION_DURATION_MS);
 
   // Loading text shown inside the banner — the indefinite progress bar
-  // animation is rendered via CSS in browser.css, so no spinner is needed.
+  // animation is rendered via CSS in banner.css, so no spinner is needed.
   const loadingSpan = el('span', {
     attrs: { class: 'browser-toolbar-message__loading' },
     children: [document.createTextNode(LOADING_LABEL)],
   });
 
-  // Indeterminate progress line pinned to the loading banner's top edge - a
-  // hand-copied rendering of Spectrum's `sp-progress-bar` size="s" sweep
-  // (see browser.css `.browser-toolbar-message__progress`), because the
-  // `@spectrum-web-components/progress-bar` package is not a project
-  // dependency. Created once so the DOM node is stable across loading
-  // cycles, then swapped in/out of the banner like `loadingSpan`.
-  const progressFill = el('div', {
-    attrs: { class: 'browser-toolbar-message__progress-fill' },
-  });
-  const progressTrack = el('div', {
-    attrs: { class: 'browser-toolbar-message__progress' },
-    children: [progressFill],
-  });
+  // Indeterminate progress line pinned to the loading banner's top edge - the
+  // shared loading-presentation node (`lib/alertBanner.ts` /
+  // `banner.css`'s `.banner-row__progress`), also used by the chat pane's
+  // "Connecting to agent..." row. Created once so the DOM node is stable
+  // across loading cycles, then swapped in/out of the banner like
+  // `loadingSpan`.
+  const progressTrack = createBannerProgressLine();
 
   // ── State ────────────────────────────────────────────────────────────────
   let lastNavigationState: BrowserNavigationState | null = null;
@@ -247,9 +243,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
   }
 
-  /** True when the `--loading` class + loading content are actively applied. */
+  /** True when the loading presentation (light row + progress line) is applied. */
   function isLoadingPresentationShown(): boolean {
-    return messageElement.classList.contains('browser-toolbar-message--loading');
+    return messageElement.classList.contains(BANNER_ROW_LOADING_CLASS);
   }
 
   function cancelLoadingBanner(): void {
@@ -266,7 +262,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
    */
   function finalizeBannerHide(): void {
     cancelBannerHide();
-    messageElement.classList.remove('browser-toolbar-message--loading');
+    messageElement.classList.remove(BANNER_ROW_LOADING_CLASS);
     restoreBannerRow(messageElement);
     messageElement.removeAttribute('dismissible');
     messageElement.removeAttribute('open');
@@ -294,7 +290,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     cancelBannerHide();
     const wasClosing = isBannerClosing(messageElement);
     const wasVisible = messageElement.hasAttribute('open') && !wasClosing;
-    messageElement.classList.toggle('browser-toolbar-message--loading', loading);
+    messageElement.classList.toggle(BANNER_ROW_LOADING_CLASS, loading);
     if (loading) messageElement.removeAttribute('dismissible');
     else messageElement.setAttribute('dismissible', '');
     messageElement.replaceChildren(...children);

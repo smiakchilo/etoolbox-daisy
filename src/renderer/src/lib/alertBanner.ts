@@ -13,8 +13,11 @@ import { el } from './dom';
  * are mounted in the same document at once (Settings opens over the browser
  * pane) and Playwright strict-mode locators rely on each matching exactly one
  * element. Every rule they can honestly share lives in `styles/banner.css`
- * under `.banner-row`; the surface classes carry only what genuinely differs
- * (browser: the loading presentation and its progress line).
+ * under `.banner-row`; the surface classes carry only what genuinely differs.
+ * The loading presentation - a light-gray fill plus an indeterminate progress
+ * line (`.banner-row--loading` / `createBannerProgressLine`) - is shared by
+ * the browser pane's "Loading\u2026" row and the chat pane's "Connecting to
+ * agent..." row, so the two are visibly the same kind of row.
  *
  * One row per surface is the invariant that keeps two banners from stacking: a
  * later message *suppresses* the former by taking that single row. Within
@@ -45,6 +48,8 @@ import { el } from './dom';
 
 /** The shared root class every banner row carries. */
 export const BANNER_ROW_CLASS = 'banner-row';
+/** The shared loading-presentation class: a light-gray fill and a progress line. */
+export const BANNER_ROW_LOADING_CLASS = 'banner-row--loading';
 /** The shared message-copy wrapper class. */
 export const BANNER_ROW_COPY_CLASS = 'banner-row__copy';
 /** The shared action-button group class. */
@@ -143,6 +148,22 @@ export function createBannerRow(surfaceClass: string): HTMLElement {
     }
   });
   return row;
+}
+
+/**
+ * Builds the indeterminate progress line pinned to a loading row's top edge -
+ * a hand-copied rendering of Spectrum's `sp-progress-bar` size="s" sweep (see
+ * `styles/banner.css`'s `.banner-row__progress*`), because the
+ * `@spectrum-web-components/progress-bar` package is not a project dependency.
+ * Shared by the browser pane's "Loading\u2026" row and the chat pane's
+ * "Connecting to agent..." row so both present identically. The caller is
+ * responsible for the row's `banner-row--loading` class.
+ */
+export function createBannerProgressLine(): HTMLElement {
+  return el('div', {
+    attrs: { class: 'banner-row__progress' },
+    children: [el('div', { attrs: { class: 'banner-row__progress-fill' } })],
+  });
 }
 
 /**

@@ -170,3 +170,75 @@
   margin-inline-start: 12px;
   vertical-align: middle;
 }
+
+/*
+ * The loading presentation, shared by the browser pane's "Loading\u2026" row and
+ * the chat pane's "Connecting to agent..." row: a light-gray fill instead of
+ * the neutral variant's dark gray, with white text turned dark so it stays
+ * legible. SWC exposes `--mod-alert-banner-*` custom properties on the host for
+ * exactly this; the neutral variant's fill is `--mod-alert-banner-neutral-background`
+ * (the dark `--system-alert-banner-neutral-background` by default) with white
+ * text, so both background and text are overridden here. Only the loading
+ * presentation is light - error/prompt rows keep the neutral styling.
+ *
+ * `position: relative` makes the row the containing block for the absolutely
+ * positioned progress line at its top edge.
+ */
+.banner-row--loading {
+  position: relative;
+  --mod-alert-banner-neutral-background: var(--spectrum-gray-200);
+  --mod-alert-banner-font-color: var(--spectrum-gray-800);
+}
+
+/*
+ * The loading presentation's narrow, indeterminate progress line, pinned to the
+ * row's top edge: a hand-copied rendering of Spectrum's `sp-progress-bar`
+ * size="s" sweep (`createBannerProgressLine`). Copied rather than instantiated
+ * because `@spectrum-web-components/progress-bar` is not a project dependency
+ * (every SWC package is pinned to 1.12.2; adding one would be a reportable
+ * deviation). Tokens resolved from the installed `theme` package: thickness
+ * 4px (`--spectrum-progress-bar-thickness-small`), pill radius 4px
+ * (`--spectrum-corner-radius-100`), track `--spectrum-gray-300`
+ * (rgb 213,213,213), fill `--spectrum-accent-color-900`
+ * (= `--spectrum-blue-900`, rgb 2,101,220), loop of 1s
+ * (`--spectrum-animation-duration-2000`) on `--spectrum-animation-ease-in-out`
+ * (cubic-bezier(.45,0,.4,1)), fill width 70%
+ * (`--system-progress-bar-fill-size-indeterminate`).
+ */
+.banner-row__progress {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 0;
+  height: var(--spectrum-progress-bar-thickness-small, 4px);
+  border-radius: var(--spectrum-corner-radius-100, 4px);
+  overflow: hidden;
+  background: var(--spectrum-gray-300, rgb(213, 213, 213));
+}
+
+.banner-row__progress-fill {
+  position: absolute;
+  inset-block: 0;
+  width: var(--system-progress-bar-fill-size-indeterminate, 70%);
+  background: var(--spectrum-accent-color-900, rgb(2, 101, 220));
+  animation: banner-row-progress-indeterminate var(--spectrum-animation-duration-2000, 1s)
+    var(--spectrum-animation-ease-in-out, cubic-bezier(0.45, 0, 0.4, 1)) infinite;
+}
+
+/* The sweep: `left` percentages resolve against the track (the row's full
+   width), so the 70%-wide fill travels completely across at any width.
+   Spectrum's own keyframes are absolute (translate(-100%) -> translate(192px))
+   and only fit the component's fixed 192px default size. */
+@keyframes banner-row-progress-indeterminate {
+  from {
+    left: -70%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .banner-row__progress-fill {
+    animation: none;
+  }
+}

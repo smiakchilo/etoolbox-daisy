@@ -168,11 +168,12 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
 
   // The loading presentation ends in a narrow indeterminate progress line
   // pinned to the banner's top edge: a hand-copied `sp-progress-bar`
-  // size="s" sweep (the light-DOM track + animated fill; see browser.css).
-  await expect(banner.locator('.browser-toolbar-message__progress')).toHaveCount(1);
+  // size="s" sweep (the light-DOM track + animated fill; the shared
+  // `.banner-row--loading` presentation in banner.css).
+  await expect(banner.locator('.banner-row__progress')).toHaveCount(1);
   const progressStyle = await banner.evaluate((element) => {
-    const track = element.querySelector<HTMLElement>('.browser-toolbar-message__progress');
-    const fill = track?.querySelector<HTMLElement>('.browser-toolbar-message__progress-fill');
+    const track = element.querySelector<HTMLElement>('.banner-row__progress');
+    const fill = track?.querySelector<HTMLElement>('.banner-row__progress-fill');
     if (!track || !fill) return null;
     const trackCS = getComputedStyle(track);
     const fillCS = getComputedStyle(fill);

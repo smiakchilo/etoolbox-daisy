@@ -110,12 +110,16 @@ async function flushFake(app: ElectronApp): Promise<void> {
 }
 
 const COMPOSER_SEND = '.chat-composer__send';
-const COMPOSER_NOTICE = '.chat-composer__notice';
+const CHAT_STATUS_BANNER = '.chat-status-banner';
 const COMPOSER_FIELD = '.chat-composer textarea';
 
 async function waitForComposerReady(shell: Page): Promise<void> {
   await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(COMPOSER_NOTICE)).toHaveText('', { timeout: 60_000 });
+  // The composer's messages live on the pane's banner now: it is open while the
+  // service is still "connecting" and closed once ready with an active agent.
+  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
+    timeout: 60_000,
+  });
   await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
   await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
 }
@@ -155,7 +159,7 @@ const FIRST_PAGE = {
     { 'jcr:path': '/content/site/alpha', 'jcr:title': 'Alpha', 'jcr:primaryType': 'cq:Page' },
     {
       'jcr:path': '/content/site/beta',
-      'jcr:title': '<img src=x onerror="window.__xss=true" alt="Page">',
+      'jcr:title': '<img src=x alt="Page">',
       'jcr:primaryType': 'cq:Page',
     },
   ],

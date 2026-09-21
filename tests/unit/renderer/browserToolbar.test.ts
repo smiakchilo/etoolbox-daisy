@@ -1,7 +1,10 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserToolbar } from '../../../src/renderer/src/shell/browserToolbar';
-import { BANNER_TRANSITION_DURATION_MS } from '../../../src/renderer/src/lib/alertBanner';
+import {
+  BANNER_ROW_LOADING_CLASS,
+  BANNER_TRANSITION_DURATION_MS,
+} from '../../../src/renderer/src/lib/alertBanner';
 import type {
   BrowserNavigationState,
   BrowserSwitchState,
@@ -153,10 +156,10 @@ describe('createBrowserToolbar loading state machine', () => {
 
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
-    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
     // The loading presentation is not dismissible and ends in a progress line.
     expect(message.hasAttribute('dismissible')).toBe(false);
-    expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
+    expect(message.querySelector('.banner-row__progress')).not.toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
     // The stop affordance is a cross, not the media "stop playback" glyph.
     expect(findNavButton(toolbar).querySelector('sp-icon-cross600')).not.toBeNull();
@@ -169,7 +172,7 @@ describe('createBrowserToolbar loading state machine', () => {
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
-    expect(message.querySelector('.browser-toolbar-message__progress')).toBeNull();
+    expect(message.querySelector('.banner-row__progress')).toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
 
@@ -252,7 +255,7 @@ describe('createBrowserToolbar loading state machine', () => {
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
-    expect(message.querySelector('.browser-toolbar-message__progress')).toBeNull();
+    expect(message.querySelector('.banner-row__progress')).toBeNull();
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
   });
 
@@ -404,14 +407,14 @@ describe('createBrowserToolbar loading state machine', () => {
     switchListeners[0]?.({ switching: false });
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
-    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
 
     // did-stop-loading collapses it.
     stateListeners[0]?.(loadingState(false));
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
-    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(false);
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
   });
 
   it('keeps the address field enabled through a server switch while back/forward disable', () => {
@@ -494,8 +497,8 @@ describe('createBrowserToolbar loading state machine', () => {
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
-    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
-    expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
+    expect(message.querySelector('.banner-row__progress')).not.toBeNull();
 
     stateListeners[0]?.(loadingState(false));
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
@@ -510,8 +513,8 @@ describe('createBrowserToolbar loading state machine', () => {
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.textContent).toBe('Loading\u2026');
-    expect(message.classList.contains('browser-toolbar-message--loading')).toBe(true);
-    expect(message.querySelector('.browser-toolbar-message__progress')).not.toBeNull();
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
+    expect(message.querySelector('.banner-row__progress')).not.toBeNull();
   });
 
   it('shows a fetch error immediately even while a loading debounce is armed', async () => {

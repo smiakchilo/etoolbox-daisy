@@ -68,7 +68,7 @@ export function parseAgentChatVoidResult(candidate: unknown): AgentChatVoidResul
  * "is the user signed in" at all, and reporting a bare `false` for that
  * window would be indistinguishable from "signed out", which is not true -
  * the user may well be signed in and merely a few seconds early. A chat pane
- * must be able to render "connecting to Copilot..." for `"starting"`,
+ * must be able to render "connecting to agent..." for `"starting"`,
  * distinct from whatever `auth`/`sessionState` say once `"ready"`.
  */
 export const AGENT_SERVICE_LIFECYCLE_STATES = ['starting', 'ready'] as const;

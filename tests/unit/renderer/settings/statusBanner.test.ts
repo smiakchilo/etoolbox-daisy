@@ -1,6 +1,9 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BANNER_TRANSITION_DURATION_MS } from '../../../../src/renderer/src/lib/alertBanner';
+import {
+  BANNER_ROW_LOADING_CLASS,
+  BANNER_TRANSITION_DURATION_MS,
+} from '../../../../src/renderer/src/lib/alertBanner';
 import {
   createSaveReporter,
   createStatusBanner,
@@ -313,6 +316,39 @@ describe('createStatusBanner standing floor', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('renders the loading presentation as the shared light row plus progress line, and drops both for a plain row', () => {
+    const banner = createStatusBanner();
+
+    banner.setStanding([document.createTextNode('Connecting to agent...')], 'loading');
+    expect(banner.element.hasAttribute('open')).toBe(true);
+    expect(banner.element.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
+    expect(banner.element.querySelector('.banner-row__progress')).not.toBeNull();
+    expect(banner.element.textContent).toBe('Connecting to agent...');
+
+    // A plain standing row must not inherit the light fill or the progress line
+    // (the presentation is part of the standing state, not sticky on the row).
+    banner.setStanding([document.createTextNode('Plain')]);
+    expect(banner.element.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
+    expect(banner.element.querySelector('.banner-row__progress')).toBeNull();
+    expect(banner.element.textContent).toBe('Plain');
+  });
+
+  it('a live presentation supersedes a loading standing row without inheriting its fill', () => {
+    const banner = createStatusBanner();
+    banner.setStanding([document.createTextNode('Connecting to agent...')], 'loading');
+
+    banner.showError('Later');
+    expect(banner.element.textContent).toBe('Later');
+    expect(banner.element.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
+    expect(banner.element.querySelector('.banner-row__progress')).toBeNull();
+
+    // Dismissing restores the loading floor - class and progress line included.
+    dismiss(banner);
+    expect(banner.element.textContent).toBe('Connecting to agent...');
+    expect(banner.element.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
+    expect(banner.element.querySelector('.banner-row__progress')).not.toBeNull();
   });
 });
 

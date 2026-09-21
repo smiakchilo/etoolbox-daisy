@@ -1,9 +1,5 @@
 import { el } from '../lib/dom';
-import {
-  type ComposerButtonState,
-  describeCanSendBlockReason,
-  shouldSubmitOnEnter,
-} from './composerViewModel';
+import { type ComposerButtonState, shouldSubmitOnEnter } from './composerViewModel';
 
 type TextFieldElement = HTMLElement & { value: string };
 
@@ -33,8 +29,7 @@ const TEXTAREA_MAX_LINES = 20;
  */
 const SEND_ACCENT_CLASS = 'chat-composer__send--enabled';
 
-export type ComposerSendOutcome =
-  { readonly ok: true } | { readonly ok: false; readonly message: string };
+export type ComposerSendOutcome = { readonly ok: true } | { readonly ok: false };
 
 export interface ComposerCallbacks {
   /** Sends `prompt`. Resolves once main has accepted or rejected it - never rejects. */
@@ -45,7 +40,7 @@ export interface ComposerCallbacks {
 
 export interface Composer {
   readonly element: HTMLElement;
-  /** Applies the latest computed button/notice state - see `composerViewModel.ts`. */
+  /** Applies the latest computed button state - see `composerViewModel.ts`. */
   setButtonState(state: ComposerButtonState): void;
   /**
    * Tells the composer whether the conversation has any content yet. While
@@ -92,7 +87,11 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   });
   stopButton.append(el('sp-icon-stop', { attrs: { slot: 'icon' } }));
 
-  const notice = el('p', { attrs: { class: 'chat-composer__notice' } });
+  // Every message the composer would once have shown inline (the connecting
+  // state, a send-blocked reason, a send failure) is routed to the chat pane's
+  // single `sp-alert-banner` instead - see `chatPane.ts`'s
+  // `refreshSessionPresentation`. This module is deliberately left with the
+  // field and the Send/Stop control only.
 
   let current: ComposerButtonState = { kind: 'connecting' };
   let conversationEmpty = true;
@@ -119,25 +118,20 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     switch (current.kind) {
       case 'connecting':
         sendButton.setAttribute('disabled', '');
-        notice.textContent = 'Connecting to Copilot...';
         return;
       case 'stop':
         stopButton.removeAttribute('disabled');
-        notice.textContent = '';
         return;
       case 'send-enabled':
         sendButton.removeAttribute('disabled');
-        notice.textContent = '';
         return;
       case 'send-disabled':
         sendButton.setAttribute('disabled', '');
-        notice.textContent = describeCanSendBlockReason(current.reason);
         return;
       case 'agent-inactive':
         // The chat pane's own banner carries the explanation; the composer
         // stays silent so the two do not say the same thing twice.
         sendButton.setAttribute('disabled', '');
-        notice.textContent = '';
         return;
       default: {
         return current;
@@ -205,14 +199,15 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     const previousValue = field.value;
     field.value = '';
     autosize();
-    notice.textContent = '';
     void callbacks
       .onSend(prompt)
       .then((outcome) => {
+        // A rejected send restores the prompt; the failure message itself is
+        // the chat pane's banner (see `chatPane.ts`'s `onSend`), so nothing is
+        // shown here.
         if (!outcome.ok) {
           field.value = previousValue;
           autosize();
-          notice.textContent = outcome.message;
         }
       })
       .finally(() => {
@@ -260,7 +255,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     attrs: { class: 'chat-composer__frame' },
     children: [field, actions],
   });
-  const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame, notice] });
+  const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame] });
 
   // The empty-state field is stretched by CSS to the pane's height, which is
   // decided by layout the composer never sees (pane attach, split-view drag,

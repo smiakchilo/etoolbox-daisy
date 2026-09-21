@@ -4,7 +4,11 @@ import { createChatToolbar } from './chatToolbar';
 import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
 import { createStatusBanner, type StatusBanner } from '../settings/statusBanner';
-import { computeComposerButtonState, isTurnInFlight } from '../chat/composerViewModel';
+import {
+  computeComposerButtonState,
+  describeCanSendBlockReason,
+  isTurnInFlight,
+} from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
 import {
@@ -13,6 +17,7 @@ import {
   type AgentChatStatus,
   type AgentServiceLifecycleState,
   type AgentSettingsSnapshot,
+  type CanSendBlockReason,
   type ChatId,
   newChatId,
   resolveEffectiveActiveAgentId,
@@ -55,10 +60,12 @@ const READY_POLL_INTERVAL_MS = 15_000;
  * strict-mode locator when Settings is open over the chat pane, and the shared
  * `banner.css` rules can tell them apart.
  *
- * The chat pane owns exactly one `sp-alert-banner`: the standing "no usable
- * agent" prompt is this row's lowest-priority presentation
- * (`StatusBanner.setStanding`), so a later error/status suppresses it instead
- * of stacking a second banner beneath it.
+ * The chat pane owns exactly one `sp-alert-banner`. Its standing
+ * (lowest-priority) presentation is the composer's own message for the current
+ * state - "Connecting to agent..." (the shared loading row), the "no usable
+ * agent" prompt, or a send-blocked reason - so a later error/status suppresses
+ * it instead of stacking a second banner beneath it, and suppressing the
+ * composer's inline notice entirely (see `refreshSessionPresentation`).
  */
 const CHAT_STATUS_BANNER_SURFACE_CLASS = 'chat-status-banner';
 
@@ -91,6 +98,24 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const agentPromptContent: readonly Node[] = [
     buildBannerCopy(['Activate an agent in ', agentSettingsButton, ' to send messages']),
   ];
+
+  // The composer's own messages, now all carried by this pane's single banner
+  // (the composer has no notice of its own). "Connecting to agent..." uses the
+  // shared loading presentation - the same light-gray fill and progress line as
+  // the browser pane's "Loading\u2026" row - because it, too, describes work in
+  // flight. Built once so re-asserting it on every status refresh is a no-op.
+  const connectingContent: readonly Node[] = [buildBannerCopy(['Connecting to agent...'])];
+
+  // A send-blocked reason is a persistent plain row. Memoised per reason so a
+  // caller re-asserting the same state never rebuilds the DOM.
+  const blockReasonContent = new Map<CanSendBlockReason, readonly Node[]>();
+  function contentForBlockReason(reason: CanSendBlockReason): readonly Node[] {
+    const existing = blockReasonContent.get(reason);
+    if (existing !== undefined) return existing;
+    const content: readonly Node[] = [buildBannerCopy([describeCanSendBlockReason(reason)])];
+    blockReasonContent.set(reason, content);
+    return content;
+  }
 
   // `browserReady` is never learned by this pane (`AgentChatStatus` does not
   // report it, and `canSendMessage` - see `composerViewModel.ts` - never
@@ -131,20 +156,31 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     }));
     const agentActive = activeAgentId !== undefined;
     transcriptStore.setTurnInFlight(isTurnInFlight(sessionStatus.state));
-    // The standing "no usable agent" prompt is the banner's lowest-priority
-    // presentation: a save/send error taking the same row suppresses it, and it
-    // returns when that clears - never two rows at once.
-    statusBanner.setStanding(serviceState === 'ready' && !agentActive ? agentPromptContent : null);
-    composer.setButtonState(
-      computeComposerButtonState({
-        serviceState,
-        // The gate must not re-block a provider that needs no authentication;
-        // when `agentActive` is false the composer returns `agent-inactive`
-        // before consulting it, so this value is only ever used when true.
-        session: { ...sessionStatus, authenticated: agentActive },
-        agentActive,
-      }),
-    );
+    const buttonState = computeComposerButtonState({
+      serviceState,
+      // The gate must not re-block a provider that needs no authentication;
+      // when `agentActive` is false the composer returns `agent-inactive`
+      // before consulting it, so this value is only ever used when true.
+      session: { ...sessionStatus, authenticated: agentActive },
+      agentActive,
+    });
+    composer.setButtonState(buttonState);
+    // Every composer-generated message goes to the banner's single standing
+    // floor - never the composer's own DOM - so the pane can never show two
+    // rows at once and a later error/prompt suppresses the message instead of
+    // stacking beneath it. The connecting state is the shared loading row;
+    // the "no usable agent" prompt and a send-blocked reason are plain rows.
+    // The `agent-inactive`/`stop` states are ordered so a turn already running
+    // can always be stopped without the prompt displacing the Stop control.
+    if (buttonState.kind === 'connecting') {
+      statusBanner.setStanding(connectingContent, 'loading');
+    } else if (!agentActive) {
+      statusBanner.setStanding(agentPromptContent);
+    } else if (buttonState.kind === 'send-disabled') {
+      statusBanner.setStanding(contentForBlockReason(buttonState.reason));
+    } else {
+      statusBanner.setStanding(null);
+    }
   }
 
   /**
@@ -242,15 +278,15 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
     if (chatId === undefined) {
       statusBanner.showError('Not connected to Copilot yet.');
-      return { ok: false, message: '' };
+      return { ok: false };
     }
     const result = await window.daisy.agentChat.sendMessage({ chatId, prompt });
     if (!result.ok) {
-      // The panel's one banner carries the failure; the composer keeps the
+      // The pane's one banner carries the failure; the composer keeps the
       // typed prompt (see `trySubmit`) and stays silent, so the two never say
       // the same thing twice.
       statusBanner.showError(result.error.message);
-      return { ok: false, message: '' };
+      return { ok: false };
     }
     transcriptStore.applyUserPrompt(result.turnId, prompt);
     refreshEmptyState();

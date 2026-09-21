@@ -154,8 +154,9 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
     );
     expect(blueMinusRed(disabledBackground)).toBeLessThanOrEqual(20);
     expect(disabledBackground).not.toBe(enabledBackground);
-    // The banner carries the explanation; the composer stays silent.
-    await expect(shell.locator('.chat-composer__notice')).toHaveText('');
+    // The banner carries the explanation; the composer owns no message element
+    // at all any more (the notice was retired).
+    await expect(shell.locator('.chat-composer__notice')).toHaveCount(0);
 
     // The banner's inline Settings control lands on the Agents tab.
     await banner.locator('sp-action-button', { hasText: 'Settings' }).click();

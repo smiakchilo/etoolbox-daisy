@@ -144,49 +144,40 @@ describe('createComposer', () => {
     });
   });
 
-  it("starts in the 'connecting' presentation: disabled Send and honest notice", () => {
+  it("starts in the 'connecting' presentation with a disabled Send and no message of its own", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     const sendButton = query(composer.element, '.chat-composer__send');
     const stopButton = query(composer.element, '.chat-composer__stop');
-    const notice = query(composer.element, '.chat-composer__notice');
 
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(true);
     expect(isShown(stopButton)).toBe(false);
-    expect(notice.textContent).toBe('Connecting to Copilot...');
+    // The composer no longer owns any message: "Connecting to agent..." is the
+    // chat pane's banner (see `chatPane.test.ts`), not a composer notice.
+    expect(composer.element.querySelector('.chat-composer__notice')).toBeNull();
   });
 
-  it("does not present 'connecting' as 'not authenticated': the notice text is distinct", () => {
-    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
-    const notice = query(composer.element, '.chat-composer__notice');
-    expect(notice.textContent).not.toMatch(/sign in/i);
-  });
-
-  it("shows an enabled Send button and empty notice once told 'send-enabled'", () => {
+  it("shows an enabled Send button once told 'send-enabled'", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'send-enabled' });
 
     const sendButton = query(composer.element, '.chat-composer__send');
     const stopButton = query(composer.element, '.chat-composer__stop');
-    const notice = query(composer.element, '.chat-composer__notice');
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(false);
     // The accent fill rides on this class; it is what makes the enabled state
     // visibly blue and every disabled state visibly grey.
     expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(true);
     expect(isShown(stopButton)).toBe(false);
-    expect(notice.textContent).toBe('');
   });
 
-  it("shows a disabled Send with the reason's text when 'send-disabled'", () => {
+  it("shows a disabled Send (no accent fill) when 'send-disabled'", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'send-disabled', reason: 'not_authenticated' });
 
     const sendButton = query(composer.element, '.chat-composer__send');
-    const notice = query(composer.element, '.chat-composer__notice');
     expect(sendButton.hasAttribute('disabled')).toBe(true);
     expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(false);
-    expect(notice.textContent).toBe('Sign in to Copilot to send a message');
   });
 
   it('shows a disabled, silent Send (no accent fill) when no agent is active', () => {
@@ -194,13 +185,12 @@ describe('createComposer', () => {
     composer.setButtonState({ kind: 'agent-inactive' });
 
     const sendButton = query(composer.element, '.chat-composer__send');
-    const notice = query(composer.element, '.chat-composer__notice');
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(true);
     expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(false);
-    // The chat pane's own banner carries the wording; the composer must not
-    // duplicate it.
-    expect(notice.textContent).toBe('');
+    // The chat pane's own banner carries the wording; the composer holds no
+    // message element at all.
+    expect(composer.element.querySelector('.chat-composer__notice')).toBeNull();
   });
 
   it('swaps to the enabled Stop control (and hides Send) when a turn is in flight', () => {
@@ -272,11 +262,8 @@ describe('createComposer', () => {
       expect(onSend).not.toHaveBeenCalled();
     });
 
-    it('restores the previous text and shows the failure message when onSend resolves not-ok', async () => {
-      const onSend = vi.fn().mockResolvedValue({
-        ok: false,
-        message: 'The turn is already in progress.',
-      } satisfies ComposerSendOutcome);
+    it('restores the previous text when onSend resolves not-ok, leaving the message to the banner', async () => {
+      const onSend = vi.fn().mockResolvedValue({ ok: false } satisfies ComposerSendOutcome);
       const { composer, field } = readyComposer(onSend);
       field.value = 'will fail';
 
@@ -285,8 +272,9 @@ describe('createComposer', () => {
       await Promise.resolve();
 
       expect(field.value).toBe('will fail');
-      const notice = query(composer.element, '.chat-composer__notice');
-      expect(notice.textContent).toBe('The turn is already in progress.');
+      // The failure message is the chat pane's banner; the composer carries no
+      // notice to duplicate it.
+      expect(composer.element.querySelector('.chat-composer__notice')).toBeNull();
     });
 
     describe('IME composition must never accidentally submit', () => {

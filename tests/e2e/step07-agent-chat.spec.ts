@@ -263,7 +263,7 @@ declare const MutationObserver: new (callback: () => void) => MinimalMutationObs
 
 const COMPOSER_SEND = '.chat-composer__send';
 const COMPOSER_STOP = '.chat-composer__stop';
-const COMPOSER_NOTICE = '.chat-composer__notice';
+const CHAT_STATUS_BANNER = '.chat-status-banner';
 const COMPOSER_FIELD = '.chat-composer textarea';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
 const TOOL_CALL = '.chat-tool-call';
@@ -271,7 +271,11 @@ const TOOL_CALL = '.chat-tool-call';
 /** Waits until the composer reaches "send-enabled" - `serviceState: "ready"`, no turn in flight. */
 async function waitForComposerReady(shell: Page): Promise<void> {
   await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(COMPOSER_NOTICE)).toHaveText('', { timeout: 60_000 });
+  // The composer's messages live on the pane's banner now: it is open while the
+  // service is still "connecting" and closed once ready with an active agent.
+  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
+    timeout: 60_000,
+  });
   await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
   await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
 }
