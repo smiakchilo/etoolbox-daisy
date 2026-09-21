@@ -19,6 +19,15 @@ const TEXTAREA_EMPTY_ROWS = 8;
  */
 const TEXTAREA_MAX_LINES = 20;
 
+/**
+ * Carry the accent fill only while Send may actually be pressed. The accent
+ * is applied through Spectrum's `--mod-actionbutton-*` hooks, and a light-DOM
+ * class rule outranks the component's own `:host([disabled])` tokens - so if
+ * the accent stayed on, a disabled Send still painted bright blue. Toggling
+ * it off lets the component's disabled tokens show through.
+ */
+const SEND_ACCENT_CLASS = 'chat-composer__send--enabled';
+
 export type ComposerSendOutcome =
   { readonly ok: true } | { readonly ok: false; readonly message: string };
 
@@ -97,6 +106,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     const inFlight = current.kind === 'stop';
     sendButton.style.display = inFlight ? 'none' : '';
     stopButton.style.display = inFlight ? '' : 'none';
+    sendButton.classList.toggle(SEND_ACCENT_CLASS, current.kind === 'send-enabled');
 
     switch (current.kind) {
       case 'connecting':
@@ -114,6 +124,12 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       case 'send-disabled':
         sendButton.setAttribute('disabled', '');
         notice.textContent = describeCanSendBlockReason(current.reason);
+        return;
+      case 'agent-inactive':
+        // The chat pane's own banner carries the explanation; the composer
+        // stays silent so the two do not say the same thing twice.
+        sendButton.setAttribute('disabled', '');
+        notice.textContent = '';
         return;
       default: {
         return current;

@@ -32,12 +32,13 @@
  * same instant don't fight over the single slot.
  */
 
-import { el } from '../lib/dom';
 import {
   BANNER_TRANSITION_DURATION_MS,
+  buildBannerCopy,
   buildBannerPrompt,
   collapseBannerRow,
   configureBannerTransition,
+  createBannerActionButton,
   createBannerRow,
   isBannerClosing,
   restoreBannerRow,
@@ -158,13 +159,10 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
   }
 
   function promptContent(copy: string, action: StatusBannerAction): readonly Node[] {
-    // An `sp-action-button` (size m), exactly like the browser banner's OK
+    // A size-s `sp-action-button`, exactly like the browser banner's OK
     // buttons (browserToolbar.ts) - deliberately NOT an accent `sp-button`,
     // so the confirm reads as a status-strip action, not a blocking dialog.
-    const actionButton = el('sp-action-button', {
-      attrs: { size: 'm' },
-      text: action.label,
-    });
+    const actionButton = createBannerActionButton(action.label);
     actionButton.addEventListener('click', () => action.onActivate());
     return buildBannerPrompt(copy, [actionButton]);
   }
@@ -185,13 +183,13 @@ export function createStatusBanner(autoClearMs: number = STATUS_AUTO_CLEAR_MS): 
       return slot === 'prompt';
     },
     showStatus(message: string): void {
-      if (!present('status', [document.createTextNode(message)])) return;
+      if (!present('status', [buildBannerCopy([message])])) return;
       autoClearTimer = setTimeout(() => {
         if (slot === 'status') hide();
       }, autoClearMs);
     },
     showError(message: string): void {
-      present('error', [document.createTextNode(message)]);
+      present('error', [buildBannerCopy([message])]);
     },
     showPrompt(copy: string, action: StatusBannerAction): void {
       present('prompt', promptContent(copy, action));

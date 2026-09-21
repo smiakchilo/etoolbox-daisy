@@ -152,8 +152,8 @@ function notOpenConversationError(chatId: ChatId): AgentChatError {
 }
 
 const BLOCK_REASON_MESSAGES: Readonly<Record<CanSendBlockReason, string>> = {
-  session_closed: 'This conversation is closed.',
-  not_authenticated: 'Sign in to Copilot before sending a message.',
+  session_closed: 'This conversation is closed',
+  not_authenticated: 'Sign in to Copilot before sending a message',
   session_error: 'Dismiss the current error before sending another message.',
   turn_in_progress:
     'Wait for the current response to finish (or press Stop) before sending another message.',

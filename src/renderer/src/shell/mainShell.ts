@@ -1,20 +1,22 @@
 import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLayoutStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
-import type { AppSettingsSnapshot } from '../../../shared';
-import { createBrowserPane, type BrowserPane } from './browserPane';
+import {
+  agentDefinition,
+  DEFAULT_AGENT_DEFINITION,
+  resolveActiveAgentId,
+  type AgentDefinition,
+  type AppSettingsSnapshot,
+} from '../../../shared';
+import { createBrowserPane } from './browserPane';
 import { createChatPane } from './chatPane';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
 import { buildHostOptions, computeAddressBarValue } from './viewModel';
 
-/** Applies one loaded settings snapshot to the already-mounted browser pane. */
-function applySnapshot(browserPane: BrowserPane, snapshot: AppSettingsSnapshot): void {
-  const { hosts } = snapshot;
-  browserPane.update({
-    addressValue: computeAddressBarValue(),
-    hostOptions: buildHostOptions(hosts),
-  });
+/** The provider a snapshot names as selected, defaulting like the main process. */
+function activeAgentFor(snapshot: AppSettingsSnapshot): AgentDefinition {
+  return agentDefinition(resolveActiveAgentId(snapshot.agents)) ?? DEFAULT_AGENT_DEFINITION;
 }
 
 /**
@@ -35,7 +37,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // time never waits on a cold IPC.
   const settingsPanel: SettingsPanel = createSettingsPanel({
     onSnapshotApplied(snapshot: AppSettingsSnapshot): void {
-      applySnapshot(browserPane, snapshot);
+      applySnapshot(snapshot);
     },
     // Dismissal is the panel's own close button or Escape: the browser-pane
     // panel host must hear about it too, because it is the host that holds
@@ -47,10 +49,29 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   browserPane.appendPanel(settingsPanel);
 
   const chatPane = createChatPane({
-    onOpenSettings() {
+    onOpenSettings(tab) {
+      // Selecting before opening means the panel paints on the requested tab
+      // with no first-frame flicker; no tab keeps the last selection.
+      if (tab !== undefined) settingsPanel.selectTab(tab);
       browserPane.panelHost.open(settingsPanel);
     },
   });
+
+  /**
+   * Applies one loaded settings snapshot to the browser pane and tells the
+   * chat pane which provider is selected, so it can decide whether a usable
+   * agent exists (see `chatPane.setActiveAgent`). Declared after both panes
+   * are constructed but hoisted, so `onSnapshotApplied` above can reference
+   * it; it only runs once a snapshot actually arrives.
+   */
+  function applySnapshot(snapshot: AppSettingsSnapshot): void {
+    const { hosts } = snapshot;
+    browserPane.update({
+      addressValue: computeAddressBarValue(),
+      hostOptions: buildHostOptions(hosts),
+    });
+    chatPane.setActiveAgent(activeAgentFor(snapshot));
+  }
 
   // The boundary the user can drag. Its position is restored from the last
   // run before the shell is inserted, so the window never renders at the
@@ -76,7 +97,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
 
   const result = await loadSettingsSnapshot();
   if (result.ok) {
-    applySnapshot(browserPane, result.snapshot);
+    applySnapshot(result.snapshot);
     // Startup affordance: with configured hosts the picker leads with the
     // list ready to choose from (it replaces the otherwise blank page-view
     // region); with none, Settings is where the first server gets added.

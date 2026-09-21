@@ -174,4 +174,13 @@ describe('createSettingsPanel dismissal', () => {
     close?.click();
     expect(pagePanel?.hidden).toBe(false);
   });
+
+  it('selects a requested tab, so the agent banner can land on Agents', () => {
+    const { settings } = build();
+    const tabs = settings.element.querySelector<HTMLElement>('.settings-panel__tabs');
+
+    expect(tabs?.getAttribute('selected')).toBe('hosts');
+    settings.selectTab('agents');
+    expect(tabs?.getAttribute('selected')).toBe('agents');
+  });
 });

@@ -18,7 +18,7 @@ import {
   type ProxyConfig,
 } from '../shared';
 import type { ProxyId, ServerId } from '../shared';
-import { DEFAULT_AGENT_ID } from '../shared';
+import { DEFAULT_AGENT_ID, resolveActiveAgentId } from '../shared';
 import type { AgentId } from '../shared';
 import {
   newProxyId,
@@ -708,10 +708,7 @@ function findServer(settings: AppSettings, serverId: ServerId): ServerConfig | u
  * up sharing an origin). `appSettingsSchema.safeParse` is used instead of a
  * bare object spread so this validation can never be silently skipped.
  */
-function withUpdatedServer(
-  settings: AppSettings,
-  updated: ServerConfig,
-): Result<AppSettings, string> {
+function withUpdatedServer(settings: AppSettings, updated: ServerConfig): Result<AppSettings> {
   const nextServers = settings.hosts.map((server) => (server.id === updated.id ? updated : server));
   const candidate = { ...settings, hosts: nextServers };
   const parsed = appSettingsSchema.safeParse(candidate);
@@ -1247,10 +1244,10 @@ export interface ModelPreferencesInput {
  * total, and matches `defaultAppSettings()`'s own seed.
  */
 export function activeAgentId(settings: AppSettings): AgentId {
-  for (const [id, node] of Object.entries(settings.agents)) {
-    if (node.active) return id as AgentId;
-  }
-  return DEFAULT_AGENT_ID;
+  // Delegates to the shared resolver so the main process and the renderer
+  // (which uses the same function to decide whether a usable agent is
+  // selected) can never disagree about which provider is current.
+  return resolveActiveAgentId(settings.agents);
 }
 
 /**

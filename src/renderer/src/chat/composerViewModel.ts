@@ -17,13 +17,23 @@ import {
 export interface ComposerStatus {
   readonly serviceState: AgentServiceLifecycleState;
   readonly session: SessionStatus;
+  /**
+   * Whether a *usable* agent is currently selected (see
+   * `isAgentActive` in `src/shared/contracts/agents.ts`): either a provider
+   * that needs no authentication, or one that needs it and is signed in. When
+   * false, the chat pane shows its own "activate an agent" banner instead of
+   * the composer's inline notice, so this state disables Send silently.
+   */
+  readonly agentActive: boolean;
 }
 
 export type ComposerButtonState =
   | { readonly kind: 'connecting' }
   | { readonly kind: 'stop' }
   | { readonly kind: 'send-enabled' }
-  | { readonly kind: 'send-disabled'; readonly reason: CanSendBlockReason };
+  | { readonly kind: 'send-disabled'; readonly reason: CanSendBlockReason }
+  /** No usable agent is selected: Send is disabled, and the chat pane's own banner explains why. */
+  | { readonly kind: 'agent-inactive' };
 
 /**
  * Streaming states with a turn actually in flight, i.e. exactly the states
@@ -62,7 +72,13 @@ export function isTurnInFlight(state: SessionStreamState): boolean {
  * 2. A turn in flight - `canSendMessage` has no notion of "Stop" at all (see
  *    below), so this composer-only concept has to be decided before
  *    delegating to it, not folded into its reason codes.
- * 3. Otherwise, `src/shared/contracts/sessionState.ts`'s own gate, called
+ * 3. No usable agent selected (`agentActive` false) - nothing can be sent at
+ *    all. This is checked before `canSendMessage` because the chat pane owns
+ *    the message for it (its own banner), not the composer's inline notice;
+ *    returning a distinct state lets the composer stay silent while still
+ *    looking disabled. It still comes *after* the in-flight check so a turn
+ *    already running can always be stopped.
+ * 4. Otherwise, `src/shared/contracts/sessionState.ts`'s own gate, called
  *    verbatim - this is the exact rule `agentChatController.ts`'s
  *    `sendMessage` enforces:
  *
@@ -76,6 +92,7 @@ export function isTurnInFlight(state: SessionStreamState): boolean {
 export function computeComposerButtonState(status: ComposerStatus): ComposerButtonState {
   if (status.serviceState === 'starting') return { kind: 'connecting' };
   if (isTurnInFlight(status.session.state)) return { kind: 'stop' };
+  if (!status.agentActive) return { kind: 'agent-inactive' };
 
   const gate = canSendMessage(status.session);
   if (!gate.canSend) return { kind: 'send-disabled', reason: gate.reason };
@@ -86,13 +103,13 @@ export function computeComposerButtonState(status: ComposerStatus): ComposerButt
 export function describeCanSendBlockReason(reason: CanSendBlockReason): string {
   switch (reason) {
     case 'session_closed':
-      return 'This conversation is closed.';
+      return 'This conversation is closed';
     case 'not_authenticated':
-      return 'Sign in to Copilot to send a message.';
+      return 'Sign in to Copilot to send a message';
     case 'session_error':
-      return 'The last turn ended in an error.';
+      return 'The last turn ended in an error';
     case 'turn_in_progress':
-      return 'A response is already in progress.';
+      return 'A response is already in progress';
     default: {
       return reason;
     }

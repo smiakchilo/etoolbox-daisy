@@ -131,6 +131,9 @@ describe('createComposer', () => {
     const notice = query(composer.element, '.chat-composer__notice');
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(false);
+    // The accent fill rides on this class; it is what makes the enabled state
+    // visibly blue and every disabled state visibly grey.
+    expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(true);
     expect(isShown(stopButton)).toBe(false);
     expect(notice.textContent).toBe('');
   });
@@ -142,7 +145,22 @@ describe('createComposer', () => {
     const sendButton = query(composer.element, '.chat-composer__send');
     const notice = query(composer.element, '.chat-composer__notice');
     expect(sendButton.hasAttribute('disabled')).toBe(true);
-    expect(notice.textContent).toBe('Sign in to Copilot to send a message.');
+    expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(false);
+    expect(notice.textContent).toBe('Sign in to Copilot to send a message');
+  });
+
+  it('shows a disabled, silent Send (no accent fill) when no agent is active', () => {
+    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+    composer.setButtonState({ kind: 'agent-inactive' });
+
+    const sendButton = query(composer.element, '.chat-composer__send');
+    const notice = query(composer.element, '.chat-composer__notice');
+    expect(isShown(sendButton)).toBe(true);
+    expect(sendButton.hasAttribute('disabled')).toBe(true);
+    expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(false);
+    // The chat pane's own banner carries the wording; the composer must not
+    // duplicate it.
+    expect(notice.textContent).toBe('');
   });
 
   it('swaps to the enabled Stop control (and hides Send) when a turn is in flight', () => {

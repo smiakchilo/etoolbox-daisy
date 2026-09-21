@@ -1,8 +1,8 @@
-import {el} from '../lib/dom';
-import {createMarkdownRenderer, type MarkdownRenderer} from './renderMarkdown';
-import {describeRequiredAction, describeToolCallStatus} from './transcriptViewModel';
-import {type QueryResultTable, readQueryResultTable} from './queryResultViewModel';
-import type {ToolCallView, TranscriptItem, TranscriptStore} from './transcriptStore';
+import { el } from '../lib/dom';
+import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
+import { describeRequiredAction, describeToolCallStatus } from './transcriptViewModel';
+import { type QueryResultTable, readQueryResultTable } from './queryResultViewModel';
+import type { ToolCallView, TranscriptItem, TranscriptStore } from './transcriptStore';
 
 export interface TranscriptView {
   readonly element: HTMLElement;

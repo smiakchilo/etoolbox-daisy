@@ -13,7 +13,7 @@ function session(overrides: Partial<SessionStatus> = {}): SessionStatus {
 }
 
 function status(overrides: Partial<ComposerStatus> = {}): ComposerStatus {
-  return { serviceState: 'ready', session: session(), ...overrides };
+  return { serviceState: 'ready', session: session(), agentActive: true, ...overrides };
 }
 
 describe('computeComposerButtonState', () => {
@@ -70,6 +70,31 @@ describe('computeComposerButtonState', () => {
   it("shows 'send-disabled' with reason 'session_error' after an error", () => {
     const result = computeComposerButtonState(status({ session: session({ state: 'error' }) }));
     expect(result).toEqual({ kind: 'send-disabled', reason: 'session_error' });
+  });
+
+  describe("no usable agent selected ('agent-inactive')", () => {
+    it("shows 'agent-inactive' when idle but no agent is active", () => {
+      const result = computeComposerButtonState(
+        status({ agentActive: false, session: session({ state: 'idle' }) }),
+      );
+      expect(result).toEqual({ kind: 'agent-inactive' });
+    });
+
+    it("still shows 'stop' for a turn already in flight when no agent is active", () => {
+      // The in-flight check runs first, so a running turn can always be stopped
+      // even if the agent's sign-in dropped mid-turn.
+      const result = computeComposerButtonState(
+        status({ agentActive: false, session: session({ state: 'streaming' }) }),
+      );
+      expect(result).toEqual({ kind: 'stop' });
+    });
+
+    it("'connecting' outranks 'agent-inactive' while the service is still starting", () => {
+      const result = computeComposerButtonState(
+        status({ serviceState: 'starting', agentActive: false }),
+      );
+      expect(result).toEqual({ kind: 'connecting' });
+    });
   });
 });
 

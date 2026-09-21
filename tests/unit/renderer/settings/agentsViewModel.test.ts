@@ -23,9 +23,13 @@ import {
  * action it shows - is asserted here against plain data, with no DOM involved.
  */
 
-const SECOND_AGENT: AgentDefinition = { id: 'opencode' as AgentId, label: 'OpenCode' };
+const SECOND_AGENT: AgentDefinition = {
+  id: 'opencode' as AgentId,
+  label: 'OpenCode',
+  requiresAuth: false,
+};
 const DEFINITIONS: readonly AgentDefinition[] = [
-  { id: DEFAULT_AGENT_ID, label: 'GitHub Copilot' },
+  { id: DEFAULT_AGENT_ID, label: 'GitHub Copilot', requiresAuth: true },
   SECOND_AGENT,
 ];
 

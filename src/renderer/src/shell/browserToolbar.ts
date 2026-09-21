@@ -1,9 +1,11 @@
 import { el } from '../lib/dom';
 import {
   BANNER_TRANSITION_DURATION_MS,
+  buildBannerCopy,
   buildBannerPrompt,
   collapseBannerRow,
   configureBannerTransition,
+  createBannerActionButton,
   createBannerRow,
   isBannerClosing,
   restoreBannerRow,
@@ -303,13 +305,13 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   function applyLoadingPresentation(): void {
     cancelLoadingBanner();
-    showBanner([loadingSpan, progressTrack], true);
+    showBanner([buildBannerCopy([loadingSpan]), progressTrack], true);
     setNavMode('stop');
   }
 
   function applyErrorPresentation(): void {
     cancelLoadingBanner();
-    showBanner([document.createTextNode(errorText ?? '')], false);
+    showBanner([buildBannerCopy([errorText ?? ''])], false);
     setNavMode('refresh');
   }
 
@@ -329,7 +331,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     if (info === null) return;
 
     const matchingHost = hostOptions.find((host) => host.origin === info.origin);
-    const okButton = el('sp-action-button', { attrs: { size: 'm' }, text: 'OK' });
+    const okButton = createBannerActionButton('OK');
     if (matchingHost === undefined) {
       okButton.setAttribute('disabled', '');
     }
@@ -385,7 +387,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     const prompt = unknownOriginPrompt;
     if (prompt === null) return;
 
-    const okButton = el('sp-action-button', { attrs: { size: 'm' }, text: 'OK' });
+    const okButton = createBannerActionButton('OK');
     okButton.addEventListener('click', () => {
       void addOriginServer(prompt);
     });

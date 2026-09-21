@@ -140,6 +140,8 @@ describe('createStatusBanner single slot', () => {
     expect(banner.element.textContent).toContain('Click Apply again to confirm.');
     const button = banner.element.querySelector('sp-action-button');
     expect(button?.textContent).toBe('Apply');
+    // Banner actions are always size "s" (createBannerActionButton).
+    expect(button?.getAttribute('size')).toBe('s');
     expect(banner.element.hasAttribute('dismissible')).toBe(true);
 
     (button as HTMLElement).click();

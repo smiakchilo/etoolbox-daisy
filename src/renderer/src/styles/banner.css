@@ -1,21 +1,26 @@
 /*
- * Shared styling for the two status/prompt rows in the shell: the browser
- * pane's toolbar message (`shell/browserToolbar.ts`) and the Settings
- * panel's single status slot (`settings/statusBanner.ts`). Imported by the
- * renderer entry BEFORE `browser.css`/`settings.css`, so the surface-specific
- * rules there can override at equal specificity where they genuinely differ.
+ * Shared styling for the shell's status/prompt rows: the browser pane's
+ * toolbar message (`shell/browserToolbar.ts`), the Settings panel's single
+ * status slot (`settings/statusBanner.ts`) and the chat pane's standing
+ * "no usable agent" row (`chat/agentBanner.ts`). Imported by the renderer
+ * entry BEFORE `browser.css`/`settings.css`, so the surface-specific rules
+ * there can override at equal specificity where they genuinely differ.
  *
- * Both rows are an `sp-alert-banner` (neutral variant) carrying the shared
- * `.banner-row` class plus their own surface class
- * (`.browser-toolbar-message` / `.settings-banner`) - see `lib/alertBanner.ts`.
- * Everything the two can honestly share lives here; `.banner-row` never sets
- * anything the surfaces need to contradict.
+ * Every row is an `sp-alert-banner` (neutral variant) carrying the shared
+ * `.banner-row` class plus its own surface class
+ * (`.browser-toolbar-message` / `.settings-banner` / `.chat-banner`) - see
+ * `lib/alertBanner.ts`. Everything they can honestly share lives here:
+ * `.banner-row` never sets anything a surface needs to contradict. That
+ * includes the four cross-surface rules - an action button is always size
+ * "s", a row with one matches its message line box to the button's height,
+ * the row carries 8px vertical padding, and every message is clamped to three
+ * lines.
  *
- * The reveal/collapse animation is shared here too: both rows sit in normal
- * flow *below* the region they describe, so animating the row's block-size
- * moves the region above it (the native view's reserved rectangle, or the
- * Settings tab content) smoothly. Neither row can paint above the native view,
- * so the animation is height-only - no opacity, no slide.
+ * The reveal/collapse animation is shared here too: every row sits in normal
+ * flow *below* the region it describes, so animating the row's block-size
+ * moves the region above it (the native view's reserved rectangle, the
+ * Settings tab content, or the transcript) smoothly. No row can paint above
+ * the native view, so the animation is height-only - no opacity, no slide.
  */
 
 .banner-row {
@@ -23,22 +28,52 @@
    * Pin every row to one height regardless of its content. The component's
    * `.text` slot pads its content with `--mod-alert-banner-top-text`
    * (14px) + `--mod-alert-banner-bottom-text` (17px), so a plain text row
-   * measures ~50px while a row containing an `sp-action-button` (32px) grows
-   * to ~63px. Zeroing the margins puts the slot content back inside the
-   * theme's 48px `--spectrum-alert-banner-minimum-height`, whose `.body`
-   * `align-items: center` centers it vertically - a with-button prompt row
-   * is exactly as tall as a quiet text row, so the strip never changes
-   * height when an action appears.
+   * measures ~50px while a row containing an `sp-action-button` grows to
+   * ~63px. Zeroing the margins puts the slot content back inside the theme's
+   * 48px minimum, whose `.body` `align-items: center` centers it vertically -
+   * a with-button prompt row is exactly as tall as a quiet text row, so the
+   * strip never changes height when an action appears. The row's own 8px
+   * vertical padding then spaces multi-line content from the strip's edges.
    */
   --mod-alert-banner-top-text: 0;
   --mod-alert-banner-bottom-text: 0;
   --mod-alert-banner-min-height: var(--spectrum-alert-banner-minimum-height, 48px);
+  /*
+   * The component gives its close control a top/inline spacing margin
+   * (`--mod-closebutton-margin-top`/`-inline`), which makes a dismissible row
+   * 40px tall before the 16px padding is added - 56px, taller than the pinned
+   * 48px. Zeroing the spacing lets the 32px close control fit the row's 32px
+   * content box, so a dismissible prompt row and a quiet status row stay the
+   * same height.
+   */
+  --mod-alert-banner-close-button-spacing: 0;
+  /*
+   * The height a `size="s"` banner action button resolves to
+   * (`lib/alertBanner.ts`'s `createBannerActionButton`). A row that carries
+   * one gives its message the same line box, so the two align by height rather
+   * than by accident - see `.banner-row:has(sp-action-button)` below.
+   */
+  --banner-row-action-height: var(--spectrum-component-height-75, 24px);
   max-inline-size: none;
   flex: 0 0 auto;
   margin: 0;
+  /* The component itself does not set this, so `min-block-size` would otherwise
+     be measured on the *content* box: 8px padding above and below would push a
+     single-line row to 64px instead of the intended 48px pinned height. */
+  box-sizing: border-box;
+  padding: 8px 0;
   /* The row's block-size is animated to reveal/collapse it; clipping keeps the
      content inside the shrinking box rather than overflowing the pane. */
   overflow: hidden;
+}
+
+/*
+ * A row that carries an action button matches its message's line box to the
+ * button's own height, so the button is aligned by height inside the text line
+ * instead of merely floating next to it.
+ */
+.banner-row:has(sp-action-button) {
+  line-height: var(--banner-row-action-height);
 }
 
 /*
@@ -91,24 +126,44 @@
   }
 }
 
-/* Message text block in prompt rows (the copy sits in this span). `flex: 1
-   1 auto` lets it absorb the strip's flex space while `min-width: 0`
-   overrides the flex item's implicit `min-width:auto` so the text may wrap
-   *inside* the span instead of forcing the whole row - the prompt stays one
-   row with the action group after it. */
+/* Message text block in prompt rows (the copy sits in this span). Inline-level
+   so a trailing action group stays on the same line, and clamped to three
+   lines whatever the text by the standard `line-clamp` (Chromium 138+;
+   Electron 44 ships Chromium 152, which computes the legacy
+   `display: -webkit-inline-box` + `-webkit-line-clamp` trio to exactly this
+   `inline-block` block anyway). The prefixed trio is deliberately not used -
+   it needs `display: -webkit-inline-box`, which IntelliJ's CSS parser rejects
+   as an invalid `display` value although Chromium accepts it. */
 .banner-row__copy {
-  flex: 1 1 auto;
-  min-width: 0;
+  display: inline-block;
+  line-clamp: 3;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+/* A copy that embeds its control inline (the chat pane's agent banner) cannot
+   clamp by line count: `line-clamp` blockifies the copy into a self-contained
+   block, which would break the sentence onto separate lines. Clamp by height
+   instead, which leaves normal inline flow intact - three lines at the button's
+   own height. `:has(sp-action-button)` also matches rows whose button lives in
+   `_actions`; those copies are text-only, where the height clamp is equivalent.
+   `line-clamp: none` must be stated explicitly, or Chromium would clamp by both
+   the line count and the height and clip a partially visible third line. */
+.banner-row:has(sp-action-button) .banner-row__copy {
+  line-clamp: none;
+  max-height: calc(3 * var(--banner-row-action-height));
 }
 
 /* The prompt action buttons, grouped after the copy so they stay on one row
    with text before actions. `margin-inline-start: 12px` is the seam between
    copy and actions, and `flex: 0 0 auto` keeps the buttons from shrinking
-   when the copy wraps. */
+   when the copy wraps. `vertical-align: middle` centers them against a
+   multi-line (clamped) copy. */
 .banner-row__actions {
   align-items: center;
   display: inline-flex;
   gap: 8px;
   flex: 0 0 auto;
   margin-inline-start: 12px;
+  vertical-align: middle;
 }

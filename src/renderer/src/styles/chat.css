@@ -163,12 +163,13 @@
   padding: 0 4px 4px 0;
 }
 
-/* Accent-filled Send. `sp-action-button` has no accent variant, and its
-   `emphasized` property only tints the *selected* state (and is deprecated),
-   so the accent fill is applied through Spectrum's documented `--mod-*`
-   hooks. Disabled states are deliberately left untouched: the component's
-   own `[disabled]` rules re-point these to the disabled tokens. */
-.chat-composer__send {
+/* Accent-filled Send, applied only while Send may actually be pressed (the
+   `chat-composer__send--enabled` class is toggled in composer.ts). It uses
+   Spectrum's documented `--mod-*` hooks rather than a variant, but a light-DOM
+   class rule outranks the component's own `:host([disabled])` tokens - so the
+   class must be removed for disabled/connecting/agent-inactive states, leaving
+   the component's disabled tokens (grey) to paint through. */
+.chat-composer__send--enabled {
   --mod-actionbutton-background-color-default: var(
     --spectrum-accent-background-color-default,
     #0265dc

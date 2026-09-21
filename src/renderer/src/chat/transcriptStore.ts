@@ -1,5 +1,12 @@
-import {createMessageStream, type MessageStream} from './messageStream';
-import type {AgentEvent, JsonValue, MessageId, ToolCallId, ToolError, TurnId,} from '../../../shared';
+import { createMessageStream, type MessageStream } from './messageStream';
+import type {
+  AgentEvent,
+  JsonValue,
+  MessageId,
+  ToolCallId,
+  ToolError,
+  TurnId,
+} from '../../../shared';
 
 /**
  * One transcript entry in first-seen order. A user's own prompt is not part

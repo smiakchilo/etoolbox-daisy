@@ -1,12 +1,17 @@
 import { el } from '../lib/dom';
 import { createChatToolbar } from './chatToolbar';
+import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
+import { createAgentBanner } from '../chat/agentBanner';
 import { computeComposerButtonState, isTurnInFlight } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
 import {
   applyAgentEvent,
+  DEFAULT_AGENT_DEFINITION,
+  isAgentActive,
   newChatId,
+  type AgentDefinition,
   type AgentServiceLifecycleState,
   type ChatId,
   type SessionStatus,
@@ -14,6 +19,12 @@ import {
 
 export interface ChatPane {
   readonly element: HTMLElement;
+  /**
+   * Updates which provider is selected (from the settings snapshot), so the
+   * pane can decide whether a *usable* agent exists and show/hide its
+   * "activate an agent" banner accordingly.
+   */
+  setActiveAgent(definition: AgentDefinition): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -42,10 +53,12 @@ const READY_POLL_INTERVAL_MS = 15_000;
  */
 export interface ChatPaneOptions {
   /**
-   * Invoked when the toolbar's Settings button is clicked. The shell hands
-   * this to the opener of its in-shell Settings panel (see `mainShell.ts`).
+   * Invoked to reveal the in-shell Settings panel. The toolbar's Settings
+   * button calls it with no tab (leaving the last selection alone); the agent
+   * banner calls it with `"agents"` so it lands on the tab that fixes the
+   * condition it is reporting.
    */
-  readonly onOpenSettings: () => void;
+  readonly onOpenSettings: (tab?: SettingsTab) => void;
 }
 
 export function createChatPane(options: ChatPaneOptions): ChatPane {
@@ -60,6 +73,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // the only consumer of this field, and that function is not used here.
   let sessionStatus: SessionStatus = { state: 'idle', authenticated: false, browserReady: false };
   let serviceState: AgentServiceLifecycleState = 'starting';
+  // Until the shell hands over the real snapshot, the default provider is
+  // assumed (GitHub Copilot, which needs a sign-in). `setActiveAgent` replaces
+  // it on every settings reload; the banner stays hidden while `starting`.
+  let activeAgent: AgentDefinition = DEFAULT_AGENT_DEFINITION;
   let chatId: ChatId | undefined;
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
@@ -76,8 +93,25 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * `isTurnInFlight` predicate so they can never disagree.
    */
   function refreshSessionPresentation(): void {
+    // "Active agent" is the UI's word for a *usable* one: a provider that
+    // needs no auth, or one that needs it and is signed in. The banner takes
+    // over the explanation, so the composer is told `agentActive` and is not
+    // asked to word the block itself.
+    const agentActive = isAgentActive(activeAgent, {
+      isAuthenticated: sessionStatus.authenticated,
+    });
     transcriptStore.setTurnInFlight(isTurnInFlight(sessionStatus.state));
-    composer.setButtonState(computeComposerButtonState({ serviceState, session: sessionStatus }));
+    agentBanner.setVisible(serviceState === 'ready' && !agentActive);
+    composer.setButtonState(
+      computeComposerButtonState({
+        serviceState,
+        // The gate must not re-block a provider that needs no authentication;
+        // when `agentActive` is false the composer returns `agent-inactive`
+        // before consulting it, so this value is only ever used when true.
+        session: { ...sessionStatus, authenticated: agentActive },
+        agentActive,
+      }),
+    );
   }
 
   /**
@@ -181,6 +215,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   const composer = createComposer({ onSend, onStop });
+  const agentBanner = createAgentBanner({
+    onOpenSettings: () => options.onOpenSettings('agents'),
+  });
 
   const transcript = el('div', {
     attrs: { class: 'chat-transcript' },
@@ -190,9 +227,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
     children: [
-      createChatToolbar({ onOpenSettings: options.onOpenSettings }),
+      createChatToolbar({ onOpenSettings: () => options.onOpenSettings() }),
       transcript,
       composer.element,
+      agentBanner.element,
     ],
   });
 
@@ -210,11 +248,16 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   return {
     element,
+    setActiveAgent(definition: AgentDefinition): void {
+      activeAgent = definition;
+      refreshSessionPresentation();
+    },
     dispose(): void {
       unsubscribeEvents?.();
       clearInterval(repaintTimer);
       if (startingPollHandle !== undefined) clearInterval(startingPollHandle);
       if (readyPollHandle !== undefined) clearInterval(readyPollHandle);
+      agentBanner.dispose();
     },
   };
 }

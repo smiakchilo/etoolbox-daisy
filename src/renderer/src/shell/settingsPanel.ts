@@ -40,7 +40,15 @@ import { createPanel, type Panel } from './panel';
 export interface SettingsPanel extends Panel {
   /** Re-reads the settings snapshot and re-renders every section. */
   reload(): Promise<void>;
+  /**
+   * Selects the tab shown next (and now, if the panel is already open). Used
+   * by the chat pane's "activate an agent" banner to land directly on Agents.
+   */
+  selectTab(tab: SettingsTab): void;
 }
+
+/** The Settings panel's tab ids, in strip order. */
+export type SettingsTab = 'hosts' | 'agents' | 'proxies' | 'browser';
 
 export interface CreateSettingsPanelOptions {
   /**
@@ -142,7 +150,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   // panel body no longer repeats the tab's title. The Hosts tab is the
   // default selection, matching the previous stacked layout's top position.
   const tabSections: ReadonlyArray<{
-    readonly value: string;
+    readonly value: SettingsTab;
     readonly label: string;
     readonly element: HTMLElement;
   }> = [
@@ -212,6 +220,12 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     },
     setCloseable: (closeable) => panel.setCloseable(closeable),
     reload,
+    selectTab(tab: SettingsTab): void {
+      // `sp-tabs` reads its selection from the `selected` attribute (the same
+      // way it is seeded with `hosts` above); setting it before `open()` means
+      // the panel paints on the requested tab with no first-frame flicker.
+      tabs.setAttribute('selected', tab);
+    },
     dispose(): void {
       hostsSection.dispose();
       proxiesSection.dispose();

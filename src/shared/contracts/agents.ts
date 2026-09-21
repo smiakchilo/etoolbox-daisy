@@ -23,6 +23,13 @@ export interface AgentDefinition {
   readonly id: AgentId;
   /** Human-facing provider name, rendered as the first line of an agent item. */
   readonly label: string;
+  /**
+   * Whether this provider needs an authenticated session before it can be
+   * used. True for GitHub Copilot. A provider with `requiresAuth: false` - a
+   * future locally hosted runtime, for example - is usable as soon as it is
+   * selected, with no sign-in step at all.
+   */
+  readonly requiresAuth: boolean;
 }
 
 /**
@@ -33,6 +40,7 @@ export interface AgentDefinition {
 const GITHUB_COPILOT: AgentDefinition = {
   id: 'copilot' as AgentId,
   label: 'GitHub Copilot',
+  requiresAuth: true,
 };
 
 export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [GITHUB_COPILOT];
@@ -44,7 +52,45 @@ export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [GITHUB_COPILOT];
  */
 export const DEFAULT_AGENT_ID: AgentId = GITHUB_COPILOT.id;
 
+/** The definition {@link DEFAULT_AGENT_ID} names, without a registry lookup. */
+export const DEFAULT_AGENT_DEFINITION: AgentDefinition = GITHUB_COPILOT;
+
 /** True when `id` names a provider in {@link AGENT_DEFINITIONS}. */
 export function isKnownAgentId(id: string): boolean {
   return AGENT_DEFINITIONS.some((definition) => definition.id === id);
+}
+
+/** The definition for `id`, or `undefined` when this build does not know it. */
+export function agentDefinition(id: AgentId): AgentDefinition | undefined {
+  return AGENT_DEFINITIONS.find((definition) => definition.id === id);
+}
+
+/**
+ * The provider a settings document names as *selected*: the entry whose
+ * `active` flag is set, or {@link DEFAULT_AGENT_ID} when none is. Shared by
+ * the main process (which recycles the Copilot runtime around it) and the
+ * renderer (which decides whether a *usable* agent is selected), so the two
+ * can never disagree about which provider is current.
+ */
+export function resolveActiveAgentId(
+  agents: Readonly<Record<string, { readonly active: boolean }>>,
+): AgentId {
+  for (const [id, node] of Object.entries(agents)) {
+    if (node.active) return id as AgentId;
+  }
+  return DEFAULT_AGENT_ID;
+}
+
+/**
+ * Whether the selected provider is *usable* right now - the UI's notion of an
+ * "active agent". A provider that needs authentication counts as active only
+ * once signed in; one that does not need it is active whenever it is selected.
+ * Deliberately separate from the settings `active` flag, which only records
+ * which provider is selected.
+ */
+export function isAgentActive(
+  definition: AgentDefinition,
+  auth: { readonly isAuthenticated: boolean } | undefined,
+): boolean {
+  return !definition.requiresAuth || auth?.isAuthenticated === true;
 }

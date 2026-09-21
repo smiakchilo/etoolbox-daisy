@@ -606,6 +606,7 @@ describe('createBrowserToolbar certificate prompt', () => {
       'This host has an untrusted certificate. Press OK to allow it',
     );
     expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(false);
+    expect(findPromptOk(toolbar).getAttribute('size')).toBe('s');
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
   });
 
@@ -773,6 +774,8 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     const okButtons = message.querySelectorAll('sp-action-button');
     expect(okButtons).toHaveLength(1);
     expect(okButtons[0]?.textContent).toBe('OK');
+    // Banner actions are always size "s" (createBannerActionButton).
+    expect(okButtons[0]?.getAttribute('size')).toBe('s');
     expect(message.querySelector('sp-button[variant="accent"]')).toBeNull();
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
   });

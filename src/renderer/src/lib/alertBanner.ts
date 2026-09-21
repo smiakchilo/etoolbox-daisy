@@ -1,23 +1,26 @@
 import { el } from './dom';
 
 /**
- * Shared status/prompt row builder for the two `sp-alert-banner` surfaces:
- * the browser pane's toolbar message (`shell/browserToolbar.ts`) and the
- * Settings panel's single status slot (`settings/statusBanner.ts`).
+ * Shared status/prompt row builder for the shell's three `sp-alert-banner`
+ * surfaces: the browser pane's toolbar message (`shell/browserToolbar.ts`),
+ * the Settings panel's single status slot (`settings/statusBanner.ts`) and
+ * the chat pane's standing "no usable agent" row (`chat/agentBanner.ts`).
  *
- * The two surfaces keep their own root class (`.browser-toolbar-message` /
- * `.settings-banner`) as a *surface* class on top of the shared `banner-row`
- * base, because both rows are mounted in the same document at once (Settings
- * opens over the browser pane) and Playwright strict-mode locators rely on
- * `.browser-toolbar-message` / `.settings-banner` matching exactly one
- * element. Every rule the two can honestly share lives in `styles/banner.css`
- * under `.banner-row`; the surface classes carry only what genuinely differs
- * (browser: the loading presentation and its progress line).
+ * Each surface keeps its own root class (`.browser-toolbar-message` /
+ * `.settings-banner` / `.chat-banner`) as a *surface* class on top of the
+ * shared `banner-row` base, because the rows are mounted in the same document
+ * at once (Settings opens over the browser pane) and Playwright strict-mode
+ * locators rely on each matching exactly one element. Every rule they can
+ * honestly share lives in `styles/banner.css` under `.banner-row`; the
+ * surface classes carry only what genuinely differs (browser: the loading
+ * presentation and its progress line).
  *
  * The row height is pinned by `.banner-row` in banner.css: the component's
  * `.text` slot margins (`--mod-alert-banner-*-text`) are neutralized and the
- * strip is held at the theme's 48px minimum, so a row containing a 32px
- * `sp-action-button` is exactly as tall as a plain-text row.
+ * strip is held at the theme's 48px minimum, so a row containing a size-s
+ * `sp-action-button` (see `createBannerActionButton`) is exactly as tall as a
+ * plain-text row. That same stylesheet clamps a row's message to three lines
+ * and gives it the button's own line height when one shares the line.
  *
  * Both rows are revealed/collapsed by animating their own `block-size`
  * (`banner.css`'s `banner-row--revealing` / `banner-row--closing`), which is
@@ -131,6 +134,34 @@ export function createBannerRow(surfaceClass: string): HTMLElement {
     }
   });
   return row;
+}
+
+/**
+ * The one action-button idiom every banner surface uses. Always `size="s"`:
+ * a banner action sits *inside* a text line, where the default (m) button
+ * would dominate the row's height. Centralised here so each surface - Settings
+ * status/prompt rows, the chat pane's agent banner, the browser toolbar's
+ * certificate/origin prompts - gets the same size without having to remember
+ * to ask for it.
+ */
+export function createBannerActionButton(label: string): HTMLElement {
+  return el('sp-action-button', { attrs: { size: 's' }, text: label });
+}
+
+/**
+ * Builds the `_copy` span for a row whose sentence embeds a control inline
+ * (the chat pane's "Activate an agent in <Settings> to send messages" row),
+ * where the control must sit *inside* the sentence rather than in the
+ * trailing action group. `parts` are appended in order; strings become text
+ * nodes. Use {@link buildBannerPrompt} instead when the controls belong in the
+ * trailing `_actions` group.
+ */
+export function buildBannerCopy(parts: readonly (string | Node)[]): HTMLElement {
+  const span = el('span', { attrs: { class: BANNER_ROW_COPY_CLASS } });
+  for (const part of parts) {
+    span.append(typeof part === 'string' ? document.createTextNode(part) : part);
+  }
+  return span;
 }
 
 /**

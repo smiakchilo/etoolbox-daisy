@@ -1,6 +1,9 @@
-import {JSDOM} from 'jsdom';
-import {afterEach, beforeEach, describe, expect, it} from 'vitest';
-import {type PickerLike, syncPickerOptions,} from '../../../../src/renderer/src/settings/pickerOptions';
+import { JSDOM } from 'jsdom';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  type PickerLike,
+  syncPickerOptions,
+} from '../../../../src/renderer/src/settings/pickerOptions';
 
 /**
  * The in-place option/selection sync behind every Settings picker.
