@@ -75,4 +75,19 @@ describe('main window shell CSS: document-never-scrolls layout contract', () => 
     expect(body).toMatch(/overflow-y:\s*auto/);
     expect(body).toMatch(/min-height:\s*0/);
   });
+
+  it('stretches the empty-conversation prompt to the whole pane height, with no fixed row cap', () => {
+    // The field is sized by `composer.ts` to whatever `.chat-composer__field`
+    // is offered, so the frame and the field must both grow and be allowed to
+    // shrink - dropping either `min-height: 0` would let the field's content
+    // floor it instead of filling the pane.
+    for (const selector of [
+      /\.chat-pane--empty \.chat-composer__frame/,
+      /\.chat-pane--empty \.chat-composer__field/,
+    ]) {
+      const body = findRuleBody(selector, chatCss, 'chat.css');
+      expect(body).toMatch(/flex:\s*1 1 auto/);
+      expect(body).toMatch(/min-height:\s*0/);
+    }
+  });
 });

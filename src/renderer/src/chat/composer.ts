@@ -10,7 +10,12 @@ type TextFieldElement = HTMLElement & { value: string };
 /** The prompt field's ordinary height, in lines, once a conversation has begun. */
 const TEXTAREA_ROWS = 4;
 
-/** The prompt field's height, in lines, while the conversation is still empty. */
+/**
+ * The prompt field's height, in lines, for the initial paint while the
+ * conversation is still empty. Once laid out, the pane stretches the field to
+ * its full height (see `chat.css`'s `.chat-pane--empty` rules), so this only
+ * governs the pre-layout frame and the fallback when no height is measurable.
+ */
 const TEXTAREA_EMPTY_ROWS = 8;
 
 /**
@@ -44,10 +49,13 @@ export interface Composer {
   setButtonState(state: ComposerButtonState): void;
   /**
    * Tells the composer whether the conversation has any content yet. While
-   * empty the field is taller (`TEXTAREA_EMPTY_ROWS`); the caller is
-   * responsible for centering the composer in the pane (see `chatPane.ts`).
+   * empty the field is stretched to the pane's full height; the caller is
+   * responsible for the pane-level layout that gives it that height (see
+   * `chatPane.ts` / `chat.css`).
    */
   setConversationEmpty(empty: boolean): void;
+  /** Releases the resize observer that keeps the empty-state field stretched. */
+  dispose(): void;
 }
 
 /**
@@ -139,9 +147,15 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   applyPresentation();
 
   /**
-   * Grows the field with its content up to `TEXTAREA_MAX_LINES`, then lets it
-   * scroll. The field's own height drives the frame's (it is a flex column),
-   * so nothing else needs resizing.
+   * Sizes the field's shadow `<textarea>`.
+   *
+   * Once a conversation has begun the field grows with its content up to
+   * `TEXTAREA_MAX_LINES`, then scrolls; the field's own height drives the
+   * frame's (it is a flex column), so nothing else needs resizing. While the
+   * conversation is empty the pane hands the frame the whole height, so the
+   * field fills whatever it is offered - the textarea takes the field's
+   * measured height instead of a fixed row count, and scrolls once its content
+   * exceeds it.
    *
    * `sp-textfield` renders the real `<textarea>` in its shadow root. A
    * `rows`-sized textarea keeps that height regardless of content, so
@@ -160,6 +174,16 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
     const style = getComputedStyle(textarea);
     const verticalPadding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+
+    if (conversationEmpty) {
+      const fillHeight = field.clientHeight;
+      if (fillHeight > 0) {
+        textarea.style.height = `${fillHeight}px`;
+        textarea.style.overflowY = textarea.scrollHeight > fillHeight ? 'auto' : 'hidden';
+        return;
+      }
+    }
+
     const rows = textarea.rows > 0 ? textarea.rows : TEXTAREA_ROWS;
     const lineHeight = (lineBoxHeight - verticalPadding) / rows;
     const minHeight =
@@ -238,6 +262,15 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   });
   const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame, notice] });
 
+  // The empty-state field is stretched by CSS to the pane's height, which is
+  // decided by layout the composer never sees (pane attach, split-view drag,
+  // window resize). Re-run `autosize` whenever the field's box changes so the
+  // shadow textarea keeps matching it. jsdom has no `ResizeObserver`; the
+  // observer is simply absent there and the unit suite exercises the rest.
+  const resizeObserver =
+    typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => autosize());
+  resizeObserver?.observe(field);
+
   return {
     element,
     setButtonState(state) {
@@ -253,6 +286,9 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       // `rows` (Lit applies that on its next update).
       field.setAttribute('rows', String(empty ? TEXTAREA_EMPTY_ROWS : TEXTAREA_ROWS));
       autosize();
+    },
+    dispose() {
+      resizeObserver?.disconnect();
     },
   };
 }

@@ -61,7 +61,7 @@
      be measured on the *content* box: 8px padding above and below would push a
      single-line row to 64px instead of the intended 48px pinned height. */
   box-sizing: border-box;
-  padding: 8px 0;
+  padding: 8px 2px 8px 0;
   /* The row's block-size is animated to reveal/collapse it; clipping keeps the
      content inside the shrinking box rather than overflowing the pane. */
   overflow: hidden;

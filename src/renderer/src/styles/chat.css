@@ -115,8 +115,10 @@
   padding: 8px 8px 8px 0;
 }
 
-/* Empty conversation: no transcript to show, and the prompt fills the free
-   space (a flex column, so its child lands at the top). */
+/* Empty conversation: no transcript to show, so the prompt frame takes the
+   whole pane height and the field inside it stretches to match - the field is
+   not capped at a fixed row count. The first transcript item ends the empty
+   state and the prompt drops back to its ordinary height at the bottom. */
 .chat-pane--empty .chat-transcript {
   display: none;
 }
@@ -126,6 +128,17 @@
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
+  min-height: 0;
+}
+
+.chat-pane--empty .chat-composer__frame {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat-pane--empty .chat-composer__field {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* The one bordered surface for the whole input: the field itself draws no

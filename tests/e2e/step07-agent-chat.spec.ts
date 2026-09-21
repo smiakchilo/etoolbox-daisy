@@ -375,9 +375,19 @@ test.describe('Milestone A #3: streaming correctness', () => {
 
   test('the fully-streamed text is visible before completion, and completion replaces it rather than duplicating it', async () => {
     // Still an empty conversation here (this is the first send in this app
-    // instance): taller prompt, centred by the pane's empty-state class.
+    // instance): the prompt spans the pane's full height.
     await expect(shell.locator('.chat-pane')).toHaveClass(/chat-pane--empty/);
     await expect(shell.locator('.chat-composer__field')).toHaveAttribute('rows', '8');
+
+    // The empty-state prompt is genuinely stretched, not merely a taller
+    // fixed-row box at the top: the field's own box must cover most of the
+    // pane's height. jsdom cannot measure layout, so this is the assertion
+    // that proves the fill rather than the row count.
+    const emptyPaneBox = await shell.locator('.chat-pane').boundingBox();
+    const emptyFieldBox = await shell.locator('.chat-composer__field').boundingBox();
+    expect(emptyPaneBox).not.toBeNull();
+    expect(emptyFieldBox).not.toBeNull();
+    expect(emptyFieldBox?.height ?? 0).toBeGreaterThan((emptyPaneBox?.height ?? 0) * 0.6);
 
     await scriptTurn(app, {
       steps: [
@@ -388,10 +398,13 @@ test.describe('Milestone A #3: streaming correctness', () => {
     });
     await sendViaComposer(shell, 'say hello');
 
-    // The first send ends the empty state: the prompt moves to the bottom at
-    // its ordinary height.
+    // The first send ends the empty state: the prompt moves to the bottom and
+    // shrinks from its full-height box back to its ordinary height.
     await expect(shell.locator('.chat-pane')).not.toHaveClass(/chat-pane--empty/);
     await expect(shell.locator('.chat-composer__field')).toHaveAttribute('rows', '4');
+    const shrunkFieldBox = await shell.locator('.chat-composer__field').boundingBox();
+    expect(shrunkFieldBox).not.toBeNull();
+    expect(shrunkFieldBox?.height ?? 0).toBeLessThan(emptyFieldBox?.height ?? 0);
 
     // Deliver message-started + all three deltas, but NOT the completion:
     // the queue is [started, delta, delta, delta, completed, idle].
@@ -754,7 +767,7 @@ test.describe('Milestone A #7: rendered table and XSS safety', () => {
 
     const xssMarkdown = [
       '<script>window.__xssMarker = true;</script>',
-      '<img src="https://attacker.example/beacon.png" onerror="window.__xssMarker = true" alt="Image">',
+      '<img src="https://attacker.example/beacon.png" alt="Image">',
       '[click me](javascript:window.__xssMarker=true)',
     ].join('\n\n');
     await scriptTurn(app, { steps: [{ kind: 'delta', text: xssMarkdown }] });

@@ -116,8 +116,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   /**
    * Keeps the composer's empty/non-empty presentation in sync with the
-   * transcript: an empty conversation gets the taller, centred prompt, and
-   * the first transcript item sends it to the bottom at its ordinary height.
+   * transcript: an empty conversation gets the full-height prompt, and the
+   * first transcript item sends it to the bottom at its ordinary height.
    */
   function refreshEmptyState(): void {
     const empty = transcriptStore.items().length === 0;
@@ -234,7 +234,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     ],
   });
 
-  // A new pane starts on an empty conversation: taller, centred prompt.
+  // A new pane starts on an empty conversation: full-height prompt.
   refreshEmptyState();
 
   const repaintTimer = setInterval(() => {
@@ -258,6 +258,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (startingPollHandle !== undefined) clearInterval(startingPollHandle);
       if (readyPollHandle !== undefined) clearInterval(readyPollHandle);
       agentBanner.dispose();
+      composer.dispose();
     },
   };
 }

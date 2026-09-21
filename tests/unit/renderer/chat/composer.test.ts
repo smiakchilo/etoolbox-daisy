@@ -104,6 +104,46 @@ describe('createComposer', () => {
     expect(field.getAttribute('rows')).toBe('8');
   });
 
+  describe('keeping the empty-state field stretched to the pane height', () => {
+    const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
+
+    afterEach(() => {
+      Reflect.set(globalThis, 'ResizeObserver', previousResizeObserver);
+    });
+
+    it('re-measures the field when its box changes, and disconnects on dispose', () => {
+      const observe = vi.fn();
+      const disconnect = vi.fn();
+      // A layout-free stand-in: the composer only ever constructs, observes
+      // and disconnects, so the callback itself is never invoked here.
+      class FakeResizeObserver {
+        observe(target: unknown): void {
+          observe(target);
+        }
+        disconnect(): void {
+          disconnect();
+        }
+      }
+      Reflect.set(globalThis, 'ResizeObserver', FakeResizeObserver);
+
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      const field = query(composer.element, 'sp-textfield');
+
+      expect(observe).toHaveBeenCalledWith(field);
+
+      composer.dispose();
+      expect(disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it('still builds and disposes when ResizeObserver is unavailable (as in jsdom)', () => {
+      Reflect.deleteProperty(globalThis, 'ResizeObserver');
+
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+
+      expect(() => composer.dispose()).not.toThrow();
+    });
+  });
+
   it("starts in the 'connecting' presentation: disabled Send and honest notice", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     const sendButton = query(composer.element, '.chat-composer__send');
