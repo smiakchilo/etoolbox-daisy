@@ -190,10 +190,9 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   // --- second run, same profile -------------------------------------------
   const second = await electron.launch({ args: [mainEntry], env });
   const restoredPage = await second.firstWindow();
-  // Same seeded profile, so the hosts panel opens at startup again - pick the
-  // seeded host to reach the idle shell (the panel is not dismissible until a
-  // page loads).
-  await restoredPage.locator(`.hosts-item[data-origin="${origin}"]`).click();
+  // The first run left the echo page as the last opened page, so this run
+  // restores it automatically and never opens the hosts picker (see
+  // `lastPageStore.ts`): the idle shell is reached with no click.
   const restoredHost = restoredPage.locator('[data-testid="browser-view-host"]');
   await restoredHost.waitFor({ state: 'visible', timeout: 30_000 });
 

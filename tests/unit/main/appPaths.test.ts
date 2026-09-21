@@ -43,6 +43,7 @@ describe('resolveAppPaths', () => {
 
     expect(paths.root).toBe(path.join(home, 'etoolbox-daisy'));
     expect(paths.settings).toBe(path.join(paths.root, 'settings'));
+    expect(paths.windowState).toBe(path.join(paths.root, 'window-state.json'));
     expect(paths.browser).toBe(path.join(paths.root, 'browser'));
     expect(paths.copilot).toBe(path.join(paths.root, 'copilot'));
     expect(paths.chats).toBe(path.join(paths.root, 'chats'));
@@ -56,6 +57,7 @@ describe('resolveAppPaths', () => {
 
     expect(existsSync(paths.root)).toBe(false);
     expect(existsSync(paths.settings)).toBe(false);
+    expect(existsSync(paths.windowState)).toBe(false);
     expect(existsSync(paths.browser)).toBe(false);
     expect(existsSync(paths.copilot)).toBe(false);
     expect(existsSync(paths.chats)).toBe(false);

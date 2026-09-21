@@ -21,6 +21,13 @@ export interface AppPaths {
   readonly root: string;
   /** Versioned, atomically-written settings - owned by `settingsStore`. */
   readonly settings: string;
+  /**
+   * The main window's persisted geometry file. A file, not a directory:
+   * unlike the six storage roots below it is written directly by
+   * `windowState.ts` (see that module for why it is not part of the settings
+   * document).
+   */
+  readonly windowState: string;
   /** Chromium/Electron browser-session data (`userData`/`sessionData`). */
   readonly browser: string;
   /** GitHub Copilot SDK/agent runtime state. */
@@ -79,6 +86,7 @@ export function resolveAppPaths(homeDir: string): AppPaths {
   return {
     root,
     settings: path.join(root, 'settings'),
+    windowState: path.join(root, 'window-state.json'),
     browser: path.join(root, 'browser'),
     copilot: path.join(root, 'copilot'),
     chats: path.join(root, 'chats'),

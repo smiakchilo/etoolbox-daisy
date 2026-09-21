@@ -1,4 +1,5 @@
 import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLayoutStore';
+import { isHostPageUrl, loadLastPageUrl, saveLastPageUrl } from '../lib/lastPageStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
 import { type AppSettingsSnapshot } from '../../../shared';
 import { createBrowserPane } from './browserPane';
@@ -47,6 +48,14 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   });
 
   /**
+   * The origins of the currently configured hosts, kept current by
+   * `applySnapshot` and consulted when remembering the last opened page. Only
+   * a page inside one of these is ever persisted (see `lastPageStore.ts`), so
+   * an SSO hop through an IdP origin is never restored as the "last page".
+   */
+  let hostOrigins: readonly string[] = [];
+
+  /**
    * Applies one loaded settings snapshot to the browser pane and hands the
    * chat pane the persisted per-provider flags. The chat pane derives which
    * agent is *actually* active (configured-and-eligible, else first eligible)
@@ -55,11 +64,49 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
    */
   function applySnapshot(snapshot: AppSettingsSnapshot): void {
     const { hosts } = snapshot;
+    hostOrigins = hosts.map((host) => host.origin);
     browserPane.update({
       addressValue: computeAddressBarValue(),
       hostOptions: buildHostOptions(hosts),
     });
     chatPane.setAgents(snapshot.agents);
+  }
+
+  // Remembers the last opened page for the next launch. Subscribing here
+  // rather than in the toolbar keeps the address-bar view free of storage
+  // concerns, and each `onStateChanged` listener is an independent
+  // `ipcRenderer.on` subscription, so a second one is safe (see
+  // `browserPane.ts`). A URL whose origin is not a configured host - an SSO
+  // redirect, `about:blank`, a pending navigation to an unknown origin - is
+  // ignored, so it never displaces the last real AEM page.
+  const unsubscribeLastPage = window.daisy.browser.onStateChanged((state) => {
+    if (hostOrigins.length === 0) return;
+    if (isHostPageUrl(state.url, hostOrigins)) {
+      saveLastPageUrl(state.url);
+    }
+  });
+
+  /**
+   * Re-opens the page remembered from the previous run, if there is one and it
+   * still belongs to a configured host. Returns `true` when a restore was
+   * attempted - including when the load itself failed, which the toolbar's
+   * error row reports - so the startup affordance below does not also open the
+   * hosts picker over it. A remembered origin that is no longer configured is
+   * not attempted at all, so a deleted server falls back to the picker.
+   */
+  async function restoreLastPage(snapshot: AppSettingsSnapshot): Promise<boolean> {
+    const url = loadLastPageUrl();
+    if (url === undefined) return false;
+    if (
+      !isHostPageUrl(
+        url,
+        snapshot.hosts.map((host) => host.origin),
+      )
+    )
+      return false;
+
+    const outcome = await window.daisy.browser.navigate(url);
+    return outcome.ok || outcome.error.code !== 'unknown_origin';
   }
 
   // The boundary the user can drag. Its position is restored from the last
@@ -87,13 +134,20 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   const result = await loadSettingsSnapshot();
   if (result.ok) {
     applySnapshot(result.snapshot);
-    // Startup affordance: with configured hosts the picker leads with the
-    // list ready to choose from (it replaces the otherwise blank page-view
-    // region); with none, Settings is where the first server gets added.
-    if (result.snapshot.hosts.length > 0) {
-      browserPane.openHostsPicker();
-    } else {
-      browserPane.panelHost.open(settingsPanel);
+    // Restoring the last opened page takes precedence over the hosts picker,
+    // so a returning user lands on the page they left. A page whose origin is
+    // no longer a configured host is not attempted at all, so a deleted server
+    // falls back to today's affordance.
+    const restored = await restoreLastPage(result.snapshot);
+    if (!restored) {
+      // Startup affordance: with configured hosts the picker leads with the
+      // list ready to choose from (it replaces the otherwise blank page-view
+      // region); with none, Settings is where the first server gets added.
+      if (result.snapshot.hosts.length > 0) {
+        browserPane.openHostsPicker();
+      } else {
+        browserPane.panelHost.open(settingsPanel);
+      }
     }
   } else {
     console.warn('[daisy] failed to load settings snapshot:', result.error);
@@ -103,10 +157,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   }
 
   // Unsubscribes the toolbar's `onStateChanged`/`onSwitchStateChanged`
-  // listeners, the settings panel's certificate-blocked subscription, and
-  // the view host's resize observer/listener when this (single, app-lifetime)
-  // window actually closes.
+  // listeners, this shell's own last-page subscription, the settings panel's
+  // certificate-blocked subscription, and the view host's resize
+  // observer/listener when this (single, app-lifetime) window actually closes.
   window.addEventListener('unload', () => {
+    unsubscribeLastPage();
     shellResizeObserver.disconnect();
     splitView.dispose();
     browserPane.dispose();

@@ -251,7 +251,7 @@ if (!gotSingleInstanceLock) {
     // right-click affordances) are provided by `contextMenu.ts` instead.
     Menu.setApplicationMenu(null);
 
-    const mainWindow = createMainWindow();
+    const mainWindow = createMainWindow({ windowStateFilePath: appPaths.windowState });
 
     // The single persistent AEM session (requirements-decisions.md section
     // 3) - created once, for the app's lifetime, and handed to the browser
@@ -514,7 +514,7 @@ if (!gotSingleInstanceLock) {
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createMainWindow();
+        createMainWindow({ windowStateFilePath: appPaths.windowState });
       }
     });
 

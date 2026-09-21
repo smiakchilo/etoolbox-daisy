@@ -1,10 +1,15 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, screen } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveAppIconPath } from './appIcon';
 import { buildAppUrl } from './browser/appProtocol';
 import { attachClipboardContextMenu } from './contextMenu';
+import {
+  attachWindowStatePersistence,
+  fitWindowStateToWorkArea,
+  readWindowState,
+} from './windowState';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const APP_PRELOAD_PATH = path.join(currentDir, '../preload/app-preload.js');
@@ -66,19 +71,42 @@ export function applyTaskbarAppDetails(window: BrowserWindow): void {
 }
 
 /**
+ * Options for {@link createMainWindow}.
+ */
+export interface CreateMainWindowOptions {
+  /**
+   * Absolute path to the window-geometry file, read before the window is
+   * created and rewritten as the window is resized/maximized/closed. See
+   * `windowState.ts`.
+   */
+  readonly windowStateFilePath: string;
+}
+
+/**
  * Creates the single local app window (browser pane + chat pane shell come in
  * later steps). Security baseline is non-negotiable: context isolation and
  * the sandbox are always on, Node integration is always off, and
  * `webSecurity` is never disabled.
  *
+ * The window's size and maximized-ness are restored from
+ * `options.windowStateFilePath` (clamped to the primary display's work area so
+ * a size remembered on a larger monitor still fits) and re-saved as it
+ * changes. Deliberately size + maximized only - the OS places the window, so a
+ * stale position can never strand it off-screen.
+ *
  * Loads the app's own UI from the `app://` scheme (step 05) rather than
  * `file://` - see `browser/appProtocol.ts`'s doc comment for why - falling
  * back to the electron-vite dev server URL unchanged.
  */
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(options: CreateMainWindowOptions): BrowserWindow {
+  const restored = fitWindowStateToWorkArea(
+    readWindowState(options.windowStateFilePath),
+    screen.getPrimaryDisplay().workAreaSize,
+  );
+
   const window = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: restored.width,
+    height: restored.height,
     show: false,
     ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
     webPreferences: {
@@ -89,6 +117,14 @@ export function createMainWindow(): BrowserWindow {
       webSecurity: true,
     },
   });
+
+  if (restored.maximized) {
+    window.maximize();
+  }
+
+  // Attached before the window can be shown. Saving is best-effort and
+  // debounced; `close` flushes synchronously so the final size is never lost.
+  attachWindowStatePersistence(window, options.windowStateFilePath);
 
   applyTaskbarAppDetails(window);
 
