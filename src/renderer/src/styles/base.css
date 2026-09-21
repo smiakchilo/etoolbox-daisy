@@ -156,3 +156,25 @@ body.daisy-pane-resizing {
   border: 1px solid rgb(0 0 0 / 20%);
   flex: 0 0 auto;
 }
+
+/*
+ * The one "focus draws the border" rule for every bordered container in the
+ * app. Each of these draws a resting gray border and delegates focus to the
+ * container (the controls inside carry no visible focus edge of their own),
+ * so the container's border turns accent blue while any descendant holds
+ * focus. It lives here, once, rather than as a `:focus-within` rule per
+ * surface: the chat composer frame, the Settings multifield items (Hosts /
+ * Proxies) and the Agents items all share it. The transition is the composer
+ * frame's original timing, now applied uniformly.
+ */
+.chat-composer__frame,
+.multifield__item,
+.agent-item {
+  transition: border-color 0.13s ease-in-out;
+}
+
+.chat-composer__frame:focus-within,
+.multifield__item:focus-within,
+.agent-item:focus-within {
+  border-color: var(--spectrum-accent-background-color-default, #0265dc);
+}

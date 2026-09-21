@@ -142,7 +142,9 @@
 }
 
 /* The one bordered surface for the whole input: the field itself draws no
-   border (see `.chat-composer__field`), so focus is shown here instead. */
+   border (see `.chat-composer__field`), so focus is shown here instead. The
+   border itself is the frame's resting gray; the blue `:focus-within` state
+   and its transition are the shared rule in base.css. */
 .chat-composer__frame {
   display: flex;
   flex-direction: column;
@@ -151,11 +153,6 @@
   border: 1px solid var(--spectrum-gray-300, #d3d3d3);
   border-radius: var(--spectrum-corner-radius-100, 4px);
   background: var(--spectrum-gray-50, #ffffff);
-  transition: border-color 0.13s ease-in-out;
-}
-
-.chat-composer__frame:focus-within {
-  border-color: var(--spectrum-accent-background-color-default, #0265dc);
 }
 
 /* Strips the field's own border/background/focus ring so the frame above is
