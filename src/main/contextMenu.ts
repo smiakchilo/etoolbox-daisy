@@ -5,6 +5,7 @@ import type {
   MenuItemConstructorOptions,
   WebContents,
 } from 'electron';
+import { openDetachedDevTools } from './devTools';
 
 /**
  * Context menus for the app's two very different surfaces.
@@ -32,6 +33,11 @@ import type {
  * still proves too broad, the clipboard template is the intended fallback for
  * the AEM view too - the two builders share their editable/selection handling
  * for that reason.
+ *
+ * "Inspect" is the one entry with no keyboard partner: the app has no menu
+ * bar, so DevTools for *remote* content is reachable only from here. It opens
+ * the page's DevTools detached (see `devTools.ts`) and selects the element
+ * under the cursor, matching Chrome's own Inspect.
  *
  * Every action is bound to the `WebContents` the menu was built for, rather
  * than using menu roles. The AEM pane is a `WebContentsView` in the same window
@@ -80,10 +86,32 @@ export function buildClipboardTemplate(
 }
 
 /**
+ * The Chrome "Inspect" item: open this page's DevTools (detached, so the
+ * app's own layout is untouched) and select the element the menu was invoked
+ * on. Present in both the editable and non-editable menus - inspecting a form
+ * field is exactly as useful as inspecting body content - and always last, as
+ * it is in Chrome.
+ */
+function inspectItem(
+  params: ContextMenuParams,
+  webContents: WebContents,
+): MenuItemConstructorOptions {
+  const { x, y } = params;
+  return {
+    label: 'Inspect',
+    click: () => {
+      openDetachedDevTools(webContents);
+      webContents.inspectElement(x, y);
+    },
+  };
+}
+
+/**
  * The Chrome-shaped menu, for remote content in the AEM pane and its auxiliary
  * windows. Ordering follows Chrome: element-specific actions first (editable
  * field, link, image), then the selection, then page navigation - which is
- * always present so the menu is never empty over a bare page.
+ * always present so the menu is never empty over a bare page - and Inspect
+ * last.
  */
 export function buildChromeTemplate(
   params: ContextMenuParams,
@@ -106,6 +134,8 @@ export function buildChromeTemplate(
         enabled: editFlags.canSelectAll,
         click: () => webContents.selectAll(),
       },
+      { type: 'separator' },
+      inspectItem(params, webContents),
     ];
   }
 
@@ -152,6 +182,8 @@ export function buildChromeTemplate(
     { label: 'Back', enabled: history.canGoBack(), click: () => history.goBack() },
     { label: 'Forward', enabled: history.canGoForward(), click: () => history.goForward() },
     { label: 'Reload', click: () => webContents.reload() },
+    { type: 'separator' },
+    inspectItem(params, webContents),
   );
 
   return template;

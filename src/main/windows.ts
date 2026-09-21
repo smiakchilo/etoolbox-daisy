@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveAppIconPath } from './appIcon';
 import { buildAppUrl } from './browser/appProtocol';
 import { attachClipboardContextMenu } from './contextMenu';
+import { attachDevToolsShortcut } from './devTools';
 import {
   attachWindowStatePersistence,
   fitWindowStateToWorkArea,
@@ -133,6 +134,12 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
   // a right-click menu instead of from a native menu bar - which `index.ts`
   // clears process-wide.
   attachClipboardContextMenu(window.webContents, window);
+
+  // Ctrl+Shift+I, restored without a menu bar: the default menu's "Toggle
+  // Developer Tools" accelerator is gone with the menu, so the key is bound to
+  // this window's own WebContents instead (`devTools.ts`). Same target the menu
+  // role used, so the shortcut still means the shell's DevTools.
+  attachDevToolsShortcut(window.webContents, window.webContents);
 
   window.once('ready-to-show', () => {
     window.show();

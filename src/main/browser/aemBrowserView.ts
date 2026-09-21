@@ -2,6 +2,7 @@ import { WebContentsView, screen } from 'electron';
 import type { BrowserWindow, Session, WebContents } from 'electron';
 import type { BrowserNavigationState, ViewBounds } from '../../shared';
 import { attachChromeContextMenu } from '../contextMenu';
+import { attachDevToolsShortcut } from '../devTools';
 import { decideAuxiliaryWindowOpen } from './auxiliaryWindowPolicy';
 import { createAuxiliaryWindowManager, type AuxiliaryWindowManager } from './auxiliaryWindows';
 import { extractChromiumErrorCodeFromText } from './serverSwitch';
@@ -95,6 +96,12 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   attachChromeContextMenu(view.webContents, options.window, {
     openLinkInNewWindow: (url) => auxiliaryWindows.openWindow(url),
   });
+
+  // Ctrl+Shift+I must keep working while the AEM pane has focus - the menu
+  // accelerator it replaces was window-scoped, not webContents-scoped. It still
+  // toggles the *shell's* DevTools (the menu role's own target); the AEM page's
+  // DevTools are reached through the context menu's "Inspect" instead.
+  attachDevToolsShortcut(view.webContents, options.window.webContents);
 
   let lastBounds: ViewBounds = { x: 0, y: 0, width: 0, height: 0 };
   let destroyed = false;

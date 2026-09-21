@@ -116,10 +116,13 @@ interface FakeWebContents {
   readonly copyImageAt: ReturnType<typeof vi.fn>;
   readonly downloadURL: ReturnType<typeof vi.fn>;
   readonly reload: ReturnType<typeof vi.fn>;
+  readonly inspectElement: ReturnType<typeof vi.fn>;
+  readonly openDevTools: ReturnType<typeof vi.fn>;
+  readonly isDevToolsOpened: ReturnType<typeof vi.fn>;
 }
 
 function makeFakeWebContents(
-  options: { canGoBack?: boolean; canGoForward?: boolean } = {},
+  options: { canGoBack?: boolean; canGoForward?: boolean; devToolsOpened?: boolean } = {},
 ): FakeWebContents {
   const listeners = new Map<string, (...args: never[]) => void>();
   const editing = {
@@ -139,6 +142,9 @@ function makeFakeWebContents(
   const copyImageAt = vi.fn();
   const downloadURL = vi.fn();
   const reload = vi.fn();
+  const inspectElement = vi.fn();
+  const openDevTools = vi.fn();
+  const isDevToolsOpened = vi.fn(() => options.devToolsOpened ?? false);
   const webContents = {
     on: (event: string, listener: (...args: never[]) => void) => {
       listeners.set(event, listener);
@@ -149,6 +155,9 @@ function makeFakeWebContents(
     copyImageAt,
     downloadURL,
     reload,
+    inspectElement,
+    openDevTools,
+    isDevToolsOpened,
   } as unknown as WebContents;
   return {
     webContents,
@@ -158,6 +167,9 @@ function makeFakeWebContents(
     copyImageAt,
     downloadURL,
     reload,
+    inspectElement,
+    openDevTools,
+    isDevToolsOpened,
   };
 }
 
@@ -284,6 +296,8 @@ describe('buildChromeTemplate', () => {
       'Paste',
       '---',
       'Select all',
+      '---',
+      'Inspect',
     ]);
     expect(template.map((item) => item.enabled)).toEqual([
       true,
@@ -294,6 +308,8 @@ describe('buildChromeTemplate', () => {
       true,
       undefined,
       true,
+      undefined,
+      undefined,
     ]);
   });
 
@@ -313,6 +329,8 @@ describe('buildChromeTemplate', () => {
       'Back',
       'Forward',
       'Reload',
+      '---',
+      'Inspect',
     ]);
     expect(template[3]?.enabled).toBe(true);
     expect(template[4]?.enabled).toBe(false);
@@ -340,6 +358,8 @@ describe('buildChromeTemplate', () => {
       'Back',
       'Forward',
       'Reload',
+      '---',
+      'Inspect',
     ]);
 
     click(itemNamed(template, 'Copy image'));
@@ -362,10 +382,45 @@ describe('buildChromeTemplate', () => {
       },
     );
 
-    expect(surface(template)).toEqual(['Copy', '---', 'Back', 'Forward', 'Reload']);
+    expect(surface(template)).toEqual([
+      'Copy',
+      '---',
+      'Back',
+      'Forward',
+      'Reload',
+      '---',
+      'Inspect',
+    ]);
 
     click(itemNamed(template, 'Copy'));
     expect(copy).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the page DevTools detached and selects the element under the cursor', () => {
+    const { webContents, inspectElement, openDevTools } = makeFakeWebContents();
+    const template = buildChromeTemplate(makeParams({ x: 42, y: 17 }), webContents, {
+      openLinkInNewWindow: vi.fn(),
+    });
+
+    click(itemNamed(template, 'Inspect'));
+
+    expect(openDevTools).toHaveBeenCalledTimes(1);
+    expect(openDevTools).toHaveBeenCalledWith({ mode: 'detach' });
+    expect(inspectElement).toHaveBeenCalledWith(42, 17);
+  });
+
+  it('does not reopen already-open DevTools when Inspect is chosen', () => {
+    const { webContents, inspectElement, openDevTools } = makeFakeWebContents({
+      devToolsOpened: true,
+    });
+    const template = buildChromeTemplate(makeParams(), webContents, {
+      openLinkInNewWindow: vi.fn(),
+    });
+
+    click(itemNamed(template, 'Inspect'));
+
+    expect(openDevTools).not.toHaveBeenCalled();
+    expect(inspectElement).toHaveBeenCalledTimes(1);
   });
 
   it('drives back/forward/reload through the bound webContents', () => {
