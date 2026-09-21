@@ -186,7 +186,11 @@ function makeFakeAemView(): FakeAemViewControls {
   const stop = vi.fn();
   const closeAll = vi.fn();
   const destroy = vi.fn();
-  const auxiliaryWindows: AuxiliaryWindowManager = { attachTo: vi.fn(), closeAll };
+  const auxiliaryWindows: AuxiliaryWindowManager = {
+    attachTo: vi.fn(),
+    openWindow: vi.fn(),
+    closeAll,
+  };
   const navigationState: BrowserNavigationState = {
     url: '',
     canGoBack: false,

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveAppIconPath } from './appIcon';
 import { buildAppUrl } from './browser/appProtocol';
+import { attachClipboardContextMenu } from './contextMenu';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const APP_PRELOAD_PATH = path.join(currentDir, '../preload/app-preload.js');
@@ -90,6 +91,12 @@ export function createMainWindow(): BrowserWindow {
   });
 
   applyTaskbarAppDetails(window);
+
+  // The app draws its own toolbar, so the shell's own surfaces (transcript,
+  // composer, address bar, banners, Settings) offer the clipboard actions from
+  // a right-click menu instead of from a native menu bar - which `index.ts`
+  // clears process-wide.
+  attachClipboardContextMenu(window.webContents, window);
 
   window.once('ready-to-show', () => {
     window.show();

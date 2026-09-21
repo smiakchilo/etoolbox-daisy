@@ -1,4 +1,4 @@
-import { app, BrowserWindow, safeStorage } from 'electron';
+import { app, BrowserWindow, Menu, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -243,6 +243,13 @@ if (!gotSingleInstanceLock) {
     } else {
       logger.error('SETTINGS_FILE_CORRUPT');
     }
+
+    // The app is a two-pane tool with its own in-window toolbar, so there is no
+    // native menu bar: Electron's default File/Edit/View/Window/Help menu is
+    // removed process-wide before the first window exists. Clipboard actions a
+    // user would otherwise reach through that menu (and the rest of the
+    // right-click affordances) are provided by `contextMenu.ts` instead.
+    Menu.setApplicationMenu(null);
 
     const mainWindow = createMainWindow();
 

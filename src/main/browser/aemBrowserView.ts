@@ -1,6 +1,7 @@
 import { WebContentsView, screen } from 'electron';
 import type { BrowserWindow, Session, WebContents } from 'electron';
 import type { BrowserNavigationState, ViewBounds } from '../../shared';
+import { attachChromeContextMenu } from '../contextMenu';
 import { decideAuxiliaryWindowOpen } from './auxiliaryWindowPolicy';
 import { createAuxiliaryWindowManager, type AuxiliaryWindowManager } from './auxiliaryWindows';
 import { extractChromiumErrorCodeFromText } from './serverSwitch';
@@ -86,6 +87,14 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
 
   const auxiliaryWindows = createAuxiliaryWindowManager(options.aemSession);
   auxiliaryWindows.attachTo(view.webContents);
+
+  // Remote AEM content gets the Chrome-shaped right-click menu (the app has no
+  // native menu bar). "Open link in new window" is routed through the same
+  // auxiliary-window policy as every other popup, so it cannot become a way to
+  // open a link outside it.
+  attachChromeContextMenu(view.webContents, options.window, {
+    openLinkInNewWindow: (url) => auxiliaryWindows.openWindow(url),
+  });
 
   let lastBounds: ViewBounds = { x: 0, y: 0, width: 0, height: 0 };
   let destroyed = false;

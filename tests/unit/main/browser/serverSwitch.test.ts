@@ -6,10 +6,7 @@ import {
   type SwitchableAemView,
 } from '../../../../src/main/browser/serverSwitch';
 import { newProxyId, newServerId } from '../../../../src/shared';
-import {
-  serverConfigSchema,
-  type ServerConfig,
-} from '../../../../src/shared';
+import { serverConfigSchema, type ServerConfig } from '../../../../src/shared';
 import { proxyConfigSchema } from '../../../../src/shared';
 
 /**
