@@ -1,5 +1,6 @@
 import { executeAemGetJson, type AemGetJsonRequest } from '../shared';
 import { executeAemQuery, type AemQueryRequest } from '../shared';
+import { deriveCurrentPageContext, renderCurrentPageContextForModel } from '../shared';
 import type { AemBridgeBroker } from './aem/bridgeBroker';
 import type { ActiveAemServer } from './browser/browserController';
 import type { NavigationEpochTracker } from './browser/navigationEpoch';
@@ -53,6 +54,37 @@ export function createCurrentAemServerContext(
     const server = getActiveServer();
     if (server === undefined) return undefined;
     return { origin: server.origin, serverId: server.serverId, serverRevision: server.revision };
+  };
+}
+
+/**
+ * Builds the model-facing "where the browser pane is" context the chat
+ * controller prepends to every prompt.
+ *
+ * Reads the active server and the live document URL fresh on every call - the
+ * same closure-not-snapshot rule as {@link createCurrentAemServerContext} -
+ * because the user can navigate to a different page (or switch servers)
+ * between one turn and the next, and the context has to describe where they
+ * are now.
+ *
+ * Returns `undefined` when there is no active server, or when
+ * `deriveCurrentPageContext` refuses the URL (an unparseable URL, a non-http(s)
+ * scheme, or any origin that is not the active server's own). That refusal is
+ * what keeps an SSO/IdP URL out of the agent's context; the model simply gets
+ * no page context for that turn rather than an unsafe or misleading one.
+ */
+export function createCurrentPageContext(
+  getActiveServer: () => ActiveAemServer | undefined,
+  getDocumentUrl: () => string | undefined,
+): () => string | undefined {
+  return () => {
+    const server = getActiveServer();
+    if (server === undefined) return undefined;
+    const context = deriveCurrentPageContext({
+      documentUrl: getDocumentUrl(),
+      activeOrigin: server.origin,
+    });
+    return context === undefined ? undefined : renderCurrentPageContextForModel(context);
   };
 }
 
@@ -363,6 +395,8 @@ export interface StartAgentServiceInBackgroundDeps {
   readonly idGenerator: IdGenerator;
   readonly currentAemServerContext: () => AemServerContext | undefined;
   readonly navigationEpoch: () => number;
+  /** The model-facing "where the browser pane is" block prepended to each prompt. */
+  readonly currentPageContext: () => string | undefined;
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
@@ -398,6 +432,7 @@ export async function startAgentServiceInBackground(
     idGenerator: deps.idGenerator,
     currentAemServerContext: deps.currentAemServerContext,
     navigationEpoch: deps.navigationEpoch,
+    currentPageContext: deps.currentPageContext,
   });
   await deps.gatedController.replaceDelegate(controller);
 }

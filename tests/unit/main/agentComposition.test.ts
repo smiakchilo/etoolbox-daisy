@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest';
 import {
   createCurrentAemServerContext,
   createBridgeCurrentContext,
+  createCurrentPageContext,
   createBrokeredExecute,
   createBrokeredQueryExecute,
   resolveBundledSkillsDirectory,
@@ -81,6 +82,49 @@ describe('createCurrentAemServerContext', () => {
       serverId: 'server-1',
       serverRevision: 5,
     });
+  });
+});
+
+describe('createCurrentPageContext', () => {
+  function activeServer(origin: string): ActiveAemServer {
+    return { serverId: newServerId(counterIds('server')), origin, revision: 1 };
+  }
+
+  it('returns undefined when no server is active, so no page context is invented', () => {
+    const provider = createCurrentPageContext(
+      () => undefined,
+      () => 'https://a.example/content/wknd.html',
+    );
+    expect(provider()).toBeUndefined();
+  });
+
+  it('returns undefined when the pane is on a different origin than the active server (an SSO/IdP page)', () => {
+    const provider = createCurrentPageContext(
+      () => activeServer('https://author.example'),
+      () => 'https://idp.example/authorize?client_id=x',
+    );
+    expect(provider()).toBeUndefined();
+  });
+
+  it('renders the host and content path for the active server page', () => {
+    const provider = createCurrentPageContext(
+      () => activeServer('https://author.example'),
+      () => 'https://author.example/editor.html/content/wknd/us/en.html',
+    );
+    const context = provider();
+    expect(context).toContain('Host: https://author.example');
+    expect(context).toContain('Content path: /content/wknd/us/en');
+  });
+
+  it('reads the live URL fresh on every call, so navigation between turns is reflected', () => {
+    let url = 'https://author.example/content/wknd/a.html';
+    const provider = createCurrentPageContext(
+      () => activeServer('https://author.example'),
+      () => url,
+    );
+    expect(provider()).toContain('Content path: /content/wknd/a');
+    url = 'https://author.example/content/wknd/b.html';
+    expect(provider()).toContain('Content path: /content/wknd/b');
   });
 });
 
@@ -429,6 +473,7 @@ describe('startAgentServiceInBackground', () => {
       idGenerator: counterIds('turn'),
       currentAemServerContext: () => undefined,
       navigationEpoch: () => 0,
+      currentPageContext: () => undefined,
       gatedController,
     });
 
@@ -457,6 +502,7 @@ describe('startAgentServiceInBackground', () => {
       idGenerator: counterIds('turn'),
       currentAemServerContext: () => undefined,
       navigationEpoch: () => 0,
+      currentPageContext: () => undefined,
       gatedController,
     });
 
@@ -477,6 +523,7 @@ describe('startAgentServiceInBackground', () => {
         idGenerator: counterIds('turn'),
         currentAemServerContext: () => undefined,
         navigationEpoch: () => 0,
+        currentPageContext: () => undefined,
         gatedController,
       }),
     ).rejects.toThrow('boom');

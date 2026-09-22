@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFakeAgentService } from '../../../src/agent/fakeAgentService';
 import {
   createAgentChatController,
+  composeModelPrompt,
   createAgentChatEventForwarder,
   createStartupGatedAgentChatController,
   type AemServerContext,
@@ -15,6 +16,7 @@ import type {
   AgentService,
   AgentServiceError,
   OpenConversationRequest,
+  SendPromptRequest,
   Unsubscribe,
 } from '../../../src/agent/agentService';
 import { ok, type Result } from '../../../src/shared';
@@ -75,6 +77,7 @@ function buildController(
     idGenerator: counterIdGenerator('turn'),
     currentAemServerContext: () => serverContext(),
     navigationEpoch: () => 0,
+    currentPageContext: () => undefined,
     ...overrides,
   };
   const controller = createAgentChatController(deps);
@@ -101,6 +104,7 @@ function buildControllerWithMutableServer(agentService: AgentService): {
     idGenerator: counterIdGenerator('turn'),
     currentAemServerContext: () => current,
     navigationEpoch: () => epoch,
+    currentPageContext: () => undefined,
   });
   return {
     controller,
@@ -127,12 +131,15 @@ function newChatId(id: string): ChatId {
 interface LeakyAgentService extends AgentService {
   /** Pushes `event` to every subscribed `onEvent` listener, bypassing any state-machine legality check. */
   emit(event: AgentEvent): void;
+  /** Every `sendPrompt` request this double received, in order. */
+  readonly sentPrompts: SendPromptRequest[];
 }
 
 function createLeakyAgentService(): LeakyAgentService {
   const eventListeners = new Set<(event: AgentEvent) => void>();
   const authListeners = new Set<(state: AgentAuthState) => void>();
   const authState: AgentAuthState = { apiVersion: 1, isAuthenticated: true };
+  const sentPrompts: SendPromptRequest[] = [];
 
   return {
     initialize(): Promise<Result<void, AgentServiceError>> {
@@ -152,7 +159,8 @@ function createLeakyAgentService(): LeakyAgentService {
     openConversation(request: OpenConversationRequest): Promise<Result<ChatId, AgentServiceError>> {
       return Promise.resolve(ok(request.chatId));
     },
-    sendPrompt(): Promise<Result<void, AgentServiceError>> {
+    sendPrompt(request: SendPromptRequest): Promise<Result<void, AgentServiceError>> {
+      sentPrompts.push(request);
       return Promise.resolve(ok(undefined));
     },
     abort(): Promise<Result<void, AgentServiceError>> {
@@ -169,6 +177,7 @@ function createLeakyAgentService(): LeakyAgentService {
     emit(event: AgentEvent): void {
       for (const listener of eventListeners) listener(event);
     },
+    sentPrompts,
   };
 }
 
@@ -634,5 +643,73 @@ describe('AgentChatController.onStatusChanged', () => {
     // ...while the current one does.
     secondService.setAuthState({ apiVersion: 1, isAuthenticated: false });
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('composeModelPrompt', () => {
+  it('returns the prompt unchanged when there is no page context', () => {
+    expect(composeModelPrompt(undefined, 'hi')).toBe('hi');
+    expect(composeModelPrompt('', 'hi')).toBe('hi');
+  });
+
+  it('prepends the context block, separated by a blank line', () => {
+    expect(composeModelPrompt('CTX-BLOCK', 'hi')).toBe('CTX-BLOCK\n\nhi');
+  });
+});
+
+describe('agentChatController page context', () => {
+  it('sends the current page context as part of the model prompt while the typed prompt is what is displayed', async () => {
+    const leaky = createLeakyAgentService();
+    const { controller } = buildController(leaky, {
+      currentPageContext: () => 'CTX-BLOCK',
+    });
+    const chatId = newChatId('chat-ctx');
+    await controller.openConversation({ chatId });
+
+    const sent = await controller.sendMessage({ chatId, prompt: 'what is on this page?' });
+    expect(sent.ok).toBe(true);
+    if (!sent.ok) throw new Error('unreachable');
+
+    expect(leaky.sentPrompts.at(-1)).toEqual({
+      chatId,
+      turnId: sent.turnId,
+      prompt: 'CTX-BLOCK\n\nwhat is on this page?',
+      displayPrompt: 'what is on this page?',
+    });
+  });
+
+  it('leaves the prompt untouched when the provider yields no context', async () => {
+    const leaky = createLeakyAgentService();
+    const { controller } = buildController(leaky);
+    const chatId = newChatId('chat-ctx');
+    await controller.openConversation({ chatId });
+
+    const sent = await controller.sendMessage({ chatId, prompt: 'plain' });
+    expect(sent.ok).toBe(true);
+    if (!sent.ok) throw new Error('unreachable');
+
+    expect(leaky.sentPrompts.at(-1)).toEqual({
+      chatId,
+      turnId: sent.turnId,
+      prompt: 'plain',
+      displayPrompt: 'plain',
+    });
+  });
+
+  it('reads the page context fresh on every send, so navigation between turns is reflected', async () => {
+    const leaky = createLeakyAgentService();
+    let context: string | undefined = 'PAGE-A';
+    const { controller } = buildController(leaky, { currentPageContext: () => context });
+    const chatId = newChatId('chat-ctx');
+    await controller.openConversation({ chatId });
+
+    await controller.sendMessage({ chatId, prompt: 'one' });
+    context = 'PAGE-B';
+    await controller.sendMessage({ chatId, prompt: 'two' });
+
+    expect(leaky.sentPrompts.map((request) => request.prompt)).toEqual([
+      'PAGE-A\n\none',
+      'PAGE-B\n\ntwo',
+    ]);
   });
 });

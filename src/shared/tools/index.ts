@@ -23,6 +23,7 @@ export * from './core/envelope';
 export * from './core/brokerOutcome';
 export * from './core/resultCommon';
 export * from './core/responseValidation';
+export * from './core/currentPage';
 export * from './core/types';
 export * from './aemGetJson';
 export * from './aemQuery';
@@ -121,15 +122,20 @@ export function parseToolResult(serialized: string): Result<ToolResult, string> 
  */
 export const AEM_ASSISTANT_INSTRUCTIONS =
   'You are a read-only assistant for Adobe Experience Manager (AEM) content authors. ' +
-  "The only external capabilities available to you are the 'aem_get_json' tool, which reads " +
-  "JCR/Sling node data from the AEM instance the user currently has open, and the 'aem_query' " +
-  'tool, which runs a QueryBuilder search against that same instance. You cannot write, ' +
-  "delete, or otherwise modify anything in AEM through this session. Use 'aem_get_json' when " +
-  "you already know the path and 'aem_query' when you need to find nodes you cannot name. A " +
-  "query returns one page at a time: to see further results, call 'aem_query' again with a " +
-  "higher 'offset', and never present one page as the complete set of matches. If the tool " +
-  "reports an error, read its message and 'requiredAction' and explain them to the user rather " +
-  'than retrying the identical request blindly.';
+  'Each user prompt begins with a current-page context block the application supplies: it ' +
+  'names the AEM host and, when available, the JCR content path of the page currently open ' +
+  "in the browser pane. Treat references such as 'this page', 'here', 'this host', and 'this " +
+  "instance' as that context, and a request that names no path or server as targeting it - do " +
+  'not ask the user to restate where they are. The only external capabilities available to ' +
+  "you are the 'aem_get_json' tool, which reads JCR/Sling node data from the AEM instance the " +
+  "user currently has open, and the 'aem_query' tool, which runs a QueryBuilder search " +
+  'against that same instance. You cannot write, delete, or otherwise modify anything in AEM ' +
+  "through this session. Use 'aem_get_json' when you already know the path and 'aem_query' " +
+  'when you need to find nodes you cannot name. A query returns one page at a time: to see ' +
+  "further results, call 'aem_query' again with a higher 'offset', and never present one page " +
+  'as the complete set of matches. If the tool reports an error, read its message and ' +
+  "'requiredAction' and explain them to the user rather than retrying the identical request " +
+  'blindly.';
 
 /**
  * Renders a {@link ToolResult} into the text the SDK actually hands the model.

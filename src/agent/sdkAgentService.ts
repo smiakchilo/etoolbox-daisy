@@ -1054,7 +1054,10 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       applyAndEmit(makeSessionStateEvent(request.chatId, 'sending', request.turnId));
 
       try {
-        await session.send({ prompt: request.prompt });
+        await session.send({
+          prompt: request.prompt,
+          ...(request.displayPrompt !== undefined ? { displayPrompt: request.displayPrompt } : {}),
+        });
         return ok(undefined);
       } catch (error) {
         console.error('sdkAgentService: session.send() rejected', error);

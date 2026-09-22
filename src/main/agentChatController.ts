@@ -1,5 +1,5 @@
 import type { AgentService, AgentServiceError } from '../agent/agentService';
-import type { CurrentAemToolContext } from '../agent/aemTool';
+import type { CurrentAemToolContext } from '../shared';
 import type {
   AgentChatByIdRequest,
   AgentChatError,
@@ -99,6 +99,15 @@ export interface AgentChatControllerDeps {
   readonly currentAemServerContext: () => AemServerContext | undefined;
   /** `NavigationEpochTracker.current`, read fresh for the same reason as `currentAemServerContext`. */
   readonly navigationEpoch: () => number;
+  /**
+   * The model-facing "where the browser pane is" block the application
+   * prepends to every user prompt - or `undefined` when there is nothing safe
+   * to say (no active server, or the pane is not on that server's origin).
+   * Read fresh at send time, never cached, so a navigation between turns is
+   * reflected in the very next prompt. The controller treats this as opaque
+   * text: it never inspects a URL itself.
+   */
+  readonly currentPageContext: () => string | undefined;
 }
 
 export interface AgentChatController {
@@ -177,6 +186,21 @@ function blockReasonError(reason: CanSendBlockReason): AgentChatError {
     );
   }
   return createAgentChatError('PRECONDITION_FAILED', BLOCK_REASON_MESSAGES[reason]);
+}
+
+/**
+ * Prepends the application-supplied page context to the user's own prompt.
+ *
+ * The context rides in `prompt` - the text the model actually reads - while
+ * the separate `displayPrompt` argument keeps the user's own message (and the
+ * SDK's timeline) showing only what they typed. The controller treats the
+ * context as opaque: `agentComposition.ts` owns turning the browser's URL into
+ * safe, model-facing text.
+ */
+export function composeModelPrompt(pageContext: string | undefined, prompt: string): string {
+  return pageContext === undefined || pageContext.length === 0
+    ? prompt
+    : `${pageContext}\n\n${prompt}`;
 }
 
 interface ActiveTurn {
@@ -344,10 +368,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     }
     const turnId = newTurnId(idGenerator);
     activeTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
+    const pageContext = deps.currentPageContext();
     const result = await agentService.sendPrompt({
       chatId: request.chatId,
       turnId,
-      prompt: request.prompt,
+      prompt: composeModelPrompt(pageContext, request.prompt),
+      displayPrompt: request.prompt,
     });
     if (!result.ok) {
       // The turn never actually started - nothing to keep tracking, unless

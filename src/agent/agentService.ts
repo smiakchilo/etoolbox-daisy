@@ -132,6 +132,14 @@ export interface SendPromptRequest {
   readonly chatId: ChatId;
   readonly turnId: TurnId;
   readonly prompt: string;
+  /**
+   * The text to show in the conversation timeline in place of `prompt`, when
+   * the application prepends context (the current AEM page) the user did not
+   * type. `prompt` is always what the model reads; `displayPrompt` only
+   * affects what the SDK records/shows as the user's own message. Omitted when
+   * the two are identical.
+   */
+  readonly displayPrompt?: string;
 }
 
 export interface AgentService {

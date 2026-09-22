@@ -19,6 +19,12 @@ An unscoped query scans the whole repository and is slow enough to time out.
 Start every query with a `path` predicate unless the user has explicitly asked
 for a repository-wide search.
 
+When the user names no path, use the **content path from the current page
+context** as the `path` predicate — they are asking about the page they are
+looking at, not the whole `/content` tree. Widen to a parent or to `/content`
+only when the request clearly reaches beyond that page, and say what scope you
+used.
+
 ```json
 {
   "path": "/content/wknd",

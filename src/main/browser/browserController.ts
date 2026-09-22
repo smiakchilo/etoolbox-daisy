@@ -105,6 +105,14 @@ export interface BrowserController {
    * settings sync, not something this accessor papers over.
    */
   activeServer(): ActiveAemServer | undefined;
+  /**
+   * The URL of the document the AEM view is currently showing, or `undefined`
+   * when it has none (no page loaded yet, an empty `about:blank` start, or a
+   * destroyed view). Read fresh on every call: this is what the agent's
+   * per-prompt page context is derived from, so it must describe where the
+   * user is right now rather than where they were when a chat opened.
+   */
+  currentDocumentUrl(): string | undefined;
   navigate(rawValue: string): Promise<BrowserIpcVoidResult>;
   switchServer(serverId: ServerId): Promise<BrowserIpcVoidResult>;
   goBack(): Promise<BrowserIpcVoidResult>;
@@ -484,6 +492,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return ok();
   }
 
+  /**
+   * The URL of the document the view is showing right now, or `undefined` for
+   * an empty URL. Deliberately narrow: the agent's page context
+   * (`deriveCurrentPageContext`) decides same-origin and content-path safety
+   * from this raw value, so nothing is normalized or filtered here.
+   */
+  function currentDocumentUrl(): string | undefined {
+    const url = aemView.getNavigationState().url;
+    return url.length > 0 ? url : undefined;
+  }
+
   async function hydrateCertificateExceptions(): Promise<void> {
     let settings: AppSettings;
     try {
@@ -550,6 +569,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     aemView,
     navigationEpoch,
     activeServer: () => activeServerState,
+    currentDocumentUrl,
     navigate,
     switchServer,
     goBack,

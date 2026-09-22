@@ -173,6 +173,9 @@ beforeEach(() => {
     activeServer: () => {
       throw new Error('activeServer must not be read by the IPC layer');
     },
+    currentDocumentUrl: () => {
+      throw new Error('currentDocumentUrl must not be read by the IPC layer');
+    },
     navigate: () => Promise.resolve(record('navigate')),
     switchServer: () => Promise.resolve(record('switchServer')),
     goBack: () => Promise.resolve(record('goBack')),

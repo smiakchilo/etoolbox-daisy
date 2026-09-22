@@ -27,6 +27,7 @@ import {
   createBrokeredExecute,
   createBrokeredQueryExecute,
   createCurrentAemServerContext,
+  createCurrentPageContext,
   createLateBoundAemToolContext,
   createModelPreferenceCache,
   exposeFakeAgentServiceForTests,
@@ -589,6 +590,10 @@ if (!gotSingleInstanceLock) {
           browserController.activeServer(),
         ),
         navigationEpoch: () => browserController.navigationEpoch.current(),
+        currentPageContext: createCurrentPageContext(
+          () => browserController.activeServer(),
+          () => browserController.currentDocumentUrl(),
+        ),
         gatedController: agentChatController,
       });
 

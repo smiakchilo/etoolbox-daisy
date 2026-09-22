@@ -68,8 +68,9 @@ from a row means it was not asked for - it does **not** mean the node lacks it.
 real answer, and it is different from a failure. Before concluding the content
 does not exist, check the obvious causes:
 
-- the `path` predicate points somewhere the content is not (`/content/we-retail`
-  vs `/content/wknd`);
+- the `path` predicate points somewhere the content is not (for example the
+  current page's content path when the user meant a parent, or
+  `/content/we-retail` vs `/content/wknd`);
 - `type` is too narrow (`cq:Page` will not match `dam:Asset`);
 - a property value is case-sensitive or has different whitespace;
 - the content exists only on Publish, not on this Author instance.
