@@ -558,6 +558,9 @@ const ERROR_MESSAGES = {
   redirected:
     'AEM redirected the request away from the server, which usually means the session has expired.',
   no_view: 'The AEM browser pane is not available, so no request could be made.',
+  bridge_unavailable:
+    'The AEM browser pane is present but its request bridge is not available, so no request ' +
+    'could be made. This is an application problem, not an AEM one.',
   network_error: 'The request to AEM could not be completed.',
   cancelled: 'The request was cancelled.',
   timeout: 'AEM did not respond before the request deadline.',
@@ -610,6 +613,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   },
   redirected: { code: 'REDIRECT_BLOCKED', retryable: false, requiredAction: 'sign_in_to_aem' },
   no_view: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'select_server' },
+  bridge_unavailable: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'none' },
   network_error: { code: 'NETWORK_ERROR', retryable: true, requiredAction: 'none' },
   cancelled: { code: 'CANCELLED', retryable: true, requiredAction: 'none' },
   timeout: { code: 'TIMEOUT', retryable: true, requiredAction: 'none' },

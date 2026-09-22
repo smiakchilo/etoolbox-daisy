@@ -22,6 +22,23 @@ export const AEM_BRIDGE_FETCH_CHANNEL = 'aem-bridge:fetch' as const;
 export const AEM_BRIDGE_CANCEL_CHANNEL = 'aem-bridge:cancel' as const;
 /** preload -> main: the outcome of a fetch the main process asked for. */
 export const AEM_BRIDGE_REPLY_CHANNEL = 'aem-bridge:reply' as const;
+/**
+ * preload -> main: the preload has registered its bridge listeners and is able
+ * to answer a fetch.
+ *
+ * Main uses this to tell "the AEM view exists but its preload never loaded"
+ * apart from "the view exists and is simply slow". Without it the first case
+ * is indistinguishable from an AEM timeout: the fetch command is delivered to
+ * a `WebContents` that has no listener, so nothing ever replies and the broker
+ * waits out the whole deadline. The preload file being absent or failing to
+ * evaluate (a build/packaging fault) is not an AEM fault, and must not be
+ * reported as one.
+ *
+ * Carries no payload: its arrival, from the trusted view's main frame, is the
+ * entire signal. Re-sent on every document load, because a navigation replaces
+ * the preload context that registered the listeners.
+ */
+export const AEM_BRIDGE_READY_CHANNEL = 'aem-bridge:ready' as const;
 
 export const aemBridgeFetchCommandSchema = z.object({
   /**

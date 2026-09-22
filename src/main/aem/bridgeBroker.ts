@@ -34,6 +34,15 @@ export interface BridgeTransport {
   /** Delivers a fetch command to the AEM view. Returns false when there is no live view to send to. */
   sendFetch(command: AemBridgeFetchCommand): boolean;
   sendCancel(command: AemBridgeCancelCommand): void;
+  /**
+   * Whether the live AEM view's preload has announced it can answer fetches
+   * (see `AEM_BRIDGE_READY_CHANNEL`). Optional so a test double need not model
+   * it; when absent the broker assumes ready, preserving the pre-handshake
+   * behaviour. A live transport always supplies it, and returning `false` lets
+   * the broker fail a request immediately instead of waiting out the deadline
+   * for a reply that can never come.
+   */
+  isReady?(): boolean;
   /** Registers the reply listener. Returns an unsubscribe function. */
   onReply(listener: (rawReply: unknown, origin: BridgeReplyOrigin) => void): () => void;
 }
@@ -69,6 +78,7 @@ function toLogOutcome(outcome: BrokerOutcome): LogOutcome {
     case 'network_error':
     case 'stale':
     case 'no_view':
+    case 'bridge_unavailable':
       return 'failure';
   }
 }
@@ -185,6 +195,16 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
       const staleness = classifyStaleness(entry.envelope, deps.currentContext());
       if (staleness !== 'fresh') {
         settle(entry, { kind: 'stale', status: staleness });
+        continue;
+      }
+
+      // The view is live but its preload has never announced it can answer - a
+      // build/packaging fault, not an AEM one. Failing here, rather than
+      // sending into a `WebContents` that has no listener and waiting out the
+      // whole deadline for a reply that can never come, is what keeps this from
+      // masquerading as an AEM timeout.
+      if (deps.transport.isReady !== undefined && !deps.transport.isReady()) {
+        settle(entry, { kind: 'bridge_unavailable' });
         continue;
       }
 

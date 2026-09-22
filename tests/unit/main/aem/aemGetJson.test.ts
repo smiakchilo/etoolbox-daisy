@@ -211,6 +211,18 @@ describe('executeAemGetJson - what each transport verdict means to the agent', (
     expect(error.requiredAction).toBe('select_server');
   });
 
+  it('reports an unavailable bridge as a non-retryable application problem, distinct from no_view', async () => {
+    const bridge = expectError(await run({ kind: 'bridge_unavailable' })).error;
+    const noView = expectError(await run({ kind: 'no_view' })).error;
+
+    expect(bridge.code).toBe('ACCESS_DENIED');
+    expect(bridge.retryable).toBe(false);
+    // The pane is present, so this is not "pick a server" - and the two facts
+    // must not share a message, or the log could not tell them apart.
+    expect(bridge.requiredAction).toBe('none');
+    expect(bridge.message).not.toBe(noView.message);
+  });
+
   it('reports a transport failure as retryable', async () => {
     const error = expectError(
       await run({ kind: 'network_error', message: 'ERR_CONNECTION_REFUSED' }),
@@ -312,6 +324,7 @@ describe('executeAemGetJson - errors never carry remote content', () => {
       { kind: 'stale', status: 'stale_server_revision' },
       { kind: 'stale', status: 'stale_navigation_epoch' },
       { kind: 'no_view' },
+      { kind: 'bridge_unavailable' },
       jsonResponse('x', 401),
       jsonResponse('x', 403),
       jsonResponse('x', 404),

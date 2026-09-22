@@ -3,6 +3,7 @@ import type { IpcMainEvent, WebContents } from 'electron';
 import {
   AEM_BRIDGE_CANCEL_CHANNEL,
   AEM_BRIDGE_FETCH_CHANNEL,
+  AEM_BRIDGE_READY_CHANNEL,
   AEM_BRIDGE_REPLY_CHANNEL,
 } from '../../../../src/shared/contracts/aemBridge';
 import type { BridgeReplyOrigin } from '../../../../src/main/aem/bridgeBroker';
@@ -65,6 +66,12 @@ function subFrameEvent(senderId: number): IpcMainEvent {
 function fireReply(event: IpcMainEvent, payload: unknown): void {
   for (const listener of [...(ipcListeners.get(AEM_BRIDGE_REPLY_CHANNEL) ?? [])]) {
     listener(event, payload);
+  }
+}
+
+function fireReady(event: IpcMainEvent): void {
+  for (const listener of [...(ipcListeners.get(AEM_BRIDGE_READY_CHANNEL) ?? [])]) {
+    listener(event, {});
   }
 }
 
@@ -210,6 +217,64 @@ describe('createAemBridgeTransport - deciding who may answer', () => {
     fireReply(mainFrameEvent(7), { anything: 'at all' });
 
     expect(captured.payloads).toEqual([{ anything: 'at all' }]);
+  });
+});
+
+describe('createAemBridgeTransport - preload readiness', () => {
+  it('is not ready before the preload has announced itself', () => {
+    const view = makeFakeView(7);
+    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+
+    expect(transport.isReady()).toBe(false);
+  });
+
+  it('is ready once the trusted view main frame announces, and stays ready', () => {
+    const view = makeFakeView(7);
+    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+
+    fireReady(mainFrameEvent(7));
+
+    expect(transport.isReady()).toBe(true);
+  });
+
+  it('does not become ready from another WebContents, however well-formed', () => {
+    const view = makeFakeView(7);
+    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+
+    fireReady(mainFrameEvent(8));
+
+    expect(transport.isReady()).toBe(false);
+  });
+
+  it('does not become ready from a sub-frame of the AEM view', () => {
+    const view = makeFakeView(7);
+    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+
+    fireReady(subFrameEvent(7));
+
+    expect(transport.isReady()).toBe(false);
+  });
+
+  it('stops being ready when the view is replaced by one that has not announced', () => {
+    // A rebuilt pane is a new WebContents whose preload has not run yet; a
+    // readiness captured once would wrongly report the new view as usable.
+    let view = makeFakeView(7);
+    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    fireReady(mainFrameEvent(7));
+    expect(transport.isReady()).toBe(true);
+
+    view = makeFakeView(99);
+
+    expect(transport.isReady()).toBe(false);
+  });
+
+  it('removes the ready listener on dispose', () => {
+    const view = makeFakeView(7);
+    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+
+    transport.dispose();
+
+    expect(ipcListeners.get(AEM_BRIDGE_READY_CHANNEL)?.size ?? 0).toBe(0);
   });
 });
 

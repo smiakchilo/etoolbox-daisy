@@ -2,6 +2,7 @@ import { ipcRenderer } from 'electron';
 import {
   AEM_BRIDGE_CANCEL_CHANNEL,
   AEM_BRIDGE_FETCH_CHANNEL,
+  AEM_BRIDGE_READY_CHANNEL,
   AEM_BRIDGE_REPLY_CHANNEL,
   aemBridgeCancelCommandSchema,
   aemBridgeFetchCommandSchema,
@@ -78,3 +79,10 @@ ipcRenderer.on(AEM_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {
   inFlight.delete(parsed.data.requestId);
   controller.abort();
 });
+
+// Announced only after both listeners are registered, so main never treats
+// "ready" as true for a document that could not yet answer a fetch. Main uses
+// this to fail a request immediately when the preload never loaded, instead of
+// letting it look like an AEM timeout. Sent once per document; a navigation
+// re-runs this file, which re-registers and re-announces.
+ipcRenderer.send(AEM_BRIDGE_READY_CHANNEL, {});

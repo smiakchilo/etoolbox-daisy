@@ -38,6 +38,15 @@ export default defineConfig({
     // where it is once again the only entry and is therefore self-contained.
     plugins: [externalizeDepsPlugin({ exclude: ['zod'] }), assertSelfContainedPreloads()],
     build: {
+      // `emptyOutDir: false` is load-bearing and mirrors the aem-preload pass.
+      // `out/preload` is written by TWO passes - this one and
+      // `electron.vite.aem-preload.config.ts` - and Vite empties an outDir
+      // inside the project root before writing. Leaving this at the default
+      // deleted `aem-preload.js`, which the `dev` script had just built (and
+      // which the `build` script builds only afterwards), so the AEM view's
+      // preload silently failed to load and every bridge fetch waited out the
+      // full 90 s deadline. Neither pass may clear the shared directory.
+      emptyOutDir: false,
       rollupOptions: {
         input: {
           'app-preload': path.resolve(__dirname, 'src/preload/app-preload.ts'),

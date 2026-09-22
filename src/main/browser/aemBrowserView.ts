@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs';
 import { WebContentsView, screen } from 'electron';
 import type { BrowserWindow, Session, WebContents } from 'electron';
 import type { BrowserNavigationState, ViewBounds } from '../../shared';
+import type { Logger } from '../logger';
 import { attachChromeContextMenu } from '../contextMenu';
 import { attachDevToolsShortcut } from '../devTools';
 import { decideAllowedUrl } from './urlPolicy';
@@ -40,6 +42,8 @@ export interface AemBrowserViewOptions {
   readonly aemPreloadPath: string;
   /** Pushed to the renderer as `browser:state-changed` on every navigation-state change. */
   readonly onNavigationStateChange: (state: BrowserNavigationState) => void;
+  /** Optional diagnostics sink for a preload that is missing or fails to evaluate. */
+  readonly logger?: Logger;
 }
 
 /**
@@ -86,6 +90,23 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   });
 
   options.window.contentView.addChildView(view);
+
+  // A preload that is absent (or throws while evaluating) leaves the bridge
+  // with no listener: the fetch command is delivered to a `WebContents` that
+  // can never answer, and every request waits out its whole deadline. The
+  // broker's readiness handshake turns that into an immediate, distinctly
+  // classified failure, but the *cause* is only visible here - at construction
+  // for a missing file, and on `preload-error` for one that fails to evaluate.
+  // Both are application build/packaging faults, not AEM faults, so they are
+  // logged as such rather than left to be inferred from a wall of timeouts.
+  if (!existsSync(options.aemPreloadPath)) {
+    options.logger?.error('AEM_PRELOAD_MISSING');
+  }
+
+  const onPreloadError = (): void => {
+    options.logger?.error('AEM_PRELOAD_ERROR');
+  };
+  view.webContents.on('preload-error', onPreloadError);
 
   // New-window requests: real popups (Chromium's `new-window` disposition -
   // the SSO/login dialogs) get a separate window, while `target="_blank"`
@@ -286,6 +307,7 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     destroyed = true;
     screen.removeListener('display-metrics-changed', onDisplayMetricsChanged);
     options.window.removeListener('moved', onWindowMoved);
+    view.webContents.removeListener('preload-error', onPreloadError);
     windowOpenRouter.closeAll();
     if (!options.window.isDestroyed()) {
       options.window.contentView.removeChildView(view);

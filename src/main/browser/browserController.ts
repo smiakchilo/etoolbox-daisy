@@ -229,6 +229,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     window,
     aemSession: aemSession.session,
     aemPreloadPath: options.aemPreloadPath,
+    logger,
     onNavigationStateChange: (state) => {
       rendererWebContents.send(BROWSER_STATE_CHANGED_CHANNEL, state);
     },

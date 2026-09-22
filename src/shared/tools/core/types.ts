@@ -59,7 +59,15 @@ export type BrokerOutcome =
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'timeout' }
   | { readonly kind: 'stale'; readonly status: 'stale_server_revision' | 'stale_navigation_epoch' }
-  | { readonly kind: 'no_view' };
+  | { readonly kind: 'no_view' }
+  /**
+   * The AEM view is live but its preload never announced it could answer
+   * fetches (`AEM_BRIDGE_READY_CHANNEL`), so no request could be delivered.
+   * Distinct from `no_view` - the pane is present; its bridge script is
+   * missing or broken. This is an application build/packaging fault, never an
+   * AEM one, and must not be reported as a timeout.
+   */
+  | { readonly kind: 'bridge_unavailable' };
 
 /**
  * A tool's model-facing registration data. `parameters` is derived from the

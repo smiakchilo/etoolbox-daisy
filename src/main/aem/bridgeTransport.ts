@@ -2,6 +2,7 @@ import { ipcMain, type IpcMainEvent, type WebContents } from 'electron';
 import {
   AEM_BRIDGE_CANCEL_CHANNEL,
   AEM_BRIDGE_FETCH_CHANNEL,
+  AEM_BRIDGE_READY_CHANNEL,
   AEM_BRIDGE_REPLY_CHANNEL,
 } from '../../shared/contracts/aemBridge';
 import type { BridgeReplyOrigin, BridgeTransport } from './bridgeBroker';
@@ -31,6 +32,8 @@ export interface AemBridgeTransportDeps {
 }
 
 export interface AemBridgeTransportHandle extends BridgeTransport {
+  /** Always implemented on the live transport, unlike the optional seam on {@link BridgeTransport}. */
+  isReady(): boolean;
   /** Removes the reply listener. Safe to call more than once. */
   dispose(): void;
 }
@@ -62,12 +65,33 @@ function replyOrigin(event: IpcMainEvent, deps: AemBridgeTransportDeps): BridgeR
 export function createAemBridgeTransport(deps: AemBridgeTransportDeps): AemBridgeTransportHandle {
   let replyListener: ((event: IpcMainEvent, payload: unknown) => void) | undefined;
 
+  /**
+   * The `WebContents` id whose preload last announced it could answer fetches.
+   * `undefined` until the first announcement, which is exactly the state a
+   * missing or broken preload leaves it in forever. Compared against the
+   * *live* view on every read (never cached), for the same reason replies are:
+   * a rebuilt pane is a new `WebContents` whose preload has not announced yet.
+   */
+  let readyWebContentsId: number | undefined;
+
   function send(channel: string, payload: unknown): boolean {
     const target = liveTarget(deps);
     if (target === undefined) return false;
     target.send(channel, payload);
     return true;
   }
+
+  // Registered once, at construction, and independent of `onReply`: readiness
+  // is a fact about the view, not about whether a caller is currently awaiting
+  // a reply. Trust is decided by the same rule replies use, so a stray
+  // announcement from any other `WebContents` or sub-frame cannot mark the
+  // bridge ready.
+  const readyListener = (event: IpcMainEvent): void => {
+    const origin = replyOrigin(event, deps);
+    if (!origin.isTrustedAemView || !origin.isMainFrame) return;
+    readyWebContentsId = event.sender.id;
+  };
+  ipcMain.on(AEM_BRIDGE_READY_CHANNEL, readyListener);
 
   return {
     sendFetch(command) {
@@ -78,6 +102,10 @@ export function createAemBridgeTransport(deps: AemBridgeTransportDeps): AemBridg
       // exists has no fetch left to abort, and the broker has already settled
       // whatever prompted the cancel.
       send(AEM_BRIDGE_CANCEL_CHANNEL, command);
+    },
+    isReady() {
+      const target = liveTarget(deps);
+      return target !== undefined && target.id === readyWebContentsId;
     },
     onReply(listener) {
       const handler = (event: IpcMainEvent, payload: unknown): void => {
@@ -92,6 +120,7 @@ export function createAemBridgeTransport(deps: AemBridgeTransportDeps): AemBridg
       };
     },
     dispose() {
+      ipcMain.removeListener(AEM_BRIDGE_READY_CHANNEL, readyListener);
       if (replyListener === undefined) return;
       ipcMain.removeListener(AEM_BRIDGE_REPLY_CHANNEL, replyListener);
       replyListener = undefined;

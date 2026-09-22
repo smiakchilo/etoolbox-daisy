@@ -17,7 +17,8 @@ export type BrokerErrorKey =
   | 'timeout'
   | 'stale_server_revision'
   | 'stale_navigation_epoch'
-  | 'no_view';
+  | 'no_view'
+  | 'bridge_unavailable';
 
 /** A broker outcome that is not a response - i.e. one that names a failure. */
 export type NonResponseBrokerOutcome = Exclude<BrokerOutcome, { kind: 'response' }>;
@@ -42,5 +43,7 @@ export function brokerErrorKey(outcome: NonResponseBrokerOutcome): BrokerErrorKe
       return outcome.status;
     case 'no_view':
       return 'no_view';
+    case 'bridge_unavailable':
+      return 'bridge_unavailable';
   }
 }

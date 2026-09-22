@@ -65,6 +65,7 @@ function createHarness() {
   let now = 0;
   let context: CurrentAemContext = { serverRevision: 0, navigationEpoch: 0 };
   const blockedRequestIds = new Set<string>();
+  let ready = true;
 
   const transport: BridgeTransport = {
     sendFetch(command) {
@@ -74,6 +75,7 @@ function createHarness() {
     sendCancel(command) {
       sendCancelCalls.push(command.requestId);
     },
+    isReady: () => ready,
     onReply(listener) {
       replyListener = listener;
       return () => {
@@ -108,6 +110,9 @@ function createHarness() {
     },
     blockRequestId: (requestId: string) => {
       blockedRequestIds.add(requestId);
+    },
+    setReady: (value: boolean) => {
+      ready = value;
     },
     fireReply: (rawReply: unknown, origin: BridgeReplyOrigin = TRUSTED_ORIGIN) => {
       replyListener?.(rawReply, origin);
@@ -378,6 +383,35 @@ describe('createAemBridgeBroker', () => {
     expect(second.value()?.kind).toBe('response');
   });
 
+  it('rule 13: resolves bridge_unavailable without sending when the view is live but its preload never announced ready', async () => {
+    const harness = createHarness();
+    harness.setReady(false);
+    const broker = createAemBridgeBroker(harness.deps);
+
+    const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
+    await flushMicrotasks();
+
+    // Never sent, and settled immediately - not after the deadline. This is
+    // what keeps a missing/broken preload from looking like an AEM timeout.
+    expect(outcome.value()).toEqual({ kind: 'bridge_unavailable' });
+    expect(harness.sendFetchCalls).toEqual([]);
+    expect(harness.timers).toEqual([]);
+  });
+
+  it('rule 13: sends normally once the preload has announced ready', async () => {
+    const harness = createHarness();
+    harness.setReady(false);
+    const broker = createAemBridgeBroker(harness.deps);
+
+    harness.setReady(true);
+    const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
+
+    expect(harness.sendFetchCalls).toEqual(['req-a']);
+    harness.fireReply(okReply('req-a'));
+    await flushMicrotasks();
+    expect(outcome.value()?.kind).toBe('response');
+  });
+
   it('rule 9: cancels the pending timer once a request settles via a reply', async () => {
     const harness = createHarness();
     const broker = createAemBridgeBroker(harness.deps);
@@ -503,6 +537,19 @@ describe('createAemBridgeBroker - request diagnostics', () => {
     await flushMicrotasks();
 
     expect(lines.at(-1)?.fields).toMatchObject({ outcome: 'timeout' });
+  });
+
+  it('reports an unavailable bridge as outcome failure, and never logs AEM_REQUEST_STARTED', async () => {
+    const harness = createHarness();
+    harness.setReady(false);
+    const { logger, lines } = recordingLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+
+    trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
+    await flushMicrotasks();
+
+    expect(lines.map((line) => line.code)).toEqual(['AEM_REQUEST_COMPLETED']);
+    expect(lines[0]?.fields).toMatchObject({ outcome: 'failure' });
   });
 
   it('reports a cancelled request as outcome cancelled', async () => {

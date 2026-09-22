@@ -372,6 +372,7 @@ describe('executeAemQuery - transport and HTTP failures', () => {
     ['timeout', { kind: 'timeout' } as const, 'TIMEOUT'],
     ['network_error', { kind: 'network_error' } as const, 'NETWORK_ERROR'],
     ['no_view', { kind: 'no_view' } as const, 'ACCESS_DENIED'],
+    ['bridge_unavailable', { kind: 'bridge_unavailable' } as const, 'ACCESS_DENIED'],
   ])('maps a %s broker outcome to %s', async (_label, outcome, code) => {
     const result = await run(outcome as BrokerOutcome);
     expect(expectError(result).error.code).toBe(code);
