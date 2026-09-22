@@ -11,6 +11,7 @@ import {
 } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
+import { repaintAndFollow } from '../chat/transcriptScroll';
 import {
   AGENT_DEFINITIONS,
   applyAgentEvent,
@@ -326,7 +327,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // Repaint at once rather than waiting up to a whole timer tick for the
     // cleared store's dirty flag to be noticed - the user just asked for a
     // clean slate and should see one immediately.
-    transcriptView.repaint(transcriptStore);
+    repaintTranscript();
     refreshSessionPresentation();
     void ensureConversationOpen(id);
   }
@@ -340,6 +341,16 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     attrs: { class: 'chat-transcript' },
     children: [transcriptView.element],
   });
+
+  /**
+   * Repaints the transcript and keeps the viewport on the newest entry when the
+   * reader is already at the bottom - see `transcriptScroll.ts`. Every repaint
+   * path (the throttled timer and `startNewSession`'s immediate one) goes
+   * through here so the two can never disagree about following.
+   */
+  function repaintTranscript(): void {
+    repaintAndFollow(transcript, () => transcriptView.repaint(transcriptStore));
+  }
 
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
@@ -359,7 +370,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   const repaintTimer = setInterval(() => {
     if (transcriptStore.takeDirty()) {
-      transcriptView.repaint(transcriptStore);
+      repaintTranscript();
     }
   }, TRANSCRIPT_REPAINT_INTERVAL_MS);
 
