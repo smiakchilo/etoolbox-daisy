@@ -11,6 +11,7 @@ import {
 } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
+import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/aemLinkTargets';
 import { repaintAndFollow } from '../chat/transcriptScroll';
 import {
   AGENT_DEFINITIONS,
@@ -35,6 +36,14 @@ export interface ChatPane {
    * other.
    */
   setAgents(agents: Readonly<Record<string, AgentSettingsSnapshot>>): void;
+  /**
+   * Updates which message links are openable: the configured host origins and
+   * the origin of the AEM page the browser pane is currently showing. Called on
+   * every settings/navigation change; a real change forces one transcript
+   * repaint so a link's clickability tracks the pane without waiting for the
+   * message text to change.
+   */
+  setLinkContext(context: LinkContext): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -84,9 +93,25 @@ export interface ChatPaneOptions {
   readonly onOpenSettings: (tab?: SettingsTab) => void;
 }
 
+/** Order-sensitive equality: the host list only changes when the settings snapshot does. */
+function linkContextsEqual(left: LinkContext, right: LinkContext): boolean {
+  return (
+    left.activeOrigin === right.activeOrigin &&
+    left.hostOrigins.length === right.hostOrigins.length &&
+    left.hostOrigins.every((origin, index) => origin === right.hostOrigins[index])
+  );
+}
+
 export function createChatPane(options: ChatPaneOptions): ChatPane {
   const transcriptStore: TranscriptStore = createTranscriptStore();
-  const transcriptView: TranscriptView = createTranscriptView();
+  // The live link context, replaced by `setLinkContext`. A fresh pane starts
+  // with nothing openable, which is also correct before the settings snapshot
+  // and the browser pane's first navigation state arrive.
+  let linkContext: LinkContext = EMPTY_LINK_CONTEXT;
+  const transcriptView: TranscriptView = createTranscriptView(undefined, {
+    getLinkContext: () => linkContext,
+    onOpenLink: (url) => openLink(url),
+  });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
   // banner row's lowest-priority presentation (see `refreshSessionPresentation`
@@ -302,6 +327,19 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
+   * Opens a message link in the AEM pane. The URL was already resolved to an
+   * absolute, configured-host address by the markdown renderer, so this is the
+   * ordinary address-bar navigation path - the pane validates the origin
+   * exactly as it does for a typed address and a failure lands on this pane's
+   * one banner.
+   */
+  function openLink(url: string): void {
+    void window.daisy.browser.navigate(url).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
+  }
+
+  /**
    * The toolbar's "New session": discards both the visible transcript and the
    * model's conversation context. A fresh `ChatId` is minted and opened; the
    * service's one-active-conversation rule tears the previous conversation
@@ -391,6 +429,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     setAgents(next: Readonly<Record<string, AgentSettingsSnapshot>>): void {
       agents = next;
       refreshSessionPresentation();
+    },
+    setLinkContext(next: LinkContext): void {
+      if (linkContextsEqual(linkContext, next)) return;
+      linkContext = next;
+      // Repaint immediately: a link's clickability changed but no message text
+      // did, so the store is not dirty and the timer would not pick it up.
+      repaintTranscript();
     },
     dispose(): void {
       unsubscribeEvents?.();

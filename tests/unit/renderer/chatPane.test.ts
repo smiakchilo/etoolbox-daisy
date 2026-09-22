@@ -1,7 +1,12 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createChatPane, type ChatPane } from '../../../src/renderer/src/shell/chatPane';
-import type { AgentChatStatus, AgentSettingsSnapshot, ChatId } from '../../../src/shared';
+import type {
+  AgentChatStatus,
+  AgentEvent,
+  AgentSettingsSnapshot,
+  ChatId,
+} from '../../../src/shared';
 
 /**
  * The chat pane's reaction to the `agent-chat:status-changed` push.
@@ -27,7 +32,9 @@ const getStatus = vi.fn();
 const openConversation = vi.fn();
 const sendMessage = vi.fn();
 const abort = vi.fn();
+const navigate = vi.fn();
 let statusListener: ((status: AgentChatStatus) => void) | undefined;
+let eventListener: ((event: AgentEvent) => void) | undefined;
 
 function definedStatus(overrides: Partial<AgentChatStatus> = {}): AgentChatStatus {
   return {
@@ -63,6 +70,19 @@ function pushStatus(status: AgentChatStatus): void {
   statusListener(status);
 }
 
+function pushEvent(event: AgentEvent): void {
+  if (eventListener === undefined) throw new Error('the pane never subscribed to chat events');
+  eventListener(event);
+}
+
+async function waitForAssistantMessage(pane: ChatPane): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (pane.element.querySelector('.chat-message--assistant') !== null) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('the transcript never repainted the assistant message');
+}
+
 function sendButton(pane: ChatPane): HTMLElement | null {
   return pane.element.querySelector('.chat-composer__send');
 }
@@ -76,7 +96,9 @@ beforeEach(() => {
   openConversation.mockReset();
   sendMessage.mockReset();
   abort.mockReset();
+  navigate.mockReset();
   statusListener = undefined;
+  eventListener = undefined;
 
   // Never resolves: the pane's own `void refreshStatus()` at construction must
   // not race the pushed status each test drives. The push is the path under
@@ -85,6 +107,7 @@ beforeEach(() => {
   openConversation.mockResolvedValue({ ok: true, chatId: 'chat-1' as ChatId });
   sendMessage.mockResolvedValue({ ok: true, turnId: 'turn-1' });
   abort.mockResolvedValue({ ok: true });
+  navigate.mockResolvedValue({ ok: true });
 
   dom = new JSDOM();
   Reflect.set(globalThis, 'document', dom.window.document);
@@ -95,7 +118,12 @@ beforeEach(() => {
       openConversation,
       sendMessage,
       abort,
-      onEvent: vi.fn(() => () => undefined),
+      onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
+        eventListener = listener;
+        return () => {
+          eventListener = undefined;
+        };
+      }),
       onStatusChanged: vi.fn((listener: (status: AgentChatStatus) => void) => {
         statusListener = listener;
         return () => {
@@ -103,6 +131,7 @@ beforeEach(() => {
         };
       }),
     },
+    browser: { navigate },
   });
 });
 
@@ -369,6 +398,47 @@ describe('createChatPane status push', () => {
     newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
     expect(transcript.scrollTop).toBe(100);
+
+    pane.dispose();
+  });
+
+  it('opens a message link in the AEM pane and repaints when the link context changes', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const chatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+    pushEvent({
+      type: 'assistant.message.completed',
+      chatId,
+      sequence: 0,
+      turnId: 'turn-1',
+      messageId: 'msg-1',
+      content: 'See /content/site/en/page for details.',
+    } as AgentEvent);
+    await waitForAssistantMessage(pane);
+
+    // No host is active yet, so the bare path is plain text.
+    expect(pane.element.querySelector('a[data-daisy-link]')).toBeNull();
+
+    // The shell reports the pane is now on a configured host: the same message
+    // is re-rendered and the path becomes an openable link without new text.
+    pane.setLinkContext({
+      hostOrigins: ['https://author.example'],
+      activeOrigin: 'https://author.example',
+    });
+    const anchor = pane.element.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(
+      'https://author.example/editor.html/content/site/en/page.html',
+    );
+
+    anchor?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(navigate).toHaveBeenCalledWith(
+      'https://author.example/editor.html/content/site/en/page.html',
+    );
 
     pane.dispose();
   });

@@ -30,6 +30,80 @@ function parse(html: string): Document {
   return new dom.window.DOMParser().parseFromString(html, 'text/html');
 }
 
+const AUTHOR = 'https://author.example';
+const ACTIVE_CONTEXT = { hostOrigins: [AUTHOR], activeOrigin: AUTHOR };
+const HOSTS_ONLY_CONTEXT = { hostOrigins: [AUTHOR], activeOrigin: undefined };
+
+describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
+  it('rewrites a relative /content markdown link to its edit-mode URL and marks it openable', () => {
+    const doc = parse(renderer.render('[Page](/content/site/en/page)', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/editor.html/content/site/en/page.html`);
+    expect(anchor?.hasAttribute('data-daisy-link')).toBe(true);
+    expect(anchor?.textContent).toBe('Page');
+  });
+
+  it('routes a relative /content/dam path to CRXDE', () => {
+    const doc = parse(renderer.render('[Asset](/content/dam/x/y)', ACTIVE_CONTEXT));
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe(
+      `${AUTHOR}/crx/de/index.jsp#/content/dam/x/y`,
+    );
+  });
+
+  it('linkifies a bare AEM path in prose', () => {
+    const doc = parse(renderer.render('See /content/site/en/page for details.', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/editor.html/content/site/en/page.html`);
+    expect(doc.body.textContent?.trim()).toBe('See /content/site/en/page for details.');
+  });
+
+  it('never linkifies inside inline code or a fenced code block', () => {
+    const doc = parse(
+      renderer.render('`/content/inline`\n\n```\n/content/fenced\n```\n', ACTIVE_CONTEXT),
+    );
+    expect(doc.querySelectorAll('a')).toHaveLength(0);
+  });
+
+  it('rewrites an absolute configured-host page link to edit mode', () => {
+    const doc = parse(renderer.render(`[P](${AUTHOR}/content/x.html)`, ACTIVE_CONTEXT));
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe(
+      `${AUTHOR}/editor.html/content/x.html`,
+    );
+    expect(doc.querySelector('a')?.hasAttribute('data-daisy-link')).toBe(true);
+  });
+
+  it('leaves an external link rendered but not openable', () => {
+    const doc = parse(renderer.render('[E](https://other.example/x)', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a');
+    expect(anchor?.getAttribute('href')).toBe('https://other.example/x');
+    expect(anchor?.hasAttribute('data-daisy-link')).toBe(false);
+  });
+
+  it('does not make a relative path clickable when no host is active', () => {
+    const doc = parse(renderer.render('[Page](/content/site/en/page)', HOSTS_ONLY_CONTEXT));
+    // The sanitizer strips the relative href and no marker is added, so the
+    // link degrades to its plain text.
+    expect(doc.querySelector('a')?.getAttribute('href')).toBeNull();
+    expect(doc.querySelector('a')?.hasAttribute('data-daisy-link')).toBe(false);
+    expect(doc.body.textContent).toContain('Page');
+  });
+
+  it('keeps a bare path as plain text when no host is active', () => {
+    const html = renderer.render('See /content/site/en/page', HOSTS_ONLY_CONTEXT);
+    expect(parse(html).querySelectorAll('a')).toHaveLength(0);
+  });
+
+  it('is unchanged from the pre-link behaviour when no context is given', () => {
+    const doc = parse(renderer.render('[Page](/content/site/en/page)'));
+    expect(doc.querySelector('a')?.getAttribute('href')).toBeNull();
+    expect(
+      parse(renderer.render('[E](https://other.example/x)'))
+        .querySelector('a')
+        ?.getAttribute('href'),
+    ).toBe('https://other.example/x');
+  });
+});
+
 describe('createMarkdownRenderer', () => {
   describe('GFM tables', () => {
     it('renders a table to real DOM elements with the expected cell text', () => {

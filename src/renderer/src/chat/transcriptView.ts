@@ -1,4 +1,5 @@
 import { el } from '../lib/dom';
+import { EMPTY_LINK_CONTEXT, MESSAGE_LINK_ATTRIBUTE, type LinkContext } from './aemLinkTargets';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import { describeRequiredAction, describeToolCallStatus } from './transcriptViewModel';
 import { type QueryResultTable, readQueryResultTable } from './queryResultViewModel';
@@ -8,6 +9,21 @@ export interface TranscriptView {
   readonly element: HTMLElement;
   /** Repaints the transcript from `store`'s current items and text. Call when `store.takeDirty()` is true. */
   repaint(store: TranscriptStore): void;
+}
+
+export interface TranscriptViewOptions {
+  /**
+   * The live link context (host origins + active AEM origin) each message is
+   * rendered against. Read on every repaint, so a navigation or a settings
+   * change is reflected as soon as the caller re-renders (see `chatPane.ts`).
+   */
+  readonly getLinkContext?: () => LinkContext;
+  /**
+   * Invoked with the resolved URL of a message link the reader clicked. Only
+   * anchors `renderMarkdown.ts` stamped as openable are routed here; every
+   * other link is left to the browser's own (blocked) default.
+   */
+  readonly onOpenLink?: (url: string) => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -125,9 +141,25 @@ function renderToolCallBody(view: ToolCallView | undefined): readonly HTMLElemen
  */
 export function createTranscriptView(
   markdownRenderer: MarkdownRenderer = createMarkdownRenderer(window),
+  options: TranscriptViewOptions = {},
 ): TranscriptView {
   const element = el('div', { attrs: { class: 'chat-transcript__messages' } });
   const cache = new Map<string, HTMLElement>();
+  const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
+
+  // One delegated listener, attached for the view's lifetime. It only acts on
+  // anchors the markdown renderer stamped as openable (`data-daisy-link`), so
+  // an external or unrecognised link falls through to the browser's default -
+  // which the app's own `will-navigate` guard then refuses. `closest` is read
+  // defensively because a click's target may be a text node.
+  element.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    const anchor = target?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}]`) ?? null;
+    const href = anchor?.getAttribute('href') ?? null;
+    if (href === null) return;
+    event.preventDefault();
+    options.onOpenLink?.(href);
+  });
 
   function createShell(item: TranscriptItem): HTMLElement {
     switch (item.kind) {
@@ -171,7 +203,10 @@ export function createTranscriptView(
         // Must fully REPLACE the node's content on every call, never append
         // to it - see this function's doc comment for why reusing the same
         // node across repaints is what makes this assignment meaningful.
-        shell.innerHTML = markdownRenderer.render(store.textForMessage(item.messageId));
+        shell.innerHTML = markdownRenderer.render(
+          store.textForMessage(item.messageId),
+          getLinkContext(),
+        );
         return;
       case 'toolCall': {
         const view = store.toolCallFor(item.toolCallId);

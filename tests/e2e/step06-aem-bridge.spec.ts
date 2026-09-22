@@ -39,8 +39,10 @@ import {
  * Proven here, end-to-end, against the real preload:
  *  - the AEM session cookie is HttpOnly and travels with a bridge fetch, but
  *    the cookie value and any Set-Cookie/Cookie header never reach this
- *    process - the reply carries only status/contentType/bodyText, nothing
- *    resembling a header map (tests 1, 2);
+ *    process. The reply's readable-headers list (added for the tool HTTP log,
+ *    commit 9a79dae) is browser-filtered: `Set-Cookie`/`Cookie` are
+ *    forbidden names the fetch implementation never exposes, so no cookie can
+ *    appear in it (tests 1, 2);
  *  - `redirect: "manual"` really yields a `redirect_blocked` opaque-redirect
  *    outcome in this Electron/Chromium build, both for an unauthenticated
  *    same-origin request and for a mid-fetch redirect to a different origin -
@@ -611,11 +613,14 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
         throw new Error(`expected a response reply, got: ${JSON.stringify(reply)}`);
       }
 
-      // The reply schema's "response" variant has exactly these five fields -
-      // no headers map, so there is nowhere for a cookie to hide.
+      // The reply schema's "response" variant has exactly these six fields.
+      // `headers` is the response's *readable* headers, for the tool HTTP log
+      // (commit 9a79dae); the browser withholds `Set-Cookie`/`Cookie` from it,
+      // so there is still nowhere for the session cookie to hide.
       expect(Object.keys(reply).sort()).toEqual([
         'bodyText',
         'contentType',
+        'headers',
         'kind',
         'requestId',
         'status',
@@ -623,6 +628,14 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
       const serialized = JSON.stringify(reply);
       expect(serialized).not.toContain(AEM_SESSION_COOKIE);
       expect(serialized.toLowerCase()).not.toContain('cookie');
+
+      // The readable-headers list is real - it carries the fixture's own
+      // response headers - which is what makes the "no cookie header in it"
+      // claim below meaningful rather than vacuous.
+      const headerNames = (reply.headers ?? []).map((header) => header.name.toLowerCase());
+      expect(headerNames).toContain('content-type');
+      expect(headerNames).not.toContain('set-cookie');
+      expect(headerNames).not.toContain('cookie');
 
       // The central security property, proven from the OTHER side: the
       // fixture's own request log shows the cookie DID travel to the server

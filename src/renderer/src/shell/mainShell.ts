@@ -1,7 +1,7 @@
 import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLayoutStore';
 import { isHostPageUrl, loadLastPageUrl, saveLastPageUrl } from '../lib/lastPageStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
-import { type AppSettingsSnapshot } from '../../../shared';
+import { parseNavigationTarget, type AppSettingsSnapshot } from '../../../shared';
 import { createBrowserPane } from './browserPane';
 import { createChatPane } from './chatPane';
 import { createMainSplitView } from './mainSplitView';
@@ -78,6 +78,29 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
    */
   let hostOrigins: readonly string[] = [];
 
+  // The URL the AEM pane last reported, kept so the link context can be
+  // re-derived when the *host list* changes (a settings edit) without a new
+  // navigation event.
+  let lastPaneUrl: string | undefined;
+
+  /**
+   * The origin of the pane's current page, but only when it is a configured
+   * host - the only origin a relative message path can be resolved against. An
+   * `about:blank` start, an SSO/IdP hop, or a page on a since-removed host all
+   * yield `undefined`, which is what keeps a relative path plain text.
+   */
+  function deriveActiveOrigin(): string | undefined {
+    if (lastPaneUrl === undefined) return undefined;
+    const target = parseNavigationTarget(lastPaneUrl);
+    if (!target.ok) return undefined;
+    return hostOrigins.includes(target.origin) ? target.origin : undefined;
+  }
+
+  /** Pushes the current host/pane context to the chat pane; it repaints only on a real change. */
+  function publishLinkContext(): void {
+    chatPane.setLinkContext({ hostOrigins, activeOrigin: deriveActiveOrigin() });
+  }
+
   /**
    * Applies one loaded settings snapshot to the browser pane and hands the
    * chat pane the persisted per-provider flags. The chat pane derives which
@@ -93,6 +116,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       hostOptions: buildHostOptions(hosts),
     });
     chatPane.setAgents(snapshot.agents);
+    publishLinkContext();
   }
 
   // Remembers the last opened page for the next launch. Subscribing here
@@ -103,6 +127,8 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // redirect, `about:blank`, a pending navigation to an unknown origin - is
   // ignored, so it never displaces the last real AEM page.
   const unsubscribeLastPage = window.daisy.browser.onStateChanged((state) => {
+    lastPaneUrl = state.url;
+    publishLinkContext();
     if (hostOrigins.length === 0) return;
     if (isHostPageUrl(state.url, hostOrigins)) {
       saveLastPageUrl(state.url);

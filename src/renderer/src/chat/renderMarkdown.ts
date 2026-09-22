@@ -1,6 +1,14 @@
 import { Marked } from 'marked';
 import createDOMPurify from 'dompurify';
 import type { Config as DomPurifyConfig } from 'dompurify';
+import {
+  EMPTY_LINK_CONTEXT,
+  MESSAGE_LINK_ATTRIBUTE,
+  resolveMessageLink,
+  resolveRelativeAemPath,
+  splitAemPathLinks,
+  type LinkContext,
+} from './aemLinkTargets';
 
 /**
  * Turns assistant Markdown into safe HTML for direct insertion into the
@@ -36,8 +44,19 @@ import type { Config as DomPurifyConfig } from 'dompurify';
  * change, re-verify assumptions marked "DOMPurify-version-specific" below.
  */
 export interface MarkdownRenderer {
-  /** Renders `markdown` to a sanitized HTML string, safe to assign to `innerHTML`. */
-  render(markdown: string): string;
+  /**
+   * Renders `markdown` to a sanitized HTML string, safe to assign to
+   * `innerHTML`.
+   *
+   * `context` says which links the reader may open (`aemLinkTargets.ts`):
+   * an absolute link on a configured AEM host, or an AEM-native relative path
+   * resolved against the pane's active host, is rewritten to its edit-mode URL
+   * and stamped with `MESSAGE_LINK_ATTRIBUTE`; every other link is left as it
+   * was (still rendered, but inert). Omitted entirely it behaves as
+   * {@link EMPTY_LINK_CONTEXT}: nothing is clickable, and this module's output
+   * is byte-for-byte what it was before link rewriting existed.
+   */
+  render(markdown: string, context?: LinkContext): string;
 }
 
 /**
@@ -260,10 +279,111 @@ const markdown = new Marked({ gfm: true, breaks: false, pedantic: false, async: 
 export function createMarkdownRenderer(windowRef: Window & typeof globalThis): MarkdownRenderer {
   const purify = createDOMPurify(windowRef);
 
+  /**
+   * Parses a rendered fragment into a detached document. `DOMParser` never
+   * executes scripts, so running it over model output (before sanitization, in
+   * `rewriteRelativeAnchors`) is safe; the sanitizer still runs afterwards as
+   * the net.
+   */
+  function parseFragment(html: string): Document {
+    return new windowRef.DOMParser().parseFromString(html, 'text/html');
+  }
+
+  /**
+   * Rewrites a relative AEM-native anchor (`[p](/content/x)`) into its absolute
+   * edit-mode URL *before* sanitization. This is what lets such a link survive
+   * the sanitizer's scheme policy, which rejects relative hrefs outright: by
+   * the time it is consulted the href is an ordinary `https://...` on a
+   * configured host. A relative path with no active host is left untouched, so
+   * the sanitizer strips it and the text remains behind with no href - exactly
+   * the owner's "do not convert relative paths to links if none".
+   */
+  function rewriteRelativeAnchors(doc: Document, context: LinkContext): void {
+    for (const anchor of Array.from(doc.querySelectorAll('a[href]'))) {
+      const href = anchor.getAttribute('href');
+      if (href === null) continue;
+      const resolved = resolveRelativeAemPath(href, context.activeOrigin);
+      if (resolved !== undefined) anchor.setAttribute('href', resolved);
+    }
+  }
+
+  /** Wraps every bare AEM-native path in a text node as a clickable anchor. */
+  function linkifyTextNodes(doc: Document, context: LinkContext): void {
+    if (context.activeOrigin === undefined) return;
+
+    const filter = {
+      acceptNode(node: Node): number {
+        const parent = node.parentElement;
+        if (parent === null) return windowRef.NodeFilter.FILTER_REJECT;
+        return parent.closest('a, code, pre') !== null
+          ? windowRef.NodeFilter.FILTER_REJECT
+          : windowRef.NodeFilter.FILTER_ACCEPT;
+      },
+    };
+    const walker = doc.createTreeWalker(doc.body, windowRef.NodeFilter.SHOW_TEXT, filter);
+
+    const textNodes: Text[] = [];
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      textNodes.push(node as Text);
+    }
+
+    for (const text of textNodes) {
+      const segments = splitAemPathLinks(text.data, context.activeOrigin);
+      if (!segments.some((segment) => segment.kind === 'link')) continue;
+
+      const fragment = doc.createDocumentFragment();
+      for (const segment of segments) {
+        if (segment.kind === 'text') {
+          fragment.append(doc.createTextNode(segment.value));
+          continue;
+        }
+        const anchor = doc.createElement('a');
+        anchor.setAttribute('href', segment.url);
+        anchor.setAttribute(MESSAGE_LINK_ATTRIBUTE, '');
+        anchor.textContent = segment.value;
+        fragment.append(anchor);
+      }
+      text.replaceWith(fragment);
+    }
+  }
+
+  /**
+   * The post-sanitization pass: linkifies bare paths, then resolves and marks
+   * every remaining anchor. Only a link {@link resolveMessageLink} resolves
+   * (a configured host, or a relative path with an active host) is stamped,
+   * and only a stamped anchor is intercepted on click (`transcriptView.ts`).
+   */
+  function markOpenableLinks(doc: Document, context: LinkContext): void {
+    linkifyTextNodes(doc, context);
+
+    for (const anchor of Array.from(doc.querySelectorAll('a'))) {
+      const href = anchor.getAttribute('href');
+      if (href === null) continue;
+      const resolved = resolveMessageLink(href, context);
+      if (resolved === undefined) continue;
+      if (resolved !== href) anchor.setAttribute('href', resolved);
+      anchor.setAttribute(MESSAGE_LINK_ATTRIBUTE, '');
+    }
+  }
+
   return {
-    render(markdownSource: string): string {
+    render(markdownSource: string, context: LinkContext = EMPTY_LINK_CONTEXT): string {
       const html: string = markdown.parse(markdownSource, { async: false });
-      return purify.sanitize(html, SANITIZER_CONFIG);
+
+      // With no configured host and no active origin nothing can be openable,
+      // so skip the two DOM passes entirely: the output is then exactly what
+      // this module produced before link rewriting existed, at the same cost.
+      if (context.hostOrigins.length === 0 && context.activeOrigin === undefined) {
+        return purify.sanitize(html, SANITIZER_CONFIG);
+      }
+
+      const preSanitize = parseFragment(html);
+      rewriteRelativeAnchors(preSanitize, context);
+      const cleaned = purify.sanitize(preSanitize.body.innerHTML, SANITIZER_CONFIG);
+
+      const postSanitize = parseFragment(cleaned);
+      markOpenableLinks(postSanitize, context);
+      return postSanitize.body.innerHTML;
     },
   };
 }

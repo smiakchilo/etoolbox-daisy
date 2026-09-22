@@ -242,11 +242,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 2043 passed / 14 skipped**;
-**Playwright → 70 tests + the new step07 "New session" case**. (The Session
-"Authentication"/"Models" → "Agents" tab merge moved the unit baseline from
-1658, and later work moved it on — see `docs/verification.md`, whose latest
-section records 2043/14.)
+Current baseline: **`npm run verify` → 2168 passed / 14 skipped**;
+**Playwright → 74 tests** (includes `message-links.spec.ts`, the assistant
+message-link case). (The Session "Authentication"/"Models" → "Agents" tab merge
+moved the unit baseline from 1658, and later work moved it on — see
+`docs/verification.md`, whose latest section records 2168/14.)
+The repository now has **commits** (HEAD `eab74e6`), so `git status`/`git log`
+work again; the older "zero commits" notes are stale. One **pre-existing,
+non-flaky** E2E failure remains: `step06-aem-bridge.spec.ts` test 2 asserts an
+exact bridge-reply key list that commit `9a79dae`'s optional `headers` field
+invalidated — see `docs/verification.md` "Assistant message links open the AEM
+pane in edit mode (2026-09-22)".
 `app.spec.ts` no longer collides with a running `npm run dev`: it now
 provisions a scratch storage home like every sibling spec (see
 `docs/verification.md` "Settings Servers renamed to Hosts", traps). Residual E2E
