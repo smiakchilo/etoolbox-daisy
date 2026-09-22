@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  newChatId,
-  newServerId,
-  newTurnId,
-  type IdGenerator,
-} from '../../src/shared';
+import { newChatId, newServerId, newTurnId, type IdGenerator } from '../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../src/shared';
 import { AEM_REQUEST_TIMEOUT_MS, toolRequestEnvelopeSchema } from '../../src/shared';
 import {

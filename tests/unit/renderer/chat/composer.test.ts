@@ -341,4 +341,225 @@ describe('createComposer', () => {
       });
     });
   });
+
+  describe('prompt history recall', () => {
+    const STORAGE_KEY = 'daisy.chat.composerHistory';
+    const previousWindow = Reflect.get(globalThis, 'window') as unknown;
+
+    interface StubStorage {
+      getItem(key: string): string | null;
+      setItem(key: string, value: string): void;
+    }
+
+    /** Installs a `window` whose `localStorage` is an in-memory stub, returning its backing map. */
+    function installStorage(seed: Record<string, string> = {}): Record<string, string> {
+      const values: Record<string, string> = { ...seed };
+      const storage: StubStorage = {
+        getItem: (key) => values[key] ?? null,
+        setItem: (key, value) => {
+          values[key] = value;
+        },
+      };
+      Reflect.set(globalThis, 'window', { localStorage: storage });
+      return values;
+    }
+
+    beforeEach(() => {
+      installStorage();
+    });
+
+    afterEach(() => {
+      Reflect.set(globalThis, 'window', previousWindow);
+    });
+
+    function arrowEvent(
+      key: 'ArrowUp' | 'ArrowDown',
+      options: { shiftKey?: boolean; ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean } = {},
+    ): InstanceType<typeof dom.window.KeyboardEvent> {
+      return new dom.window.KeyboardEvent('keydown', {
+        key,
+        shiftKey: options.shiftKey ?? false,
+        ctrlKey: options.ctrlKey ?? false,
+        altKey: options.altKey ?? false,
+        metaKey: options.metaKey ?? false,
+        bubbles: true,
+        cancelable: true,
+      });
+    }
+
+    interface StubTextarea {
+      selectionStart: number;
+      selectionEnd: number;
+      readonly style: Record<string, string>;
+      readonly rows: number;
+      readonly clientHeight: number;
+      readonly scrollHeight: number;
+      setSelectionRange(start: number, end: number): void;
+    }
+
+    /**
+     * jsdom does not upgrade `sp-textfield`, so there is no shadow `<textarea>`
+     * to read a caret from. Installing one lets the caret-sensitive branches be
+     * exercised; `autosize` bails on the zero-height metrics.
+     */
+    function stubShadowTextarea(
+      field: HTMLElement,
+      caret: { readonly start?: number; readonly end?: number } = {},
+    ): StubTextarea {
+      const textarea: StubTextarea = {
+        selectionStart: caret.start ?? 0,
+        selectionEnd: caret.end ?? 0,
+        style: {},
+        rows: 4,
+        clientHeight: 0,
+        scrollHeight: 0,
+        setSelectionRange(start: number, end: number): void {
+          textarea.selectionStart = start;
+          textarea.selectionEnd = end;
+        },
+      };
+      Object.defineProperty(field, 'shadowRoot', {
+        configurable: true,
+        value: { querySelector: (selector: string) => (selector === 'textarea' ? textarea : null) },
+      });
+      return textarea;
+    }
+
+    it('recalls the newest stored prompt on Up from an empty field, then walks older', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['older', 'newest']) });
+      const { field } = readyComposer();
+
+      field.dispatchEvent(arrowEvent('ArrowUp'));
+      expect(field.value).toBe('newest');
+
+      field.dispatchEvent(arrowEvent('ArrowUp'));
+      expect(field.value).toBe('older');
+    });
+
+    it('restores the draft on Down once past the newest prompt', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['older', 'newest']) });
+      const { field } = readyComposer();
+      const textarea = stubShadowTextarea(field, { start: 0, end: 0 });
+      field.value = 'my draft';
+
+      field.dispatchEvent(arrowEvent('ArrowUp'));
+      expect(field.value).toBe('newest');
+      // The caret lands at the end of a recalled prompt.
+      expect(textarea.selectionStart).toBe('newest'.length);
+
+      field.dispatchEvent(arrowEvent('ArrowDown'));
+      expect(field.value).toBe('my draft');
+    });
+
+    it('leaves Up alone while the caret is inside a non-empty draft', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['stored']) });
+      const { field } = readyComposer();
+      stubShadowTextarea(field, { start: 3, end: 3 });
+      field.value = 'my draft';
+
+      const event = arrowEvent('ArrowUp');
+      field.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(field.value).toBe('my draft');
+    });
+
+    it('does not consume Down at the draft position', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['stored']) });
+      const { field } = readyComposer();
+      field.value = '';
+
+      const event = arrowEvent('ArrowDown');
+      field.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(field.value).toBe('');
+    });
+
+    it('ignores a modified arrow key', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['stored']) });
+      const { field } = readyComposer();
+      field.value = '';
+
+      for (const modifier of ['shiftKey', 'ctrlKey', 'altKey', 'metaKey'] as const) {
+        const event = arrowEvent('ArrowUp', {
+          shiftKey: modifier === 'shiftKey',
+          ctrlKey: modifier === 'ctrlKey',
+          altKey: modifier === 'altKey',
+          metaKey: modifier === 'metaKey',
+        });
+        field.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+      }
+      expect(field.value).toBe('');
+    });
+
+    it('does not recall while an IME composition is open', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['stored']) });
+      const { field } = readyComposer();
+      field.value = '';
+      field.dispatchEvent(new dom.window.Event('compositionstart', { bubbles: true }));
+
+      const event = arrowEvent('ArrowUp');
+      field.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(field.value).toBe('');
+    });
+
+    it('records an accepted prompt and recalls it', async () => {
+      const storage = installStorage();
+      const onSend = vi.fn().mockResolvedValue({ ok: true } satisfies ComposerSendOutcome);
+      const { field } = readyComposer(onSend);
+      field.value = 'remember me';
+
+      pressEnter(field);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(JSON.parse(storage[STORAGE_KEY] ?? '[]')).toEqual(['remember me']);
+
+      field.dispatchEvent(arrowEvent('ArrowUp'));
+      expect(field.value).toBe('remember me');
+    });
+
+    it('does not record a rejected prompt', async () => {
+      const storage = installStorage();
+      const onSend = vi.fn().mockResolvedValue({ ok: false } satisfies ComposerSendOutcome);
+      const { field } = readyComposer(onSend);
+      field.value = 'will fail';
+
+      pressEnter(field);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(storage[STORAGE_KEY]).toBeUndefined();
+    });
+
+    it('loads the history persisted by a previous run', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['from a previous run']) });
+      const { field } = readyComposer();
+
+      field.dispatchEvent(arrowEvent('ArrowUp'));
+
+      expect(field.value).toBe('from a previous run');
+    });
+
+    it('abandons a walk in progress as soon as the user edits the field', () => {
+      installStorage({ [STORAGE_KEY]: JSON.stringify(['older', 'newest']) });
+      const { field } = readyComposer();
+      stubShadowTextarea(field, { start: 0, end: 0 });
+
+      field.dispatchEvent(arrowEvent('ArrowUp'));
+      expect(field.value).toBe('newest');
+
+      // Typing resets the walk; a following Down must not snap back to the draft.
+      field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+      const event = arrowEvent('ArrowDown');
+      field.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(field.value).toBe('newest');
+    });
+  });
 });

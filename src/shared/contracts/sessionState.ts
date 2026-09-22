@@ -1,5 +1,5 @@
-import {err, ok, type Result} from '../result';
-import {type AgentEvent, SESSION_STREAM_STATES, type SessionStreamState} from './agentEvents';
+import { err, ok, type Result } from '../result';
+import { type AgentEvent, SESSION_STREAM_STATES, type SessionStreamState } from './agentEvents';
 
 /**
  * The chat session state machine (implementation-plan.md step 03).

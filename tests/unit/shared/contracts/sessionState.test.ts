@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  agentEventSchema,
-  SESSION_STREAM_STATES,
-} from '../../../../src/shared';
+import { agentEventSchema, SESSION_STREAM_STATES } from '../../../../src/shared';
 import {
   applyAgentEvent,
   applyTransition,

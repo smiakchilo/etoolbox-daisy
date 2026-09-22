@@ -34,11 +34,7 @@ import {
   type IllegalTransitionError,
   type SessionStatus,
 } from '../../src/shared';
-import {
-  bumpRevision,
-  type ServerConfig,
-  type ServerTargetingChanges,
-} from '../../src/shared';
+import { bumpRevision, type ServerConfig, type ServerTargetingChanges } from '../../src/shared';
 import {
   serializeToolResult,
   toolResultSchema,

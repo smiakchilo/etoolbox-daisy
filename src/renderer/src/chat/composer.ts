@@ -1,4 +1,6 @@
 import { el } from '../lib/dom';
+import { loadComposerHistory, saveComposerHistory } from '../lib/composerHistoryStore';
+import { createComposerHistoryNavigator, resolveCaretBounds } from './composerHistory';
 import { type ComposerButtonState, shouldSubmitOnEnter } from './composerViewModel';
 
 type TextFieldElement = HTMLElement & { value: string };
@@ -108,6 +110,80 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   // themselves, not on every subsequent keydown) as a second, redundant
   // signal - see `shouldSubmitOnEnter`'s doc comment.
   let composing = false;
+  // The user's submitted prompts, recalled with Up/Down. Loaded once at
+  // construction; every successful submit appends and re-persists it.
+  const history = createComposerHistoryNavigator(loadComposerHistory());
+
+  /**
+   * The field's current text. `sp-textfield.value` is always a string once the
+   * component is upgraded, but jsdom never upgrades it, so an unset field reads
+   * back `undefined` there; normalising keeps the history logic total.
+   */
+  function readValue(): string {
+    return typeof field.value === 'string' ? field.value : '';
+  }
+
+  /** The shadow textarea's current selection, or `undefined` when it cannot be read. */
+  function readSelection(): { readonly start: number; readonly end: number } | undefined {
+    const textarea = field.shadowRoot?.querySelector('textarea');
+    const start = textarea?.selectionStart;
+    const end = textarea?.selectionEnd;
+    if (typeof start !== 'number' || typeof end !== 'number') return undefined;
+    return { start, end };
+  }
+
+  /**
+   * Puts the caret at the end of `text`, where a recalled prompt should leave
+   * it. `sp-textfield` propagates `value` to its shadow `<textarea>` on its
+   * next Lit update, so the range is applied once `updateComplete` resolves -
+   * setting it immediately would clamp against the stale text. A not-yet-
+   * upgraded field (jsdom) has no `updateComplete` and applies at once.
+   */
+  function moveCaretToEnd(text: string): void {
+    const apply = (): void => {
+      const textarea = field.shadowRoot?.querySelector('textarea');
+      textarea?.setSelectionRange(text.length, text.length);
+    };
+    const ready = (field as HTMLElement & { readonly updateComplete?: Promise<unknown> })
+      .updateComplete;
+    if (ready === undefined) {
+      apply();
+      return;
+    }
+    void ready.then(apply);
+  }
+
+  /**
+   * Handles an Up/Down keydown as history recall, returning whether the event
+   * was consumed (and should be prevented from moving the caret).
+   *
+   * At the draft position, Up only recalls when the caret is already at the
+   * very start (otherwise it moves within a multiline draft), and Down never
+   * recalls. While already recalling an entry, Up always steps further back and
+   * Down steps forward only once the caret is at the end - so a multiline
+   * remembered prompt can still be navigated with the arrows.
+   */
+  function recallHistory(keyEvent: KeyboardEvent): boolean {
+    if (keyEvent.key !== 'ArrowUp' && keyEvent.key !== 'ArrowDown') return false;
+    if (keyEvent.shiftKey || keyEvent.ctrlKey || keyEvent.altKey || keyEvent.metaKey) return false;
+
+    const currentText = readValue();
+    const bounds = resolveCaretBounds(currentText, readSelection());
+    const recalling = history.isRecalling();
+    if (keyEvent.key === 'ArrowUp') {
+      if (!recalling && !bounds.atStart) return false;
+    } else if (!recalling || !bounds.atEnd) {
+      return false;
+    }
+
+    const recalled = keyEvent.key === 'ArrowUp' ? history.previous(currentText) : history.next();
+    if (recalled === undefined) return false;
+
+    field.value = recalled;
+    moveCaretToEnd(recalled);
+    autosize();
+    return true;
+  }
 
   function applyPresentation(): void {
     const inFlight = current.kind === 'stop';
@@ -192,20 +268,27 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   function trySubmit(): void {
     if (submitting) return;
     if (current.kind !== 'send-enabled') return;
-    const prompt = field.value.trim();
+    const prompt = readValue().trim();
     if (prompt === '') return;
 
     submitting = true;
-    const previousValue = field.value;
+    history.reset();
+    const previousValue = readValue();
     field.value = '';
     autosize();
     void callbacks
       .onSend(prompt)
       .then((outcome) => {
-        // A rejected send restores the prompt; the failure message itself is
-        // the chat pane's banner (see `chatPane.ts`'s `onSend`), so nothing is
-        // shown here.
-        if (!outcome.ok) {
+        if (outcome.ok) {
+          // Only accepted prompts become history: a rejected send puts the
+          // text straight back in the field, so it is still in the user's
+          // hands and need not be recalled.
+          history.record(prompt);
+          saveComposerHistory(history.entries());
+        } else {
+          // A rejected send restores the prompt; the failure message itself is
+          // the chat pane's banner (see `chatPane.ts`'s `onSend`), so nothing is
+          // shown here.
           field.value = previousValue;
           autosize();
         }
@@ -215,7 +298,13 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       });
   }
 
-  field.addEventListener('input', autosize);
+  field.addEventListener('input', () => {
+    // A user edit (programmatic recall does not fire `input`) abandons any walk
+    // through history: the text on screen is the new draft, and the next Up
+    // starts again from the newest prompt.
+    history.reset();
+    autosize();
+  });
   field.addEventListener('compositionstart', () => {
     composing = true;
   });
@@ -224,6 +313,10 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   });
   field.addEventListener('keydown', (keyEvent) => {
     const isComposing = composing || keyEvent.isComposing;
+    if (!isComposing && recallHistory(keyEvent)) {
+      keyEvent.preventDefault();
+      return;
+    }
     if (
       !shouldSubmitOnEnter({
         key: keyEvent.key,
