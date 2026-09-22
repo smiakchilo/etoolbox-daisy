@@ -1,5 +1,5 @@
-import { err, ok, type Result } from '../result';
-import { SESSION_STREAM_STATES, type AgentEvent, type SessionStreamState } from './agentEvents';
+import {err, ok, type Result} from '../result';
+import {type AgentEvent, SESSION_STREAM_STATES, type SessionStreamState} from './agentEvents';
 
 /**
  * The chat session state machine (implementation-plan.md step 03).
@@ -45,9 +45,13 @@ import { SESSION_STREAM_STATES, type AgentEvent, type SessionStreamState } from 
  *
  * `sending` is reachable only from `idle`: a second prompt cannot be sent
  * over an unfinished turn (requirements-decisions.md section 7 / step 07).
- * `runningTool` is reachable only from `streaming` and back again: tool
- * calls happen while the assistant is generating a response, not before it
- * has started or after it has finished. `streaming` may also go straight to
+ * `runningTool` is reachable from `sending` or `streaming`, and returns to
+ * `streaming`: a tool call can be the very first activity of a turn. The SDK
+ * can emit `external_tool.requested` with no preceding
+ * `assistant.message_start` (observed live - a turn whose first action is a
+ * tool call, with no prose before it), so `sending` -> `runningTool` must be
+ * legal. The older assumption that a tool call always follows an assistant
+ * message start was false. `streaming` may also go straight to
  * `idle`: a turn ends once the assistant's final message completes, which
  * happens while still `streaming`, not while `runningTool`. `cancelling` is
  * reachable from every state that represents outstanding work (`sending`,
@@ -63,7 +67,7 @@ import { SESSION_STREAM_STATES, type AgentEvent, type SessionStreamState } from 
  */
 const LEGAL_TRANSITIONS: Readonly<Record<SessionStreamState, readonly SessionStreamState[]>> = {
   idle: ['idle', 'sending', 'error', 'closed'],
-  sending: ['sending', 'streaming', 'cancelling', 'error', 'closed'],
+  sending: ['sending', 'streaming', 'runningTool', 'cancelling', 'error', 'closed'],
   streaming: ['streaming', 'runningTool', 'idle', 'cancelling', 'error', 'closed'],
   runningTool: ['runningTool', 'streaming', 'cancelling', 'error', 'closed'],
   cancelling: ['cancelling', 'idle', 'error', 'closed'],
@@ -198,9 +202,9 @@ export type CanRunAemToolResult =
  * is not necessarily driven by the current chat turn - the AEM pane itself
  * can originate a read independently of whether a chat happens to be mid
  * turn. Note this does surface a real seam: `nextStreamStateForEvent` only
- * ever reaches `runningTool` *from* `streaming` (see its doc comment above),
- * so a tool call approved while `idle` executes without the state machine
- * ever recording `runningTool` for it. That is a gap between this gate and
+ * ever reaches `runningTool` *from* `sending` or `streaming` (see its doc
+ * comment above), so a tool call approved while `idle` executes without the
+ * state machine ever recording `runningTool` for it. That is a gap between this gate and
  * the reducer's bookkeeping, not a bug in either half considered alone; it
  * is left open deliberately rather than closed by guessing which side should
  * change, and is worth the next reader's attention if `idle`-time tool calls
@@ -255,8 +259,7 @@ function nextStreamStateForEvent(
     case 'tool.call.approved':
       return current;
     default: {
-      const exhaustive: never = event;
-      return exhaustive;
+      return event;
     }
   }
 }

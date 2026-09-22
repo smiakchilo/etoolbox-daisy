@@ -1,0 +1,93 @@
+import type { AemBridgeBlockReason } from '../../contracts/aemBridge';
+import type { JsonValue } from '../../contracts';
+import type { ToolError } from '../../contracts';
+import type { ChatId, ServerId, ToolCallId, TurnId } from '../../contracts';
+import type { Result } from '../../result';
+
+/**
+ * The runtime seam every agent tool is registered through.
+ *
+ * Takes this adapter's own normalized JSON arguments and the SDK's own
+ * per-call `toolCallId`/cancellation `signal`, but returns this app's own
+ * `Result<JsonValue, ToolError>` rather than the SDK's untyped `unknown`. That
+ * is deliberate: `sdkAgentService.ts` builds `tool.result` directly from this
+ * return value, so a failure already carries this app's own `ToolError`
+ * classification and a real `RequestId` - there is no lossy string round trip
+ * through the SDK to reconstruct it from.
+ *
+ * Lives in `src/shared` - not `src/agent` - so a tool module can own its own
+ * executor without importing the SDK boundary (which `src/shared` may not do).
+ */
+export type AemToolExecutor = (
+  args: Readonly<Record<string, JsonValue>>,
+  context: { readonly toolCallId: ToolCallId; readonly signal: AbortSignal | undefined },
+) => Promise<Result<JsonValue, ToolError>>;
+
+/**
+ * Everything about "where a request goes" that the model must never choose,
+ * read fresh on every call via the application's `currentContext` provider.
+ *
+ * The model's tool arguments are the only per-call input an executor accepts
+ * from the SDK; none of the fields below are reachable from them, and no
+ * executor has a parameter that could carry an origin from tool arguments even
+ * if a caller tried to supply one.
+ */
+export interface CurrentAemToolContext {
+  readonly origin: string;
+  readonly serverId: ServerId;
+  readonly serverRevision: number;
+  readonly navigationEpoch: number;
+  readonly chatId: ChatId;
+  readonly turnId: TurnId;
+}
+
+/**
+ * The verdict of one bridge round trip, before any HTTP or JSON interpretation.
+ *
+ * Moved here from the main-process broker so a tool module can describe the
+ * `fetchThroughBridge` seam it depends on without importing `src/main`.
+ */
+export type BrokerOutcome =
+  | {
+      readonly kind: 'response';
+      readonly status: number;
+      readonly contentType: string | null;
+      readonly bodyText: string;
+    }
+  | { readonly kind: 'blocked'; readonly reason: AemBridgeBlockReason }
+  | { readonly kind: 'network_error'; readonly message: string }
+  | { readonly kind: 'cancelled' }
+  | { readonly kind: 'timeout' }
+  | { readonly kind: 'stale'; readonly status: 'stale_server_revision' | 'stale_navigation_epoch' }
+  | { readonly kind: 'no_view' };
+
+/**
+ * A tool's model-facing registration data. `parameters` is derived from the
+ * same schema that validates the call (`z.toJSONSchema`), so the two cannot
+ * drift the way a hand-written JSON Schema copy eventually would.
+ */
+export interface ToolDescriptor {
+  readonly name: string;
+  readonly description: string;
+  /**
+   * The JSON Schema `z.toJSONSchema` produces. Left as `unknown` rather than
+   * named against zod's internal `ZodStandardJSONSchemaPayload<T>` type:
+   * `toJSONSchema` is overloaded, so `ReturnType<typeof z.toJSONSchema>`
+   * resolves to whichever overload TypeScript picks last, not the one actually
+   * called.
+   */
+  readonly parameters: unknown;
+}
+
+/**
+ * The static metadata one tool module contributes to the registry. Executors
+ * and handlers live in the tool module itself; this is everything the session
+ * policy and the SDK adapter need to describe the tool without knowing its
+ * implementation.
+ */
+export interface ToolDefinition {
+  readonly name: string;
+  readonly descriptor: ToolDescriptor;
+  /** The source-qualified allowlist entry (`custom:<name>`) the policy grants. */
+  readonly allowlistEntry: string;
+}

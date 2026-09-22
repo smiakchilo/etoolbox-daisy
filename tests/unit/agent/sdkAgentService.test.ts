@@ -7,18 +7,18 @@ import {
   type ModelPreference,
 } from '../../../src/agent/sdkAgentService';
 import type { HardenedSessionClient, HardenedToolPolicy } from '../../../src/agent/toolPolicy';
-import type { AgentEvent } from '../../../src/shared/contracts/agentEvents';
-import { createToolError, type ToolError } from '../../../src/shared/contracts/errors';
+import type { AgentEvent } from '../../../src/shared';
+import { createToolError, type ToolError } from '../../../src/shared';
 import {
   newChatId,
   newRequestId,
   newTurnId,
   sdkSessionIdSchema,
   type IdGenerator,
-} from '../../../src/shared/contracts/ids';
-import { applyAgentEvent, type SessionStatus } from '../../../src/shared/contracts/sessionState';
-import { err, ok } from '../../../src/shared/result';
-import type { AuthStatus } from '../../../src/shared/agent-auth';
+} from '../../../src/shared';
+import { applyAgentEvent, type SessionStatus } from '../../../src/shared';
+import { err, ok } from '../../../src/shared';
+import type { AuthStatus } from '../../../src/shared';
 
 /** Mints reproducible `ChatId`/`TurnId` values - never SDK-facing ids, which the adapter adopts instead. */
 function counterIdGenerator(): IdGenerator {
@@ -339,9 +339,9 @@ describe('sdkAgentService - tool lifecycle', () => {
     );
     const turnId = newTurnId(ids);
     await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
-    // `runningTool` (which `external_tool.requested` drives) is only legal
-    // from `streaming` (sessionState.ts's `LEGAL_TRANSITIONS`), so an
-    // assistant message must have started first.
+    // An assistant message starts first here to exercise the
+    // `streaming` -> `runningTool` path; the tool-first path (no message
+    // start) is covered separately below.
     sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: 'msg-1' } });
 
     sessionHandle.emit({
@@ -382,6 +382,32 @@ describe('sdkAgentService - tool lifecycle', () => {
     );
 
     assertLegalSequence(events);
+  });
+
+  it("accepts a tool call that is the turn's first activity, with no preceding assistant.message_start (the live sending -> runningTool case)", async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const { service, chatId, events } = await setUpOpenConversation(sessionHandle, ids, undefined, {
+      aem_get_json: executor,
+    });
+    const turnId = newTurnId(ids);
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+
+    // The model's first action is the tool call - no assistant message start.
+    sessionHandle.emit({
+      type: 'external_tool.requested',
+      data: {
+        requestId: 'req-1',
+        toolCallId: 'tool-1',
+        toolName: 'aem_get_json',
+        arguments: { path: '/content/foo.json' },
+      },
+    });
+
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(events.find((event) => event.type === 'tool.call.requested')).toBeDefined();
+    expect(assertLegalSequence(events).state).toBe('runningTool');
   });
 
   it("maps a rejected executor to a tool.result with ok: false, carrying the executor's own ToolError, and renders that same failure back to the SDK instead of throwing", async () => {

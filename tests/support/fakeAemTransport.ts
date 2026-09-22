@@ -6,8 +6,8 @@ import {
   type Clock,
   type CurrentAemContext,
   type ToolRequestEnvelope,
-} from '../../src/shared/contracts/toolContracts';
-import { createToolError } from '../../src/shared/contracts/errors';
+} from '../../src/shared';
+import { createToolError } from '../../src/shared';
 import {
   newMessageId,
   newRequestId,
@@ -18,14 +18,14 @@ import {
   type RequestId,
   type ToolCallId,
   type TurnId,
-} from '../../src/shared/contracts/ids';
+} from '../../src/shared';
 import {
   agentEventSchema,
   jsonValueSchema,
   EventSequencer,
   type AgentEvent,
   type SequenceCheckOutcome,
-} from '../../src/shared/contracts/agentEvents';
+} from '../../src/shared';
 import {
   applyAgentEvent,
   canRunAemTool,
@@ -33,18 +33,18 @@ import {
   type CanSendBlockReason,
   type IllegalTransitionError,
   type SessionStatus,
-} from '../../src/shared/contracts/sessionState';
+} from '../../src/shared';
 import {
   bumpRevision,
   type ServerConfig,
   type ServerTargetingChanges,
-} from '../../src/shared/contracts/serverConfig';
+} from '../../src/shared';
 import {
   serializeToolResult,
   toolResultSchema,
   type ToolErrorResult,
   type ToolResult,
-} from '../../src/shared/contracts/toolResult';
+} from '../../src/shared';
 import type { FakeAgentToolCall } from './fakeAgent';
 import type { FakeBrowserSide } from './fakeBrowserSide';
 

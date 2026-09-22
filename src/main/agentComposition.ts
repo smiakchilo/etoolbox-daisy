@@ -1,5 +1,5 @@
-import { executeAemGetJson, type AemGetJsonRequest } from './aem/aemGetJson';
-import { executeAemQuery, type AemQueryRequest } from './aem/aemQuery';
+import { executeAemGetJson, type AemGetJsonRequest } from '../shared';
+import { executeAemQuery, type AemQueryRequest } from '../shared';
 import type { AemBridgeBroker } from './aem/bridgeBroker';
 import type { ActiveAemServer } from './browser/browserController';
 import type { NavigationEpochTracker } from './browser/navigationEpoch';
@@ -11,7 +11,7 @@ import {
 } from './agentChatController';
 import type { Logger } from './logger';
 import type { AgentService } from '../agent/agentService';
-import type { CurrentAemToolContext } from '../agent/aemTool';
+import type { CurrentAemToolContext } from '../shared';
 import type { CopilotClient } from '../agent';
 import type { FakeAgentService } from '../agent/fakeAgentService';
 import type { ModelPreference } from '../agent/sdkAgentService';

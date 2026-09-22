@@ -11,7 +11,7 @@ import {
   toolRequestEnvelopeSchema,
   type JcrPathRejectionReason,
   type ToolRequestEnvelope,
-} from '../../../../src/shared/contracts/toolContracts';
+} from '../../../../src/shared';
 
 function issueMessages(result: {
   success: false;

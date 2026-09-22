@@ -1,15 +1,15 @@
-import { originSchema } from '../../src/shared/contracts/origin';
-import type { Clock, ToolRequestEnvelope } from '../../src/shared/contracts/toolContracts';
-import type { ToolErrorCode } from '../../src/shared/contracts/errors';
-import { toolRequestEnvelopeSchema } from '../../src/shared/contracts/toolContracts';
+import { originSchema } from '../../src/shared';
+import type { Clock, ToolRequestEnvelope } from '../../src/shared';
+import type { ToolErrorCode } from '../../src/shared';
+import { toolRequestEnvelopeSchema } from '../../src/shared';
 import type {
   ChildrenMetadata,
   HasMore,
   PaginationMetadata,
   TotalMatches,
   ToolSuccess,
-} from '../../src/shared/contracts/toolResult';
-import type { JsonValue } from '../../src/shared/contracts/agentEvents';
+} from '../../src/shared';
+import type { JsonValue } from '../../src/shared';
 import { FixtureRepository } from './fakeAemFixtures';
 
 /**

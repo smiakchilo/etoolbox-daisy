@@ -5,8 +5,8 @@ import {
   createNavigationEpochTracker,
   type NavigationEpochChange,
 } from '../../../../src/main/browser/navigationEpoch';
-import { classifyStaleness } from '../../../../src/shared/contracts/toolContracts';
-import type { ToolRequestEnvelope } from '../../../../src/shared/contracts/toolContracts';
+import { classifyStaleness } from '../../../../src/shared';
+import type { ToolRequestEnvelope } from '../../../../src/shared';
 
 /**
  * A minimal stand-in for the AEM view's `WebContents` that records handlers so

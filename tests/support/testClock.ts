@@ -1,4 +1,4 @@
-import type { Clock } from '../../src/shared/contracts/toolContracts';
+import type { Clock } from '../../src/shared';
 
 /**
  * A manually-advanced clock for deterministic deadline/staleness tests.

@@ -20,11 +20,11 @@ import {
 } from '../../../src/main/agentChatController';
 import type { Logger } from '../../../src/main/logger';
 import type { AgentService } from '../../../src/agent/agentService';
-import type { CurrentAemToolContext } from '../../../src/agent/aemTool';
-import { newChatId, newRequestId, newServerId, newTurnId } from '../../../src/shared/contracts/ids';
-import type { AemGetJsonRequest } from '../../../src/main/aem/aemGetJson';
-import type { AemQueryRequest } from '../../../src/main/aem/aemQuery';
-import type { BrokerOutcome } from '../../../src/main/aem/bridgeBroker';
+import type { CurrentAemToolContext } from '../../../src/shared';
+import { newChatId, newRequestId, newServerId, newTurnId } from '../../../src/shared';
+import type { AemGetJsonRequest } from '../../../src/shared';
+import type { AemQueryRequest } from '../../../src/shared';
+import type { BrokerOutcome } from '../../../src/shared';
 
 function counterIds(prefix: string): () => string {
   let n = 0;

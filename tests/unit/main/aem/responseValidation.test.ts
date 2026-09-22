@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyAemResponse } from '../../../../src/main/aem/responseValidation';
+import { classifyAemResponse } from '../../../../src/shared';
 
 const VALID_OBJECT_BODY = JSON.stringify({ 'jcr:primaryType': 'cq:Page', 'jcr:title': 'Home' });
 
@@ -96,7 +96,7 @@ describe('classifyAemResponse - 200 but not JSON at all', () => {
     const result = classifyAemResponse({
       status: 200,
       contentType: 'text/html; charset=UTF-8',
-      bodyText: "<html><body><form id='login'>...</form></body></html>",
+      bodyText: "<html lang='en'><body><form id='login'>...</form></body></html>",
     });
     expect(result).toEqual({ kind: 'html_login_page' });
   });

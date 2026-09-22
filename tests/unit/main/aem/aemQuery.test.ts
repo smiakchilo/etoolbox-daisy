@@ -1,21 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeAemQuery, type AemQueryRequest } from '../../../../src/main/aem/aemQuery';
-import type { BrokerOutcome } from '../../../../src/main/aem/bridgeBroker';
-import {
-  aemQueryArgsSchema,
-  type AemQueryArgs,
-} from '../../../../src/shared/contracts/toolContracts';
+import { executeAemQuery, type AemQueryRequest } from '../../../../src/shared';
+import type { BrokerOutcome } from '../../../../src/shared';
+import { aemQueryArgsSchema, type AemQueryArgs } from '../../../../src/shared';
 import {
   chatIdSchema,
   requestIdSchema,
   serverIdSchema,
   turnIdSchema,
-} from '../../../../src/shared/contracts/ids';
+} from '../../../../src/shared';
 import {
   renderToolResultForModel,
   toolResultSchema,
   type ToolResult,
-} from '../../../../src/shared/contracts/toolResult';
+} from '../../../../src/shared';
 
 const ORIGIN = 'https://author.example';
 
@@ -312,7 +309,7 @@ describe('executeAemQuery - transport and HTTP failures', () => {
       kind: 'response',
       status: 414,
       contentType: 'text/html',
-      bodyText: '<html>URI Too Long</html>',
+      bodyText: '<html lang="en">URI Too Long</html>',
     });
     const error = expectError(result);
     expect(error.error.code).toBe('INVALID_ARGUMENT');
@@ -348,7 +345,7 @@ describe('executeAemQuery - transport and HTTP failures', () => {
       kind: 'response',
       status: 200,
       contentType: 'text/html',
-      bodyText: "<html><form id='login'></form></html>",
+      bodyText: "<html lang='en'><form id='login'></form></html>",
     });
     expect(expectError(result).error.requiredAction).toBe('sign_in_to_aem');
   });

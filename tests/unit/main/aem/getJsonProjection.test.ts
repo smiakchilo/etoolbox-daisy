@@ -1,16 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import {
-  projectGetJsonResult,
-  type ProjectedResourceData,
-} from '../../../../src/main/aem/getJsonProjection';
-import {
-  aemGetJsonArgsSchema,
-  type AemGetJsonArgs,
-} from '../../../../src/shared/contracts/toolContracts';
-import { requestIdSchema } from '../../../../src/shared/contracts/ids';
-import { toolResultSchema } from '../../../../src/shared/contracts/toolResult';
-import type { AemGetJsonSuccess } from '../../../../src/shared/contracts/toolResult';
-import type { JsonObject } from '../../../../src/main/aem/responseValidation';
+import { projectGetJsonResult, type ProjectedResourceData } from '../../../../src/shared';
+import { aemGetJsonArgsSchema, type AemGetJsonArgs } from '../../../../src/shared';
+import { requestIdSchema } from '../../../../src/shared';
+import { toolResultSchema } from '../../../../src/shared';
+import type { AemGetJsonSuccess } from '../../../../src/shared';
+import type { JsonObject } from '../../../../src/shared';
 
 const REQUEST_ID = requestIdSchema.parse('req-1');
 const SOURCE_ORIGIN = 'https://author.example';

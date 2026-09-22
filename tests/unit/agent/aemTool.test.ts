@@ -14,7 +14,7 @@ import {
   type AemQueryRequestEnvelope,
   type CurrentAemToolContext,
 } from '../../../src/agent/aemTool';
-import type { ToolCallId } from '../../../src/shared/contracts/ids';
+import type { ToolCallId } from '../../../src/shared';
 import {
   newChatId,
   newRequestId,
@@ -22,10 +22,10 @@ import {
   newTurnId,
   requestIdSchema,
   type IdGenerator,
-} from '../../../src/shared/contracts/ids';
-import { createToolError } from '../../../src/shared/contracts/errors';
-import type { ToolResult } from '../../../src/shared/contracts/toolResult';
-import type { JsonValue } from '../../../src/shared/contracts/agentEvents';
+} from '../../../src/shared';
+import { createToolError } from '../../../src/shared';
+import type { ToolResult } from '../../../src/shared';
+import type { JsonValue } from '../../../src/shared';
 
 /** Mints reproducible ids, mirroring `sdkAgentService.test.ts`'s identically-named helper. */
 function counterIdGenerator(): IdGenerator {

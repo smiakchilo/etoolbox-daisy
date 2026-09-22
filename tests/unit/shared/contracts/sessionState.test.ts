@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentEventSchema,
   SESSION_STREAM_STATES,
-} from '../../../../src/shared/contracts/agentEvents';
+} from '../../../../src/shared';
 import {
   applyAgentEvent,
   applyTransition,
@@ -10,7 +10,7 @@ import {
   canSendMessage,
   canTransition,
   type SessionStatus,
-} from '../../../../src/shared/contracts/sessionState';
+} from '../../../../src/shared';
 
 function idleStatus(overrides: Partial<SessionStatus> = {}): SessionStatus {
   return { state: 'idle', authenticated: true, browserReady: true, ...overrides };
@@ -31,6 +31,7 @@ describe('canTransition / applyTransition: legal transitions', () => {
     ['idle', 'error'],
     ['idle', 'closed'],
     ['sending', 'streaming'],
+    ['sending', 'runningTool'],
     ['sending', 'cancelling'],
     ['sending', 'error'],
     ['streaming', 'runningTool'],
@@ -58,7 +59,6 @@ describe('canTransition / applyTransition: representative illegal transitions', 
     ['idle', 'runningTool'],
     ['idle', 'cancelling'],
     ['sending', 'idle'],
-    ['sending', 'runningTool'],
     ['streaming', 'sending'],
     ['runningTool', 'idle'],
     ['runningTool', 'sending'],
@@ -167,6 +167,52 @@ describe('full lifecycle: idle -> sending -> streaming -> runningTool -> streami
     const turnEnded = applyAgentEvent(
       status,
       event({ type: 'session.state.changed', turnId: 'turn-1', state: 'idle', sequence: 6 }),
+    );
+    expect(turnEnded.ok).toBe(true);
+    if (turnEnded.ok) status = turnEnded.value;
+    expect(status.state).toBe('idle');
+  });
+});
+
+describe('full lifecycle: idle -> sending -> runningTool -> streaming -> idle (a turn whose first activity is a tool call)', () => {
+  it('accepts a tool call with no preceding assistant.message.started', () => {
+    let status = idleStatus();
+
+    const sendResult = applyTransition(status.state, 'sending');
+    expect(sendResult.ok).toBe(true);
+    if (sendResult.ok) status = { ...status, state: sendResult.value };
+    expect(status.state).toBe('sending');
+
+    const requested = applyAgentEvent(
+      status,
+      event({
+        type: 'tool.call.requested',
+        toolCallId: 'call-1',
+        toolName: 'aem_get_json',
+        arguments: { path: '/content' },
+        sequence: 1,
+      }),
+    );
+    expect(requested.ok).toBe(true);
+    if (requested.ok) status = requested.value;
+    expect(status.state).toBe('runningTool');
+
+    const result = applyAgentEvent(
+      status,
+      event({
+        type: 'tool.result',
+        toolCallId: 'call-1',
+        outcome: { ok: true, data: {} },
+        sequence: 2,
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) status = result.value;
+    expect(status.state).toBe('streaming');
+
+    const turnEnded = applyAgentEvent(
+      status,
+      event({ type: 'session.state.changed', turnId: 'turn-1', state: 'idle', sequence: 3 }),
     );
     expect(turnEnded.ok).toBe(true);
     if (turnEnded.ok) status = turnEnded.value;

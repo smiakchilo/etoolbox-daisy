@@ -7,3 +7,4 @@ export * from './settings-ipc';
 export * from './browser-ipc';
 export * from './agent-chat-ipc';
 export * from './contracts';
+export * from './tools';

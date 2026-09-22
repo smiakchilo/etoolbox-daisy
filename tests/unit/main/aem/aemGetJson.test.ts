@@ -1,19 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { executeAemGetJson, type AemGetJsonRequest } from '../../../../src/main/aem/aemGetJson';
-import type { BrokerOutcome } from '../../../../src/main/aem/bridgeBroker';
-import type { ProjectedResourceData } from '../../../../src/main/aem/getJsonProjection';
-import {
-  aemGetJsonArgsSchema,
-  type AemGetJsonArgs,
-} from '../../../../src/shared/contracts/toolContracts';
+import { executeAemGetJson, type AemGetJsonRequest } from '../../../../src/shared';
+import type { BrokerOutcome } from '../../../../src/shared';
+import type { ProjectedResourceData } from '../../../../src/shared';
+import { aemGetJsonArgsSchema, type AemGetJsonArgs } from '../../../../src/shared';
 import {
   chatIdSchema,
   requestIdSchema,
   serverIdSchema,
   turnIdSchema,
-} from '../../../../src/shared/contracts/ids';
-import { toolResultSchema, type ToolResult } from '../../../../src/shared/contracts/toolResult';
-import { TOOL_ERROR_CODES } from '../../../../src/shared/contracts/errors';
+} from '../../../../src/shared';
+import { toolResultSchema, type ToolResult } from '../../../../src/shared';
+import { TOOL_ERROR_CODES } from '../../../../src/shared';
 
 const ORIGIN = 'https://author.example';
 
@@ -108,7 +105,7 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
         kind: 'response',
         status: 200,
         contentType: 'text/html; charset=utf-8',
-        bodyText: '<html><body>Sign in</body></html>',
+        bodyText: '<html lang="en"><body>Sign in</body></html>',
       }),
     ).error;
 
@@ -289,7 +286,7 @@ describe('executeAemGetJson - errors never carry remote content', () => {
         kind: 'response',
         status: 500,
         contentType: 'text/html',
-        bodyText: `<html>${secret}</html>`,
+        bodyText: `<html lang='en'>${secret}</html>`,
       }),
     ).error;
 

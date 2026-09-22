@@ -135,7 +135,9 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 `settings-ipc.ts`, `app-api.ts`, `agent-auth.ts`).
 
 > **Treat Step 03 contracts as frozen.** A few have been changed since —
-> `toolResult.ts` (§8), the settings contracts `appSettings.ts` /
+> `toolResult.ts` (§8), `sessionState.ts` (the `sending -> runningTool`
+> transition, because the SDK can make a tool call a turn's first event), the
+> settings contracts `appSettings.ts` /
 > `settingsSnapshot.ts` (the latter gained the `browser` object with
 > `disableNativeWebAuthn`, the Settings "Browser" tab's WebAuthn-suppression
 > flag), and `settings-ipc.ts`. **There is deliberately no `schemaVersion` field and no

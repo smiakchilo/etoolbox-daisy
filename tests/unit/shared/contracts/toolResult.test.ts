@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createToolError } from '../../../../src/shared/contracts/errors';
-import { requestIdSchema } from '../../../../src/shared/contracts/ids';
+import { createToolError } from '../../../../src/shared';
+import { requestIdSchema } from '../../../../src/shared';
 import {
   parseToolResult,
   renderToolResultForModel,
@@ -10,7 +10,7 @@ import {
   type AemQuerySuccess,
   type PropertySelection,
   type ToolErrorResult,
-} from '../../../../src/shared/contracts/toolResult';
+} from '../../../../src/shared';
 
 const REQUEST_ID = requestIdSchema.parse('req-1');
 

@@ -1,16 +1,14 @@
 import type {
-  AemBridgeBlockReason,
   AemBridgeCancelCommand,
   AemBridgeFetchCommand,
   AemBridgeReply,
 } from '../../shared/contracts/aemBridge';
 import { aemBridgeReplySchema } from '../../shared/contracts/aemBridge';
-import type {
-  Clock,
-  CurrentAemContext,
-  ToolRequestEnvelope,
-} from '../../shared/contracts/toolContracts';
-import { classifyStaleness, isDeadlineExpired } from '../../shared/contracts/toolContracts';
+import type { Clock, CurrentAemContext, ToolRequestEnvelope } from '../../shared';
+import { classifyStaleness, isDeadlineExpired } from '../../shared';
+import type { BrokerOutcome } from '../../shared';
+
+export type { BrokerOutcome };
 
 /**
  * Main-side half of the private AEM bridge (implementation-plan.md step 06).
@@ -48,20 +46,11 @@ export interface BrokerDeps {
   readonly currentContext: () => CurrentAemContext;
 }
 
-export type BrokerOutcome =
-  | {
-      readonly kind: 'response';
-      readonly status: number;
-      readonly contentType: string | null;
-      readonly bodyText: string;
-    }
-  | { readonly kind: 'blocked'; readonly reason: AemBridgeBlockReason }
-  | { readonly kind: 'network_error'; readonly message: string }
-  | { readonly kind: 'cancelled' }
-  | { readonly kind: 'timeout' }
-  | { readonly kind: 'stale'; readonly status: 'stale_server_revision' | 'stale_navigation_epoch' }
-  | { readonly kind: 'no_view' };
-
+/**
+ * The verdict of one bridge round trip is defined in `src/shared/tools/types.ts`
+ * (a tool module depends on this shape) and re-exported at the top of this file
+ * so the broker's own consumers keep a single import site.
+ */
 export interface AemBridgeBroker {
   /** Issues one fetch. Resolves exactly once. */
   request(envelope: ToolRequestEnvelope, url: string): Promise<BrokerOutcome>;

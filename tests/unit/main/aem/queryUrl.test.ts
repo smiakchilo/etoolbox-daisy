@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildQueryUrl } from '../../../../src/main/aem/queryUrl';
-import { aemQueryArgsSchema } from '../../../../src/shared/contracts/toolContracts';
+import { buildQueryUrl } from '../../../../src/shared';
+import { aemQueryArgsSchema } from '../../../../src/shared';
 
 const ORIGIN = 'https://author.example';
 

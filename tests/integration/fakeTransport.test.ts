@@ -4,12 +4,9 @@ import {
   newServerId,
   newTurnId,
   type IdGenerator,
-} from '../../src/shared/contracts/ids';
-import { serverConfigSchema, type ServerConfig } from '../../src/shared/contracts/serverConfig';
-import {
-  AEM_REQUEST_TIMEOUT_MS,
-  toolRequestEnvelopeSchema,
-} from '../../src/shared/contracts/toolContracts';
+} from '../../src/shared';
+import { serverConfigSchema, type ServerConfig } from '../../src/shared';
+import { AEM_REQUEST_TIMEOUT_MS, toolRequestEnvelopeSchema } from '../../src/shared';
 import {
   parseToolResult,
   renderToolResultForModel,
@@ -17,7 +14,7 @@ import {
   type ToolErrorResult,
   type ToolResult,
   type ToolSuccess,
-} from '../../src/shared/contracts/toolResult';
+} from '../../src/shared';
 import { aemGetJsonCall, aemQueryCall, unknownOperationCall } from '../support/fakeAgent';
 import { FakeBrowserSide } from '../support/fakeBrowserSide';
 import { FixtureRepository } from '../support/fakeAemFixtures';

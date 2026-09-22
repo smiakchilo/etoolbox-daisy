@@ -4,6 +4,7 @@ import type { SessionConfig, SessionEvent, Tool, ToolInvocation } from '@github/
 
 import {
   type AgentEvent,
+  type AemToolExecutor,
   agentEventSchema,
   applyAgentEvent,
   type AssistantTextDeltaEvent,
@@ -164,21 +165,12 @@ export interface AgentAuthStatusSource {
 }
 
 /**
- * The seam a later task (s07-tool) plugs its real AEM tool execution into -
- * see finding 3. Takes this adapter's own normalized JSON arguments and the
- * SDK's own per-call `toolCallId`/cancellation `signal` (so a real
- * implementation can honour cancellation), but returns this app's own
- * `Result<JsonValue, ToolError>` rather than the SDK's untyped `unknown`.
- * That is deliberate: this adapter builds `tool.result` directly from this
- * return value, so a failure already carries this app's own `ToolError`
- * classification and, when the executor minted one for its own AEM
- * request, a real `RequestId` - there is no lossy string round trip through
- * the SDK to reconstruct it from.
+ * The seam a tool module plugs its real AEM tool execution into - see finding
+ * 3. Defined in `src/shared/tools/types.ts` so a tool module can own its own
+ * executor without importing this SDK boundary; re-exported here because this
+ * adapter's own options and wrapper name it.
  */
-export type AemToolExecutor = (
-  args: Readonly<Record<string, JsonValue>>,
-  context: { readonly toolCallId: ToolCallId; readonly signal: AbortSignal | undefined },
-) => Promise<Result<JsonValue, ToolError>>;
+export type { AemToolExecutor };
 
 export interface SdkAgentServiceOptions {
   readonly client: HardenedSessionClient;

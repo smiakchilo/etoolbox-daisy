@@ -10,7 +10,7 @@ import {
   toolRequestEnvelopeSchema,
   type CurrentAemContext,
   type ToolRequestEnvelope,
-} from '../../../../src/shared/contracts/toolContracts';
+} from '../../../../src/shared';
 
 const TRUSTED_ORIGIN: BridgeReplyOrigin = { isTrustedAemView: true, isMainFrame: true };
 
