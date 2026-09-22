@@ -1,13 +1,15 @@
 import type {
   AemBridgeCancelCommand,
   AemBridgeFetchCommand,
+  AemBridgeHeader,
   AemBridgeReply,
 } from '../../shared/contracts/aemBridge';
-import { aemBridgeReplySchema } from '../../shared/contracts/aemBridge';
+import { AEM_BRIDGE_REQUEST_HEADERS, aemBridgeReplySchema } from '../../shared/contracts/aemBridge';
 import type { Clock, CurrentAemContext, ToolRequestEnvelope } from '../../shared';
 import { classifyStaleness, isDeadlineExpired } from '../../shared';
 import type { BrokerOutcome } from '../../shared';
 import { toLoggableUrl, type LogOutcome, type Logger } from '../logger';
+import type { ToolHttpLogger } from './toolHttpLog';
 
 export type { BrokerOutcome };
 
@@ -63,6 +65,14 @@ export interface BrokerDeps {
    * (it records normalized agent events, not HTTP results).
    */
   readonly logger?: Logger;
+  /**
+   * Optional second sink for the HTTP detail `logger` must not carry: the full
+   * request URL (query string included) and the request/response headers,
+   * written to `logs/tools.log` by `toolHttpLog.ts`. Separate from `logger`
+   * on purpose - `app.log` keeps its closed-vocabulary guarantee, and this
+   * sink exists only because diagnosing a tool call needs the URL and headers.
+   */
+  readonly toolLogger?: ToolHttpLogger;
 }
 
 /** Maps a raw broker verdict onto the logger's closed outcome vocabulary. */
@@ -151,20 +161,36 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
    * guard is removed; at present no test does, which is a deliberate
    * statement about this function rather than an oversight.
    */
-  function settle(entry: PendingRequest, outcome: BrokerOutcome): void {
+  function settle(
+    entry: PendingRequest,
+    outcome: BrokerOutcome,
+    responseHeaders?: readonly AemBridgeHeader[],
+  ): void {
     if (entry.settled) return;
     entry.settled = true;
     entry.cancelTimer?.();
     entry.cancelTimer = undefined;
     if (inFlight === entry) inFlight = undefined;
+    const durationMs = Math.max(0, deps.clock() - entry.queuedAt);
     deps.logger?.info('AEM_REQUEST_COMPLETED', {
-      durationMs: Math.max(0, deps.clock() - entry.queuedAt),
+      durationMs,
       outcome: toLogOutcome(outcome),
       ...(outcome.kind === 'response' && outcome.status >= 100 && outcome.status <= 599
         ? { statusCode: outcome.status }
         : {}),
       ids: { requestId: entry.envelope.requestId },
       url: toLoggableUrl(entry.url),
+    });
+    // The tool HTTP log records the same settlement with the HTTP detail
+    // `logger` must not carry. `responseHeaders` is only ever supplied by the
+    // reply path (the only one that has a response at all); every other
+    // outcome - timeout, cancel, stale, no view - logs an empty header list.
+    deps.toolLogger?.response({
+      requestId: entry.envelope.requestId,
+      status: outcome.kind === 'response' ? outcome.status : null,
+      outcome: toLogOutcome(outcome),
+      durationMs,
+      headers: responseHeaders ?? [],
     });
     entry.resolve(outcome);
   }
@@ -233,6 +259,15 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
         ids: { requestId: entry.envelope.requestId },
         url: toLoggableUrl(entry.url),
       });
+      deps.toolLogger?.request({
+        requestId: entry.envelope.requestId,
+        method: 'GET',
+        url: entry.url,
+        headers: Object.entries(AEM_BRIDGE_REQUEST_HEADERS).map(([name, value]) => ({
+          name,
+          value,
+        })),
+      });
       return;
     }
   }
@@ -275,7 +310,11 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
       return;
     }
 
-    settle(current, replyToOutcome(parsed.data));
+    settle(
+      current,
+      replyToOutcome(parsed.data),
+      parsed.data.kind === 'response' ? parsed.data.headers : undefined,
+    );
     pump();
   });
 

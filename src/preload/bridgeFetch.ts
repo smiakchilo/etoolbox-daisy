@@ -1,4 +1,9 @@
-import type { AemBridgeFetchCommand, AemBridgeReply } from '../shared/contracts/aemBridge';
+import {
+  AEM_BRIDGE_REQUEST_HEADERS,
+  type AemBridgeFetchCommand,
+  type AemBridgeHeader,
+  type AemBridgeReply,
+} from '../shared/contracts/aemBridge';
 
 /**
  * The entire decision logic of the AEM preload bridge, extracted from
@@ -66,7 +71,7 @@ export async function performBridgeFetch(
       // Asking for JSON explicitly gives a well-behaved SSO gateway the chance
       // to answer 401 instead of an HTML login page - a far more actionable
       // result. Safe to send on a same-origin request: it triggers no preflight.
-      headers: { Accept: 'application/json' },
+      headers: { ...AEM_BRIDGE_REQUEST_HEADERS },
       signal,
     });
   } catch (error) {
@@ -110,5 +115,18 @@ export async function performBridgeFetch(
     status: response.status,
     contentType: response.headers.get('content-type'),
     bodyText,
+    headers: readableHeaders(response.headers),
   };
+}
+
+/**
+ * Flattens a `Headers` object to the array main logs. Only *readable* headers
+ * are obtainable: `Set-Cookie` (and `Set-Cookie2`) are browser-forbidden
+ * response-header names, filtered out by the fetch implementation before this
+ * code ever sees them, so the AEM session cookie cannot be reported here even
+ * if something upstream tried to. Iteration order and duplicate handling are
+ * whatever the `Headers` object gives - this does not re-combine or sort.
+ */
+function readableHeaders(headers: Headers): AemBridgeHeader[] {
+  return [...headers].map(([name, value]) => ({ name, value }));
 }

@@ -58,6 +58,36 @@ export const aemBridgeFetchCommandSchema = z.object({
 });
 export type AemBridgeFetchCommand = z.infer<typeof aemBridgeFetchCommandSchema>;
 
+/**
+ * The only request headers the bridge ever sets, defined once here so the
+ * preload (which issues the fetch) and main (which logs the tool HTTP
+ * request) describe the same request rather than two drifting copies.
+ *
+ * `Accept: application/json` is safe on a same-origin request: it triggers no
+ * CORS preflight and gives a well-behaved SSO gateway the chance to answer 401
+ * instead of an HTML login page. Nothing else is set: the AEM session cookie
+ * is attached ambiently by Chromium (`credentials: "same-origin"`) and is a
+ * forbidden request-header name, so this code cannot set or read it.
+ */
+export const AEM_BRIDGE_REQUEST_HEADERS: Readonly<Record<string, string>> = {
+  Accept: 'application/json',
+};
+
+/**
+ * One HTTP header, as it crosses the bridge for diagnostics. The preload
+ * reports the response's *readable* headers only; `Set-Cookie` and `Cookie`
+ * are browser-forbidden names and are therefore never present here (see
+ * `bridgeFetch.ts`). This is a diagnostic shape, not something the agent or
+ * the tool result ever consumes.
+ */
+export const aemBridgeHeaderSchema = z
+  .object({
+    name: z.string().min(1),
+    value: z.string(),
+  })
+  .strict();
+export type AemBridgeHeader = z.infer<typeof aemBridgeHeaderSchema>;
+
 export const aemBridgeCancelCommandSchema = z.object({
   requestId: z.string().min(1),
 });
@@ -95,6 +125,13 @@ export const aemBridgeReplySchema = z.discriminatedUnion('kind', [
      * path; the user explicitly rejected one.
      */
     bodyText: z.string(),
+    /**
+     * The response's readable headers, for the tool HTTP log only. Optional so
+     * a reply built before this field existed still validates; the preload
+     * always supplies it going forward. Never interpreted - the bridge's
+     * classification still reads `contentType` alone.
+     */
+    headers: z.array(aemBridgeHeaderSchema).optional(),
   }),
   z.object({
     kind: z.literal('blocked'),

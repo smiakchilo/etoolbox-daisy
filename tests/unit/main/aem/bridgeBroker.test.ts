@@ -12,6 +12,11 @@ import {
   type ToolRequestEnvelope,
 } from '../../../../src/shared';
 import type { Logger } from '../../../../src/main/logger';
+import type {
+  ToolHttpLogger,
+  ToolHttpRequestRecord,
+  ToolHttpResponseRecord,
+} from '../../../../src/main/aem/toolHttpLog';
 
 /** A logger double that records every line's code and fields. */
 function recordingLogger(): { logger: Logger; lines: { code: string; fields: unknown }[] } {
@@ -23,6 +28,22 @@ function recordingLogger(): { logger: Logger; lines: { code: string; fields: unk
     getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
   } as unknown as Logger;
   return { logger, lines };
+}
+
+/** A tool-log double that records the request/response records it is given. */
+function recordingToolLogger(): {
+  toolLogger: ToolHttpLogger;
+  requests: ToolHttpRequestRecord[];
+  responses: ToolHttpResponseRecord[];
+} {
+  const requests: ToolHttpRequestRecord[] = [];
+  const responses: ToolHttpResponseRecord[] = [];
+  const toolLogger = {
+    request: (record: ToolHttpRequestRecord) => requests.push(record),
+    response: (record: ToolHttpResponseRecord) => responses.push(record),
+    getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
+  } as unknown as ToolHttpLogger;
+  return { toolLogger, requests, responses };
 }
 
 const TRUSTED_ORIGIN: BridgeReplyOrigin = { isTrustedAemView: true, isMainFrame: true };
@@ -565,6 +586,71 @@ describe('createAemBridgeBroker - request diagnostics', () => {
   });
 
   it('does not log when no logger is supplied', () => {
+    const harness = createHarness();
+    const broker = createAemBridgeBroker(harness.deps);
+    expect(() => broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x')).not.toThrow();
+  });
+});
+
+describe('createAemBridgeBroker - tool HTTP log', () => {
+  it('logs the full request URL with its headers on send, and the response with headers on reply', async () => {
+    const harness = createHarness();
+    const { toolLogger, requests, responses } = recordingToolLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, toolLogger });
+    const url = 'https://aem.example.com/bin/querybuilder.json?path=/content/foo&type=cq:Page';
+
+    harness.setNow(1000);
+    trackOutcome(broker.request(makeEnvelope('req-1'), url));
+
+    // The query string is exactly what app.log strips and this log exists to keep.
+    expect(requests).toEqual([
+      {
+        requestId: 'req-1',
+        method: 'GET',
+        url,
+        headers: [{ name: 'Accept', value: 'application/json' }],
+      },
+    ]);
+    expect(responses).toEqual([]);
+
+    harness.setNow(1250);
+    harness.fireReply({
+      ...okReply('req-1'),
+      headers: [{ name: 'content-type', value: 'application/json' }],
+    });
+    await flushMicrotasks();
+
+    expect(responses).toEqual([
+      {
+        requestId: 'req-1',
+        status: 200,
+        outcome: 'success',
+        durationMs: 250,
+        headers: [{ name: 'content-type', value: 'application/json' }],
+      },
+    ]);
+  });
+
+  it('logs a deadline expiry with a null status and no headers', async () => {
+    const harness = createHarness();
+    const { toolLogger, responses } = recordingToolLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, toolLogger });
+
+    trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
+    harness.setNow(100_000);
+    harness.timers[0]?.fn();
+    await flushMicrotasks();
+
+    expect(responses).toHaveLength(1);
+    expect(responses[0]).toMatchObject({
+      requestId: 'req-1',
+      status: null,
+      outcome: 'timeout',
+      headers: [],
+    });
+  });
+
+  it('does not require a tool logger', () => {
     const harness = createHarness();
     const broker = createAemBridgeBroker(harness.deps);
     expect(() => broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x')).not.toThrow();

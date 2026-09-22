@@ -15,15 +15,19 @@ function responseStub(init: {
   contentType?: string | null;
   body?: string;
   bodyThrows?: Error;
+  headers?: Record<string, string>;
 }): Response {
-  const headers = new Map<string, string>();
+  const headers = new Headers();
   if (init.contentType !== null && init.contentType !== undefined) {
     headers.set('content-type', init.contentType);
+  }
+  for (const [name, value] of Object.entries(init.headers ?? {})) {
+    headers.set(name, value);
   }
   return {
     status: init.status ?? 200,
     type: init.type ?? 'basic',
-    headers: { get: (name: string) => headers.get(name.toLowerCase()) ?? null },
+    headers,
     text: () =>
       init.bodyThrows ? Promise.reject(init.bodyThrows) : Promise.resolve(init.body ?? ''),
   } as unknown as Response;
@@ -127,7 +131,36 @@ describe('performBridgeFetch - how it reports each outcome', () => {
       status: 200,
       contentType: 'application/json',
       bodyText: '{"a":1}',
+      headers: [{ name: 'content-type', value: 'application/json' }],
     });
+  });
+
+  it('reports the response headers it could read, lowercased by the Headers object', async () => {
+    const reply = await performBridgeFetch(
+      COMMAND,
+      deps(() =>
+        Promise.resolve(
+          responseStub({
+            status: 200,
+            contentType: 'application/json',
+            body: '{}',
+            headers: { 'X-Aem-Path': '/content/foo', 'Cache-Control': 'no-store' },
+          }),
+        ),
+      ),
+      new AbortController().signal,
+    );
+    // The `Headers` object decides iteration order, so assert membership and
+    // count rather than a fixed sequence.
+    const headers = reply.kind === 'response' ? reply.headers : undefined;
+    expect(headers).toHaveLength(3);
+    expect(headers).toEqual(
+      expect.arrayContaining([
+        { name: 'content-type', value: 'application/json' },
+        { name: 'x-aem-path', value: '/content/foo' },
+        { name: 'cache-control', value: 'no-store' },
+      ]),
+    );
   });
 
   it('passes a non-200 status straight through rather than treating it as an error', async () => {

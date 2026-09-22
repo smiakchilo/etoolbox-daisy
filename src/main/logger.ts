@@ -300,8 +300,14 @@ const DEFAULT_MAX_LOG_BYTES = 5 * 1024 * 1024;
  * bounding total size to roughly `2 * maxBytes` (no generational rotation
  * framework - one backup is enough to satisfy "does not grow without
  * bound"), and a failure path that always degrades instead of throwing.
+ *
+ * Exported for reuse by purpose-built JSON Lines sinks that need the same
+ * durability and bounded-growth behaviour but not this module's closed
+ * field vocabulary - currently `aem/toolHttpLog.ts`. Keeping the writer here
+ * rather than duplicating it is deliberate: two independent rotation
+ * implementations would eventually disagree about the bound.
  */
-class LogWriter {
+export class LogWriter {
   private readonly filePath: string;
   private readonly backupPath: string;
   private readonly maxBytes: number;

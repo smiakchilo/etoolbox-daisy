@@ -19,6 +19,7 @@ import { installWebContentsSecurityGuard } from './security';
 import { createAemSession } from './aem';
 import { createAemBridgeBroker } from './aem/bridgeBroker';
 import { createAemBridgeTransport } from './aem/bridgeTransport';
+import { createToolHttpLogger } from './aem/toolHttpLog';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
 import { APP_USER_MODEL_ID, createMainWindow } from './windows';
@@ -224,6 +225,11 @@ if (!gotSingleInstanceLock) {
     // secrets directory is a subdirectory of the existing `settings` path,
     // not a new top-level directory alongside `appPaths`'s fixed six.
     const logger = createLogger(appPaths.logs);
+    // The tool HTTP log (`logs/tools.log`): the full request URL and the
+    // request/response headers for every AEM bridge round trip. Deliberately a
+    // separate file from `app.log`, whose logger cannot carry free-form text -
+    // see `aem/toolHttpLog.ts` for why the diagnostic need justifies the split.
+    const toolLogger = createToolHttpLogger(appPaths.logs);
     // The append-only chat journal (implementation-plan.md step 09): one JSON
     // Lines file per chat under `<home>/etoolbox-daisy/chats`. Owned here for
     // the app's lifetime, not by a controller - the Copilot runtime recycles
@@ -451,6 +457,7 @@ if (!gotSingleInstanceLock) {
     const aemBridgeBroker = createAemBridgeBroker({
       transport: aemBridgeTransport,
       logger,
+      toolLogger,
       clock: Date.now,
       setTimer: (fn, delayMs) => {
         const timer = setTimeout(fn, delayMs);
