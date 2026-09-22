@@ -2,6 +2,7 @@ import { el } from '../lib/dom';
 import { EMPTY_LINK_CONTEXT, MESSAGE_LINK_ATTRIBUTE, type LinkContext } from './aemLinkTargets';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import { describeRequiredAction, describeToolCallStatus } from './transcriptViewModel';
+import { describeToolCall } from './toolCallDetails';
 import { type QueryResultTable, readQueryResultTable } from './queryResultViewModel';
 import type { ToolCallView, TranscriptItem, TranscriptStore } from './transcriptStore';
 
@@ -80,7 +81,87 @@ function renderQueryResultTable(table: QueryResultTable): readonly HTMLElement[]
   return [tableEl, status];
 }
 
-function renderToolCallBody(view: ToolCallView | undefined): readonly HTMLElement[] {
+/**
+ * The disclosure control of a tool-call billet: the requested icon, the
+ * `name - status` label (kept as its own `.chat-tool-call__header` element
+ * because the E2E asserts that exact text), an optional one-line summary of
+ * the request, and a chevron whose rotation `chat.css` drives off the
+ * `chat-tool-call--expanded` class.
+ *
+ * The whole row is the toggle, so the billet behaves like the tool-call
+ * entries of other harnesses: a compact line that opens on click to show what
+ * was sent. See `toggleToolCallExpansion` for the state transition.
+ */
+function renderToolCallToggle(
+  view: ToolCallView,
+  toolCallId: string,
+  expanded: boolean,
+): HTMLButtonElement {
+  const { summary } = describeToolCall(view.toolName, view.args);
+  const toggle = el('button', {
+    attrs: {
+      type: 'button',
+      class: 'chat-tool-call__toggle',
+      'data-tool-call-toggle': toolCallId,
+      'aria-expanded': String(expanded),
+      title: expanded ? 'Hide call details' : 'Show call details',
+    },
+  });
+  toggle.append(
+    el('sp-icon-actions', { attrs: { class: 'chat-tool-call__icon', size: 's' } }),
+    el('span', {
+      attrs: { class: 'chat-tool-call__header' },
+      text: `${view.toolName} \u2014 ${describeToolCallStatus(view.status)}`,
+    }),
+  );
+  if (summary !== undefined && summary !== '') {
+    toggle.append(el('span', { attrs: { class: 'chat-tool-call__summary' }, text: summary }));
+  }
+  toggle.append(
+    el('sp-icon-chevron-down', { attrs: { class: 'chat-tool-call__chevron', size: 's' } }),
+  );
+  return toggle;
+}
+
+/**
+ * The label/value rows revealed when a billet is expanded. Every value is set
+ * through `textContent`: these are model-authored strings, so this is a
+ * second `queryResultViewModel.ts`-style boundary and must never be parsed as
+ * markup.
+ */
+function renderToolCallParameters(view: ToolCallView, expanded: boolean): HTMLElement {
+  const { parameters } = describeToolCall(view.toolName, view.args);
+  const container = el('div', {
+    attrs: { class: 'chat-tool-call__params' },
+    children: parameters.map((parameter) =>
+      el('div', {
+        attrs: { class: 'chat-tool-call__param' },
+        children: [
+          el('span', {
+            attrs: { class: 'chat-tool-call__param-label' },
+            text: parameter.label,
+          }),
+          el('span', {
+            attrs: { class: 'chat-tool-call__param-value' },
+            text: parameter.value,
+          }),
+        ],
+      }),
+    ),
+  });
+  // `hidden` rather than removal: a repaint rebuilds these rows anyway, so
+  // removal would buy nothing, while keeping one code path lets tests assert
+  // on the rows' text regardless of expansion. `hidden` still removes them
+  // from rendering and the accessibility tree while collapsed.
+  container.hidden = !expanded;
+  return container;
+}
+
+function renderToolCallBody(
+  view: ToolCallView | undefined,
+  toolCallId: string,
+  expanded: boolean,
+): readonly HTMLElement[] {
   if (view === undefined) {
     // A tool call this store never recorded `requested` for - see
     // `transcriptStore.ts`'s `updateToolCallStatus` doc comment for why this
@@ -92,10 +173,8 @@ function renderToolCallBody(view: ToolCallView | undefined): readonly HTMLElemen
   }
 
   const nodes: HTMLElement[] = [
-    el('p', {
-      attrs: { class: 'chat-tool-call__header' },
-      text: `${view.toolName} \u2014 ${describeToolCallStatus(view.status)}`,
-    }),
+    renderToolCallToggle(view, toolCallId, expanded),
+    renderToolCallParameters(view, expanded),
   ];
 
   if (view.status.kind === 'succeeded') {
@@ -113,6 +192,8 @@ function renderToolCallBody(view: ToolCallView | undefined): readonly HTMLElemen
     // action, and must be structurally distinguishable from a completed
     // one - see this function's caller, which puts a
     // `chat-tool-call--failed` class on the whole card, not just this text.
+    // The error text stays outside the disclosure so a failure is never
+    // hidden behind a collapsed billet.
     nodes.push(
       el('p', { attrs: { class: 'chat-tool-call__detail' }, text: view.status.error.message }),
     );
@@ -145,15 +226,54 @@ export function createTranscriptView(
 ): TranscriptView {
   const element = el('div', { attrs: { class: 'chat-transcript__messages' } });
   const cache = new Map<string, HTMLElement>();
+  // Per-tool-call disclosure state, keyed by `toolCallId`. It lives here, not
+  // on the DOM, because `updateShell` rebuilds a billet's children on every
+  // repaint (a streaming delta repaints the whole transcript); DOM-held open
+  // state would be discarded every tick. Only calls the reader has toggled
+  // appear here - an absent entry means the default, collapsed.
+  const expandedToolCalls = new Set<string>();
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
 
-  // One delegated listener, attached for the view's lifetime. It only acts on
-  // anchors the markdown renderer stamped as openable (`data-daisy-link`), so
-  // an external or unrecognised link falls through to the browser's default -
+  /** Applies an expansion state to an already-rendered billet, without a full repaint. */
+  function applyToolCallExpansion(shell: HTMLElement, expanded: boolean): void {
+    shell.classList.toggle('chat-tool-call--expanded', expanded);
+    const toggle = shell.querySelector('.chat-tool-call__toggle');
+    if (toggle !== null) {
+      toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.setAttribute('title', expanded ? 'Hide call details' : 'Show call details');
+    }
+    const params = shell.querySelector<HTMLElement>('.chat-tool-call__params');
+    if (params !== null) params.hidden = !expanded;
+  }
+
+  function toggleToolCallExpansion(toggle: Element): void {
+    const toolCallId = toggle.getAttribute('data-tool-call-toggle');
+    const shell = toggle.closest<HTMLElement>('.chat-tool-call');
+    if (toolCallId === null || shell === null) return;
+    const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+    if (expanded) {
+      expandedToolCalls.add(toolCallId);
+    } else {
+      expandedToolCalls.delete(toolCallId);
+    }
+    applyToolCallExpansion(shell, expanded);
+  }
+
+  // One delegated listener, attached for the view's lifetime. A click on a
+  // tool-call billet toggles its disclosure; otherwise it only acts on anchors
+  // the markdown renderer stamped as openable (`data-daisy-link`), so an
+  // external or unrecognised link falls through to the browser's default -
   // which the app's own `will-navigate` guard then refuses. `closest` is read
-  // defensively because a click's target may be a text node.
+  // defensively because a click's target may be a text node (or shadow content
+  // retargeted to its host).
   element.addEventListener('click', (event) => {
     const target = event.target as Element | null;
+    const toggle = target?.closest?.('[data-tool-call-toggle]') ?? null;
+    if (toggle !== null) {
+      event.preventDefault();
+      toggleToolCallExpansion(toggle);
+      return;
+    }
     const anchor = target?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}]`) ?? null;
     const href = anchor?.getAttribute('href') ?? null;
     if (href === null) return;
@@ -210,11 +330,13 @@ export function createTranscriptView(
         return;
       case 'toolCall': {
         const view = store.toolCallFor(item.toolCallId);
+        const expanded = expandedToolCalls.has(item.toolCallId);
         shell.className =
           view === undefined
             ? 'chat-tool-call'
             : `chat-tool-call chat-tool-call--${view.status.kind}`;
-        shell.replaceChildren(...renderToolCallBody(view));
+        if (expanded) shell.classList.add('chat-tool-call--expanded');
+        shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
         return;
       }
       case 'thinking':

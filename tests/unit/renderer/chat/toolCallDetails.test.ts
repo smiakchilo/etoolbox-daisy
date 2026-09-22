@@ -1,0 +1,109 @@
+import { describe, expect, it } from 'vitest';
+import { describeToolCall } from '../../../../src/renderer/src/chat/toolCallDetails';
+
+describe('describeToolCall - aem_get_json', () => {
+  it('summarises the requested path and shows it, plus the effective request, as parameters', () => {
+    const details = describeToolCall('aem_get_json', { path: '/content/acme/en/us/home' });
+
+    expect(details.summary).toBe('/content/acme/en/us/home');
+    expect(details.parameters).toContainEqual({
+      label: 'Path',
+      value: '/content/acme/en/us/home',
+    });
+    expect(details.parameters).toContainEqual({
+      label: 'Request',
+      value: '/content/acme/en/us/home.0.json',
+    });
+  });
+
+  it('reflects includeChildren in the request selector and adds an explicit row', () => {
+    const details = describeToolCall('aem_get_json', {
+      path: '/content/acme',
+      includeChildren: true,
+    });
+
+    expect(details.parameters).toContainEqual({
+      label: 'Request',
+      value: '/content/acme.1.json',
+    });
+    expect(details.parameters).toContainEqual({ label: 'Include children', value: 'Yes' });
+  });
+
+  it('lists the requested properties when present', () => {
+    const details = describeToolCall('aem_get_json', {
+      path: '/content/acme',
+      properties: ['jcr:title', 'jcr:description'],
+    });
+
+    expect(details.parameters).toContainEqual({
+      label: 'Properties',
+      value: 'jcr:title, jcr:description',
+    });
+  });
+
+  it('degrades honestly when path is missing rather than inventing one', () => {
+    const details = describeToolCall('aem_get_json', {});
+
+    expect(details.summary).toBeUndefined();
+    expect(details.parameters).toContainEqual({ label: 'Path', value: '(not provided)' });
+    expect(details.parameters.some((parameter) => parameter.label === 'Request')).toBe(false);
+  });
+});
+
+describe('describeToolCall - aem_query', () => {
+  it('summarises the exact query and repeats it as a labelled parameter', () => {
+    const details = describeToolCall('aem_query', {
+      predicates: { path: '/content/site', type: 'cq:Page' },
+      offset: 0,
+      limit: 25,
+    });
+
+    expect(details.summary).toBe('path=/content/site&type=cq:Page');
+    expect(details.parameters).toContainEqual({
+      label: 'Query',
+      value: 'path=/content/site&type=cq:Page',
+    });
+    expect(details.parameters).toContainEqual({ label: 'Offset', value: '0' });
+    expect(details.parameters).toContainEqual({ label: 'Limit', value: '25' });
+  });
+
+  it('shows the property projection space-separated, matching the wire parameter', () => {
+    const details = describeToolCall('aem_query', {
+      predicates: { path: '/content' },
+      properties: ['jcr:path', 'jcr:title'],
+    });
+
+    expect(details.parameters).toContainEqual({
+      label: 'Properties',
+      value: 'jcr:path jcr:title',
+    });
+  });
+
+  it('treats a non-string predicate value as no usable query', () => {
+    const details = describeToolCall('aem_query', { predicates: { depth: 2 } });
+
+    expect(details.summary).toBeUndefined();
+    expect(details.parameters).toContainEqual({ label: 'Query', value: '(no predicates)' });
+  });
+});
+
+describe('describeToolCall - unknown tools', () => {
+  it('falls back to the full argument object so no tool is ever invisible', () => {
+    const details = describeToolCall('aem_unknown_tool', {
+      foo: 'bar',
+      count: 3,
+      nested: { a: 1 },
+    });
+
+    expect(details.summary).toBeUndefined();
+    expect(details.parameters).toContainEqual({ label: 'foo', value: 'bar' });
+    expect(details.parameters).toContainEqual({ label: 'count', value: '3' });
+    expect(details.parameters).toContainEqual({ label: 'nested', value: '{"a":1}' });
+  });
+
+  it('never returns an empty parameter list', () => {
+    const details = describeToolCall('aem_unknown_tool', {});
+
+    expect(details.parameters).toEqual([{ label: 'Arguments', value: '(none)' }]);
+  });
+});

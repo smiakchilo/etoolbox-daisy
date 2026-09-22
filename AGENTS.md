@@ -205,6 +205,27 @@ goes through `marked` + `DOMPurify`. **Never set a cell or message with
 `innerHTML`** — the transcript uses `textContent`, and there are mutation tests
 guarding that.
 
+### Adding a tool: design its `getDetails()` by hand
+
+`transcriptView.ts` renders every tool call as a borderless, icon-led billet
+that expands to show a standard **`getDetails()`** representation — a one-line
+summary plus label/value rows — composed by `describeToolCall()` in
+`src/renderer/src/chat/toolCallDetails.ts`.
+
+- **Creating a tool includes designing its `getDetails()`.** Do not lean on the
+  generic fallback (`describeGenericArgs`), which dumps the raw argument object.
+  It exists so an unrecognised tool can never be *invisible*, not as an
+  acceptable finished design. Add a deliberate case to `describeToolCall` that
+  exposes the command and/or parameters a reader actually needs — e.g.
+  `aem_get_json` shows the requested path and the effective `.0.json`/`.1.json`
+  request; `aem_query` shows the exact query string.
+- **An agent creating a tool must ask the user what to expose.** Which
+  arguments, what the collapsed summary should say, and how the expanded rows
+  should read are the user's call, not the agent's to guess. The tool is not
+  done until that composition is agreed and implemented.
+- Cover it: `tests/unit/renderer/chat/toolCallDetails.test.ts`, plus an E2E
+  when the composition hinges on a custom element (see §9).
+
 ### `resources/skills/`
 
 Four bundled skills, each a `SKILL.md`: `aem-daisy-conventions`,
@@ -434,6 +455,12 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 - **Ambiguity goes back to the user.** The plan says it explicitly: a question
   these documents and the verified APIs cannot answer must not be resolved by a
   guess. Ask.
+- **A new tool is not finished until its `getDetails()` is designed.** Every
+  tool needs a deliberate transcript-details composition (`describeToolCall` in
+  `src/renderer/src/chat/toolCallDetails.ts`), never the generic
+  argument-dump fallback. **When an agent adds a tool, it must ask the user**
+  which arguments to expose and how the collapsed summary and expanded rows
+  should read, before writing the composition. See §5.
 - **One step at a time.** Prove each step's success criteria by execution before
   starting the next. Do not mark several future steps complete on impression.
 - **Keep the plan bookkeeping current as you go**, not at the end.

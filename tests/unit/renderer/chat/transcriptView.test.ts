@@ -67,6 +67,21 @@ function toolRequested(sequence: number, toolName = 'aem_get_json'): AgentEvent 
   });
 }
 
+function toolRequestedWithArgs(
+  sequence: number,
+  toolName: string,
+  args: Record<string, unknown>,
+): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.requested',
+    chatId,
+    sequence,
+    toolCallId,
+    toolName,
+    arguments: args,
+  });
+}
+
 function toolResult(sequence: number, ok: boolean): AgentEvent {
   return agentEventSchema.parse({
     type: 'tool.result',
@@ -301,6 +316,7 @@ describe('createTranscriptView', () => {
 });
 
 describe('createTranscriptView - aem_query result table (Step 08)', () => {
+  // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute
   const queryData = {
     ok: true,
     operation: 'aem_query',
@@ -367,6 +383,7 @@ describe('createTranscriptView - aem_query result table (Step 08)', () => {
   it('never parses a property value as HTML', () => {
     const element = renderQuery(queryData);
     // The literal text must survive, and it must not have become an element.
+    // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute
     expect(element.textContent).toContain('<img src=x onerror=alert(1) alt="Image">');
     expect(element.querySelector('img')).toBeNull();
   });
@@ -468,5 +485,118 @@ describe('createTranscriptView - openable message links', () => {
       activeOrigin: undefined,
     }));
     expect(element.querySelector('a')).toBeNull();
+  });
+});
+
+describe('createTranscriptView - tool-call billet disclosure', () => {
+  function click(target: Element): Event {
+    const event = new dom.window.MouseEvent('click', { bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  }
+
+  function renderGetJson(args: Record<string, unknown> = { path: '/content/acme/en/us/home' }) {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'aem_get_json', args));
+    view.repaint(store);
+    return { view, store };
+  }
+
+  it('renders each call as a disclosure row preceded by an sp-icon-actions icon and a chevron', () => {
+    const { view } = renderGetJson();
+
+    const icon = view.element.querySelector('.chat-tool-call__icon');
+    expect(icon?.tagName.toLowerCase()).toBe('sp-icon-actions');
+    expect(view.element.querySelector('.chat-tool-call__chevron')).not.toBeNull();
+    // Prepended: the icon is the toggle's first child.
+    expect(view.element.querySelector('.chat-tool-call__toggle')?.firstElementChild).toBe(icon);
+  });
+
+  it('is collapsed by default, with the call parameters present but hidden', () => {
+    const { view } = renderGetJson();
+
+    const params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.hidden).toBe(true);
+    expect(params?.textContent).toContain('/content/acme/en/us/home.0.json');
+    expect(
+      view.element.querySelector('.chat-tool-call__toggle')?.getAttribute('aria-expanded'),
+    ).toBe('false');
+  });
+
+  it('reveals the requested path on click and collapses again on a second click', () => {
+    const { view } = renderGetJson();
+    const toggle = view.element.querySelector('.chat-tool-call__toggle')!;
+
+    click(toggle);
+    let params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.hidden).toBe(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      view.element.querySelector('.chat-tool-call')?.classList.contains('chat-tool-call--expanded'),
+    ).toBe(true);
+
+    click(toggle);
+    params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.hidden).toBe(true);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('shows the exact aem_query query when expanded', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(
+      toolRequestedWithArgs(0, 'aem_query', {
+        predicates: { path: '/content/site', type: 'cq:Page' },
+        offset: 0,
+        limit: 10,
+      }),
+    );
+    view.repaint(store);
+
+    click(view.element.querySelector('.chat-tool-call__toggle')!);
+
+    const params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.textContent).toContain('path=/content/site&type=cq:Page');
+    expect(params?.textContent).toContain('10');
+  });
+
+  it('keeps a billet expanded across a repaint triggered by a later event', () => {
+    const { view, store } = renderGetJson();
+    click(view.element.querySelector('.chat-tool-call__toggle')!);
+
+    store.applyEvent(delta(1, 'still working'));
+    view.repaint(store);
+
+    const params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.hidden).toBe(false);
+    expect(
+      view.element.querySelector('.chat-tool-call')?.classList.contains('chat-tool-call--expanded'),
+    ).toBe(true);
+  });
+
+  it('keeps the path out of the header element so its exact status text is unchanged', () => {
+    const { view, store } = renderGetJson();
+    store.applyEvent(toolResult(1, true));
+    view.repaint(store);
+
+    expect(view.element.querySelector('.chat-tool-call__header')?.textContent).toBe(
+      'aem_get_json \u2014 Completed',
+    );
+    expect(view.element.querySelector('.chat-tool-call__summary')?.textContent).toBe(
+      '/content/acme/en/us/home',
+    );
+  });
+
+  it('does not route a billet click to onOpenLink', () => {
+    const onOpenLink = vi.fn<(url: string) => void>();
+    const view = createTranscriptView(markdownRenderer, { onOpenLink });
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'aem_get_json', { path: '/content/acme' }));
+    view.repaint(store);
+
+    click(view.element.querySelector('.chat-tool-call__toggle')!);
+
+    expect(onOpenLink).not.toHaveBeenCalled();
   });
 });

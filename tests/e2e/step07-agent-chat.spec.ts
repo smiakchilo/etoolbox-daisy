@@ -517,6 +517,47 @@ test.describe('Milestone A #4: tool lifecycle visibility', () => {
     );
   });
 
+  test('a tool-call billet is icon-led and expands to reveal the requested path', async () => {
+    await scriptTurn(app, {
+      steps: [
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: AEM_GET_JSON_TOOL_NAME,
+            arguments: { path: '/content/we-retail/us/en/home' },
+            decision: { kind: 'approved', outcome: { ok: true, data: {} } },
+          },
+        },
+      ],
+    });
+    await sendViaComposer(shell, 'what is on the home page?');
+    await flushFake(app);
+
+    const toolCall = shell.locator(TOOL_CALL).last();
+    const toggle = toolCall.locator('.chat-tool-call__toggle');
+    await expect(toggle).toBeVisible();
+
+    // The requested icon must be a REGISTERED custom element in the shipped
+    // renderer bundle, not an inert unknown tag - the one thing a jsdom unit
+    // test structurally cannot prove (see step08-query-results.spec.ts).
+    const iconUpgraded = await shell.evaluate(
+      () => customElements.get('sp-icon-actions') !== undefined,
+    );
+    expect(iconUpgraded).toBe(true);
+
+    // Collapsed by default: the parameters exist but are hidden.
+    const params = toolCall.locator('.chat-tool-call__params');
+    await expect(params).toBeHidden();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    await toggle.click();
+
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(params).toBeVisible();
+    await expect(params).toContainText('/content/we-retail/us/en/home');
+    await expect(params).toContainText('.0.json');
+  });
+
   test('an approved but failed tool call renders as FAILED with the error message and the suggested action', async () => {
     const beforeCount = (await getCapturedEvents(shell)).length;
 

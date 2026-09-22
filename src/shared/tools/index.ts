@@ -36,6 +36,13 @@ export * from './aemQuery';
  * below. Nothing else in `src/` needs to change: the session policy derives its
  * allowlist from `TOOL_DEFINITIONS`, the SDK adapter derives its descriptors
  * from it, and the rendering dispatch below follows the same list.
+ *
+ * Registration is not the whole job. Every tool must also have a deliberate
+ * transcript `getDetails()` composition so its call is legible in the chat
+ * pane - see `describeToolCall` in
+ * `src/renderer/src/chat/toolCallDetails.ts` and AGENTS.md §5. When an agent
+ * adds a tool it must ask the user what to expose there rather than fall back
+ * to the generic argument dump.
  */
 
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
@@ -101,7 +108,7 @@ export function serializeToolResult(result: ToolResult): string {
  * error message - exactly the shape the shared `Result` helper exists for, so
  * it is reused here rather than a second parse-outcome type.
  */
-export function parseToolResult(serialized: string): Result<ToolResult, string> {
+export function parseToolResult(serialized: string): Result<ToolResult> {
   let candidate: unknown;
   try {
     candidate = JSON.parse(serialized);
