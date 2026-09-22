@@ -159,7 +159,7 @@ const FIRST_PAGE = {
     { 'jcr:path': '/content/site/alpha', 'jcr:title': 'Alpha', 'jcr:primaryType': 'cq:Page' },
     {
       'jcr:path': '/content/site/beta',
-      'jcr:title': '<img src=x alt="Page">',
+      'jcr:title': '<img src=x onerror="window.__xss=true">',
       'jcr:primaryType': 'cq:Page',
     },
   ],

@@ -54,16 +54,16 @@ export function isAllowedAppNavigation(targetUrl: string, rendererDistDir: strin
  * reviewed IPC call - not by relaxing this handler.
  *
  * Scoped to `session.defaultSession` webContents only (step 05): the AEM
- * `WebContentsView` and its auxiliary windows deliberately use a *different*
- * session (`AEM_SESSION_PARTITION`, `src/main/aem/session.ts`) and have their
- * own, separately reviewed navigation/window-open policy
- * (`src/main/browser/aemBrowserView.ts`, `auxiliaryWindows.ts`) - reusing
- * *this* deny-everything guard for them would not "extend" that policy, it
+ * `WebContentsView` deliberately uses a *different* session
+ * (`AEM_SESSION_PARTITION`, `src/main/aem/session.ts`) and has its own,
+ * separately reviewed navigation/window-open policy
+ * (`src/main/browser/aemBrowserView.ts`, `windowOpenRouter.ts`) - reusing
+ * *this* deny-everything guard for it would not "extend" that policy, it
  * would replace it, since only one `setWindowOpenHandler` can be active per
  * `WebContents` at a time and this app-wide listener would otherwise
  * overwrite whichever handler was attached second. Checking `.session`
  * (identity, not partition name) is what tells "our own local UI" apart from
- * "AEM/auxiliary content" without needing this module to know anything about
+ * "AEM content" without needing this module to know anything about
  * the AEM session's existence beyond importing `session.defaultSession`
  * itself.
  */

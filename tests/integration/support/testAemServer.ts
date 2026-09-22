@@ -452,8 +452,8 @@ export async function startAemOrigin(options: AemOriginOptions = {}): Promise<Ae
 
         case '/popup-launcher': {
           // `window.open` is driven by a click rather than on load so the test
-          // controls exactly when the auxiliary window appears, and so the app's
-          // window-open policy sees a user gesture like it would in real AEM.
+          // controls exactly when the popup appears, and so a window-open policy
+          // sees a user gesture like it would in real AEM.
           send(
             response,
             200,

@@ -5,7 +5,7 @@ import { app, type BrowserWindow, type Session, type WebContents } from 'electro
 import { createBrowserController } from '../../../../src/main/browser/browserController';
 import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
 import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView';
-import type { AuxiliaryWindowManager } from '../../../../src/main/browser/auxiliaryWindows';
+import type { WindowOpenRouter } from '../../../../src/main/browser/windowOpenRouter';
 import type { AemSession } from '../../../../src/main/aem';
 import type { CertificateExceptionRecord } from '../../../../src/main/aem';
 import { computeCertificateFingerprintHex } from '../../../../src/main/aem';
@@ -26,11 +26,11 @@ import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
  * `createBrowserController` unconditionally calls `app.on("certificate-error", ...)`
  * at construction and `app.removeListener` in `destroy()` - the only real
  * Electron *value* this module itself touches. Everything else it imports
- * from `electron` (`WebContentsView`/`screen` via `aemBrowserView.ts`,
- * `BrowserWindow` via `auxiliaryWindows.ts`) is only referenced inside
- * function bodies this suite never calls, since every test injects a fake
- * `AemBrowserView` through the `createAemView` seam instead of letting the
- * real factory run. `electron`'s own package resolves to a bare path string
+ * from `electron` (`WebContentsView`/`screen` via `aemBrowserView.ts`) is only
+ * referenced inside function bodies this suite never calls, since every test
+ * injects a fake `AemBrowserView` through the `createAemView` seam instead of
+ * letting the real factory run. `electron`'s own package resolves to a bare
+ * path string
  * outside a real Electron process (`node_modules/electron/index.js`), so
  * those unused bindings would just be `undefined` - stubbing all four here
  * anyway is cheap and keeps this test insulated from that resolution detail.
@@ -118,7 +118,7 @@ interface FakeAemViewControls {
   readonly webContents: FakeWebContentsControls;
   readonly loadURL: ReturnType<typeof vi.fn>;
   readonly stop: ReturnType<typeof vi.fn>;
-  readonly closeAll: ReturnType<typeof vi.fn>;
+  readonly closePopups: ReturnType<typeof vi.fn>;
   readonly destroy: ReturnType<typeof vi.fn>;
   loadURLImpl: (url: string) => Promise<void>;
 }
@@ -184,13 +184,9 @@ function makeFakeAemView(): FakeAemViewControls {
     await controls.loadURLImpl(url);
   });
   const stop = vi.fn();
-  const closeAll = vi.fn();
   const destroy = vi.fn();
-  const auxiliaryWindows: AuxiliaryWindowManager = {
-    attachTo: vi.fn(),
-    openWindow: vi.fn(),
-    closeAll,
-  };
+  const closePopups = vi.fn();
+  const windowOpenRouter: WindowOpenRouter = { attachTo: vi.fn(), closeAll: closePopups };
   const navigationState: BrowserNavigationState = {
     url: '',
     canGoBack: false,
@@ -200,7 +196,7 @@ function makeFakeAemView(): FakeAemViewControls {
   const webContentsControls = makeFakeWebContents();
   const view: AemBrowserView = {
     webContents: webContentsControls.webContents,
-    auxiliaryWindows,
+    windowOpenRouter,
     setBounds: vi.fn(),
     getNavigationState: vi.fn(() => navigationState),
     goBack: vi.fn(() => Promise.resolve({ ok: true as const })),
@@ -215,7 +211,7 @@ function makeFakeAemView(): FakeAemViewControls {
     webContents: webContentsControls,
     loadURL,
     stop,
-    closeAll,
+    closePopups,
     destroy,
     loadURLImpl: () => Promise.resolve(),
   };

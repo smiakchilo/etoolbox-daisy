@@ -8,7 +8,8 @@ import type { ProxyPlainCredentials } from '../aem';
  * sequential: enter a switching state, stop in-flight operations, close
  * auxiliary windows, apply the new proxy configuration, close previous
  * connections, and then load the new address. Tools remain disabled until
- * the transition completes.").
+ * the transition completes."). "Auxiliary windows" here are the popups this
+ * app still opens for SSO/login dialogs - `closePopups` below.
  *
  * `switching` is a real, checkable field on this object - not an implicit
  * race between "did the proxy finish applying" and "did the load start" -
@@ -86,8 +87,8 @@ export function extractChromiumErrorCode(error: unknown): string | undefined {
 export interface ServerSwitchDeps {
   /** Returns the current AEM view, or `undefined` if none exists yet (e.g. window not created). */
   readonly getView: () => SwitchableAemView | undefined;
-  /** Closes every open auxiliary window (login popups, SSO windows) - see `auxiliaryWindows.ts`. Must not itself touch the AEM view or session. */
-  readonly closeAuxiliaryWindows: () => void;
+  /** Closes every open popup window (login/SSO dialogs) - see `windowOpenRouter.ts`. Must not itself touch the pane view or session. */
+  readonly closePopups: () => void;
   readonly aemSession: AemSwitchSession;
   /**
    * Resolves the proxy-library entry (or `undefined` for a direct connection)
@@ -175,10 +176,11 @@ export class ServerSwitchController {
       //    server keeps running underneath the switch.
       view.stop();
 
-      // 2. Close every auxiliary window (login popups, SSO windows) tied to
-      //    the previous server. These share the AEM session/proxy, so they
-      //    must not survive into the new server's context.
-      this.deps.closeAuxiliaryWindows();
+      // 2. Close every open popup window (login/SSO dialogs) tied to the
+      //    previous server. These share the pane's session/proxy, so they must
+      //    not survive into the new server's context. In-place "tab" requests
+      //    never had a separate window to close - they load in the view.
+      this.deps.closePopups();
 
       // 3. Apply the new proxy configuration and close previous connections
       //    - `AemSession.switchProxy` itself awaits `setProxy` then

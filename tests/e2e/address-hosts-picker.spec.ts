@@ -241,6 +241,16 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     await itemA.click();
     await expect.poll(() => serverA.hits > baselineA, { timeout: 30_000 }).toBe(true);
 
+    // Let the picker-initiated switch fully settle before typing the next
+    // address. `browser:navigate` is deliberately rejected while a switch is
+    // in progress (`switch_in_progress`), and the server records the request
+    // before the load finishes - so waiting only on `serverA.hits` can race the
+    // still-running switch and see the typed navigation silently dropped. The
+    // toolbar's Refresh (rather than Stop) is the "not loading" signal.
+    await expect(page.locator('.browser-toolbar [aria-label="Refresh"]')).toHaveCount(1, {
+      timeout: 30_000,
+    });
+
     // Typing directly into the field still works too - the same field, not
     // a separate mode.
     await addressInput.fill(serverB.origin);

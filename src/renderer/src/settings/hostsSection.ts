@@ -416,11 +416,28 @@ function buildHostItem(
       ctx.status.clear();
     }
     if (removeArmed) {
-      // A removal warning has no value to reconcile against - any edit voids
-      // it. (The Remove click itself does not reach here: the field blur it
-      // causes fires this listener *before* the button's own handler arms.)
-      removeArmed = false;
-      ctx.status.clear();
+      // An *edit* voids the removal warning - but a spurious `change` does not.
+      // Clicking Remove blurs whichever field had focus and fires a native
+      // `change` with the value unchanged; depending on which listener runs
+      // first, that used to cancel the confirmation the user was about to
+      // click. Only a value that actually differs from the saved host voids it.
+      const labelNow = resolveHostLabelInput(
+        labelField.value,
+        addressResult.ok ? addressResult.origin : savedOrigin,
+      );
+      const colorNow = refreshColor();
+      const edited =
+        !addressResult.ok ||
+        addressResult.origin !== savedOrigin ||
+        !labelNow.ok ||
+        labelNow.label !== savedLabel ||
+        !colorNow.ok ||
+        colorNow.color === undefined ||
+        colorKey(colorNow.color) !== savedColorKey;
+      if (edited) {
+        removeArmed = false;
+        ctx.status.clear();
+      }
     }
 
     // Immediate inline feedback, before the debounced save.
@@ -711,6 +728,13 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
       // input, so it is skipped in that case).
       for (const item of items.values()) item.setProxyOptions(proxies);
       if (hasPendingEdits()) return;
+      // A confirmation is anchored to a row (its action closure reads that
+      // row's `removeArmed`/`pendingOrigin`). Rebuilding the rows while it is
+      // on screen would replace that closure and orphan the prompt - so a
+      // later auto-save could raise the *origin* prompt and clobber the
+      // *removal* confirmation the user is clicking. Wait for the prompt to
+      // clear; the next snapshot update rebuilds then.
+      if (options.status.isPromptShowing?.() === true) return;
       replaceItems(servers);
     },
     async flushNow(): Promise<void> {

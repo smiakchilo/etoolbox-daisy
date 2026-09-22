@@ -24,11 +24,10 @@ const APP_PRELOAD_PATH = path.join(currentDir, '../preload/app-preload.js');
 export const APP_USER_MODEL_ID = 'com.etoolboxdaisy.app';
 
 /**
- * The app's own icon, resolved once for every window this process creates -
- * the main window here and the AEM pane's auxiliary (popup) windows in
- * `browser/auxiliaryWindows.ts`. `undefined` when the icon is missing, so
- * `exactOptionalPropertyTypes` requires the `icon` option to be omitted
- * rather than set to `undefined`; hence the conditional spread at each use.
+ * The app's own icon, resolved once for the main window this process creates.
+ * `undefined` when the icon is missing, so
+ * `exactOptionalPropertyTypes` requires the `icon` option to be omitted rather
+ * than set to `undefined`; hence the conditional spread at each use.
  */
 export const APP_ICON_PATH = resolveAppIconPath({
   isPackaged: app.isPackaged,

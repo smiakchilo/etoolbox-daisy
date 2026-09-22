@@ -183,7 +183,10 @@ scoping.
 `main/browser/` owns the AEM pane: `browserController.ts` (the state machine),
 `navigationEpoch.ts` (**how a late result from a previous page is rejected** —
 central to correctness), `serverSwitch.ts`, `certificatePrompt.ts`,
-`auxiliaryWindowPolicy.ts` (popup/SSO handling), `viewBounds.ts`.
+`urlPolicy.ts` + `windowOpenPolicy.ts` + `windowOpenRouter.ts` (http(s)-only URL
+policy; new-window requests classified as popups - `window.open` with window
+features, left as real windows for SSO - vs tabs, loaded in the same view),
+`viewBounds.ts`.
 
 ### `src/renderer/`
 
@@ -237,10 +240,10 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1941 passed / 14 skipped**;
-**Playwright → 68 tests**. (The Session "Authentication"/"Models" → "Agents"
+Current baseline: **`npm run verify` → 1969 passed / 14 skipped**;
+**Playwright → 70 tests**. (The Session "Authentication"/"Models" → "Agents"
 tab merge moved the unit baseline from 1658, and later work moved it on — see
-`docs/verification.md`, whose latest section records 1941/68.)
+`docs/verification.md`, whose latest section records 1969/70.)
 `app.spec.ts` no longer collides with a running `npm run dev`: it now
 provisions a scratch storage home like every sibling spec (see
 `docs/verification.md` "Settings Servers renamed to Hosts", traps). Residual E2E
@@ -248,11 +251,12 @@ flakes, all load-correlated and green in isolation:
 `step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
 closeability section), `settings-color-picker.spec.ts` (its 1–2 px geometry
 assertions), `agent-token-canary.spec.ts`, and `step05-loading-indicator.spec.ts`
-("Stop mid-load" can see a one-off `switch_in_progress` banner). One
-**pre-existing, consistent** failure is *not* a flake:
-`step05-settings-servers.spec.ts` (the banner OK button detaches mid-click); it
-reproduces on the clean baseline and is recorded in
-`docs/handoff-steps-09-12.md` as an open item.
+("Stop mid-load" can see a one-off `switch_in_progress` banner). The two
+previously-*consistent* failures — `step05-settings-servers.spec.ts` (an
+orphaned banner collapse timer detached the OK button mid-click) and
+`step08-query-results.spec.ts`'s markup case (a stale `onerror=` fixture) — were
+fixed on 2026-09-22; see `docs/verification.md` "Fix the three knowingly-failing
+E2E tests".
 
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's

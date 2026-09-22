@@ -22,9 +22,9 @@ import { openDetachedDevTools } from './devTools';
  *    keyboard accelerators, and a disabled editing menu over a transcript is
  *    noise.
  *  - {@link buildChromeTemplate} - remote AEM content in the pane's
- *    `WebContentsView` and in its auxiliary (popup/SSO) windows. This is a
- *    genuine web page, so it mirrors Chrome's menu for the element under the
- *    cursor (editable field, link, image, selection) plus page navigation.
+ *    `WebContentsView`. This is a genuine web page, so it mirrors Chrome's menu
+ *    for the element under the cursor (editable field, link, image, selection)
+ *    plus page navigation.
  *
  * Electron has no built-in "Chrome context menu", so the Chrome-shaped menu is
  * assembled here from the `WebContents` APIs that correspond to Chrome's
@@ -46,8 +46,8 @@ import { openDetachedDevTools } from './devTools';
  */
 
 export interface ChromeContextMenuTarget {
-  /** Opens an http(s) URL in the app's managed auxiliary window. */
-  openLinkInNewWindow(url: string): void;
+  /** Loads an http(s) URL in the AEM pane's own view (never a second window - see `browser/windowOpenRouter.ts`). */
+  openLink(url: string): void;
 }
 
 /**
@@ -144,7 +144,7 @@ export function buildChromeTemplate(
   if (params.linkURL.length > 0) {
     const linkUrl = params.linkURL;
     template.push(
-      { label: 'Open link in new window', click: () => target.openLinkInNewWindow(linkUrl) },
+      { label: 'Open link', click: () => target.openLink(linkUrl) },
       {
         label: 'Copy link address',
         click: () => {
@@ -208,7 +208,7 @@ export function attachClipboardContextMenu(webContents: WebContents, window: Bro
   });
 }
 
-/** Attaches the Chrome-shaped menu to a remote-content surface (AEM pane or auxiliary window). */
+/** Attaches the Chrome-shaped menu to a remote-content surface (the AEM pane). */
 export function attachChromeContextMenu(
   webContents: WebContents,
   window: BrowserWindow,

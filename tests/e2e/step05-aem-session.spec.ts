@@ -271,8 +271,10 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
           const afterSsoHeading = await text('#aem-heading');
 
           // -- F. Popup flow ------------------------------------------------------
-          // No preload is given to the popup, mirroring the app's auxiliary-window
-          // policy, so the assertion below is about what AEM-opened windows can see.
+          // This harness creates the popup itself (the app routes bare
+          // `window.open`/`target="_blank"` requests into the pane view instead
+          // - see `windowOpenRouter.ts`) with no preload, so the assertion
+          // below is about what an AEM-opened window in this session can see.
           let popupUrl = '(none)';
           let popupStatus = '(none)';
           let popupBridge = '(none)';

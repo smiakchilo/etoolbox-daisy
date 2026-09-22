@@ -225,7 +225,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   const switchController = new ServerSwitchController({
     getView: () => aemView,
-    closeAuxiliaryWindows: () => aemView.auxiliaryWindows.closeAll(),
+    closePopups: () => aemView.windowOpenRouter.closeAll(),
     aemSession: {
       switchProxy: (proxy, resolveCredentials) => aemSession.switchProxy(proxy, resolveCredentials),
     },

@@ -1,5 +1,5 @@
-import { originsMatch, parseNavigationTarget } from '../../shared/contracts/origin';
-import type { ServerConfig } from '../../shared/contracts/serverConfig';
+import { originsMatch, parseNavigationTarget } from '../../shared';
+import type { ServerConfig } from '../../shared';
 
 /**
  * The unknown-origin policy (implementation-plan.md step 05;
@@ -10,9 +10,9 @@ import type { ServerConfig } from '../../shared/contracts/serverConfig';
  * This function is deliberately the *only* place that policy is decided, and
  * it is deliberately never consulted for anything except a manually-typed
  * address. That is what makes it correct rather than merely convenient: an
- * SSO redirect chain or an auxiliary sign-in popup is page-driven navigation
- * happening on an already-loaded `WebContentsView`/auxiliary window (see
- * `aemBrowserView.ts`'s navigation guard and `auxiliaryWindows.ts`), which
+ * SSO redirect chain or a popup request routed in place is page-driven
+ * navigation happening on the already-loaded `WebContentsView` (see
+ * `aemBrowserView.ts`'s navigation guard and `windowOpenRouter.ts`), which
  * never calls this function at all - there is no redirect-chain heuristic to
  * get subtly wrong ("was this origin reached via N hops from a configured
  * server?"), because the two cases are distinguished by *how* the navigation

@@ -284,7 +284,7 @@ describe('buildChromeTemplate', () => {
         }),
       }),
       webContents,
-      { openLinkInNewWindow: vi.fn() },
+      { openLink: vi.fn() },
     );
 
     expect(surface(template)).toEqual([
@@ -313,9 +313,9 @@ describe('buildChromeTemplate', () => {
     ]);
   });
 
-  it('offers link actions before page navigation, and routes "open in new window" through the target', () => {
+  it('offers link actions before page navigation, and routes "Open link" through the target', () => {
     const { webContents } = makeFakeWebContents({ canGoBack: true });
-    const target = { openLinkInNewWindow: vi.fn() };
+    const target = { openLink: vi.fn() };
     const template = buildChromeTemplate(
       makeParams({ linkURL: 'https://author.example/content.html' }),
       webContents,
@@ -323,7 +323,7 @@ describe('buildChromeTemplate', () => {
     );
 
     expect(surface(template)).toEqual([
-      'Open link in new window',
+      'Open link',
       'Copy link address',
       '---',
       'Back',
@@ -335,8 +335,8 @@ describe('buildChromeTemplate', () => {
     expect(template[3]?.enabled).toBe(true);
     expect(template[4]?.enabled).toBe(false);
 
-    click(itemNamed(template, 'Open link in new window'));
-    expect(target.openLinkInNewWindow).toHaveBeenCalledWith('https://author.example/content.html');
+    click(itemNamed(template, 'Open link'));
+    expect(target.openLink).toHaveBeenCalledWith('https://author.example/content.html');
 
     click(itemNamed(template, 'Copy link address'));
     expect(electronMock.writeText).toHaveBeenCalledWith('https://author.example/content.html');
@@ -347,7 +347,7 @@ describe('buildChromeTemplate', () => {
     const template = buildChromeTemplate(
       makeParams({ mediaType: 'image', srcURL: 'https://author.example/asset.png', x: 7, y: 9 }),
       webContents,
-      { openLinkInNewWindow: vi.fn() },
+      { openLink: vi.fn() },
     );
 
     expect(surface(template)).toEqual([
@@ -378,7 +378,7 @@ describe('buildChromeTemplate', () => {
       makeParams({ selectionText: 'selected words' }),
       webContents,
       {
-        openLinkInNewWindow: vi.fn(),
+        openLink: vi.fn(),
       },
     );
 
@@ -399,7 +399,7 @@ describe('buildChromeTemplate', () => {
   it('opens the page DevTools detached and selects the element under the cursor', () => {
     const { webContents, inspectElement, openDevTools } = makeFakeWebContents();
     const template = buildChromeTemplate(makeParams({ x: 42, y: 17 }), webContents, {
-      openLinkInNewWindow: vi.fn(),
+      openLink: vi.fn(),
     });
 
     click(itemNamed(template, 'Inspect'));
@@ -414,7 +414,7 @@ describe('buildChromeTemplate', () => {
       devToolsOpened: true,
     });
     const template = buildChromeTemplate(makeParams(), webContents, {
-      openLinkInNewWindow: vi.fn(),
+      openLink: vi.fn(),
     });
 
     click(itemNamed(template, 'Inspect'));
@@ -426,7 +426,7 @@ describe('buildChromeTemplate', () => {
   it('drives back/forward/reload through the bound webContents', () => {
     const { webContents, navigationHistory, reload } = makeFakeWebContents();
     const template = buildChromeTemplate(makeParams(), webContents, {
-      openLinkInNewWindow: vi.fn(),
+      openLink: vi.fn(),
     });
 
     click(itemNamed(template, 'Back'));
@@ -472,13 +472,13 @@ describe('attachContextMenu', () => {
   it('pops a Chrome menu bound to the remote surface it was attached to', () => {
     const { webContents, emit } = makeFakeWebContents();
     const window = makeFakeWindow();
-    attachChromeContextMenu(webContents, window, { openLinkInNewWindow: vi.fn() });
+    attachChromeContextMenu(webContents, window, { openLink: vi.fn() });
 
     emit('context-menu', {}, makeParams({ linkURL: 'https://author.example/a.html' }));
 
     const built = electronMock.buildFromTemplate.mock.calls[0]?.[0] as
       MenuItemConstructorOptions[] | undefined;
-    expect(surface(built ?? [])).toContain('Open link in new window');
+    expect(surface(built ?? [])).toContain('Open link');
     expect(electronMock.popup).toHaveBeenCalledWith({ window });
   });
 });

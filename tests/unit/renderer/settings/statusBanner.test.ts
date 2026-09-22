@@ -240,6 +240,42 @@ describe('createStatusBanner single slot', () => {
     }
   });
 
+  it('a superseded collapse never tears down a later presentation (no orphaned timer)', () => {
+    vi.useFakeTimers();
+    try {
+      const banner = createStatusBanner();
+      banner.showStatus('Saving\u2026');
+      // Two dismissals in a row: the second must not orphan the first's
+      // collapse timer. An orphan fired later and emptied whatever row was on
+      // screen by then - in the real app it tore a confirmation away while the
+      // user was clicking its OK button.
+      banner.clear();
+      banner.clear();
+
+      banner.showError('Back.');
+      expect(banner.element.textContent).toBe('Back.');
+
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS * 3);
+      expect(banner.element.hasAttribute('open')).toBe(true);
+      expect(banner.element.textContent).toBe('Back.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-presenting the same prompt keeps the very same action button (no rebuild)', () => {
+    const banner = createStatusBanner();
+    const action: StatusBannerAction = { label: 'OK', onActivate: vi.fn() };
+    banner.showPrompt('Confirm?', action);
+    const button = banner.element.querySelector('sp-action-button');
+    expect(button).not.toBeNull();
+
+    // The auto-save re-affirms the same confirmation; it must not replace the
+    // button, or a click in flight would land on a detached element.
+    banner.showPrompt('Confirm?', action);
+    expect(banner.element.querySelector('sp-action-button')).toBe(button);
+  });
+
   it('dispose removes the banner element from the DOM', () => {
     const banner = createStatusBanner();
     document.body.append(banner.element);

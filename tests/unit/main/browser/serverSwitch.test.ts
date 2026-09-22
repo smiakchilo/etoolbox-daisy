@@ -48,19 +48,19 @@ function makeRecordingHarness() {
     },
   };
 
-  const closeAuxiliaryWindows = () => {
-    calls.push('closeAuxiliaryWindows');
+  const closePopups = () => {
+    calls.push('closePopups');
   };
 
-  return { calls, view, aemSession, closeAuxiliaryWindows };
+  return { calls, view, aemSession, closePopups };
 }
 
 describe('ServerSwitchController', () => {
-  it('performs the switch in the exact required order: stop, close aux windows, switchProxy, then loadURL', async () => {
+  it('performs the switch in the exact required order: stop, close popups, switchProxy, then loadURL', async () => {
     const harness = makeRecordingHarness();
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -72,7 +72,7 @@ describe('ServerSwitchController', () => {
     expect(outcome).toEqual({ ok: true });
     expect(harness.calls).toEqual([
       'view.stop',
-      'closeAuxiliaryWindows',
+      'closePopups',
       'aemSession.switchProxy:none',
       'view.loadURL:https://second.example',
     ]);
@@ -82,7 +82,7 @@ describe('ServerSwitchController', () => {
     const harness = makeRecordingHarness();
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -97,7 +97,7 @@ describe('ServerSwitchController', () => {
     expect(outcome).toEqual({ ok: true });
     expect(harness.calls).toEqual([
       'view.stop',
-      'closeAuxiliaryWindows',
+      'closePopups',
       'aemSession.switchProxy:none',
       'view.loadURL:https://second.example/editor.html/content/site.html',
     ]);
@@ -107,7 +107,7 @@ describe('ServerSwitchController', () => {
     const harness = makeRecordingHarness();
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -127,7 +127,7 @@ describe('ServerSwitchController', () => {
     const harness = makeRecordingHarness();
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () =>
@@ -143,7 +143,7 @@ describe('ServerSwitchController', () => {
 
     expect(harness.calls).toEqual([
       'view.stop',
-      'closeAuxiliaryWindows',
+      'closePopups',
       'aemSession.switchProxy:https://proxy.example',
       'view.loadURL:https://proxied.example',
     ]);
@@ -163,7 +163,7 @@ describe('ServerSwitchController', () => {
 
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -195,7 +195,7 @@ describe('ServerSwitchController', () => {
 
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -215,10 +215,10 @@ describe('ServerSwitchController', () => {
     const firstOutcome = await firstSwitch;
     expect(firstOutcome).toEqual({ ok: true });
 
-    // The second switch must never have touched stop/close/loadURL at all.
+    // The second switch must never have touched stop/closePopups/loadURL at all.
     expect(harness.calls).toEqual([
       'view.stop',
-      'closeAuxiliaryWindows',
+      'closePopups',
       'aemSession.switchProxy:start',
       'aemSession.switchProxy:end',
       'view.loadURL:https://first.example',
@@ -229,7 +229,7 @@ describe('ServerSwitchController', () => {
     const harness = makeRecordingHarness();
     const controller = new ServerSwitchController({
       getView: () => undefined,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -250,7 +250,7 @@ describe('ServerSwitchController', () => {
 
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -279,7 +279,7 @@ describe('ServerSwitchController', () => {
 
     const controller = new ServerSwitchController({
       getView: () => rejectingView,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: harness.aemSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
@@ -309,7 +309,7 @@ describe('ServerSwitchController', () => {
 
     const controller = new ServerSwitchController({
       getView: () => harness.view,
-      closeAuxiliaryWindows: harness.closeAuxiliaryWindows,
+      closePopups: harness.closePopups,
       aemSession: rejectingSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,

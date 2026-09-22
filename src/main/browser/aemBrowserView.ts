@@ -3,8 +3,8 @@ import type { BrowserWindow, Session, WebContents } from 'electron';
 import type { BrowserNavigationState, ViewBounds } from '../../shared';
 import { attachChromeContextMenu } from '../contextMenu';
 import { attachDevToolsShortcut } from '../devTools';
-import { decideAuxiliaryWindowOpen } from './auxiliaryWindowPolicy';
-import { createAuxiliaryWindowManager, type AuxiliaryWindowManager } from './auxiliaryWindows';
+import { decideAllowedUrl } from './urlPolicy';
+import { createWindowOpenRouter, openUrlInView, type WindowOpenRouter } from './windowOpenRouter';
 import { extractChromiumErrorCodeFromText } from './serverSwitch';
 import { clampViewBounds } from './viewBounds';
 
@@ -59,7 +59,8 @@ export type ChromeNavigationOutcome =
 
 export interface AemBrowserView {
   readonly webContents: WebContents;
-  readonly auxiliaryWindows: AuxiliaryWindowManager;
+  /** The popup/tab policy for this view's new-window requests; `closeAll` is what a server switch closes popups through. */
+  readonly windowOpenRouter: WindowOpenRouter;
   setBounds(bounds: ViewBounds): void;
   getNavigationState(): BrowserNavigationState;
   goBack(): Promise<ChromeNavigationOutcome>;
@@ -86,15 +87,18 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
 
   options.window.contentView.addChildView(view);
 
-  const auxiliaryWindows = createAuxiliaryWindowManager(options.aemSession);
-  auxiliaryWindows.attachTo(view.webContents);
+  // New-window requests: real popups (Chromium's `new-window` disposition -
+  // the SSO/login dialogs) get a separate window, while `target="_blank"`
+  // links and bare/`noopener` `window.open` calls load in this same view so
+  // the chat pane always describes what the one authenticated view is showing
+  // (see `windowOpenPolicy.ts` / `windowOpenRouter.ts`).
+  const windowOpenRouter = createWindowOpenRouter(options.aemSession);
+  windowOpenRouter.attachTo(view.webContents);
 
-  // Remote AEM content gets the Chrome-shaped right-click menu (the app has no
-  // native menu bar). "Open link in new window" is routed through the same
-  // auxiliary-window policy as every other popup, so it cannot become a way to
-  // open a link outside it.
+  // Remote content gets the Chrome-shaped right-click menu (the app has no
+  // native menu bar). "Open link" loads in this same view - no second window.
   attachChromeContextMenu(view.webContents, options.window, {
-    openLinkInNewWindow: (url) => auxiliaryWindows.openWindow(url),
+    openLink: (url) => openUrlInView(view.webContents, url),
   });
 
   // Ctrl+Shift+I must keep working while the AEM pane has focus - the menu
@@ -154,7 +158,7 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     // Sub-frame navigation does not change the address bar's document, and the
     // same scheme-only http(s) rule that guards the view's own top-level
     // navigation keeps an empty/about:blank start from surfacing as an address.
-    if (!details.isMainFrame || decideAuxiliaryWindowOpen(details.url).kind !== 'allow') return;
+    if (!details.isMainFrame || decideAllowedUrl(details.url).kind !== 'allow') return;
     pendingNavigationUrl = details.url;
     pushNavigationState();
   }
@@ -257,12 +261,12 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   // Top-level navigation guard for the AEM view itself: http(s) only. Cross-
   // *origin* http(s) navigation is deliberately still allowed here (an SSO
   // redirect chain legitimately leaves the AEM origin for an IdP origin and
-  // comes back), matching decideAuxiliaryWindowOpen's own scheme-only
-  // (not origin) restriction - reused here rather than duplicated so both
-  // the AEM view and its auxiliary windows enforce identically the one rule
-  // that actually matters for this guard.
+  // comes back), matching `decideAllowedUrl`'s own scheme-only (not origin)
+  // restriction - reused here rather than duplicated so every entry point into
+  // the view enforces identically the one rule that actually matters for this
+  // guard.
   view.webContents.on('will-navigate', (navigationEvent, targetUrl) => {
-    if (decideAuxiliaryWindowOpen(targetUrl).kind !== 'allow') {
+    if (decideAllowedUrl(targetUrl).kind !== 'allow') {
       navigationEvent.preventDefault();
     }
   });
@@ -282,7 +286,7 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     destroyed = true;
     screen.removeListener('display-metrics-changed', onDisplayMetricsChanged);
     options.window.removeListener('moved', onWindowMoved);
-    auxiliaryWindows.closeAll();
+    windowOpenRouter.closeAll();
     if (!options.window.isDestroyed()) {
       options.window.contentView.removeChildView(view);
     }
@@ -293,7 +297,7 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
 
   return {
     webContents: view.webContents,
-    auxiliaryWindows,
+    windowOpenRouter,
     setBounds,
     getNavigationState,
     goBack: () => runNavigationCommand(() => view.webContents.navigationHistory.goBack()),

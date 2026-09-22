@@ -71,6 +71,12 @@ export interface StatusBannerSink {
   showPrompt(copy: string, action: StatusBannerAction): void;
   /** Hides whatever is showing. */
   clear(): void;
+  /**
+   * True while a confirm prompt is on screen. Optional so a section's test
+   * double need not implement it; a section that rebuilds its rows uses it to
+   * avoid tearing down the row a confirmation is anchored to.
+   */
+  isPromptShowing?(): boolean;
 }
 
 export interface StatusBanner extends StatusBannerSink {
@@ -134,6 +140,15 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   configureBannerTransition(banner, BANNER_TRANSITION_DURATION_MS);
 
   let slot: BannerSlot | null = null;
+  // What is painted into the row right now, and a signature of that content.
+  // `present` short-circuits when it is asked for the *same* thing, so a
+  // repeated presentation (e.g. the address-confirm prompt re-affirmed by the
+  // debounced auto-save, or "Saving\u2026" re-asserted) does not tear the row
+  // down and rebuild it - which would detach an action button the user (or a
+  // test) is clicking. `slot` deliberately still clears immediately on
+  // `clear()`; this is only about avoiding a needless rebuild.
+  let renderedSlot: BannerSlot | null = null;
+  let renderedSignature: string | null = null;
   let standing: readonly Node[] | null = null;
   let standingPresentation: StatusBannerStandingPresentation = 'plain';
   let autoClearTimer: ReturnType<typeof setTimeout> | null = null;
@@ -160,6 +175,9 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     // with the content - a later plain row must not inherit the light fill or
     // the progress line.
     banner.classList.remove(BANNER_ROW_LOADING_CLASS);
+    // The row is empty now, so it renders nothing.
+    renderedSlot = null;
+    renderedSignature = null;
     // Same contract as the browser banner (browserToolbar.ts's
     // `finalizeBannerHide`): dismissing also drops `dismissible`, so the
     // closed row carries no leftover close control.
@@ -179,6 +197,14 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   // the standing floor is empty.
   function hideRow(): void {
     cancelAutoClear();
+    // Cancel any collapse already in flight before starting another. Without
+    // this, a second `hideRow` overwrote `collapseTimer` with a new timeout and
+    // orphaned the first, which then fired later and emptied whatever row was
+    // on screen by then - tearing down a confirmation the user was clicking.
+    if (collapseTimer !== null) {
+      clearTimeout(collapseTimer);
+      collapseTimer = null;
+    }
     if (!banner.hasAttribute('open')) {
       finalizeHide();
       return;
@@ -211,6 +237,8 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     banner.classList.toggle(BANNER_ROW_LOADING_CLASS, loading);
     banner.removeAttribute('dismissible');
     banner.setAttribute('open', '');
+    renderedSlot = null;
+    renderedSignature = null;
     if (!wasVisible) revealBannerRow(banner);
   }
 
@@ -226,9 +254,14 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     return slot === null ? true : SLOT_RANK[candidate] >= SLOT_RANK[slot];
   }
 
-  function present(next: BannerSlot, content: readonly Node[]): boolean {
+  function present(next: BannerSlot, content: readonly Node[], signature: string): boolean {
     if (!canShow(next)) return false;
     cancelAutoClear();
+    // The same presentation is already on screen and not mid-collapse: keep it
+    // rather than rebuilding (see `renderedSignature`).
+    if (collapseTimer === null && renderedSlot === next && renderedSignature === signature) {
+      return true;
+    }
     // A row mid-collapse is torn down first so the new message reveals from
     // scratch (re-adding `open` replays the reveal keyframes).
     const wasVisible = banner.hasAttribute('open') && !isBannerClosing(banner);
@@ -244,6 +277,8 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     if (next === 'status') banner.removeAttribute('dismissible');
     else banner.setAttribute('dismissible', '');
     banner.setAttribute('open', '');
+    renderedSlot = next;
+    renderedSignature = signature;
     // Already showing: a same-height content swap (status -> error) must not
     // replay the reveal. A fresh row (or one cancelled mid-collapse) reveals.
     if (!wasVisible) revealBannerRow(banner);
@@ -275,16 +310,16 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
       return slot === 'prompt';
     },
     showStatus(message: string): void {
-      if (!present('status', [buildBannerCopy([message])])) return;
+      if (!present('status', [buildBannerCopy([message])], `status:${message}`)) return;
       autoClearTimer = setTimeout(() => {
         if (slot === 'status') dismissSlot();
       }, autoClearMs);
     },
     showError(message: string): void {
-      present('error', [buildBannerCopy([message])]);
+      present('error', [buildBannerCopy([message])], `error:${message}`);
     },
     showPrompt(copy: string, action: StatusBannerAction): void {
-      present('prompt', promptContent(copy, action));
+      present('prompt', promptContent(copy, action), `prompt:${copy}:${action.label}`);
     },
     setStanding(
       content: readonly Node[] | null,
