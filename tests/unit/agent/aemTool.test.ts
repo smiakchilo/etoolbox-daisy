@@ -445,6 +445,25 @@ describe('aemTool - createAemQueryExecutor', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('names the offending field when a predicate value is not a string', async () => {
+    const ids = counterIdGenerator();
+    const execute = vi.fn(() => Promise.resolve(makeQuerySuccess(newRequestId(ids))));
+    const executor = createAemQueryExecutor(makeQueryConfig(ids, execute, () => makeContext(ids)));
+    // The exact shape that produced an opaque "expected string, received number"
+    // in production: `limit` nested inside `predicates` rather than beside it.
+    // The message must name `predicates.limit` so the model can self-correct.
+    const result = await executor(
+      { predicates: { path: '/content/site', limit: 20 } },
+      toolCallContext(),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_ARGUMENT');
+      expect(result.error.message).toContain('predicates.limit');
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('rejects a limit above 200 before reaching the handler', async () => {
     const ids = counterIdGenerator();
     const execute = vi.fn(() => Promise.resolve(makeQuerySuccess(newRequestId(ids))));

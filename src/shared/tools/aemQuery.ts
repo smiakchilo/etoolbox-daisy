@@ -5,6 +5,7 @@ import type { JsonValue } from '../contracts';
 import { err, ok, type Result } from '../result';
 import { originSchema, parseOrigin } from '../contracts';
 import { computeDeadline, envelopeCommonShape } from './core/envelope';
+import { firstIssueMessage } from './core/validationIssue';
 import type { ToolResult } from './index';
 import { brokerErrorKey } from './core/brokerOutcome';
 import { classifyAemResponse, type JsonObject } from './core/responseValidation';
@@ -178,7 +179,9 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     "larger `limit`. Do not put QueryBuilder's own output-control parameters " +
     '(`p.limit`, `p.offset`, `p.guessTotal`, `p.hits`, `p.nodedepth`, `p.excerpt`, ' +
     '`p.facets`) in `predicates` - they are rejected; use the dedicated `limit`/' +
-    '`offset`/`properties` fields instead. `properties` optionally restricts which ' +
+    '`offset`/`properties` fields instead. Every value in `predicates` must be a ' +
+    'string: `limit` and `offset` are top-level siblings of `predicates`, never ' +
+    'keys inside it. `properties` optionally restricts which ' +
     'result fields are returned.',
   parameters: z.toJSONSchema(aemQueryArgsSchema, { io: 'input' }),
 };
@@ -728,14 +731,6 @@ export interface AemQueryExecutorConfig<TRuntimeDeps extends Record<string, unkn
   readonly currentContext: () => CurrentAemToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
-}
-
-function firstIssueMessage(
-  issues: readonly { readonly message: string }[],
-  fallback: string,
-): string {
-  const message = issues[0]?.message;
-  return message !== undefined && message.length > 0 ? message.slice(0, 500) : fallback;
 }
 
 function toSuccessPayload(result: AemQuerySuccess): JsonValue {

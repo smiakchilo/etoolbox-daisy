@@ -10,6 +10,7 @@ import type { JsonValue } from '../contracts';
 import { err, ok, type Result } from '../result';
 import { originSchema, parseOrigin } from '../contracts';
 import { computeDeadline, envelopeCommonShape } from './core/envelope';
+import { firstIssueMessage } from './core/validationIssue';
 import type { ToolResult } from './index';
 import { brokerErrorKey } from './core/brokerOutcome';
 import { classifyAemResponse, type JsonObject } from './core/responseValidation';
@@ -692,14 +693,6 @@ export interface AemGetJsonExecutorConfig<TRuntimeDeps extends Record<string, un
   readonly currentContext: () => CurrentAemToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
-}
-
-function firstIssueMessage(
-  issues: readonly { readonly message: string }[],
-  fallback: string,
-): string {
-  const message = issues[0]?.message;
-  return message !== undefined && message.length > 0 ? message.slice(0, 500) : fallback;
 }
 
 function toSuccessPayload(result: AemGetJsonSuccess): JsonValue {

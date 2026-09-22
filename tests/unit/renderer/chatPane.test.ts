@@ -341,4 +341,35 @@ describe('createChatPane status push', () => {
 
     pane.dispose();
   });
+
+  it('follows new transcript entries to the bottom only while the reader is already there', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    // jsdom has no layout, so the scroller's geometry is injected. `New session`
+    // repaints the transcript synchronously, which is a repaint path a unit test
+    // can drive deterministically (unlike the 100ms timer).
+    const transcript = pane.element.querySelector('.chat-transcript') as HTMLElement;
+    Object.defineProperty(transcript, 'scrollHeight', { configurable: true, get: () => 1000 });
+    Object.defineProperty(transcript, 'clientHeight', { configurable: true, get: () => 400 });
+
+    const newSessionButton = pane.element.querySelector('[title="New session"]');
+
+    // Pinned to the bottom (scrollTop 600 === scrollHeight - clientHeight): the
+    // repaint follows to the new bottom.
+    transcript.scrollTop = 600;
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    expect(transcript.scrollTop).toBe(1000);
+
+    // Scrolled up to read history: the same repaint must not yank the viewport.
+    transcript.scrollTop = 100;
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    expect(transcript.scrollTop).toBe(100);
+
+    pane.dispose();
+  });
 });
