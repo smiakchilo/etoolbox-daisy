@@ -57,7 +57,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     const app = await electron.launch({ args: [mainEntry], env });
     const shell = await app.firstWindow();
     await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await shell.locator('sp-action-button[title="Settings"]').first().click();
     await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
     await shell.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     return { app, page: shell };
@@ -218,7 +218,7 @@ test('the Settings banner keeps one height with and without an action button', a
   try {
     const page = await app.firstWindow();
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     const banner = page.locator('.settings-banner').first();
 
@@ -298,7 +298,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
   const openSettings = async (app: Awaited<ReturnType<typeof electron.launch>>) => {
     const page = await app.firstWindow();
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     await page.locator('.multifield__item').first().waitFor({ state: 'visible', timeout: 60_000 });
     return page;
   };
@@ -308,7 +308,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
   try {
     const page = await first.firstWindow();
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     const add = async (label: string, origin: string): Promise<void> => {

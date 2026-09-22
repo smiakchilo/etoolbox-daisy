@@ -1145,3 +1145,62 @@ describe('createBrowserToolbar address swatch', () => {
     expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
   });
 });
+
+describe('createBrowserToolbar agent-pane toggle', () => {
+  function toggleButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
+    const button = toolbar.element.querySelector<HTMLElement>(
+      '[title="Close Agent"], [title="Open Agent"]',
+    );
+    if (!button) throw new Error('agent-pane toggle button not found');
+    return button;
+  }
+
+  function buildWithToggle(): {
+    toolbar: ReturnType<typeof createBrowserToolbar>;
+    onToggle: ReturnType<typeof vi.fn>;
+  } {
+    const onToggle = vi.fn();
+    return {
+      toolbar: createBrowserToolbar({ onHostsPickerClick: () => {}, onToggleAgentPane: onToggle }),
+      onToggle,
+    };
+  }
+
+  it('renders the toggle as the toolbar\'s right-most control, starting selected ("Close Agent")', () => {
+    const { toolbar } = buildWithToggle();
+    const button = toggleButton(toolbar);
+
+    // Right-most: nothing else follows it in the toolbar.
+    expect(toolbar.element.lastElementChild).toBe(button);
+    expect(button.getAttribute('title')).toBe('Close Agent');
+    expect(button.getAttribute('aria-label')).toBe('Close Agent');
+    expect(button.hasAttribute('selected')).toBe(true);
+    expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+    // Icon-only: no text content of its own.
+    expect(button.textContent).toBe('');
+  });
+
+  it('calls back when activated', () => {
+    const { toolbar, onToggle } = buildWithToggle();
+    toggleButton(toolbar).click();
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops `selected` and renames to "Open Agent" when the pane is hidden, and back', () => {
+    const { toolbar } = buildWithToggle();
+    const button = toggleButton(toolbar);
+
+    toolbar.setAgentPaneOpen(false);
+    expect(button.getAttribute('title')).toBe('Open Agent');
+    expect(button.getAttribute('aria-label')).toBe('Open Agent');
+    expect(button.hasAttribute('selected')).toBe(false);
+    // One fixed glyph: the state is carried by `selected`, not an icon swap.
+    expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+
+    toolbar.setAgentPaneOpen(true);
+    expect(button.getAttribute('title')).toBe('Close Agent');
+    expect(button.getAttribute('aria-label')).toBe('Close Agent');
+    expect(button.hasAttribute('selected')).toBe(true);
+    expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+  });
+});

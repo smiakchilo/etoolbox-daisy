@@ -53,7 +53,7 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
   try {
     const settings = await app.firstWindow();
     await settings.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await settings.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await settings.locator('sp-action-button[title="Settings"]').first().click();
     await settings
       .locator('.settings-panel')
       .first()

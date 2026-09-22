@@ -185,3 +185,85 @@ describe('createMainSplitView', () => {
     expect(persist).not.toHaveBeenCalled();
   });
 });
+
+describe('createMainSplitView agent-pane visibility', () => {
+  interface PanesHarness extends Harness {
+    readonly primary: HTMLElement;
+    readonly secondary: HTMLElement;
+  }
+
+  function buildWithPanes(initialFraction = 2 / 3): PanesHarness {
+    const harness = build(initialFraction);
+    const primary = dom.window.document.createElement('div');
+    const secondary = dom.window.document.createElement('div');
+    harness.splitView.element.append(primary, secondary);
+    return { ...harness, primary, secondary };
+  }
+
+  function handleWidth(element: HTMLElement): string {
+    return element.style.getPropertyValue('--mod-splitview-handle-width');
+  }
+
+  it('starts with both panes shown, the splitter draggable and no inline overrides', () => {
+    const { splitView, primary, secondary } = buildWithPanes();
+    expect(splitView.element.hasAttribute('resizable')).toBe(true);
+    expect(handleWidth(splitView.element)).toBe('');
+    expect(primary.style.width).toBe('');
+    expect(secondary.style.display).toBe('');
+  });
+
+  it('collapses the chat pane to zero width and zeroes the splitter when hidden', () => {
+    const { splitView, primary, secondary } = buildWithPanes();
+    splitView.setAgentPaneVisible(false);
+
+    expect(primary.style.width).toBe('100%');
+    expect(secondary.style.display).toBe('none');
+    expect(handleWidth(splitView.element)).toBe('0px');
+    // An invisible, zero-width splitter must not stay keyboard-focusable.
+    expect(splitView.element.hasAttribute('resizable')).toBe(false);
+  });
+
+  it('restores the former split, the chat pane and the drag affordance when shown again', () => {
+    const { splitView, primary, secondary } = buildWithPanes(0.4);
+    splitView.relayout();
+    expect(primarySizeOf(splitView.element)).toBe('400px');
+
+    splitView.setAgentPaneVisible(false);
+    splitView.setAgentPaneVisible(true);
+
+    expect(primary.style.width).toBe('');
+    expect(secondary.style.display).toBe('');
+    expect(handleWidth(splitView.element)).toBe('');
+    expect(splitView.element.hasAttribute('resizable')).toBe(true);
+    expect(primarySizeOf(splitView.element)).toBe('400px');
+  });
+
+  it('keeps the fraction while hidden: a splitter move cannot overwrite it', () => {
+    const { splitView } = buildWithPanes(0.4);
+    splitView.setAgentPaneVisible(false);
+    // The component would still dispatch `change` if it ever clamped its own
+    // position while collapsed; that must not become the restored fraction.
+    simulateSplitterMove(splitView.element, 900);
+    splitView.setAgentPaneVisible(true);
+    expect(primarySizeOf(splitView.element)).toBe('400px');
+  });
+
+  it('ignores relayout while hidden, so a window resize cannot disturb the kept fraction', () => {
+    const { splitView } = buildWithPanes(0.4);
+    splitView.relayout();
+    expect(primarySizeOf(splitView.element)).toBe('400px');
+
+    splitView.setAgentPaneVisible(false);
+    setWidthPx(splitView.element, 500);
+    splitView.relayout();
+
+    expect(primarySizeOf(splitView.element)).toBe('400px');
+  });
+
+  it('is a no-op when asked for the visibility it already has', () => {
+    const { splitView, persist } = buildWithPanes(0.4);
+    splitView.setAgentPaneVisible(true);
+    expect(splitView.element.hasAttribute('resizable')).toBe(true);
+    expect(persist).not.toHaveBeenCalled();
+  });
+});

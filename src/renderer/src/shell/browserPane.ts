@@ -38,6 +38,8 @@ export interface BrowserPane {
    * own (settings, history).
    */
   appendPanel(panel: Panel): void;
+  /** Reflects the chat pane's visibility onto the toolbar toggle (icon/title). */
+  setAgentPaneOpen(open: boolean): void;
   update(state: {
     readonly addressValue: string;
     readonly hostOptions: readonly HostOption[];
@@ -76,7 +78,12 @@ export interface BrowserPane {
  * it is cleared when a new navigation starts loading, and re-shown only when
  * that navigation fails.
  */
-export function createBrowserPane(): BrowserPane {
+export interface BrowserPaneCallbacks {
+  /** Fired by the toolbar's agent-pane toggle; the shell hides/shows the chat pane. */
+  readonly onToggleAgentPane?: () => void;
+}
+
+export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): BrowserPane {
   let activePanel: Panel | undefined;
 
   // The closeability latch. A whole-size panel replaces (suspends) the native
@@ -110,6 +117,9 @@ export function createBrowserPane(): BrowserPane {
       } else {
         openPanel(picker);
       }
+    },
+    onToggleAgentPane(): void {
+      callbacks.onToggleAgentPane?.();
     },
   });
   const viewHost = createBrowserViewHost();
@@ -179,6 +189,9 @@ export function createBrowserPane(): BrowserPane {
     },
     appendPanel(panel: Panel): void {
       element.append(panel.element);
+    },
+    setAgentPaneOpen(open: boolean): void {
+      toolbar.setAgentPaneOpen(open);
     },
     update(state): void {
       toolbar.setAddressValue(state.addressValue);

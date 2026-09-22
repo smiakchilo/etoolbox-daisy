@@ -128,7 +128,6 @@ body.daisy-pane-resizing {
   align-items: center;
   gap: 8px;
   padding: 8px;
-  border-bottom: 1px solid var(--spectrum-gray-300, #d3d3d3);
   flex: 0 0 auto;
 }
 

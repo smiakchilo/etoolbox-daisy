@@ -66,7 +66,7 @@ import { newChatId, type AgentEvent, type ChatId, type DaisyAppApi } from '../..
  * is not simply silent by sending a message on the new conversation and
  * confirming ITS event is captured.
  *
- * NOTE ON WHAT #6 CANNOT PROVE HERE: this build's "New chat" toolbar button
+ * NOTE ON WHAT #6 CANNOT PROVE HERE: this build's "New session" toolbar button
  * is inert (no click handler is wired to it - `chatToolbar.ts`), and
  * `chatPane.ts` itself only ever adopts one `ChatId`, once, for its entire
  * lifetime (`refreshStatus`'s `if (chatId === undefined)` guard). There is
@@ -683,7 +683,7 @@ test.describe('Milestone A #6: cancellation without leakage', () => {
     await registerRawEventCapture(shell);
 
     // Real, shipped IPC call (not a new surface): opens a second
-    // conversation directly, bypassing the inert "New chat" UI button. This
+    // conversation directly, bypassing the inert "New session" UI button. This
     // synchronously tears down chatA inside the fake (still mid-turn),
     // which emits exactly three `session.state.changed` events tagged
     // chatA - `cancelling`, `idle`, `closed` - before this call's promise

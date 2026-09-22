@@ -118,7 +118,7 @@ test('a token typed into Settings is never written in plaintext, and activates t
     const shell = await app.firstWindow();
     await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
 
-    await shell.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await shell.locator('sp-action-button[title="Settings"]').first().click();
     await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     await shell.locator('sp-tab', { hasText: 'Agents' }).click();

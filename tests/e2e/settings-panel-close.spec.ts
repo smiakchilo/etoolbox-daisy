@@ -150,7 +150,7 @@ test('closing Settings with its close button restores the AEM view and Settings 
     expect(await waitForNativeView('full')).toBe(true);
 
     // --- Step 2: open Settings ---------------------------------------------
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     const settingsPanel = page.locator('.settings-panel');
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
     // The panel covers the page-view region: the native view is collapsed.
@@ -163,7 +163,7 @@ test('closing Settings with its close button restores the AEM view and Settings 
     expect(await waitForNativeView('full')).toBe(true);
 
     // --- Step 4: Settings can be opened again and suspends the view again --
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
     expect(await waitForNativeView('collapsed')).toBe(true);
 

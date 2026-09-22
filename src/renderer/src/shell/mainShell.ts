@@ -18,7 +18,30 @@ import { buildHostOptions, computeAddressBarValue } from './viewModel';
  * shell's first paint behind an IPC round trip.
  */
 export async function mountMainShell(root: HTMLElement): Promise<void> {
-  const browserPane = createBrowserPane();
+  // The boundary the user can drag. Its position is restored from the last
+  // run before the shell is inserted, so the window never renders at the
+  // default split and then visibly jumps to the remembered one. Created
+  // before the panes so the browser toolbar's agent-pane toggle can reach it.
+  const splitView = createMainSplitView(
+    loadBrowserPaneFraction() ?? DEFAULT_BROWSER_PANE_FRACTION,
+    {
+      persist: saveBrowserPaneFraction,
+    },
+  );
+  splitView.element.classList.add('main-shell');
+
+  // The right (chat) pane starts visible; the toggle in the browser toolbar
+  // flips it. The state is in-memory only (not persisted), so every launch
+  // starts with the agent pane open.
+  let agentPaneVisible = true;
+
+  const browserPane = createBrowserPane({
+    onToggleAgentPane(): void {
+      agentPaneVisible = !agentPaneVisible;
+      splitView.setAgentPaneVisible(agentPaneVisible);
+      browserPane.setAgentPaneOpen(agentPaneVisible);
+    },
+  });
 
   // Settings live in a whole-size panel on the browser pane (superseding the
   // separate child window). It is appended once, hidden, and revealed through
@@ -109,17 +132,8 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     return outcome.ok || outcome.error.code !== 'unknown_origin';
   }
 
-  // The boundary the user can drag. Its position is restored from the last
-  // run before the shell is inserted, so the window never renders at the
-  // default split and then visibly jumps to the remembered one.
-  const splitView = createMainSplitView(
-    loadBrowserPaneFraction() ?? DEFAULT_BROWSER_PANE_FRACTION,
-    {
-      persist: saveBrowserPaneFraction,
-    },
-  );
-  splitView.element.classList.add('main-shell');
-
+  // The split view was created above (so the toolbar toggle could reach it);
+  // its panes are appended here, once both exist, before it is inserted.
   splitView.element.append(browserPane.element, chatPane.element);
   root.append(splitView.element);
   splitView.relayout();

@@ -330,3 +330,33 @@ describe('createBrowserPane closeability', () => {
     expect(pagePanel?.hidden).toBe(false);
   });
 });
+
+describe('createBrowserPane agent-pane toggle', () => {
+  function toggleOf(pane: ReturnType<typeof createBrowserPane>): HTMLElement {
+    const button = pane.element.querySelector<HTMLElement>(
+      '[title="Close Agent"], [title="Open Agent"]',
+    );
+    if (!button) throw new Error('agent-pane toggle button not found');
+    return button;
+  }
+
+  it('forwards a toggle click to the shell callback', () => {
+    const onToggleAgentPane = vi.fn();
+    const pane = createBrowserPane({ onToggleAgentPane });
+
+    toggleOf(pane).click();
+
+    expect(onToggleAgentPane).toHaveBeenCalledTimes(1);
+  });
+
+  it('reflects the pane state onto the toolbar button', () => {
+    const pane = createBrowserPane();
+    expect(toggleOf(pane).getAttribute('title')).toBe('Close Agent');
+
+    pane.setAgentPaneOpen(false);
+    expect(toggleOf(pane).getAttribute('title')).toBe('Open Agent');
+
+    pane.setAgentPaneOpen(true);
+    expect(toggleOf(pane).getAttribute('title')).toBe('Close Agent');
+  });
+});

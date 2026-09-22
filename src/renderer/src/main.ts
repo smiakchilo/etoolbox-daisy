@@ -22,6 +22,7 @@ import '@spectrum-web-components/icons-ui/icons/sp-icon-cross600.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chat-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-history.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-settings.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-padding-right.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chevron-down.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chevron-up.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-delete-outline.js';

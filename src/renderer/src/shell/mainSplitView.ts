@@ -19,6 +19,13 @@ export interface MainSplitView {
   readonly element: HTMLElement;
   /** Re-derives the pixel split from the current fraction, e.g. after the window resized. */
   relayout(): void;
+  /**
+   * Shows/hides the secondary (chat) pane. Hiding collapses it to zero width,
+   * drops the splitter to zero width and lets the primary pane take the full
+   * width, so the reserved native-view region has no right blank margin. The
+   * current fraction is kept, so showing restores the former split.
+   */
+  setAgentPaneVisible(visible: boolean): void;
   dispose(): void;
 }
 
@@ -60,13 +67,20 @@ export function createMainSplitView(
 
   let currentFraction = initialFraction;
 
+  // True while the secondary (chat) pane is shown. The shell flips this via
+  // `setAgentPaneVisible`; the toolbar toggle that drives it is the shell's.
+  let agentPaneVisible = true;
+
   /**
    * Re-derives `currentFraction` from the component's own reactive state.
    * Runs on every settle *and* on every intermediate drag/resize tick - it
    * only caches a value, it never persists one, so it is safe to call this
-   * often.
+   * often. Ignored while the agent pane is hidden: the collapsed layout
+   * clamps `splitterPos` near the full width, which would otherwise overwrite
+   * the fraction that restores the former split.
    */
   function onChange(): void {
+    if (!agentPaneVisible) return;
     const widthPx = element.getBoundingClientRect().width;
     const splitterPos = element.splitterPos;
     if (widthPx <= 0 || splitterPos === undefined) return;
@@ -105,12 +119,44 @@ export function createMainSplitView(
   element.addEventListener('pointercancel', endDrag);
   element.addEventListener('keydown', onKeyDown);
 
+  /** Re-derives the pixel split from the current fraction (no-op while collapsed). */
+  function relayout(): void {
+    // Collapsed: the primary pane is pinned full-width, so a resize needs no
+    // re-derivation and must not disturb the fraction kept for the restore.
+    if (!agentPaneVisible) return;
+    const widthPx = element.getBoundingClientRect().width;
+    if (widthPx <= 0) return;
+    element.primarySize = `${Math.round(currentFraction * widthPx)}px`;
+  }
+
   return {
     element,
-    relayout(): void {
-      const widthPx = element.getBoundingClientRect().width;
-      if (widthPx <= 0) return;
-      element.primarySize = `${Math.round(currentFraction * widthPx)}px`;
+    relayout,
+    setAgentPaneVisible(visible: boolean): void {
+      if (agentPaneVisible === visible) return;
+      // `sp-split-view`'s own sizing cannot collapse a pane below
+      // `secondary-min` (nor drop its splitter below its handle width, which
+      // it caches), so the collapse is applied to the slotted panes directly -
+      // inline styles, which unambiguously beat the component's shadow
+      // `::slotted` rules. No nodes are moved; showing simply removes them.
+      const primary = element.children[0] as HTMLElement | undefined;
+      const secondary = element.children[1] as HTMLElement | undefined;
+      if (primary === undefined || secondary === undefined) return;
+      agentPaneVisible = visible;
+      if (visible) {
+        element.style.removeProperty('--mod-splitview-handle-width');
+        primary.style.removeProperty('width');
+        secondary.style.removeProperty('display');
+        // The drag affordance comes back with the pane, and relayout rebuilds
+        // the former split from the fraction `onChange` kept while hidden.
+        element.setAttribute('resizable', '');
+        relayout();
+      } else {
+        element.style.setProperty('--mod-splitview-handle-width', '0px');
+        primary.style.width = '100%';
+        secondary.style.display = 'none';
+        element.removeAttribute('resizable');
+      }
     },
     dispose(): void {
       element.removeEventListener('change', onChange);

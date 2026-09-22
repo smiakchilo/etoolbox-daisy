@@ -66,7 +66,7 @@ test('a host uses a library proxy, and removing it clears the reference', async 
   try {
     const page = await app.firstWindow();
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     await page.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     // --- Add one library proxy on the Proxies tab --------------------------
@@ -163,7 +163,7 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
   try {
     const page = await app.firstWindow();
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await page.locator('sp-action-button[title="Settings"]').first().click();
     await page.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     // Add one library proxy.

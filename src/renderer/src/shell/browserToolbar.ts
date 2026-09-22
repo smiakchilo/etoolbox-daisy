@@ -104,6 +104,8 @@ export interface BrowserToolbar {
   setHostOptions(options: readonly HostOption[]): void;
   /** Marks the picker button as open (panel visible) or closed. */
   setHostsPickerOpen(open: boolean): void;
+  /** Swaps the agent-pane toggle's icon/title between "Close Agent" and "Open Agent". */
+  setAgentPaneOpen(open: boolean): void;
   /** Writes `origin` into the address field and navigates to it, exactly like a typed address. */
   navigateTo(origin: string): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
@@ -113,6 +115,8 @@ export interface BrowserToolbar {
 export interface BrowserToolbarCallbacks {
   /** Fired when the picker button is activated; the owning pane opens/closes the panel. */
   onHostsPickerClick(): void;
+  /** Fired when the agent-pane toggle is activated; the shell shows/hides the chat pane. */
+  onToggleAgentPane?(): void;
 }
 
 /**
@@ -714,7 +718,29 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     children: [addressField, addressSwatch, hostsButton],
   });
 
-  toolbar.append(backButton, forwardButton, refreshButton, addressGroup);
+  // The agent-pane toggle, pinned to the toolbar's right edge (`addressGroup`
+  // is the flex-grow item, so this sits after it). It is a real toggle: one
+  // fixed icon, with the `selected` state (styled by browser.css) showing the
+  // pane is open. `title`/`aria-label` keep naming the action; the pane does
+  // not exist yet at mount, so it starts selected/open.
+  const agentToggleButton = el('sp-action-button', {
+    attrs: { quiet: '', class: 'browser-toolbar__agent-toggle' },
+  });
+  const agentToggleIcon = document.createElement('sp-icon-padding-right');
+  agentToggleIcon.setAttribute('slot', 'icon');
+  agentToggleButton.append(agentToggleIcon);
+  agentToggleButton.addEventListener('click', () => callbacks.onToggleAgentPane?.());
+
+  function renderAgentToggle(open: boolean): void {
+    const label = open ? 'Close Agent' : 'Open Agent';
+    agentToggleButton.toggleAttribute('selected', open);
+    agentToggleButton.setAttribute('title', label);
+    agentToggleButton.setAttribute('aria-label', label);
+  }
+
+  renderAgentToggle(true);
+
+  toolbar.append(backButton, forwardButton, refreshButton, addressGroup, agentToggleButton);
 
   // Wire the Refresh control immediately (idempotent), so clicking it before
   // the first navigation-state event still works.
@@ -846,6 +872,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         hostsButton.removeAttribute('open');
         hostsButton.setAttribute('aria-expanded', 'false');
       }
+    },
+    setAgentPaneOpen(open: boolean): void {
+      renderAgentToggle(open);
     },
     navigateTo(origin: string): void {
       addressField.value = origin;

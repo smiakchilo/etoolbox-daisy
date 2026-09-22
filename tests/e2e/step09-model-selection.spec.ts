@@ -80,7 +80,7 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
     const app = await electron.launch({ args: [mainEntry], env });
     const settings = await app.firstWindow();
     await settings.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await settings.locator('sp-action-button', { hasText: 'Settings' }).first().click();
+    await settings.locator('sp-action-button[title="Settings"]').first().click();
     await settings
       .locator('.settings-panel')
       .first()
