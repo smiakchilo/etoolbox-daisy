@@ -51,8 +51,24 @@ const AEM_UI_PATH_PREFIXES = [
   '/siteadmin.html',
 ] as const;
 
+/**
+ * AEM as a Cloud Service (and the AEM 6.5 unified shell) serves the author UI
+ * through a shell route, so the real UI path sits behind an `/aem` segment
+ * inside the fragment - `.../ui#/aem/editor.html/content/...` - rather than at
+ * the start of the pathname. Stripping that segment first lets the same
+ * wrapper allowlist above apply to the shell form as to the on-prem one.
+ */
+const SHELL_APP_PREFIX = '/aem';
+
 function stripTrailingHtml(path: string): string {
   return path.endsWith(HTML_EXTENSION) ? path.slice(0, -HTML_EXTENSION.length) : path;
+}
+
+function stripAppPrefix(candidate: string): string {
+  if (candidate === SHELL_APP_PREFIX) return '/';
+  return candidate.startsWith(`${SHELL_APP_PREFIX}/`)
+    ? candidate.slice(SHELL_APP_PREFIX.length)
+    : candidate;
 }
 
 function stripAemUiPrefix(candidate: string): string {
@@ -71,7 +87,7 @@ function stripAemUiPrefix(candidate: string): string {
  * (`/content/dam/wknd`), both of which are handled identically.
  */
 function extractJcrPath(candidate: string): string | undefined {
-  const path = stripAemUiPrefix(candidate);
+  const path = stripAemUiPrefix(stripAppPrefix(candidate));
   if (path !== CONTENT_ROOT && !path.startsWith(`${CONTENT_ROOT}/`)) return undefined;
   const withoutExtension = stripTrailingHtml(path);
   return withoutExtension.length > 1 && withoutExtension.endsWith('/')

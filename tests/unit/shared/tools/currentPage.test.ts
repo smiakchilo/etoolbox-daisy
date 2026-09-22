@@ -62,6 +62,22 @@ describe('deriveCurrentPageContext', () => {
     expect(derive(`${AUTHOR}/damadmin#/content/dam/wknd`)?.jcrPath).toBe('/content/dam/wknd');
   });
 
+  it('reads the content path out of an AEM as a Cloud Service shell fragment', () => {
+    expect(derive(`${AUTHOR}/ui#/aem/editor.html/content/hpe/country/us/en/about.html`)).toEqual({
+      origin: AUTHOR,
+      url: `${AUTHOR}/ui`,
+      jcrPath: '/content/hpe/country/us/en/about',
+    });
+    expect(derive(`${AUTHOR}/ui#/aem/sites.html/content/wknd/us/en`)?.jcrPath).toBe(
+      '/content/wknd/us/en',
+    );
+  });
+
+  it('reports no content path for a shell fragment that names none', () => {
+    expect(derive(`${AUTHOR}/ui#/aem/`)?.jcrPath).toBeUndefined();
+    expect(derive(`${AUTHOR}/ui`)?.jcrPath).toBeUndefined();
+  });
+
   it('reports the host but no content path for a server page that is not content', () => {
     expect(derive(`${AUTHOR}/`)).toEqual({ origin: AUTHOR, url: `${AUTHOR}/`, jcrPath: undefined });
     expect(derive(`${AUTHOR}/libs/granite/core/content/login.html`)?.jcrPath).toBeUndefined();
