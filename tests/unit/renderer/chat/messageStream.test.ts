@@ -241,4 +241,25 @@ describe('createMessageStream', () => {
       expect(renders).toEqual(['I checked ', 'I checked the page and found the answer.']);
     });
   });
+
+  describe('clear', () => {
+    it('drops every accumulated message text and marks the stream dirty', () => {
+      const stream = createMessageStream();
+      stream.applyEvent(delta(0, 'hello'));
+      stream.applyEvent(delta(1, ' there', otherMessageId));
+      stream.takeDirty();
+
+      stream.clear();
+
+      expect(stream.textFor(messageId)).toBe('');
+      expect(stream.textFor(otherMessageId)).toBe('');
+      expect(stream.takeDirty()).toBe(true);
+    });
+
+    it('does not mark dirty when there was nothing to clear', () => {
+      const stream = createMessageStream();
+      stream.clear();
+      expect(stream.takeDirty()).toBe(false);
+    });
+  });
 });

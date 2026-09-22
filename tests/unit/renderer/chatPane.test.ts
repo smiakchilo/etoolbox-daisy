@@ -45,6 +45,19 @@ async function flush(): Promise<void> {
   for (let tick = 0; tick < 12; tick += 1) await Promise.resolve();
 }
 
+/**
+ * The transcript repaints on a real 100ms interval (only when the store is
+ * dirty), so a unit test must let that interval actually fire before the DOM
+ * reflects an event. Bounded and short - it only waits as long as it needs to.
+ */
+async function waitForUserMessage(pane: ChatPane): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (pane.element.querySelector('.chat-message--user') !== null) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('the transcript never repainted the user prompt');
+}
+
 function pushStatus(status: AgentChatStatus): void {
   if (statusListener === undefined) throw new Error('the pane never subscribed to status changes');
   statusListener(status);
@@ -276,6 +289,55 @@ describe('createChatPane status push', () => {
     // A plain row, not the loading presentation.
     expect(banner?.classList.contains('banner-row--loading')).toBe(false);
     expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
+
+    pane.dispose();
+  });
+
+  it('New session empties the transcript and opens a genuinely different conversation', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const firstChatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+
+    // Send through the real composer so the transcript has content to clear.
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'hello';
+    sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    await waitForUserMessage(pane);
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
+    expect(pane.element.classList.contains('chat-pane--empty')).toBe(false);
+
+    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    // The visible transcript is genuinely gone...
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(0);
+    expect(pane.element.classList.contains('chat-pane--empty')).toBe(true);
+    // ...and a fresh conversation (not the old id re-opened) is now open, so
+    // the model carries none of the previous conversation's context.
+    expect(openConversation).toHaveBeenCalledTimes(2);
+    const newChatIdArg = (openConversation.mock.calls[1]?.[0] as { chatId: ChatId }).chatId;
+    expect(newChatIdArg).not.toBe(firstChatId);
+
+    pane.dispose();
+  });
+
+  it('New session does nothing before any conversation has been opened', () => {
+    // The service is still `starting`, so no `ChatId` has been minted yet:
+    // there is no transcript or context to clean up, and the click must not
+    // try to open a conversation the gated controller would refuse.
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+
+    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+    expect(openConversation).not.toHaveBeenCalled();
 
     pane.dispose();
   });

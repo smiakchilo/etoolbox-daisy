@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import { AEM_GET_JSON_TOOL_NAME } from '../../src/agent/aemTool';
+import { AEM_GET_JSON_TOOL_NAME } from '../../src/shared';
 import type { ScriptedTurn } from '../../src/agent/fakeAgentService';
 import {
   FAKE_AGENT_SERVICE_ENV_VAR,
@@ -66,15 +66,17 @@ import { newChatId, type AgentEvent, type ChatId, type DaisyAppApi } from '../..
  * is not simply silent by sending a message on the new conversation and
  * confirming ITS event is captured.
  *
- * NOTE ON WHAT #6 CANNOT PROVE HERE: this build's "New session" toolbar button
- * is inert (no click handler is wired to it - `chatToolbar.ts`), and
- * `chatPane.ts` itself only ever adopts one `ChatId`, once, for its entire
- * lifetime (`refreshStatus`'s `if (chatId === undefined)` guard). There is
- * therefore no way, anywhere in the shipped UI, to ever display a second
- * conversation - so criterion #6 cannot be proven by pointing at a second
- * visible transcript, only at the `window.daisy.agentChat` push-channel
- * boundary directly, which is what the second test below does. This is a
- * property of the current build, not a shortcut taken by this test.
+ * WHAT #6 PROVES AT THE BOUNDARY RATHER THAN THROUGH THE UI: the second test
+ * below opens its second conversation by calling `window.daisy.agentChat`
+ * directly rather than clicking the toolbar's "New session" button. That is
+ * deliberate, not a missing capability: the button now starts a fresh
+ * conversation and empties the transcript (see `chatPane.ts`'s
+ * `startNewSession`), but a click does not expose the new `ChatId` to the
+ * test, and this criterion is about the `agent-chat:event` push-channel
+ * boundary - a stale event from a torn-down conversation must never reach a
+ * listener on its replacement. Driving the IPC surface directly keeps the
+ * assertion pinned to that boundary and lets the test name both chat ids
+ * explicitly.
  *
  * A second, related, honest limitation: `fakeAgentService.ts`'s
  * `performAbort`/`teardown` unconditionally discard a turn's still-queued
@@ -683,7 +685,9 @@ test.describe('Milestone A #6: cancellation without leakage', () => {
     await registerRawEventCapture(shell);
 
     // Real, shipped IPC call (not a new surface): opens a second
-    // conversation directly, bypassing the inert "New session" UI button. This
+    // conversation directly, naming both chat ids explicitly instead of
+    // clicking the toolbar's "New session" button (which also starts a fresh
+    // conversation but does not expose the new id to the test). This
     // synchronously tears down chatA inside the fake (still mid-turn),
     // which emits exactly three `session.state.changed` events tagged
     // chatA - `cancelling`, `idle`, `closed` - before this call's promise
@@ -717,6 +721,68 @@ test.describe('Milestone A #6: cancellation without leakage', () => {
     const capturedAfterSend = await getCapturedEvents(shell);
     expect(capturedAfterSend.some((event) => event.chatId === chatB)).toBe(true);
     expect(capturedAfterSend.some((event) => event.chatId === chatA)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New session: the toolbar button empties the transcript and starts a fresh
+// conversation (a fresh SDK session, so no prior context carries over)
+// ---------------------------------------------------------------------------
+
+test.describe('Milestone A: New session clears transcript and context', () => {
+  let app: ElectronApp;
+  let shell: Page;
+
+  test.beforeAll(async () => {
+    test.setTimeout(90_000);
+    app = await launch(makeScratchProfile());
+    shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+  });
+
+  test.afterAll(async () => {
+    await app.close();
+  });
+
+  test('clicking New session empties the transcript and switches to a genuinely different conversation', async () => {
+    // First conversation: a completed turn, so there is real content to clear.
+    await scriptTurn(app, { steps: [{ kind: 'delta', text: 'First answer' }] });
+    await sendViaComposer(shell, 'first message');
+    await flushFake(app);
+    await expect(shell.locator('.chat-message--user')).toHaveCount(1);
+    await expect(shell.locator(ASSISTANT_MESSAGE)).toHaveCount(1);
+    await expect(shell.locator('.chat-pane')).not.toHaveClass(/chat-pane--empty/);
+
+    const oldChatId = (await shell.evaluate(() => window.daisy.agentChat.getStatus())).activeChatId;
+    expect(oldChatId).not.toBeNull();
+
+    // The real toolbar button, not the IPC surface directly.
+    await shell.locator('[title="New session"]').click();
+
+    // The visible transcript is emptied and the empty-state presentation
+    // returns...
+    await expect(shell.locator('.chat-message--user')).toHaveCount(0);
+    await expect(shell.locator(ASSISTANT_MESSAGE)).toHaveCount(0);
+    await expect(shell.locator('.chat-pane')).toHaveClass(/chat-pane--empty/);
+
+    // ...and main now owns a different conversation, so none of the previous
+    // conversation's context survives into the next turn.
+    await expect
+      .poll(async () => {
+        const status = await shell.evaluate(() => window.daisy.agentChat.getStatus());
+        return status.activeChatId;
+      })
+      .not.toBe(oldChatId);
+    const newChatId = (await shell.evaluate(() => window.daisy.agentChat.getStatus())).activeChatId;
+    expect(newChatId).not.toBeNull();
+    expect(newChatId).not.toBe(oldChatId);
+
+    // The fresh conversation still works end to end.
+    await scriptTurn(app, { steps: [{ kind: 'delta', text: 'Second answer' }] });
+    await sendViaComposer(shell, 'second message');
+    await flushFake(app);
+    await expect(shell.locator(ASSISTANT_MESSAGE)).toHaveCount(1);
+    await expect(shell.locator(ASSISTANT_MESSAGE).first()).toHaveText('Second answer');
   });
 });
 

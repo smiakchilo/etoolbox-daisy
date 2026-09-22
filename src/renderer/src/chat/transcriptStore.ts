@@ -72,6 +72,14 @@ export interface TranscriptStore {
   setTurnInFlight(inFlight: boolean): void;
   /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
   takeDirty(): boolean;
+  /**
+   * Empties the transcript: every item, every recorded prompt, and every
+   * tool call is dropped, and the trailing `thinking` indicator is reset.
+   * This is what "New session" needs - a genuinely clean view state, not a
+   * second conversation layered on top of the previous one's items. Marks
+   * the store dirty so a throttled renderer repaints the empty transcript.
+   */
+  clear(): void;
 }
 
 /** Creates an empty transcript store with no items observed yet. */
@@ -229,6 +237,24 @@ export function createTranscriptStore(
       const wasDirty = dirty || streamDirty;
       dirty = false;
       return wasDirty;
+    },
+    clear() {
+      const hadContent =
+        order.length > 0 ||
+        userPrompts.size > 0 ||
+        toolCalls.size > 0 ||
+        turnInFlight ||
+        awaitingAssistantText;
+      order.length = 0;
+      knownMessageIds.clear();
+      knownToolCallIds.clear();
+      userPrompts.clear();
+      toolCalls.clear();
+      currentTurnId = undefined;
+      awaitingAssistantText = false;
+      turnInFlight = false;
+      messageStream.clear();
+      if (hadContent) dirty = true;
     },
   };
 }

@@ -61,6 +61,16 @@ export interface MessageStream {
    * the same rationale, which this mirrors.
    */
   takeDirty(): boolean;
+
+  /**
+   * Drops every message's accumulated text, as when the pane starts a brand
+   * new conversation. A message id is unique per conversation, so nothing
+   * already rendered could ever be reached again anyway; this is what makes
+   * the old conversation's text genuinely gone rather than merely
+   * unreferenced, and it marks the stream dirty so a throttled renderer
+   * repaints the now-empty transcript.
+   */
+  clear(): void;
 }
 
 /**
@@ -146,6 +156,10 @@ export function createMessageStream(): MessageStream {
       const wasDirty = dirty;
       dirty = false;
       return wasDirty;
+    },
+    clear() {
+      if (states.size > 0) dirty = true;
+      states.clear();
     },
   };
 }

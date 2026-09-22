@@ -242,10 +242,11 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 1969 passed / 14 skipped**;
-**Playwright → 70 tests**. (The Session "Authentication"/"Models" → "Agents"
-tab merge moved the unit baseline from 1658, and later work moved it on — see
-`docs/verification.md`, whose latest section records 1969/70.)
+Current baseline: **`npm run verify` → 2043 passed / 14 skipped**;
+**Playwright → 70 tests + the new step07 "New session" case**. (The Session
+"Authentication"/"Models" → "Agents" tab merge moved the unit baseline from
+1658, and later work moved it on — see `docs/verification.md`, whose latest
+section records 2043/14.)
 `app.spec.ts` no longer collides with a running `npm run dev`: it now
 provisions a scratch storage home like every sibling spec (see
 `docs/verification.md` "Settings Servers renamed to Hosts", traps). Residual E2E

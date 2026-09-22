@@ -2,14 +2,20 @@ import { el } from '../lib/dom';
 import { reportNotWired } from '../lib/notWired';
 
 /**
- * The chat pane's toolbar (requirements-decisions.md section 8). Chat
- * transcript rendering lands in a later implementation-plan step, so New
- * session and History remain stubs until their agent-session/window-opening
- * IPC surfaces exist; Settings opens the in-shell Settings panel provided by
- * the caller (see `chatPane.ts` -> `shell/mainShell.ts`).
+ * The chat pane's toolbar (requirements-decisions.md section 8). New session
+ * starts a fresh conversation - the current one is torn down and the
+ * transcript emptied (see `chatPane.ts`'s `startNewSession`); History remains
+ * a stub until its window-opening IPC surface exists; Settings opens the
+ * in-shell Settings panel provided by the caller (see `chatPane.ts` ->
+ * `shell/mainShell.ts`).
  */
 export interface ChatToolbarCallbacks {
   readonly onOpenSettings: () => void;
+  /**
+   * Starts a brand-new conversation: current conversation context and the
+   * on-screen transcript are both discarded.
+   */
+  readonly onNewSession: () => void;
 }
 
 export function createChatToolbar(callbacks: ChatToolbarCallbacks): HTMLElement {
@@ -22,7 +28,7 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): HTMLElement 
   newChatIcon.setAttribute('slot', 'icon');
   newSessionButton.append(newChatIcon, document.createTextNode('New session'));
   newSessionButton.addEventListener('click', () => {
-    reportNotWired('New session (no agent-session IPC channel exists yet)');
+    callbacks.onNewSession();
   });
 
   // History and Settings are icon-only and pinned to the right edge by the

@@ -300,6 +300,37 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     });
   }
 
+  /**
+   * The toolbar's "New session": discards both the visible transcript and the
+   * model's conversation context. A fresh `ChatId` is minted and opened; the
+   * service's one-active-conversation rule tears the previous conversation
+   * down as part of that open - cancelling any in-flight turn and closing the
+   * old SDK session - so the new conversation genuinely starts with no prior
+   * context, rather than the old one's history lingering behind a re-used id.
+   *
+   * The pane clears immediately, before the open resolves, so the previous
+   * conversation is never left on screen beside the new (empty) one; if the
+   * open fails, `ensureConversationOpen` puts the failure on the pane's banner
+   * and the next status poll re-opens this same new id, which is why `chatId`
+   * is adopted up front rather than only on success.
+   */
+  function startNewSession(): void {
+    // No conversation is open yet (the service is still starting), so there
+    // is no transcript or context for this to clean up.
+    if (chatId === undefined) return;
+    const id = newChatId(() => crypto.randomUUID());
+    chatId = id;
+    transcriptStore.clear();
+    sessionStatus = { ...sessionStatus, state: 'idle' };
+    refreshEmptyState();
+    // Repaint at once rather than waiting up to a whole timer tick for the
+    // cleared store's dirty flag to be noticed - the user just asked for a
+    // clean slate and should see one immediately.
+    transcriptView.repaint(transcriptStore);
+    refreshSessionPresentation();
+    void ensureConversationOpen(id);
+  }
+
   const statusBanner: StatusBanner = createStatusBanner({
     surfaceClassName: CHAT_STATUS_BANNER_SURFACE_CLASS,
   });
@@ -313,7 +344,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
     children: [
-      createChatToolbar({ onOpenSettings: () => options.onOpenSettings() }),
+      createChatToolbar({
+        onOpenSettings: () => options.onOpenSettings(),
+        onNewSession: startNewSession,
+      }),
       transcript,
       composer.element,
       statusBanner.element,

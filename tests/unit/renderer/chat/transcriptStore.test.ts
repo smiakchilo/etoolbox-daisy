@@ -351,4 +351,32 @@ describe('createTranscriptStore', () => {
       expect(store.takeDirty()).toBe(true);
     });
   });
+
+  describe('clear', () => {
+    it('drops every item, prompt, tool call, and the thinking indicator', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(messageStarted(1));
+      store.applyEvent(delta(2, 'answer'));
+      store.setTurnInFlight(true);
+      store.takeDirty();
+      expect(store.textForMessage(messageId)).toBe('answer');
+
+      store.clear();
+
+      expect(store.items()).toEqual([]);
+      expect(store.textForUserPrompt(turnId)).toBe('');
+      expect(store.toolCallFor(toolCallId)).toBeUndefined();
+      expect(store.textForMessage(messageId)).toBe('');
+      // A cleared transcript is a change worth repainting.
+      expect(store.takeDirty()).toBe(true);
+    });
+
+    it('does not mark dirty when there was nothing to clear', () => {
+      const store = createTranscriptStore();
+      store.clear();
+      expect(store.takeDirty()).toBe(false);
+    });
+  });
 });
