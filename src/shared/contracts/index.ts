@@ -20,5 +20,6 @@ export * from './appSettings';
 export * from './modelCatalog';
 export * from './settingsSnapshot';
 export * from './chatMetadata';
+export * from './chatJournal';
 export * from './agentEvents';
 export * from './sessionState';

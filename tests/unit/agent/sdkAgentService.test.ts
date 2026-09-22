@@ -1042,3 +1042,25 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     expect(sessionHandle.setModel).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('sdkAgentService - open session id', () => {
+  it('is undefined before a conversation opens and reports the SDK session id after', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const { client } = makeFakeClient(sessionHandle.session);
+    const service = createSdkAgentService({
+      client,
+      policy: POLICY,
+      authSource: makeAuthSource().source,
+      idGenerator: ids,
+    });
+
+    expect(service.getOpenSessionId()).toBeUndefined();
+
+    expect((await service.initialize()).ok).toBe(true);
+    const chatId = newChatId(ids);
+    expect((await service.openConversation({ chatId })).ok).toBe(true);
+
+    expect(service.getOpenSessionId()).toBe('fake-session-id');
+  });
+});

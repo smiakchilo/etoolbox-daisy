@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { createAgentServiceError } from '../../../src/agent/agentService';
 import { createFakeAgentService, type ScriptedTurn } from '../../../src/agent/fakeAgentService';
-import type { AgentEvent } from '../../../src/shared/contracts/agentEvents';
-import { newChatId, newTurnId, type IdGenerator } from '../../../src/shared/contracts/ids';
-import { applyAgentEvent, type SessionStatus } from '../../../src/shared/contracts/sessionState';
+import type { AgentEvent } from '../../../src/shared';
+import { newChatId, newTurnId, type IdGenerator } from '../../../src/shared';
+import { applyAgentEvent, type SessionStatus } from '../../../src/shared';
 
 /**
  * A plain incrementing-counter id generator, used only to mint `ChatId`s and
@@ -475,5 +475,19 @@ describe('FakeAgentService - unsubscribe', () => {
     unsubscribe();
     fake.setAuthState({ apiVersion: 1, isAuthenticated: true });
     expect(states).toEqual([false]);
+  });
+});
+
+describe('FakeAgentService - open session id', () => {
+  it('is undefined before a chat opens and deterministic after', async () => {
+    const ids = counterIdGenerator();
+    const fake = createFakeAgentService({ idGenerator: counterIdGenerator() });
+
+    expect(fake.getOpenSessionId()).toBeUndefined();
+
+    const chatId = newChatId(ids);
+    await fake.openConversation({ chatId });
+
+    expect(fake.getOpenSessionId()).toBe('fake-session-test-id-0');
   });
 });

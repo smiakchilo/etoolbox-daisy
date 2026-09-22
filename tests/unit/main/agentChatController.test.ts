@@ -10,6 +10,7 @@ import {
   type AgentChatControllerDeps,
   type AgentChatEventSink,
 } from '../../../src/main/agentChatController';
+import type { ChatJournal } from '../../../src/main/chatJournal';
 import type { Logger } from '../../../src/main/logger';
 import type {
   AgentAuthState,
@@ -147,6 +148,9 @@ function createLeakyAgentService(): LeakyAgentService {
     },
     getAuthState(): AgentAuthState {
       return authState;
+    },
+    getOpenSessionId() {
+      return undefined;
     },
     onAuthStateChanged(listener: (state: AgentAuthState) => void): Unsubscribe {
       authListeners.add(listener);
@@ -643,6 +647,208 @@ describe('AgentChatController.onStatusChanged', () => {
     // ...while the current one does.
     secondService.setAuthState({ apiVersion: 1, isAuthenticated: false });
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chat journal integration (implementation-plan.md step 09)
+// ---------------------------------------------------------------------------
+
+interface JournalCall {
+  readonly method: string;
+  readonly args: unknown;
+}
+
+function createRecordingJournal(): { journal: ChatJournal; calls: JournalCall[] } {
+  const calls: JournalCall[] = [];
+  const journal: ChatJournal = {
+    openChat: (params) => calls.push({ method: 'openChat', args: params }),
+    recordUserPrompt: (params) => calls.push({ method: 'recordUserPrompt', args: params }),
+    discardUserPrompt: (chatId, turnId) =>
+      calls.push({ method: 'discardUserPrompt', args: { chatId, turnId } }),
+    recordEvent: (event) => calls.push({ method: 'recordEvent', args: event }),
+    closeChat: (chatId) => calls.push({ method: 'closeChat', args: chatId }),
+    getHealth: () => ({ writeFailureCount: 0, droppedRecordCount: 0, lastFailureCode: null }),
+  };
+  return { journal, calls };
+}
+
+function methods(calls: readonly JournalCall[]): string[] {
+  return calls.map((call) => call.method);
+}
+
+describe('agentChatController chat journal', () => {
+  it('opens the journal with the SDK session id and the bound server after a successful open', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+
+    expect(calls).toEqual([
+      {
+        method: 'openChat',
+        args: {
+          chatId,
+          sdkSessionId: 'fake-session-chat-1',
+          serverId: 'server-a',
+        },
+      },
+    ]);
+  });
+
+  it('stages the prompt before the turn, and records every event including the ones the renderer never sees', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'hi' }] });
+    const sent = await controller.sendMessage({ chatId, prompt: 'hello' });
+    expect(sent.ok).toBe(true);
+    if (!sent.ok) throw new Error('unreachable');
+
+    // The prompt is staged before sendPrompt, whose synchronous first event is
+    // the "sending" state change - so on disk the prompt precedes the turn.
+    expect(methods(calls).slice(1, 3)).toEqual(['recordUserPrompt', 'recordEvent']);
+    expect(calls[1]?.args).toEqual({ chatId, turnId: sent.turnId, prompt: 'hello' });
+    expect(calls[2]?.args).toMatchObject({ type: 'session.state.changed', state: 'sending' });
+
+    agentService.flush();
+    expect(methods(calls).filter((method) => method === 'recordEvent').length).toBeGreaterThan(1);
+  });
+
+  it('discards a staged prompt when sendPrompt fails', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    // A service that reports a failure after the controller has staged the
+    // prompt. The real adapter can fail this way (e.g. an unavailable model).
+    const failing = {
+      ...agentService,
+      sendPrompt: () =>
+        Promise.resolve({
+          ok: false as const,
+          error: { code: 'COPILOT_UNAVAILABLE' as const, message: 'no' },
+        }),
+    };
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(failing, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    const sent = await controller.sendMessage({ chatId, prompt: 'hello' });
+    expect(sent.ok).toBe(false);
+
+    expect(methods(calls)).toContain('discardUserPrompt');
+    expect(calls.at(-1)).toMatchObject({ method: 'discardUserPrompt' });
+  });
+
+  it('closes the journal when the conversation is closed', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    await controller.closeConversation({ chatId });
+
+    expect(calls.at(-1)).toEqual({ method: 'closeChat', args: chatId });
+  });
+
+  it('closes the previous chat and records its teardown events when switching to another chat', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatA = newChatId('chat-a');
+    const chatB = newChatId('chat-b');
+    await controller.openConversation({ chatId: chatA });
+    calls.length = 0;
+
+    await controller.openConversation({ chatId: chatB });
+
+    // chatA's own "closed" event is still recorded, and only then is chatA's
+    // journal closed and chatB's opened.
+    expect(methods(calls)).toEqual(['recordEvent', 'closeChat', 'openChat']);
+    expect(calls[0]?.args).toMatchObject({ type: 'session.state.changed', state: 'closed' });
+    expect(calls[1]?.args).toBe(chatA);
+    expect(calls[2]?.args).toMatchObject({ chatId: chatB });
+  });
+});
+
+describe('agentChatController AEM-request cancellation', () => {
+  it('cancels in-flight AEM requests on Stop', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const cancelAemRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelAemRequests });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'slow' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+
+    await controller.abort({ chatId });
+    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels in-flight AEM requests when the conversation is closed', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const cancelAemRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelAemRequests });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    await controller.closeConversation({ chatId });
+
+    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels in-flight AEM requests when switching to another chat', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const cancelAemRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelAemRequests });
+
+    await controller.openConversation({ chatId: newChatId('chat-a') });
+    await controller.openConversation({ chatId: newChatId('chat-b') });
+
+    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels AEM requests and logs the cause on an AEM-context invalidation', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const cancelAemRequests = vi.fn();
+    const info = vi.fn();
+    const logger: Logger = {
+      info,
+      warn: vi.fn(),
+      error: vi.fn(),
+      getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
+    };
+    const { controller } = buildController(agentService, { cancelAemRequests, logger });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'slow' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+
+    await controller.handleAemContextInvalidated();
+
+    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+    expect(info).toHaveBeenCalledWith('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE', {
+      ids: { chatId },
+    });
+  });
+
+  it('does nothing on a context invalidation when no turn is in flight', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const cancelAemRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelAemRequests });
+
+    await controller.openConversation({ chatId: newChatId('chat-1') });
+    await controller.handleAemContextInvalidated();
+
+    expect(cancelAemRequests).not.toHaveBeenCalled();
   });
 });
 

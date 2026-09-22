@@ -26,6 +26,7 @@ import {
   type ToolCallId,
   type TurnId,
 } from '../shared';
+import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
 
 /**
@@ -108,6 +109,22 @@ export interface AgentChatControllerDeps {
    * text: it never inspects a URL itself.
    */
   readonly currentPageContext: () => string | undefined;
+  /**
+   * Optional append-only chat journal (implementation-plan.md step 09). When
+   * supplied, every accepted chat's open/prompt/events/close are mirrored to
+   * `<home>/etoolbox-daisy/chats`. Optional so a unit test can construct a
+   * controller with no journal - the journal is a recording concern, never a
+   * gate on the conversation itself.
+   */
+  readonly chatJournal?: ChatJournal;
+  /**
+   * Cancels every in-flight/queued AEM bridge request. Called whenever the
+   * current turn is cancelled - Stop, an AEM-context change, a chat switch, or
+   * closing - so a stopped tool call releases the bridge's single concurrency
+   * slot immediately instead of occupying it until its 90 s deadline. Optional
+   * so a unit test can construct a controller without a bridge.
+   */
+  readonly cancelAemRequests?: () => void;
 }
 
 export interface AgentChatController {
@@ -211,6 +228,8 @@ interface ActiveTurn {
 
 export function createAgentChatController(deps: AgentChatControllerDeps): AgentChatController {
   const { agentService, idGenerator, logger } = deps;
+  const chatJournal = deps.chatJournal;
+  const cancelAemRequests = deps.cancelAemRequests;
 
   let activeChatId: ChatId | undefined;
   let activeTurn: ActiveTurn | undefined;
@@ -291,6 +310,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
   });
 
   const unsubscribeEvents = agentService.onEvent((event) => {
+    // Journaled before the ownership guard: a chat's own teardown events (a
+    // switch to another chat tears the previous one down first) must still be
+    // recorded, even though they are correctly never forwarded to the
+    // renderer. The journal routes by `event.chatId` and drops events for a
+    // chat it has no open file for.
+    chatJournal?.recordEvent(event);
     if (!isOwnedEvent(event)) return; // Late/foreign event - dropped, never forwarded, never queued.
     const applied = applyAgentEvent(sessionStatus, event);
     if (!applied.ok) {
@@ -328,6 +353,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     request: AgentChatOpenConversationRequest,
   ): Promise<AgentChatOpenResult> {
     const isSameChat = activeChatId === request.chatId;
+    const previousChatId = activeChatId;
     // Ownership flips BEFORE calling into the service: any teardown event
     // the service emits synchronously for the previous chat during this call
     // is tagged with the previous chatId, which by then no longer matches
@@ -342,6 +368,16 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
         ? { chatId: request.chatId }
         : { chatId: request.chatId, resume: request.resume },
     );
+    // The previous chat is gone either way (the service tears it down before
+    // attempting the new one), so its journal is closed - after the await, so
+    // its teardown events above are still recorded.
+    if (previousChatId !== undefined && previousChatId !== request.chatId) {
+      // The service has torn the previous chat down by now, so any AEM request
+      // it still had in flight is cancelled into an abandoned record rather
+      // than left to occupy the bridge until its deadline.
+      cancelAemRequests?.();
+      chatJournal?.closeChat(previousChatId);
+    }
     if (!result.ok) {
       // Mirrors both `AgentService` implementations: a failed open leaves no
       // conversation open at all (not the previous one, which was already
@@ -349,6 +385,15 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       activeChatId = undefined;
       activeTurn = undefined;
       return { ok: false, error: toAgentChatError(result.error) };
+    }
+    const sdkSessionId = agentService.getOpenSessionId();
+    if (sdkSessionId !== undefined) {
+      const server = deps.currentAemServerContext();
+      chatJournal?.openChat({
+        chatId: request.chatId,
+        sdkSessionId,
+        ...(server !== undefined ? { serverId: server.serverId } : {}),
+      });
     }
     return { ok: true, chatId: result.value };
   }
@@ -369,6 +414,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const turnId = newTurnId(idGenerator);
     activeTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
     const pageContext = deps.currentPageContext();
+    // Staged, not written: the journal flushes it immediately before the
+    // turn's first event (the service emits `session.state.changed: sending`
+    // synchronously inside `sendPrompt`), so the prompt precedes the turn's
+    // events on disk - and a prompt whose turn never starts is discarded below
+    // and never written at all.
+    chatJournal?.recordUserPrompt({ chatId: request.chatId, turnId, prompt: request.prompt });
     const result = await agentService.sendPrompt({
       chatId: request.chatId,
       turnId,
@@ -376,6 +427,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       displayPrompt: request.prompt,
     });
     if (!result.ok) {
+      chatJournal?.discardUserPrompt(request.chatId, turnId);
       // The turn never actually started - nothing to keep tracking, unless
       // something else has already moved `activeTurn` on in the meantime.
       if (activeTurn.turnId === turnId) activeTurn = undefined;
@@ -392,6 +444,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // `cancelling` -> `idle` events flow through the same ownership-checked
     // `onEvent` pipe as anything else. No `error` `AgentEvent` is ever
     // synthesised for a user-initiated Stop.
+    //
+    // The AEM bridge is cancelled first. `agentService.abort` clears its
+    // `currentTurn` synchronously before it awaits, so the bridge's resolved
+    // tool promises settle *after* that clear and their results are suppressed -
+    // the same "no result for a cancelled turn" rule, now also freeing the
+    // bridge's single concurrency slot instead of waiting out the deadline.
+    cancelAemRequests?.();
     const result = await agentService.abort(request.chatId);
     if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
     return { ok: true };
@@ -409,6 +468,11 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     activeTurn = undefined;
     const result = await agentService.closeConversation(request.chatId);
     if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
+    // The service's teardown has already cleared its turn, so a cancelled
+    // bridge request settles with its result suppressed - recorded as an
+    // abandoned tool call rather than a late success.
+    cancelAemRequests?.();
+    chatJournal?.closeChat(request.chatId);
     return { ok: true };
   }
 
@@ -450,6 +514,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
   async function handleAemContextInvalidated(): Promise<void> {
     if (activeChatId === undefined || activeTurn === undefined) return;
     const chatId = activeChatId;
+    // Logged *before* aborting so an automatic cancellation is distinguishable
+    // from a user Stop in `logs/app.log`: a Stop leaves no such line.
+    logger.info('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE', { ids: { chatId } });
+    cancelAemRequests?.();
     const result = await agentService.abort(chatId);
     if (!result.ok) {
       logger.error('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED', { ids: { chatId } });

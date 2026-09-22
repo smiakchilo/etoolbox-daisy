@@ -66,6 +66,32 @@ export function createNavigationEpochTracker(initialEpoch = 0): NavigationEpochT
   };
 }
 
+export interface NavigationEpochTrackingOptions {
+  /**
+   * Whether a main-frame document navigation stays on the currently active
+   * AEM server's origin.
+   *
+   * A same-origin navigation (for example following a link inside the AEM
+   * authoring UI, or a reload) changes the *page*, not the AEM *context*: the
+   * origin, the authenticated session and therefore the target of any in-flight
+   * tool request are unchanged. Such a navigation must neither invalidate an
+   * in-flight tool request nor cancel the agent's turn, so it does not bump the
+   * epoch at all. A cross-origin navigation (an SSO/IdP hop, or a server
+   * switch) does change the context and still invalidates.
+   *
+   * Defaults to `() => false`, i.e. every main-frame navigation invalidates -
+   * the strict behaviour, and the only safe default for a caller that has no
+   * notion of "the active server".
+   */
+  readonly isSameOriginNavigation?: (url: string) => boolean;
+  /**
+   * Observability hook, called for a main-frame navigation that did *not*
+   * invalidate. Never called for one that did - that path is visible as the
+   * epoch change itself.
+   */
+  readonly onSameOriginNavigation?: (url: string) => void;
+}
+
 /**
  * Wires an existing tracker to a live `WebContents`. Split from the tracker
  * itself so the invalidation rules above can be unit-tested without Electron.
@@ -80,7 +106,19 @@ export function createNavigationEpochTracker(initialEpoch = 0): NavigationEpochT
 export function attachNavigationEpochTracking(
   webContents: WebContents,
   tracker: NavigationEpochTracker,
+  options: NavigationEpochTrackingOptions = {},
 ): () => void {
+  const isSameOrigin = options.isSameOriginNavigation ?? ((): boolean => false);
+
+  /** Same-origin navigations are reported but not bumped - see the option's doc. */
+  const handleMainFrameNavigation = (url: string): void => {
+    if (isSameOrigin(url)) {
+      options.onSameOriginNavigation?.(url);
+      return;
+    }
+    tracker.bump('document_navigation');
+  };
+
   // Reads the `details` event object rather than the trailing positional
   // arguments, which Electron 44 marks `@deprecated`. The positional form also
   // spells the same-document flag `isInPlace`, which is easy to misread.
@@ -90,10 +128,10 @@ export function attachNavigationEpochTracking(
     // Sub-frame navigation leaves the main frame's document - and therefore the
     // context a reply comes from - intact, so it must not invalidate anything.
     if (!details.isMainFrame || details.isSameDocument) return;
-    tracker.bump('document_navigation');
+    handleMainFrameNavigation(details.url);
   };
-  const onNavigate = (): void => {
-    tracker.bump('document_navigation');
+  const onNavigate = (_event: Electron.Event, url: string): void => {
+    handleMainFrameNavigation(url);
   };
   const onRenderProcessGone = (): void => {
     tracker.bump('render_process_gone');

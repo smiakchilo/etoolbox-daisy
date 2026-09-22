@@ -10,6 +10,7 @@ import {
   type AemServerContext,
   type StartupGatedAgentChatController,
 } from './agentChatController';
+import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
 import type { AgentService } from '../agent/agentService';
 import type { CurrentAemToolContext } from '../shared';
@@ -397,6 +398,10 @@ export interface StartAgentServiceInBackgroundDeps {
   readonly navigationEpoch: () => number;
   /** The model-facing "where the browser pane is" block prepended to each prompt. */
   readonly currentPageContext: () => string | undefined;
+  /** Optional append-only chat journal (implementation-plan.md step 09). */
+  readonly chatJournal?: ChatJournal;
+  /** Cancels in-flight AEM bridge requests when a turn is cancelled. */
+  readonly cancelAemRequests?: () => void;
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
@@ -433,6 +438,8 @@ export async function startAgentServiceInBackground(
     currentAemServerContext: deps.currentAemServerContext,
     navigationEpoch: deps.navigationEpoch,
     currentPageContext: deps.currentPageContext,
+    ...(deps.chatJournal !== undefined ? { chatJournal: deps.chatJournal } : {}),
+    ...(deps.cancelAemRequests !== undefined ? { cancelAemRequests: deps.cancelAemRequests } : {}),
   });
   await deps.gatedController.replaceDelegate(controller);
 }

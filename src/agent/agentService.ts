@@ -153,6 +153,15 @@ export interface AgentService {
   /** The most recently known sign-in status. Never blocks on the network. */
   getAuthState(): AgentAuthState;
 
+  /**
+   * The SDK session id backing the currently open conversation, or `undefined`
+   * when no conversation is open. Read after a successful `openConversation` to
+   * correlate the application's own `ChatId` with the SDK's session - the chat
+   * journal records it in its header (implementation-plan.md step 09). Never
+   * blocks.
+   */
+  getOpenSessionId(): SdkSessionId | undefined;
+
   /** Notifies `listener` on every subsequent change to `getAuthState()`. */
   onAuthStateChanged(listener: (state: AgentAuthState) => void): Unsubscribe;
 

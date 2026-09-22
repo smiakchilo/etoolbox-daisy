@@ -27,6 +27,8 @@ import {
   renderFoldedText,
   renderToolResultForModel,
   type Result,
+  type SdkSessionId,
+  sdkSessionIdSchema,
   type SessionStatus,
   type SessionStreamState,
   TOOL_DESCRIPTORS,
@@ -909,6 +911,13 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
 
     getAuthState(): AgentAuthState {
       return authState;
+    },
+
+    getOpenSessionId(): SdkSessionId | undefined {
+      const raw = openSession?.sessionId;
+      if (raw === undefined) return undefined;
+      const parsed = sdkSessionIdSchema.safeParse(raw);
+      return parsed.success ? parsed.data : undefined;
     },
 
     onAuthStateChanged(listener: (state: AgentAuthState) => void): Unsubscribe {

@@ -10,6 +10,7 @@ import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
+import { createChatJournal } from './chatJournal';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
 import { loadSettings, loadSettingsSync, configuredAgentId } from './settingsStore';
@@ -223,6 +224,11 @@ if (!gotSingleInstanceLock) {
     // secrets directory is a subdirectory of the existing `settings` path,
     // not a new top-level directory alongside `appPaths`'s fixed six.
     const logger = createLogger(appPaths.logs);
+    // The append-only chat journal (implementation-plan.md step 09): one JSON
+    // Lines file per chat under `<home>/etoolbox-daisy/chats`. Owned here for
+    // the app's lifetime, not by a controller - the Copilot runtime recycles
+    // (replacing the controller) while the same journal keeps appending.
+    const chatJournal = createChatJournal(appPaths.chats);
     const secretsDir = path.join(appPaths.settings, 'secrets');
     const secretStore = createSecretStore(secretsDir, safeStorage);
 
@@ -444,6 +450,7 @@ if (!gotSingleInstanceLock) {
     });
     const aemBridgeBroker = createAemBridgeBroker({
       transport: aemBridgeTransport,
+      logger,
       clock: Date.now,
       setTimer: (fn, delayMs) => {
         const timer = setTimeout(fn, delayMs);
@@ -594,6 +601,11 @@ if (!gotSingleInstanceLock) {
           () => browserController.activeServer(),
           () => browserController.currentDocumentUrl(),
         ),
+        chatJournal,
+        // Stop / chat switch / close / context change all cancel the bridge's
+        // in-flight and queued AEM requests, so a stopped tool call releases the
+        // concurrency-1 slot immediately instead of running to its 90 s deadline.
+        cancelAemRequests: () => aemBridgeBroker.cancelAll(),
         gatedController: agentChatController,
       });
 

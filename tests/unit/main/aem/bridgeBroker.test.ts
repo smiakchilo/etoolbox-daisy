@@ -11,6 +11,19 @@ import {
   type CurrentAemContext,
   type ToolRequestEnvelope,
 } from '../../../../src/shared';
+import type { Logger } from '../../../../src/main/logger';
+
+/** A logger double that records every line's code and fields. */
+function recordingLogger(): { logger: Logger; lines: { code: string; fields: unknown }[] } {
+  const lines: { code: string; fields: unknown }[] = [];
+  const logger = {
+    info: (code: string, fields?: unknown) => lines.push({ code, fields }),
+    warn: (code: string, fields?: unknown) => lines.push({ code, fields }),
+    error: (code: string, fields?: unknown) => lines.push({ code, fields }),
+    getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
+  } as unknown as Logger;
+  return { logger, lines };
+}
 
 const TRUSTED_ORIGIN: BridgeReplyOrigin = { isTrustedAemView: true, isMainFrame: true };
 
@@ -431,5 +444,82 @@ describe('createAemBridgeBroker', () => {
     });
     // The stale timer callback must not have sent a second, pointless cancel.
     expect(harness.sendCancelCalls).toEqual([]);
+  });
+});
+
+describe('createAemBridgeBroker - request diagnostics', () => {
+  it('logs AEM_REQUEST_STARTED on send and AEM_REQUEST_COMPLETED with status/outcome/duration on reply', async () => {
+    const harness = createHarness();
+    const { logger, lines } = recordingLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+
+    harness.setNow(1000);
+    trackOutcome(
+      broker.request(makeEnvelope('req-1'), 'https://aem.example.com/bin/querybuilder.json'),
+    );
+    expect(lines.map((line) => line.code)).toEqual(['AEM_REQUEST_STARTED']);
+
+    harness.setNow(1250);
+    harness.fireReply(okReply('req-1'));
+    await flushMicrotasks();
+
+    expect(lines.map((line) => line.code)).toEqual([
+      'AEM_REQUEST_STARTED',
+      'AEM_REQUEST_COMPLETED',
+    ]);
+    expect(lines[1]?.fields).toMatchObject({
+      durationMs: 250,
+      outcome: 'success',
+      statusCode: 200,
+    });
+  });
+
+  it('reports a non-2xx response as outcome failure, with its status', async () => {
+    const harness = createHarness();
+    const { logger, lines } = recordingLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+
+    trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
+    harness.fireReply({
+      kind: 'response',
+      requestId: 'req-1',
+      status: 404,
+      contentType: null,
+      bodyText: '',
+    });
+    await flushMicrotasks();
+
+    expect(lines.at(-1)?.fields).toMatchObject({ outcome: 'failure', statusCode: 404 });
+  });
+
+  it('reports a deadline expiry as outcome timeout', async () => {
+    const harness = createHarness();
+    const { logger, lines } = recordingLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+
+    trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
+    harness.setNow(100_000);
+    harness.timers[0]?.fn();
+    await flushMicrotasks();
+
+    expect(lines.at(-1)?.fields).toMatchObject({ outcome: 'timeout' });
+  });
+
+  it('reports a cancelled request as outcome cancelled', async () => {
+    const harness = createHarness();
+    const { logger, lines } = recordingLogger();
+    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+
+    trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
+    broker.cancelAll();
+    await flushMicrotasks();
+
+    expect(lines.at(-1)?.fields).toMatchObject({ outcome: 'cancelled' });
+  });
+
+  it('does not log when no logger is supplied', () => {
+    const harness = createHarness();
+    const broker = createAemBridgeBroker(harness.deps);
+    expect(() => broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x')).not.toThrow();
   });
 });

@@ -5,6 +5,7 @@ import type {
   JsonValue,
   MessageId,
   RequiredAction,
+  SdkSessionId,
   ToolCallId,
   ToolErrorCode,
   TurnId,
@@ -20,6 +21,7 @@ import {
   newToolCallId,
   ok,
   type Result,
+  sdkSessionIdSchema,
   type SessionStatus,
   type SessionStreamState,
 } from '../shared';
@@ -576,6 +578,15 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
 
     getAuthState(): AgentAuthState {
       return authState;
+    },
+
+    getOpenSessionId(): SdkSessionId | undefined {
+      if (openChatId === undefined) return undefined;
+      // Deterministic, derived from the chat id: this fake has no real SDK
+      // session, but the journal's header still needs a stable id. Truncated to
+      // the identifier schema's bound so a very long chat id cannot make it
+      // unparseable.
+      return sdkSessionIdSchema.parse(`fake-session-${openChatId}`.slice(0, 200));
     },
 
     onAuthStateChanged(listener: (state: AgentAuthState) => void): Unsubscribe {

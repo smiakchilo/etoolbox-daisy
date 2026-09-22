@@ -19,8 +19,10 @@ import {
   createStartupGatedAgentChatController,
   type AgentChatController,
 } from '../../../src/main/agentChatController';
+import type { ChatJournal } from '../../../src/main/chatJournal';
 import type { Logger } from '../../../src/main/logger';
 import type { AgentService } from '../../../src/agent/agentService';
+import { createFakeAgentService } from '../../../src/agent/fakeAgentService';
 import type { CurrentAemToolContext } from '../../../src/shared';
 import { newChatId, newRequestId, newServerId, newTurnId } from '../../../src/shared';
 import type { AemGetJsonRequest } from '../../../src/shared';
@@ -372,6 +374,7 @@ function fakeAgentServiceDouble(): AgentService {
   return {
     initialize: () => Promise.resolve({ ok: true, value: undefined }),
     getAuthState: () => ({ apiVersion: 1, isAuthenticated: true }),
+    getOpenSessionId: () => undefined,
     onAuthStateChanged: () => () => {},
     onEvent: () => () => {},
     openConversation: () => Promise.reject(new Error('not used in this test')),
@@ -530,6 +533,46 @@ describe('startAgentServiceInBackground', () => {
 
     expect(buildAgentService).not.toHaveBeenCalled();
     expect(gatedController.getStatus().serviceState).toBe('starting');
+  });
+
+  it('threads cancelAemRequests and the chat journal into the controller it builds', async () => {
+    // Both are optional dependencies wired only here; a silent drop would leave
+    // Stop not cancelling the AEM fetch and the journal never writing, with no
+    // type error to catch it - exactly the class of wiring bug the project has
+    // hit before (the preload bridge argument list).
+    const agentService = createFakeAgentService({ idGenerator: counterIds('fake') });
+    const gatedController = createStartupGatedAgentChatController();
+    const cancelAemRequests = vi.fn();
+    const openChat = vi.fn();
+    const chatJournal: ChatJournal = {
+      openChat,
+      recordUserPrompt: vi.fn(),
+      discardUserPrompt: vi.fn(),
+      recordEvent: vi.fn(),
+      closeChat: vi.fn(),
+      getHealth: () => ({ writeFailureCount: 0, droppedRecordCount: 0, lastFailureCode: null }),
+    };
+
+    await startAgentServiceInBackground({
+      copilotClient: undefined,
+      buildAgentService: () => agentService,
+      logger: noopLogger().logger,
+      idGenerator: counterIds('turn'),
+      currentAemServerContext: () => undefined,
+      navigationEpoch: () => 0,
+      currentPageContext: () => undefined,
+      chatJournal,
+      cancelAemRequests,
+      gatedController,
+    });
+
+    const chatId = newChatId(counterIds('chat'));
+    await gatedController.openConversation({ chatId });
+    await gatedController.sendMessage({ chatId, prompt: 'hi' });
+    await gatedController.abort({ chatId });
+
+    expect(openChat).toHaveBeenCalledTimes(1);
+    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
   });
 });
 

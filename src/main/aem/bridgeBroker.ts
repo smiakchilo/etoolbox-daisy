@@ -7,6 +7,7 @@ import { aemBridgeReplySchema } from '../../shared/contracts/aemBridge';
 import type { Clock, CurrentAemContext, ToolRequestEnvelope } from '../../shared';
 import { classifyStaleness, isDeadlineExpired } from '../../shared';
 import type { BrokerOutcome } from '../../shared';
+import { toLoggableUrl, type LogOutcome, type Logger } from '../logger';
 
 export type { BrokerOutcome };
 
@@ -44,6 +45,32 @@ export interface BrokerDeps {
   readonly setTimer: (fn: () => void, delayMs: number) => () => void;
   /** The live serverRevision + navigationEpoch, read fresh at every decision point. */
   readonly currentContext: () => CurrentAemContext;
+  /**
+   * Optional diagnostics sink. When supplied, every request logs
+   * `AEM_REQUEST_STARTED` when it reaches the view and `AEM_REQUEST_COMPLETED`
+   * when it settles, with its duration, HTTP status (when there is one) and a
+   * closed-vocabulary outcome - so `logs/app.log` can answer "did the AEM
+   * request actually succeed", which the chat journal deliberately cannot
+   * (it records normalized agent events, not HTTP results).
+   */
+  readonly logger?: Logger;
+}
+
+/** Maps a raw broker verdict onto the logger's closed outcome vocabulary. */
+function toLogOutcome(outcome: BrokerOutcome): LogOutcome {
+  switch (outcome.kind) {
+    case 'response':
+      return outcome.status >= 200 && outcome.status < 400 ? 'success' : 'failure';
+    case 'timeout':
+      return 'timeout';
+    case 'cancelled':
+      return 'cancelled';
+    case 'blocked':
+    case 'network_error':
+    case 'stale':
+    case 'no_view':
+      return 'failure';
+  }
 }
 
 /**
@@ -69,6 +96,8 @@ interface PendingRequest {
   readonly envelope: ToolRequestEnvelope;
   readonly url: string;
   readonly resolve: (outcome: BrokerOutcome) => void;
+  /** When the request was enqueued, so `AEM_REQUEST_COMPLETED` can report total wait. */
+  readonly queuedAt: number;
   settled: boolean;
   cancelTimer: (() => void) | undefined;
 }
@@ -118,6 +147,15 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
     entry.cancelTimer?.();
     entry.cancelTimer = undefined;
     if (inFlight === entry) inFlight = undefined;
+    deps.logger?.info('AEM_REQUEST_COMPLETED', {
+      durationMs: Math.max(0, deps.clock() - entry.queuedAt),
+      outcome: toLogOutcome(outcome),
+      ...(outcome.kind === 'response' && outcome.status >= 100 && outcome.status <= 599
+        ? { statusCode: outcome.status }
+        : {}),
+      ids: { requestId: entry.envelope.requestId },
+      url: toLoggableUrl(entry.url),
+    });
     entry.resolve(outcome);
   }
 
@@ -171,6 +209,10 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
         settle(entry, { kind: 'no_view' });
         continue;
       }
+      deps.logger?.info('AEM_REQUEST_STARTED', {
+        ids: { requestId: entry.envelope.requestId },
+        url: toLoggableUrl(entry.url),
+      });
       return;
     }
   }
@@ -224,6 +266,7 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
           envelope,
           url,
           resolve,
+          queuedAt: deps.clock(),
           settled: false,
           cancelTimer: undefined,
         };

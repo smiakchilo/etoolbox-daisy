@@ -19,7 +19,7 @@ import type { AemSession } from '../aem';
 import type { ProxyPlainCredentials } from '../aem';
 import { resolveEffectiveProxy } from '../aem';
 import type { SecretStore } from '../secretStore';
-import type { Logger } from '../logger';
+import { toLoggableUrl, type DiagnosticCode, type Logger } from '../logger';
 import {
   createAemBrowserView,
   type AemBrowserView,
@@ -34,8 +34,24 @@ import { attachProxyReconciliation } from './proxyReconciliation';
 import {
   attachNavigationEpochTracking,
   createNavigationEpochTracker,
+  type NavigationEpochBumpReason,
   type NavigationEpochTracker,
 } from './navigationEpoch';
+
+/**
+ * One diagnostic code per epoch-invalidation cause, so a cancelled turn can be
+ * told apart from a user Stop in `logs/app.log`: any of these lines immediately
+ * before a turn's `cancelling` means the cancellation was automatic, and its
+ * code says which event caused it. `BROWSER_SWITCH_STARTED` doubles as the
+ * server-switch bump's marker (a switch is the only thing that bumps with
+ * `server_switch`).
+ */
+const NAVIGATION_LOG_CODE_BY_REASON: Readonly<Record<NavigationEpochBumpReason, DiagnosticCode>> = {
+  document_navigation: 'BROWSER_NAVIGATION',
+  server_switch: 'BROWSER_SWITCH_STARTED',
+  render_process_gone: 'BROWSER_RENDER_PROCESS_GONE',
+  view_destroyed: 'BROWSER_VIEW_DESTROYED',
+};
 
 /**
  * Top-level orchestrator for the browser shell (implementation-plan.md step
@@ -219,7 +235,43 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   const navigationEpoch = createNavigationEpochTracker();
-  const detachNavigationEpoch = attachNavigationEpochTracking(aemView.webContents, navigationEpoch);
+
+  /**
+   * Whether `url` is on the active AEM server's own origin. A same-origin
+   * navigation changes the page but not the AEM context, so it must not
+   * invalidate in-flight tool requests or cancel the agent's turn - see
+   * `NavigationEpochTrackingOptions`. `false` when no server is active, which
+   * makes every navigation invalidate (the safe direction: there is no
+   * in-flight turn to preserve in that state anyway).
+   */
+  function isSameOriginNavigation(url: unknown): boolean {
+    // Defensive: an event payload without a URL must not throw inside a
+    // listener. A missing URL is treated as "not known same-origin", which
+    // invalidates - the safe direction.
+    if (typeof url !== 'string') return false;
+    const active = activeServerState;
+    if (active === undefined) return false;
+    const target = parseNavigationTarget(url);
+    return target.ok && target.origin === active.origin;
+  }
+
+  const detachNavigationEpoch = attachNavigationEpochTracking(
+    aemView.webContents,
+    navigationEpoch,
+    {
+      isSameOriginNavigation,
+      onSameOriginNavigation: (url) => {
+        logger.info('BROWSER_NAVIGATION', { url: toLoggableUrl(url) });
+      },
+    },
+  );
+
+  // Every epoch invalidation is logged with its cause, so an automatic turn
+  // cancellation is traceable. The same-origin case is logged by the callback
+  // above instead (it does not bump).
+  const detachNavigationLog = navigationEpoch.subscribe((change) => {
+    logger.info(NAVIGATION_LOG_CODE_BY_REASON[change.reason]);
+  });
 
   // Per-origin proxy reconciliation (requirement 4): whenever the main frame
   // navigates - including a cross-origin SSO redirect - the session proxy is
@@ -425,6 +477,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     }
     activeServerState = toActiveServer(server);
     appliedProxyKey = currentProxy?.id ?? '';
+    logger.info('BROWSER_SWITCH_COMPLETED');
     return ok();
   }
 
@@ -561,6 +614,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // from it is invalidated rather than left pending against a dead frame.
     navigationEpoch.bump('view_destroyed');
     detachNavigationEpoch();
+    detachNavigationLog();
     detachProxyReconciliation();
     aemView.destroy();
   }

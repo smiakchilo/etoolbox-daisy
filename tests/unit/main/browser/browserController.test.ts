@@ -100,17 +100,28 @@ function makeFakeSecretStore(passwords: Record<string, string> = {}): SecretStor
   };
 }
 
-function makeFakeLogger(): Logger {
-  return {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
+function makeFakeLogger(): {
+  logger: Logger;
+  spies: {
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
+} {
+  const info = vi.fn();
+  const warn = vi.fn();
+  const error = vi.fn();
+  const logger: Logger = {
+    info,
+    warn,
+    error,
     getHealth: vi.fn(() => ({
       writeFailureCount: 0,
       lastFailureCode: null,
       rotationCount: 0,
     })),
   };
+  return { logger, spies: { info, warn, error } };
 }
 
 interface FakeAemViewControls {
@@ -265,7 +276,7 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
   const settingsDir = createScratchRoot();
   const aemViewControls = makeFakeAemView();
   const aemSessionControls = makeFakeAemSession();
-  const logger = makeFakeLogger();
+  const { logger, spies: loggerSpies } = makeFakeLogger();
   const secretStore = options.secretStore ?? makeFakeSecretStore();
   const { webContents: rendererWebContents, send: rendererSend } = makeFakeRendererWebContents();
 
@@ -286,6 +297,7 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
     aemViewControls,
     aemSessionControls,
     logger,
+    loggerSpies,
     secretStore,
     rendererSend,
   };
@@ -1023,5 +1035,58 @@ describe('browserController.activeServer', () => {
     });
 
     expect(harness.controller.activeServer()).toEqual(before);
+  });
+});
+
+describe('browserController same-origin navigation and invalidation logging', () => {
+  it('does NOT invalidate on a same-origin navigation, and logs it as BROWSER_NAVIGATION', async () => {
+    const server = makeServer(); // origin https://author.example
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+    const before = harness.controller.navigationEpoch.current();
+
+    harness.aemViewControls.webContents.emit('did-start-navigation', {
+      isMainFrame: true,
+      isSameDocument: false,
+      url: 'https://author.example/content/other.html',
+    });
+
+    expect(harness.controller.navigationEpoch.current()).toBe(before);
+    expect(harness.loggerSpies.info).toHaveBeenCalledWith('BROWSER_NAVIGATION', expect.anything());
+  });
+
+  it('still invalidates on a cross-origin navigation while a server is active', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+    const before = harness.controller.navigationEpoch.current();
+
+    harness.aemViewControls.webContents.emit('did-start-navigation', {
+      isMainFrame: true,
+      isSameDocument: false,
+      url: 'https://ims.example/oauth',
+    });
+
+    expect(harness.controller.navigationEpoch.current()).toBeGreaterThan(before);
+  });
+
+  it('logs the start and completion of a server switch', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+
+    await harness.controller.switchServer(server.id);
+
+    const codes = harness.loggerSpies.info.mock.calls.map((call) => call[0] as string);
+    expect(codes).toContain('BROWSER_SWITCH_STARTED');
+    expect(codes).toContain('BROWSER_SWITCH_COMPLETED');
+  });
+
+  it('logs the invalidation cause when the view is destroyed', () => {
+    const harness = makeControllerHarness();
+    harness.controller.destroy();
+    expect(harness.loggerSpies.info).toHaveBeenCalledWith('BROWSER_VIEW_DESTROYED');
   });
 });

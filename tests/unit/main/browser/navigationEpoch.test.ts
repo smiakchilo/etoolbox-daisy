@@ -219,3 +219,52 @@ describe('epoch integration with classifyStaleness', () => {
     ).toBe('stale_navigation_epoch');
   });
 });
+
+describe('attachNavigationEpochTracking - same-origin navigation', () => {
+  it('does NOT invalidate a same-origin main-frame navigation, and reports it', () => {
+    const fake = createFakeWebContents();
+    const tracker = createNavigationEpochTracker();
+    const onSameOriginNavigation = vi.fn();
+    attachNavigationEpochTracking(fake.webContents, tracker, {
+      isSameOriginNavigation: (url) => url.startsWith('https://aem.example.com/'),
+      onSameOriginNavigation,
+    });
+
+    fake.emit('did-start-navigation', startNavigation());
+
+    expect(tracker.current()).toBe(0);
+    expect(onSameOriginNavigation).toHaveBeenCalledWith(
+      'https://aem.example.com/content/site.html',
+    );
+  });
+
+  it('still invalidates a cross-origin main-frame navigation', () => {
+    const fake = createFakeWebContents();
+    const tracker = createNavigationEpochTracker();
+    const onSameOriginNavigation = vi.fn();
+    attachNavigationEpochTracking(fake.webContents, tracker, {
+      isSameOriginNavigation: (url) => url.startsWith('https://aem.example.com/'),
+      onSameOriginNavigation,
+    });
+
+    fake.emit('did-start-navigation', {
+      ...(startNavigation() as Record<string, unknown>),
+      url: 'https://ims.example.com/oauth',
+    });
+
+    expect(tracker.current()).toBe(1);
+    expect(onSameOriginNavigation).not.toHaveBeenCalled();
+  });
+
+  it('applies the same-origin rule to the did-navigate backstop', () => {
+    const fake = createFakeWebContents();
+    const tracker = createNavigationEpochTracker();
+    attachNavigationEpochTracking(fake.webContents, tracker, {
+      isSameOriginNavigation: () => true,
+    });
+
+    fake.emit('did-navigate', {}, 'https://aem.example.com/content/other.html');
+
+    expect(tracker.current()).toBe(0);
+  });
+});
