@@ -1,4 +1,4 @@
-import { el } from '../lib/dom';
+import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import {
   HOST_PROXY_NONE,
@@ -735,6 +735,13 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
       // *removal* confirmation the user is clicking. Wait for the prompt to
       // clear; the next snapshot update rebuilds then.
       if (options.status.isPromptShowing?.() === true) return;
+      // A rebuild detaches the focused field and drops the caret. The reload
+      // that follows this very auto-save would therefore interrupt the user
+      // mid-typing, making the "Settings saved" row look like it stole focus.
+      // The live rows already show the user's committed edit (and the Proxy
+      // options were refreshed above), so nothing is lost by waiting for focus
+      // to leave the section before rebuilding from the snapshot.
+      if (containsFocus(element)) return;
       replaceItems(servers);
     },
     async flushNow(): Promise<void> {

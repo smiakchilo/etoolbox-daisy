@@ -4,6 +4,21 @@
  * removes the repetitive create-element/set-attributes/set-text boilerplate
  * that pattern otherwise repeats at every call site.
  */
+/**
+ * True while keyboard focus sits somewhere inside `root`.
+ *
+ * Used to hold off a snapshot-driven re-render that would replace `root`'s
+ * subtree: detaching the focused element drops the caret mid-typing, so the
+ * "Settings saved" feedback that follows an auto-save would appear to have
+ * stolen focus. A focused Spectrum field retargets `document.activeElement` to
+ * its shadow *host*, which is still a descendant of `root`, so containment
+ * holds across the shadow boundary.
+ */
+export function containsFocus(root: HTMLElement): boolean {
+  const active = root.ownerDocument.activeElement;
+  return active !== null && active !== root && root.contains(active);
+}
+
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   options?: {

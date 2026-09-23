@@ -258,6 +258,85 @@ test('the Settings banner keeps one height with and without an action button', a
 });
 
 /**
+ * The "Settings saved" feedback follows an auto-save, and that auto-save also
+ * triggers a snapshot re-read. That re-read must not rebuild the rows while the
+ * user is still typing in one: `replaceItems` detaches the focused field, so
+ * the banner would look like it had stolen focus and the caret would be lost
+ * mid-edit. Only the real app proves the fix, because it hinges on Spectrum's
+ * textfield retargeting `document.activeElement` to its shadow host (jsdom's
+ * un-upgraded field has no shadow root).
+ */
+test('an auto-save does not steal focus from the field being typed in', async () => {
+  test.setTimeout(180_000);
+
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+  const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  const readDoc = (): string => {
+    try {
+      return readFileSync(settingsFile, 'utf8');
+    } catch {
+      return '';
+    }
+  };
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
+
+    // One persisted host (a draft counts as a row, so the disk read is what
+    // proves the address save landed and the row is no longer a draft).
+    await page.locator('.multifield__add').first().click();
+    const item = page.locator('.multifield__item').last();
+    await item
+      .locator('sp-textfield[aria-label="Address"] input')
+      .fill('https://focus-check.example');
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('https://focus-check.example');
+
+    // Let the host-creation feedback auto-clear, so the next "Settings saved"
+    // unambiguously belongs to the label save below.
+    const banner = page.locator('.settings-banner').first();
+    await expect(banner).toHaveText('', { timeout: 60_000 });
+
+    // Type into the label; the debounced save settles on "Settings saved" and
+    // fires the snapshot re-read that used to tear the row down.
+    const labelHost = item.locator('sp-textfield[aria-label="Label"]');
+    await labelHost.locator('input').fill('Focus Check');
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('Focus Check');
+    await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
+    // The banner is announced before the reload continuation runs, so give the
+    // re-read time to land before asserting.
+    await page.waitForTimeout(1000);
+
+    // The very same field node is still focused and still connected: had the
+    // reload rebuilt the rows, it would have been detached from the document.
+    expect(
+      await labelHost.evaluate(
+        (el) => el.isConnected && el === el.ownerDocument.activeElement,
+      ),
+    ).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
  * Reordering is part of the requirement, and its persistence is a real IPC
  * round trip (`settings:reorder-servers`), so it is proven here rather than
  * only against the store in isolation. This also pins the bound recomputation:

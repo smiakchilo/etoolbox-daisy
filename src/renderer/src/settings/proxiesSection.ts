@@ -1,4 +1,4 @@
-import { el } from '../lib/dom';
+import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProxyId, type ProxySnapshot } from '../../../shared';
 import { createAutoSave } from './autoSave';
@@ -445,6 +445,12 @@ export function createProxiesSection(options: ProxiesSectionOptions): ProxiesSec
     update(proxies: readonly ProxySnapshot[]): void {
       lastPersistedOrder = proxies.map((proxy) => proxy.id);
       if (hasPendingEdits()) return;
+      // A rebuild detaches the focused field and drops the caret. The reload
+      // that follows this very auto-save would therefore interrupt the user
+      // mid-typing, making the "Settings saved" row look like it stole focus.
+      // The live rows already show the user's committed edit, so nothing is
+      // lost by waiting for focus to leave the section before rebuilding.
+      if (containsFocus(element)) return;
       replaceItems(proxies);
     },
     async flushNow(): Promise<void> {

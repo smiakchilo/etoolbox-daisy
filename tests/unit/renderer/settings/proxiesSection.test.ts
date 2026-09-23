@@ -332,4 +332,26 @@ describe('createProxiesSection', () => {
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(1);
     expect(field(section.element, 'Address')?.value).toBe('https://draft.example');
   });
+
+  it('does not rebuild rows while a persisted proxy field holds focus', () => {
+    const section = buildSection();
+    // jsdom only focuses an element that is attached to the document.
+    dom.window.document.body.append(section.element);
+    section.update([snapshot('a', 'https://a.example', 'A')]);
+
+    const label = field(section.element, 'Label');
+    if (!label) throw new Error('missing label field');
+    // The real Spectrum field is focusable; jsdom's un-upgraded host is not
+    // unless it is given a tabindex.
+    label.setAttribute('tabindex', '0');
+    label.focus();
+    expect(dom.window.document.activeElement).toBe(label);
+
+    // The reload that follows an auto-save must not tear the row down: doing so
+    // detaches the focused field and drops the caret mid-typing.
+    section.update([snapshot('a', 'https://a.example', 'A')]);
+
+    expect(section.element.contains(label)).toBe(true);
+    expect(dom.window.document.activeElement).toBe(label);
+  });
 });
