@@ -40,6 +40,12 @@ const scratchBase = path.resolve(__dirname, '../../test-results', 'message-links
 const HOST = 'https://aem.example.invalid';
 
 const CHAT_STATUS_BANNER = '.chat-status-banner';
+/**
+ * Every browser navigation - including one a transcript link starts - is owned
+ * by the browser pane, so a failed load is reported in the browser pane's
+ * message row (with its Reload), never the chat pane's banner.
+ */
+const BROWSER_MESSAGE = '.browser-toolbar-message';
 const COMPOSER_SEND = '.chat-composer__send';
 const COMPOSER_FIELD = '.chat-composer textarea';
 const ASSISTANT = '.chat-message--assistant';
@@ -173,7 +179,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // resolve, so the proof is the pane's own error banner naming the URL the
     // click asked for - not the absence of an error.
     await link.click();
-    const banner = shell.locator(CHAT_STATUS_BANNER);
+    const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(`${HOST}/content/site/alpha.html`, { timeout: 60_000 });
 
@@ -242,7 +248,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // Edit drives the real pane navigation path; the unresolvable host makes
     // the resulting error banner the proof it reached it.
     await edit.click();
-    const banner = shell.locator(CHAT_STATUS_BANNER);
+    const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(`${HOST}/editor.html/content/site/alpha.html`, {
       timeout: 60_000,
@@ -265,7 +271,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
         'focusin',
         (event) => {
           const target = event.target as Element | null;
-          if (target?.closest?.('sp-overlay') !== null) {
+          if (target !== null && target.closest('sp-overlay') !== null) {
             scope.__popoverFocus.push(target.tagName);
           }
         },
@@ -307,7 +313,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     expect(detectorWorks).toBeGreaterThan(0);
 
     await crx.click();
-    const banner = shell.locator(CHAT_STATUS_BANNER);
+    const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(
       `${HOST}/crx/de/index.jsp#/content/site/alpha/jcr:content/myComponent/2`,
@@ -354,7 +360,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // The unresolvable host makes the pane's error banner the proof the encoded
     // URL is what actually reached the load path.
     await link.click();
-    const banner = shell.locator(CHAT_STATUS_BANNER);
+    const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(`${HOST}/apps/x/jcr%3Acontent/y`, { timeout: 60_000 });
 

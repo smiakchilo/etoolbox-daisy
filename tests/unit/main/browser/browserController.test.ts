@@ -497,6 +497,47 @@ describe('browserController.reload / goBack / goForward', () => {
 
     expect(result).toEqual({ ok: true });
   });
+
+  it('re-derives the active server from the committed URL after a successful history navigation', async () => {
+    const server = makeServer({ origin: 'https://a.example' });
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    // The history restore committed a page on the configured host, but the
+    // failed switch that preceded it had cleared the active server.
+    harness.aemViewControls.view.getNavigationState = vi.fn(() => ({
+      url: 'https://a.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    }));
+    harness.aemViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
+
+    const result = await harness.controller.goBack();
+
+    expect(result).toEqual({ ok: true });
+    expect(harness.controller.activeServer()).toEqual({
+      serverId: server.id,
+      origin: 'https://a.example',
+      revision: server.revision,
+    });
+  });
+
+  it('clears the active server after a history navigation to a non-host origin', async () => {
+    const server = makeServer({ origin: 'https://a.example' });
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    harness.aemViewControls.view.getNavigationState = vi.fn(() => ({
+      url: 'https://ims.example/oauth',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    }));
+    harness.aemViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
+
+    await harness.controller.goBack();
+
+    expect(harness.controller.activeServer()).toBeUndefined();
+  });
 });
 
 describe('browserController.switchServer', () => {

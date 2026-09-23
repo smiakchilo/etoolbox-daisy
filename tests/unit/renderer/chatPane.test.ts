@@ -459,6 +459,43 @@ describe('createChatPane status push', () => {
 
     pane.dispose();
   });
+
+  it('routes a message link to the browser pane when the shell wires it', async () => {
+    const onNavigateInBrowser = vi.fn();
+    const pane = createChatPane({ onOpenSettings: vi.fn(), onNavigateInBrowser });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const chatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+    pushEvent({
+      type: 'assistant.message.completed',
+      chatId,
+      sequence: 0,
+      turnId: 'turn-1',
+      messageId: 'msg-1',
+      content: 'See /content/site/en/page for details.',
+    } as AgentEvent);
+    await waitForAssistantMessage(pane);
+
+    pane.setLinkContext({
+      hostOrigins: ['https://author.example'],
+      activeOrigin: 'https://author.example',
+    });
+    const anchor = pane.element.querySelector('a[data-daisy-link]');
+    anchor?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(onNavigateInBrowser).toHaveBeenCalledWith(
+      'https://author.example/content/site/en/page.html',
+    );
+    // The browser pane owns the navigation (and its failure) now: this pane
+    // must not call the browser IPC directly, which would land the error in
+    // the chat banner instead of the browser pane.
+    expect(navigate).not.toHaveBeenCalled();
+
+    pane.dispose();
+  });
 });
 
 describe('createChatPane startup restore', () => {

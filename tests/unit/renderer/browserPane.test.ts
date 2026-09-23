@@ -331,6 +331,31 @@ describe('createBrowserPane closeability', () => {
   });
 });
 
+describe('createBrowserPane navigation failure recovery', () => {
+  it('exposes navigate(url), routed through the toolbar like a typed address', () => {
+    const pane = build();
+
+    pane.navigate('https://author.example/content/page.html');
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://author.example/content/page.html');
+  });
+
+  it('opens the hosts picker when a failed load has no page to restore', async () => {
+    const pane = build();
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'network_error', message: 'Timed out', errorCode: 'ERR_TIMED_OUT' },
+    });
+
+    pane.navigate('https://dead.example/');
+
+    await vi.waitFor(() => {
+      expect(pagePanel?.hidden).toBe(true);
+    });
+  });
+});
+
 describe('createBrowserPane agent-pane toggle', () => {
   function toggleOf(pane: ReturnType<typeof createBrowserPane>): HTMLElement {
     const button = pane.element.querySelector<HTMLElement>(

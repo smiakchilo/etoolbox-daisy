@@ -556,6 +556,223 @@ describe('createBrowserToolbar loading state machine', () => {
   });
 });
 
+describe('createBrowserToolbar navigation failure recovery', () => {
+  function buildWith(
+    overrides: {
+      readonly onHostsPickerRequest?: () => void;
+    } = {},
+  ): ReturnType<typeof createBrowserToolbar> {
+    return createBrowserToolbar({
+      onHostsPickerClick: () => {},
+      ...(overrides.onHostsPickerRequest !== undefined
+        ? { onHostsPickerRequest: overrides.onHostsPickerRequest }
+        : {}),
+    });
+  }
+
+  /** Reports the page the view is showing, so it can be remembered as "previous". */
+  function pushPage(url: string): void {
+    stateListeners[0]?.({ url, canGoBack: true, canGoForward: false, isLoading: false });
+  }
+
+  function typeAndSubmit(toolbar: ReturnType<typeof createBrowserToolbar>, value: string): void {
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    address.value = value;
+    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  }
+
+  const TIMEOUT_ERROR = {
+    ok: false as const,
+    error: {
+      code: 'network_error' as const,
+      message: 'Timed out while trying to reach https://dead.example. Check the address',
+      errorCode: 'ERR_TIMED_OUT',
+    },
+  };
+
+  it('adds a size-s Reload action that re-issues the failed target', async () => {
+    const toolbar = buildWith();
+    const message = findMessage(toolbar);
+    browser.navigate.mockResolvedValue(TIMEOUT_ERROR);
+
+    typeAndSubmit(toolbar, 'https://dead.example/content/page.html');
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(true);
+    });
+
+    const reload = message.querySelector('sp-action-button');
+    expect(reload).not.toBeNull();
+    expect(reload?.textContent).toBe('Reload');
+    expect(reload?.getAttribute('size')).toBe('s');
+
+    const before = browser.navigate.mock.calls.length;
+    (reload as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(browser.navigate.mock.calls.length).toBe(before + 1);
+    });
+    expect(browser.navigate).toHaveBeenLastCalledWith('https://dead.example/content/page.html');
+  });
+
+  it('restores the page displayed before a failed load via history, then keeps the error row', async () => {
+    const toolbar = buildWith();
+    const message = findMessage(toolbar);
+    pushPage('https://author.example/content/page.html');
+
+    browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
+
+    typeAndSubmit(toolbar, 'https://author.example/content/other.html');
+
+    // A fresh navigation's failure restores through history (instant bfcache
+    // back), not a network re-navigation of the remembered URL.
+    await vi.waitFor(() => {
+      expect(browser.goBack).toHaveBeenCalledTimes(1);
+    });
+    expect(browser.navigate).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(true);
+    });
+    expect(message.textContent).toContain('Timed out while trying to reach');
+    expect(message.querySelector('sp-action-button')?.textContent).toBe('Reload');
+  });
+
+  it('keeps the error row readable while the silent restore is loading', async () => {
+    const toolbar = buildWith();
+    const message = findMessage(toolbar);
+    pushPage('https://author.example/content/page.html');
+
+    let resolveGoBack: ((value: { ok: boolean }) => void) | undefined;
+    browser.goBack.mockReturnValueOnce(
+      new Promise<{ ok: boolean }>((resolve) => {
+        resolveGoBack = resolve;
+      }),
+    );
+    browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
+
+    typeAndSubmit(toolbar, 'https://author.example/content/other.html');
+    await vi.waitFor(() => {
+      expect(browser.goBack).toHaveBeenCalledTimes(1);
+    });
+
+    // The restore's own load begins. Its `isLoading` push must NOT replace the
+    // error row with the loading presentation - that is the whole point of a
+    // silent recovery.
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: true,
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
+    expect(message.textContent).toContain('Timed out while trying to reach');
+
+    resolveGoBack?.({ ok: true });
+    await vi.waitFor(() => {
+      expect(message.textContent).toContain('Timed out while trying to reach');
+    });
+  });
+
+  it('keeps an unacknowledged error row through a page-initiated load, then clears it on a user navigation', async () => {
+    const toolbar = buildWith();
+    const message = findMessage(toolbar);
+    pushPage('https://author.example/content/page.html');
+
+    browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
+    typeAndSubmit(toolbar, 'https://author.example/content/other.html');
+    await vi.waitFor(() => {
+      expect(message.textContent).toContain('Timed out while trying to reach');
+    });
+
+    // The restored page starts its own load (a redirect/SSO hop). The error
+    // row must survive it rather than being replaced by the loading
+    // presentation - this is the regression that lost the message entirely.
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: true,
+    });
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
+    expect(message.textContent).toContain('Timed out while trying to reach');
+
+    // A user-initiated navigation acknowledges the error; the row lets go
+    // (it collapses, then is torn down).
+    browser.navigate.mockResolvedValueOnce({ ok: true });
+    typeAndSubmit(toolbar, 'https://author.example/content/third.html');
+    stateListeners[0]?.({
+      url: 'https://author.example/content/third.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    });
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(false);
+    });
+    expect(message.textContent).not.toContain('Timed out while trying to reach');
+  });
+
+  it('does not rebuild the error row (or detach its Reload) on repeated state pushes', async () => {
+    const toolbar = buildWith();
+    const message = findMessage(toolbar);
+
+    browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
+    typeAndSubmit(toolbar, 'https://dead.example/');
+    await vi.waitFor(() => {
+      expect(message.querySelector('sp-action-button')).not.toBeNull();
+    });
+    const reload = message.querySelector('sp-action-button');
+
+    // Several pushes arrive while the error persists (a long restored-page
+    // load); the same button node must remain in the row.
+    for (let i = 0; i < 3; i += 1) {
+      stateListeners[0]?.({
+        url: 'https://author.example/content/page.html',
+        canGoBack: false,
+        canGoForward: false,
+        isLoading: true,
+      });
+    }
+    expect(message.querySelector('sp-action-button')).toBe(reload);
+    expect(message.textContent).toContain('Timed out while trying to reach');
+  });
+
+  it('asks for the hosts picker when nothing was displayed before the failure', async () => {
+    const onHostsPickerRequest = vi.fn();
+    const toolbar = buildWith({ onHostsPickerRequest });
+    browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
+
+    typeAndSubmit(toolbar, 'https://dead.example/');
+
+    await vi.waitFor(() => {
+      expect(onHostsPickerRequest).toHaveBeenCalledTimes(1);
+    });
+    // No restore attempt: only the original navigation was issued.
+    expect(browser.navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the error row (with Reload) on a failed reload, without the hosts picker', async () => {
+    const onHostsPickerRequest = vi.fn();
+    const toolbar = buildWith({ onHostsPickerRequest });
+    const message = findMessage(toolbar);
+    pushPage('https://author.example/');
+    browser.reload.mockResolvedValueOnce(TIMEOUT_ERROR);
+
+    // Refresh with the address matching the loaded page issues a reload.
+    findNavButton(toolbar).click();
+
+    await vi.waitFor(() => {
+      expect(message.hasAttribute('open')).toBe(true);
+    });
+    expect(message.querySelector('sp-action-button')?.textContent).toBe('Reload');
+    // A reload's "previous page" is the very page that just failed, so there
+    // is nothing to fall back to and the picker is not forced on the user.
+    expect(onHostsPickerRequest).not.toHaveBeenCalled();
+    expect(browser.navigate).not.toHaveBeenCalled();
+  });
+});
+
 const BLOCKED_INFO: CertificateBlockedInfo = {
   origin: 'https://author.example',
   certificateSha256Fingerprint: 'a'.repeat(64),

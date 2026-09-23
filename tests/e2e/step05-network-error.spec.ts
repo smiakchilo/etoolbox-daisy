@@ -250,3 +250,113 @@ test('dismissing the error banner then Reload re-shows it for the same still-dow
 
   await app.close();
 });
+
+test('a failed navigation restores the previous page and keeps the error readable', async () => {
+  test.setTimeout(120_000);
+
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-restore-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+
+  // A real, reachable "previous page" host and a dead host to fail over to.
+  const upServer = createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('<!doctype html><title>Up</title><body>up page</body>');
+  });
+  await new Promise<void>((resolve) => upServer.listen(0, '127.0.0.1', resolve));
+  const upAddress = upServer.address();
+  if (upAddress === null || typeof upAddress === 'string') throw new Error('no up port');
+  const upUrl = `http://127.0.0.1:${String(upAddress.port)}/up.html`;
+
+  const deadPort = await reserveClosedPort();
+  const deadOrigin = `http://127.0.0.1:${String(deadPort)}`;
+
+  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label: 'Up fixture',
+        origin: `http://127.0.0.1:${String(upAddress.port)}`,
+        color: { kind: 'swatch', swatch: 'green' },
+        revision: 0,
+      },
+      {
+        id: randomUUID(),
+        label: 'Unreachable fixture',
+        origin: deadOrigin,
+        color: { kind: 'swatch', swatch: 'red' },
+        revision: 0,
+      },
+    ],
+  });
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(seeded, null, 2), 'utf8');
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+    const addressInput = page.locator('#browser-address-bar input');
+
+    // Load the page we will be pulled away from.
+    await addressInput.fill(upUrl);
+    await addressInput.press('Enter');
+    await expect.poll(() => addressInput.inputValue(), { timeout: 60_000 }).toBe(upUrl);
+
+    // Dismiss the startup hosts picker so the page (and its banner) is visible.
+    const panelClose = page.locator('.hosts-panel__close');
+    await expect(panelClose).not.toHaveAttribute('disabled');
+    await panelClose.click();
+    await expect(page.locator('.hosts-panel')).toBeHidden();
+
+    // Now fail over to the dead host.
+    await addressInput.fill(deadOrigin);
+    await addressInput.press('Enter');
+
+    const banner = page.locator('sp-alert-banner.browser-toolbar-message');
+    await expect(banner).toContainText(deadOrigin, { timeout: 60_000 });
+
+    // The previous page is restored underneath (its address comes back), and
+    // the error row stays readable - the recovery runs silently, so the
+    // loading presentation never replaces the copy the user is reading.
+    await expect.poll(() => addressInput.inputValue(), { timeout: 60_000 }).toBe(upUrl);
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('Check that the server is running');
+    await expect(banner).toContainText(deadOrigin);
+    expect(await banner.getAttribute('class')).not.toContain('banner-row--loading');
+
+    // A restored AEM page routinely starts its own load right after restore (a
+    // redirect, an SSO hop). That follow-up load must not evict the error row
+    // either - the regression this test was extended for.
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const view = win?.contentView.children.find(
+        (child) => (child as { webContents?: unknown }).webContents !== undefined,
+      ) as { webContents: { executeJavaScript(code: string): Promise<unknown> } } | undefined;
+      await view?.webContents.executeJavaScript("location.href = '/up.html?again=1'");
+    });
+    await expect.poll(() => addressInput.inputValue(), { timeout: 60_000 }).toContain('again=1');
+    await expect(banner).toContainText(deadOrigin);
+    await expect(banner).toContainText('Check that the server is running');
+    expect(await banner.getAttribute('class')).not.toContain('banner-row--loading');
+  } finally {
+    await app.close();
+    await new Promise<void>((resolve) => upServer.close(() => resolve()));
+  }
+});

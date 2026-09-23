@@ -33,6 +33,13 @@ export interface BrowserPane {
    */
   openHostsPicker(): void;
   /**
+   * Navigates the pane to `url` exactly as a typed address or a picker
+   * selection would. The shell routes a transcript link here so the browser
+   * pane owns the navigation and, in particular, its failure: a failed load
+   * shows the pane's error row (with Reload) rather than a chat-pane error.
+   */
+  navigate(url: string): void;
+  /**
    * Appends a panel's element to the pane's page-view region (hidden until
    * `panelHost.open` reveals it). Used for panels the pane does not itself
    * own (settings, history).
@@ -121,6 +128,12 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     onToggleAgentPane(): void {
       callbacks.onToggleAgentPane?.();
     },
+    // A failed load with no page to restore: replace the blank page-view
+    // region with the hosts list so the user can pick where to go. Not a
+    // toggle - opening an already-open picker is a no-op (`openPanel`).
+    onHostsPickerRequest(): void {
+      openPanel(picker);
+    },
   });
   const viewHost = createBrowserViewHost();
 
@@ -186,6 +199,9 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
     openHostsPicker(): void {
       openPanel(picker);
+    },
+    navigate(url: string): void {
+      toolbar.navigateTo(url);
     },
     appendPanel(panel: Panel): void {
       element.append(panel.element);

@@ -107,8 +107,13 @@ export interface BrowserToolbar {
   setHostsPickerOpen(open: boolean): void;
   /** Swaps the agent-pane toggle's icon/title between "Close Agent" and "Open Agent". */
   setAgentPaneOpen(open: boolean): void;
-  /** Writes `origin` into the address field and navigates to it, exactly like a typed address. */
-  navigateTo(origin: string): void;
+  /**
+   * Writes `url` into the address field and navigates to it, exactly like a
+   * typed address. Used by the hosts picker's selection and by a transcript
+   * link (routed here by the shell so every browser navigation - and every
+   * navigation failure - is owned by this pane, never the chat pane).
+   */
+  navigateTo(url: string): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
   dispose(): void;
 }
@@ -116,6 +121,13 @@ export interface BrowserToolbar {
 export interface BrowserToolbarCallbacks {
   /** Fired when the picker button is activated; the owning pane opens/closes the panel. */
   onHostsPickerClick(): void;
+  /**
+   * Fired when a failed load could not be recovered (no page to restore), so
+   * the owning pane must bring the hosts picker on over the blank page-view
+   * region. Unlike {@link onHostsPickerClick} this is not a user toggle: the
+   * pane opens the picker unconditionally.
+   */
+  onHostsPickerRequest?(): void;
   /** Fired when the agent-pane toggle is activated; the shell shows/hides the chat pane. */
   onToggleAgentPane?(): void;
 }
@@ -181,6 +193,16 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // `loadingSpan`.
   const progressTrack = createBannerProgressLine();
 
+  // The error row's "Reload": re-issues the exact navigation operation that
+  // failed (the target that timed out / was unreachable), so the user can
+  // retry without retyping. Built once and read `errorRetry` at click time, so
+  // it always reflects the currently displayed error.
+  const reloadButton = createBannerActionButton('Reload');
+  reloadButton.addEventListener('click', () => {
+    const retry = errorRetry;
+    if (retry !== null) retry();
+  });
+
   // ── State ────────────────────────────────────────────────────────────────
   let lastNavigationState: BrowserNavigationState | null = null;
   let switching = false;
@@ -191,6 +213,21 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // Cleared by the next navigation-state push.
   let failedNavigation = false;
   let errorText: string | null = null;
+  // The action the error row's "Reload" button re-issues: the exact navigation
+  // operation that failed (see `NavigationAttempt`). `null` for errors that are
+  // not a failed navigation (an add-server failure, an approval failure, ...),
+  // which is also what hides the Reload control for them.
+  let errorRetry: (() => void) | null = null;
+  // Signature of the error row currently painted, so an error that persists
+  // across many state pushes (a restored page's redirect/SSO chain) is not
+  // rebuilt - and its Reload button not detached mid-click - on every push.
+  // Reset whenever another presentation takes the row.
+  let renderedErrorSignature: string | null = null;
+
+  // Monotonic id for one issued navigation operation. A recovery (restore of
+  // the previous page) only completes if no newer navigation superseded it:
+  // the user typing a new address mid-recovery must win over the restore.
+  let navigationToken = 0;
   // The blocked-certificate decision main most recently pushed via
   // `browser:certificate-blocked`, or null when no prompt is pending. Cleared
   // by a new navigation (main clears its own auto-retry target at the same
@@ -267,6 +304,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
    */
   function finalizeBannerHide(): void {
     cancelBannerHide();
+    renderedErrorSignature = null;
     messageElement.classList.remove(BANNER_ROW_LOADING_CLASS);
     restoreBannerRow(messageElement);
     messageElement.removeAttribute('dismissible');
@@ -306,14 +344,34 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   function applyLoadingPresentation(): void {
     cancelLoadingBanner();
+    renderedErrorSignature = null;
     showBanner([buildBannerCopy([loadingSpan]), progressTrack], true);
     setNavMode('stop');
   }
 
   function applyErrorPresentation(): void {
     cancelLoadingBanner();
-    showBanner([buildBannerCopy([errorText ?? ''])], false);
     setNavMode('refresh');
+    // Already showing exactly this error (the common case while a restored
+    // page loads for seconds): keep the row and its button node as they are.
+    const signature = `${errorText ?? ''}|${errorRetry === null ? 'plain' : 'reload'}`;
+    if (
+      renderedErrorSignature === signature &&
+      messageElement.hasAttribute('open') &&
+      !isBannerClosing(messageElement) &&
+      !isLoadingPresentationShown()
+    ) {
+      return;
+    }
+    renderedErrorSignature = signature;
+    // A failed navigation row carries a "Reload" that re-issues the failed
+    // target; errors that are not a navigation (no retry to offer) stay a
+    // plain copy row.
+    const content: readonly Node[] =
+      errorRetry !== null
+        ? buildBannerPrompt(errorText ?? '', [reloadButton])
+        : [buildBannerCopy([errorText ?? ''])];
+    showBanner(content, false);
   }
 
   // The untrusted-certificate prompt: the decision main pushed to the
@@ -328,6 +386,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // server's persisted entry; approving never creates a server.
   function applyCertificatePromptPresentation(): void {
     cancelLoadingBanner();
+    renderedErrorSignature = null;
     const info = blockedCertificate;
     if (info === null) return;
 
@@ -385,6 +444,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // status strip, not a blocking dialog.
   function applyUnknownOriginPromptPresentation(): void {
     cancelLoadingBanner();
+    renderedErrorSignature = null;
     const prompt = unknownOriginPrompt;
     if (prompt === null) return;
 
@@ -417,8 +477,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       applyPresentation();
       return;
     }
-    const navigation: BrowserIpcVoidResult = await window.daisy.browser.navigate(prompt.url);
-    handleVoidResult(navigation);
+    performNavigate(prompt.url);
   }
 
   function applyIdlePresentation(): void {
@@ -434,7 +493,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // link or button): the view's own `isLoading` is the only authority, plus
     // a server switch's teardown phase before its `loadURL` starts and a
     // failure result that has already settled the load.
-    const loading = switching || isLoading;
+    //
+    // The one exception is an error the user has not acknowledged: while an
+    // error row is on screen it suppresses the loading presentation, so the
+    // page the recovery restores - and that page's own redirects/SSO hops,
+    // which keep loading for seconds - never evict the message the user is
+    // reading. A user-initiated navigation clears the error first (see
+    // `performNavigate`), so the loading presentation is never lost for a load
+    // the user actually asked for.
+    const loading = errorText === null && (switching || isLoading);
 
     // The Refresh/Stop swap is deliberately NOT debounced with the banner: a
     // real browser swaps the control the instant a navigation starts. Every
@@ -568,9 +635,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         const value = (addressField.value ?? '').trim();
         const currentUrl = lastNavigationState?.url;
         if (value !== '' && value !== currentUrl) {
-          void window.daisy.browser.navigate(value).then(handleVoidResult);
+          performNavigate(value);
         } else {
-          void window.daisy.browser.reload().then(handleVoidResult);
+          performReload();
         }
       };
     }
@@ -578,7 +645,93 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   }
 
   // ── IPC result handler ───────────────────────────────────────────────────
-  function handleVoidResult(result: BrowserIpcVoidResult): void {
+  /**
+   * One navigation operation the toolbar issued (an address/picker/transcript
+   * navigation, Back/Forward, or Refresh). `previous` is a synchronous
+   * snapshot of the page that was on screen at the moment the operation was
+   * issued - the only instant at which the state feed reliably names the
+   * *previous* page, because the failed load's own `did-start-loading` push
+   * replaces it a tick later. `retry` re-issues the exact operation, and
+   * `token` lets a recovery bail out if a newer navigation superseded it.
+   */
+  interface NavigationAttempt {
+    readonly target: string;
+    readonly previous: string;
+    readonly retry: () => void;
+    readonly token: number;
+    /**
+     * How a failure may restore the previous page:
+     *
+     * - `"history"` - a fresh navigation (`browser:navigate`) reliably pushes a
+     *   history entry for the failed target, so the page behind it is exactly
+     *   the one remembered. Restore with an instant history back (bfcache: no
+     *   network, no loading banner).
+     * - `"exact"` - a Back/Forward failure leaves the active history entry
+     *   ambiguous, so re-navigate the remembered URL exactly instead.
+     * - `"none"` - a reload's "previous page" is the very page that just
+     *   failed; there is nothing to fall back to, so the error row and its
+     *   Reload are the whole recovery.
+     */
+    readonly restoreVia: 'history' | 'exact' | 'none';
+  }
+
+  /** The URL of the page currently on screen, or `''` when the view is blank. */
+  function currentDisplayedUrl(): string {
+    return lastNavigationState?.url ?? '';
+  }
+
+  function performNavigate(target: string): void {
+    const token = ++navigationToken;
+    // A user-initiated navigation is what clears a previous error row (see
+    // `applyPresentation`): the user has moved on, so the loading presentation
+    // may take the row again.
+    errorText = null;
+    errorRetry = null;
+    const previous = currentDisplayedUrl();
+    void window.daisy.browser.navigate(target).then((result) =>
+      handleVoidResult(result, {
+        target,
+        previous,
+        retry: () => performNavigate(target),
+        token,
+        restoreVia: 'history',
+      }),
+    );
+  }
+
+  function performReload(): void {
+    const token = ++navigationToken;
+    errorText = null;
+    errorRetry = null;
+    const previous = currentDisplayedUrl();
+    void window.daisy.browser.reload().then((result) =>
+      handleVoidResult(result, {
+        target: previous,
+        previous,
+        retry: performReload,
+        token,
+        restoreVia: 'none',
+      }),
+    );
+  }
+
+  function performHistory(direction: 'back' | 'forward'): void {
+    const token = ++navigationToken;
+    errorText = null;
+    errorRetry = null;
+    const previous = currentDisplayedUrl();
+    const retry = (): void => performHistory(direction);
+    const command =
+      direction === 'back' ? window.daisy.browser.goBack() : window.daisy.browser.goForward();
+    void command.then((result) =>
+      // The destination is a history entry the renderer does not know
+      // synchronously, so `target` stays empty: a failure restores the
+      // displayed page rather than treating the two as equal.
+      handleVoidResult(result, { target: '', previous, retry, token, restoreVia: 'exact' }),
+    );
+  }
+
+  function handleVoidResult(result: BrowserIpcVoidResult, attempt?: NavigationAttempt): void {
     if (!result.ok) {
       // The awaited load has settled; a buffered `isLoading:true` push must not
       // keep the Stop/banner up past the failure.
@@ -607,12 +760,78 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
           const origin = result.error.origin ?? submittedUrl;
           unknownOriginPrompt = { url: submittedUrl === '' ? origin : submittedUrl, origin };
           errorText = null;
+          errorRetry = null;
         } else {
           errorText = result.error.message;
+          errorRetry = attempt?.retry ?? null;
+          if (
+            result.error.code === 'network_error' &&
+            attempt !== undefined &&
+            attempt.restoreVia !== 'none'
+          ) {
+            // A failed load would leave the blank page-view region behind the
+            // banner. Recover the page that was on screen before this attempt,
+            // or - when there was none - ask the pane for the hosts picker.
+            // This returns without applying the presentation: the restore runs
+            // silently and the error row (with its Reload) is re-asserted once
+            // it settles.
+            recoverOrPickHosts(attempt, result.error.message);
+            return;
+          }
         }
       }
     }
     applyPresentation();
+  }
+
+  /**
+   * Recovers from a failed load that would otherwise leave the blank page-view
+   * region on screen: go back to the page remembered when the operation was
+   * issued, or - when there was no such page (or it is the very page that just
+   * failed) - ask the pane to bring the hosts picker on.
+   *
+   * The restore is **silent**: the error row is already on screen and, because
+   * an unacknowledged error suppresses the loading presentation (see
+   * `applyPresentation`), the restore's own load - and any redirects or SSO
+   * hops the restored page starts - run behind it without evicting it.
+   */
+  function recoverOrPickHosts(attempt: NavigationAttempt, message: string): void {
+    const { previous, target, token, restoreVia } = attempt;
+    if (restoreVia !== 'none' && previous !== '' && previous !== target) {
+      void (async (): Promise<void> => {
+        let restored: boolean;
+        try {
+          restored = await restorePage(restoreVia, previous);
+        } catch {
+          restored = false;
+        }
+        // A newer navigation superseded this recovery: leave its result alone.
+        if (token !== navigationToken) return;
+        if (!restored) callbacks.onHostsPickerRequest?.();
+      })();
+    } else {
+      callbacks.onHostsPickerRequest?.();
+    }
+    // Paint the error row now; the restore (if any) proceeds behind it.
+    errorText = message;
+    applyPresentation();
+  }
+
+  /**
+   * Puts the remembered page back. `"history"` uses an instant history back -
+   * Electron restores the previous document from bfcache in tens of
+   * milliseconds with no network round trip (verified on Electron 44.3.0), so
+   * the pane never shows a sustained blank. `"exact"` re-navigates the
+   * remembered URL, which re-resolves the server/proxy the same way any typed
+   * address would.
+   */
+  async function restorePage(via: 'history' | 'exact', previous: string): Promise<boolean> {
+    if (via === 'history') {
+      const outcome = await window.daisy.browser.goBack();
+      return outcome.ok;
+    }
+    const outcome = await window.daisy.browser.navigate(previous);
+    return outcome.ok;
   }
 
   // ── Chrome action click handlers ─────────────────────────────────────────
@@ -621,10 +840,10 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // knows. No arming is needed: the view's own `isLoading` push drives the
   // same banner + Stop presentation as any other load.
   backButton.addEventListener('click', () => {
-    void window.daisy.browser.goBack().then(handleVoidResult);
+    performHistory('back');
   });
   forwardButton.addEventListener('click', () => {
-    void window.daisy.browser.goForward().then(handleVoidResult);
+    performHistory('forward');
   });
 
   const addressField = el('sp-textfield', {
@@ -667,7 +886,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     if (value === '') return;
     event.preventDefault();
     keydownNavigated = true;
-    void window.daisy.browser.navigate(value).then(handleVoidResult);
+    performNavigate(value);
   });
 
   addressField.addEventListener('change', () => {
@@ -677,7 +896,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
     const value = addressField.value.trim();
     if (value === '') return;
-    void window.daisy.browser.navigate(value).then(handleVoidResult);
+    performNavigate(value);
   });
 
   // Keep the paired swatch and the external-browser control tracking whatever
@@ -784,6 +1003,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     blockedCertificate = null;
     unknownOriginPrompt = null;
     errorText = null;
+    errorRetry = null;
     applyPresentation();
   });
 
@@ -805,18 +1025,16 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // as it shows a toolbar-typed target - instead of waiting for the new
     // document to commit.
     addressField.value = state.url;
-    // A navigation to a new page has begun — any stale error text is now
-    // superseded by the live load state; clearing it here lets the banner
-    // show "Loading…" instead of a stale error. A failed navigation
-    // re-sets `errorText` via `handleVoidResult`; a successful one should
-    // never resurrect text from a previous page.
+    // A navigation to a new page has begun: pending prompts (and main's
+    // matching auto-retry target) are superseded by it, and a failure flag
+    // from the previous navigation no longer applies. Deliberately does NOT
+    // clear `errorText`/`errorRetry`: an error row is the user's to read and
+    // dismiss, and a page the recovery restored can start several loads of its
+    // own (redirects, an SSO hop) that would otherwise erase it. It is cleared
+    // only by a user-initiated navigation (`performNavigate`/`performReload`/
+    // `performHistory`) or by dismissing the row.
     if (state.isLoading) {
-      // A genuinely new load: any failure flag from the previous navigation
-      // no longer applies.
       failedNavigation = false;
-      errorText = null;
-      // A navigation to a new page has begun — any pending prompts (and
-      // main's matching auto-retry target) are superseded by it.
       blockedCertificate = null;
       unknownOriginPrompt = null;
     }
@@ -916,11 +1134,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     setAgentPaneOpen(open: boolean): void {
       renderAgentToggle(open);
     },
-    navigateTo(origin: string): void {
-      addressField.value = origin;
+    navigateTo(url: string): void {
+      addressField.value = url;
       refreshAddressSwatch();
       refreshExternalButton();
-      void window.daisy.browser.navigate(origin).then(handleVoidResult);
+      performNavigate(url);
     },
     dispose(): void {
       cancelLoadingBanner();

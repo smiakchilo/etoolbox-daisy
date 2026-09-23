@@ -74,6 +74,12 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       if (tab !== undefined) settingsPanel.selectTab(tab);
       browserPane.panelHost.open(settingsPanel);
     },
+    // A chat link is a browser navigation: route it through the browser pane
+    // so that pane owns the load and, on failure, its error row (with Reload)
+    // plus the restore-or-hosts-picker fallback - never the chat pane's banner.
+    onNavigateInBrowser(url) {
+      browserPane.navigate(url);
+    },
     resolveStartupConversation,
     onConversationUsed(chatId, sdkSessionId) {
       // The server-match gate reads this back: a chat is only worth remembering
@@ -171,12 +177,18 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   /**
    * Re-opens the page remembered from the previous run, if there is one and it
    * still belongs to a configured host. Returns `true` when a restore was
-   * attempted - including when the load itself failed, which the toolbar's
-   * error row reports - so the startup affordance below does not also open the
-   * hosts picker over it. A remembered origin that is no longer configured is
-   * not attempted at all, so a deleted server falls back to the picker.
+   * attempted - including when the load itself failed, because the browser
+   * pane now owns that failure (its error row with Reload, plus the
+   * restore-or-hosts-picker fallback) - so the startup affordance below does
+   * not also open the hosts picker over it. A remembered origin that is no
+   * longer configured is not attempted at all, so a deleted server falls back
+   * to the picker.
+   *
+   * Deliberately routed through `browserPane.navigate` rather than a bare
+   * `browser:navigate`: a dead remembered page must not be the one silent
+   * blank page left in the app.
    */
-  async function restoreLastPage(snapshot: AppSettingsSnapshot): Promise<boolean> {
+  function restoreLastPage(snapshot: AppSettingsSnapshot): boolean {
     const url = loadLastPageUrl();
     if (url === undefined) return false;
     if (
@@ -187,8 +199,8 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     )
       return false;
 
-    const outcome = await window.daisy.browser.navigate(url);
-    return outcome.ok || outcome.error.code !== 'unknown_origin';
+    browserPane.navigate(url);
+    return true;
   }
 
   /**
@@ -245,7 +257,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     // so a returning user lands on the page they left. A page whose origin is
     // no longer a configured host is not attempted at all, so a deleted server
     // falls back to today's affordance.
-    const restored = await restoreLastPage(result.snapshot);
+    const restored = restoreLastPage(result.snapshot);
     if (!restored) {
       // Startup affordance: with configured hosts the picker leads with the
       // list ready to choose from (it replaces the otherwise blank page-view

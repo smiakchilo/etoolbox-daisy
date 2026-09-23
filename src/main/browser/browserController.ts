@@ -631,14 +631,52 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     });
   }
 
+  /**
+   * Re-derives which server is active from the document the view is now
+   * showing, if it is on a configured host. A `goBack`/`goForward`/`reload`
+   * success does not go through `switchServer`, so without this the active
+   * server would stay stale (Back to a different host) or unset (the renderer
+   * restores the previous page after a failed switch with a history back).
+   * A URL whose origin is not a configured host - an SSO/IdP hop, a blank
+   * view - clears the active server, exactly as `switchServer`'s failure path
+   * does.
+   */
+  async function refreshActiveServerFromView(): Promise<void> {
+    const url = currentDocumentUrl();
+    const target = url === undefined ? undefined : parseNavigationTarget(url);
+    if (target === undefined || !target.ok) {
+      activeServerState = undefined;
+      return;
+    }
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch {
+      // A failed settings read must not fabricate an active server; leave the
+      // previous answer rather than guessing.
+      return;
+    }
+    const host = settings.hosts.find((candidate) => candidate.origin === target.origin);
+    activeServerState = host === undefined ? undefined : toActiveServer(host);
+  }
+
+  /** A chrome history command that also re-derives the active server on success. */
+  async function settleHistoryCommand(
+    outcome: ChromeNavigationOutcome,
+  ): Promise<BrowserIpcVoidResult> {
+    const result = mapNavigationOutcome(outcome);
+    if (result.ok) await refreshActiveServerFromView();
+    return result;
+  }
+
   async function goBack(): Promise<BrowserIpcVoidResult> {
-    return mapNavigationOutcome(await aemView.goBack());
+    return settleHistoryCommand(await aemView.goBack());
   }
   async function goForward(): Promise<BrowserIpcVoidResult> {
-    return mapNavigationOutcome(await aemView.goForward());
+    return settleHistoryCommand(await aemView.goForward());
   }
   async function reload(): Promise<BrowserIpcVoidResult> {
-    return mapNavigationOutcome(await aemView.reload());
+    return settleHistoryCommand(await aemView.reload());
   }
   function stop(): BrowserIpcVoidResult {
     aemView.stop();

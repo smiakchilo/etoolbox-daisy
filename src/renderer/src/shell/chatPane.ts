@@ -107,6 +107,14 @@ export interface ChatPaneOptions {
    */
   readonly onOpenSettings: (tab?: SettingsTab) => void;
   /**
+   * Opens an AEM-pane message link. The shell routes this to the browser pane
+   * so that pane owns the navigation *and its failure* - a failed link load
+   * must show the browser pane's error row (with Reload) and recover the page
+   * or reveal the hosts picker, never land in the chat pane's banner. The
+   * fallback (no shell wiring, e.g. a unit test) keeps the old direct call.
+   */
+  readonly onNavigateInBrowser?: (url: string) => void;
+  /**
    * Resolves the conversation to restore on startup, or `undefined` to start a
    * fresh one. Called at most once, as early as the pane is constructed: the
    * journal it returns is painted before the runtime is ready, and the session
@@ -532,12 +540,17 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   /**
    * Opens a message link in the AEM pane. The URL was already resolved to an
-   * absolute, configured-host address by the markdown renderer, so this is the
-   * ordinary address-bar navigation path - the pane validates the origin
-   * exactly as it does for a typed address and a failure lands on this pane's
-   * one banner.
+   * absolute, configured-host address by the markdown renderer. The shell
+   * routes it to the browser pane (`onNavigateInBrowser`), so the browser pane
+   * owns the navigation and its failure - the same path as a typed address.
+   * Without shell wiring (a unit test) this falls back to the direct
+   * `browser:navigate` call.
    */
   function openLink(url: string): void {
+    if (options.onNavigateInBrowser !== undefined) {
+      options.onNavigateInBrowser(url);
+      return;
+    }
     void window.daisy.browser.navigate(url).then((result) => {
       if (!result.ok) statusBanner.showError(result.error.message);
     });
