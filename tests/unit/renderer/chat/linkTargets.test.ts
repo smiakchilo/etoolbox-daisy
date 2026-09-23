@@ -96,9 +96,23 @@ describe('linkTargets - classifyAemPath', () => {
     expect(classifyAemPath(AUTHOR, '/apps/x/y')).toEqual(
       pane(`${AUTHOR}/apps/x/y`, [crxAction(`${AUTHOR}/crx/de/index.jsp#/apps/x/y`)]),
     );
+  });
+
+  it('trims a jcr:content resource link to its owning page, keeping CRX on the resource', () => {
     expect(classifyAemPath(AUTHOR, '/content/site/en/page/jcr:content')).toEqual(
-      pane(`${AUTHOR}/content/site/en/page/jcr:content`, [
+      pane(`${AUTHOR}/content/site/en/page.html`, [
         crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr:content`),
+      ]),
+    );
+    expect(classifyAemPath(AUTHOR, '/content/hpe/us/en/page/jcr:content/myComponent/2')).toEqual(
+      pane(`${AUTHOR}/content/hpe/us/en/page.html`, [
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/hpe/us/en/page/jcr:content/myComponent/2`),
+      ]),
+    );
+    // A `.html` suffix on the resource is trimmed before the page is built.
+    expect(classifyAemPath(AUTHOR, '/content/site/en/page/jcr:content/x.html')).toEqual(
+      pane(`${AUTHOR}/content/site/en/page.html`, [
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr:content/x`),
       ]),
     );
   });

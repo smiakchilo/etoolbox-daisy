@@ -23,11 +23,15 @@ import { parseNavigationTarget } from '../../../shared';
  *    the raw asset URL in the pane (a preview, never a download). A path under
  *    `/content/dam` additionally offers **Edit** (`/assetdetails.html<path>`).
  *  - A `.html`/extensionless path is a Page when it is under `/content` (but not
- *    `/content/dam`) and contains no `jcr:content` segment; a Page opens its
- *    rendered `.html` URL and offers **Edit** (`/editor.html<path>.html`) and
- *    **CRX** (`/crx/de/index.jsp#<path-without-.html>`). Every other
- *    `.html`/extensionless path is not a page: it opens the raw path and offers
- *    **CRX** only.
+ *    `/content/dam`) and names the page itself: it opens its rendered `.html`
+ *    URL and offers **Edit** (`/editor.html<path>.html`) and **CRX**
+ *    (`/crx/de/index.jsp#<path-without-.html>`).
+ *  - A `/content` path carrying a `jcr:content` segment names a resource
+ *    *inside* a page (a component, a parsys, a rendition). The link itself opens
+ *    the owning page - trimmed at `/jcr:content` and rendered as `.html` - while
+ *    **CRX** still targets the exact resource the message referenced.
+ *  - Every other `.html`/extensionless path is not a page: it opens the raw path
+ *    and offers **CRX** only.
  *
  * This module is deliberately pure and DOM-free: the whole classification is
  * exercised with no jsdom, and `renderMarkdown.ts` is the only place that turns
@@ -124,6 +128,19 @@ function hasJcrContent(pathname: string): boolean {
 }
 
 /**
+ * The owning page path of a resource that carries a `jcr:content` segment:
+ * everything before the first such segment, with no trailing slash.
+ * `/content/a/b/jcr:content/x` -> `/content/a/b`. Segment-aware (not a raw
+ * `indexOf`) so a segment that merely contains the substring is never mistaken
+ * for the segment itself.
+ */
+function beforeJcrContent(pathname: string): string {
+  const segments = pathname.split('/');
+  const index = segments.indexOf('jcr:content');
+  return index <= 1 ? pathname : segments.slice(0, index).join('/');
+}
+
+/**
  * True when the final path segment ends in an extension other than `.html`
  * (`.jpg`, `.pdf`, `.json`, ...). A `.html` path is a page/document, not an
  * asset, and an extensionless path falls to the page/non-page decision.
@@ -164,7 +181,17 @@ export function classifyAemPath(origin: string, rawPathname: string): ResolvedLi
     href: `${origin}/crx/de/index.jsp#${pathNoHtml}`,
   };
 
-  if (isContentPath(path) && !hasJcrContent(path)) {
+  if (isContentPath(path)) {
+    if (hasJcrContent(path)) {
+      // A `jcr:content` segment names a resource *inside* a page (a component, a
+      // parsys, a rendition). The link opens the owning page; CRX still targets
+      // the exact resource the message referenced.
+      return {
+        openIn: 'pane',
+        href: `${origin}${beforeJcrContent(pathNoHtml)}.html`,
+        actions: [crx],
+      };
+    }
     return {
       openIn: 'pane',
       href: `${origin}${pathNoHtml}.html`,
