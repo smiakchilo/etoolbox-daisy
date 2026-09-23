@@ -339,6 +339,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       apiVersion: 1,
       auth: agentService.getAuthState(),
       activeChatId: activeChatId ?? null,
+      sdkSessionId: agentService.getOpenSessionId() ?? null,
       sessionState: sessionStatus.state,
       // This controller is only ever constructed once a real (or fake)
       // `AgentService` already exists and has been `initialize()`d - see
@@ -640,6 +641,7 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
       // before trusting `auth` at all.
       auth: { apiVersion: 1, isAuthenticated: false },
       activeChatId: null,
+      sdkSessionId: null,
       sessionState: 'idle',
       serviceState: 'starting',
     };

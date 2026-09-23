@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { authStatusSchema } from './agent-auth';
 import { agentEventSchema, sessionStreamStateSchema, type AgentEvent } from './contracts';
-import { chatIdSchema, sdkSessionIdSchema, turnIdSchema } from './contracts';
+import {
+  chatIdSchema,
+  chatJournalRecordSchema,
+  sdkSessionIdSchema,
+  turnIdSchema,
+} from './contracts';
 import { requiredActionSchema, toolErrorCodeSchema } from './contracts';
 
 /**
@@ -92,6 +97,14 @@ export const agentChatStatusSchema = z
     apiVersion: z.literal(1),
     auth: authStatusSchema,
     activeChatId: chatIdSchema.nullable(),
+    /**
+     * The SDK session id backing `activeChatId`, or `null` when no
+     * conversation is open. Exposed so a caller can persist it for a later
+     * genuine resume (the chat journal's header also records it, but only at
+     * chat creation - a runtime recycle mints a new session for the same
+     * `chatId`, so this live value is the authoritative one).
+     */
+    sdkSessionId: sdkSessionIdSchema.nullable(),
     sessionState: sessionStreamStateSchema,
     serviceState: agentServiceLifecycleStateSchema,
   })
@@ -187,6 +200,38 @@ export type AgentChatByIdRequest = Readonly<z.infer<typeof agentChatByIdRequestS
 
 export function parseAgentChatByIdRequest(candidate: unknown): AgentChatByIdRequest {
   return agentChatByIdRequestSchema.parse(candidate);
+}
+
+// ---------------------------------------------------------------------------
+// Read journal (`agent-chat:read-journal`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads one chat's append-only journal (`contracts/chatJournal.ts`) so a
+ * renderer can repaint a resumed conversation's transcript. The journal is the
+ * UI projection of a chat, deliberately separate from the SDK session that
+ * `resume` restores; a caller that resumes a chat reads this to show what was
+ * said, not to reconstruct the model's context.
+ */
+export const agentChatReadJournalRequestSchema = z.object({ chatId: chatIdSchema }).strict();
+
+export type AgentChatReadJournalRequest = Readonly<
+  z.infer<typeof agentChatReadJournalRequestSchema>
+>;
+
+export function parseAgentChatReadJournalRequest(candidate: unknown): AgentChatReadJournalRequest {
+  return agentChatReadJournalRequestSchema.parse(candidate);
+}
+
+export const agentChatReadJournalResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), records: z.array(chatJournalRecordSchema) }).strict(),
+  z.object({ ok: z.literal(false), error: agentChatErrorSchema }).strict(),
+]);
+
+export type AgentChatReadJournalResult = Readonly<z.infer<typeof agentChatReadJournalResultSchema>>;
+
+export function parseAgentChatReadJournalResult(candidate: unknown): AgentChatReadJournalResult {
+  return agentChatReadJournalResultSchema.parse(candidate);
 }
 
 // ---------------------------------------------------------------------------

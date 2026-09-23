@@ -5,14 +5,18 @@ import {
   AGENT_CHAT_EVENT_CHANNEL,
   AGENT_CHAT_GET_STATUS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
+  AGENT_CHAT_READ_JOURNAL_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
 } from '../../shared';
 import {
   agentChatByIdRequestSchema,
   agentChatOpenConversationRequestSchema,
+  agentChatReadJournalRequestSchema,
   agentChatSendMessageRequestSchema,
   type AgentChatOpenResult,
+  type AgentChatReadJournalRequest,
+  type AgentChatReadJournalResult,
   type AgentChatSendResult,
   type AgentChatVoidResult,
 } from '../../shared';
@@ -95,6 +99,14 @@ function untrustedSendResult(): AgentChatSendResult {
   return { ok: false, error: UNTRUSTED_SENDER_ERROR };
 }
 
+function untrustedReadJournalResult(): AgentChatReadJournalResult {
+  return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+}
+
+function invalidPayloadReadJournalResult(message: string): AgentChatReadJournalResult {
+  return { ok: false, error: { code: 'INVALID_ARGUMENT', message } };
+}
+
 function invalidPayloadVoidResult(message: string): AgentChatVoidResult {
   return { ok: false, error: { code: 'INVALID_ARGUMENT', message } };
 }
@@ -114,6 +126,13 @@ export interface AgentChatIpcDependencies {
   readonly mainWebContentsId: number;
   /** The chat-pane renderer's own `WebContents` - the sink `agent-chat:event` is pushed to. */
   readonly rendererWebContents: WebContents;
+  /**
+   * Reads one chat's journal and returns the wire result. Built in the
+   * composition root (`index.ts`) so this handler stays free of filesystem and
+   * path concerns; a missing/unreadable journal is an `ok: false` result, never
+   * a throw.
+   */
+  readonly readJournal: (request: AgentChatReadJournalRequest) => AgentChatReadJournalResult;
 }
 
 /**
@@ -180,6 +199,16 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
       const parsed = agentChatByIdRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadVoidResult(parsed.error.message);
       return deps.controller.closeConversation(parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    AGENT_CHAT_READ_JOURNAL_CHANNEL,
+    (event, rawRequest: unknown): AgentChatReadJournalResult => {
+      if (!checkSender(event)) return untrustedReadJournalResult();
+      const parsed = agentChatReadJournalRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadReadJournalResult(parsed.error.message);
+      return deps.readJournal(parsed.data);
     },
   );
 

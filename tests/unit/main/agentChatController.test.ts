@@ -589,6 +589,18 @@ describe('AgentChatController.onStatusChanged', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it('reports no sdkSessionId once the conversation is closed', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+
+    await controller.closeConversation({ chatId });
+
+    expect(controller.getStatus().activeChatId).toBeNull();
+    expect(controller.getStatus().sdkSessionId).toBeNull();
+  });
+
   it('stops notifying after the listener unsubscribes', () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller } = buildController(agentService);

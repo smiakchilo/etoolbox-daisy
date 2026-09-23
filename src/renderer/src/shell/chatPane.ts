@@ -3,6 +3,7 @@ import { buildBannerCopy, createBannerActionButton } from '../lib/alertBanner';
 import { createChatToolbar } from './chatToolbar';
 import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
+import { replayJournalIntoTranscript } from '../chat/journalReplay';
 import { createStatusBanner, type StatusBanner } from '../settings/statusBanner';
 import {
   computeComposerButtonState,
@@ -16,13 +17,16 @@ import { repaintAndFollow } from '../chat/transcriptScroll';
 import {
   AGENT_DEFINITIONS,
   applyAgentEvent,
+  type AgentChatOpenResult,
   type AgentChatStatus,
   type AgentServiceLifecycleState,
   type AgentSettingsSnapshot,
   type CanSendBlockReason,
   type ChatId,
+  type ChatJournalRecord,
   newChatId,
   resolveEffectiveActiveAgentId,
+  type SdkSessionId,
   type SessionStatus,
 } from '../../../shared';
 
@@ -80,6 +84,17 @@ const READY_POLL_INTERVAL_MS = 15_000;
 const CHAT_STATUS_BANNER_SURFACE_CLASS = 'chat-status-banner';
 
 /**
+ * A conversation to resume when the pane first becomes ready, plus the journal
+ * records to repaint it from. Resolved by the shell, which owns both the
+ * persisted pointer and the server-match gate; the pane only opens and replays.
+ */
+export interface StartupConversation {
+  readonly chatId: ChatId;
+  readonly sdkSessionId: SdkSessionId;
+  readonly records: readonly ChatJournalRecord[];
+}
+
+/**
  * The right-hand chat pane: toolbar, transcript, and composer, wired to the
  * `agent-chat:*` IPC surface (`window.daisy.agentChat`).
  */
@@ -91,6 +106,22 @@ export interface ChatPaneOptions {
    * condition it is reporting.
    */
   readonly onOpenSettings: (tab?: SettingsTab) => void;
+  /**
+   * Resolves the conversation to restore on startup, or `undefined` to start a
+   * fresh one. Called at most once, the first time the service is ready.
+   */
+  readonly resolveStartupConversation?: () => Promise<StartupConversation | undefined>;
+  /**
+   * Records the active conversation and its live SDK session id, so it can be
+   * genuinely resumed on the next launch. Called after a successful resume and
+   * after every successful send.
+   */
+  readonly onConversationUsed?: (chatId: ChatId, sdkSessionId: SdkSessionId) => void;
+  /**
+   * Forgets the remembered conversation when it could not be resumed, so a
+   * session that is gone is not retried on every subsequent launch.
+   */
+  readonly onConversationUnavailable?: () => void;
 }
 
 /** Order-sensitive equality: the host list only changes when the settings snapshot does. */
@@ -161,6 +192,16 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
   let conversationEmpty = false;
+  // The most recent live SDK session id for `chatId`, learned from
+  // `AgentChatStatus`. Persisted so a later launch resumes the *current*
+  // session, not the one the journal recorded at chat creation (a runtime
+  // recycle mints a new session for the same chat).
+  let latestSdkSessionId: SdkSessionId | undefined;
+  // Whether the active conversation has at least one message. Only then is it
+  // worth restoring - an opened-but-unused chat is never remembered.
+  let conversationHasMessage = false;
+  // `resolveStartupConversation` is consulted at most once.
+  let startupConversationResolved = false;
 
   let unsubscribeEvents: (() => void) | undefined;
   let startingPollHandle: ReturnType<typeof setInterval> | undefined;
@@ -246,8 +287,62 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     });
   }
 
-  async function ensureConversationOpen(id: ChatId): Promise<void> {
-    const result = await window.daisy.agentChat.openConversation({ chatId: id });
+  async function openConversation(id: ChatId, resume?: SdkSessionId): Promise<AgentChatOpenResult> {
+    const result = await window.daisy.agentChat.openConversation(
+      resume === undefined ? { chatId: id } : { chatId: id, resume: { sdkSessionId: resume } },
+    );
+    if (result.ok) {
+      // Capture the freshly minted live session id for persistence. A plain
+      // read, not a push: pushing a status change on open would make this pane
+      // react to a conversation some other caller opened (the pane's re-open is
+      // meant for its own runtime-recycle recovery).
+      void window.daisy.agentChat.getStatus().then(
+        (status) => {
+          if (status.sdkSessionId === null) return;
+          latestSdkSessionId = status.sdkSessionId;
+          persistActiveConversation();
+        },
+        () => undefined,
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Records the active conversation so a later launch can genuinely resume it.
+   * Written only once the conversation has at least one message (see
+   * `conversationHasMessage`), and refreshed whenever a new live session id
+   * arrives, so a runtime recycle does not leave a stale id on disk.
+   */
+  function persistActiveConversation(): void {
+    if (!conversationHasMessage) return;
+    if (chatId === undefined || latestSdkSessionId === undefined) return;
+    options.onConversationUsed?.(chatId, latestSdkSessionId);
+  }
+
+  /**
+   * Resolves the conversation to restore, consulting the shell at most once.
+   * A shell failure or an `undefined` answer both mean "start fresh".
+   */
+  async function resolveStartupConversation(): Promise<StartupConversation | undefined> {
+    if (startupConversationResolved) return undefined;
+    startupConversationResolved = true;
+    if (options.resolveStartupConversation === undefined) return undefined;
+    try {
+      return await options.resolveStartupConversation();
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Starts a genuinely empty conversation under a fresh id. */
+  async function startFreshConversation(): Promise<void> {
+    const id = newChatId(() => crypto.randomUUID());
+    chatId = id;
+    conversationHasMessage = false;
+    transcriptStore.clear();
+    refreshEmptyState();
+    const result = await openConversation(id);
     if (!result.ok) statusBanner.showError(result.error.message);
   }
 
@@ -275,12 +370,39 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     }
 
     sessionStatus = { ...sessionStatus, authenticated: status.auth.isAuthenticated };
+    if (status.sdkSessionId !== null) latestSdkSessionId = status.sdkSessionId;
+    // A live session id may arrive after the first send; refreshing the stored
+    // pointer here keeps it current across a runtime recycle.
+    persistActiveConversation();
 
     if (chatId === undefined) {
-      const id = status.activeChatId ?? newChatId(() => crypto.randomUUID());
-      chatId = id;
-      if (status.activeChatId === null) {
-        await ensureConversationOpen(id);
+      if (status.activeChatId !== null) {
+        // Main already owns a conversation (a recycled runtime that re-opened
+        // one before this pane polled). Adopt it; its transcript arrives on the
+        // ordinary event stream.
+        chatId = status.activeChatId;
+      } else {
+        const startup = await resolveStartupConversation();
+        if (startup === undefined) {
+          await startFreshConversation();
+        } else {
+          chatId = startup.chatId;
+          latestSdkSessionId = startup.sdkSessionId;
+          const opened = await openConversation(startup.chatId, startup.sdkSessionId);
+          if (opened.ok) {
+            replayJournalIntoTranscript(startup.records, transcriptStore);
+            conversationHasMessage = true;
+            refreshEmptyState();
+            repaintTranscript();
+            persistActiveConversation();
+          } else {
+            // Silent fallback, as agreed: no banner, and - the important part -
+            // no old transcript left on screen under a new session. Forget the
+            // pointer so the next launch does not retry a session that is gone.
+            options.onConversationUnavailable?.();
+            await startFreshConversation();
+          }
+        }
       }
       sessionStatus = { ...sessionStatus, state: status.sessionState };
       subscribeToEvents();
@@ -292,7 +414,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       readyPollHandle ??= setInterval(() => void refreshStatus(), READY_POLL_INTERVAL_MS);
     } else if (status.activeChatId !== chatId) {
       sessionStatus = { ...sessionStatus, state: 'idle' };
-      await ensureConversationOpen(chatId);
+      const result = await openConversation(chatId);
+      if (!result.ok) statusBanner.showError(result.error.message);
     }
 
     refreshSessionPresentation();
@@ -317,6 +440,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     }
     transcriptStore.applyUserPrompt(result.turnId, prompt);
     refreshEmptyState();
+    // The chat now has at least one message, so it is worth restoring next
+    // launch - and this also refreshes the stored live session id.
+    conversationHasMessage = true;
+    persistActiveConversation();
     return { ok: true };
   }
 
@@ -362,9 +489,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    *
    * The pane clears immediately, before the open resolves, so the previous
    * conversation is never left on screen beside the new (empty) one; if the
-   * open fails, `ensureConversationOpen` puts the failure on the pane's banner
-   * and the next status poll re-opens this same new id, which is why `chatId`
-   * is adopted up front rather than only on success.
+   * open fails, the banner reports it and the next status poll re-opens this
+   * same new id, which is why `chatId` is adopted up front rather than only on
+   * success.
    */
   function startNewSession(): void {
     // No conversation is open yet (the service is still starting), so there
@@ -372,6 +499,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (chatId === undefined) return;
     const id = newChatId(() => crypto.randomUUID());
     chatId = id;
+    conversationHasMessage = false;
     transcriptStore.clear();
     sessionStatus = { ...sessionStatus, state: 'idle' };
     refreshEmptyState();
@@ -380,7 +508,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // clean slate and should see one immediately.
     repaintTranscript();
     refreshSessionPresentation();
-    void ensureConversationOpen(id);
+    void openConversation(id).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
   }
 
   const statusBanner: StatusBanner = createStatusBanner({

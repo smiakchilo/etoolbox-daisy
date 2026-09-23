@@ -11,6 +11,7 @@ import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createChatJournal } from './chatJournal';
+import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
 import { loadSettings, loadSettingsSync, configuredAgentId } from './settingsStore';
@@ -69,6 +70,27 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
 const aemPreloadPath = path.join(currentDir, '../preload/aem-preload.js');
 const isDev = Boolean(process.env['ELECTRON_RENDERER_URL']);
+
+/**
+ * User-facing text for a failed journal read. A missing file is `NOT_FOUND`
+ * (there simply is no stored transcript); every other reason is a storage fault
+ * on a file that should be readable. Never echoes a path or filesystem error.
+ */
+function describeJournalReadFailure(reason: ChatJournalReadFailureReason): {
+  readonly code: 'NOT_FOUND' | 'STORAGE_ERROR';
+  readonly message: string;
+} {
+  switch (reason) {
+    case 'not_found':
+      return { code: 'NOT_FOUND', message: 'No stored transcript was found for this chat.' };
+    case 'invalid_chat_id':
+      return { code: 'STORAGE_ERROR', message: 'The stored chat id is not usable.' };
+    case 'too_large':
+      return { code: 'STORAGE_ERROR', message: 'The stored transcript is too large to reopen.' };
+    case 'unreadable':
+      return { code: 'STORAGE_ERROR', message: 'The stored transcript could not be read.' };
+  }
+}
 
 // Must run before `app.whenReady()` - Electron ignores
 // `protocol.registerSchemesAsPrivileged` once Chromium has already started
@@ -503,6 +525,16 @@ if (!gotSingleInstanceLock) {
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
       rendererWebContents: mainWindow.webContents,
+      // Reads a chat's journal from the app's own `chats` directory. The read
+      // is bounded and never throws; a failure comes back as an `ok: false`
+      // result, which the renderer treats as "nothing to repaint".
+      readJournal: (request) => {
+        const outcome = readChatJournal(appPaths.chats, request.chatId);
+        if (!outcome.ok) {
+          return { ok: false, error: describeJournalReadFailure(outcome.reason) };
+        }
+        return { ok: true, records: [...outcome.records] };
+      },
     });
 
     // Milestone A criterion 6: a server switch (or any other navigation-

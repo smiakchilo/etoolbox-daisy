@@ -6,6 +6,9 @@ import type {
   AgentEvent,
   AgentSettingsSnapshot,
   ChatId,
+  ChatJournalRecord,
+  SdkSessionId,
+  TurnId,
 } from '../../../src/shared';
 
 /**
@@ -41,6 +44,7 @@ function definedStatus(overrides: Partial<AgentChatStatus> = {}): AgentChatStatu
     apiVersion: 1,
     auth: { apiVersion: 1, isAuthenticated: false },
     activeChatId: null,
+    sdkSessionId: null,
     sessionState: 'idle',
     serviceState: 'ready',
     ...overrides,
@@ -435,6 +439,92 @@ describe('createChatPane status push', () => {
     await flush();
 
     expect(navigate).toHaveBeenCalledWith('https://author.example/content/site/en/page.html');
+
+    pane.dispose();
+  });
+});
+
+describe('createChatPane startup restore', () => {
+  function userPromptRecord(chatId: ChatId, turnId: string, prompt: string): ChatJournalRecord {
+    return {
+      recordType: 'user.prompt',
+      at: 1,
+      chatId,
+      turnId: turnId as TurnId,
+      prompt,
+    };
+  }
+
+  const rememberedConversation = {
+    chatId: 'chat-remembered' as ChatId,
+    sdkSessionId: 'sdk-remembered' as SdkSessionId,
+    records: [
+      userPromptRecord('chat-remembered' as ChatId, 'turn-old', 'what did we say?'),
+    ] satisfies readonly ChatJournalRecord[],
+  };
+
+  it('resumes the remembered conversation, replays its journal, and records it', async () => {
+    const onConversationUsed = vi.fn();
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(rememberedConversation),
+      onConversationUsed,
+    });
+
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    await waitForUserMessage(pane);
+
+    expect(openConversation).toHaveBeenCalledTimes(1);
+    expect(openConversation.mock.calls[0]?.[0]).toEqual({
+      chatId: 'chat-remembered',
+      resume: { sdkSessionId: 'sdk-remembered' },
+    });
+    expect(onConversationUsed).toHaveBeenCalledWith('chat-remembered', 'sdk-remembered');
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
+
+    pane.dispose();
+  });
+
+  it('falls back silently to an empty fresh chat when the remembered session cannot be resumed', async () => {
+    const onConversationUnavailable = vi.fn();
+    openConversation.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'RESUME_FAILED', message: 'the session is gone' },
+    });
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(rememberedConversation),
+      onConversationUnavailable,
+    });
+
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    await flush();
+
+    expect(openConversation).toHaveBeenCalledTimes(2);
+    // First attempted with resume, then a genuinely fresh open.
+    expect((openConversation.mock.calls[0]?.[0] as { resume?: unknown }).resume).toBeDefined();
+    expect((openConversation.mock.calls[1]?.[0] as { resume?: unknown }).resume).toBeUndefined();
+    expect(onConversationUnavailable).toHaveBeenCalledTimes(1);
+    // Silent - no banner - and no old transcript under the new session.
+    expect(agentBanner(pane)?.hasAttribute('open')).toBe(false);
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(0);
+
+    pane.dispose();
+  });
+
+  it('starts fresh when the resolver finds nothing to restore', async () => {
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(undefined),
+    });
+
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    expect(openConversation).toHaveBeenCalledTimes(1);
+    expect((openConversation.mock.calls[0]?.[0] as { resume?: unknown }).resume).toBeUndefined();
 
     pane.dispose();
   });

@@ -101,6 +101,8 @@ export const AGENT_CHAT_OPEN_CONVERSATION_CHANNEL = 'agent-chat:open-conversatio
 export const AGENT_CHAT_SEND_MESSAGE_CHANNEL = 'agent-chat:send-message' as const;
 export const AGENT_CHAT_ABORT_CHANNEL = 'agent-chat:abort' as const;
 export const AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL = 'agent-chat:close-conversation' as const;
+/** Reads one chat's append-only journal so a resumed conversation's transcript can be repainted. */
+export const AGENT_CHAT_READ_JOURNAL_CHANNEL = 'agent-chat:read-journal' as const;
 /** Push channel: main -> renderer, one `AgentEvent` per event, only for the currently open conversation. */
 export const AGENT_CHAT_EVENT_CHANNEL = 'agent-chat:event' as const;
 /**

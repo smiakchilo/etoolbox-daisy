@@ -124,8 +124,12 @@ interface OpenChat {
  * control characters but are not otherwise constrained, so this rejects path
  * separators explicitly rather than trusting the id's provenance - the journal
  * must never be steerable to an arbitrary file by a crafted id.
+ *
+ * Exported because the reader (`chatJournalReader.ts`) must apply the identical
+ * guard: a read path built from an attacker-influenced id is the same hazard as
+ * a write path.
  */
-function toChatFileName(chatId: string): string {
+export function toChatFileName(chatId: string): string {
   if (
     chatId.length === 0 ||
     chatId === '.' ||

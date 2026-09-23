@@ -35,6 +35,8 @@ import type {
   AgentChatByIdRequest,
   AgentChatOpenConversationRequest,
   AgentChatOpenResult,
+  AgentChatReadJournalRequest,
+  AgentChatReadJournalResult,
   AgentChatSendMessageRequest,
   AgentChatSendResult,
   AgentChatStatus,
@@ -83,6 +85,12 @@ export interface DaisyAgentChatApi {
   sendMessage(request: AgentChatSendMessageRequest): Promise<AgentChatSendResult>;
   abort(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   closeConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
+  /**
+   * Reads one chat's append-only journal so a resumed conversation's transcript
+   * can be repainted. Main owns the file and bounds the read; a missing or
+   * unreadable journal comes back as an `ok: false` result, never a throw.
+   */
+  readJournal(request: AgentChatReadJournalRequest): Promise<AgentChatReadJournalResult>;
   /** Subscribes to `agent-chat:event`; returns an unsubscribe function. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**

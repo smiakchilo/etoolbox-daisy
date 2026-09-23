@@ -1,9 +1,10 @@
 import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLayoutStore';
 import { isHostPageUrl, loadLastPageUrl, saveLastPageUrl } from '../lib/lastPageStore';
+import { clearLastChat, loadLastChat, saveLastChat } from '../lib/lastChatStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
-import { parseNavigationTarget, type AppSettingsSnapshot } from '../../../shared';
+import { parseNavigationTarget, type AppSettingsSnapshot, type ServerId } from '../../../shared';
 import { createBrowserPane } from './browserPane';
-import { createChatPane } from './chatPane';
+import { createChatPane, type StartupConversation } from './chatPane';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
@@ -61,12 +62,30 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   });
   browserPane.appendPanel(settingsPanel);
 
+  // Started before the panes are built so the first settings round trip is
+  // already in flight while the DOM is constructed; awaited further below and
+  // shared with the startup-chat resolver, which needs the same snapshot.
+  const snapshotPromise = loadSettingsSnapshot();
+
   const chatPane = createChatPane({
     onOpenSettings(tab) {
       // Selecting before opening means the panel paints on the requested tab
       // with no first-frame flicker; no tab keeps the last selection.
       if (tab !== undefined) settingsPanel.selectTab(tab);
       browserPane.panelHost.open(settingsPanel);
+    },
+    resolveStartupConversation,
+    onConversationUsed(chatId, sdkSessionId) {
+      // The server-match gate reads this back: a chat is only worth remembering
+      // when it was used against a configured host, and only that host's page
+      // will restore it. No active host means no restore, matching "the page
+      // wins".
+      const serverId = activeServerId();
+      if (serverId === undefined) return;
+      saveLastChat({ chatId, sdkSessionId, serverId });
+    },
+    onConversationUnavailable() {
+      clearLastChat();
     },
   });
 
@@ -77,6 +96,13 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
    * an SSO hop through an IdP origin is never restored as the "last page".
    */
   let hostOrigins: readonly string[] = [];
+
+  /**
+   * The configured hosts, kept current by `applySnapshot`. Consulted to resolve
+   * the pane's current page back to its `ServerId` - the value the last-chat
+   * pointer records and the server-match gate compares against.
+   */
+  let hosts: AppSettingsSnapshot['hosts'] = [];
 
   // The URL the AEM pane last reported, kept so the link context can be
   // re-derived when the *host list* changes (a settings edit) without a new
@@ -96,6 +122,13 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     return hostOrigins.includes(target.origin) ? target.origin : undefined;
   }
 
+  /** The configured host the pane is currently showing, if any - see `deriveActiveOrigin`. */
+  function activeServerId(): ServerId | undefined {
+    const origin = deriveActiveOrigin();
+    if (origin === undefined) return undefined;
+    return hosts.find((host) => host.origin === origin)?.id;
+  }
+
   /** Pushes the current host/pane context to the chat pane; it repaints only on a real change. */
   function publishLinkContext(): void {
     chatPane.setLinkContext({ hostOrigins, activeOrigin: deriveActiveOrigin() });
@@ -109,11 +142,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
    * changes without the shell having to know the rule.
    */
   function applySnapshot(snapshot: AppSettingsSnapshot): void {
-    const { hosts } = snapshot;
-    hostOrigins = hosts.map((host) => host.origin);
+    hosts = snapshot.hosts;
+    hostOrigins = snapshot.hosts.map((host) => host.origin);
     browserPane.update({
       addressValue: computeAddressBarValue(),
-      hostOptions: buildHostOptions(hosts),
+      hostOptions: buildHostOptions(snapshot.hosts),
     });
     chatPane.setAgents(snapshot.agents);
     publishLinkContext();
@@ -158,6 +191,40 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     return outcome.ok || outcome.error.code !== 'unknown_origin';
   }
 
+  /**
+   * Decides which conversation, if any, to restore on startup, and returns it
+   * with its journal so the chat pane can repaint it.
+   *
+   * The gate is the same "page wins" rule the shell already applies to the last
+   * URL: a chat is restored only when the remembered page's origin is a
+   * configured host AND the chat was last used against that same host. A chat
+   * recorded against a different server is left alone - cross-server selection
+   * belongs to History - so the pane never resumes a conversation against the
+   * wrong target.
+   *
+   * Returns `undefined` for every "nothing to restore" case (no pointer, no
+   * page, an unknown origin, a foreign server, a missing journal): the pane then
+   * starts a fresh chat, exactly as before this feature.
+   */
+  async function resolveStartupConversation(): Promise<StartupConversation | undefined> {
+    const record = loadLastChat();
+    if (record === undefined) return undefined;
+    const pageUrl = loadLastPageUrl();
+    if (pageUrl === undefined) return undefined;
+    const target = parseNavigationTarget(pageUrl);
+    if (!target.ok) return undefined;
+
+    const loaded = await snapshotPromise;
+    if (!loaded.ok) return undefined;
+    const host = loaded.snapshot.hosts.find((candidate) => candidate.origin === target.origin);
+    if (host === undefined || host.id !== record.serverId) return undefined;
+
+    const journal = await window.daisy.agentChat.readJournal({ chatId: record.chatId });
+    if (!journal.ok) return undefined;
+
+    return { chatId: record.chatId, sdkSessionId: record.sdkSessionId, records: journal.records };
+  }
+
   // The split view was created above (so the toolbar toggle could reach it);
   // its panes are appended here, once both exist, before it is inserted.
   splitView.element.append(browserPane.element, chatPane.element);
@@ -171,7 +238,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   const shellResizeObserver = new ResizeObserver(() => splitView.relayout());
   shellResizeObserver.observe(splitView.element);
 
-  const result = await loadSettingsSnapshot();
+  const result = await snapshotPromise;
   if (result.ok) {
     applySnapshot(result.snapshot);
     // Restoring the last opened page takes precedence over the hosts picker,
