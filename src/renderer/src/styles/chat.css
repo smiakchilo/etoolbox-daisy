@@ -313,3 +313,10 @@
   --mod-actionbutton-content-color-down: var(--spectrum-white, #ffffff);
   --mod-actionbutton-content-color-focus: var(--spectrum-white, #ffffff);
 }
+
+/* The single travelling link-action popover: a compact row of icon-only actions. */
+.chat-link-popover__actions {
+  display: flex;
+  gap: var(--spectrum-spacing-100, 8px);
+  padding: var(--spectrum-spacing-100, 8px);
+}

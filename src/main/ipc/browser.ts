@@ -4,6 +4,7 @@ import {
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
+  BROWSER_OPEN_EXTERNAL_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STOP_CHANNEL,
@@ -12,6 +13,7 @@ import {
 import {
   approveCertificateExceptionRequestSchema,
   navigateRequestSchema,
+  openExternalRequestSchema,
   switchServerRequestSchema,
   viewBoundsSchema,
   type BrowserIpcVoidResult,
@@ -125,6 +127,16 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
       const parsed = navigateRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadResult(parsed.error.message);
       return deps.controller.navigate(parsed.data.value);
+    },
+  );
+
+  ipcMain.handle(
+    BROWSER_OPEN_EXTERNAL_CHANNEL,
+    async (event, rawRequest: unknown): Promise<BrowserIpcVoidResult> => {
+      if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
+      const parsed = openExternalRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadResult(parsed.error.message);
+      return deps.controller.openExternal(parsed.data);
     },
   );
 

@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { createBrowserController } from '../../../../src/main/browser/browserController';
 import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
@@ -35,9 +35,17 @@ import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
  * those unused bindings would just be `undefined` - stubbing all four here
  * anyway is cheap and keeps this test insulated from that resolution detail.
  */
+// `vi.hoisted` so the `vi.mock` factory (which is hoisted above the imports) can
+// close over a named spy. A named `vi.fn` also avoids the `unbound-method`
+// lint error that `shell.openExternal` referenced as a value would raise.
+const { openExternalMock } = vi.hoisted(() => ({
+  openExternalMock: vi.fn(() => Promise.resolve()),
+}));
+
 vi.mock('electron', () => ({
   app: { on: vi.fn(), removeListener: vi.fn() },
   screen: { on: vi.fn(), removeListener: vi.fn() },
+  shell: { openExternal: openExternalMock },
   WebContentsView: class {},
   BrowserWindow: class {},
 }));
@@ -302,6 +310,44 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
     rendererSend,
   };
 }
+
+describe('browserController.openExternal', () => {
+  beforeEach(() => {
+    openExternalMock.mockClear();
+    openExternalMock.mockResolvedValue(undefined);
+  });
+
+  it('hands a valid http(s) URL to the OS default browser', async () => {
+    const harness = makeControllerHarness();
+
+    const result = await harness.controller.openExternal({ url: 'https://external.example/x' });
+
+    expect(result).toEqual({ ok: true });
+    expect(openExternalMock).toHaveBeenCalledWith('https://external.example/x');
+  });
+
+  it('refuses a non-http(s) URL without ever calling the OS', async () => {
+    const harness = makeControllerHarness();
+
+    const result = await harness.controller.openExternal({ url: 'file:///etc/passwd' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a failure result');
+    expect(result.error.code).toBe('invalid_address');
+    expect(openExternalMock).not.toHaveBeenCalled();
+  });
+
+  it('reports open_external_failed when the OS call rejects', async () => {
+    const harness = makeControllerHarness();
+    openExternalMock.mockRejectedValueOnce(new Error('no handler registered'));
+
+    const result = await harness.controller.openExternal({ url: 'https://external.example/x' });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a failure result');
+    expect(result.error.code).toBe('open_external_failed');
+  });
+});
 
 describe('browserController.navigate', () => {
   it('resolves a valid, configured address to its server and switches to it', async () => {

@@ -11,7 +11,7 @@ import {
 } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
-import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/aemLinkTargets';
+import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { repaintAndFollow } from '../chat/transcriptScroll';
 import {
   AGENT_DEFINITIONS,
@@ -111,6 +111,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const transcriptView: TranscriptView = createTranscriptView(undefined, {
     getLinkContext: () => linkContext,
     onOpenLink: (url) => openLink(url),
+    onOpenExternal: (url) => openExternal(url),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -340,6 +341,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
+   * Opens a message link whose origin is not a configured AEM host in the
+   * system browser. The URL was resolved by the markdown renderer; main
+   * re-validates that it is http(s) before handing it to the OS, so the
+   * renderer can never drive an arbitrary `shell.openExternal`.
+   */
+  function openExternal(url: string): void {
+    void window.daisy.browser.openExternal({ url }).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
+  }
+
+  /**
    * The toolbar's "New session": discards both the visible transcript and the
    * model's conversation context. A fresh `ChatId` is minted and opened; the
    * service's one-active-conversation rule tears the previous conversation
@@ -445,6 +458,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (readyPollHandle !== undefined) clearInterval(readyPollHandle);
       statusBanner.dispose();
       composer.dispose();
+      transcriptView.dispose();
     },
   };
 }

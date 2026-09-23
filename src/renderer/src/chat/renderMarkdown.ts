@@ -3,12 +3,13 @@ import createDOMPurify from 'dompurify';
 import type { Config as DomPurifyConfig } from 'dompurify';
 import {
   EMPTY_LINK_CONTEXT,
+  MESSAGE_EXTERNAL_ATTRIBUTE,
   MESSAGE_LINK_ATTRIBUTE,
   resolveMessageLink,
-  resolveRelativeAemPath,
   splitAemPathLinks,
   type LinkContext,
-} from './aemLinkTargets';
+  type ResolvedLink,
+} from './linkTargets';
 
 /**
  * Turns assistant Markdown into safe HTML for direct insertion into the
@@ -48,7 +49,7 @@ export interface MarkdownRenderer {
    * Renders `markdown` to a sanitized HTML string, safe to assign to
    * `innerHTML`.
    *
-   * `context` says which links the reader may open (`aemLinkTargets.ts`):
+   * `context` says which links the reader may open (`linkTargets.ts`):
    * an absolute link on a configured AEM host, or an AEM-native relative path
    * resolved against the pane's active host, is rewritten to its edit-mode URL
    * and stamped with `MESSAGE_LINK_ATTRIBUTE`; every other link is left as it
@@ -267,6 +268,25 @@ const SANITIZER_CONFIG: DomPurifyConfig = {
 const markdown = new Marked({ gfm: true, breaks: false, pedantic: false, async: false });
 
 /**
+ * A cheap prefix probe for "does this rendered HTML mention an AEM-native
+ * root at all?" - used only to skip the two DOM passes when nothing could be
+ * linkified.
+ *
+ * It must be a strict *superset* of what `splitAemPathLinks` can match: a
+ * false negative here takes the fast path and silently disables linkification
+ * for the whole message, while a false positive only costs the two DOM passes
+ * (the real links still come from `splitAemPathLinks`, never from this probe).
+ * The real matcher's boundary cannot be reproduced against raw HTML - a path at
+ * a paragraph start is preceded by a tag close (`<p>/content/...`) rather than
+ * the text-node start, an `&nbsp;`-style entity hides a decoded whitespace
+ * boundary, and a root at the end of a text node is followed by `<` rather than
+ * `$`. So this probe drops its boundaries entirely and matches any `/`-rooted
+ * AEM path anywhere in the markup. Deliberately non-global so repeated `.test`
+ * calls are stateless.
+ */
+const AEM_PATH_HINT = /\/(?:content|apps|libs|conf|var|etc|home)/;
+
+/**
  * Creates a renderer bound to `windowRef`.
  *
  * Takes the window as a parameter, rather than reading the ambient global
@@ -282,28 +302,40 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
   /**
    * Parses a rendered fragment into a detached document. `DOMParser` never
    * executes scripts, so running it over model output (before sanitization, in
-   * `rewriteRelativeAnchors`) is safe; the sanitizer still runs afterwards as
-   * the net.
+   * `rewriteAnchors`) is safe; the sanitizer still runs afterwards as the net.
    */
   function parseFragment(html: string): Document {
     return new windowRef.DOMParser().parseFromString(html, 'text/html');
   }
 
   /**
-   * Rewrites a relative AEM-native anchor (`[p](/content/x)`) into its absolute
-   * edit-mode URL *before* sanitization. This is what lets such a link survive
-   * the sanitizer's scheme policy, which rejects relative hrefs outright: by
-   * the time it is consulted the href is an ordinary `https://...` on a
-   * configured host. A relative path with no active host is left untouched, so
-   * the sanitizer strips it and the text remains behind with no href - exactly
-   * the owner's "do not convert relative paths to links if none".
+   * Rewrites an AEM-native anchor (`[p](/content/x)` or an absolute host URL)
+   * into its absolute *open target* before sanitization. This is what lets a
+   * relative link survive the sanitizer's scheme policy, which rejects relative
+   * hrefs outright: by the time it is consulted the href is an ordinary
+   * `https://...` on a configured host. A relative path with no active host is
+   * left untouched, so the sanitizer strips it and the text remains behind with
+   * no href - exactly the owner's "do not convert relative paths to links if
+   * none". An external absolute URL is normalised to the same string the click
+   * handler will see.
    */
-  function rewriteRelativeAnchors(doc: Document, context: LinkContext): void {
+  function rewriteAnchors(doc: Document, context: LinkContext): void {
     for (const anchor of Array.from(doc.querySelectorAll('a[href]'))) {
       const href = anchor.getAttribute('href');
       if (href === null) continue;
-      const resolved = resolveRelativeAemPath(href, context.activeOrigin);
-      if (resolved !== undefined) anchor.setAttribute('href', resolved);
+      const resolved = resolveMessageLink(href, context);
+      if (resolved !== undefined) anchor.setAttribute('href', resolved.href);
+    }
+  }
+
+  /** Stamps a resolved link with the marker for where it opens. */
+  function mark(anchor: HTMLAnchorElement, resolved: ResolvedLink): void {
+    anchor.setAttribute(
+      resolved.openIn === 'external' ? MESSAGE_EXTERNAL_ATTRIBUTE : MESSAGE_LINK_ATTRIBUTE,
+      '',
+    );
+    if (resolved.openIn === 'external') {
+      anchor.setAttribute('title', 'Opens in your browser');
     }
   }
 
@@ -338,8 +370,8 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
           continue;
         }
         const anchor = doc.createElement('a');
-        anchor.setAttribute('href', segment.url);
-        anchor.setAttribute(MESSAGE_LINK_ATTRIBUTE, '');
+        anchor.setAttribute('href', segment.resolved.href);
+        mark(anchor, segment.resolved);
         anchor.textContent = segment.value;
         fragment.append(anchor);
       }
@@ -350,8 +382,9 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
   /**
    * The post-sanitization pass: linkifies bare paths, then resolves and marks
    * every remaining anchor. Only a link {@link resolveMessageLink} resolves
-   * (a configured host, or a relative path with an active host) is stamped,
-   * and only a stamped anchor is intercepted on click (`transcriptView.ts`).
+   * (a configured host, an external origin, or a relative path with an active
+   * host) is stamped, and only a stamped anchor is intercepted on click
+   * (`transcriptView.ts`).
    */
   function markOpenableLinks(doc: Document, context: LinkContext): void {
     linkifyTextNodes(doc, context);
@@ -361,8 +394,8 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
       if (href === null) continue;
       const resolved = resolveMessageLink(href, context);
       if (resolved === undefined) continue;
-      if (resolved !== href) anchor.setAttribute('href', resolved);
-      anchor.setAttribute(MESSAGE_LINK_ATTRIBUTE, '');
+      if (resolved.href !== href) anchor.setAttribute('href', resolved.href);
+      mark(anchor, resolved);
     }
   }
 
@@ -370,15 +403,18 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
     render(markdownSource: string, context: LinkContext = EMPTY_LINK_CONTEXT): string {
       const html: string = markdown.parse(markdownSource, { async: false });
 
-      // With no configured host and no active origin nothing can be openable,
-      // so skip the two DOM passes entirely: the output is then exactly what
-      // this module produced before link rewriting existed, at the same cost.
-      if (context.hostOrigins.length === 0 && context.activeOrigin === undefined) {
+      // Fast path: with no anchor to resolve and (nothing to linkify, or no
+      // active host to linkify against) the two DOM passes cannot change the
+      // output, so skip them and sanitize directly. An absolute external link
+      // is always resolvable, so any anchor forces the slow path.
+      const hasAnchor = /<a[\s>]/i.test(html);
+      const hasBarePath = context.activeOrigin !== undefined && AEM_PATH_HINT.test(html);
+      if (!hasAnchor && !hasBarePath) {
         return purify.sanitize(html, SANITIZER_CONFIG);
       }
 
       const preSanitize = parseFragment(html);
-      rewriteRelativeAnchors(preSanitize, context);
+      rewriteAnchors(preSanitize, context);
       const cleaned = purify.sanitize(preSanitize.body.innerHTML, SANITIZER_CONFIG);
 
       const postSanitize = parseFragment(cleaned);

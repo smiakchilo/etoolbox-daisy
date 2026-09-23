@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
 import {
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
@@ -9,6 +9,7 @@ import type {
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
+  OpenExternalRequest,
   ViewBounds,
 } from '../../shared';
 import type { AppSettings } from '../../shared';
@@ -130,6 +131,13 @@ export interface BrowserController {
    */
   currentDocumentUrl(): string | undefined;
   navigate(rawValue: string): Promise<BrowserIpcVoidResult>;
+  /**
+   * Opens a transcript link's URL in the OS default browser. The URL is
+   * re-validated here (http(s), no userinfo) so the renderer can never drive an
+   * arbitrary `shell.openExternal` - the same narrow, reviewed command
+   * `security.ts`'s deny-by-default window guard requires.
+   */
+  openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult>;
   switchServer(serverId: ServerId): Promise<BrowserIpcVoidResult>;
   goBack(): Promise<BrowserIpcVoidResult>;
   goForward(): Promise<BrowserIpcVoidResult>;
@@ -390,6 +398,34 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return switchServer(decision.server.id, decision.url);
   }
 
+  /**
+   * Hands a validated absolute http(s) URL to the OS default browser. Only the
+   * scheme and userinfo are checked (`parseNavigationTarget`); the origin is
+   * deliberately not restricted to a configured host, because the whole point
+   * is to leave the app for an origin the app does not manage. The validation
+   * is what stops a model-authored link from reaching `shell.openExternal` as
+   * `file:`/`javascript:`/a custom scheme.
+   */
+  async function openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult> {
+    const parsed = parseNavigationTarget(request.url);
+    if (!parsed.ok) {
+      return fail({
+        code: 'invalid_address',
+        message: `not a valid http(s) address: ${request.url}`,
+      });
+    }
+    try {
+      await shell.openExternal(parsed.url);
+    } catch (error) {
+      logger.warn('BROWSER_OPEN_EXTERNAL_FAILED');
+      return fail({
+        code: 'open_external_failed',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return ok();
+  }
+
   async function switchServer(
     serverId: ServerId,
     targetUrl?: string,
@@ -626,6 +662,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activeServer: () => activeServerState,
     currentDocumentUrl,
     navigate,
+    openExternal,
     switchServer,
     goBack,
     goForward,

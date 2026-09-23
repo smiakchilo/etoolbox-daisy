@@ -122,6 +122,12 @@ export const BROWSER_IPC_ERROR_CODES = [
   'network_error',
   /** Reading or writing the settings file failed. */
   'storage_error',
+  /**
+   * Handing a validated http(s) URL to the OS default browser failed (no
+   * registered handler, or the OS rejected it). Only `browser:open-external`
+   * produces this.
+   */
+  'open_external_failed',
 ] as const;
 
 export type BrowserIpcErrorCode = (typeof BROWSER_IPC_ERROR_CODES)[number];
@@ -166,6 +172,17 @@ export type NavigateRequest = Readonly<z.infer<typeof navigateRequestSchema>>;
 /** `browser:switch-server`. */
 export const switchServerRequestSchema = z.object({ serverId: serverIdSchema }).strict();
 export type SwitchServerRequest = Readonly<z.infer<typeof switchServerRequestSchema>>;
+
+/**
+ * `browser:open-external` - an absolute URL a transcript link asked to open in
+ * the system browser. Carries the raw string; main re-validates it is http(s)
+ * (no userinfo) with the same `parseNavigationTarget` the address bar uses
+ * before it reaches `shell.openExternal`.
+ */
+export const openExternalRequestSchema = z
+  .object({ url: z.string().min(1).max(ADDRESS_MAX_LENGTH) })
+  .strict();
+export type OpenExternalRequest = Readonly<z.infer<typeof openExternalRequestSchema>>;
 
 /**
  * `browser:approve-certificate-exception`. Carries `serverId` (which

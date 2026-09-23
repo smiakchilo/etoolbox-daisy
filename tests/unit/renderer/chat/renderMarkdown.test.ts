@@ -1,3 +1,5 @@
+// noinspection HtmlUnknownTarget
+
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { createMarkdownRenderer } from '../../../../src/renderer/src/chat/renderMarkdown';
@@ -35,26 +37,44 @@ const ACTIVE_CONTEXT = { hostOrigins: [AUTHOR], activeOrigin: AUTHOR };
 const HOSTS_ONLY_CONTEXT = { hostOrigins: [AUTHOR], activeOrigin: undefined };
 
 describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
-  it('rewrites a relative /content markdown link to its edit-mode URL and marks it openable', () => {
+  it('rewrites a relative /content page link to its rendered URL and marks it as a pane link', () => {
     const doc = parse(renderer.render('[Page](/content/site/en/page)', ACTIVE_CONTEXT));
     const anchor = doc.querySelector('a');
-    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/editor.html/content/site/en/page.html`);
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/en/page.html`);
     expect(anchor?.hasAttribute('data-daisy-link')).toBe(true);
+    expect(anchor?.hasAttribute('data-daisy-external')).toBe(false);
     expect(anchor?.textContent).toBe('Page');
   });
 
-  it('routes a relative /content/dam path to CRXDE', () => {
+  it('previews a relative /content/dam asset', () => {
+    const doc = parse(renderer.render('[Asset](/content/dam/x/y.jpg)', ACTIVE_CONTEXT));
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y.jpg`);
+  });
+
+  it('opens a /content/dam non-asset raw (CRX popover only)', () => {
     const doc = parse(renderer.render('[Asset](/content/dam/x/y)', ACTIVE_CONTEXT));
-    expect(doc.querySelector('a')?.getAttribute('href')).toBe(
-      `${AUTHOR}/crx/de/index.jsp#/content/dam/x/y`,
-    );
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y`);
   });
 
   it('linkifies a bare AEM path in prose', () => {
     const doc = parse(renderer.render('See /content/site/en/page for details.', ACTIVE_CONTEXT));
     const anchor = doc.querySelector('a[data-daisy-link]');
-    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/editor.html/content/site/en/page.html`);
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/en/page.html`);
     expect(doc.body.textContent?.trim()).toBe('See /content/site/en/page for details.');
+  });
+
+  it('linkifies a bare AEM path that starts a paragraph', () => {
+    // Regression: a path at the start of an HTML block is preceded by `>` (the
+    // opening tag), so a fast-path probe requiring a whitespace/bracket
+    // boundary would skip the linkification passes and leave it as text.
+    const doc = parse(
+      renderer.render('Waldo is in:\n\n/content/site/en/page\n\nThat node.', ACTIVE_CONTEXT),
+    );
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/en/page.html`);
+    expect(doc.body.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      'Waldo is in: /content/site/en/page That node.',
+    );
   });
 
   it('never linkifies inside inline code or a fenced code block', () => {
@@ -64,19 +84,19 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(doc.querySelectorAll('a')).toHaveLength(0);
   });
 
-  it('rewrites an absolute configured-host page link to edit mode', () => {
+  it('rewrites an absolute configured-host page link to its rendered URL', () => {
     const doc = parse(renderer.render(`[P](${AUTHOR}/content/x.html)`, ACTIVE_CONTEXT));
-    expect(doc.querySelector('a')?.getAttribute('href')).toBe(
-      `${AUTHOR}/editor.html/content/x.html`,
-    );
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe(`${AUTHOR}/content/x.html`);
     expect(doc.querySelector('a')?.hasAttribute('data-daisy-link')).toBe(true);
   });
 
-  it('leaves an external link rendered but not openable', () => {
+  it('marks an external link as opening in the browser', () => {
     const doc = parse(renderer.render('[E](https://other.example/x)', ACTIVE_CONTEXT));
     const anchor = doc.querySelector('a');
     expect(anchor?.getAttribute('href')).toBe('https://other.example/x');
+    expect(anchor?.hasAttribute('data-daisy-external')).toBe(true);
     expect(anchor?.hasAttribute('data-daisy-link')).toBe(false);
+    expect(anchor?.getAttribute('title')).toBe('Opens in your browser');
   });
 
   it('does not make a relative path clickable when no host is active', () => {
@@ -93,14 +113,14 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(parse(html).querySelectorAll('a')).toHaveLength(0);
   });
 
-  it('is unchanged from the pre-link behaviour when no context is given', () => {
-    const doc = parse(renderer.render('[Page](/content/site/en/page)'));
-    expect(doc.querySelector('a')?.getAttribute('href')).toBeNull();
+  it('still marks an external link with no configured hosts at all', () => {
+    const doc = parse(renderer.render('[E](https://other.example/x)'));
+    expect(doc.querySelector('a')?.getAttribute('href')).toBe('https://other.example/x');
+    expect(doc.querySelector('a')?.hasAttribute('data-daisy-external')).toBe(true);
+    // A relative path is still inert with no context.
     expect(
-      parse(renderer.render('[E](https://other.example/x)'))
-        .querySelector('a')
-        ?.getAttribute('href'),
-    ).toBe('https://other.example/x');
+      parse(renderer.render('[P](/content/x)')).querySelector('a')?.getAttribute('href'),
+    ).toBeNull();
   });
 });
 
@@ -150,6 +170,7 @@ describe('createMarkdownRenderer', () => {
       expect(html.toLowerCase()).not.toContain('<script');
     });
 
+    // noinspection CommaExpressionJS
     it('renders a fenced code block containing <script> as escaped text, not a live element', () => {
       const html = renderer.render('```\n<script>alert(1)</script>\n```\n');
       const doc = parse(html);
@@ -211,6 +232,7 @@ describe('createMarkdownRenderer', () => {
   });
 
   describe('remote images', () => {
+    // noinspection HtmlRequiredAltAttribute
     it('never lets an <img> perform a network fetch: no beacon URL survives in any attribute', () => {
       const html = renderer.render('![tracker](https://evil.example/beacon.png "title")');
       expect(html.toLowerCase()).not.toContain('evil.example');
@@ -240,6 +262,7 @@ describe('createMarkdownRenderer', () => {
     });
 
     it('strips onerror from an img tag', () => {
+      // noinspection HtmlDeprecatedAttribute
       const html = renderer.render('<img src="x" onerror="alert(1)" alt="pic">');
       expect(html.toLowerCase()).not.toContain('onerror');
     });

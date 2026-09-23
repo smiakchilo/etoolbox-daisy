@@ -17,6 +17,7 @@ import {
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
+  BROWSER_OPEN_EXTERNAL_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
@@ -44,6 +45,7 @@ import {
   approveCertificateExceptionRequestSchema,
   clearPasswordRequestSchema,
   navigateRequestSchema,
+  openExternalRequestSchema,
   parseAddProxyResult,
   parseAddServerResult,
   parseAgentChatByIdRequest,
@@ -105,6 +107,7 @@ import {
   type GetSettingsSnapshotResult,
   type LoginOutcome,
   type LogoutResult,
+  type OpenExternalRequest,
   type PasswordTarget,
   type RemoveProxyRequest,
   type RemoveServerRequest,
@@ -331,6 +334,11 @@ const daisyApi: DaisyAppApi = {
     async navigate(value: string): Promise<BrowserIpcVoidResult> {
       const request = navigateRequestSchema.parse({ value });
       const raw: unknown = await ipcRenderer.invoke(BROWSER_NAVIGATE_CHANNEL, request);
+      return parseBrowserIpcVoidResult(raw);
+    },
+    async openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult> {
+      const parsedRequest = openExternalRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(BROWSER_OPEN_EXTERNAL_CHANNEL, parsedRequest);
       return parseBrowserIpcVoidResult(raw);
     },
     async switchServer(serverId: string): Promise<BrowserIpcVoidResult> {

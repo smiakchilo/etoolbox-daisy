@@ -136,8 +136,26 @@ async function sendMessage(app: ElectronApp, shell: Page, text: string): Promise
   await flushFake(app);
 }
 
+/** Replaces main's `shell.openExternal` with a recorder, so no real browser is launched. */
+async function stubOpenExternal(app: ElectronApp): Promise<void> {
+  await app.evaluate(({ shell }) => {
+    const scope = globalThis as Record<string, unknown>;
+    scope['__openedExternal'] = [] as string[];
+    (shell as unknown as { openExternal: (url: string) => Promise<void> }).openExternal = (url) => {
+      (scope['__openedExternal'] as string[]).push(url);
+      return Promise.resolve();
+    };
+  });
+}
+
+function readOpenedExternal(app: ElectronApp): Promise<string[]> {
+  return app.evaluate(
+    () => ((globalThis as Record<string, unknown>)['__openedExternal'] as string[]) ?? [],
+  );
+}
+
 test.describe('Message links open the AEM pane in edit mode', () => {
-  test('an absolute link on a configured host is rewritten to the editor and opens the pane', async () => {
+  test('an absolute link on a configured host opens its rendered page in the pane', async () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
@@ -147,7 +165,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
 
     const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
     await expect(link).toHaveCount(1, { timeout: 30_000 });
-    await expect(link).toHaveAttribute('href', `${HOST}/editor.html/content/site/alpha.html`, {
+    await expect(link).toHaveAttribute('href', `${HOST}/content/site/alpha.html`, {
       timeout: 30_000,
     });
 
@@ -157,14 +175,12 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await link.click();
     const banner = shell.locator(CHAT_STATUS_BANNER);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
-    await expect(banner).toContainText(`${HOST}/editor.html/content/site/alpha.html`, {
-      timeout: 60_000,
-    });
+    await expect(banner).toContainText(`${HOST}/content/site/alpha.html`, { timeout: 60_000 });
 
     await app.close();
   });
 
-  test('a bare AEM path stays text until the pane is on a host, then becomes an editor link', async () => {
+  test('a bare AEM path stays text until the pane is on a host, then becomes a page link', async () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
@@ -195,7 +211,64 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // clickable - no new message, no text change.
     const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
     await expect(link).toHaveCount(1, { timeout: 30_000 });
-    await expect(link).toHaveAttribute('href', `${HOST}/editor.html/content/site/beta.html`);
+    await expect(link).toHaveAttribute('href', `${HOST}/content/site/beta.html`);
+
+    await app.close();
+  });
+
+  test('a page link offers Edit and CRX in one travelling hover popover', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    await sendMessage(app, shell, `See [Alpha](${HOST}/content/site/alpha.html).`);
+    const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
+    await expect(link).toHaveCount(1, { timeout: 30_000 });
+
+    // The overlay is registered in the shipped bundle (jsdom cannot prove
+    // this) and appears with exactly the two page actions.
+    await link.hover();
+    const overlay = shell.locator('sp-overlay');
+    await expect(overlay).toHaveCount(1);
+    const edit = shell.locator('sp-overlay sp-action-button[title="Edit"]');
+    const crx = shell.locator('sp-overlay sp-action-button[title="CRX"]');
+    await expect(edit).toBeVisible({ timeout: 30_000 });
+    await expect(crx).toBeVisible();
+    await expect
+      .poll(() => overlay.evaluate((element) => (element as unknown as { open: boolean }).open))
+      .toBe(true);
+
+    // Edit drives the real pane navigation path; the unresolvable host makes
+    // the resulting error banner the proof it reached it.
+    await edit.click();
+    const banner = shell.locator(CHAT_STATUS_BANNER);
+    await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
+    await expect(banner).toContainText(`${HOST}/editor.html/content/site/alpha.html`, {
+      timeout: 60_000,
+    });
+
+    await app.close();
+  });
+
+  test('an external link opens in the system browser, not the pane', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    await stubOpenExternal(app);
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    await sendMessage(app, shell, 'See [External](https://external.example/page).');
+    const link = shell.locator(`${ASSISTANT} a[data-daisy-external]`);
+    await expect(link).toHaveCount(1, { timeout: 30_000 });
+    await expect(link).toHaveAttribute('href', 'https://external.example/page');
+    await expect(link).toHaveAttribute('title', 'Opens in your browser');
+
+    await link.click();
+
+    await expect.poll(() => readOpenedExternal(app)).toEqual(['https://external.example/page']);
+    // No pane navigation, so no error banner.
+    await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '');
 
     await app.close();
   });

@@ -1,5 +1,12 @@
 import { el } from '../lib/dom';
-import { EMPTY_LINK_CONTEXT, MESSAGE_LINK_ATTRIBUTE, type LinkContext } from './aemLinkTargets';
+import {
+  EMPTY_LINK_CONTEXT,
+  MESSAGE_EXTERNAL_ATTRIBUTE,
+  MESSAGE_LINK_ATTRIBUTE,
+  resolveMessageLink,
+  type LinkContext,
+} from './linkTargets';
+import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import { describeRequiredAction, describeToolCallStatus } from './transcriptViewModel';
 import { describeToolCall } from './toolCallDetails';
@@ -10,6 +17,8 @@ export interface TranscriptView {
   readonly element: HTMLElement;
   /** Repaints the transcript from `store`'s current items and text. Call when `store.takeDirty()` is true. */
   repaint(store: TranscriptStore): void;
+  /** Removes the transcript's overlay and listeners. Call when the pane is torn down. */
+  dispose(): void;
 }
 
 export interface TranscriptViewOptions {
@@ -20,11 +29,17 @@ export interface TranscriptViewOptions {
    */
   readonly getLinkContext?: () => LinkContext;
   /**
-   * Invoked with the resolved URL of a message link the reader clicked. Only
-   * anchors `renderMarkdown.ts` stamped as openable are routed here; every
-   * other link is left to the browser's own (blocked) default.
+   * Invoked with the resolved URL of a message link the reader clicked, for a
+   * link the markdown renderer stamped as opening in the AEM pane.
    */
   readonly onOpenLink?: (url: string) => void;
+  /**
+   * Invoked with the URL of a message link whose origin is not a configured
+   * AEM host, for the host to hand to the system browser. Only anchors stamped
+   * as external are routed here; anything else is left to the browser's own
+   * (blocked) default.
+   */
+  readonly onOpenExternal?: (url: string) => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -234,6 +249,44 @@ export function createTranscriptView(
   const expandedToolCalls = new Set<string>();
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
 
+  // The one travelling hover popover for pane links that offer actions. It is
+  // undefined in a jsdom unit test (the Spectrum overlay is not registered
+  // there) and in any environment where it is; `show`/`scheduleHide` below are
+  // then simply inert.
+  const popover: LinkActionPopover | undefined = createLinkActionPopover({
+    onOpenLink: (url) => options.onOpenLink?.(url),
+    getContainer: () => element.closest('sp-theme') ?? document.body,
+  });
+  // The link the popover is currently shown for, so repeated `pointerover`
+  // events over one link do not rebuild its buttons.
+  let hoveredLink: HTMLElement | undefined;
+
+  function paneLinkFrom(target: EventTarget | null): HTMLAnchorElement | null {
+    return (target as Element | null)?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}]`) ?? null;
+  }
+
+  element.addEventListener('pointerover', (event) => {
+    if (popover === undefined) return;
+    const anchor = paneLinkFrom(event.target);
+    if (anchor === null || anchor === hoveredLink) return;
+    const href = anchor.getAttribute('href');
+    if (href === null) return;
+    const resolved = resolveMessageLink(href, getLinkContext());
+    if (resolved === undefined || resolved.actions.length === 0) return;
+    hoveredLink = anchor;
+    popover.show(anchor, resolved.actions);
+  });
+
+  element.addEventListener('pointerout', (event) => {
+    if (popover === undefined || hoveredLink === undefined) return;
+    if (paneLinkFrom(event.target) !== hoveredLink) return;
+    const related = event.relatedTarget as Node | null;
+    // Moving to a child of the same link (or into the popover) must not hide it.
+    if (related !== null && hoveredLink.contains(related)) return;
+    hoveredLink = undefined;
+    popover.scheduleHide();
+  });
+
   /** Applies an expansion state to an already-rendered billet, without a full repaint. */
   function applyToolCallExpansion(shell: HTMLElement, expanded: boolean): void {
     shell.classList.toggle('chat-tool-call--expanded', expanded);
@@ -274,11 +327,18 @@ export function createTranscriptView(
       toggleToolCallExpansion(toggle);
       return;
     }
-    const anchor = target?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}]`) ?? null;
+    const anchor =
+      target?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}], a[${MESSAGE_EXTERNAL_ATTRIBUTE}]`) ?? null;
     const href = anchor?.getAttribute('href') ?? null;
-    if (href === null) return;
+    if (anchor === null || href === null) return;
     event.preventDefault();
-    options.onOpenLink?.(href);
+    popover?.hideNow();
+    hoveredLink = undefined;
+    if (anchor.hasAttribute(MESSAGE_EXTERNAL_ATTRIBUTE)) {
+      options.onOpenExternal?.(href);
+    } else {
+      options.onOpenLink?.(href);
+    }
   });
 
   function createShell(item: TranscriptItem): HTMLElement {
@@ -351,6 +411,10 @@ export function createTranscriptView(
   return {
     element,
     repaint(store) {
+      // A repaint replaces the message nodes, so any open popover is now
+      // anchored to a detached element - close it rather than leave it floating.
+      popover?.hideNow();
+      hoveredLink = undefined;
       const items = store.items();
       const seenKeys = new Set<string>();
       const nodes: HTMLElement[] = [];
@@ -375,6 +439,9 @@ export function createTranscriptView(
       }
 
       element.replaceChildren(...nodes);
+    },
+    dispose() {
+      popover?.dispose();
     },
   };
 }

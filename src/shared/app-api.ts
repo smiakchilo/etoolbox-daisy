@@ -28,6 +28,7 @@ import type {
   BrowserNavigationState,
   BrowserSwitchState,
   CertificateBlockedInfo,
+  OpenExternalRequest,
   ViewBounds,
 } from './browser-ipc';
 import type {
@@ -98,6 +99,12 @@ export interface DaisyBrowserApi {
   reload(): Promise<BrowserIpcVoidResult>;
   stop(): Promise<BrowserIpcVoidResult>;
   navigate(value: string): Promise<BrowserIpcVoidResult>;
+  /**
+   * Opens a validated absolute http(s) URL in the OS default browser. Used for
+   * a transcript link whose origin is not a configured AEM host; main refuses
+   * any other scheme.
+   */
+  openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult>;
   switchServer(serverId: string): Promise<BrowserIpcVoidResult>;
   /** Fire-and-forget: reports the renderer's `.browser-view-host` bounds. Never awaited. */
   setViewBounds(bounds: ViewBounds): void;

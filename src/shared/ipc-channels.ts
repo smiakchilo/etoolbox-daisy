@@ -78,6 +78,8 @@ export const BROWSER_GO_BACK_CHANNEL = 'browser:go-back' as const;
 export const BROWSER_GO_FORWARD_CHANNEL = 'browser:go-forward' as const;
 export const BROWSER_RELOAD_CHANNEL = 'browser:reload' as const;
 export const BROWSER_NAVIGATE_CHANNEL = 'browser:navigate' as const;
+/** Opens an absolute http(s) URL in the OS default browser (a transcript link whose origin is not a configured host). */
+export const BROWSER_OPEN_EXTERNAL_CHANNEL = 'browser:open-external' as const;
 export const BROWSER_SET_VIEW_BOUNDS_CHANNEL = 'browser:set-view-bounds' as const;
 export const BROWSER_SWITCH_SERVER_CHANNEL = 'browser:switch-server' as const;
 /** Stops any in-flight load in the AEM view (the toolbar's Refresh/Stop control). */

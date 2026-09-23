@@ -93,6 +93,17 @@ export function createAemSession(options: AemSessionOptions = {}): AemSession {
   const aemSession = session.fromPartition(AEM_SESSION_PARTITION);
   const certificateStore = createCertificateExceptionStore(aemSession);
 
+  // The AEM pane is for reading and previewing, never for saving files (owner
+  // decision: a DAM asset link is "a preview experience - not downloaded or
+  // offered to download"). A top-level navigation to a type Chromium cannot
+  // display - a `.zip`, or any `Content-Disposition: attachment` response -
+  // would otherwise silently start a download, so every download on this
+  // session is cancelled.
+  aemSession.on('will-download', (event) => {
+    options.logger?.info('AEM_DOWNLOAD_BLOCKED');
+    event.preventDefault();
+  });
+
   aemSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
     if (!shouldPersistSessionCookie(cookie, removed)) return;
     const details = buildPersistCookieDetails(cookie, Date.now());

@@ -429,16 +429,12 @@ describe('createChatPane status push', () => {
       activeOrigin: 'https://author.example',
     });
     const anchor = pane.element.querySelector('a[data-daisy-link]');
-    expect(anchor?.getAttribute('href')).toBe(
-      'https://author.example/editor.html/content/site/en/page.html',
-    );
+    expect(anchor?.getAttribute('href')).toBe('https://author.example/content/site/en/page.html');
 
     anchor?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
     await flush();
 
-    expect(navigate).toHaveBeenCalledWith(
-      'https://author.example/editor.html/content/site/en/page.html',
-    );
+    expect(navigate).toHaveBeenCalledWith('https://author.example/content/site/en/page.html');
 
     pane.dispose();
   });

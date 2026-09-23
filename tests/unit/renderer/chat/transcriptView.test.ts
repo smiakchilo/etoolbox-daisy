@@ -15,7 +15,7 @@ import {
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import { createTranscriptView } from '../../../../src/renderer/src/chat/transcriptView';
 import { createMarkdownRenderer } from '../../../../src/renderer/src/chat/renderMarkdown';
-import type { LinkContext } from '../../../../src/renderer/src/chat/aemLinkTargets';
+import type { LinkContext } from '../../../../src/renderer/src/chat/linkTargets';
 
 // See `composer.test.ts` for why a jsdom document is installed onto
 // `globalThis`: `transcriptView.ts` builds its DOM through the same `el()`
@@ -429,10 +429,13 @@ describe('createTranscriptView - openable message links', () => {
 
   function renderMessage(
     content: string,
-    onOpenLink: (url: string) => void,
+    handlers: {
+      onOpenLink?: (url: string) => void;
+      onOpenExternal?: (url: string) => void;
+    } = {},
     getLinkContext: () => LinkContext = () => activeContext,
   ): HTMLElement {
-    const view = createTranscriptView(markdownRenderer, { getLinkContext, onOpenLink });
+    const view = createTranscriptView(markdownRenderer, { getLinkContext, ...handlers });
     const store = createTranscriptStore();
     store.applyEvent(completed(0, content));
     view.repaint(store);
@@ -445,42 +448,47 @@ describe('createTranscriptView - openable message links', () => {
     return event;
   }
 
-  it('routes a click on an AEM page link to onOpenLink with its edit-mode URL, and prevents the default', () => {
+  it('routes a click on an AEM page link to onOpenLink with its rendered URL, and prevents the default', () => {
     const onOpenLink = vi.fn<(url: string) => void>();
-    const element = renderMessage('[Page](/content/site/en/page)', onOpenLink);
+    const element = renderMessage('[Page](/content/site/en/page)', { onOpenLink });
     const anchor = element.querySelector('a[data-daisy-link]');
     expect(anchor).not.toBeNull();
 
     const event = click(anchor!);
 
-    expect(onOpenLink).toHaveBeenCalledWith(`${AUTHOR}/editor.html/content/site/en/page.html`);
+    expect(onOpenLink).toHaveBeenCalledWith(`${AUTHOR}/content/site/en/page.html`);
     expect(event.defaultPrevented).toBe(true);
   });
 
   it('opens a bare AEM path wrapped in prose', () => {
     const onOpenLink = vi.fn<(url: string) => void>();
-    const element = renderMessage('Look at /content/site/en/page', onOpenLink);
+    const element = renderMessage('Look at /content/site/en/page', { onOpenLink });
 
     click(element.querySelector('a[data-daisy-link]')!);
 
-    expect(onOpenLink).toHaveBeenCalledWith(`${AUTHOR}/editor.html/content/site/en/page.html`);
+    expect(onOpenLink).toHaveBeenCalledWith(`${AUTHOR}/content/site/en/page.html`);
   });
 
-  it('does not intercept an external link', () => {
+  it('routes an external link to onOpenExternal, not the pane', () => {
     const onOpenLink = vi.fn<(url: string) => void>();
-    const element = renderMessage('[E](https://other.example/x)', onOpenLink);
-    const anchor = element.querySelector('a');
+    const onOpenExternal = vi.fn<(url: string) => void>();
+    const element = renderMessage('[E](https://other.example/x)', {
+      onOpenLink,
+      onOpenExternal,
+    });
+    const anchor = element.querySelector('a[data-daisy-external]');
     expect(anchor).not.toBeNull();
 
     const event = click(anchor!);
 
+    expect(onOpenExternal).toHaveBeenCalledWith('https://other.example/x');
     expect(onOpenLink).not.toHaveBeenCalled();
-    expect(event.defaultPrevented).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('renders a bare path as plain text (no anchor) until a host is active', () => {
     const onOpenLink = vi.fn<(url: string) => void>();
-    const element = renderMessage('Look at /content/site/en/page', onOpenLink, () => ({
+    const element = renderMessage('Look at /content/site/en/page', { onOpenLink }, () => ({
       hostOrigins: [AUTHOR],
       activeOrigin: undefined,
     }));

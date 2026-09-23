@@ -263,11 +263,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run verify` → 2168 passed / 14 skipped**;
-**Playwright → 74 tests** (includes `message-links.spec.ts`, the assistant
-message-link case). (The Session "Authentication"/"Models" → "Agents" tab merge
-moved the unit baseline from 1658, and later work moved it on — see
-`docs/verification.md`, whose latest section records 2168/14.)
+Current baseline: **`npm run test` → 2210 passed / 14 skipped**;
+**Playwright → 77 tests** (includes `message-links.spec.ts`, the assistant
+message-link case, now 4 tests covering the Edit/CRX hover popover and the
+external-browser path). (The Session "Authentication"/"Models" → "Agents" tab
+merge moved the unit baseline from 1658, and later work moved it on — see
+`docs/verification.md`.) **`npm run verify` is currently red on one unrelated,
+untracked WIP file**, `src/shared/tools/aemCreatePage.ts`, which is not
+registered in `src/shared/tools/index.ts`; every other file typechecks.
 The repository now has **commits** (HEAD `eab74e6`), so `git status`/`git log`
 work again; the older "zero commits" notes are stale. One **pre-existing,
 non-flaky** E2E failure remains: `step06-aem-bridge.spec.ts` test 2 asserts an
