@@ -217,6 +217,22 @@ describe('FakeAgentService - every scripted scenario is a legal event sequence',
         { kind: 'delta', text: 'done.' },
       ],
     },
+    'reasoning before and between tool calls': {
+      steps: [
+        { kind: 'reasoning', text: 'I should look this up.\n' },
+        { kind: 'reasoning', text: 'Let me query AEM.' },
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'aem_get_json',
+            arguments: { path: '/a' },
+            decision: { kind: 'approved', outcome: { ok: true, data: 1 } },
+          },
+        },
+        { kind: 'reasoning', text: 'That answered it.' },
+        { kind: 'delta', text: 'Done.' },
+      ],
+    },
   };
 
   for (const [name, turn] of Object.entries(scenarios)) {
@@ -236,6 +252,58 @@ describe('FakeAgentService - every scripted scenario is a legal event sequence',
       expect(finalStatus.state).toBe('idle');
     });
   }
+});
+
+describe('FakeAgentService - reasoning steps', () => {
+  it('closes one reasoning block per contiguous run, with deltas then a completed event', async () => {
+    const ids = counterIdGenerator();
+    const fake = createFakeAgentService();
+    const events: AgentEvent[] = [];
+    fake.onEvent((event) => events.push(event));
+    const chatId = newChatId(ids);
+    await fake.openConversation({ chatId });
+    fake.scriptNextResponse({
+      steps: [
+        { kind: 'reasoning', text: 'first ' },
+        { kind: 'reasoning', text: 'block' },
+        { kind: 'delta', text: 'answer' },
+        { kind: 'reasoning', text: 'second block' },
+      ],
+    });
+    await fake.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
+    fake.flush();
+
+    const reasoning = events.filter((event) => event.type.startsWith('assistant.reasoning'));
+    expect(reasoning.map((event) => event.type)).toEqual([
+      'assistant.reasoning.delta',
+      'assistant.reasoning.delta',
+      'assistant.reasoning.completed',
+      'assistant.reasoning.delta',
+      'assistant.reasoning.completed',
+    ]);
+    // Two contiguous runs -> two distinct reasoning ids.
+    const idsUsed = new Set(
+      reasoning.map((event) => (event as { reasoningId?: string }).reasoningId),
+    );
+    expect(idsUsed.size).toBe(2);
+    const completed = reasoning.filter((event) => event.type === 'assistant.reasoning.completed');
+    expect(completed[0]).toMatchObject({ content: 'first block' });
+    expect(completed[1]).toMatchObject({ content: 'second block' });
+  });
+
+  it('rejects an empty reasoning step', async () => {
+    const ids = counterIdGenerator();
+    const fake = createFakeAgentService();
+    const chatId = newChatId(ids);
+    await fake.openConversation({ chatId });
+    fake.scriptNextResponse({ steps: [{ kind: 'reasoning', text: '' }] });
+
+    // `buildTurnPlan` runs synchronously inside `sendPrompt`, so the invalid
+    // script throws before a promise is ever returned.
+    expect(() => fake.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' })).toThrow(
+      /empty reasoning step/,
+    );
+  });
 });
 
 describe('FakeAgentService - abort', () => {

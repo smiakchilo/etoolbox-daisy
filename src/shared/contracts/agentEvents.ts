@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   chatIdSchema,
   messageIdSchema,
+  reasoningIdSchema,
   toolCallIdSchema,
   turnIdSchema,
   type ChatId,
@@ -21,7 +22,7 @@ import { toolErrorSchema, type ToolError } from './errors';
  * requirements-decisions.md section 2 forbids for anything beyond content
  * the user already has access to, and (b) couple every consumer to an SDK
  * version instead of to this module. So every event below is a deliberately
- * narrow, hand-picked projection: nine variants, each a `.strict()` object of
+ * narrow, hand-picked projection: eleven variants, each a `.strict()` object of
  * named fields, with no `unknown`/`Record<string, unknown>` escape hatch
  * anywhere in the tree. If a caller wants something this module does not
  * expose, that is a decision to revisit here, not a reason to reach past it.
@@ -163,6 +164,46 @@ const assistantMessageCompletedEventSchema = z
   })
   .strict();
 
+/**
+ * One incremental chunk of extended-thinking (reasoning) text for a block
+ * identified by `reasoningId`. Mirrors `assistant.text.delta`'s INCREMENTAL
+ * contract: chunks accumulate, they do not replace. `delta` is non-empty for
+ * the same reason `assistant.text.delta.delta` is.
+ *
+ * The SDK marks the corresponding `assistant.reasoning_delta` event
+ * `ephemeral: true` ("transient and not persisted to the session event log on
+ * disk", docs/compatibility.md section 6), and this application extends that
+ * rule to its own journal: neither reasoning variant is ever written to the
+ * chat journal (`chatJournal.ts`), so reasoning is displayed in the moment
+ * and then disappears rather than accumulating as durable history.
+ */
+const assistantReasoningDeltaEventSchema = z
+  .object({
+    type: z.literal('assistant.reasoning.delta'),
+    ...baseEventFields,
+    turnId: turnIdSchema,
+    reasoningId: reasoningIdSchema,
+    delta: z.string().min(1),
+  })
+  .strict();
+
+/**
+ * The complete text of one reasoning block, the counterpart of
+ * `assistant.message.completed` for the reasoning stream. `content` is
+ * authoritative and REPLACES the block's folded deltas. Its arrival means the
+ * block has ended, which is what erases the transient "Thinking" billet in the
+ * transcript - see `transcriptStore.ts`.
+ */
+const assistantReasoningCompletedEventSchema = z
+  .object({
+    type: z.literal('assistant.reasoning.completed'),
+    ...baseEventFields,
+    turnId: turnIdSchema,
+    reasoningId: reasoningIdSchema,
+    content: z.string(),
+  })
+  .strict();
+
 const toolCallRequestedEventSchema = z
   .object({
     type: z.literal('tool.call.requested'),
@@ -172,7 +213,6 @@ const toolCallRequestedEventSchema = z
     arguments: toolArgumentsSchema,
   })
   .strict();
-
 const toolCallApprovedEventSchema = z
   .object({
     type: z.literal('tool.call.approved'),
@@ -245,6 +285,8 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   assistantMessageStartedEventSchema,
   assistantTextDeltaEventSchema,
   assistantMessageCompletedEventSchema,
+  assistantReasoningDeltaEventSchema,
+  assistantReasoningCompletedEventSchema,
   toolCallRequestedEventSchema,
   toolCallApprovedEventSchema,
   toolCallRejectedEventSchema,
@@ -257,6 +299,10 @@ export type AgentEvent = z.infer<typeof agentEventSchema>;
 export type AssistantMessageStartedEvent = z.infer<typeof assistantMessageStartedEventSchema>;
 export type AssistantTextDeltaEvent = z.infer<typeof assistantTextDeltaEventSchema>;
 export type AssistantMessageCompletedEvent = z.infer<typeof assistantMessageCompletedEventSchema>;
+export type AssistantReasoningDeltaEvent = z.infer<typeof assistantReasoningDeltaEventSchema>;
+export type AssistantReasoningCompletedEvent = z.infer<
+  typeof assistantReasoningCompletedEventSchema
+>;
 export type ToolCallRequestedEvent = z.infer<typeof toolCallRequestedEventSchema>;
 export type ToolCallApprovedEvent = z.infer<typeof toolCallApprovedEventSchema>;
 export type ToolCallRejectedEvent = z.infer<typeof toolCallRejectedEventSchema>;

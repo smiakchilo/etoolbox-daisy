@@ -135,6 +135,9 @@ const CHAT_STATUS_BANNER = '.chat-status-banner';
 const COMPOSER_FIELD = '.chat-composer textarea';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
 const THINKING = '.chat-message--thinking';
+const THINKING_TOGGLE = '.chat-message__thinking-toggle';
+const THINKING_LINE = '.chat-message__thinking-line';
+const THINKING_BODY = '.chat-message__thinking-body';
 
 async function waitForComposerReady(shell: Page): Promise<void> {
   await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
@@ -210,6 +213,43 @@ test.describe('transcript thinking indicator', () => {
     await expect(shell.locator(ASSISTANT_MESSAGE).last()).toHaveText('Hello');
 
     // Still gone after the turn completes.
+    await flushFake(app);
+    await expect(thinking).toHaveCount(0);
+  });
+
+  test('shows streamed reasoning in an expandable billet, then erases it when the block ends', async () => {
+    await scriptTurn(app, {
+      steps: [{ kind: 'reasoning', text: 'first thought\nsecond thought' }],
+    });
+    await sendViaComposer(shell, 'reason about it');
+
+    const thinking = shell.locator(THINKING);
+    await expect(thinking).toBeVisible();
+    // Nothing to expand yet: the toggle is inert until reasoning arrives.
+    await expect(shell.locator(THINKING_TOGGLE)).toBeDisabled();
+
+    // `assistant.message.started` - still no reasoning.
+    await advanceFakeTimes(app, 1);
+    await expect(shell.locator(THINKING_TOGGLE)).toBeDisabled();
+
+    // The reasoning delta: the rolling line shows the LAST line, and the
+    // billet becomes expandable.
+    await advanceFakeTimes(app, 1);
+    await expect(shell.locator(THINKING_LINE)).toHaveText('second thought');
+    await expect(shell.locator(THINKING_TOGGLE)).toBeEnabled();
+
+    // Expanding reveals the whole block, preserving the model's line breaks.
+    await shell.locator(THINKING_TOGGLE).click();
+    await expect(shell.locator(THINKING_BODY)).toBeVisible();
+    await expect(shell.locator(THINKING_BODY)).toHaveText('first thought\nsecond thought');
+
+    // `assistant.reasoning.completed`: the transient text is erased while the
+    // plain indicator remains until the turn produces its final message.
+    await advanceFakeTimes(app, 1);
+    await expect(shell.locator(THINKING_LINE)).toHaveText('');
+    await expect(shell.locator(THINKING_BODY)).toBeHidden();
+    await expect(shell.locator(THINKING_TOGGLE)).toBeDisabled();
+
     await flushFake(app);
     await expect(thinking).toHaveCount(0);
   });

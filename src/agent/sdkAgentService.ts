@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import type { SessionConfig, SessionEvent, Tool, ToolInvocation } from '@github/copilot-sdk';
+import type {
+  ReasoningSummary,
+  SessionConfig,
+  SessionEvent,
+  Tool,
+  ToolInvocation,
+} from '@github/copilot-sdk';
 
 import {
   type AgentEvent,
@@ -27,6 +33,7 @@ import {
   renderFoldedText,
   renderToolResultForModel,
   type Result,
+  reasoningIdSchema,
   type SdkSessionId,
   sdkSessionIdSchema,
   type SessionStatus,
@@ -229,6 +236,21 @@ export interface SdkAgentServiceOptions {
 type ReasoningEffort = NonNullable<SessionConfig['reasoningEffort']>;
 
 /**
+ * The reasoning-summary mode requested whenever a reasoning effort is
+ * configured, so the model emits readable thinking (`assistant.reasoning` /
+ * `assistant.reasoning_delta`) for the transcript's transient "Thinking"
+ * billet. `'concise'` rather than `'detailed'`: the collapsed billet shows one
+ * rolling line and the full text is only revealed on expansion, so a concise
+ * summary is enough and a detailed one would inflate a stream that is
+ * discarded the moment the block ends.
+ *
+ * Deliberately tied to `reasoningEffort` being set: a model the user runs at
+ * its own default reasoning level is left untouched, so this cannot change the
+ * behaviour of a preference the user did not express.
+ */
+const REASONING_SUMMARY: ReasoningSummary = 'concise';
+
+/**
  * A model choice and, optionally, the reasoning effort to run it at.
  *
  * `model: null` means "no preference" - not "the default model". The
@@ -268,12 +290,16 @@ function sameModelPreference(a: ModelPreference | undefined, b: ModelPreference)
 function modelSessionConfig(preference: ModelPreference): {
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  reasoningSummary?: ReasoningSummary;
 } {
   if (preference.model === null) return {};
   return {
     model: preference.model,
     ...(preference.reasoningEffort !== null
-      ? { reasoningEffort: preference.reasoningEffort as ReasoningEffort }
+      ? {
+          reasoningEffort: preference.reasoningEffort as ReasoningEffort,
+          reasoningSummary: REASONING_SUMMARY,
+        }
       : {}),
   };
 }
@@ -786,6 +812,31 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           });
           return;
         }
+        case 'assistant.reasoning_delta': {
+          if (currentTurn === undefined) return;
+          if (event.data.deltaContent.length === 0) return;
+          applyAndEmit({
+            type: 'assistant.reasoning.delta',
+            chatId,
+            sequence: nextSequence(chatId),
+            turnId: currentTurn.turnId,
+            reasoningId: reasoningIdSchema.parse(event.data.reasoningId),
+            delta: event.data.deltaContent,
+          });
+          return;
+        }
+        case 'assistant.reasoning': {
+          if (currentTurn === undefined) return;
+          applyAndEmit({
+            type: 'assistant.reasoning.completed',
+            chatId,
+            sequence: nextSequence(chatId),
+            turnId: currentTurn.turnId,
+            reasoningId: reasoningIdSchema.parse(event.data.reasoningId),
+            content: event.data.content,
+          });
+          return;
+        }
         case 'external_tool.requested': {
           if (currentTurn === undefined) return;
           const toolCallId = toolCallIdSchema.parse(event.data.toolCallId);
@@ -1036,7 +1087,10 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         try {
           await session.setModel(preference.model, {
             ...(preference.reasoningEffort !== null
-              ? { reasoningEffort: preference.reasoningEffort as ReasoningEffort }
+              ? {
+                  reasoningEffort: preference.reasoningEffort as ReasoningEffort,
+                  reasoningSummary: REASONING_SUMMARY,
+                }
               : {}),
           });
           appliedModelPreference = preference;

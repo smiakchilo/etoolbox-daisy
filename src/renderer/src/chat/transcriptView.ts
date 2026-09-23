@@ -8,7 +8,11 @@ import {
 } from './linkTargets';
 import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
-import { describeRequiredAction, describeToolCallStatus } from './transcriptViewModel';
+import {
+  describeRequiredAction,
+  describeToolCallStatus,
+  latestReasoningLine,
+} from './transcriptViewModel';
 import { describeToolCall } from './toolCallDetails';
 import { type QueryResultTable, readQueryResultTable } from './queryResultViewModel';
 import type { ToolCallView, TranscriptItem, TranscriptStore } from './transcriptStore';
@@ -222,6 +226,25 @@ function renderToolCallBody(
 }
 
 /**
+ * Whether `element`'s children are exactly `nodes`, in order and by identity.
+ *
+ * A repaint reuses each item's cached node and applies content changes in place
+ * (`updateShell`), so when the ordered list is unchanged there is nothing left
+ * for the DOM to do. Skipping `replaceChildren` in that case is not just an
+ * optimisation: re-inserting an already-mounted node detaches and re-attaches
+ * it, which restarts any CSS animation it contains. The thinking spinner
+ * visibly stuttered on every streamed reasoning delta because of exactly that.
+ */
+function hasSameChildren(element: HTMLElement, nodes: readonly HTMLElement[]): boolean {
+  const children = element.children;
+  if (children.length !== nodes.length) return false;
+  for (let index = 0; index < nodes.length; index += 1) {
+    if (children[index] !== nodes[index]) return false;
+  }
+  return true;
+}
+
+/**
  * Renders a `TranscriptStore`'s items into `element`.
  *
  * Each item gets one persistent DOM node, cached by `keyFor` and reused
@@ -247,6 +270,12 @@ export function createTranscriptView(
   // state would be discarded every tick. Only calls the reader has toggled
   // appear here - an absent entry means the default, collapsed.
   const expandedToolCalls = new Set<string>();
+  // Whether the transient "Thinking" billet is expanded. A single boolean,
+  // not a set: there is at most one such billet, it is erased when its
+  // reasoning block ends, and `updateShell` resets this to `false` whenever
+  // there is no reasoning text to expand - so a later block starts collapsed
+  // again (the default the reader expects).
+  let expandedThinking = false;
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
 
   // The one travelling hover popover for pane links that offer actions. It is
@@ -312,6 +341,32 @@ export function createTranscriptView(
     applyToolCallExpansion(shell, expanded);
   }
 
+  /**
+   * Applies the thinking billet's expansion state to an already-rendered shell.
+   * Mirrors `applyToolCallExpansion`, with the extra "nothing to expand" case:
+   * when the billet has no reasoning text the toggle is disabled and there is
+   * no chevron, so the row cannot be opened onto an empty body.
+   */
+  function applyThinkingExpansion(shell: HTMLElement, expanded: boolean): void {
+    shell.classList.toggle('chat-message--thinking--expanded', expanded);
+    const toggle = shell.querySelector('.chat-message__thinking-toggle');
+    if (toggle !== null) {
+      toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.setAttribute('title', expanded ? 'Hide reasoning' : 'Show reasoning');
+    }
+    const body = shell.querySelector<HTMLElement>('.chat-message__thinking-body');
+    if (body !== null) body.hidden = !expanded;
+  }
+
+  function toggleThinkingExpansion(toggle: Element): void {
+    if (toggle.hasAttribute('disabled')) return;
+    const shell = toggle.closest<HTMLElement>('.chat-message--thinking');
+    if (shell === null) return;
+    const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+    expandedThinking = expanded;
+    applyThinkingExpansion(shell, expanded);
+  }
+
   // One delegated listener, attached for the view's lifetime. A click on a
   // tool-call billet toggles its disclosure; otherwise it only acts on anchors
   // the markdown renderer stamped as openable (`data-daisy-link`), so an
@@ -325,6 +380,12 @@ export function createTranscriptView(
     if (toggle !== null) {
       event.preventDefault();
       toggleToolCallExpansion(toggle);
+      return;
+    }
+    const thinkingToggle = target?.closest?.('[data-thinking-toggle]') ?? null;
+    if (thinkingToggle !== null) {
+      event.preventDefault();
+      toggleThinkingExpansion(thinkingToggle);
       return;
     }
     const anchor =
@@ -350,22 +411,40 @@ export function createTranscriptView(
       case 'toolCall':
         return el('div', { attrs: { class: 'chat-tool-call' } });
       case 'thinking':
-        // Static content (spinner + label), built once here rather than in
-        // `updateShell`, so a repaint triggered by an unrelated tool event
-        // does not recreate the spinner and restart its animation.
+        // The whole structure (spinner, label, rolling line, chevron,
+        // expandable body) is built once here rather than in `updateShell`, so
+        // a repaint triggered by a streaming delta or an unrelated tool event
+        // does not recreate the spinner and restart its animation. Only text
+        // and visibility are updated per repaint.
         return el('div', {
           attrs: { class: 'chat-message chat-message--thinking' },
           children: [
-            // `label` is screen-reader-only here (the component renders only
-            // its track/fills plus a deprecated label slot); the visible text
-            // is the sibling span, so the two cannot duplicate.
-            el('sp-progress-circle', {
-              attrs: { size: 's', indeterminate: '', label: 'Thinking' },
+            el('button', {
+              attrs: {
+                type: 'button',
+                class: 'chat-message__thinking-toggle',
+                'data-thinking-toggle': '',
+                'aria-expanded': 'false',
+              },
+              children: [
+                // `label` is screen-reader-only here (the component renders
+                // only its track/fills plus a deprecated label slot); the
+                // visible text is the sibling span, so the two cannot
+                // duplicate.
+                el('sp-progress-circle', {
+                  attrs: { size: 's', indeterminate: '', label: 'Thinking' },
+                }),
+                el('span', {
+                  attrs: { class: 'chat-message__thinking-label' },
+                  text: 'Thinking',
+                }),
+                el('span', { attrs: { class: 'chat-message__thinking-line' } }),
+                el('sp-icon-chevron-down', {
+                  attrs: { class: 'chat-message__thinking-chevron', size: 's' },
+                }),
+              ],
             }),
-            el('span', {
-              attrs: { class: 'chat-message__thinking-label' },
-              text: 'Thinking\u2026',
-            }),
+            el('div', { attrs: { class: 'chat-message__thinking-body', hidden: '' } }),
           ],
         });
       default: {
@@ -399,9 +478,27 @@ export function createTranscriptView(
         shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
         return;
       }
-      case 'thinking':
-        // Nothing to update - see `createShell`'s thinking case.
+      case 'thinking': {
+        // The reasoning text is transient: `thinkingReasoning()` returns `""`
+        // once the block ends, which empties the rolling line and the body and
+        // collapses the billet - see `transcriptStore.ts`.
+        const reasoning = store.thinkingReasoning();
+        const line = shell.querySelector<HTMLElement>('.chat-message__thinking-line');
+        if (line !== null) line.textContent = latestReasoningLine(reasoning);
+        const body = shell.querySelector<HTMLElement>('.chat-message__thinking-body');
+        if (body !== null) body.textContent = reasoning;
+        const expandable = reasoning.length > 0;
+        // Nothing to expand: the row is inert (disabled toggle, no chevron)
+        // and any previous expansion is dropped so a later block starts
+        // collapsed again.
+        if (!expandable) expandedThinking = false;
+        const toggle = shell.querySelector<HTMLButtonElement>('.chat-message__thinking-toggle');
+        if (toggle !== null) toggle.disabled = !expandable;
+        const chevron = shell.querySelector<HTMLElement>('.chat-message__thinking-chevron');
+        if (chevron !== null) chevron.hidden = !expandable;
+        applyThinkingExpansion(shell, expandable && expandedThinking);
         return;
+      }
       default: {
         return item;
       }
@@ -418,10 +515,12 @@ export function createTranscriptView(
       const items = store.items();
       const seenKeys = new Set<string>();
       const nodes: HTMLElement[] = [];
+      let sawThinking = false;
 
       for (const item of items) {
         const key = keyFor(item);
         seenKeys.add(key);
+        if (item.kind === 'thinking') sawThinking = true;
         let shell = cache.get(key);
         if (shell === undefined) {
           shell = createShell(item);
@@ -431,6 +530,11 @@ export function createTranscriptView(
         nodes.push(shell);
       }
 
+      // The billet is gone entirely (its turn ended): drop any expansion so
+      // the next block starts collapsed. `updateShell` handles the case where
+      // the item is still present but has no reasoning text.
+      if (!sawThinking) expandedThinking = false;
+
       // Bounds the cache to the chat currently displayed - a stale node from
       // a since-closed/replaced conversation must not linger and be
       // resurrected if a future item happens to reuse its key.
@@ -438,7 +542,10 @@ export function createTranscriptView(
         if (!seenKeys.has(key)) cache.delete(key);
       }
 
-      element.replaceChildren(...nodes);
+      // Only touch the DOM when the ordered node list actually changed. See
+      // `hasSameChildren`: re-inserting unchanged nodes restarts their CSS
+      // animations, which made the thinking spinner stutter on every delta.
+      if (!hasSameChildren(element, nodes)) element.replaceChildren(...nodes);
     },
     dispose() {
       popover?.dispose();

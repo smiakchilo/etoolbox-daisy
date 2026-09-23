@@ -4,6 +4,7 @@ import type {
   IdGenerator,
   JsonValue,
   MessageId,
+  ReasoningId,
   RequiredAction,
   SdkSessionId,
   ToolCallId,
@@ -17,6 +18,7 @@ import {
   createToolError,
   err,
   newMessageId,
+  newReasoningId,
   newRequestId,
   newToolCallId,
   ok,
@@ -78,6 +80,20 @@ export interface ScriptedDeltaStep {
 }
 
 /**
+ * One chunk of extended-thinking text, delivered as an
+ * `assistant.reasoning.delta`. Consecutive `reasoning` steps form a single
+ * reasoning block; the block's `assistant.reasoning.completed` event (carrying
+ * the concatenation) is emitted as soon as a non-reasoning step follows, or at
+ * the turn's end - mirroring how the SDK closes a block before the model moves
+ * on to text or a tool call.
+ */
+export interface ScriptedReasoningStep {
+  readonly kind: 'reasoning';
+  /** Must be non-empty - `assistant.reasoning.delta.delta` is `min(1)` (agentEvents.ts). */
+  readonly text: string;
+}
+
+/**
  * The outcome a scripted tool call reports once "executed". Modelled after
  * `tool.result`'s own `{ ok: true, data } | { ok: false, error }` shape
  * (`toolResultEventSchema`, agentEvents.ts), except the failure arm here
@@ -113,7 +129,9 @@ export interface ScriptedToolCall {
 
 /** One step of a scripted turn, emitted in the order the script lists them. */
 export type ScriptedStep =
-  ScriptedDeltaStep | { readonly kind: 'toolCall'; readonly call: ScriptedToolCall };
+  | ScriptedDeltaStep
+  | ScriptedReasoningStep
+  | { readonly kind: 'toolCall'; readonly call: ScriptedToolCall };
 
 /**
  * A full scripted response to one `sendPrompt` call.
@@ -356,6 +374,38 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     };
   }
 
+  function makeReasoningDeltaEvent(
+    chatId: ChatId,
+    turnId: TurnId,
+    reasoningId: ReasoningId,
+    delta: string,
+  ): AgentEvent {
+    return {
+      type: 'assistant.reasoning.delta',
+      chatId,
+      sequence: nextSequence(chatId),
+      turnId,
+      reasoningId,
+      delta,
+    };
+  }
+
+  function makeReasoningCompletedEvent(
+    chatId: ChatId,
+    turnId: TurnId,
+    reasoningId: ReasoningId,
+    content: string,
+  ): AgentEvent {
+    return {
+      type: 'assistant.reasoning.completed',
+      chatId,
+      sequence: nextSequence(chatId),
+      turnId,
+      reasoningId,
+      content,
+    };
+  }
+
   function makeMessageCompletedEvent(
     chatId: ChatId,
     turnId: TurnId,
@@ -458,7 +508,34 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     queue.push(makeMessageStartedEvent(chatId, turnId, messageId));
 
     const deltaTexts: string[] = [];
+    let activeReasoningId: ReasoningId | undefined;
+    let reasoningText = '';
+
+    /** Closes the current reasoning block, if any, with its completed event. */
+    function closeReasoningBlock(): void {
+      if (activeReasoningId === undefined) return;
+      queue.push(makeReasoningCompletedEvent(chatId, turnId, activeReasoningId, reasoningText));
+      activeReasoningId = undefined;
+      reasoningText = '';
+    }
+
     for (const step of steps) {
+      if (step.kind === 'reasoning') {
+        if (step.text.length === 0) {
+          throw new Error(
+            'ScriptedTurn contains an empty reasoning step; assistant.reasoning.delta.delta ' +
+              'must be non-empty (agentEvents.ts).',
+          );
+        }
+        activeReasoningId ??= newReasoningId(idGenerator);
+        reasoningText += step.text;
+        queue.push(makeReasoningDeltaEvent(chatId, turnId, activeReasoningId, step.text));
+        continue;
+      }
+      // Any non-reasoning step ends the block that preceded it, exactly as the
+      // SDK closes a reasoning block before the model produces text or calls a
+      // tool.
+      closeReasoningBlock();
       if (step.kind === 'delta') {
         if (step.text.length === 0) {
           throw new Error(
@@ -479,6 +556,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
         queue.push(makeToolRejectedEvent(chatId, toolCallId, step.call.decision.reason));
       }
     }
+    closeReasoningBlock();
 
     const finalContent = turn.finalContentOverride ?? deltaTexts.join('');
     queue.push(makeMessageCompletedEvent(chatId, turnId, messageId, finalContent));

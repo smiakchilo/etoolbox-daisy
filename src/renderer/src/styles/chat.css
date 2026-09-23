@@ -54,19 +54,96 @@
   background: var(--spectrum-gray-200, #ebebeb);
 }
 
-/* The trailing "Thinking" indicator shown while a turn is in flight and has
-   not produced text yet (transcriptStore.ts's `setTurnInFlight`). Same
-   surface as an assistant message, with the spinner prepended inline. */
+/* The transient "Thinking" billet: a borderless disclosure row shown while a
+   turn is in flight. It has no surface of its own - no border, no background
+   and no hover background - so it reads as transcript metadata rather than a
+   message bubble, matching the tool-call billet. Collapsed it is a spinner,
+   the word "Thinking" and one rolling line of the model's reasoning; expanded
+   it reveals the whole block. The billet is erased when its reasoning block
+   ends (transcriptStore.ts), so it never accumulates into the conversation. */
 .chat-message--thinking {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--spectrum-gray-100, #f5f5f5);
+  padding: 0 4px;
+  background: transparent;
   color: var(--spectrum-gray-700, #4b4b4b);
 }
 
+/* The whole row is the toggle. A real <button> reset, but with no background
+   in any state, hover included. */
+.chat-message__thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-message__thinking-toggle:disabled {
+  cursor: default;
+}
+
+.chat-message__thinking-toggle:focus-visible {
+  outline: 2px solid var(--spectrum-accent-background-color-default, #0265dc);
+  outline-offset: 1px;
+}
+
 .chat-message__thinking-label {
+  flex: 0 0 auto;
   font-size: 13px;
+  font-weight: 600;
+}
+
+/* The one-line rolling view of the reasoning. It flexes and ellipsises so a
+   long thought cannot push the chevron off the row. */
+.chat-message__thinking-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+.chat-message__thinking-chevron {
+  flex: 0 0 auto;
+  color: var(--spectrum-gray-600, #6e6e6e);
+  transition: transform 0.13s ease-in-out;
+}
+
+/* Explicit, because a component's own `:host` display can outrank the UA
+   `[hidden]` rule. */
+.chat-message__thinking-chevron[hidden] {
+  display: none;
+}
+
+.chat-message--thinking--expanded .chat-message__thinking-chevron {
+  transform: rotate(180deg);
+}
+
+/* The full reasoning text, revealed on expansion. `pre-wrap` preserves the
+   model's own line breaks; the text is set with `textContent`, never parsed
+   as markup (it is model-authored). Capped and scrollable so a long block
+   cannot take over the transcript. */
+.chat-message__thinking-body {
+  padding: 2px 6px 8px 32px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+/* A class rule would otherwise outrank the UA `[hidden]` rule. */
+.chat-message__thinking-body[hidden] {
+  display: none;
 }
 
 /* Rendered by transcriptView.ts from marked + DOMPurify output (see

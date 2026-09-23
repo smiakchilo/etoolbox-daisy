@@ -55,6 +55,8 @@ export type TurnId = Branded<'TurnId'>;
 export type MessageId = Branded<'MessageId'>;
 /** A single tool invocation requested by the agent. */
 export type ToolCallId = Branded<'ToolCallId'>;
+/** One extended-thinking (reasoning) block emitted by the model within a turn. */
+export type ReasoningId = Branded<'ReasoningId'>;
 /** One application-issued AEM request, used end to end for correlation. */
 export type RequestId = Branded<'RequestId'>;
 /**
@@ -75,6 +77,7 @@ export const sdkSessionIdSchema = brandedSchema<SdkSessionId>('sdkSessionId');
 export const turnIdSchema = brandedSchema<TurnId>('turnId');
 export const messageIdSchema = brandedSchema<MessageId>('messageId');
 export const toolCallIdSchema = brandedSchema<ToolCallId>('toolCallId');
+export const reasoningIdSchema = brandedSchema<ReasoningId>('reasoningId');
 export const requestIdSchema = brandedSchema<RequestId>('requestId');
 export const agentIdSchema = brandedSchema<AgentId>('agentId');
 
@@ -108,5 +111,7 @@ export const newMessageId = (generate: IdGenerator): MessageId =>
   mint(messageIdSchema, generate, 'messageId');
 export const newToolCallId = (generate: IdGenerator): ToolCallId =>
   mint(toolCallIdSchema, generate, 'toolCallId');
+export const newReasoningId = (generate: IdGenerator): ReasoningId =>
+  mint(reasoningIdSchema, generate, 'reasoningId');
 export const newRequestId = (generate: IdGenerator): RequestId =>
   mint(requestIdSchema, generate, 'requestId');

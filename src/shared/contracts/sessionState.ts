@@ -256,6 +256,8 @@ function nextStreamStateForEvent(
       return event.state;
     case 'assistant.text.delta':
     case 'assistant.message.completed':
+    case 'assistant.reasoning.delta':
+    case 'assistant.reasoning.completed':
     case 'tool.call.approved':
       return current;
     default: {

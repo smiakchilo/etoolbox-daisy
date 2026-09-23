@@ -171,6 +171,33 @@ describe('full lifecycle: idle -> sending -> streaming -> runningTool -> streami
   });
 });
 
+describe('reasoning is a state-neutral stream', () => {
+  it('leaves the stream state unchanged for both reasoning variants, from any in-flight state', () => {
+    const reasoningDelta = event({
+      type: 'assistant.reasoning.delta',
+      turnId: 'turn-1',
+      reasoningId: 'reason-1',
+      delta: 'thinking',
+      sequence: 1,
+    });
+    const reasoningCompleted = event({
+      type: 'assistant.reasoning.completed',
+      turnId: 'turn-1',
+      reasoningId: 'reason-1',
+      content: 'thinking',
+      sequence: 2,
+    });
+
+    for (const state of ['sending', 'streaming', 'runningTool'] as const) {
+      for (const reasoningEvent of [reasoningDelta, reasoningCompleted]) {
+        const applied = applyAgentEvent(idleStatus({ state }), reasoningEvent);
+        expect(applied.ok).toBe(true);
+        if (applied.ok) expect(applied.value.state).toBe(state);
+      }
+    }
+  });
+});
+
 describe('full lifecycle: idle -> sending -> runningTool -> streaming -> idle (a turn whose first activity is a tool call)', () => {
   it('accepts a tool call with no preceding assistant.message.started', () => {
     let status = idleStatus();

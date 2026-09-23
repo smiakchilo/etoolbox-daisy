@@ -3,6 +3,7 @@ import type {
   AgentEvent,
   JsonValue,
   MessageId,
+  ReasoningId,
   ToolCallId,
   ToolError,
   TurnId,
@@ -60,14 +61,25 @@ export interface TranscriptStore {
   /** The current view of one tool call, or `undefined` if `toolCallId` has not been observed. */
   toolCallFor(toolCallId: ToolCallId): ToolCallView | undefined;
   /**
+   * The reasoning text of the transient "Thinking" billet, or `""` when none
+   * is being shown. Reasoning never becomes a transcript item of its own - the
+   * `thinking` item carries no text - so this is the view's only way to read
+   * it. It deliberately returns `""` the moment the block ends (see
+   * `applyEvent`), which is what makes the billet disappear rather than
+   * accumulate as durable history.
+   */
+  thinkingReasoning(): string;
+  /**
    * Marks whether a turn is currently in flight. The transcript shows a
-   * trailing `thinking` item while this is `true` AND the current turn has
-   * not yet produced any assistant text - the moment the first
-   * `assistant.text.delta`/`assistant.message.completed` arrives, the
-   * indicator disappears for the rest of the turn even though the turn is
-   * still running. Callers should drive this from the same state the
-   * composer's Stop button uses (`composerViewModel.ts`'s
-   * `isTurnInFlight`), so the two can never disagree.
+   * trailing `thinking` item while this is `true` AND either the current turn
+   * has not yet produced any assistant text - the moment the first
+   * `assistant.text.delta`/`assistant.message.completed` arrives, the plain
+   * indicator disappears for the rest of the turn - or a reasoning block is
+   * being streamed (`assistant.reasoning.delta`), which can bring the item
+   * back with a rolling line even after text has appeared. Callers should
+   * drive this from the same state the composer's Stop button uses
+   * (`composerViewModel.ts`'s `isTurnInFlight`), so the two can never
+   * disagree.
    */
   setTurnInFlight(inFlight: boolean): void;
   /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
@@ -101,10 +113,36 @@ export function createTranscriptStore(
   // first text event for that turn.
   let awaitingAssistantText = false;
   let turnInFlight = false;
+  // The reasoning block currently being shown, if any. `activeReasoningId`
+  // identifies the block (a delta for a different id starts a new one);
+  // `reasoningText` is its accumulated text. Both are cleared the moment the
+  // block ends - see `endReasoningBlock` - so reasoning never survives its
+  // block.
+  let activeReasoningId: ReasoningId | undefined;
+  let reasoningText = '';
 
-  /** The trailing "Thinking" indicator is visible exactly while both are true. */
+  /**
+   * The trailing "Thinking" billet is visible while a turn is in flight and
+   * either no assistant text has arrived yet (the plain spinner + label) or a
+   * reasoning block is being streamed (spinner + label + one rolling line).
+   * The reasoning arm is what lets a later block reappear after an earlier one
+   * ended, even though the turn has already produced text.
+   */
   function thinkingVisible(): boolean {
-    return turnInFlight && awaitingAssistantText;
+    return turnInFlight && (awaitingAssistantText || reasoningText.length > 0);
+  }
+
+  /**
+   * Ends the current reasoning block, discarding its text. Called when the
+   * block's own `assistant.reasoning.completed` arrives, and when the
+   * assistant moves on to text or a tool call - either way the block is over,
+   * so the transient billet must not linger.
+   */
+  function endReasoningBlock(): void {
+    if (activeReasoningId === undefined && reasoningText === '') return;
+    activeReasoningId = undefined;
+    reasoningText = '';
+    dirty = true;
   }
 
   function setAwaitingAssistantText(next: boolean): void {
@@ -154,9 +192,29 @@ export function createTranscriptStore(
           if (currentTurnId === undefined || event.turnId === currentTurnId) {
             setAwaitingAssistantText(false);
           }
+          // The assistant moving on to real output also ends any reasoning
+          // block still on screen.
+          endReasoningBlock();
           ensureMessageItem(event.messageId);
           return;
+        case 'assistant.reasoning.delta':
+          if (activeReasoningId === event.reasoningId) {
+            reasoningText += event.delta;
+          } else {
+            // A delta for a different block id starts a new block; the previous
+            // one is over by definition.
+            activeReasoningId = event.reasoningId;
+            reasoningText = event.delta;
+          }
+          dirty = true;
+          return;
+        case 'assistant.reasoning.completed':
+          if (activeReasoningId === event.reasoningId) endReasoningBlock();
+          return;
         case 'tool.call.requested':
+          // A tool call ends the reasoning block that preceded it, exactly as
+          // assistant text does.
+          endReasoningBlock();
           ensureToolCallItem(event.toolCallId);
           toolCalls.set(event.toolCallId, {
             toolCallId: event.toolCallId,
@@ -227,6 +285,9 @@ export function createTranscriptStore(
     toolCallFor(toolCallId) {
       return toolCalls.get(toolCallId);
     },
+    thinkingReasoning() {
+      return thinkingVisible() ? reasoningText : '';
+    },
     takeDirty() {
       // `messageStream`'s own dirty flag must always be read (it clears on
       // read), even once this store already knows it is dirty for its own
@@ -253,6 +314,8 @@ export function createTranscriptStore(
       currentTurnId = undefined;
       awaitingAssistantText = false;
       turnInFlight = false;
+      activeReasoningId = undefined;
+      reasoningText = '';
       messageStream.clear();
       if (hadContent) dirty = true;
     },

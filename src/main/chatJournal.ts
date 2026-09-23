@@ -307,6 +307,18 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         droppedRecordCount += 1;
         return;
       }
+      // Reasoning is transient by contract: it is shown in the moment and then
+      // discarded, never accumulated as durable history (see `agentEvents.ts`'s
+      // reasoning variants and docs/compatibility.md section 6 - the SDK marks
+      // the deltas `ephemeral`). Returning before the turn bookkeeping below
+      // also means a reasoning block can never flush a pending prompt on its
+      // own; the turn's first non-reasoning event does that instead.
+      if (
+        event.type === 'assistant.reasoning.delta' ||
+        event.type === 'assistant.reasoning.completed'
+      ) {
+        return;
+      }
       const turnId = 'turnId' in event ? event.turnId : undefined;
       if (turnId !== undefined) {
         state.currentTurnId = turnId;

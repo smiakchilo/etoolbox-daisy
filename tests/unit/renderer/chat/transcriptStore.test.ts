@@ -3,11 +3,13 @@ import {
   agentEventSchema,
   chatIdSchema,
   messageIdSchema,
+  reasoningIdSchema,
   requestIdSchema,
   toolCallIdSchema,
   turnIdSchema,
   type AgentEvent,
   type MessageId,
+  type ReasoningId,
   type ToolCallId,
   type TurnId,
 } from '../../../../src/shared';
@@ -17,6 +19,7 @@ const chatId = chatIdSchema.parse('chat-1');
 const turnId: TurnId = turnIdSchema.parse('turn-1');
 const messageId: MessageId = messageIdSchema.parse('msg-1');
 const toolCallId: ToolCallId = toolCallIdSchema.parse('call-1');
+const reasoningId: ReasoningId = reasoningIdSchema.parse('reason-1');
 const requestId = requestIdSchema.parse('req-1');
 
 function messageStarted(sequence: number): AgentEvent {
@@ -47,6 +50,36 @@ function completed(sequence: number, content: string): AgentEvent {
     sequence,
     turnId,
     messageId,
+    content,
+  });
+}
+
+function reasoningDelta(
+  sequence: number,
+  deltaText: string,
+  id: ReasoningId = reasoningId,
+): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'assistant.reasoning.delta',
+    chatId,
+    sequence,
+    turnId,
+    reasoningId: id,
+    delta: deltaText,
+  });
+}
+
+function reasoningCompleted(
+  sequence: number,
+  content: string,
+  id: ReasoningId = reasoningId,
+): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'assistant.reasoning.completed',
+    chatId,
+    sequence,
+    turnId,
+    reasoningId: id,
     content,
   });
 }
@@ -307,6 +340,117 @@ describe('createTranscriptStore', () => {
       store.applyEvent(delta(0, 'late previous text'));
 
       expect(store.items()).toContainEqual({ kind: 'thinking' });
+    });
+  });
+
+  describe('reasoning (transient thinking)', () => {
+    it('exposes the accumulated reasoning text while a block streams', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.takeDirty();
+
+      store.applyEvent(reasoningDelta(0, 'first '));
+      store.applyEvent(reasoningDelta(1, 'second'));
+
+      expect(store.thinkingReasoning()).toBe('first second');
+      expect(store.takeDirty()).toBe(true);
+    });
+
+    it('keeps the thinking item visible for a later reasoning block even after text has arrived', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(delta(0, 'some answer'));
+      expect(store.items()).not.toContainEqual({ kind: 'thinking' });
+
+      store.applyEvent(reasoningDelta(1, 'reflecting'));
+
+      expect(store.items()).toContainEqual({ kind: 'thinking' });
+      expect(store.thinkingReasoning()).toBe('reflecting');
+    });
+
+    it('replaces the text when a delta belongs to a different reasoning block', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'block one'));
+
+      const secondReasoningId: ReasoningId = reasoningIdSchema.parse('reason-2');
+      store.applyEvent(reasoningDelta(1, 'block two', secondReasoningId));
+
+      expect(store.thinkingReasoning()).toBe('block two');
+    });
+
+    it('discards the reasoning text when the block completes', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'thinking'));
+
+      store.applyEvent(reasoningCompleted(1, 'thinking'));
+
+      expect(store.thinkingReasoning()).toBe('');
+      // Still in flight with no text: the plain thinking item remains.
+      expect(store.items()).toContainEqual({ kind: 'thinking' });
+    });
+
+    it('discards the reasoning text when assistant text starts', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'thinking'));
+
+      store.applyEvent(delta(1, 'answer'));
+
+      expect(store.thinkingReasoning()).toBe('');
+      expect(store.items()).not.toContainEqual({ kind: 'thinking' });
+    });
+
+    it('discards the reasoning text when a tool call is requested', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'thinking'));
+
+      store.applyEvent(toolRequested(1));
+
+      expect(store.thinkingReasoning()).toBe('');
+    });
+
+    it('returns no reasoning once the turn leaves the in-flight state', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'thinking'));
+
+      store.setTurnInFlight(false);
+
+      expect(store.thinkingReasoning()).toBe('');
+    });
+
+    it('ignores a completed event for a reasoning block that is not the active one', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'active block'));
+
+      const otherReasoningId: ReasoningId = reasoningIdSchema.parse('reason-other');
+      store.applyEvent(reasoningCompleted(1, 'other block', otherReasoningId));
+
+      expect(store.thinkingReasoning()).toBe('active block');
+    });
+
+    it('drops reasoning on clear()', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(reasoningDelta(0, 'thinking'));
+
+      store.clear();
+
+      expect(store.thinkingReasoning()).toBe('');
+      expect(store.items()).toEqual([]);
     });
   });
 

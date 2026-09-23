@@ -4,11 +4,13 @@ import {
   agentEventSchema,
   chatIdSchema,
   messageIdSchema,
+  reasoningIdSchema,
   requestIdSchema,
   toolCallIdSchema,
   turnIdSchema,
   type AgentEvent,
   type MessageId,
+  type ReasoningId,
   type ToolCallId,
   type TurnId,
 } from '../../../../src/shared';
@@ -32,6 +34,7 @@ const chatId = chatIdSchema.parse('chat-1');
 const turnId: TurnId = turnIdSchema.parse('turn-1');
 const messageId: MessageId = messageIdSchema.parse('msg-1');
 const toolCallId: ToolCallId = toolCallIdSchema.parse('call-1');
+const reasoningId: ReasoningId = reasoningIdSchema.parse('reason-1');
 const requestId = requestIdSchema.parse('req-1');
 
 function delta(sequence: number, text: string): AgentEvent {
@@ -52,6 +55,28 @@ function completed(sequence: number, content: string): AgentEvent {
     sequence,
     turnId,
     messageId,
+    content,
+  });
+}
+
+function reasoningDelta(sequence: number, deltaText: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'assistant.reasoning.delta',
+    chatId,
+    sequence,
+    turnId,
+    reasoningId,
+    delta: deltaText,
+  });
+}
+
+function reasoningCompleted(sequence: number, content: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'assistant.reasoning.completed',
+    chatId,
+    sequence,
+    turnId,
+    reasoningId,
     content,
   });
 }
@@ -229,34 +254,182 @@ describe('createTranscriptView', () => {
     });
   });
 
-  describe('thinking indicator', () => {
-    it('renders a trailing thinking item with a prepended spinner and label while a turn is in flight', () => {
-      const view = createTranscriptView(markdownRenderer);
-      const store = createTranscriptStore();
+  describe('thinking billet', () => {
+    function click(target: Element): void {
+      target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    }
+
+    function startTurn(store: ReturnType<typeof createTranscriptStore>): void {
       store.applyUserPrompt(turnId, 'hi');
       store.setTurnInFlight(true);
+    }
+
+    it('renders a trailing billet with a spinner, the "Thinking" label and a toggle while a turn is in flight', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
 
       view.repaint(store);
 
       const node = view.element.querySelector('.chat-message--thinking');
       expect(node).not.toBeNull();
-      const spinner = node?.querySelector('sp-progress-circle');
+      const toggle = node?.querySelector('.chat-message__thinking-toggle');
+      expect(toggle).not.toBeNull();
+      // The spinner sits inside the toggle row, not loose on the shell.
+      const spinner = toggle?.querySelector('sp-progress-circle');
       expect(spinner).not.toBeNull();
       expect(spinner?.hasAttribute('indeterminate')).toBe(true);
-      expect(node?.textContent).toContain('Thinking');
-      // Prepended: the spinner is the thinking node's first child.
-      expect(node?.firstElementChild).toBe(spinner);
+      expect(node?.querySelector('.chat-message__thinking-label')?.textContent).toBe('Thinking');
     });
 
-    it('removes the thinking item once assistant text starts streaming', () => {
+    it('is inert while no reasoning has streamed: disabled toggle, no chevron, hidden body', () => {
       const view = createTranscriptView(markdownRenderer);
       const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, 'hi');
-      store.setTurnInFlight(true);
+      startTurn(store);
       view.repaint(store);
-      expect(view.element.querySelector('.chat-message--thinking')).not.toBeNull();
 
-      store.applyEvent(delta(0, 'Here is the answer'));
+      const toggle = view.element.querySelector<HTMLButtonElement>(
+        '.chat-message__thinking-toggle',
+      );
+      expect(toggle?.disabled).toBe(true);
+      expect(
+        view.element.querySelector('.chat-message__thinking-chevron')?.hasAttribute('hidden'),
+      ).toBe(true);
+      expect(view.element.querySelector<HTMLElement>('.chat-message__thinking-body')?.hidden).toBe(
+        true,
+      );
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe('');
+    });
+
+    it('shows the latest reasoning line and makes the billet expandable while reasoning streams', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'first thought\nsecond thought'));
+
+      view.repaint(store);
+
+      const line = view.element.querySelector('.chat-message__thinking-line');
+      // The rolling line is the last line of the reasoning, not the first.
+      expect(line?.textContent).toBe('second thought');
+      const toggle = view.element.querySelector<HTMLButtonElement>(
+        '.chat-message__thinking-toggle',
+      );
+      expect(toggle?.disabled).toBe(false);
+      expect(
+        view.element.querySelector('.chat-message__thinking-chevron')?.hasAttribute('hidden'),
+      ).toBe(false);
+      const body = view.element.querySelector<HTMLElement>('.chat-message__thinking-body');
+      // Full text is present but collapsed by default.
+      expect(body?.textContent).toBe('first thought\nsecond thought');
+      expect(body?.hidden).toBe(true);
+    });
+
+    it('reveals the whole reasoning output on click and collapses on a second click', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'first thought\nsecond thought'));
+      view.repaint(store);
+
+      const toggle = view.element.querySelector('.chat-message__thinking-toggle');
+      click(toggle!);
+
+      const body = view.element.querySelector<HTMLElement>('.chat-message__thinking-body');
+      expect(body?.hidden).toBe(false);
+      expect(view.element.querySelector('.chat-message--thinking')?.className).toContain(
+        'chat-message--thinking--expanded',
+      );
+
+      click(toggle!);
+      expect(body?.hidden).toBe(true);
+    });
+
+    it('keeps the billet expanded across a repaint triggered by a later reasoning delta', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'first'));
+      view.repaint(store);
+      click(view.element.querySelector('.chat-message__thinking-toggle')!);
+
+      store.applyEvent(reasoningDelta(1, ' and more'));
+      view.repaint(store);
+
+      const body = view.element.querySelector<HTMLElement>('.chat-message__thinking-body');
+      expect(body?.textContent).toBe('first and more');
+      expect(body?.hidden).toBe(false);
+    });
+
+    it('does not re-insert the thinking shell on a reasoning-delta repaint, so its spinner animation is not restarted', async () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'first'));
+      view.repaint(store);
+
+      const shell = view.element.querySelector('.chat-message--thinking');
+      const mutations: MutationRecord[] = [];
+      const observer = new dom.window.MutationObserver((records) => mutations.push(...records));
+      // Direct children only: this is what `replaceChildren` would churn.
+      observer.observe(view.element, { childList: true });
+
+      store.applyEvent(reasoningDelta(1, ' and more'));
+      view.repaint(store);
+      // MutationObserver delivers records asynchronously; let them land before
+      // disconnecting, or the observation proves nothing.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      observer.disconnect();
+
+      // Assert on plain counts, not the MutationRecord objects themselves:
+      // jsdom throws `SecurityError` when vitest pretty-prints one on failure,
+      // which would hide the real cause.
+      const churn = mutations.map((record) => ({
+        removed: record.removedNodes.length,
+        added: record.addedNodes.length,
+      }));
+      // No child was removed/re-added, and the shell (and its spinner) is the
+      // very same node that was already mounted.
+      expect(churn).toEqual([]);
+      expect(view.element.querySelector('.chat-message--thinking')).toBe(shell);
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe(
+        'first and more',
+      );
+    });
+
+    it('erases the reasoning text when the block completes, while the plain indicator remains', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'thinking hard'));
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe(
+        'thinking hard',
+      );
+
+      store.applyEvent(reasoningCompleted(1, 'thinking hard'));
+      view.repaint(store);
+
+      // Still in flight with no text yet: the plain spinner remains, but the
+      // transient reasoning line is gone.
+      expect(view.element.querySelector('.chat-message--thinking')).not.toBeNull();
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe('');
+      expect(
+        view.element.querySelector<HTMLButtonElement>('.chat-message__thinking-toggle')?.disabled,
+      ).toBe(true);
+    });
+
+    it('erases the reasoning text when the assistant starts producing output', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'thinking hard'));
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe(
+        'thinking hard',
+      );
+
+      store.applyEvent(delta(1, 'Here is the answer'));
       view.repaint(store);
 
       expect(view.element.querySelector('.chat-message--thinking')).toBeNull();
@@ -265,11 +438,49 @@ describe('createTranscriptView', () => {
       );
     });
 
-    it('removes the thinking item when the turn leaves the in-flight state', () => {
+    it('erases the reasoning text when a tool call is requested', () => {
       const view = createTranscriptView(markdownRenderer);
       const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, 'hi');
-      store.setTurnInFlight(true);
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'I should query AEM'));
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe(
+        'I should query AEM',
+      );
+
+      store.applyEvent(toolRequested(1));
+      view.repaint(store);
+
+      expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe('');
+    });
+
+    it('starts a later reasoning block collapsed again after the previous one was expanded', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'first block'));
+      view.repaint(store);
+      click(view.element.querySelector('.chat-message__thinking-toggle')!);
+      expect(view.element.querySelector<HTMLElement>('.chat-message__thinking-body')?.hidden).toBe(
+        false,
+      );
+
+      // The first block ends, then a second one begins.
+      store.applyEvent(reasoningCompleted(1, 'first block'));
+      view.repaint(store);
+      store.applyEvent(reasoningDelta(2, 'second block'));
+      view.repaint(store);
+
+      const body = view.element.querySelector<HTMLElement>('.chat-message__thinking-body');
+      expect(body?.textContent).toBe('second block');
+      expect(body?.hidden).toBe(true);
+    });
+
+    it('removes the billet when the turn leaves the in-flight state', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      startTurn(store);
+      store.applyEvent(reasoningDelta(0, 'thinking hard'));
       view.repaint(store);
       expect(view.element.querySelector('.chat-message--thinking')).not.toBeNull();
 

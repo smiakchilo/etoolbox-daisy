@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   describeRequiredAction,
   describeToolCallStatus,
+  latestReasoningLine,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
 import type { ToolCallStatus } from '../../../../src/renderer/src/chat/transcriptStore';
 import { REQUIRED_ACTIONS, requestIdSchema, type ToolError } from '../../../../src/shared';
@@ -56,5 +57,26 @@ describe('describeRequiredAction', () => {
       expect(description?.length).toBeGreaterThan(0);
     }
     expect(new Set(descriptions).size).toBe(actionable.length);
+  });
+});
+
+describe('latestReasoningLine', () => {
+  it('returns "" for empty or whitespace-only input', () => {
+    expect(latestReasoningLine('')).toBe('');
+    expect(latestReasoningLine('   \n  \n ')).toBe('');
+  });
+
+  it('returns the only line when the reasoning has no line break', () => {
+    expect(latestReasoningLine('a single thought')).toBe('a single thought');
+  });
+
+  it('returns the last non-empty line, so the reader sees the newest thought', () => {
+    expect(latestReasoningLine('first\nsecond\nthird')).toBe('third');
+    // A trailing newline must not produce an empty rolling line.
+    expect(latestReasoningLine('first\nsecond\n')).toBe('second');
+  });
+
+  it('trims each line before choosing the last one', () => {
+    expect(latestReasoningLine('first\n   second   ')).toBe('second');
   });
 });

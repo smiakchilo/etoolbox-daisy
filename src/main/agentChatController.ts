@@ -265,6 +265,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       case 'assistant.text.delta':
       case 'assistant.message.completed':
         return activeTurn !== undefined && event.turnId === activeTurn.turnId;
+      case 'assistant.reasoning.delta':
+      case 'assistant.reasoning.completed':
+        // Reasoning is turn-scoped exactly like assistant text; it is not
+        // tracked in `recordTurnMembership` because nothing downstream keys on
+        // a reasoning id, only on the current turn.
+        return activeTurn !== undefined && event.turnId === activeTurn.turnId;
       case 'tool.call.requested':
         return activeTurn !== undefined;
       case 'tool.call.approved':

@@ -260,6 +260,68 @@ describe('sdkAgentService - delta accumulation and completion', () => {
   });
 });
 
+describe('sdkAgentService - reasoning projection', () => {
+  it('maps reasoning deltas and the completed block, keyed by reasoningId and turn', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const { service, chatId, events } = await setUpOpenConversation(sessionHandle, ids);
+    const turnId = newTurnId(ids);
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+
+    sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: 'msg-1' } });
+    sessionHandle.emit({
+      type: 'assistant.reasoning_delta',
+      data: { reasoningId: 'reason-1', deltaContent: 'Let me think' },
+    });
+    // An empty chunk carries nothing and must not be forwarded.
+    sessionHandle.emit({
+      type: 'assistant.reasoning_delta',
+      data: { reasoningId: 'reason-1', deltaContent: '' },
+    });
+    sessionHandle.emit({
+      type: 'assistant.reasoning_delta',
+      data: { reasoningId: 'reason-1', deltaContent: ' about it.' },
+    });
+    sessionHandle.emit({
+      type: 'assistant.reasoning',
+      data: { reasoningId: 'reason-1', content: 'Let me think about it.' },
+    });
+    sessionHandle.emit({
+      type: 'assistant.message',
+      data: { messageId: 'msg-1', content: 'Done' },
+    });
+
+    const deltas = events.filter((event) => event.type === 'assistant.reasoning.delta');
+    expect(deltas.map((event) => (event as { delta: string }).delta)).toEqual([
+      'Let me think',
+      ' about it.',
+    ]);
+    expect(deltas[0]).toMatchObject({ reasoningId: 'reason-1', turnId });
+
+    const completed = events.find((event) => event.type === 'assistant.reasoning.completed');
+    expect(completed).toMatchObject({
+      reasoningId: 'reason-1',
+      content: 'Let me think about it.',
+      turnId,
+    });
+
+    assertLegalSequence(events);
+  });
+
+  it('drops reasoning that arrives with no turn in flight', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const { events } = await setUpOpenConversation(sessionHandle, ids);
+
+    sessionHandle.emit({
+      type: 'assistant.reasoning_delta',
+      data: { reasoningId: 'reason-1', deltaContent: 'stray' },
+    });
+
+    expect(events.some((event) => event.type.startsWith('assistant.reasoning'))).toBe(false);
+  });
+});
+
 describe('sdkAgentService - sub-agent event filtering', () => {
   it('drops every event carrying a defined agentId', async () => {
     const ids = counterIdGenerator();
@@ -746,9 +808,12 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     expect((await service.openConversation({ chatId: newChatId(ids) })).ok).toBe(true);
 
     const config = createSession.mock.calls[0]?.[0] as
-      { model?: string; reasoningEffort?: string } | undefined;
+      { model?: string; reasoningEffort?: string; reasoningSummary?: string } | undefined;
     expect(config?.model).toBe('model-a');
     expect(config?.reasoningEffort).toBe('high');
+    // A reasoning effort is what turns reasoning summaries on, so the
+    // transcript has thinking to show.
+    expect(config?.reasoningSummary).toBe('concise');
   });
 
   it('omits both keys entirely when there is no preference', async () => {
@@ -768,6 +833,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     expect(config).toBeDefined();
     expect(Object.hasOwn(config ?? {}, 'model')).toBe(false);
     expect(Object.hasOwn(config ?? {}, 'reasoningEffort')).toBe(false);
+    expect(Object.hasOwn(config ?? {}, 'reasoningSummary')).toBe(false);
   });
 
   it('omits the effort when a model is chosen but no effort is', async () => {
@@ -784,6 +850,9 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     const config = createSession.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
     expect(config?.['model']).toBe('model-a');
     expect(Object.hasOwn(config ?? {}, 'reasoningEffort')).toBe(false);
+    // Reasoning summaries are tied to an explicit effort: a model run at its
+    // own default reasoning level is left untouched.
+    expect(Object.hasOwn(config ?? {}, 'reasoningSummary')).toBe(false);
   });
 
   it('does NOT push the model into the config when RESUMING', async () => {
@@ -850,7 +919,10 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     );
 
     expect(sessionHandle.setModel).toHaveBeenCalledTimes(1);
-    expect(sessionHandle.setModel).toHaveBeenCalledWith('model-a', { reasoningEffort: 'high' });
+    expect(sessionHandle.setModel).toHaveBeenCalledWith('model-a', {
+      reasoningEffort: 'high',
+      reasoningSummary: 'concise',
+    });
   });
 
   it("leaves a resumed session's own model alone when there is NO preference", async () => {
@@ -897,7 +969,10 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     const second = await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'two' });
     expect(second.ok).toBe(true);
     expect(sessionHandle.setModel).toHaveBeenCalledTimes(1);
-    expect(sessionHandle.setModel).toHaveBeenCalledWith('model-b', { reasoningEffort: 'low' });
+    expect(sessionHandle.setModel).toHaveBeenCalledWith('model-b', {
+      reasoningEffort: 'low',
+      reasoningSummary: 'concise',
+    });
 
     finishTurn(sessionHandle, 'msg-2');
     expect((await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'three' })).ok).toBe(

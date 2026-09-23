@@ -6,8 +6,8 @@ import {
   foldTextDelta,
   renderFoldedText,
   type AssistantTextDeltaEvent,
-} from '../../../../src/shared/contracts/agentEvents';
-import { chatIdSchema, messageIdSchema } from '../../../../src/shared/contracts/ids';
+} from '../../../../src/shared';
+import { chatIdSchema, messageIdSchema } from '../../../../src/shared';
 
 function validMessageStarted(overrides: Record<string, unknown> = {}) {
   return {
@@ -40,6 +40,30 @@ function validMessageCompleted(overrides: Record<string, unknown> = {}) {
     turnId: 'turn-1',
     messageId: 'msg-1',
     content: 'hello there',
+    ...overrides,
+  };
+}
+
+function validReasoningDelta(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'assistant.reasoning.delta',
+    chatId: 'chat-1',
+    sequence: 3,
+    turnId: 'turn-1',
+    reasoningId: 'reason-1',
+    delta: 'thinking...',
+    ...overrides,
+  };
+}
+
+function validReasoningCompleted(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'assistant.reasoning.completed',
+    chatId: 'chat-1',
+    sequence: 4,
+    turnId: 'turn-1',
+    reasoningId: 'reason-1',
+    content: 'thinking...',
     ...overrides,
   };
 }
@@ -119,6 +143,8 @@ describe('agentEventSchema: valid variants', () => {
     ['assistant.message.started', validMessageStarted()],
     ['assistant.text.delta', validTextDelta()],
     ['assistant.message.completed', validMessageCompleted()],
+    ['assistant.reasoning.delta', validReasoningDelta()],
+    ['assistant.reasoning.completed', validReasoningCompleted()],
     ['tool.call.requested', validToolCallRequested()],
     ['tool.call.approved', validToolCallApproved()],
     ['tool.call.rejected', validToolCallRejected()],
@@ -200,6 +226,25 @@ describe('agentEventSchema: does not forward raw SDK payloads', () => {
 
   it('rejects an empty assistant.text.delta chunk', () => {
     expect(agentEventSchema.safeParse(validTextDelta({ delta: '' })).success).toBe(false);
+  });
+
+  it('rejects an empty assistant.reasoning.delta chunk', () => {
+    expect(agentEventSchema.safeParse(validReasoningDelta({ delta: '' })).success).toBe(false);
+  });
+
+  it('rejects a reasoning event missing reasoningId - it could not be matched to its block', () => {
+    expect(agentEventSchema.safeParse(omitKey(validReasoningDelta(), 'reasoningId')).success).toBe(
+      false,
+    );
+    expect(
+      agentEventSchema.safeParse(omitKey(validReasoningCompleted(), 'reasoningId')).success,
+    ).toBe(false);
+  });
+
+  it('rejects a reasoning event missing turnId', () => {
+    expect(agentEventSchema.safeParse(omitKey(validReasoningDelta(), 'turnId')).success).toBe(
+      false,
+    );
   });
 
   it('rejects a negative sequence number', () => {

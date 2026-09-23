@@ -6,6 +6,7 @@ import type {
   AgentEvent,
   ChatId,
   MessageId,
+  ReasoningId,
   SdkSessionId,
   ServerId,
   ToolCallId,
@@ -92,6 +93,25 @@ const messageCompleted = (content: string): AgentEvent => ({
 });
 
 const TOOL_CALL_ID = 'call-1' as ToolCallId;
+const REASONING_ID = 'reason-1' as ReasoningId;
+
+const reasoningDelta = (text: string, sequence = 2): AgentEvent => ({
+  type: 'assistant.reasoning.delta',
+  chatId: CHAT_ID,
+  sequence,
+  turnId: TURN_ID,
+  reasoningId: REASONING_ID,
+  delta: text,
+});
+
+const reasoningCompleted = (content: string, sequence = 3): AgentEvent => ({
+  type: 'assistant.reasoning.completed',
+  chatId: CHAT_ID,
+  sequence,
+  turnId: TURN_ID,
+  reasoningId: REASONING_ID,
+  content,
+});
 
 const toolRequested = (): AgentEvent => ({
   type: 'tool.call.requested',
@@ -234,6 +254,42 @@ describe('createChatJournal - events and prompts', () => {
     );
     expect(deltaLines).toHaveLength(0);
     expect(records).toHaveLength(2); // header + message.started
+  });
+
+  it('never writes reasoning to the journal, and never lets it flush a pending prompt', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'hi' });
+    journal.recordEvent(reasoningDelta('thinking'));
+    journal.recordEvent(reasoningCompleted('thinking'));
+
+    const records = readRecords(dir);
+    // Reasoning is transient by contract: not one line of it is durable.
+    expect(
+      records.some((r) =>
+        (r as { event?: { type?: string } }).event?.type?.startsWith('assistant.reasoning'),
+      ),
+    ).toBe(false);
+    // And a reasoning block alone must not flush the staged prompt.
+    expect(records.some((r) => (r as { recordType: string }).recordType === 'user.prompt')).toBe(
+      false,
+    );
+    expect(records).toHaveLength(1); // header only
+  });
+
+  it('still flushes the staged prompt on the first non-reasoning event', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'hi' });
+    journal.recordEvent(reasoningDelta('thinking'));
+    journal.recordEvent(messageStarted());
+
+    const records = readRecords(dir);
+    expect(records.some((r) => (r as { recordType: string }).recordType === 'user.prompt')).toBe(
+      true,
+    );
   });
 
   it('writes a partial message when the turn ends before completion', () => {

@@ -1,5 +1,5 @@
-import type { RequiredAction } from '../../../shared';
-import type { ToolCallStatus } from './transcriptStore';
+import type {RequiredAction} from '../../../shared';
+import type {ToolCallStatus} from './transcriptStore';
 
 /**
  * Short label for a tool call's current lifecycle status. `"FAILED"` is
@@ -20,10 +20,24 @@ export function describeToolCallStatus(status: ToolCallStatus): string {
     case 'failed':
       return 'FAILED';
     default: {
-      const exhaustive: never = status;
-      return exhaustive;
+      return status;
     }
   }
+}
+
+/**
+ * The one line of reasoning shown beside the "Thinking" label while the
+ * billet is collapsed: the last non-empty line of the streamed reasoning text,
+ * so the reader sees the model's most recent thought. Reasoning that has not
+ * yet produced a line break is a single line. Returns `""` for empty or
+ * whitespace-only input, which the view renders as no line at all.
+ */
+export function latestReasoningLine(reasoning: string): string {
+  const lines = reasoning
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines[lines.length - 1] ?? '';
 }
 
 /**
@@ -55,8 +69,7 @@ export function describeRequiredAction(action: RequiredAction): string | undefin
     case 'start_new_chat':
       return 'Start a new chat and try again.';
     default: {
-      const exhaustive: never = action;
-      return exhaustive;
+      return action;
     }
   }
 }
