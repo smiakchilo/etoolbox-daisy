@@ -251,6 +251,116 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await app.close();
   });
 
+  test('a jcr:content link opens its owning page; Edit is trimmed but CRX keeps the resource, and no popover button takes focus', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    // Record every focus that lands inside the popover.
+    await shell.evaluate(() => {
+      const scope = window as unknown as { __popoverFocus: string[] };
+      scope.__popoverFocus = [];
+      document.addEventListener(
+        'focusin',
+        (event) => {
+          const target = event.target as Element | null;
+          if (target?.closest?.('sp-overlay') !== null) {
+            scope.__popoverFocus.push(target.tagName);
+          }
+        },
+        true,
+      );
+    });
+
+    // First turn: CRX keeps the exact resource the message referenced - this is
+    // the regression, since re-classifying the trimmed href retargeted it at the
+    // page. Each popover interaction below is the first for its own message:
+    // re-hovering one link after a click races the overlay's 200ms hide grace.
+    await sendMessage(
+      app,
+      shell,
+      `See [Resource](${HOST}/content/site/alpha/jcr:content/myComponent/2).`,
+    );
+    const resourceLink = shell.locator(`${ASSISTANT} a[data-daisy-link]`).last();
+    await expect(shell.locator(`${ASSISTANT} a[data-daisy-link]`)).toHaveCount(1, {
+      timeout: 30_000,
+    });
+    // The link itself opens the owning page, trimmed at /jcr:content.
+    await expect(resourceLink).toHaveAttribute('href', `${HOST}/content/site/alpha.html`);
+
+    await resourceLink.hover();
+    const crx = shell.locator('sp-overlay sp-action-button[title="CRX"]');
+    await expect(crx).toBeVisible({ timeout: 30_000 });
+
+    // Prove the detector is not vacuous: a programmatic focus IS recorded, so
+    // an empty record after the real click is evidence, not an untested pass.
+    const detectorWorks = await shell.evaluate(() => {
+      const scope = window as unknown as { __popoverFocus: string[] };
+      const button = document.querySelector('sp-overlay sp-action-button[title="CRX"]');
+      (button as HTMLElement | null)?.focus();
+      const recorded = scope.__popoverFocus.length;
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      scope.__popoverFocus.length = 0;
+      return recorded;
+    });
+    expect(detectorWorks).toBeGreaterThan(0);
+
+    await crx.click();
+    const banner = shell.locator(CHAT_STATUS_BANNER);
+    await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
+    await expect(banner).toContainText(
+      `${HOST}/crx/de/index.jsp#/content/site/alpha/jcr:content/myComponent/2`,
+      { timeout: 60_000 },
+    );
+
+    // Second turn: Edit opens the owning page's editor (trimmed).
+    await sendMessage(app, shell, `Also [Resource2](${HOST}/content/site/beta/jcr:content/x).`);
+    const secondLink = shell.locator(`${ASSISTANT} a[data-daisy-link]`).last();
+    await expect(shell.locator(`${ASSISTANT} a[data-daisy-link]`)).toHaveCount(2, {
+      timeout: 30_000,
+    });
+    await expect(secondLink).toHaveAttribute('href', `${HOST}/content/site/beta.html`);
+
+    await secondLink.hover();
+    const edit = shell.locator('sp-overlay sp-action-button[title="Edit"]');
+    await expect(edit).toBeVisible({ timeout: 30_000 });
+    await edit.click();
+    await expect(banner).toContainText(`${HOST}/editor.html/content/site/beta.html`, {
+      timeout: 60_000,
+    });
+
+    // No popover button ever received focus.
+    await expect
+      .poll(() =>
+        shell.evaluate(() => (window as unknown as { __popoverFocus: string[] }).__popoverFocus),
+      )
+      .toEqual([]);
+
+    await app.close();
+  });
+
+  test('a jcr:content path is percent-encoded in the URL the pane loads', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    await sendMessage(app, shell, `See [Apps](${HOST}/apps/x/jcr:content/y).`);
+    const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
+    await expect(link).toHaveCount(1, { timeout: 30_000 });
+    await expect(link).toHaveAttribute('href', `${HOST}/apps/x/jcr%3Acontent/y`);
+
+    // The unresolvable host makes the pane's error banner the proof the encoded
+    // URL is what actually reached the load path.
+    await link.click();
+    const banner = shell.locator(CHAT_STATUS_BANNER);
+    await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
+    await expect(banner).toContainText(`${HOST}/apps/x/jcr%3Acontent/y`, { timeout: 60_000 });
+
+    await app.close();
+  });
+
   test('an external link opens in the system browser, not the pane', async () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();

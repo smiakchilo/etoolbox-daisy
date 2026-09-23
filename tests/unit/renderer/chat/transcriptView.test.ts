@@ -18,6 +18,7 @@ import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcr
 import { createTranscriptView } from '../../../../src/renderer/src/chat/transcriptView';
 import { createMarkdownRenderer } from '../../../../src/renderer/src/chat/renderMarkdown';
 import type { LinkContext } from '../../../../src/renderer/src/chat/linkTargets';
+import { parseLinkActions } from '../../../../src/renderer/src/chat/linkTargets';
 
 // See `composer.test.ts` for why a jsdom document is installed onto
 // `globalThis`: `transcriptView.ts` builds its DOM through the same `el()`
@@ -678,6 +679,30 @@ describe('createTranscriptView - openable message links', () => {
     click(element.querySelector('a[data-daisy-link]')!);
 
     expect(onOpenLink).toHaveBeenCalledWith(`${AUTHOR}/content/site/en/page.html`);
+  });
+
+  it('routes a jcr:content resource link click to its owning page, not the raw resource', () => {
+    const onOpenLink = vi.fn<(url: string) => void>();
+    const element = renderMessage('[C](/content/a/b/jcr:content/x)', { onOpenLink });
+    const anchor = element.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/a/b.html`);
+
+    click(anchor!);
+
+    expect(onOpenLink).toHaveBeenCalledWith(`${AUTHOR}/content/a/b.html`);
+  });
+
+  it('stamps a jcr:content link with the original resource CRX, not the trimmed page', () => {
+    // The popover reads these stamped actions verbatim (it does not re-derive
+    // them from the trimmed href), so this is the data-level guarantee that CRX
+    // keeps the exact resource the message named.
+    const element = renderMessage('[C](/content/a/b/jcr:content/x)');
+    const anchor = element.querySelector('a[data-daisy-link]');
+
+    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr:content/x` },
+    ]);
   });
 
   it('routes an external link to onOpenExternal, not the pane', () => {

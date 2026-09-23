@@ -108,7 +108,9 @@ export interface ChatPaneOptions {
   readonly onOpenSettings: (tab?: SettingsTab) => void;
   /**
    * Resolves the conversation to restore on startup, or `undefined` to start a
-   * fresh one. Called at most once, the first time the service is ready.
+   * fresh one. Called at most once, as early as the pane is constructed: the
+   * journal it returns is painted before the runtime is ready, and the session
+   * it names is resumed later, when the service reports ready.
    */
   readonly resolveStartupConversation?: () => Promise<StartupConversation | undefined>;
   /**
@@ -164,6 +166,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // flight. Built once so re-asserting it on every status refresh is a no-op.
   const connectingContent: readonly Node[] = [buildBannerCopy(['Connecting to agent...'])];
 
+  // Shown in place of the connecting row once a saved conversation's journal is
+  // already on screen but its SDK session has not resumed yet: the same loading
+  // presentation, but naming the work the user is actually waiting on.
+  const restoringContent: readonly Node[] = [buildBannerCopy(['Restoring conversation...'])];
+
   // A send-blocked reason is a persistent plain row. Memoised per reason so a
   // caller re-asserting the same state never rebuilds the DOM.
   const blockReasonContent = new Map<CanSendBlockReason, readonly Node[]>();
@@ -200,8 +207,23 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // Whether the active conversation has at least one message. Only then is it
   // worth restoring - an opened-but-unused chat is never remembered.
   let conversationHasMessage = false;
-  // `resolveStartupConversation` is consulted at most once.
-  let startupConversationResolved = false;
+  // The startup conversation is resolved at most once, and both the early
+  // journal preload and the ready-time resume await this same promise - so the
+  // two can never race over which one claims the restore.
+  let startupConversationPromise: Promise<StartupConversation | undefined> | undefined;
+  // A saved conversation whose journal is already painted but whose SDK session
+  // has not been resumed yet (the runtime is still cold-starting). While set,
+  // the banner says "Restoring conversation..." instead of the generic
+  // connecting row, and the resume path knows there is nothing left to paint.
+  let pendingStartup: StartupConversation | undefined;
+  // Whether the startup journal has been replayed into the transcript. Guards
+  // against replaying it twice when the preload wins the race to paint.
+  let startupJournalPainted = false;
+  // Set synchronously when the pane commits to resuming a startup conversation,
+  // before the resume RPC awaits. A status poll landing in that window sees this
+  // and skips, instead of resolving the startup conversation again and opening a
+  // second conversation over the first.
+  let startupResumeInFlight = false;
 
   let unsubscribeEvents: (() => void) | undefined;
   let startingPollHandle: ReturnType<typeof setInterval> | undefined;
@@ -240,7 +262,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // the "no usable agent" prompt and a send-blocked reason are plain rows.
     // The `agent-inactive`/`stop` states are ordered so a turn already running
     // can always be stopped without the prompt displacing the Stop control.
-    if (buttonState.kind === 'connecting') {
+    if (pendingStartup !== undefined) {
+      // A restored transcript is on screen but the session that owns it has not
+      // resumed yet; name that, rather than the generic connecting row.
+      statusBanner.setStanding(restoringContent, 'loading');
+    } else if (buttonState.kind === 'connecting') {
       statusBanner.setStanding(connectingContent, 'loading');
     } else if (!agentActive) {
       statusBanner.setStanding(agentPromptContent);
@@ -321,18 +347,50 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
-   * Resolves the conversation to restore, consulting the shell at most once.
-   * A shell failure or an `undefined` answer both mean "start fresh".
+   * Resolves the conversation to restore, memoised so it is read exactly once.
+   * A shell failure or an `undefined` answer both mean "start fresh". The
+   * promise is shared by {@link preloadStartupConversation} and the ready-time
+   * resume, so neither can resolve it twice or race the other.
    */
-  async function resolveStartupConversation(): Promise<StartupConversation | undefined> {
-    if (startupConversationResolved) return undefined;
-    startupConversationResolved = true;
-    if (options.resolveStartupConversation === undefined) return undefined;
-    try {
-      return await options.resolveStartupConversation();
-    } catch {
-      return undefined;
-    }
+  function ensureStartupConversation(): Promise<StartupConversation | undefined> {
+    startupConversationPromise ??= (async () => {
+      if (options.resolveStartupConversation === undefined) return undefined;
+      try {
+        return await options.resolveStartupConversation();
+      } catch {
+        return undefined;
+      }
+    })();
+    return startupConversationPromise;
+  }
+
+  /**
+   * Paints a saved conversation's journal into the transcript, at most once.
+   * The journal is local and needs no SDK session, so this is what lets the
+   * transcript appear while `copilot-runtime.exe` is still cold-starting.
+   */
+  function paintStartupJournal(startup: StartupConversation): void {
+    if (startupJournalPainted) return;
+    startupJournalPainted = true;
+    pendingStartup = startup;
+    replayJournalIntoTranscript(startup.records, transcriptStore);
+    conversationHasMessage = true;
+    refreshEmptyState();
+    repaintTranscript();
+  }
+
+  /**
+   * Reads the saved conversation's journal and paints it *before* the agent
+   * runtime is ready - the read is local, and the session it belongs to is
+   * resumed later, when the service reports ready. Runs at construction, in
+   * parallel with the runtime's cold start, so the transcript no longer waits
+   * on the SDK. A no-op when there is nothing to restore.
+   */
+  async function preloadStartupConversation(): Promise<void> {
+    const startup = await ensureStartupConversation();
+    if (startup === undefined) return;
+    paintStartupJournal(startup);
+    refreshSessionPresentation();
   }
 
   /** Starts a genuinely empty conversation under a fresh id. */
@@ -380,20 +438,36 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         // Main already owns a conversation (a recycled runtime that re-opened
         // one before this pane polled). Adopt it; its transcript arrives on the
         // ordinary event stream.
+        if (pendingStartup !== undefined && pendingStartup.chatId !== status.activeChatId) {
+          // The preload painted a *different* conversation's journal - drop it,
+          // so its history is not shown under the adopted conversation's id.
+          transcriptStore.clear();
+          conversationHasMessage = false;
+          refreshEmptyState();
+          repaintTranscript();
+        }
+        pendingStartup = undefined;
         chatId = status.activeChatId;
+      } else if (startupResumeInFlight) {
+        // A concurrent status poll (or push) is already resolving and resuming
+        // the startup conversation. Do not re-enter: it would open a second
+        // conversation over the first. The in-flight call finishes the setup.
+        return;
       } else {
-        const startup = await resolveStartupConversation();
+        startupResumeInFlight = true;
+        const startup = await ensureStartupConversation();
         if (startup === undefined) {
           await startFreshConversation();
         } else {
+          // The journal may already be on screen (the preload won the race to
+          // paint it); `paintStartupJournal` is a no-op then. Either way the
+          // session is resumed now, and only now does the pane own the chat.
+          paintStartupJournal(startup);
+          pendingStartup = undefined;
           chatId = startup.chatId;
           latestSdkSessionId = startup.sdkSessionId;
           const opened = await openConversation(startup.chatId, startup.sdkSessionId);
           if (opened.ok) {
-            replayJournalIntoTranscript(startup.records, transcriptStore);
-            conversationHasMessage = true;
-            refreshEmptyState();
-            repaintTranscript();
             persistActiveConversation();
           } else {
             // Silent fallback, as agreed: no banner, and - the important part -
@@ -403,6 +477,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
             await startFreshConversation();
           }
         }
+        startupResumeInFlight = false;
       }
       sessionStatus = { ...sessionStatus, state: status.sessionState };
       subscribeToEvents();
@@ -421,6 +496,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     refreshSessionPresentation();
   }
 
+  /** Polls the current status and applies it (the fallback for a missed push). */
   async function refreshStatus(): Promise<void> {
     await applyStatus(await window.daisy.agentChat.getStatus());
   }
@@ -566,6 +642,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   });
   startingPollHandle = setInterval(() => void refreshStatus(), STARTING_POLL_INTERVAL_MS);
   void refreshStatus();
+  // Resolve and paint the remembered conversation's journal now, in parallel
+  // with the runtime's cold start - the transcript no longer waits on the SDK.
+  void preloadStartupConversation();
 
   return {
     element,

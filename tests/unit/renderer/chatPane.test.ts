@@ -1,6 +1,10 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createChatPane, type ChatPane } from '../../../src/renderer/src/shell/chatPane';
+import {
+  createChatPane,
+  type ChatPane,
+  type StartupConversation,
+} from '../../../src/renderer/src/shell/chatPane';
 import type {
   AgentChatStatus,
   AgentEvent,
@@ -93,6 +97,19 @@ function sendButton(pane: ChatPane): HTMLElement | null {
 
 function agentBanner(pane: ChatPane): HTMLElement | null {
   return pane.element.querySelector('.chat-status-banner');
+}
+
+/**
+ * Waits out the banner's collapse animation, so a test can assert the row is
+ * gone rather than mid-transition - a collapsing row keeps `open` for
+ * `BANNER_TRANSITION_DURATION_MS` while it animates shut.
+ */
+async function waitForBannerClosed(pane: ChatPane): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (agentBanner(pane)?.hasAttribute('open') !== true) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('the chat status banner never collapsed');
 }
 
 beforeEach(() => {
@@ -486,6 +503,102 @@ describe('createChatPane startup restore', () => {
     pane.dispose();
   });
 
+  it('paints the saved journal before the service is ready, then resumes it', async () => {
+    // The whole point of the preload: the journal is local, so the transcript
+    // appears while the runtime is still cold-starting (no `ready` status has
+    // arrived yet), instead of after it.
+    const onConversationUsed = vi.fn();
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(rememberedConversation),
+      onConversationUsed,
+    });
+
+    // No status pushed: the service is still `starting`.
+    await waitForUserMessage(pane);
+
+    // The transcript is already on screen, and the banner says what the user is
+    // actually waiting on - the session resume, not the generic connecting row.
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
+    const banner = agentBanner(pane);
+    expect(banner?.textContent).toBe('Restoring conversation...');
+    expect(banner?.classList.contains('banner-row--loading')).toBe(true);
+    // No session has been resumed yet: the pane owns no conversation.
+    expect(openConversation).not.toHaveBeenCalled();
+
+    // The runtime becomes ready: the session is resumed with the journal's id.
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    expect(openConversation).toHaveBeenCalledTimes(1);
+    expect(openConversation.mock.calls[0]?.[0]).toEqual({
+      chatId: 'chat-remembered',
+      resume: { sdkSessionId: 'sdk-remembered' },
+    });
+    expect(onConversationUsed).toHaveBeenCalledWith('chat-remembered', 'sdk-remembered');
+
+    pane.dispose();
+  });
+
+  it('does not resume twice when a status lands while the startup conversation resolves', async () => {
+    // Two ready statuses arriving before the startup conversation resolves must
+    // not both enter the "no conversation yet" branch and open two
+    // conversations; the second sees the first is already in flight and skips.
+    let resolveStartup: ((value: StartupConversation | undefined) => void) | undefined;
+    const resolveStartupConversation = vi.fn(
+      () =>
+        new Promise<StartupConversation | undefined>((resolve) => {
+          resolveStartup = resolve;
+        }),
+    );
+    const pane = createChatPane({ onOpenSettings: vi.fn(), resolveStartupConversation });
+
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    expect(openConversation).not.toHaveBeenCalled();
+
+    resolveStartup?.(rememberedConversation);
+    await flush();
+
+    // Resolved once, resumed once - not twice.
+    expect(openConversation).toHaveBeenCalledTimes(1);
+    expect(openConversation.mock.calls[0]?.[0]).toEqual({
+      chatId: 'chat-remembered',
+      resume: { sdkSessionId: 'sdk-remembered' },
+    });
+
+    pane.dispose();
+  });
+
+  it('adopts a conversation main already owns instead of the preloaded one', async () => {
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(rememberedConversation),
+    });
+
+    // The preload paints the remembered journal before the service is ready.
+    await waitForUserMessage(pane);
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
+
+    // Main reports it already owns a *different* conversation (a recycled
+    // runtime that re-opened one before this pane polled).
+    pushStatus(
+      definedStatus({
+        auth: { apiVersion: 1, isAuthenticated: true },
+        activeChatId: 'chat-other' as ChatId,
+      }),
+    );
+    await flush();
+
+    // The stale preloaded journal is dropped and no resume is attempted.
+    expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(0);
+    expect(openConversation).not.toHaveBeenCalled();
+
+    pane.dispose();
+  });
+
   it('falls back silently to an empty fresh chat when the remembered session cannot be resumed', async () => {
     const onConversationUnavailable = vi.fn();
     openConversation.mockResolvedValueOnce({
@@ -507,8 +620,10 @@ describe('createChatPane startup restore', () => {
     expect((openConversation.mock.calls[0]?.[0] as { resume?: unknown }).resume).toBeDefined();
     expect((openConversation.mock.calls[1]?.[0] as { resume?: unknown }).resume).toBeUndefined();
     expect(onConversationUnavailable).toHaveBeenCalledTimes(1);
-    // Silent - no banner - and no old transcript under the new session.
-    expect(agentBanner(pane)?.hasAttribute('open')).toBe(false);
+    // Silent - no error banner - and no old transcript under the new session.
+    // (The restoring row shown while the journal was on screen collapses once
+    // the fresh conversation takes over.)
+    await waitForBannerClosed(pane);
     expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(0);
 
     pane.dispose();

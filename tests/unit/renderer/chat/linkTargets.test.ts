@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  absoluteMessageHref,
   classifyAemPath,
   hasNonHtmlExtension,
   isAemNativePath,
   isDamPath,
+  parseLinkActions,
   resolveAbsoluteLink,
   resolveMessageLink,
   resolveRelativePath,
+  serializeLinkActions,
   splitAemPathLinks,
   type LinkContext,
   type ResolvedLink,
@@ -101,18 +104,51 @@ describe('linkTargets - classifyAemPath', () => {
   it('trims a jcr:content resource link to its owning page, keeping CRX on the resource', () => {
     expect(classifyAemPath(AUTHOR, '/content/site/en/page/jcr:content')).toEqual(
       pane(`${AUTHOR}/content/site/en/page.html`, [
+        editAction(`${AUTHOR}/editor.html/content/site/en/page.html`),
         crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr:content`),
       ]),
     );
     expect(classifyAemPath(AUTHOR, '/content/hpe/us/en/page/jcr:content/myComponent/2')).toEqual(
       pane(`${AUTHOR}/content/hpe/us/en/page.html`, [
+        editAction(`${AUTHOR}/editor.html/content/hpe/us/en/page.html`),
         crxAction(`${AUTHOR}/crx/de/index.jsp#/content/hpe/us/en/page/jcr:content/myComponent/2`),
       ]),
     );
     // A `.html` suffix on the resource is trimmed before the page is built.
     expect(classifyAemPath(AUTHOR, '/content/site/en/page/jcr:content/x.html')).toEqual(
       pane(`${AUTHOR}/content/site/en/page.html`, [
+        editAction(`${AUTHOR}/editor.html/content/site/en/page.html`),
         crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr:content/x`),
+      ]),
+    );
+  });
+
+  it('percent-encodes the path in content-view URLs, but not in the CRX fragment', () => {
+    // `:` is not safe in a URL path, so `jcr:content` is escaped there - while
+    // the CRX fragment keeps the raw JCR path, which CRXDE Lite reads verbatim.
+    expect(classifyAemPath(AUTHOR, '/apps/x/jcr:content/y')).toEqual(
+      pane(`${AUTHOR}/apps/x/jcr%3Acontent/y`, [
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/apps/x/jcr:content/y`),
+      ]),
+    );
+    // A DAM asset preview and its assetdetails Edit both encode the path.
+    expect(classifyAemPath(AUTHOR, '/content/dam/x/jcr:content/y.jpg')).toEqual(
+      pane(`${AUTHOR}/content/dam/x/jcr%3Acontent/y.jpg`, [
+        editAction(`${AUTHOR}/assetdetails.html/content/dam/x/jcr%3Acontent/y.jpg`),
+      ]),
+    );
+    // Spaces and unicode are escaped too.
+    expect(classifyAemPath(AUTHOR, '/content/caf\u00e9/site name/page')).toEqual(
+      pane(`${AUTHOR}/content/caf%C3%A9/site%20name/page.html`, [
+        editAction(`${AUTHOR}/editor.html/content/caf%C3%A9/site%20name/page.html`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/caf\u00e9/site name/page`),
+      ]),
+    );
+    // An already percent-encoded path must not be double-encoded.
+    expect(classifyAemPath(AUTHOR, '/content/caf%C3%A9/page')).toEqual(
+      pane(`${AUTHOR}/content/caf%C3%A9/page.html`, [
+        editAction(`${AUTHOR}/editor.html/content/caf%C3%A9/page.html`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/caf%C3%A9/page`),
       ]),
     );
   });
@@ -197,6 +233,51 @@ describe('linkTargets - resolveMessageLink', () => {
   it('returns undefined for a relative path with no active host', () => {
     expect(resolveMessageLink('/content/x', hostsOnlyContext)).toBeUndefined();
     expect(resolveMessageLink('/content/x', emptyContext)).toBeUndefined();
+  });
+});
+
+describe('linkTargets - absoluteMessageHref', () => {
+  it('keeps an absolute URL and resolves a relative path against the active host', () => {
+    expect(absoluteMessageHref(`${AUTHOR}/content/x`, activeContext)).toBe(`${AUTHOR}/content/x`);
+    expect(absoluteMessageHref('/content/site/en/page', activeContext)).toBe(
+      `${AUTHOR}/content/site/en/page`,
+    );
+    expect(absoluteMessageHref('https://other.example/x', activeContext)).toBe(
+      'https://other.example/x',
+    );
+  });
+
+  it('preserves a jcr:content resource path rather than trimming it to the page', () => {
+    // The whole point: the normalised href keeps the resource so the
+    // post-sanitization pass can recover CRX's exact target.
+    expect(absoluteMessageHref('/content/a/b/jcr:content/x', activeContext)).toBe(
+      `${AUTHOR}/content/a/b/jcr:content/x`,
+    );
+  });
+
+  it('is undefined for an unresolvable href', () => {
+    expect(absoluteMessageHref('/content/x', hostsOnlyContext)).toBeUndefined();
+    expect(absoluteMessageHref('//evil.example/x', activeContext)).toBeUndefined();
+    expect(absoluteMessageHref('/system/console', activeContext)).toBeUndefined();
+    expect(absoluteMessageHref('mailto:a@example.com', activeContext)).toBeUndefined();
+  });
+});
+
+describe('linkTargets - link action serialization', () => {
+  it('round-trips the exact actions a link was classified with', () => {
+    const resolved = classifyAemPath(AUTHOR, '/content/a/b/jcr:content/x');
+    expect(parseLinkActions(serializeLinkActions(resolved.actions))).toEqual(resolved.actions);
+  });
+
+  it('drops malformed or unrecognised action data instead of throwing', () => {
+    expect(parseLinkActions(null)).toEqual([]);
+    expect(parseLinkActions('not json')).toEqual([]);
+    expect(parseLinkActions('{"id":"edit"}')).toEqual([]);
+    expect(parseLinkActions('[{"id":"delete","title":"x","href":"y"}]')).toEqual([]);
+    expect(parseLinkActions('[{"id":"edit","title":"Edit"}]')).toEqual([]);
+    expect(parseLinkActions('[{"id":"edit","title":"Edit","href":"https://a/x"}]')).toEqual([
+      { id: 'edit', title: 'Edit', href: 'https://a/x' },
+    ]);
   });
 });
 

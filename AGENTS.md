@@ -263,11 +263,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2278 passed / 14 skipped**;
-**Playwright → 79 tests** (includes `message-links.spec.ts`, the assistant
-message-link case, now 4 tests covering the Edit/CRX hover popover and the
-external-browser path, and `chat-thinking-indicator.spec.ts`, now 2 tests
-covering the transient reasoning billet). (The Session "Authentication"/"Models"
+Current baseline: **`npm run test` → 2292 passed / 14 skipped**;
+**Playwright → 81 tests** (includes `message-links.spec.ts`, the assistant
+message-link case, now 6 tests covering the Edit/CRX hover popover, the
+`jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
+on the exact resource - percent-encoding of the path in content-view URLs, the
+never-focused popover buttons, and the external-browser path, and
+`chat-thinking-indicator.spec.ts`, now 2 tests covering the transient reasoning
+billet). (The Session "Authentication"/"Models"
 → "Agents" tab merge moved the unit baseline from 1658, and later work moved it
 on — see `docs/verification.md`.) **`npm run verify` is currently red on one
 unrelated, tracked WIP file**, `src/shared/tools/aemCreatePage.ts`, which is not

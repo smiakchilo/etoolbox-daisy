@@ -28,8 +28,9 @@ import { parseNavigationTarget } from '../../../shared';
  *    (`/crx/de/index.jsp#<path-without-.html>`).
  *  - A `/content` path carrying a `jcr:content` segment names a resource
  *    *inside* a page (a component, a parsys, a rendition). The link itself opens
- *    the owning page - trimmed at `/jcr:content` and rendered as `.html` - while
- *    **CRX** still targets the exact resource the message referenced.
+ *    the owning page - trimmed at `/jcr:content` and rendered as `.html` - and
+ *    offers **Edit** for that owning page; **CRX** still targets the exact
+ *    resource the message referenced, untrimmed.
  *  - Every other `.html`/extensionless path is not a page: it opens the raw path
  *    and offers **CRX** only.
  *
@@ -81,6 +82,55 @@ export const MESSAGE_LINK_ATTRIBUTE = 'data-daisy-link';
  * not a configured host, so it opens in the system browser instead.
  */
 export const MESSAGE_EXTERNAL_ATTRIBUTE = 'data-daisy-external';
+
+/**
+ * The attribute `renderMarkdown.ts` stamps on a resolved pane anchor with the
+ * JSON-serialized {@link LinkAction}s its hover popover offers.
+ *
+ * It exists so the popover reads the actions the link was *classified* with,
+ * rather than re-deriving them from the anchor's `href`: for a `jcr:content`
+ * resource the href is deliberately trimmed to the owning page, so
+ * re-classifying it would silently retarget **CRX** at that page and lose the
+ * resource the message named.
+ */
+export const MESSAGE_ACTIONS_ATTRIBUTE = 'data-daisy-actions';
+
+const LINK_ACTION_IDS: readonly LinkAction['id'][] = ['edit', 'crx'];
+
+/** Serializes a link's popover actions for {@link MESSAGE_ACTIONS_ATTRIBUTE}. */
+export function serializeLinkActions(actions: readonly LinkAction[]): string {
+  return JSON.stringify(actions.map(({ id, title, href }) => ({ id, title, href })));
+}
+
+/**
+ * Reads {@link MESSAGE_ACTIONS_ATTRIBUTE} back into actions. Defensive because
+ * the attribute is DOM data: anything malformed or unrecognised is dropped, so
+ * a corrupted value degrades to "no popover", never a throw.
+ */
+export function parseLinkActions(raw: string | null): readonly LinkAction[] {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const actions: LinkAction[] = [];
+  for (const entry of parsed) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const { id, title, href } = entry as Record<string, unknown>;
+    if (
+      typeof id === 'string' &&
+      (LINK_ACTION_IDS as readonly string[]).includes(id) &&
+      typeof title === 'string' &&
+      typeof href === 'string'
+    ) {
+      actions.push({ id: id as LinkAction['id'], title, href });
+    }
+  }
+  return actions;
+}
 
 /** Where a resolved link opens. */
 export type LinkOpenIn = 'pane' | 'external';
@@ -159,6 +209,34 @@ function withoutHtmlExtension(pathname: string): string {
 }
 
 /**
+ * Percent-encodes a JCR path for use in a URL, segment by segment.
+ *
+ * JCR names routinely carry characters that are not URL-safe in a path - most
+ * visibly the `:` of `jcr:content`, but also spaces, `[`/`]`, unicode, ... -
+ * so every segment is `encodeURIComponent`-ed. The path is decoded once first
+ * because it may already be percent-encoded (an absolute link's pathname
+ * arrives that way from `new URL`), and encoding it again would double-escape
+ * it; this mirrors `buildResourceUrl`'s "decode once, re-encode per segment"
+ * rule.
+ *
+ * Only the content-view URLs (page, editor, asset preview, `assetdetails`) are
+ * built from this. The **CRX** action deliberately keeps the raw JCR path in
+ * its `#fragment`, where CRXDE Lite reads it verbatim and `:` needs no escaping.
+ */
+function encodeAemPathname(pathname: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    decoded = pathname;
+  }
+  return decoded
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+/**
  * Classifies one AEM-native path and builds its open target plus actions. The
  * single source of truth for the owner's rules - `resolveMessageLink` and the
  * bare-path linkifier both route through here.
@@ -169,10 +247,11 @@ export function classifyAemPath(origin: string, rawPathname: string): ResolvedLi
 
   if (hasNonHtmlExtension(path)) {
     // An asset: preview it in the pane. A DAM asset also offers Edit.
+    const encoded = encodeAemPathname(path);
     const actions: LinkAction[] = isDamPath(path)
-      ? [{ id: 'edit', title: 'Edit', href: `${origin}/assetdetails.html${path}` }]
+      ? [{ id: 'edit', title: 'Edit', href: `${origin}/assetdetails.html${encoded}` }]
       : [];
-    return { openIn: 'pane', href: `${origin}${path}`, actions };
+    return { openIn: 'pane', href: `${origin}${encoded}`, actions };
   }
 
   const crx: LinkAction = {
@@ -184,25 +263,24 @@ export function classifyAemPath(origin: string, rawPathname: string): ResolvedLi
   if (isContentPath(path)) {
     if (hasJcrContent(path)) {
       // A `jcr:content` segment names a resource *inside* a page (a component, a
-      // parsys, a rendition). The link opens the owning page; CRX still targets
-      // the exact resource the message referenced.
+      // parsys, a rendition). The link and Edit both open the owning page;
+      // CRX still targets the exact resource the message referenced.
+      const page = encodeAemPathname(beforeJcrContent(pathNoHtml));
       return {
         openIn: 'pane',
-        href: `${origin}${beforeJcrContent(pathNoHtml)}.html`,
-        actions: [crx],
+        href: `${origin}${page}.html`,
+        actions: [{ id: 'edit', title: 'Edit', href: `${origin}/editor.html${page}.html` }, crx],
       };
     }
+    const page = encodeAemPathname(pathNoHtml);
     return {
       openIn: 'pane',
-      href: `${origin}${pathNoHtml}.html`,
-      actions: [
-        { id: 'edit', title: 'Edit', href: `${origin}/editor.html${pathNoHtml}.html` },
-        crx,
-      ],
+      href: `${origin}${page}.html`,
+      actions: [{ id: 'edit', title: 'Edit', href: `${origin}/editor.html${page}.html` }, crx],
     };
   }
 
-  return { openIn: 'pane', href: `${origin}${path}`, actions: [crx] };
+  return { openIn: 'pane', href: `${origin}${encodeAemPathname(path)}`, actions: [crx] };
 }
 
 /**
@@ -240,6 +318,32 @@ export function resolveRelativePath(
   const pathname = rawHref.split(/[?#]/, 1)[0] ?? '';
   if (!isAemNativePath(pathname)) return undefined;
   return classifyAemPath(activeOrigin, pathname);
+}
+
+/**
+ * The absolute `http(s)` URL a message href denotes *before* it is normalised to
+ * its open target: an absolute URL normalised, or a relative AEM-native path
+ * resolved against `activeOrigin`. `undefined` when the href does not resolve at
+ * all (so it stays inert).
+ *
+ * `renderMarkdown.ts` normalises to this - rather than straight to
+ * `ResolvedLink.href` - so its post-sanitization pass can re-classify the
+ * *original* path. For a `jcr:content` resource that is what keeps the exact
+ * resource for **CRX**; the open target itself is applied from the
+ * re-classification.
+ */
+export function absoluteMessageHref(rawHref: string, context: LinkContext): string | undefined {
+  const parsed = parseNavigationTarget(rawHref);
+  if (parsed.ok) return parsed.url;
+  if (context.activeOrigin === undefined) return undefined;
+  if (!rawHref.startsWith('/') || rawHref.startsWith('//')) return undefined;
+  const pathname = rawHref.split(/[?#]/, 1)[0] ?? '';
+  if (!isAemNativePath(pathname)) return undefined;
+  try {
+    return new URL(rawHref, context.activeOrigin).href;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

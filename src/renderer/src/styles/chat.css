@@ -17,7 +17,7 @@
   margin-bottom: 16px;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 8px 8px 4px;
+  padding: 0 8px 8px 0;
 }
 
 /* Fully replaced on every repaint (see transcriptView.ts). */
@@ -45,13 +45,18 @@
   overflow-wrap: break-word;
 }
 
+.chat-message:first-child {
+  margin-block-start: 0;
+}
+
 .chat-message--user {
   background: var(--spectrum-blue-100, #e5f1ff);
   align-self: flex-end;
 }
 
 .chat-message--assistant {
-  background: var(--spectrum-gray-200, #ebebeb);
+  background: var(--spectrum-gray-100, #f8f8f8);
+  border: 1px solid var(--spectrum-gray-200, #d3d3d3);
 }
 
 /* The transient "Thinking" billet: a borderless disclosure row shown while a
@@ -306,7 +311,7 @@
 
 .chat-composer {
   flex: 0 0 auto;
-  padding: 0 8px 8px 4px;
+  padding: 0 8px 8px 0;
 }
 
 /* Empty conversation: no transcript to show, so the prompt frame takes the

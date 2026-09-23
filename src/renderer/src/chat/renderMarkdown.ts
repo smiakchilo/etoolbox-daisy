@@ -3,9 +3,12 @@ import createDOMPurify from 'dompurify';
 import type { Config as DomPurifyConfig } from 'dompurify';
 import {
   EMPTY_LINK_CONTEXT,
+  MESSAGE_ACTIONS_ATTRIBUTE,
   MESSAGE_EXTERNAL_ATTRIBUTE,
   MESSAGE_LINK_ATTRIBUTE,
+  absoluteMessageHref,
   resolveMessageLink,
+  serializeLinkActions,
   splitAemPathLinks,
   type LinkContext,
   type ResolvedLink,
@@ -309,26 +312,29 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
   }
 
   /**
-   * Rewrites an AEM-native anchor (`[p](/content/x)` or an absolute host URL)
-   * into its absolute *open target* before sanitization. This is what lets a
-   * relative link survive the sanitizer's scheme policy, which rejects relative
-   * hrefs outright: by the time it is consulted the href is an ordinary
-   * `https://...` on a configured host. A relative path with no active host is
-   * left untouched, so the sanitizer strips it and the text remains behind with
-   * no href - exactly the owner's "do not convert relative paths to links if
-   * none". An external absolute URL is normalised to the same string the click
-   * handler will see.
+   * Normalises a resolvable anchor's href to the absolute URL of the path the
+   * message wrote, *before* sanitization. This is what lets a relative link
+   * survive the sanitizer's scheme policy, which rejects relative hrefs
+   * outright.
+   *
+   * It normalises to the absolute *source*, not the open target: the
+   * post-sanitization pass re-classifies this href and applies the open target
+   * itself, and for a `jcr:content` resource only the source preserves the exact
+   * resource that **CRX** must target. Rewriting straight to the open target
+   * here would trim the path before the actions could be computed. An external
+   * absolute URL is normalised to the same string the click handler will see;
+   * anything unresolvable is left untouched, so the sanitizer strips it.
    */
   function rewriteAnchors(doc: Document, context: LinkContext): void {
     for (const anchor of Array.from(doc.querySelectorAll('a[href]'))) {
       const href = anchor.getAttribute('href');
       if (href === null) continue;
-      const resolved = resolveMessageLink(href, context);
-      if (resolved !== undefined) anchor.setAttribute('href', resolved.href);
+      const absolute = absoluteMessageHref(href, context);
+      if (absolute !== undefined) anchor.setAttribute('href', absolute);
     }
   }
 
-  /** Stamps a resolved link with the marker for where it opens. */
+  /** Stamps a resolved link with the marker for where it opens, and its actions. */
   function mark(anchor: HTMLAnchorElement, resolved: ResolvedLink): void {
     anchor.setAttribute(
       resolved.openIn === 'external' ? MESSAGE_EXTERNAL_ATTRIBUTE : MESSAGE_LINK_ATTRIBUTE,
@@ -336,6 +342,9 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
     );
     if (resolved.openIn === 'external') {
       anchor.setAttribute('title', 'Opens in your browser');
+    }
+    if (resolved.actions.length > 0) {
+      anchor.setAttribute(MESSAGE_ACTIONS_ATTRIBUTE, serializeLinkActions(resolved.actions));
     }
   }
 
@@ -380,15 +389,19 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
   }
 
   /**
-   * The post-sanitization pass: linkifies bare paths, then resolves and marks
-   * every remaining anchor. Only a link {@link resolveMessageLink} resolves
-   * (a configured host, an external origin, or a relative path with an active
-   * host) is stamped, and only a stamped anchor is intercepted on click
+   * The post-sanitization pass: resolves and marks every anchor, then linkifies
+   * bare paths. Only a link {@link resolveMessageLink} resolves (a configured
+   * host, an external origin, or a relative path with an active host) is
+   * stamped, and only a stamped anchor is intercepted on click
    * (`transcriptView.ts`).
+   *
+   * The anchor pass runs first, over the anchors that came from the message, and
+   * `linkifyTextNodes` runs last, creating only *new* anchors. That order
+   * matters: a linkified anchor's href is already its open target, so feeding it
+   * back through `resolveMessageLink` would re-classify a trimmed
+   * `jcr:content` page and lose its exact CRX resource.
    */
   function markOpenableLinks(doc: Document, context: LinkContext): void {
-    linkifyTextNodes(doc, context);
-
     for (const anchor of Array.from(doc.querySelectorAll('a'))) {
       const href = anchor.getAttribute('href');
       if (href === null) continue;
@@ -397,6 +410,8 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
       if (resolved.href !== href) anchor.setAttribute('href', resolved.href);
       mark(anchor, resolved);
     }
+
+    linkifyTextNodes(doc, context);
   }
 
   return {

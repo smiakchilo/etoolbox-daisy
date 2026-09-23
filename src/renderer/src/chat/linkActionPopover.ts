@@ -103,9 +103,14 @@ export function createLinkActionPopover(
         ? el('sp-icon-edit', { attrs: { slot: 'icon' } })
         : el('sp-icon-journey-voyager', { attrs: { slot: 'icon' } });
     const button = el('sp-action-button', {
-      attrs: { label: action.title, title: action.title },
+      // `tabindex="-1"` keeps the button out of the tab order (the Spectrum
+      // button sets its own host to `tabindex="0"` only when none is present);
+      // `mousedown` is prevented so a click never focuses it either. The popover
+      // is a transient hover affordance, so no button may ever take focus.
+      attrs: { label: action.title, title: action.title, tabindex: '-1' },
     });
     button.append(icon);
+    button.addEventListener('mousedown', (event) => event.preventDefault());
     button.addEventListener('click', () => {
       hideNow();
       options.onOpenLink(action.href);

@@ -3,6 +3,7 @@
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { createMarkdownRenderer } from '../../../../src/renderer/src/chat/renderMarkdown';
+import { parseLinkActions } from '../../../../src/renderer/src/chat/linkTargets';
 
 // `tsconfig.test.json` compiles this test suite against the `ES2023` lib
 // only (no `dom`), matching the Node-oriented rest of `tests/**`. Rather than
@@ -54,6 +55,38 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
   it('opens a /content/dam non-asset raw (CRX popover only)', () => {
     const doc = parse(renderer.render('[Asset](/content/dam/x/y)', ACTIVE_CONTEXT));
     expect(doc.querySelector('a')?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y`);
+  });
+
+  it('trims a jcr:content resource link to its owning page but keeps CRX on the resource', () => {
+    const doc = parse(renderer.render('[C](/content/a/b/jcr:content/x)', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/a/b.html`);
+    expect(anchor?.hasAttribute('data-daisy-link')).toBe(true);
+    // The popover actions are stamped from the *original* resource path, so
+    // re-classifying the trimmed href can never retarget CRX at the page.
+    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr:content/x` },
+    ]);
+  });
+
+  it('linkifies a bare jcr:content path with the same page href and resource CRX', () => {
+    const doc = parse(renderer.render('See /content/a/b/jcr:content/x now.', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/a/b.html`);
+    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr:content/x` },
+    ]);
+  });
+
+  it('percent-encodes jcr:content in the content-view href, leaving the CRX fragment raw', () => {
+    const doc = parse(renderer.render('See /apps/x/jcr:content/y now.', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/apps/x/jcr%3Acontent/y`);
+    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/apps/x/jcr:content/y` },
+    ]);
   });
 
   it('linkifies a bare AEM path in prose', () => {
@@ -302,6 +335,7 @@ describe('createMarkdownRenderer', () => {
     });
 
     it('removes form/input/button/link/meta/base', () => {
+      // noinspection JSUnresolvedLibraryURL
       const html = renderer.render(
         '<form action="https://evil.example"><input name="x"><button>go</button></form>' +
           '<link rel="stylesheet" href="https://evil.example/x.css">' +

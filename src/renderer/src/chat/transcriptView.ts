@@ -1,9 +1,10 @@
 import { el } from '../lib/dom';
 import {
   EMPTY_LINK_CONTEXT,
+  MESSAGE_ACTIONS_ATTRIBUTE,
   MESSAGE_EXTERNAL_ATTRIBUTE,
   MESSAGE_LINK_ATTRIBUTE,
-  resolveMessageLink,
+  parseLinkActions,
   type LinkContext,
 } from './linkTargets';
 import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
@@ -298,12 +299,13 @@ export function createTranscriptView(
     if (popover === undefined) return;
     const anchor = paneLinkFrom(event.target);
     if (anchor === null || anchor === hoveredLink) return;
-    const href = anchor.getAttribute('href');
-    if (href === null) return;
-    const resolved = resolveMessageLink(href, getLinkContext());
-    if (resolved === undefined || resolved.actions.length === 0) return;
+    // The actions are read from the anchor, not re-derived from its href: a
+    // `jcr:content` link's href is trimmed to the owning page, so re-classifying
+    // it would retarget CRX at that page (see `MESSAGE_ACTIONS_ATTRIBUTE`).
+    const actions = parseLinkActions(anchor.getAttribute(MESSAGE_ACTIONS_ATTRIBUTE));
+    if (actions.length === 0) return;
     hoveredLink = anchor;
-    popover.show(anchor, resolved.actions);
+    popover.show(anchor, actions);
   });
 
   element.addEventListener('pointerout', (event) => {
