@@ -931,3 +931,60 @@ describe('agentChatController page context', () => {
     ]);
   });
 });
+
+describe('agentChatController skill prompt rewrite', () => {
+  it('rewrites only the model-facing prompt, keeping the user text for display', async () => {
+    const leaky = createLeakyAgentService();
+    const { controller } = buildController(leaky, {
+      currentPageContext: () => 'CTX-BLOCK',
+      resolveSkillPrompt: (prompt) =>
+        prompt === '/aem-tool-selection what tool?' ? 'DIRECTIVE' : prompt,
+    });
+    const chatId = newChatId('chat-skill');
+    await controller.openConversation({ chatId });
+
+    const sent = await controller.sendMessage({
+      chatId,
+      prompt: '/aem-tool-selection what tool?',
+    });
+    expect(sent.ok).toBe(true);
+    if (!sent.ok) throw new Error('unreachable');
+
+    expect(leaky.sentPrompts.at(-1)).toEqual({
+      chatId,
+      turnId: sent.turnId,
+      prompt: 'CTX-BLOCK\n\nDIRECTIVE',
+      displayPrompt: '/aem-tool-selection what tool?',
+    });
+  });
+
+  it('passes an unrecognised prompt through unchanged', async () => {
+    const leaky = createLeakyAgentService();
+    const { controller } = buildController(leaky, {
+      resolveSkillPrompt: (prompt) => prompt,
+    });
+    const chatId = newChatId('chat-skill');
+    await controller.openConversation({ chatId });
+
+    await controller.sendMessage({ chatId, prompt: '/content/wknd/us/en' });
+
+    expect(leaky.sentPrompts.at(-1)).toMatchObject({
+      prompt: '/content/wknd/us/en',
+      displayPrompt: '/content/wknd/us/en',
+    });
+  });
+
+  it('leaves the prompt untouched when no resolver is configured', async () => {
+    const leaky = createLeakyAgentService();
+    const { controller } = buildController(leaky);
+    const chatId = newChatId('chat-skill');
+    await controller.openConversation({ chatId });
+
+    await controller.sendMessage({ chatId, prompt: '/aem-tool-selection hi' });
+
+    expect(leaky.sentPrompts.at(-1)).toMatchObject({
+      prompt: '/aem-tool-selection hi',
+      displayPrompt: '/aem-tool-selection hi',
+    });
+  });
+});

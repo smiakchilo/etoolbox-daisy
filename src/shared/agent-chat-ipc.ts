@@ -235,6 +235,37 @@ export function parseAgentChatReadJournalResult(candidate: unknown): AgentChatRe
 }
 
 // ---------------------------------------------------------------------------
+// Skill catalogue (`agent-chat:list-skills`)
+// ---------------------------------------------------------------------------
+
+/**
+ * One bundled skill reduced to what the composer's `/` autocomplete needs: the
+ * name it is invoked by and the description shown beside it. Main reads these
+ * from the application's own `resources/skills/<name>/SKILL.md` front matter and
+ * never sends a skill's body - the renderer only ever re-emits the name in a
+ * prompt, and the model loads the body through the runtime's `skill` tool.
+ */
+export const agentChatSkillSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    description: z.string().max(4000),
+  })
+  .strict();
+
+export type AgentChatSkill = Readonly<z.infer<typeof agentChatSkillSchema>>;
+
+export const agentChatSkillsResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), skills: z.array(agentChatSkillSchema) }).strict(),
+  z.object({ ok: z.literal(false), error: agentChatErrorSchema }).strict(),
+]);
+
+export type AgentChatSkillsResult = Readonly<z.infer<typeof agentChatSkillsResultSchema>>;
+
+export function parseAgentChatSkillsResult(candidate: unknown): AgentChatSkillsResult {
+  return agentChatSkillsResultSchema.parse(candidate);
+}
+
+// ---------------------------------------------------------------------------
 // Push channel (`agent-chat:event`)
 // ---------------------------------------------------------------------------
 

@@ -402,6 +402,12 @@ export interface StartAgentServiceInBackgroundDeps {
   readonly chatJournal?: ChatJournal;
   /** Cancels in-flight AEM bridge requests when a turn is cancelled. */
   readonly cancelAemRequests?: () => void;
+  /**
+   * Rewrites a prompt that begins with a bundled-skill reference into the
+   * model-facing directive that loads that skill. Optional and passed through
+   * verbatim to `createAgentChatController`; omitted means no rewrite.
+   */
+  readonly resolveSkillPrompt?: (prompt: string) => string;
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
@@ -440,6 +446,9 @@ export async function startAgentServiceInBackground(
     currentPageContext: deps.currentPageContext,
     ...(deps.chatJournal !== undefined ? { chatJournal: deps.chatJournal } : {}),
     ...(deps.cancelAemRequests !== undefined ? { cancelAemRequests: deps.cancelAemRequests } : {}),
+    ...(deps.resolveSkillPrompt !== undefined
+      ? { resolveSkillPrompt: deps.resolveSkillPrompt }
+      : {}),
   });
   await deps.gatedController.replaceDelegate(controller);
 }

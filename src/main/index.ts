@@ -11,6 +11,7 @@ import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createChatJournal } from './chatJournal';
+import { createSkillCatalog } from './skills/skillCatalog';
 import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
@@ -64,7 +65,7 @@ import {
   DEFAULT_FAKE_AUTH_STATE,
   type FakeAgentService,
 } from '../agent/fakeAgentService';
-import { err, ok, type ModelCatalogEntry, type Result } from '../shared';
+import { err, ok, resolveSkillPrompt, type ModelCatalogEntry, type Result } from '../shared';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
@@ -512,6 +513,12 @@ if (!gotSingleInstanceLock) {
       mainDir: currentDir,
       join: (...segments) => path.join(...segments),
     });
+    // The composer's `/` autocomplete reads this lazily, only once the renderer
+    // asks (after the pane reports ready), so its filesystem read never sits on
+    // the window's startup path. The send path consults `current()` - empty
+    // until that read lands, which simply means a leading `/name` is passed
+    // through unchanged until the catalogue is known.
+    const skillCatalog = createSkillCatalog(bundledSkillsDirectory);
 
     // Decided once, from the exact same pure function `selectAgentService`
     // calls internally with the same `env`/`isPackaged` - so the client
@@ -534,6 +541,19 @@ if (!gotSingleInstanceLock) {
           return { ok: false, error: describeJournalReadFailure(outcome.reason) };
         }
         return { ok: true, records: [...outcome.records] };
+      },
+      // The bundled skill catalogue, read on demand for the composer's `/`
+      // autocomplete. `readSkillCatalog` never rejects; the `ok: false` branch
+      // is a defence-in-depth backstop the renderer treats as "no autocomplete".
+      listSkills: async () => {
+        try {
+          return { ok: true, skills: [...(await skillCatalog.load())] };
+        } catch {
+          return {
+            ok: false,
+            error: { code: 'STORAGE_ERROR', message: 'The skill catalogue could not be read.' },
+          };
+        }
       },
     });
 
@@ -645,6 +665,16 @@ if (!gotSingleInstanceLock) {
         // in-flight and queued AEM requests, so a stopped tool call releases the
         // concurrency-1 slot immediately instead of running to its 90 s deadline.
         cancelAemRequests: () => aemBridgeBroker.cancelAll(),
+        // A prompt that begins with a known `/skillname` becomes an explicit
+        // directive to load that skill; the user's own text is kept for the
+        // transcript and the journal by the controller. `current()` is empty
+        // until the catalogue read lands, so an unknown or not-yet-loaded name
+        // is passed through unchanged.
+        resolveSkillPrompt: (prompt) =>
+          resolveSkillPrompt(
+            prompt,
+            skillCatalog.current().map((skill) => skill.name),
+          ),
         gatedController: agentChatController,
       });
 

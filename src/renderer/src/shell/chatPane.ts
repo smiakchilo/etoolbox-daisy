@@ -18,6 +18,7 @@ import {
   AGENT_DEFINITIONS,
   applyAgentEvent,
   type AgentChatOpenResult,
+  type AgentChatSkill,
   type AgentChatStatus,
   type AgentServiceLifecycleState,
   type AgentSettingsSnapshot,
@@ -179,6 +180,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // presentation, but naming the work the user is actually waiting on.
   const restoringContent: readonly Node[] = [buildBannerCopy(['Restoring conversation...'])];
 
+  // Shown while the `/` autocomplete's skill catalogue is being read from disk
+  // in main, which the pane begins only once the service is ready - so it never
+  // delays or competes with the runtime's own cold start.
+  const loadingSkillsContent: readonly Node[] = [buildBannerCopy(['Loading skills...'])];
+
   // A send-blocked reason is a persistent plain row. Memoised per reason so a
   // caller re-asserting the same state never rebuilds the DOM.
   const blockReasonContent = new Map<CanSendBlockReason, readonly Node[]>();
@@ -215,6 +221,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // Whether the active conversation has at least one message. Only then is it
   // worth restoring - an opened-but-unused chat is never remembered.
   let conversationHasMessage = false;
+  // The bundled skill catalogue for the composer's `/` autocomplete, and where
+  // its one asynchronous read is: `idle` until the service is ready, `loading`
+  // while main reads the SKILL.md files, `loaded` once (success or failure).
+  // A failed read leaves an empty catalogue - the autocomplete simply stays
+  // silent, and a leading `/name` is still sent as ordinary text.
+  let skills: readonly AgentChatSkill[] = [];
+  let skillsState: 'idle' | 'loading' | 'loaded' = 'idle';
   // The startup conversation is resolved at most once, and both the early
   // journal preload and the ready-time resume await this same promise - so the
   // two can never race over which one claims the restore.
@@ -278,6 +291,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       statusBanner.setStanding(connectingContent, 'loading');
     } else if (!agentActive) {
       statusBanner.setStanding(agentPromptContent);
+    } else if (skillsState === 'loading') {
+      statusBanner.setStanding(loadingSkillsContent, 'loading');
     } else if (buttonState.kind === 'send-disabled') {
       statusBanner.setStanding(contentForBlockReason(buttonState.reason));
     } else {
@@ -296,6 +311,28 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     conversationEmpty = empty;
     element.classList.toggle('chat-pane--empty', empty);
     composer.setConversationEmpty(empty);
+  }
+
+  /**
+   * Reads the bundled skill catalogue once, off any critical path: the pane
+   * asks main only after the service reports ready, so the read never competes
+   * with the runtime's own cold start. The "Loading skills..." banner is shown
+   * for its duration, and the catalogue is handed to the composer for its `/`
+   * autocomplete. A failure (or an empty catalogue) is silent here - the
+   * autocomplete simply has nothing to offer, and any leading `/name` is still
+   * sent as ordinary text.
+   */
+  async function loadSkills(): Promise<void> {
+    if (skillsState !== 'idle') return;
+    skillsState = 'loading';
+    refreshSessionPresentation();
+    const result = await window.daisy.agentChat.listSkills();
+    skillsState = 'loaded';
+    if (result.ok) {
+      skills = result.skills;
+      composer.setSkills(skills);
+    }
+    refreshSessionPresentation();
   }
 
   function subscribeToEvents(): void {
@@ -434,6 +471,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       refreshSessionPresentation();
       return;
     }
+
+    // The runtime is ready, so the composer may soon send: fetch the skill
+    // catalogue for its `/` autocomplete now. Guarded to a single read.
+    void loadSkills();
 
     sessionStatus = { ...sessionStatus, authenticated: status.auth.isAuthenticated };
     if (status.sdkSessionId !== null) latestSdkSessionId = status.sdkSessionId;

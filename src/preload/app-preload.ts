@@ -8,6 +8,7 @@ import {
   AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL,
   AGENT_CHAT_EVENT_CHANNEL,
   AGENT_CHAT_GET_STATUS_CHANNEL,
+  AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
@@ -57,6 +58,7 @@ import {
   parseAgentChatReadJournalResult,
   parseAgentChatSendMessageRequest,
   parseAgentChatSendResult,
+  parseAgentChatSkillsResult,
   parseAgentChatStatus,
   parseAgentChatVoidResult,
   parseAppInfo,
@@ -97,6 +99,7 @@ import {
   type AgentChatReadJournalResult,
   type AgentChatSendMessageRequest,
   type AgentChatSendResult,
+  type AgentChatSkillsResult,
   type AgentChatStatus,
   type AgentChatVoidResult,
   type AgentEvent,
@@ -304,6 +307,10 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = parseAgentChatReadJournalRequest(request);
       const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_READ_JOURNAL_CHANNEL, parsedRequest);
       return parseAgentChatReadJournalResult(raw);
+    },
+    async listSkills(): Promise<AgentChatSkillsResult> {
+      const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_LIST_SKILLS_CHANNEL);
+      return parseAgentChatSkillsResult(raw);
     },
     onEvent(listener: (event: AgentEvent) => void): () => void {
       const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {

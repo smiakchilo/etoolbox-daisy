@@ -1,5 +1,6 @@
 ---
 name: aem-daisy-conventions
+user-invocable: false
 description: EToolbox Daisy conventions for working with a conventional AEM Author instance. Use when answering questions about how this application refers to AEM paths, nodes, or components, or when asked for the EToolbox Daisy skill verification phrase.
 ---
 

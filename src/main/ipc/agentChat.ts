@@ -4,6 +4,7 @@ import {
   AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL,
   AGENT_CHAT_EVENT_CHANNEL,
   AGENT_CHAT_GET_STATUS_CHANNEL,
+  AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
@@ -18,6 +19,7 @@ import {
   type AgentChatReadJournalRequest,
   type AgentChatReadJournalResult,
   type AgentChatSendResult,
+  type AgentChatSkillsResult,
   type AgentChatVoidResult,
 } from '../../shared';
 import { isAllowedAppNavigation } from '../security';
@@ -103,6 +105,10 @@ function untrustedReadJournalResult(): AgentChatReadJournalResult {
   return { ok: false, error: UNTRUSTED_SENDER_ERROR };
 }
 
+function untrustedSkillsResult(): AgentChatSkillsResult {
+  return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+}
+
 function invalidPayloadReadJournalResult(message: string): AgentChatReadJournalResult {
   return { ok: false, error: { code: 'INVALID_ARGUMENT', message } };
 }
@@ -133,6 +139,12 @@ export interface AgentChatIpcDependencies {
    * a throw.
    */
   readonly readJournal: (request: AgentChatReadJournalRequest) => AgentChatReadJournalResult;
+  /**
+   * Reads the bundled skill catalogue for the composer's `/` autocomplete.
+   * Built in the composition root so this handler stays free of filesystem and
+   * path concerns; a missing catalogue is an `ok: false` result, never a throw.
+   */
+  readonly listSkills: () => Promise<AgentChatSkillsResult>;
 }
 
 /**
@@ -211,6 +223,11 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
       return deps.readJournal(parsed.data);
     },
   );
+
+  ipcMain.handle(AGENT_CHAT_LIST_SKILLS_CHANNEL, (event): Promise<AgentChatSkillsResult> => {
+    if (!checkSender(event)) return Promise.resolve(untrustedSkillsResult());
+    return deps.listSkills();
+  });
 
   const unsubscribeEvents = deps.controller.onEvent(
     createAgentChatEventForwarder(deps.rendererWebContents, AGENT_CHAT_EVENT_CHANNEL),

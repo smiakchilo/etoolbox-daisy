@@ -1,0 +1,184 @@
+import { readFile, readdir } from 'node:fs/promises';
+import path from 'node:path';
+
+import type { AgentChatSkill } from '../../shared';
+
+/**
+ * Reads the application's own bundled skill catalogue for the composer's `/`
+ * autocomplete.
+ *
+ * The runtime loads the *bodies* of these `SKILL.md` files itself through its
+ * `skill` tool; this module only needs the three front-matter fields the
+ * autocomplete uses - `name`, `description` and `user-invocable` - so it parses
+ * them directly rather than asking the runtime (which would require a live
+ * session, and would leave the feature unavailable under the deterministic
+ * fake).
+ *
+ * The directory is resolved by the composition root from the application's own
+ * install location (`agentComposition.ts`'s `resolveBundledSkillsDirectory`) and
+ * is never sourced from settings, the user's home, or an AEM response, so this
+ * reads a fixed, application-owned tree. A missing or unreadable entry is
+ * skipped: the catalogue is a convenience and must never fail the app.
+ */
+
+const FRONT_MATTER_DELIMITER = '---';
+const DESCRIPTION_MAX_LENGTH = 4000;
+
+export interface ParsedSkillFrontMatter {
+  readonly name: string;
+  readonly description: string;
+  /**
+   * Whether the skill belongs in the user's `/` menu. Follows the Agent Skills
+   * convention: `user-invocable` defaults to `true`, and `false` marks a skill
+   * the model may still load but the user is not offered by name (an
+   * "agent-only background skill").
+   */
+  readonly userInvocable: boolean;
+}
+
+/**
+ * The Agent Skills front matter accepts `yes`/`no`/`on`/`off`/`1`/`0` in any
+ * letter case in addition to `true`/`false`; an absent or unrecognised value
+ * falls back to the field's own default.
+ */
+function parseFrontMatterBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  switch (value.trim().toLowerCase()) {
+    case 'true':
+    case 'yes':
+    case 'on':
+    case '1':
+      return true;
+    case 'false':
+    case 'no':
+    case 'off':
+    case '0':
+      return false;
+    default:
+      return fallback;
+  }
+}
+
+/** Strips one matching pair of surrounding single or double quotes, if present. */
+function stripQuotes(value: string): string {
+  if (value.length < 2) return value;
+  const first = value.charAt(0);
+  const last = value.charAt(value.length - 1);
+  if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+/**
+ * Parses the leading `---`-delimited front-matter block of a `SKILL.md`.
+ *
+ * Deliberately minimal: the bundle's front matter is a flat list of
+ * `key: value` lines and only `name`/`description` are read, so a full YAML
+ * parser would be an unearned dependency. Returns `undefined` when the block is
+ * absent, unterminated, or carries no non-empty `name`.
+ */
+export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter | undefined {
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0]?.trim() !== FRONT_MATTER_DELIMITER) return undefined;
+  const endIndex = lines.findIndex(
+    (line, index) => index > 0 && line.trim() === FRONT_MATTER_DELIMITER,
+  );
+  if (endIndex === -1) return undefined;
+
+  const fields = new Map<string, string>();
+  for (const line of lines.slice(1, endIndex)) {
+    const separator = line.indexOf(':');
+    if (separator === -1) continue;
+    const key = line.slice(0, separator).trim();
+    if (key === '') continue;
+    fields.set(key, stripQuotes(line.slice(separator + 1).trim()));
+  }
+
+  const name = fields.get('name');
+  if (name === undefined || name === '') return undefined;
+  return {
+    name,
+    description: fields.get('description') ?? '',
+    userInvocable: parseFrontMatterBoolean(fields.get('user-invocable'), true),
+  };
+}
+
+/**
+ * Reads and parses every `<directory>/<skill>/SKILL.md`, sorted by name for a
+ * stable order, keeping only the skills the user may invoke (`user-invocable`
+ * not `false`).
+ *
+ * Auxiliary skills the model loads on its own - `aem-tool-selection`,
+ * `aem-query-results`, `aem-daisy-conventions` - set `user-invocable: false`,
+ * so they are deliberately absent from the `/` autocomplete even though the
+ * runtime still loads their bodies. Never rejects: a missing directory, an
+ * unreadable file, or a file without usable front matter is simply omitted.
+ */
+export async function readSkillCatalog(directory: string): Promise<AgentChatSkill[]> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const skills: AgentChatSkill[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    let markdown: string;
+    try {
+      markdown = await readFile(path.join(directory, entry.name, 'SKILL.md'), 'utf8');
+    } catch {
+      continue;
+    }
+    const parsed = parseSkillFrontMatter(markdown);
+    if (parsed === undefined || !parsed.userInvocable) continue;
+    skills.push({
+      name: parsed.name,
+      description: parsed.description.slice(0, DESCRIPTION_MAX_LENGTH),
+    });
+  }
+  skills.sort((left, right) => left.name.localeCompare(right.name));
+  return skills;
+}
+
+/**
+ * A lazily-read, single-flight view of the catalogue.
+ *
+ * `load()` performs one filesystem read no matter how many callers ask, and
+ * caches the result (including a failed read, as an empty catalogue, so a
+ * broken install is not re-read on every prompt). `current()` is the
+ * synchronous snapshot the send path consults - it is `[]` until the first
+ * `load()` resolves, which is exactly "no skills are known yet", so a prompt
+ * sent before the catalogue arrives is passed through unchanged.
+ */
+export interface SkillCatalog {
+  load(): Promise<readonly AgentChatSkill[]>;
+  current(): readonly AgentChatSkill[];
+}
+
+export function createSkillCatalog(directory: string): SkillCatalog {
+  let loaded: readonly AgentChatSkill[] | undefined;
+  let inFlight: Promise<readonly AgentChatSkill[]> | undefined;
+
+  return {
+    load(): Promise<readonly AgentChatSkill[]> {
+      if (loaded !== undefined) return Promise.resolve(loaded);
+      inFlight ??= readSkillCatalog(directory).then(
+        (skills) => {
+          loaded = skills;
+          return skills;
+        },
+        () => {
+          loaded = [];
+          return loaded;
+        },
+      );
+      return inFlight;
+    },
+    current(): readonly AgentChatSkill[] {
+      return loaded ?? [];
+    },
+  };
+}

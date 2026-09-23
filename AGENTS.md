@@ -228,10 +228,13 @@ summary plus label/value rows — composed by `describeToolCall()` in
 
 ### `resources/skills/`
 
-Four bundled skills, each a `SKILL.md`: `aem-daisy-conventions`,
-`aem-tool-selection`, `aem-querybuilder-queries`, `aem-query-results`.
-Application-owned only — never loaded from the user's home, a project
-directory, or an AEM response.
+Five bundled skills, each a `SKILL.md`: `aem-query` and `aem-semantic-search`
+(both user-invocable — they appear in the composer's `/` autocomplete), plus
+`aem-daisy-conventions`, `aem-tool-selection` and `aem-query-results`
+(auxiliary — `user-invocable: false`, so the runtime still loads them for the
+model but the `/` menu does not list them; see
+`src/main/skills/skillCatalog.ts`). Application-owned only — never loaded from
+the user's home, a project directory, or an AEM response.
 
 ### `tests/`
 

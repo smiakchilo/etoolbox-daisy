@@ -39,6 +39,7 @@ import type {
   AgentChatReadJournalResult,
   AgentChatSendMessageRequest,
   AgentChatSendResult,
+  AgentChatSkillsResult,
   AgentChatStatus,
   AgentChatVoidResult,
 } from './agent-chat-ipc';
@@ -91,6 +92,13 @@ export interface DaisyAgentChatApi {
    * unreadable journal comes back as an `ok: false` result, never a throw.
    */
   readJournal(request: AgentChatReadJournalRequest): Promise<AgentChatReadJournalResult>;
+  /**
+   * The bundled skill catalogue (name + description) for the composer's `/`
+   * autocomplete. Read from the application's own `resources/skills` directory
+   * in main; never throws - an unreadable catalogue comes back as `ok: false`,
+   * which the pane treats as "no autocomplete".
+   */
+  listSkills(): Promise<AgentChatSkillsResult>;
   /** Subscribes to `agent-chat:event`; returns an unsubscribe function. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**

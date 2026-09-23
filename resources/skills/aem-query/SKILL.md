@@ -1,5 +1,5 @@
 ---
-name: aem-querybuilder-queries
+name: aem-query
 description: How to construct AEM QueryBuilder predicate maps for the aem_query tool, including path/type/property predicates, nested AND/OR groups, date and range predicates, full-text search, ordering, and choosing which properties to return. Use whenever building, correcting, or explaining an aem_query call against a conventional AEM Author instance.
 ---
 

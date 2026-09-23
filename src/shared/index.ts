@@ -6,5 +6,6 @@ export * from './agent-auth';
 export * from './settings-ipc';
 export * from './browser-ipc';
 export * from './agent-chat-ipc';
+export * from './skillInvocation';
 export * from './contracts';
 export * from './tools';

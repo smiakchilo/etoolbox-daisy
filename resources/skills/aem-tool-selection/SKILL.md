@@ -1,5 +1,6 @@
 ---
 name: aem-tool-selection
+user-invocable: false
 description: How to choose between the aem_get_json and aem_query tools when answering a question about a conventional AEM Author instance, and which operations EToolbox Daisy does not permit at all. Use before the first AEM tool call of a task, whenever a request could be answered either by reading a known path or by searching, whenever a request refers to "this page", "this host", or the current environment instead of naming a path or server, and whenever a request asks to change, create, delete, move, replicate, or activate AEM content.
 ---
 

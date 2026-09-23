@@ -40,6 +40,7 @@ const openConversation = vi.fn();
 const sendMessage = vi.fn();
 const abort = vi.fn();
 const navigate = vi.fn();
+const listSkills = vi.fn();
 let statusListener: ((status: AgentChatStatus) => void) | undefined;
 let eventListener: ((event: AgentEvent) => void) | undefined;
 
@@ -118,6 +119,8 @@ beforeEach(() => {
   sendMessage.mockReset();
   abort.mockReset();
   navigate.mockReset();
+  listSkills.mockReset();
+  listSkills.mockResolvedValue({ ok: true, skills: [] });
   statusListener = undefined;
   eventListener = undefined;
 
@@ -139,6 +142,7 @@ beforeEach(() => {
       openConversation,
       sendMessage,
       abort,
+      listSkills,
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         eventListener = listener;
         return () => {
@@ -677,6 +681,70 @@ describe('createChatPane startup restore', () => {
 
     expect(openConversation).toHaveBeenCalledTimes(1);
     expect((openConversation.mock.calls[0]?.[0] as { resume?: unknown }).resume).toBeUndefined();
+
+    pane.dispose();
+  });
+});
+
+describe('createChatPane skill catalogue', () => {
+  // The `/` popup itself is a Spectrum overlay/popover, which jsdom cannot
+  // register, so the popup's contents are asserted by the E2E
+  // (`skill-autocomplete.spec.ts`). These cover the catalogue read the pane
+  // owns: when it happens, the loading row, and that a failure stays silent.
+
+  it('reads the catalogue once after ready and shows a loading row until it lands', async () => {
+    let resolveSkills:
+      ((value: { ok: true; skills: { name: string; description: string }[] }) => void) | undefined;
+    listSkills.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSkills = resolve;
+      }),
+    );
+
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    expect(listSkills).toHaveBeenCalledTimes(1);
+    expect(agentBanner(pane)?.hasAttribute('open')).toBe(true);
+    expect(agentBanner(pane)?.textContent).toContain('Loading skills');
+
+    resolveSkills?.({ ok: true, skills: [{ name: 'aem-query', description: 'query' }] });
+    await flush();
+    await waitForBannerClosed(pane);
+
+    pane.dispose();
+  });
+
+  it('reads the catalogue only once across repeated ready statuses', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    expect(listSkills).toHaveBeenCalledTimes(1);
+
+    pane.dispose();
+  });
+
+  it('stays silent when the catalogue cannot be read, and does not retry', async () => {
+    listSkills.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'STORAGE_ERROR', message: 'unreadable' },
+    });
+
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    await waitForBannerClosed(pane);
+
+    expect(agentBanner(pane)?.hasAttribute('open')).toBe(false);
+    expect(listSkills).toHaveBeenCalledTimes(1);
 
     pane.dispose();
   });

@@ -2,6 +2,17 @@ import { el } from '../lib/dom';
 import { loadComposerHistory, saveComposerHistory } from '../lib/composerHistoryStore';
 import { createComposerHistoryNavigator, resolveCaretBounds } from './composerHistory';
 import { type ComposerButtonState, shouldSubmitOnEnter } from './composerViewModel';
+import {
+  EMPTY_SKILL_MENU,
+  isSkillMenuOpen,
+  moveSkillMenuSelection,
+  refreshSkillMenu,
+  resolveSkillMenuKey,
+  skillAcceptValue,
+  type SkillMenuState,
+} from './composerSkillsViewModel';
+import { createSkillPopover } from './skillPopover';
+import type { AgentChatSkill } from '../../../shared';
 
 type TextFieldElement = HTMLElement & { value: string };
 
@@ -51,6 +62,12 @@ export interface Composer {
    * `chatPane.ts` / `chat.css`).
    */
   setConversationEmpty(empty: boolean): void;
+  /**
+   * Supplies the bundled skill catalogue the `/` autocomplete filters. Called
+   * once main's asynchronous read lands; until then an empty list simply means
+   * "no suggestions", never an error.
+   */
+  setSkills(skills: readonly AgentChatSkill[]): void;
   /** Releases the resize observer that keeps the empty-state field stretched. */
   dispose(): void;
 }
@@ -113,6 +130,15 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   // The user's submitted prompts, recalled with Up/Down. Loaded once at
   // construction; every successful submit appends and re-persists it.
   const history = createComposerHistoryNavigator(loadComposerHistory());
+
+  // The skill catalogue for the `/` autocomplete, supplied asynchronously via
+  // `setSkills`. Empty until main's read lands.
+  let skills: readonly AgentChatSkill[] = [];
+  // The autocomplete's pure state (matching suggestions + highlighted row). The
+  // popup that draws it is Spectrum's own overlay/popover - see
+  // `skillPopover.ts` - and is absent under jsdom, where this state is still
+  // maintained but never rendered.
+  let skillMenu: SkillMenuState = EMPTY_SKILL_MENU;
 
   /**
    * The field's current text. `sp-textfield.value` is always a string once the
@@ -183,6 +209,69 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     moveCaretToEnd(recalled);
     autosize();
     return true;
+  }
+
+  /** Re-reads the field text into the autocomplete state and redraws the popup. */
+  function refreshSkillSuggestions(): void {
+    skillMenu = refreshSkillMenu(skillMenu, readValue(), skills);
+    syncSkillPopover();
+  }
+
+  function closeSkillMenu(): void {
+    skillMenu = EMPTY_SKILL_MENU;
+    syncSkillPopover();
+  }
+
+  /** Redraws the popup from the current state, or hides it when there is nothing to show. */
+  function syncSkillPopover(): void {
+    if (isSkillMenuOpen(skillMenu)) {
+      popover?.show(frame, skillMenu.suggestions, skillMenu.selectedIndex);
+    } else {
+      popover?.hide();
+    }
+  }
+
+  /**
+   * Replaces the typed token with the chosen skill's name plus a trailing
+   * space, leaving the caret after it so the user can type the actual request.
+   * The field keeps focus: accepting a suggestion is an edit, not a submit.
+   */
+  function acceptSkillAt(index: number): void {
+    const skill = skillMenu.suggestions[index];
+    if (skill === undefined) return;
+    const value = skillAcceptValue(skill);
+    field.value = value;
+    moveCaretToEnd(value);
+    autosize();
+    closeSkillMenu();
+    field.focus();
+  }
+
+  /**
+   * Handles a keydown against the open popup, returning whether it was consumed.
+   * Enter is deliberately not consumed - it submits, exactly as it does with the
+   * popup closed; Tab (and a click) is what accepts a suggestion.
+   */
+  function handleSkillMenuKey(keyEvent: KeyboardEvent): boolean {
+    if (!isSkillMenuOpen(skillMenu)) return false;
+    switch (resolveSkillMenuKey(keyEvent.key, keyEvent.shiftKey)) {
+      case 'dismiss':
+        closeSkillMenu();
+        return true;
+      case 'next':
+        skillMenu = moveSkillMenuSelection(skillMenu, 1);
+        syncSkillPopover();
+        return true;
+      case 'previous':
+        skillMenu = moveSkillMenuSelection(skillMenu, -1);
+        syncSkillPopover();
+        return true;
+      case 'accept':
+        acceptSkillAt(skillMenu.selectedIndex);
+        return true;
+      default:
+        return false;
+    }
   }
 
   function applyPresentation(): void {
@@ -271,6 +360,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     const prompt = readValue().trim();
     if (prompt === '') return;
 
+    closeSkillMenu();
     submitting = true;
     history.reset();
     const previousValue = readValue();
@@ -304,6 +394,9 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     // starts again from the newest prompt.
     history.reset();
     autosize();
+    // The `/skillname` suggestions track the field's own text, so every edit -
+    // typing, deleting, pasting - re-evaluates them.
+    refreshSkillSuggestions();
   });
   field.addEventListener('compositionstart', () => {
     composing = true;
@@ -313,6 +406,13 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   });
   field.addEventListener('keydown', (keyEvent) => {
     const isComposing = composing || keyEvent.isComposing;
+    // The open skill popup claims the arrow keys (to move its highlight) and
+    // Escape/Tab before history recall or submission see them. Enter is left
+    // alone, so it always submits - see `handleSkillMenuKey`.
+    if (!isComposing && handleSkillMenuKey(keyEvent)) {
+      keyEvent.preventDefault();
+      return;
+    }
     if (!isComposing && recallHistory(keyEvent)) {
       keyEvent.preventDefault();
       return;
@@ -350,6 +450,14 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   });
   const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame] });
 
+  // The `/` autocomplete popup, anchored above the frame. Undefined under jsdom
+  // (Spectrum's overlay/popover tags are not registered there); the composer's
+  // skill state is still maintained, it just has no popup to draw.
+  const popover = createSkillPopover({
+    onAccept: (index) => acceptSkillAt(index),
+    getContainer: () => element.closest('sp-theme') ?? document.body,
+  });
+
   // The empty-state field is stretched by CSS to the pane's height, which is
   // decided by layout the composer never sees (pane attach, split-view drag,
   // window resize). Re-run `autosize` whenever the field's box changes so the
@@ -375,8 +483,13 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       field.setAttribute('rows', String(empty ? TEXTAREA_EMPTY_ROWS : TEXTAREA_ROWS));
       autosize();
     },
+    setSkills(next) {
+      skills = next;
+      refreshSkillSuggestions();
+    },
     dispose() {
       resizeObserver?.disconnect();
+      popover?.dispose();
     },
   };
 }

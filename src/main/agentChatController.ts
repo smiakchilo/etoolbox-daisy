@@ -125,6 +125,16 @@ export interface AgentChatControllerDeps {
    * so a unit test can construct a controller without a bridge.
    */
   readonly cancelAemRequests?: () => void;
+  /**
+   * Rewrites a user prompt that begins with a bundled-skill reference (e.g.
+   * `/aem-tool-selection ...`) into the model-facing text that makes the agent
+   * load that skill, returning the prompt unchanged for anything else. Optional
+   * so a unit test can construct a controller with no skill catalogue.
+   *
+   * Only the text the model reads is rewritten - the display prompt and the
+   * journal always keep the user's own text (see `sendMessage` below).
+   */
+  readonly resolveSkillPrompt?: (prompt: string) => string;
 }
 
 export interface AgentChatController {
@@ -421,6 +431,9 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const turnId = newTurnId(idGenerator);
     activeTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
     const pageContext = deps.currentPageContext();
+    // The user's own text is kept for display and the journal; only the prompt
+    // the model reads is rewritten for a leading `/skillname`.
+    const modelPrompt = deps.resolveSkillPrompt?.(request.prompt) ?? request.prompt;
     // Staged, not written: the journal flushes it immediately before the
     // turn's first event (the service emits `session.state.changed: sending`
     // synchronously inside `sendPrompt`), so the prompt precedes the turn's
@@ -430,7 +443,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const result = await agentService.sendPrompt({
       chatId: request.chatId,
       turnId,
-      prompt: composeModelPrompt(pageContext, request.prompt),
+      prompt: composeModelPrompt(pageContext, modelPrompt),
       displayPrompt: request.prompt,
     });
     if (!result.ok) {
