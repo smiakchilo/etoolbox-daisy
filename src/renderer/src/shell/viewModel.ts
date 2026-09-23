@@ -1,4 +1,4 @@
-import { type ServerId, type ServerSnapshot } from '../../../shared';
+import { parseNavigationTarget, type ServerId, type ServerSnapshot } from '../../../shared';
 import { resolveServerColorCss } from '../lib/serverColor';
 
 /**
@@ -55,6 +55,18 @@ export function resolveAddressSwatchColor(
     return undefined;
   }
   return hosts.find((host) => host.origin === origin)?.colorCss;
+}
+
+/**
+ * Whether the address bar's current text names a page the "Open in external
+ * browser" control may hand to the OS: an absolute http(s) URL with no
+ * userinfo and a host - exactly the predicate main's `openExternal`
+ * re-validates with (`parseNavigationTarget`). Anything else (empty, a bare
+ * host without a scheme, a non-http(s) scheme, embedded credentials) leaves
+ * the control disabled, so it never offers an action main would refuse.
+ */
+export function canOpenInExternalBrowser(address: string): boolean {
+  return parseNavigationTarget(address).ok;
 }
 
 /**

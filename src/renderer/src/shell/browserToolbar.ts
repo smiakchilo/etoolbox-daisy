@@ -22,6 +22,7 @@ import type {
 import { SERVER_SWATCHES } from '../../../shared';
 import type { HostOption } from './viewModel';
 import {
+  canOpenInExternalBrowser,
   describeBlockedCertificate,
   describeUnknownOrigin,
   deriveServerLabelFromOrigin,
@@ -679,11 +680,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     void window.daisy.browser.navigate(value).then(handleVoidResult);
   });
 
-  // Keep the paired swatch tracking whatever the field shows, whether typed
-  // here or written programmatically (the state pushes below call
-  // `refreshAddressSwatch` explicitly, since assigning `.value` fires no
-  // `input` event).
-  addressField.addEventListener('input', refreshAddressSwatch);
+  // Keep the paired swatch and the external-browser control tracking whatever
+  // the field shows, whether typed here or written programmatically (the state
+  // pushes below call the two refreshers explicitly, since assigning `.value`
+  // fires no `input` event).
+  addressField.addEventListener('input', () => {
+    refreshAddressSwatch();
+    refreshExternalButton();
+  });
 
   // `sp-picker-button` default `position="right"` removes its left border
   // radius so it sits flush against the address field's right edge as a
@@ -718,6 +722,20 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     children: [addressField, addressSwatch, hostsButton],
   });
 
+  // "Open in external browser": hands the address bar's current URL to the OS
+  // default browser via `browser:openExternal`. Labelless like the nav
+  // controls; it is enabled only while the address field holds an absolute
+  // http(s) URL (the same predicate main re-validates with), so it never
+  // offers an action main would refuse. Sits after the address group and
+  // before the agent-pane toggle.
+  const externalButton = buildNavButton('Open in external browser', 'sp-icon-open-in-light');
+  externalButton.setAttribute('disabled', '');
+  externalButton.addEventListener('click', () => {
+    const value = addressField.value.trim();
+    if (value === '') return;
+    void window.daisy.browser.openExternal({ url: value }).then(handleVoidResult);
+  });
+
   // The agent-pane toggle, pinned to the toolbar's right edge (`addressGroup`
   // is the flex-grow item, so this sits after it). It is a real toggle: one
   // fixed icon, with the `selected` state (styled by browser.css) showing the
@@ -740,7 +758,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   renderAgentToggle(true);
 
-  toolbar.append(backButton, forwardButton, refreshButton, addressGroup, agentToggleButton);
+  toolbar.append(
+    backButton,
+    forwardButton,
+    refreshButton,
+    addressGroup,
+    externalButton,
+    agentToggleButton,
+  );
 
   // Wire the Refresh control immediately (idempotent), so clicking it before
   // the first navigation-state event still works.
@@ -796,6 +821,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       unknownOriginPrompt = null;
     }
     refreshAddressSwatch();
+    refreshExternalButton();
     applyPresentation();
   });
 
@@ -828,6 +854,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
   }
 
+  /**
+   * Re-derives the "Open in external browser" control's enabled state from the
+   * field's current value: enabled only while the address is an absolute
+   * http(s) URL (see `canOpenInExternalBrowser`), disabled otherwise.
+   */
+  function refreshExternalButton(): void {
+    if (canOpenInExternalBrowser(addressField.value)) {
+      externalButton.removeAttribute('disabled');
+    } else {
+      externalButton.setAttribute('disabled', '');
+    }
+  }
+
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
     switching = state.switching;
     applyPresentation();
@@ -850,6 +889,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       if (hasLiveNavigationState) return;
       addressField.value = value;
       refreshAddressSwatch();
+      refreshExternalButton();
     },
     setHostOptions(options: readonly HostOption[]): void {
       // Never touches `addressField.value`: the address bar's displayed
@@ -879,6 +919,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     navigateTo(origin: string): void {
       addressField.value = origin;
       refreshAddressSwatch();
+      refreshExternalButton();
       void window.daisy.browser.navigate(origin).then(handleVoidResult);
     },
     dispose(): void {

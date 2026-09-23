@@ -43,6 +43,7 @@ interface FakeDaisyBrowser {
   reload: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   navigate: ReturnType<typeof vi.fn>;
+  openExternal: ReturnType<typeof vi.fn>;
   approveCertificateException: ReturnType<typeof vi.fn>;
   onStateChanged: ReturnType<typeof vi.fn>;
   onSwitchStateChanged: ReturnType<typeof vi.fn>;
@@ -76,6 +77,7 @@ beforeEach(() => {
     reload: vi.fn(() => Promise.resolve({ ok: true })),
     stop: vi.fn(() => Promise.resolve({ ok: true })),
     navigate: vi.fn(() => Promise.resolve({ ok: true })),
+    openExternal: vi.fn(() => Promise.resolve({ ok: true })),
     approveCertificateException: vi.fn(() => Promise.resolve({ ok: true })),
     onStateChanged: vi.fn((listener: (state: BrowserNavigationState) => void) => {
       stateListeners.push(listener);
@@ -1202,5 +1204,106 @@ describe('createBrowserToolbar agent-pane toggle', () => {
     expect(button.getAttribute('aria-label')).toBe('Close Agent');
     expect(button.hasAttribute('selected')).toBe(true);
     expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+  });
+});
+
+describe('createBrowserToolbar open-in-external-browser button', () => {
+  function externalButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
+    const button = toolbar.element.querySelector<HTMLElement>('[title="Open in external browser"]');
+    if (!button) throw new Error('open-in-external-browser button not found');
+    return button;
+  }
+
+  function typeAddress(
+    toolbar: ReturnType<typeof createBrowserToolbar>,
+    value: string,
+  ): HTMLElement & { value: string } {
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    address.value = value;
+    address.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    return address;
+  }
+
+  it('renders labelless, titled, icon-led, disabled, and immediately before the agent-pane toggle', () => {
+    const toolbar = build();
+    const button = externalButton(toolbar);
+
+    // Labelless, like the rest of the toolbar buttons: no text, just the icon.
+    expect(button.textContent).toBe('');
+    expect(button.querySelector('sp-icon-open-in-light')).not.toBeNull();
+    expect(button.getAttribute('title')).toBe('Open in external browser');
+    expect(button.getAttribute('aria-label')).toBe('Open in external browser');
+    // Disabled until a valid URL is in the address field.
+    expect(button.hasAttribute('disabled')).toBe(true);
+
+    // Placed after the address group, before the last control (agent toggle).
+    const last = toolbar.element.lastElementChild;
+    expect(last?.getAttribute('title')).toBe('Close Agent');
+    expect(button.nextElementSibling).toBe(last);
+  });
+
+  it('enables only while the address field holds an absolute http(s) URL', () => {
+    const toolbar = build();
+    const button = externalButton(toolbar);
+
+    typeAddress(toolbar, 'https://author.example/content/page.html');
+    expect(button.hasAttribute('disabled')).toBe(false);
+
+    typeAddress(toolbar, 'author.example/content/page.html');
+    expect(button.hasAttribute('disabled')).toBe(true);
+
+    typeAddress(toolbar, 'javascript:alert(1)');
+    expect(button.hasAttribute('disabled')).toBe(true);
+
+    typeAddress(toolbar, '');
+    expect(button.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('follows the live navigation state into the address field', () => {
+    const toolbar = build();
+    const button = externalButton(toolbar);
+
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+    });
+    expect(button.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('opens the trimmed address field value via browser:openExternal', async () => {
+    const toolbar = build();
+    const address = typeAddress(toolbar, '  https://author.example/content/page.html  ');
+
+    externalButton(toolbar).click();
+
+    await vi.waitFor(() => {
+      expect(browser.openExternal).toHaveBeenCalledWith({
+        url: 'https://author.example/content/page.html',
+      });
+    });
+    // The address field itself is untouched by the click.
+    expect(address.value).toBe('  https://author.example/content/page.html  ');
+  });
+
+  it('surfaces an open failure as an error banner', async () => {
+    const toolbar = build();
+    const message = findMessage(toolbar);
+    browser.openExternal.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'open_external_failed', message: 'no handler registered' },
+    });
+    typeAddress(toolbar, 'https://author.example/');
+
+    externalButton(toolbar).click();
+
+    await vi.waitFor(() => {
+      expect(message.textContent).toContain('no handler registered');
+    });
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.hasAttribute('dismissible')).toBe(true);
   });
 });

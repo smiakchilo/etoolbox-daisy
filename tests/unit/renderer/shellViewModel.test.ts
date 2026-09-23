@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildHostOptions,
+  canOpenInExternalBrowser,
   computeAddressBarValue,
   computeReservedRegionBounds,
   deriveServerLabelFromOrigin,
@@ -82,6 +83,27 @@ describe('resolveAddressSwatchColor', () => {
 
   it('returns undefined when no hosts are configured', () => {
     expect(resolveAddressSwatchColor('https://author.example/', [])).toBeUndefined();
+  });
+});
+
+describe('canOpenInExternalBrowser', () => {
+  it('accepts an absolute http(s) URL, path/query/fragment included', () => {
+    expect(canOpenInExternalBrowser('https://author.example/content/page.html?a=1#s')).toBe(true);
+    expect(canOpenInExternalBrowser('http://staging.internal:4502/')).toBe(true);
+    // The very same predicate main re-validates with, so whitespace is trimmed.
+    expect(canOpenInExternalBrowser('  https://author.example/  ')).toBe(true);
+  });
+
+  it('rejects an empty or scheme-less address', () => {
+    expect(canOpenInExternalBrowser('')).toBe(false);
+    expect(canOpenInExternalBrowser('   ')).toBe(false);
+    expect(canOpenInExternalBrowser('author.example/content/page.html')).toBe(false);
+  });
+
+  it('rejects non-http(s) schemes and embedded credentials', () => {
+    expect(canOpenInExternalBrowser('file:///C:/page.html')).toBe(false);
+    expect(canOpenInExternalBrowser('javascript:alert(1)')).toBe(false);
+    expect(canOpenInExternalBrowser('https://user:pass@author.example/')).toBe(false);
   });
 });
 
