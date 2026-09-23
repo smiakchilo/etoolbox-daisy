@@ -8,3 +8,4 @@ export * from './proxyPolicy';
 export * from './proxyAuth';
 export * from './proxyResolution';
 export * from './session';
+export * from './sessionCookiePersistence';

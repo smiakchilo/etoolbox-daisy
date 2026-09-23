@@ -270,7 +270,7 @@ if (!gotSingleInstanceLock) {
     // 3) - created once, for the app's lifetime, and handed to the browser
     // controller below. Certificate-error/login policy is wired inside
     // `createAemSession` itself; nothing here duplicates it.
-    const aemSession = createAemSession();
+    const aemSession = createAemSession({ logger });
 
     const browserController = createBrowserController({
       settingsDir: appPaths.settings,

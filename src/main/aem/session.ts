@@ -1,6 +1,7 @@
 import { app, session } from 'electron';
 import type { Session } from 'electron';
 import type { ProxyConfig } from '../../shared';
+import type { Logger } from '../logger';
 import {
   createCertificateErrorListener,
   createCertificateExceptionStore,
@@ -8,6 +9,7 @@ import {
 } from './certificateExceptions';
 import { applyProxySwitch, applySessionProxy, type ProxySwitchOptions } from './proxyPolicy';
 import { createProxyLoginListener, type ProxyPlainCredentials } from './proxyAuth';
+import { buildPersistCookieDetails, shouldPersistSessionCookie } from './sessionCookiePersistence';
 
 /**
  * The single persistent AEM session (implementation-plan.md step 05;
@@ -71,15 +73,39 @@ export interface AemSession {
   listCertificateExceptions(): readonly CertificateExceptionRecord[];
 }
 
+export interface AemSessionOptions {
+  /** Optional diagnostics sink for a failed cookie promotion. */
+  readonly logger?: Logger;
+}
+
 /**
  * Creates the one AEM session for the app's lifetime and wires the
  * `certificate-error`/`login` policy onto it. Must be called at most once;
  * calling it twice would register two listener pairs on `app` for the same
  * partition, double-invoking every decision.
+ *
+ * Also promotes insecure *session* cookies to persistent ones (see
+ * `sessionCookiePersistence.ts` for the exact rule and why): a plain-HTTP dev
+ * instance mints AEM's `login-token` without an expiry, so without this a
+ * developer re-authenticates on every launch.
  */
-export function createAemSession(): AemSession {
+export function createAemSession(options: AemSessionOptions = {}): AemSession {
   const aemSession = session.fromPartition(AEM_SESSION_PARTITION);
   const certificateStore = createCertificateExceptionStore(aemSession);
+
+  aemSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
+    if (!shouldPersistSessionCookie(cookie, removed)) return;
+    const details = buildPersistCookieDetails(cookie, Date.now());
+    if (details === undefined) return;
+    // Re-setting a session cookie with an `expirationDate` is what writes it
+    // to disk. The resulting `changed` event carries `session: false` and is
+    // ignored here, so this cannot recurse. A rejection is non-fatal: the
+    // login still works for this run, it just will not survive the next
+    // launch - so it is logged, not thrown.
+    void aemSession.cookies
+      .set(details)
+      .catch(() => options.logger?.warn('AEM_SESSION_COOKIE_PERSIST_FAILED'));
+  });
 
   let currentProxy: ProxyConfig | undefined;
   let currentResolveCredentials: () => ProxyPlainCredentials | undefined = () => undefined;

@@ -275,9 +275,9 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
           // `window.open`/`target="_blank"` requests into the pane view instead
           // - see `windowOpenRouter.ts`) with no preload, so the assertion
           // below is about what an AEM-opened window in this session can see.
-          let popupUrl = '(none)';
-          let popupStatus = '(none)';
-          let popupBridge = '(none)';
+          let popupUrl: string;
+          let popupStatus: string;
+          let popupBridge: string;
           wc.setWindowOpenHandler(() => ({
             action: 'allow',
             overrideBrowserWindowOptions: {
@@ -486,7 +486,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
         host.destroy();
         return {
           persistedCookieCount: persisted.length,
-          sessionScopedCookieCount: sessionScoped.length,
+          sessionCookieCount: sessionScoped.length,
           url,
           heading: typeof headingValue === 'string' ? headingValue : '(n/a)',
           whoami: typeof whoamiValue === 'string' ? whoamiValue : '(n/a)',
@@ -500,13 +500,19 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
 
     // The shared AEM profile survived a full application restart: the
     // persistent login-token was reloaded from disk and no second sign-in was
-    // required. The session-scoped cookie is asserted to be GONE on purpose -
-    // Chromium discarding a cookie that carries no `Max-Age`/`Expires` is
-    // correct behaviour, not a persistence failure, and pinning it here stops
-    // a future change from "fixing" persistence by making session cookies
-    // immortal.
+    // required.
+    //
+    // Deliberate deviation from Chromium's default (see
+    // `src/main/aem/sessionCookiePersistence.ts` and docs/verification.md,
+    // "AEM session cookies for non-TLS hosts now survive restart"): the
+    // fixture's *session* cookie is set over plain HTTP and carries no
+    // `Max-Age`, so Chromium would normally discard it on exit. The app now
+    // promotes insecure session cookies to persistent ones, so it is reloaded
+    // too. A `Secure` session cookie (the HTTPS case) is still left to die on
+    // restart - that half is covered directly in the unit tests, since this
+    // spec's origins are all plain HTTP.
     expect(afterRestart.persistedCookieCount).toBeGreaterThan(0);
-    expect(afterRestart.sessionScopedCookieCount).toBe(0);
+    expect(afterRestart.sessionCookieCount).toBeGreaterThan(0);
     expect(afterRestart.url).not.toContain('/login');
     expect(afterRestart.heading).toBe('AEM content');
     expect(afterRestart.whoami).toContain(`"authenticated":true`);
