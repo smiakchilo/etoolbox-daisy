@@ -341,6 +341,13 @@
   background: var(--spectrum-gray-100, #f8f8f8);
 }
 
+/* Pointer hover gives the row the same affordance the host picker's rows do.
+   Declared after the selected rule so hovering a highlighted row still reads
+   as interactive. */
+.chat-composer__skill:hover {
+  background: var(--spectrum-gray-200, #eaeaea);
+}
+
 .chat-composer__skill-name {
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 13px;
@@ -396,6 +403,29 @@
   border: 1px solid var(--spectrum-gray-300, #d3d3d3);
   border-radius: var(--spectrum-corner-radius-100, 4px);
   background: var(--spectrum-gray-50, #ffffff);
+  /* Positions the skill list's zero-height anchor at the frame's top-left. */
+  position: relative;
+}
+
+/* The `/` autocomplete's anchor: a zero-height, non-interactive point at the
+   frame's top-left, so the popup opens flush with the composer's left edge and
+   can flip below the top edge when there is no room above. */
+.chat-composer__skill-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* In the full-height empty state the list flips below the marker, so the marker
+   is nudged down past the first line of typed text (keeping the caret line
+   visible) and a little to the right (so the popup's left border does not merge
+   with the composer's). */
+.chat-pane--empty .chat-composer__skill-anchor {
+  top: 22px;
+  left: 12px;
 }
 
 /* Strips the field's own border/background/focus ring so the frame above is

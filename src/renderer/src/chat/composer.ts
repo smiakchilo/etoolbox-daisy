@@ -225,7 +225,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   /** Redraws the popup from the current state, or hides it when there is nothing to show. */
   function syncSkillPopover(): void {
     if (isSkillMenuOpen(skillMenu)) {
-      popover?.show(frame, skillMenu.suggestions, skillMenu.selectedIndex);
+      popover?.show(skillAnchor, skillMenu.suggestions, skillMenu.selectedIndex);
     } else {
       popover?.hide();
     }
@@ -444,13 +444,20 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     attrs: { class: 'chat-composer__actions' },
     children: [sendButton, stopButton],
   });
+  // The `/` autocomplete anchors here, not to `frame`: a zero-height marker at
+  // the frame's top-left. Spectrum's flip then has somewhere on-screen to put
+  // the list when it does not fit above - against the full-height empty-state
+  // frame, "below" would land at the pane's bottom edge and vanish.
+  const skillAnchor = el('span', {
+    attrs: { class: 'chat-composer__skill-anchor', 'aria-hidden': 'true' },
+  });
   const frame = el('div', {
     attrs: { class: 'chat-composer__frame' },
-    children: [field, actions],
+    children: [skillAnchor, field, actions],
   });
   const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame] });
 
-  // The `/` autocomplete popup, anchored above the frame. Undefined under jsdom
+  // The `/` autocomplete popup, anchored to the marker. Undefined under jsdom
   // (Spectrum's overlay/popover tags are not registered there); the composer's
   // skill state is still maintained, it just has no popup to draw.
   const popover = createSkillPopover({

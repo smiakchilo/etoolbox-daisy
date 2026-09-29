@@ -9,8 +9,9 @@ import type { AgentChatSkill } from '../../../shared';
  * the pane so the composer can never clip it.
  *
  * One `sp-overlay` + `sp-popover` is created for the composer's lifetime,
- * anchored to the composer frame via `triggerElement`, and its rows are rebuilt
- * on every keystroke. Returns `undefined` when the overlay/popover tags are not
+ * anchored to the composer's zero-height marker via `triggerElement`, and its
+ * rows are rebuilt on every keystroke. Returns `undefined` when the overlay/
+ * popover tags are not
  * registered - notably under jsdom, where the unit suite imports the composer
  * but never loads Spectrum. There the autocomplete's pure state
  * (`composerSkillsViewModel.ts`) is still maintained, and the real popup is
@@ -18,7 +19,10 @@ import type { AgentChatSkill } from '../../../shared';
  */
 
 export interface SkillPopover {
-  /** Draws `suggestions`, highlights `selectedIndex`, and shows the popup above `anchor`. */
+  /**
+   * Draws `suggestions`, highlights `selectedIndex`, and opens the popup
+   * against `anchor` - above it, or flipped below when there is no room.
+   */
   show(anchor: HTMLElement, suggestions: readonly AgentChatSkill[], selectedIndex: number): void;
   /** Hides the popup. Safe to call when it is already hidden. */
   hide(): void;
@@ -50,7 +54,14 @@ export function createSkillPopover(options: SkillPopoverOptions): SkillPopover |
     attrs: {
       class: 'chat-skill-overlay',
       type: 'manual',
-      placement: 'top',
+      // `top-start` keeps the list flush with the composer's left edge (the
+      // default `top` centres it). Its anchor is a zero-height marker at the
+      // composer's top-left (see `composer.ts`), so floating-ui's own flip can
+      // fall back to `bottom-start` and the list stays on screen when there is
+      // no room above - under the full-height empty-composer layout, anchoring
+      // to the tall frame itself would flip "below" to the pane's bottom edge,
+      // which is also off screen.
+      placement: 'top-start',
       offset: '8',
       // The field keeps focus and owns all key handling; the popup must never
       // take focus or a click would move the caret.

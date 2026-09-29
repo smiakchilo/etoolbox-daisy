@@ -115,6 +115,35 @@ test.describe('composer skill autocomplete', () => {
     await expect(shell.locator(SKILL_NAME, { hasText: 'aem-semantic-search' })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: 'aem-tool-selection' })).toHaveCount(0);
 
+    // The empty composer fills the pane, so there is no room above it: the list
+    // must be flipped to open *below* the first line of typed text (never over
+    // it) and nudged just right of the composer's left border so the two edges
+    // do not merge. Loose bounds keep this a behaviour check, not a pixel
+    // assertion.
+    await expect(shell.locator('sp-popover.chat-skill-popover')).toBeVisible();
+    const popoverBox = await shell.locator('sp-popover.chat-skill-popover').boundingBox();
+    const frameBox = await shell.locator('.chat-composer__frame').boundingBox();
+    const viewport = await shell.evaluate(() => ({ height: window.innerHeight }));
+    expect(popoverBox).not.toBeNull();
+    expect(frameBox).not.toBeNull();
+    if (popoverBox !== null && frameBox !== null) {
+      expect(popoverBox.x - frameBox.x).toBeGreaterThanOrEqual(8);
+      expect(popoverBox.x - frameBox.x).toBeLessThanOrEqual(24);
+      expect(popoverBox.y).toBeGreaterThanOrEqual(frameBox.y + 20);
+      expect(popoverBox.y + popoverBox.height).toBeLessThanOrEqual(viewport.height);
+    }
+
+    // Pointer hover shades the row (the first is highlighted at rest).
+    const firstRow = shell.locator(SKILL_ROW).first();
+    const restingColor = await firstRow.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+    await firstRow.hover();
+    const hoverColor = await firstRow.evaluate(
+      (element) => getComputedStyle(element).backgroundColor,
+    );
+    expect(hoverColor).not.toBe(restingColor);
+
     // `/aem` matches both; the first (sorted) is highlighted.
     await field.fill('/aem');
     await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
