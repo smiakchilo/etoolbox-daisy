@@ -1,6 +1,8 @@
+// noinspection HtmlDeprecatedAttribute,HtmlRequiredAltAttribute,HtmlUnknownTarget
+
 import { describe, expect, it } from 'vitest';
-import { readQueryResultTable } from '../../../../src/renderer/src/chat/queryResultViewModel';
-import type { JsonValue } from '../../../../src/shared';
+import { readQueryResultTable } from '../../../src/tools/aem-query/renderer/queryResultViewModel';
+import type { JsonValue } from '../../../src/shared';
 
 function queryResult(overrides: Record<string, JsonValue> = {}): JsonValue {
   return {

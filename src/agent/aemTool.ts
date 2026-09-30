@@ -1,55 +1,38 @@
 import type { HardenedToolPolicy } from './toolPolicy';
-import { AEM_ASSISTANT_INSTRUCTIONS, TOOL_ALLOWLIST_ENTRIES } from '../shared';
 
 /**
- * The agent-side surface for AEM tools.
+ * The agent-side surface for building an AEM session's tool policy.
  *
- * The tools themselves - argument schemas, descriptors, result shapes, URL
- * building, response reading, projection, error wording, and executors - now
- * live in one self-contained module each under `src/shared/tools/`. This file
- * only re-exports the executor entry points the composition root imports
- * (`src/main/index.ts`), and builds the SDK session policy from the registry's
- * own allowlist, so the policy can never list a tool the registry does not.
+ * The agent knows no tool: the tools live one folder each under
+ * src/tools/, are discovered by src/main/tools/registry.ts, and hand this
+ * module their allowlist entries and instruction text through the composition
+ * root. Keeping this file tool-agnostic is what lets a tool folder be deleted
+ * without touching the agent.
  */
 
-export type {
-  AemGetJsonExecutorConfig,
-  AemGetJsonRequestEnvelope,
-  AemQueryExecutorConfig,
-  AemQueryRequestEnvelope,
-  CurrentAemToolContext,
-} from '../shared/tools';
-
-export {
-  createAemGetJsonExecutor,
-  createAemQueryExecutor,
-  AEM_GET_JSON_ALLOWLIST_ENTRY,
-  AEM_GET_JSON_TOOL_NAME,
-  AEM_QUERY_ALLOWLIST_ENTRY,
-  AEM_QUERY_TOOL_NAME,
-  AEM_ASSISTANT_INSTRUCTIONS,
-} from '../shared/tools';
+export interface AemToolPolicyInput {
+  /** Source-qualified allowlist entries of the enabled tools (e.g. custom:aem_query). */
+  readonly allowlistEntries: readonly string[];
+  /** The composed session instructions (shared framing plus each tool's fragment). */
+  readonly instructions: string;
+  /**
+   * The application's own bundled skill directories. Omitting them leaves
+   * `enableSkills` at its hardened `false` default, so skills are never
+   * enabled by accident. The location depends on whether the app is packaged,
+   * which is composition knowledge that belongs in src/main.
+   */
+  readonly bundledSkillDirectories?: readonly string[];
+}
 
 /**
- * Builds the `HardenedToolPolicy` for a real AEM session: allows exactly the
- * tools the registry declares, supplies the bundled base instruction through
- * `instructions`, and points `skillDirectories` at the application's own
- * bundled skills when one is supplied.
- *
- * `bundledSkillDirectories` is a parameter rather than something this module
- * resolves itself: the location depends on whether the app is packaged
- * (`process.resourcesPath`) or running from source, which is composition
- * knowledge that belongs in `src/main`. Omitting it leaves `enableSkills` at
- * its hardened `false` default, so skills are never enabled by accident.
+ * Builds the HardenedToolPolicy for a real AEM session: allows exactly the
+ * tools it is given and supplies the base instruction through instructions.
  */
-export function buildAemToolPolicy(
-  bundledSkillDirectories?: readonly string[],
-): HardenedToolPolicy {
+export function buildAemToolPolicy(input: AemToolPolicyInput): HardenedToolPolicy {
   const base = {
-    availableTools: [...TOOL_ALLOWLIST_ENTRIES],
-    instructions: AEM_ASSISTANT_INSTRUCTIONS,
+    availableTools: [...input.allowlistEntries],
+    instructions: input.instructions,
   };
-  return bundledSkillDirectories !== undefined && bundledSkillDirectories.length > 0
-    ? { ...base, bundledSkillDirectories }
-    : base;
+  const dirs = input.bundledSkillDirectories;
+  return dirs !== undefined && dirs.length > 0 ? { ...base, bundledSkillDirectories: dirs } : base;
 }

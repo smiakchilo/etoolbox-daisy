@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { executeAemQuery, type AemQueryRequest } from '../../../../src/shared';
+import { executeAemQuery, type AemQueryRequest } from '../../../../src/tools/aem-query/aemQuery';
 import type { BrokerOutcome } from '../../../../src/shared';
-import { aemQueryArgsSchema, type AemQueryArgs } from '../../../../src/shared';
+import { aemQueryArgsSchema, type AemQueryArgs } from '../../../../src/tools/aem-query/aemQuery';
 import {
   chatIdSchema,
   requestIdSchema,
@@ -12,7 +12,7 @@ import {
   renderToolResultForModel,
   toolResultSchema,
   type ToolResult,
-} from '../../../../src/shared';
+} from '../../../support/toolUnions';
 
 const ORIGIN = 'https://author.example';
 

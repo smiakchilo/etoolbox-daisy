@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildResourceUrl } from '../../../../src/shared';
+import { buildResourceUrl } from '../../../../src/tools/aem-get-json/aemGetJson';
 import type { JcrPathRejectionReason } from '../../../../src/shared';
 
 const ORIGIN = 'https://author.example';

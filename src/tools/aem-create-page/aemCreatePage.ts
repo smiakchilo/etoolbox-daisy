@@ -1,20 +1,27 @@
 import { z } from 'zod';
-import { createToolError, type RequiredAction, type ToolErrorCode } from '../contracts';
-import { newRequestId, requestIdSchema, type IdGenerator, type RequestId } from '../contracts';
-import type { JsonValue } from '../contracts';
-import { err, ok, type Result } from '../result';
-import { originSchema, parseOrigin } from '../contracts';
-import { computeDeadline, envelopeCommonShape } from './core/envelope';
-import { firstIssueMessage } from './core/validationIssue';
-import type { ToolResult } from './index';
-import { brokerErrorKey } from './core/brokerOutcome';
-import { jcrPathSchema, parseJcrPath } from './aemGetJson';
-import type {
-  AemToolExecutor,
-  BrokerOutcome,
-  CurrentAemToolContext,
-  ToolDescriptor,
-} from './core/types';
+import {
+  type AemToolExecutor,
+  type BrokerOutcome,
+  type CurrentAemToolContext,
+  type IdGenerator,
+  type JsonValue,
+  type RequestId,
+  type RequiredAction,
+  type Result,
+  type ToolDescriptor,
+  type ToolErrorCode,
+  type ToolOutcome,
+  brokerErrorKey,
+  createToolExecutor,
+  envelopeCommonShape,
+  err,
+  jcrPathSchema,
+  ok,
+  originSchema,
+  parseJcrPath,
+  parseOrigin,
+  requestIdSchema,
+} from '../../shared';
 
 /**
  * The `aem_create_page` tool: the application's **single** write path to AEM.
@@ -113,9 +120,7 @@ export function deriveNameFromTitle(title: string): string {
 export function deriveTitleFromName(name: string): string {
   const words = name.split(/[-_]+/).filter((word) => word.length > 0);
   if (words.length === 0) return name;
-  return words
-    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
-    .join(' ');
+  return words.map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +139,7 @@ export const aemCreatePageArgsSchema = z
     if (args.name === undefined && args.title === undefined) {
       ctx.addIssue({
         code: 'custom',
-        message:
-          "at least one of 'name' or 'title' is required; the other is derived from it",
+        message: "at least one of 'name' or 'title' is required; the other is derived from it",
       });
     }
   });
@@ -171,9 +175,9 @@ export const AEM_CREATE_PAGE_TOOL_DESCRIPTOR: ToolDescriptor = {
     'own page-creation command. THIS IS THE ONLY TOOL THAT WRITES TO AEM: use it only when ' +
     'the user explicitly asks to create a page, and only after you have every value below. ' +
     '`parentPath` must be a bare absolute repository path to the *existing* parent page (no ' +
-    "scheme, host, query, or trailing slash). `template` must be the absolute repository path " +
+    'scheme, host, query, or trailing slash). `template` must be the absolute repository path ' +
     'of an existing page template (e.g. `/conf/<site>/settings/wcm/templates/<template>`). ' +
-    "Supply `title` (the human-readable page title) and/or `name` (the URL segment / node " +
+    'Supply `title` (the human-readable page title) and/or `name` (the URL segment / node ' +
     'name). At least one is required: if `name` is omitted it is derived from the title; if ' +
     '`title` is omitted it is derived from the name. `name` accepts only letters, digits, ' +
     'hyphens, and underscores. The tool returns the created page path; it cannot edit, move, ' +
@@ -219,6 +223,9 @@ export const aemCreatePageSuccessSchema = z
   .strict();
 
 export type AemCreatePageSuccess = z.infer<typeof aemCreatePageSuccessSchema>;
+
+/** What `executeAemCreatePage` resolves: this tool's success shape, or the shared error arm. */
+export type AemCreatePageResult = ToolOutcome<AemCreatePageSuccess>;
 
 /**
  * Renders the created page for the model. The bare repository path is stated
@@ -269,7 +276,12 @@ function buildFixedEndpointUrl(
   } catch {
     return err({ kind: 'invalid_origin' });
   }
-  if (url.origin !== originResult.origin || url.pathname !== path || url.search !== '' || url.hash !== '') {
+  if (
+    url.origin !== originResult.origin ||
+    url.pathname !== path ||
+    url.search !== '' ||
+    url.hash !== ''
+  ) {
     return err({ kind: 'invalid_origin' });
   }
   return ok(url.toString());
@@ -423,7 +435,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   unexpected_status: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
 };
 
-function toolError(key: ErrorMessageKey, requestId: RequestId): ToolResult {
+function toolError(key: ErrorMessageKey, requestId: RequestId): AemCreatePageResult {
   const mapping = ERROR_MAPPINGS[key];
   return {
     ok: false,
@@ -485,7 +497,9 @@ function readCsrfOutcome(outcome: BrokerOutcome): CsrfReadOutcome {
   return { kind: 'proceed', token: undefined };
 }
 
-function classifyCreateResponse(outcome: BrokerOutcome): Result<string | undefined, ErrorMessageKey> {
+function classifyCreateResponse(
+  outcome: BrokerOutcome,
+): Result<string | undefined, ErrorMessageKey> {
   if (outcome.kind !== 'response') {
     return err(brokerErrorKey(outcome));
   }
@@ -510,7 +524,7 @@ function deriveCreatedPath(target: ResolvedCreatePageTarget): string {
 export async function executeAemCreatePage(
   envelope: AemCreatePageRequest,
   deps: AemCreatePageDeps,
-): Promise<ToolResult> {
+): Promise<AemCreatePageResult> {
   const target = resolveCreatePageTarget(envelope.args);
 
   const commandUrl = buildWcmCommandUrl(deps.origin);
@@ -561,7 +575,7 @@ export interface AemCreatePageExecutorConfig<TRuntimeDeps extends Record<string,
   readonly execute: (
     envelope: AemCreatePageRequest,
     deps: { readonly origin: string } & TRuntimeDeps,
-  ) => Promise<ToolResult>;
+  ) => Promise<AemCreatePageResult>;
   readonly runtimeDeps: TRuntimeDeps;
   readonly currentContext: () => CurrentAemToolContext;
   readonly clock: () => number;
@@ -590,80 +604,13 @@ function toSuccessPayload(result: AemCreatePageSuccess): JsonValue {
 export function createAemCreatePageExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemCreatePageExecutorConfig<TRuntimeDeps>,
 ): AemToolExecutor {
-  return async (args, context) => {
-    if (context.signal?.aborted === true) {
-      const requestId = newRequestId(config.idGenerator);
-      return err(
-        createToolError('CANCELLED', 'The request was cancelled before it started.', requestId),
-      );
-    }
-
-    const parsedArgs = aemCreatePageArgsSchema.safeParse(args);
-    if (!parsedArgs.success) {
-      const requestId = newRequestId(config.idGenerator);
-      return err(
-        createToolError(
-          'INVALID_ARGUMENT',
-          firstIssueMessage(parsedArgs.error.issues, 'Invalid aem_create_page arguments.'),
-          requestId,
-        ),
-      );
-    }
-
-    const current = config.currentContext();
-    const requestId = newRequestId(config.idGenerator);
-    const candidate = {
-      operation: 'aem_create_page' as const,
-      requestId,
-      chatId: current.chatId,
-      turnId: current.turnId,
-      serverId: current.serverId,
-      serverRevision: current.serverRevision,
-      navigationEpoch: current.navigationEpoch,
-      deadlineMs: computeDeadline(config.clock),
-      args: parsedArgs.data,
-    };
-    const parsedEnvelope = aemCreatePageRequestSchema.safeParse(candidate);
-    if (!parsedEnvelope.success) {
-      return err(
-        createToolError(
-          'UNEXPECTED_RESPONSE',
-          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an AEM request.'),
-          requestId,
-        ),
-      );
-    }
-
-    try {
-      const result = await config.execute(parsedEnvelope.data, {
-        ...config.runtimeDeps,
-        origin: current.origin,
-      });
-      if (!result.ok) return err(result.error);
-      if (result.operation !== 'aem_create_page') {
-        return err(
-          createToolError(
-            'UNEXPECTED_RESPONSE',
-            'Internal error: unexpected tool result shape.',
-            requestId,
-          ),
-        );
-      }
-      return ok(toSuccessPayload(result));
-    } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message.slice(0, 500) : 'AEM page creation failed.';
-      return err(createToolError('UNEXPECTED_RESPONSE', message, requestId));
-    }
-  };
+  return createToolExecutor({
+    operation: 'aem_create_page',
+    argsSchema: aemCreatePageArgsSchema,
+    requestSchema: aemCreatePageRequestSchema,
+    render: renderCreatePageSuccess,
+    toPayload: toSuccessPayload,
+    failureFallbackMessage: 'AEM page creation failed.',
+    ...config,
+  });
 }
-
-/**
- * Registers itself with the session's tool policy under this entry, and
- * `sdkAgentService.ts` under {@link AEM_CREATE_PAGE_TOOL_NAME}.
- */
-export const AEM_CREATE_PAGE_DEFINITION = {
-  name: AEM_CREATE_PAGE_TOOL_NAME,
-  descriptor: AEM_CREATE_PAGE_TOOL_DESCRIPTOR,
-  allowlistEntry: AEM_CREATE_PAGE_ALLOWLIST_ENTRY,
-} as const;

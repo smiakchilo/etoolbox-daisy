@@ -1,32 +1,35 @@
 import { z } from 'zod';
 import {
-  createToolError,
+  type AemToolExecutor,
+  type BrokerOutcome,
+  type CurrentAemToolContext,
+  type IdGenerator,
+  type JcrPathRejectionReason,
+  type JsonObject,
+  type JsonValue,
+  type PropertySelection,
+  type RequestId,
   type RequiredAction,
-  type ToolError,
+  type Result,
+  type ToolDescriptor,
   type ToolErrorCode,
-} from '../contracts';
-import { newRequestId, requestIdSchema, type IdGenerator, type RequestId } from '../contracts';
-import type { JsonValue } from '../contracts';
-import { err, ok, type Result } from '../result';
-import { originSchema, parseOrigin } from '../contracts';
-import { computeDeadline, envelopeCommonShape } from './core/envelope';
-import { firstIssueMessage } from './core/validationIssue';
-import type { ToolResult } from './index';
-import { brokerErrorKey } from './core/brokerOutcome';
-import { classifyAemResponse, type JsonObject } from './core/responseValidation';
-import {
+  type ToolOutcome,
+  brokerErrorKey,
+  classifyAemResponse,
+  createToolExecutor,
+  envelopeCommonShape,
+  err,
+  jcrPathSchema,
+  ok,
+  originSchema,
+  parseJcrPath,
+  parseOrigin,
   propertiesSelectionSchema,
   propertySelectionSchema,
   renderHasMore,
   renderSelection,
-  type PropertySelection,
-} from './core/resultCommon';
-import type {
-  AemToolExecutor,
-  BrokerOutcome,
-  CurrentAemToolContext,
-  ToolDescriptor,
-} from './core/types';
+  requestIdSchema,
+} from '../../shared';
 
 /**
  * The `aem_get_json` tool, self-contained.
@@ -45,220 +48,6 @@ import type {
  * application context. The executor has no parameter that could carry an
  * origin from tool arguments even if a caller tried to supply one.
  */
-
-// ---------------------------------------------------------------------------
-// JCR/Sling path validation
-// ---------------------------------------------------------------------------
-
-/**
- * Bounds a path to something a JCR repository would plausibly contain. Not a
- * security boundary by itself - it exists so a pathological input cannot turn
- * later string scanning/logging into unbounded work.
- */
-const JCR_PATH_MAX_LENGTH = 1000;
-
-export const JCR_PATH_REJECTION_REASONS = [
-  'empty',
-  'too_long',
-  'malformed_percent_encoding',
-  'contains_double_percent_encoding',
-  'contains_control_character',
-  'protocol_relative',
-  'not_absolute',
-  'contains_scheme',
-  'contains_query',
-  'contains_fragment',
-  'contains_backslash',
-  'contains_traversal_segment',
-  'contains_request_path_parameter',
-  'contains_empty_segment',
-  'contains_dot_terminated_segment',
-  'contains_sling_selector',
-  'contains_json_extension',
-] as const;
-
-export type JcrPathRejectionReason = (typeof JCR_PATH_REJECTION_REASONS)[number];
-
-/**
- * Matches a trailing Sling response-format extension, with or without a
- * preceding depth selector (`.json`, `.1.json`, `.99.json`, `.-1.json`,
- * `.infinity.json`, case-insensitive). The application appends the URL's
- * extension and depth selector when it builds the actual request; a path
- * already carrying one is an attempt to choose the output format/depth the
- * agent is not trusted with. Banning only this suffix - not dots in general -
- * is deliberate: `/content/dam/my.file.pdf` is an ordinary DAM path.
- */
-const JSON_EXTENSION_PATTERN = /\.json$/i;
-
-/**
- * A bare numeric or signed-numeric dot-token (`99`, `-1`) is a Sling depth
- * selector, not part of a node name - `-1`, like `infinity`, requests
- * unbounded depth.
- */
-const NUMERIC_SELECTOR_TOKEN_PATTERN = /^-?\d+$/;
-
-/**
- * Word-form Sling selectors worth rejecting even without a following
- * extension, because the application - not the agent - chooses both the
- * selector chain and the extension when it builds the request.
- */
-const SLING_SELECTOR_KEYWORDS = new Set(['infinity', 'tidy', 'harray', 'blocks']);
-
-/**
- * A `%XX` sequence surviving a single `decodeURIComponent` pass only occurs
- * when the caller encoded the percent sign itself (`%25`), i.e. a
- * double-encoding attempt aimed at surviving this validator's one decode pass.
- */
-const PERCENT_ENCODED_OCTET_PATTERN = /%[0-9a-fA-F]{2}/;
-
-/**
- * True if the path's final segment carries a dot-token, after the first (the
- * node name itself), that looks like a Sling selector rather than part of that
- * name. Only the final segment is checked: selectors are meaningful only on
- * the terminal resource of a Sling URL.
- *
- * Deliberately over-inclusive: at validation time there is no way to tell
- * `/content/dam/report.2024` apart from `report` plus a `2024` depth selector.
- * A false rejection the user can see and retry is the correct failure mode; a
- * silently accepted unbounded-depth fetch is not recoverable.
- */
-function containsSlingSelectorToken(candidate: string): boolean {
-  const finalSegment = candidate.slice(candidate.lastIndexOf('/') + 1);
-  const [, ...suffixTokens] = finalSegment.split('.');
-  return suffixTokens.some(
-    (token) =>
-      NUMERIC_SELECTOR_TOKEN_PATTERN.test(token) ||
-      SLING_SELECTOR_KEYWORDS.has(token.toLowerCase()),
-  );
-}
-
-/**
- * Validates a candidate JCR/Sling path without rewriting it. A bad path must be
- * rejected, not sanitised: silently stripping `..` or a scheme would make the
- * eventual AEM request address something other than what the agent (and the
- * user reading its answer) believes was asked for.
- *
- * CONTRACT FOR CALLERS: every structural check runs against the
- * percent-decoded form of `candidate`, because that is what a servlet
- * container hands to Sling. Whatever builds the real request URL must
- * reproduce exactly the same single `decodeURIComponent` pass performed here,
- * then percent-encode the result per path segment.
- */
-export function parseJcrPath(candidate: string): Result<void, JcrPathRejectionReason> {
-  if (candidate.length === 0) return err('empty');
-  if (candidate.length > JCR_PATH_MAX_LENGTH) return err('too_long');
-
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(candidate);
-  } catch {
-    return err('malformed_percent_encoding');
-  }
-  if (PERCENT_ENCODED_OCTET_PATTERN.test(decoded)) {
-    return err('contains_double_percent_encoding');
-  }
-
-  if ([...decoded].some((char) => char.codePointAt(0)! < 0x20 || char === '\u007f')) {
-    return err('contains_control_character');
-  }
-  if (decoded.startsWith('//')) return err('protocol_relative');
-  if (!decoded.startsWith('/')) return err('not_absolute');
-  if (decoded.includes('://')) return err('contains_scheme');
-  if (decoded.includes('?')) return err('contains_query');
-  if (decoded.includes('#')) return err('contains_fragment');
-  if (decoded.includes('\\')) return err('contains_backslash');
-  if (decoded.split('/').some((segment) => segment === '..')) {
-    return err('contains_traversal_segment');
-  }
-  // Sling parses `;key=value` after the resource path (or extension) as a
-  // request path parameter, not part of a node name. The documented `;v=1.0`
-  // parameter selects a different VERSION of the resource.
-  if (decoded.includes(';')) {
-    return err('contains_request_path_parameter');
-  }
-  if (decoded !== '/' && decoded.slice(1).split('/').includes('')) {
-    return err('contains_empty_segment');
-  }
-  // A segment ending in `.` is a suffix hazard: for `/a/b./c/d` Sling resolves
-  // resource `/a/b` with suffix `/c/d` and no extension, routing to the stream
-  // rendering instead of the JSON servlet.
-  if (decoded.split('/').some((segment) => segment.length > 0 && segment.endsWith('.'))) {
-    return err('contains_dot_terminated_segment');
-  }
-  if (containsSlingSelectorToken(decoded)) {
-    return err('contains_sling_selector');
-  }
-  if (JSON_EXTENSION_PATTERN.test(decoded)) {
-    return err('contains_json_extension');
-  }
-  return ok(undefined);
-}
-
-function jcrPathRejectionMessage(reason: JcrPathRejectionReason): string {
-  switch (reason) {
-    case 'empty':
-      return 'must not be empty';
-    case 'too_long':
-      return `must be at most ${String(JCR_PATH_MAX_LENGTH)} characters`;
-    case 'malformed_percent_encoding':
-      return "must not contain a malformed percent-encoded sequence (e.g. '%ZZ' or a truncated '%2')";
-    case 'contains_double_percent_encoding':
-      return (
-        "must not contain a double percent-encoded sequence (e.g. '%252E' encoding a " +
-        "literal '%'); the application decodes the path exactly once"
-      );
-    case 'contains_control_character':
-      return 'must not contain control characters';
-    case 'protocol_relative':
-      return "must not start with '//' (that resolves as a network-path reference, not a repository path)";
-    case 'not_absolute':
-      return "must be an absolute repository path starting with '/'";
-    case 'contains_scheme':
-      return "must not contain a URL scheme ('://')";
-    case 'contains_query':
-      return "must not contain a query string ('?')";
-    case 'contains_fragment':
-      return "must not contain a fragment ('#')";
-    case 'contains_backslash':
-      return 'must not contain a backslash';
-    case 'contains_traversal_segment':
-      return "must not contain a '..' path segment";
-    case 'contains_request_path_parameter':
-      return (
-        "must not contain ';' (Sling reads ';key=value' after a resource path as a request " +
-        "path parameter - for example ';v=1.0' selects a different version of the content - " +
-        'so it would change which content is returned)'
-      );
-    case 'contains_empty_segment':
-      return "must not contain an empty path segment (a trailing '/' or a '//' run)";
-    case 'contains_dot_terminated_segment':
-      return (
-        "must not contain a path segment ending in '.' (Sling would treat the rest of the " +
-        'path as a suffix and drop the extension, routing the request to a different ' +
-        'renderer than the JSON one)'
-      );
-    case 'contains_sling_selector':
-      return (
-        "must not contain a Sling selector in its final segment (a numeric or '-1' depth " +
-        "selector, 'infinity', 'tidy', 'harray', or 'blocks'); the application chooses " +
-        'selectors and extensions itself - if this is a genuine node name, it cannot be ' +
-        'addressed through this tool'
-      );
-    case 'contains_json_extension':
-      return (
-        "must not include a '.json' extension or Sling depth selector (e.g. '.json', " +
-        "'.99.json', '.-1.json', '.infinity.json'); the application appends its own " +
-        'response format and depth'
-      );
-  }
-}
-
-export const jcrPathSchema = z.string().superRefine((value, ctx) => {
-  const result = parseJcrPath(value);
-  if (!result.ok) {
-    ctx.addIssue({ code: 'custom', message: `path ${jcrPathRejectionMessage(result.error)}` });
-  }
-});
 
 // ---------------------------------------------------------------------------
 // Arguments, descriptor, request envelope
@@ -343,6 +132,9 @@ export const aemGetJsonSuccessSchema = z
   .strict();
 
 export type AemGetJsonSuccess = z.infer<typeof aemGetJsonSuccessSchema>;
+
+/** What `executeAemGetJson` resolves: this tool's success shape, or the shared error arm. */
+export type AemGetJsonResult = ToolOutcome<AemGetJsonSuccess>;
 
 export function renderGetJsonSuccess(result: AemGetJsonSuccess): string {
   const childrenLine = result.children.requested
@@ -617,7 +409,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   unexpected_json_shape: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
 };
 
-function toolError(key: ErrorMessageKey, requestId: RequestId): { ok: false; error: ToolError } {
+function toolError(key: ErrorMessageKey, requestId: RequestId): AemGetJsonResult {
   const mapping = ERROR_MAPPINGS[key];
   return {
     ok: false,
@@ -643,7 +435,7 @@ export interface AemGetJsonDeps {
 export async function executeAemGetJson(
   envelope: AemGetJsonRequest,
   deps: AemGetJsonDeps,
-): Promise<ToolResult> {
+): Promise<AemGetJsonResult> {
   const args = envelope.args;
   const built = buildResourceUrl({
     origin: deps.origin,
@@ -688,112 +480,27 @@ export interface AemGetJsonExecutorConfig<TRuntimeDeps extends Record<string, un
   readonly execute: (
     envelope: AemGetJsonRequest,
     deps: { readonly origin: string } & TRuntimeDeps,
-  ) => Promise<ToolResult>;
+  ) => Promise<AemGetJsonResult>;
   readonly runtimeDeps: TRuntimeDeps;
   readonly currentContext: () => CurrentAemToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
 }
 
-function toSuccessPayload(result: AemGetJsonSuccess): JsonValue {
-  return {
-    textResultForLlm: renderGetJsonSuccess(result),
-    resultType: 'success',
-  };
-}
-
 /**
- * Builds the `AemToolExecutor` `sdkAgentService.ts` registers for
- * `aem_get_json`.
- *
- * Order of operations: an already-aborted signal is honoured before anything
- * else; the model's untrusted `args` are validated next; the target and every
- * other envelope field the model does not supply are read from
- * `currentContext()`; the resulting envelope is re-validated before being
- * handed to `config.execute`. Success resolves the rendered
- * `{ textResultForLlm, resultType: "success" }` payload; every failure resolves
- * `err(ToolError)` instead of throwing.
+ * Builds the `AemToolExecutor` the SDK adapter registers for `aem_get_json`.
+ * The shared order of operations (abort, validate args, bind context, re-validate
+ * the envelope, execute, render) lives in `createToolExecutor`.
  */
 export function createAemGetJsonExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemGetJsonExecutorConfig<TRuntimeDeps>,
 ): AemToolExecutor {
-  return async (args, context) => {
-    if (context.signal?.aborted === true) {
-      const requestId = newRequestId(config.idGenerator);
-      return err(
-        createToolError('CANCELLED', 'The request was cancelled before it started.', requestId),
-      );
-    }
-
-    const parsedArgs = aemGetJsonArgsSchema.safeParse(args);
-    if (!parsedArgs.success) {
-      const requestId = newRequestId(config.idGenerator);
-      return err(
-        createToolError(
-          'INVALID_ARGUMENT',
-          firstIssueMessage(parsedArgs.error.issues, 'Invalid aem_get_json arguments.'),
-          requestId,
-        ),
-      );
-    }
-
-    const current = config.currentContext();
-    const requestId = newRequestId(config.idGenerator);
-    const candidate = {
-      operation: 'aem_get_json' as const,
-      requestId,
-      chatId: current.chatId,
-      turnId: current.turnId,
-      serverId: current.serverId,
-      serverRevision: current.serverRevision,
-      navigationEpoch: current.navigationEpoch,
-      deadlineMs: computeDeadline(config.clock),
-      args: parsedArgs.data,
-    };
-    const parsedEnvelope = aemGetJsonRequestSchema.safeParse(candidate);
-    if (!parsedEnvelope.success) {
-      return err(
-        createToolError(
-          'UNEXPECTED_RESPONSE',
-          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an AEM request.'),
-          requestId,
-        ),
-      );
-    }
-
-    try {
-      const result = await config.execute(parsedEnvelope.data, {
-        ...config.runtimeDeps,
-        origin: current.origin,
-      });
-      if (!result.ok) return err(result.error);
-      if (result.operation !== 'aem_get_json') {
-        // Unreachable: `config.execute` is this tool's own handler. Handled
-        // rather than asserted so a future change fails closed with a readable
-        // message instead of a thrown type error.
-        return err(
-          createToolError(
-            'UNEXPECTED_RESPONSE',
-            'Internal error: unexpected tool result shape.',
-            requestId,
-          ),
-        );
-      }
-      return ok(toSuccessPayload(result));
-    } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message.slice(0, 500) : 'AEM request failed.';
-      return err(createToolError('UNEXPECTED_RESPONSE', message, requestId));
-    }
-  };
+  return createToolExecutor({
+    operation: 'aem_get_json',
+    argsSchema: aemGetJsonArgsSchema,
+    requestSchema: aemGetJsonRequestSchema,
+    render: renderGetJsonSuccess,
+    failureFallbackMessage: 'AEM request failed.',
+    ...config,
+  });
 }
-
-/**
- * Registers itself with the session's tool policy under this entry, and
- * `sdkAgentService.ts` under {@link AEM_GET_JSON_TOOL_NAME}.
- */
-export const AEM_GET_JSON_DEFINITION = {
-  name: AEM_GET_JSON_TOOL_NAME,
-  descriptor: AEM_GET_JSON_TOOL_DESCRIPTOR,
-  allowlistEntry: AEM_GET_JSON_ALLOWLIST_ENTRY,
-} as const;

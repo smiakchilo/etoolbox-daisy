@@ -1,7 +1,4 @@
-import { executeAemGetJson, type AemGetJsonRequest } from '../shared';
-import { executeAemQuery, type AemQueryRequest } from '../shared';
 import { deriveCurrentPageContext, renderCurrentPageContextForModel } from '../shared';
-import type { AemBridgeBroker } from './aem/bridgeBroker';
 import type { ActiveAemServer } from './browser/browserController';
 import type { NavigationEpochTracker } from './browser/navigationEpoch';
 import {
@@ -21,7 +18,6 @@ import type { ModelCatalogEntry } from '../shared';
 import type { IdGenerator } from '../shared';
 import type { CurrentAemContext } from '../shared';
 import type { SessionStreamState } from '../shared';
-import type { ToolResult } from '../shared';
 
 /**
  * The production composition root (`src/main/index.ts`) wires together every
@@ -116,82 +112,6 @@ export function createBridgeCurrentContext(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Closing the envelope-passing gap between aemTool.ts and bridgeBroker.ts
-// ---------------------------------------------------------------------------
-
-/**
- * Everything `createBrokeredExecute`'s returned function needs besides the
- * `origin` `createAemGetJsonExecutor` already binds for every runtime deps
- * shape. Inferred as this module's own `TRuntimeDeps` for
- * `AemGetJsonExecutorConfig` - see that generic's own doc comment on why it
- * is never given a concrete shape by `aemTool.ts` itself.
- */
-export interface BrokeredExecuteRuntimeDeps {
-  /** Wall-clock time stamped onto a successful result (`AemGetJsonDeps.now`). */
-  readonly now: () => number;
-}
-
-/**
- * Bridges `aemTool.ts`'s `AemGetJsonExecutorConfig.execute` shape - called
- * once per tool call as `execute(envelope, { origin, ...runtimeDeps })`,
- * where `runtimeDeps` is a single object built once at construction and
- * reused for every call - onto `AemGetJsonDeps.fetchThroughBridge`, whose
- * signature is `(url) => Promise<BrokerOutcome>` with no envelope parameter
- * at all, while `AemBridgeBroker.request(envelope, url)` needs one.
- *
- * The real, unmodified `executeAemGetJson` is still what runs the actual
- * request/response logic; this function never reimplements any of it. It
- * only closes the gap by building `fetchThroughBridge` fresh *inside* the
- * per-call `execute` invocation, where the current call's own `envelope` is
- * in scope - rather than once at construction time, where it is not.
- *
- * `BrokeredExecute` (the return type below) matches
- * `AemGetJsonExecutorConfig<BrokeredExecuteRuntimeDeps>["execute"]`
- * structurally (verified where it is actually passed to
- * `createAemGetJsonExecutor` in `index.ts`), but is not written as an
- * explicit instantiation of that generic - `TRuntimeDeps extends
- * Record<string, unknown>`, and TypeScript's generic-constraint check
- * rejects a plain named interface for that constraint even though the same
- * interface is perfectly assignable structurally wherever it is actually
- * used as a value (as `runtimeDeps` is, in every real call site).
- */
-export type BrokeredExecute = (
-  envelope: AemGetJsonRequest,
-  deps: { readonly origin: string } & BrokeredExecuteRuntimeDeps,
-) => Promise<ToolResult>;
-
-export function createBrokeredExecute(broker: Pick<AemBridgeBroker, 'request'>): BrokeredExecute {
-  return (envelope, deps) =>
-    executeAemGetJson(envelope, {
-      origin: deps.origin,
-      now: deps.now,
-      fetchThroughBridge: (url) => broker.request(envelope, url),
-    });
-}
-
-/**
- * The `aem_query` counterpart of {@link BrokeredExecute}. Separate rather than
- * generic because the two envelope types are distinct members of a
- * discriminated union: one function taking `AemGetJsonRequest | AemQueryRequest`
- * could not hand either one to the right `execute*` without a cast.
- */
-export type BrokeredQueryExecute = (
-  envelope: AemQueryRequest,
-  deps: { readonly origin: string } & BrokeredExecuteRuntimeDeps,
-) => Promise<ToolResult>;
-
-export function createBrokeredQueryExecute(
-  broker: Pick<AemBridgeBroker, 'request'>,
-): BrokeredQueryExecute {
-  return (envelope, deps) =>
-    executeAemQuery(envelope, {
-      origin: deps.origin,
-      now: deps.now,
-      fetchThroughBridge: (url) => broker.request(envelope, url),
-    });
-}
-
 /**
  * Resolves the one directory the bundled AEM skills may be loaded from.
  *
@@ -225,7 +145,7 @@ export function resolveBundledSkillsDirectory(params: {
 
 export interface LateBoundAemToolContext {
   /**
-   * Passed to `createAemGetJsonExecutor` as `currentContext`. Throws if
+   * Passed to every tool executor (via `ToolHost.currentContext`). Throws if
    * called before `bind` - which would mean a tool call reached the
    * executor before the composition root finished wiring the chat
    * controller, a construction-order bug worth failing loudly on rather
@@ -241,9 +161,7 @@ export function createLateBoundAemToolContext(): LateBoundAemToolContext {
   return {
     currentContext: () => {
       if (bound === undefined) {
-        throw new Error(
-          'aem_get_json tool context requested before the chat controller was bound.',
-        );
+        throw new Error('Tool context requested before the chat controller was bound.');
       }
       return bound.currentAemToolContext();
     },

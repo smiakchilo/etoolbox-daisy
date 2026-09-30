@@ -3,10 +3,10 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "rootDir": "src/renderer/src",
+    "rootDir": "src",
     "outDir": ".tsc-out/renderer",
     "types": ["vite/client"]
   },
-  "include": ["src/renderer/src/**/*.ts"],
+  "include": ["src/renderer/src/**/*.ts", "src/tools/*/renderer/**/*.ts"],
   "references": [{ "path": "./tsconfig.shared.json" }]
 }

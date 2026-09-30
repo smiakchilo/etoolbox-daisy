@@ -2,18 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createAemGetJsonExecutor,
-  createAemQueryExecutor,
-  buildAemToolPolicy,
-  AEM_ASSISTANT_INSTRUCTIONS,
-  AEM_GET_JSON_ALLOWLIST_ENTRY,
-  AEM_GET_JSON_TOOL_NAME,
-  AEM_QUERY_ALLOWLIST_ENTRY,
-  AEM_QUERY_TOOL_NAME,
   type AemGetJsonExecutorConfig,
   type AemGetJsonRequestEnvelope,
+  type AemGetJsonResult,
+} from '../../../src/tools/aem-get-json/aemGetJson';
+import {
+  createAemQueryExecutor,
   type AemQueryRequestEnvelope,
-  type CurrentAemToolContext,
-} from '../../../src/agent/aemTool';
+  type AemQueryResult,
+} from '../../../src/tools/aem-query/aemQuery';
 import type { ToolCallId } from '../../../src/shared';
 import {
   newChatId,
@@ -23,8 +20,7 @@ import {
   requestIdSchema,
   type IdGenerator,
 } from '../../../src/shared';
-import { createToolError } from '../../../src/shared';
-import type { ToolResult } from '../../../src/shared';
+import { createToolError, type CurrentAemToolContext } from '../../../src/shared';
 import type { JsonValue } from '../../../src/shared';
 
 /** Mints reproducible ids, mirroring `sdkAgentService.test.ts`'s identically-named helper. */
@@ -50,7 +46,7 @@ function makeContext(
   };
 }
 
-function makeSuccessResult(requestId: ReturnType<typeof newRequestId>): ToolResult {
+function makeSuccessResult(requestId: ReturnType<typeof newRequestId>): AemGetJsonResult {
   return {
     ok: true,
     operation: 'aem_get_json',
@@ -65,7 +61,9 @@ function makeSuccessResult(requestId: ReturnType<typeof newRequestId>): ToolResu
   };
 }
 
-function makeFailureResult(requestId: ReturnType<typeof newRequestId>): ToolResult {
+function makeFailureResult(
+  requestId: ReturnType<typeof newRequestId>,
+): Extract<AemGetJsonResult, { ok: false }> {
   return {
     ok: false,
     error: createToolError(
@@ -93,7 +91,7 @@ function makeConfig(
   execute: (
     envelope: AemGetJsonRequestEnvelope,
     deps: { readonly origin: string } & RuntimeDeps,
-  ) => Promise<ToolResult>,
+  ) => Promise<AemGetJsonResult>,
   context: () => CurrentAemToolContext,
 ): AemGetJsonExecutorConfig<RuntimeDeps> {
   return {
@@ -133,7 +131,7 @@ describe('aemTool - createAemGetJsonExecutor', () => {
       (
         envelope: AemGetJsonRequestEnvelope,
         deps: { readonly origin: string } & RuntimeDeps,
-      ) => Promise<ToolResult>
+      ) => Promise<AemGetJsonResult>
     >((envelope) => Promise.resolve(makeSuccessResult(envelope.requestId)));
     const executor = createAemGetJsonExecutor(makeConfig(ids, execute, () => context));
 
@@ -201,7 +199,7 @@ describe('aemTool - createAemGetJsonExecutor', () => {
       (
         envelope: AemGetJsonRequestEnvelope,
         deps: { readonly origin: string } & RuntimeDeps,
-      ) => Promise<ToolResult>
+      ) => Promise<AemGetJsonResult>
     >((envelope) => Promise.resolve(makeSuccessResult(envelope.requestId)));
     const executor = createAemGetJsonExecutor(
       makeConfig(ids, execute, () => makeContext(ids, { origin })),
@@ -216,14 +214,14 @@ describe('aemTool - createAemGetJsonExecutor', () => {
     expect(execute.mock.calls[1]![1].origin).toBe('https://server-b.example.com');
   });
 
-  it('maps a successful ToolResult to resultType: success with rendered text', async () => {
+  it('maps a successful AemGetJsonResult to resultType: success with rendered text', async () => {
     const ids = counterIdGenerator();
     const context = makeContext(ids);
     const execute = vi.fn<
       (
         envelope: AemGetJsonRequestEnvelope,
         deps: { readonly origin: string } & RuntimeDeps,
-      ) => Promise<ToolResult>
+      ) => Promise<AemGetJsonResult>
     >((envelope) => Promise.resolve(makeSuccessResult(envelope.requestId)));
     const executor = createAemGetJsonExecutor(makeConfig(ids, execute, () => context));
 
@@ -235,14 +233,14 @@ describe('aemTool - createAemGetJsonExecutor', () => {
     expect(payload.textResultForLlm).toContain('AEM node /content/foo');
   });
 
-  it('maps a failed ToolResult to a returned err(ToolError), with the error still readable', async () => {
+  it('maps a failed AemGetJsonResult to a returned err(ToolError), with the error still readable', async () => {
     const ids = counterIdGenerator();
     const context = makeContext(ids);
     const execute = vi.fn<
       (
         envelope: AemGetJsonRequestEnvelope,
         deps: { readonly origin: string } & RuntimeDeps,
-      ) => Promise<ToolResult>
+      ) => Promise<AemGetJsonResult>
     >((envelope) => Promise.resolve(makeFailureResult(envelope.requestId)));
     const executor = createAemGetJsonExecutor(makeConfig(ids, execute, () => context));
 
@@ -278,7 +276,7 @@ describe('aemTool - createAemGetJsonExecutor', () => {
       (
         envelope: AemGetJsonRequestEnvelope,
         deps: { readonly origin: string } & RuntimeDeps,
-      ) => Promise<ToolResult>
+      ) => Promise<AemGetJsonResult>
     >((envelope) => Promise.resolve(makeSuccessResult(envelope.requestId)));
     const executor = createAemGetJsonExecutor(makeConfig(ids, execute, () => context));
 
@@ -290,46 +288,8 @@ describe('aemTool - createAemGetJsonExecutor', () => {
   });
 });
 
-describe('aemTool - buildAemToolPolicy', () => {
-  it('allows exactly the two custom tools, and supplies the bundled base instruction', () => {
-    const policy = buildAemToolPolicy();
-    expect(policy.availableTools).toEqual([
-      AEM_GET_JSON_ALLOWLIST_ENTRY,
-      AEM_QUERY_ALLOWLIST_ENTRY,
-    ]);
-    expect(policy.instructions).toBe(AEM_ASSISTANT_INSTRUCTIONS);
-    expect(policy.instructions).toBeTruthy();
-  });
-
-  it('leaves skills disabled when no bundled directory is supplied', () => {
-    expect(buildAemToolPolicy().bundledSkillDirectories).toBeUndefined();
-    expect(buildAemToolPolicy([]).bundledSkillDirectories).toBeUndefined();
-  });
-
-  it('points skills at the application-owned directory when one is supplied', () => {
-    const policy = buildAemToolPolicy(['C:\\app\\resources\\skills']);
-    expect(policy.bundledSkillDirectories).toEqual(['C:\\app\\resources\\skills']);
-  });
-
-  it('tells the model that later pages need another call at a higher offset', () => {
-    expect(AEM_ASSISTANT_INSTRUCTIONS).toMatch(/higher 'offset'/);
-    expect(AEM_ASSISTANT_INSTRUCTIONS).toMatch(/never present one page as the complete set/i);
-  });
-
-  it('tells the model it cannot modify AEM', () => {
-    expect(AEM_ASSISTANT_INSTRUCTIONS).toMatch(/cannot write, delete, or otherwise modify/i);
-  });
-
-  it("registers the executor under the descriptor's own tool name", () => {
-    expect(AEM_GET_JSON_TOOL_NAME).toBe('aem_get_json');
-    expect(AEM_GET_JSON_ALLOWLIST_ENTRY.endsWith(AEM_GET_JSON_TOOL_NAME)).toBe(true);
-    expect(AEM_QUERY_TOOL_NAME).toBe('aem_query');
-    expect(AEM_QUERY_ALLOWLIST_ENTRY.endsWith(AEM_QUERY_TOOL_NAME)).toBe(true);
-  });
-});
-
 describe('aemTool - createAemQueryExecutor', () => {
-  function makeQuerySuccess(requestId: ReturnType<typeof newRequestId>): ToolResult {
+  function makeQuerySuccess(requestId: ReturnType<typeof newRequestId>): AemQueryResult {
     return {
       ok: true,
       operation: 'aem_query',
@@ -355,7 +315,7 @@ describe('aemTool - createAemQueryExecutor', () => {
     execute: (
       envelope: AemQueryRequestEnvelope,
       deps: { readonly origin: string } & RuntimeDeps,
-    ) => Promise<ToolResult>,
+    ) => Promise<AemQueryResult>,
     context: () => CurrentAemToolContext,
   ) {
     return {

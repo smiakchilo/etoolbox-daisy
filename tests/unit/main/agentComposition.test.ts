@@ -3,8 +3,6 @@ import {
   createCurrentAemServerContext,
   createBridgeCurrentContext,
   createCurrentPageContext,
-  createBrokeredExecute,
-  createBrokeredQueryExecute,
   resolveBundledSkillsDirectory,
   createLateBoundAemToolContext,
   wireNavigationEpochCancellation,
@@ -24,10 +22,7 @@ import type { Logger } from '../../../src/main/logger';
 import type { AgentService } from '../../../src/agent/agentService';
 import { createFakeAgentService } from '../../../src/agent/fakeAgentService';
 import type { CurrentAemToolContext } from '../../../src/shared';
-import { newChatId, newRequestId, newServerId, newTurnId } from '../../../src/shared';
-import type { AemGetJsonRequest } from '../../../src/shared';
-import type { AemQueryRequest } from '../../../src/shared';
-import type { BrokerOutcome } from '../../../src/shared';
+import { newChatId, newServerId, newTurnId } from '../../../src/shared';
 
 function counterIds(prefix: string): () => string {
   let n = 0;
@@ -159,84 +154,6 @@ describe('createBridgeCurrentContext', () => {
     expect(context.navigationEpoch).toBe(2);
     // serverRevisionSchema is z.number().int().nonnegative() - never negative.
     expect(context.serverRevision).toBeLessThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// createBrokeredExecute
-// ---------------------------------------------------------------------------
-
-function makeEnvelope(overrides: Partial<AemGetJsonRequest> = {}): AemGetJsonRequest {
-  const ids = counterIds('id');
-  return {
-    operation: 'aem_get_json',
-    requestId: newRequestId(ids),
-    chatId: newChatId(ids),
-    turnId: newTurnId(ids),
-    serverId: newServerId(ids),
-    serverRevision: 0,
-    navigationEpoch: 0,
-    deadlineMs: 1_700_000_010_000,
-    args: { path: '/content/foo' },
-    ...overrides,
-  };
-}
-
-/** A hand-rolled recording fake for `AemBridgeBroker.request`, matching this codebase's stated preference (see `bridgeBroker.test.ts`) for recording fakes over `vi.fn` where call arguments matter. */
-function recordingBrokerRequest(outcome: BrokerOutcome): {
-  readonly request: (envelope: AemGetJsonRequest, url: string) => Promise<BrokerOutcome>;
-  readonly calls: Array<{ envelope: AemGetJsonRequest; url: string }>;
-} {
-  const calls: Array<{ envelope: AemGetJsonRequest; url: string }> = [];
-  return {
-    calls,
-    request: (envelope, url) => {
-      calls.push({ envelope, url });
-      return Promise.resolve(outcome);
-    },
-  };
-}
-
-describe('createBrokeredExecute', () => {
-  it("routes the fetch through the broker with the URL built for that envelope's own args", async () => {
-    const broker = recordingBrokerRequest({
-      kind: 'response',
-      status: 200,
-      contentType: 'application/json',
-      bodyText: '{"jcr:primaryType":"nt:unstructured"}',
-    });
-    const execute = createBrokeredExecute(broker);
-    const envelope = makeEnvelope();
-
-    const result = await execute(envelope, {
-      origin: 'https://aem.example',
-      now: () => 1_700_000_000_000,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(broker.calls).toHaveLength(1);
-    expect(broker.calls[0]?.envelope).toBe(envelope);
-    expect(broker.calls[0]?.url).toBe('https://aem.example/content/foo.0.json');
-  });
-
-  it("passes each call's own envelope to the broker rather than one captured from an earlier call", async () => {
-    const broker = recordingBrokerRequest({ kind: 'cancelled' });
-    const execute = createBrokeredExecute(broker);
-    const envelopeA = makeEnvelope();
-    const envelopeB = makeEnvelope();
-
-    await execute(envelopeA, { origin: 'https://aem.example', now: () => 1 });
-    await execute(envelopeB, { origin: 'https://aem.example', now: () => 2 });
-
-    expect(broker.calls).toHaveLength(2);
-    expect(broker.calls[0]).toEqual({
-      envelope: envelopeA,
-      url: 'https://aem.example/content/foo.0.json',
-    });
-    expect(broker.calls[1]).toEqual({
-      envelope: envelopeB,
-      url: 'https://aem.example/content/foo.0.json',
-    });
   });
 });
 
@@ -623,67 +540,6 @@ describe('startAppRuntime', () => {
     await Promise.resolve();
 
     expect(onAgentServiceStartupFailed).toHaveBeenCalledWith(failure);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// createBrokeredQueryExecute / resolveBundledSkillsDirectory  (Step 08)
-// ---------------------------------------------------------------------------
-
-describe('createBrokeredQueryExecute', () => {
-  function queryEnvelope(): AemQueryRequest {
-    return {
-      operation: 'aem_query',
-      requestId: newRequestId(() => 'req-q'),
-      chatId: newChatId(() => 'chat-q'),
-      turnId: newTurnId(() => 'turn-q'),
-      serverId: newServerId(() => 'srv-q'),
-      serverRevision: 1,
-      navigationEpoch: 0,
-      deadlineMs: 30_000,
-      args: { predicates: { path: '/content/site' }, limit: 50, offset: 0 },
-    };
-  }
-
-  it('routes the request through the broker with the current envelope', async () => {
-    const request = vi.fn((envelope: AemQueryRequest, url: string): Promise<BrokerOutcome> =>
-      Promise.resolve({
-        kind: 'response',
-        status: 200,
-        contentType: 'application/json',
-        bodyText: JSON.stringify({
-          success: true,
-          results: 0,
-          total: 0,
-          more: false,
-          hits: [],
-          echoed: `${envelope.operation}:${url.length}`,
-        }),
-      }),
-    );
-    const execute = createBrokeredQueryExecute({ request });
-    const envelope = queryEnvelope();
-    const result = await execute(envelope, { origin: 'https://aem.example.com', now: () => 1 });
-
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.lastCall?.[0]).toBe(envelope);
-    expect(result.ok).toBe(true);
-  });
-
-  it('targets the QueryBuilder endpoint on the bound origin, not on anything in the args', async () => {
-    let seenUrl: string | undefined;
-    const request = vi.fn((_envelope: AemQueryRequest, url: string): Promise<BrokerOutcome> => {
-      seenUrl = url;
-      return Promise.resolve({
-        kind: 'response',
-        status: 200,
-        contentType: 'application/json',
-        bodyText: JSON.stringify({ success: true, results: 0, total: 0, more: false, hits: [] }),
-      });
-    });
-    const execute = createBrokeredQueryExecute({ request });
-    await execute(queryEnvelope(), { origin: 'https://aem.example.com', now: () => 1 });
-    expect(seenUrl?.startsWith('https://aem.example.com/bin/querybuilder.json?')).toBe(true);
   });
 });
 

@@ -1,14 +1,12 @@
 import { originSchema } from '../../src/shared';
-import type { Clock, ToolRequestEnvelope } from '../../src/shared';
+import type { Clock } from '../../src/shared';
+import type { ToolRequestEnvelope } from './toolUnions';
 import type { ToolErrorCode } from '../../src/shared';
-import { toolRequestEnvelopeSchema } from '../../src/shared';
-import type {
-  ChildrenMetadata,
-  HasMore,
-  PaginationMetadata,
-  TotalMatches,
-  ToolSuccess,
-} from '../../src/shared';
+import { toolRequestEnvelopeSchema } from './toolUnions';
+import type { HasMore } from '../../src/shared';
+import type { ChildrenMetadata } from '../../src/tools/aem-get-json/aemGetJson';
+import type { PaginationMetadata, TotalMatches } from '../../src/tools/aem-query/aemQuery';
+import type { ToolSuccess } from './toolUnions';
 import type { JsonValue } from '../../src/shared';
 import { FixtureRepository } from './fakeAemFixtures';
 

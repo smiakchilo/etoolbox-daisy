@@ -86,16 +86,3 @@ export interface ToolDescriptor {
    */
   readonly parameters: unknown;
 }
-
-/**
- * The static metadata one tool module contributes to the registry. Executors
- * and handlers live in the tool module itself; this is everything the session
- * policy and the SDK adapter need to describe the tool without knowing its
- * implementation.
- */
-export interface ToolDefinition {
-  readonly name: string;
-  readonly descriptor: ToolDescriptor;
-  /** The source-qualified allowlist entry (`custom:<name>`) the policy grants. */
-  readonly allowlistEntry: string;
-}

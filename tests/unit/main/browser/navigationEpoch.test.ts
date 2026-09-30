@@ -6,7 +6,7 @@ import {
   type NavigationEpochChange,
 } from '../../../../src/main/browser/navigationEpoch';
 import { classifyStaleness } from '../../../../src/shared';
-import type { ToolRequestEnvelope } from '../../../../src/shared';
+import type { ToolRequestEnvelope } from '../../../support/toolUnions';
 
 /**
  * A minimal stand-in for the AEM view's `WebContents` that records handlers so

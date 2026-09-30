@@ -90,6 +90,7 @@ export const DIAGNOSTIC_CODES = [
   'AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE',
   'AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED',
   'AGENT_SERVICE_FAKE_SELECTED',
+  'TOOL_REGISTRATION_FAILED',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];
@@ -231,8 +232,8 @@ const loggableUrlValidationSchema = z
 
 const logFieldsValidationSchema = z
   .object({
-    durationMs: z.number().finite().nonnegative().optional(),
-    count: z.number().finite().nonnegative().int().optional(),
+    durationMs: z.number().nonnegative().optional(),
+    count: z.number().nonnegative().int().optional(),
     statusCode: z.number().int().min(100).max(599).optional(),
     outcome: z.enum(LOG_OUTCOMES).optional(),
     ids: logIdsSchema.optional(),

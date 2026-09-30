@@ -1,17 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   AEM_REQUEST_TIMEOUT_MS,
-  aemGetJsonArgsSchema,
-  aemQueryArgsSchema,
   classifyStaleness,
   computeDeadline,
   isDeadlineExpired,
   jcrPathSchema,
   parseJcrPath,
-  toolRequestEnvelopeSchema,
   type JcrPathRejectionReason,
-  type ToolRequestEnvelope,
 } from '../../../../src/shared';
+import { aemGetJsonArgsSchema } from '../../../../src/tools/aem-get-json/aemGetJson';
+import { aemQueryArgsSchema } from '../../../../src/tools/aem-query/aemQuery';
+import { toolRequestEnvelopeSchema, type ToolRequestEnvelope } from '../../../support/toolUnions';
 
 function issueMessages(result: {
   success: false;

@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { createToolError } from '../../../../src/shared';
 import { requestIdSchema } from '../../../../src/shared';
+import { type PropertySelection, type ToolErrorResult } from '../../../../src/shared';
 import {
   parseToolResult,
   renderToolResultForModel,
   serializeToolResult,
   toolResultSchema,
-  type AemGetJsonSuccess,
-  type AemQuerySuccess,
-  type PropertySelection,
-  type ToolErrorResult,
-} from '../../../../src/shared';
+} from '../../../support/toolUnions';
+import { type AemGetJsonSuccess } from '../../../../src/tools/aem-get-json/aemGetJson';
+import { type AemQuerySuccess } from '../../../../src/tools/aem-query/aemQuery';
 
 const REQUEST_ID = requestIdSchema.parse('req-1');
 

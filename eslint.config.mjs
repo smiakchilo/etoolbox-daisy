@@ -90,6 +90,33 @@ const sharedGlobalsRestriction = [
   })),
 ];
 
+// Rule 4 (src/tools/<name>/): a tool folder is a plugin. It may import the
+// shared kit (src/shared) and its own files - never the app (src/main,
+// src/agent, src/renderer, src/preload), never Electron, Node or the SDK, and
+// never another tool, so deleting any one folder cannot break another. The
+// regexes are relative-path shapes: at a tool folder's top level `../../shared`
+// is the only permitted way out; inside `renderer/` `../` (the tool's own
+// files) and `../../../shared` are.
+const toolBoundaryPaths = sharedPurityRestriction[1].paths;
+const toolBoundaryNodePattern = sharedPurityRestriction[1].patterns;
+const toolRestriction = (escape) => [
+  'error',
+  {
+    paths: toolBoundaryPaths,
+    patterns: [
+      ...toolBoundaryNodePattern,
+      {
+        regex: escape,
+        message:
+          'A tool folder may import only its own files and src/shared - not the app or another tool.',
+      },
+    ],
+  },
+];
+const toolTopLevelRestriction = toolRestriction('^\\.\\./(?!\\.\\./shared(/|$))');
+const toolRendererRestriction = toolRestriction('^\\.\\./\\.\\./(?!\\.\\./shared(/|$))');
+const nodeOnlyGlobals = ['process', '__dirname', '__filename', 'require', 'global', 'Buffer'];
+
 export default tseslint.config(
   {
     ignores: [
@@ -150,6 +177,30 @@ export default tseslint.config(
     },
   },
   {
+    // A tool's non-renderer code runs in main and is shared with the renderer
+    // and tests: same purity as src/shared, plus the plugin boundary.
+    files: ['src/tools/**/*.ts'],
+    ignores: ['src/tools/*/renderer/**'],
+    rules: {
+      'no-restricted-imports': toolTopLevelRestriction,
+      'no-restricted-globals': sharedGlobalsRestriction,
+    },
+  },
+  {
+    // A tool's renderer module runs in the renderer: DOM types are fine, Node is not.
+    files: ['src/tools/*/renderer/**/*.ts'],
+    rules: {
+      'no-restricted-imports': toolRendererRestriction,
+      'no-restricted-globals': [
+        'error',
+        ...nodeOnlyGlobals.map((name) => ({
+          name,
+          message: `A tool renderer must not use \`${name}\`; it runs in the renderer.`,
+        })),
+      ],
+    },
+  },
+  {
     // src/agent is the one place allowed to import the SDK/CLI packages -
     // undo the blanket restriction applied to "**/*.ts" above.
     files: ['src/agent/**/*.ts'],
@@ -176,6 +227,13 @@ export default tseslint.config(
     files: ['tests/fixtures/eslint-violations/sdk-outside-agent-violation.ts'],
     rules: {
       'no-restricted-imports': sdkOutsideAgentRestriction,
+    },
+  },
+  {
+    // Proves the plugin boundary fires (run directly with --no-ignore).
+    files: ['tests/fixtures/eslint-violations/tool-boundary-violation.ts'],
+    rules: {
+      'no-restricted-imports': toolTopLevelRestriction,
     },
   },
 );

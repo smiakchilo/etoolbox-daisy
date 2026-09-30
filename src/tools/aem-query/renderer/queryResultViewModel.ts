@@ -1,4 +1,4 @@
-import type { JsonValue } from '../../../shared';
+import { type JsonValue } from '../../../shared';
 
 /**
  * Turns the `data` payload of a succeeded `aem_query` tool call into

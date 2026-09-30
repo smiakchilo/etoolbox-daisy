@@ -1,3 +1,4 @@
+import type { ToolResultTable } from '../../../shared';
 import { el } from '../lib/dom';
 import {
   EMPTY_LINK_CONTEXT,
@@ -15,7 +16,7 @@ import {
   latestReasoningLine,
 } from './transcriptViewModel';
 import { describeToolCall } from './toolCallDetails';
-import { type QueryResultTable, readQueryResultTable } from './queryResultViewModel';
+import { toolRendererRegistry } from './toolRegistry';
 import type { ToolCallView, TranscriptItem, TranscriptStore } from './transcriptStore';
 
 export interface TranscriptView {
@@ -65,7 +66,7 @@ function keyFor(item: TranscriptItem): string {
 }
 
 /**
- * Renders a query result as a Spectrum `<sp-table>` plus its pagination
+ * Renders a tool's tabular result as a Spectrum `<sp-table>` plus its pagination
  * status line.
  *
  * Every cell is set through `text:` (i.e. `textContent`), never through
@@ -74,7 +75,7 @@ function keyFor(item: TranscriptItem): string {
  * message text goes through the markdown renderer, which sanitises; tool
  * result data has no such pass and must never be parsed as HTML here.
  */
-function renderQueryResultTable(table: QueryResultTable): readonly HTMLElement[] {
+function renderResultTable(table: ToolResultTable): readonly HTMLElement[] {
   const status = el('p', {
     attrs: { class: 'chat-tool-call__pagination' },
     text: table.status,
@@ -198,8 +199,8 @@ function renderToolCallBody(
   ];
 
   if (view.status.kind === 'succeeded') {
-    const table = readQueryResultTable(view.toolName, view.status.data);
-    if (table !== undefined) nodes.push(...renderQueryResultTable(table));
+    const table = toolRendererRegistry.readResultTable(view.toolName, view.status.data);
+    if (table !== undefined) nodes.push(...renderResultTable(table));
   }
 
   if (view.status.kind === 'rejected') {

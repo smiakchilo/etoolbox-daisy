@@ -1,29 +1,34 @@
 import { z } from 'zod';
-import { createToolError, type RequiredAction, type ToolErrorCode } from '../contracts';
-import { newRequestId, requestIdSchema, type IdGenerator, type RequestId } from '../contracts';
-import type { JsonValue } from '../contracts';
-import { err, ok, type Result } from '../result';
-import { originSchema, parseOrigin } from '../contracts';
-import { computeDeadline, envelopeCommonShape } from './core/envelope';
-import { firstIssueMessage } from './core/validationIssue';
-import type { ToolResult } from './index';
-import { brokerErrorKey } from './core/brokerOutcome';
-import { classifyAemResponse, type JsonObject } from './core/responseValidation';
 import {
+  type AemToolExecutor,
+  type BrokerOutcome,
+  type CurrentAemToolContext,
+  type HasMore,
+  type IdGenerator,
+  type JsonObject,
+  type JsonValue,
+  type PropertySelection,
+  type RequestId,
+  type RequiredAction,
+  type Result,
+  type ToolDescriptor,
+  type ToolErrorCode,
+  type ToolOutcome,
+  brokerErrorKey,
+  classifyAemResponse,
+  createToolExecutor,
+  envelopeCommonShape,
+  err,
   hasMoreSchema,
+  ok,
+  originSchema,
+  parseOrigin,
   propertiesSelectionSchema,
   propertySelectionSchema,
   renderHasMore,
   renderSelection,
-  type HasMore,
-  type PropertySelection,
-} from './core/resultCommon';
-import type {
-  AemToolExecutor,
-  BrokerOutcome,
-  CurrentAemToolContext,
-  ToolDescriptor,
-} from './core/types';
+  requestIdSchema,
+} from '../../shared';
 
 /**
  * The `aem_query` tool, self-contained.
@@ -64,7 +69,6 @@ export const queryOffsetSchema = z
   .number()
   .int('offset must be an integer')
   .nonnegative('offset must not be negative')
-  .safe('offset must be a safe integer')
   .default(0);
 
 const PREDICATE_KEY_MAX_LENGTH = 200;
@@ -250,6 +254,9 @@ export const aemQuerySuccessSchema = z
   .strict();
 
 export type AemQuerySuccess = z.infer<typeof aemQuerySuccessSchema>;
+
+/** What `executeAemQuery` resolves: this tool's success shape, or the shared error arm. */
+export type AemQueryResult = ToolOutcome<AemQuerySuccess>;
 
 /**
  * Renders the total alongside its accuracy in the same breath, never the bare
@@ -647,7 +654,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   malformed_envelope: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
 };
 
-function toolError(key: ErrorMessageKey, requestId: RequestId): ToolResult {
+function toolError(key: ErrorMessageKey, requestId: RequestId): AemQueryResult {
   const mapping = ERROR_MAPPINGS[key];
   return {
     ok: false,
@@ -670,7 +677,7 @@ export interface AemQueryDeps {
 export async function executeAemQuery(
   envelope: AemQueryRequest,
   deps: AemQueryDeps,
-): Promise<ToolResult> {
+): Promise<AemQueryResult> {
   const args = envelope.args;
   const built = buildQueryUrl({
     origin: deps.origin,
@@ -726,101 +733,27 @@ export interface AemQueryExecutorConfig<TRuntimeDeps extends Record<string, unkn
   readonly execute: (
     envelope: AemQueryRequest,
     deps: { readonly origin: string } & TRuntimeDeps,
-  ) => Promise<ToolResult>;
+  ) => Promise<AemQueryResult>;
   readonly runtimeDeps: TRuntimeDeps;
   readonly currentContext: () => CurrentAemToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
 }
 
-function toSuccessPayload(result: AemQuerySuccess): JsonValue {
-  return {
-    textResultForLlm: renderQuerySuccess(result),
-    resultType: 'success',
-  };
-}
-
 /**
- * Builds the `AemToolExecutor` `sdkAgentService.ts` registers for `aem_query`.
- *
- * Structurally identical to `createAemGetJsonExecutor`, and deliberately so:
- * the same abort-first ordering, the same validate-args-before-anything-else
- * rule, the same application-bound envelope, and the same `err(ToolError)`
- * failure discipline. The only differences are which schema validates the
- * arguments and which operation the envelope names.
+ * Builds the `AemToolExecutor` the SDK adapter registers for `aem_query`.
+ * Structurally identical to `aem_get_json`'s, via the shared
+ * `createToolExecutor`.
  */
 export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemQueryExecutorConfig<TRuntimeDeps>,
 ): AemToolExecutor {
-  return async (args, context) => {
-    if (context.signal?.aborted === true) {
-      const requestId = newRequestId(config.idGenerator);
-      return err(
-        createToolError('CANCELLED', 'The request was cancelled before it started.', requestId),
-      );
-    }
-
-    const parsedArgs = aemQueryArgsSchema.safeParse(args);
-    if (!parsedArgs.success) {
-      const requestId = newRequestId(config.idGenerator);
-      return err(
-        createToolError(
-          'INVALID_ARGUMENT',
-          firstIssueMessage(parsedArgs.error.issues, 'Invalid aem_query arguments.'),
-          requestId,
-        ),
-      );
-    }
-
-    const current = config.currentContext();
-    const requestId = newRequestId(config.idGenerator);
-    const candidate = {
-      operation: 'aem_query' as const,
-      requestId,
-      chatId: current.chatId,
-      turnId: current.turnId,
-      serverId: current.serverId,
-      serverRevision: current.serverRevision,
-      navigationEpoch: current.navigationEpoch,
-      deadlineMs: computeDeadline(config.clock),
-      args: parsedArgs.data,
-    };
-    const parsedEnvelope = aemQueryRequestSchema.safeParse(candidate);
-    if (!parsedEnvelope.success) {
-      return err(
-        createToolError(
-          'UNEXPECTED_RESPONSE',
-          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an AEM request.'),
-          requestId,
-        ),
-      );
-    }
-
-    try {
-      const result = await config.execute(parsedEnvelope.data, {
-        ...config.runtimeDeps,
-        origin: current.origin,
-      });
-      if (!result.ok) return err(result.error);
-      if (result.operation !== 'aem_query') {
-        return err(
-          createToolError(
-            'UNEXPECTED_RESPONSE',
-            'Internal error: unexpected tool result shape.',
-            requestId,
-          ),
-        );
-      }
-      return ok(toSuccessPayload(result));
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message.slice(0, 500) : 'AEM query failed.';
-      return err(createToolError('UNEXPECTED_RESPONSE', message, requestId));
-    }
-  };
+  return createToolExecutor({
+    operation: 'aem_query',
+    argsSchema: aemQueryArgsSchema,
+    requestSchema: aemQueryRequestSchema,
+    render: renderQuerySuccess,
+    failureFallbackMessage: 'AEM query failed.',
+    ...config,
+  });
 }
-
-export const AEM_QUERY_DEFINITION = {
-  name: AEM_QUERY_TOOL_NAME,
-  descriptor: AEM_QUERY_TOOL_DESCRIPTOR,
-  allowlistEntry: AEM_QUERY_ALLOWLIST_ENTRY,
-} as const;

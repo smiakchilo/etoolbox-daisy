@@ -9,9 +9,10 @@
     // eslint.config.mjs bans `window`/`document`/`process` and friends, so the
     // "usable from any process" guarantee is enforced rather than assumed.
     "lib": ["ES2023", "DOM"],
-    "rootDir": "src/shared",
+    "rootDir": "src",
     "outDir": ".tsc-out/shared",
     "types": []
   },
-  "include": ["src/shared/**/*.ts"]
+  "include": ["src/shared/**/*.ts", "src/tools/**/*.ts"],
+  "exclude": ["src/tools/*/renderer/**"]
 }

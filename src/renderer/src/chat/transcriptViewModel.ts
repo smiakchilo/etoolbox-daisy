@@ -1,5 +1,5 @@
-import type {RequiredAction} from '../../../shared';
-import type {ToolCallStatus} from './transcriptStore';
+import type { RequiredAction } from '../../../shared';
+import type { ToolCallStatus } from './transcriptStore';
 
 /**
  * Short label for a tool call's current lifecycle status. `"FAILED"` is

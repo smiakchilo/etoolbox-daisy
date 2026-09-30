@@ -66,7 +66,7 @@ by a human.** It needs a real Copilot sign-in and a real AEM instance.
 │    settingsStore / secretStore / logger / appPaths                   │
 │                                                                      │
 │  src/agent/  ← the ONLY place allowed to import the Copilot SDK      │
-│    copilotClient · toolPolicy · sdkAgentService · aemTool            │
+│    copilotClient · toolPolicy · sdkAgentService · aemTool (tool-agnostic)│
 └──────────┬───────────────────────────────────┬───────────────────────┘
            │ typed IPC                         │ stdio
 ┌──────────┴───────────┐            ┌──────────┴─────────────────────┐
@@ -93,8 +93,10 @@ anything near it:
 
 ```
 model calls aem_get_json / aem_query
-  → src/agent/aemTool.ts        executor: validates args, builds an envelope
-  → src/main/agentComposition.ts  createBrokeredExecute / createBrokeredQueryExecute
+  → src/tools/<name>/tool.ts     the tool's executor (createToolExecutor in
+                                 src/shared/tools/core): validate args, build envelope
+  → src/main/tools/registry.ts   discovered + isolated; hands each tool a ToolHost
+                                 whose bridge is bridgeBroker.request
   → src/main/aem/bridgeBroker.ts  policy, deadlines, navigation-epoch checks
   → src/main/aem/bridgeTransport.ts  IPC to the AEM pane
   → src/preload/bridgeFetch.ts    the fetch, inside the authenticated page
@@ -124,8 +126,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
 | `contracts/chatMetadata.ts` | Chat list entries (title, date, server, selection) |
-| `contracts/toolContracts.ts` | Tool **argument** schemas (`aemGetJsonArgsSchema`, `aemQueryArgsSchema`) and descriptors |
-| `contracts/toolResult.ts` | Tool **result** schemas, `paginationMetadataSchema`, `totalMatchesSchema`, `renderTotal()` |
+| *(moved)* | Tool argument/result schemas, `paginationMetadataSchema`, `totalMatchesSchema`, `renderTotal()` now live with their tool: `src/tools/<name>/<name>.ts`; the plugin contract is `src/shared/tools/core/` |
 | `contracts/agentEvents.ts` | The normalized event stream the renderer consumes |
 | `contracts/sessionState.ts` | Session/turn state machines |
 | `contracts/aemBridge.ts` | The preload↔main bridge envelope |
@@ -199,23 +200,56 @@ status/message row); add new ones at that same version. Elements are registered
 by side-effect import in `src/renderer/src/main.ts`.
 
 `chat/` separates view-model from view on purpose: `transcriptViewModel.ts`,
-`composerViewModel.ts` and `queryResultViewModel.ts` are pure and heavily
-tested; `transcriptView.ts` and `composer.ts` only render. `renderMarkdown.ts`
+`composerViewModel.ts` and the query tool's `queryResultViewModel.ts` (now in
+`src/tools/aem-query/renderer/`) are pure and heavily tested; `transcriptView.ts` and `composer.ts` only render. `renderMarkdown.ts`
 goes through `marked` + `DOMPurify`. **Never set a cell or message with
 `innerHTML`** — the transcript uses `textContent`, and there are mutation tests
 guarding that.
+
+### Tools are plugins: one folder under `src/tools/<name>/`
+
+A tool is a self-contained folder; **deleting the folder removes the tool**
+(main registry, renderer registry and transcript rendering all discover tools
+with `import.meta.glob`, no central list to edit). Nothing else may import from
+a tool folder.
+
+```
+src/tools/<name>/
+  tool.ts              exports `tool: ToolModule` (manifest + createExecutor(host))
+  <name>.ts            the tool's own request/result types, URL building, projection
+  renderer/index.ts    exports `renderer: ToolRenderer` (getDetails, optional result table)
+```
+
+- The contract lives in `src/shared/tools/core/` (`toolModule.ts`,
+  `toolRenderer.ts`, `jcrPath.ts`). The unions are **open**: each tool owns its
+  own args/result types; `src/shared/tools/index.ts` no longer lists tools.
+- `tool.ts` manifest: `name` must equal `descriptor.name`, `allowlistEntry` must
+  be `custom:<name>`, `disabled: true` switches it off (loader, executor and
+  instructions are all skipped). A load failure, bad shape, name mismatch,
+  duplicate name or throwing `createExecutor` disables **only that tool**; the app
+  logs `TOOL_REGISTRATION_FAILED` and continues (`src/main/tools/registry.ts`).
+- ESLint (Rule 4) confines a tool to its own folder plus `src/shared`; renderer
+  code may not import Node/Electron. Proof fixture:
+  `tests/fixtures/eslint-violations/tool-boundary-violation.ts`.
+- Limit: a **type error** in any tool, even a disabled one, still fails global
+  `tsc`. Only deleting the folder (or fixing it) avoids that.
+- `aem_create_page` is present but `disabled`: the bridge is GET-only (rule 4
+  stands) and it has no renderer yet.
+- Tests live in `tests/unit/tools/` (manifests, executors),
+  `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
+  snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
 
 ### Adding a tool: design its `getDetails()` by hand
 
 `transcriptView.ts` renders every tool call as a borderless, icon-led billet
 that expands to show a standard **`getDetails()`** representation — a one-line
-summary plus label/value rows — composed by `describeToolCall()` in
-`src/renderer/src/chat/toolCallDetails.ts`.
+summary plus label/value rows — composed by the tool's `renderer/index.ts` and
+dispatched by `describeToolCall()` in `src/renderer/src/chat/toolCallDetails.ts`.
 
 - **Creating a tool includes designing its `getDetails()`.** Do not lean on the
   generic fallback (`describeGenericArgs`), which dumps the raw argument object.
   It exists so an unrecognised tool can never be *invisible*, not as an
-  acceptable finished design. Add a deliberate case to `describeToolCall` that
+  acceptable finished design. Give the tool a `renderer/index.ts` whose `getDetails`
   exposes the command and/or parameters a reader actually needs — e.g.
   `aem_get_json` shows the requested path and the effective `.0.json`/`.1.json`
   request; `aem_query` shows the exact query string.
@@ -266,8 +300,10 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2292 passed / 14 skipped**;
-**Playwright → 81 tests** (includes `message-links.spec.ts`, the assistant
+Current baseline: **`npm run test` → 2380 passed / 1 failed / 14 skipped** (the one failure is
+`tests/integration/proxy-login.test.ts` case 7, an environmental
+untrusted-certificate case that predates the tool refactor);
+**Playwright → 86 tests, all green** (includes `message-links.spec.ts`, the assistant
 message-link case, now 6 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
 on the exact resource - percent-encoding of the path in content-view URLs, the
@@ -275,9 +311,11 @@ never-focused popover buttons, and the external-browser path, and
 `chat-thinking-indicator.spec.ts`, now 2 tests covering the transient reasoning
 billet). (The Session "Authentication"/"Models"
 → "Agents" tab merge moved the unit baseline from 1658, and later work moved it
-on — see `docs/verification.md`.) **`npm run verify` is currently red on one
-unrelated, tracked WIP file**, `src/shared/tools/aemCreatePage.ts`, which is not
-registered in `src/shared/tools/index.ts`; every other file typechecks.
+on — see `docs/verification.md`.) **`npm run verify`** typechecks cleanly (the old red WIP file is now the
+registered-but-disabled `src/tools/aem-create-page/`); it is red only on the
+proxy-login case above and pre-existing lint errors in
+`tests/unit/main/aem/session.test.ts:12` and `tests/e2e/step05-aem-session.spec.ts`
+(prefer-const).
 The repository now has **commits** (HEAD `eab74e6`), so `git status`/`git log`
 work again; the older "zero commits" notes are stale. One **pre-existing,
 non-flaky** E2E failure remains: `step06-aem-bridge.spec.ts` test 2 asserts an
@@ -321,6 +359,15 @@ build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/age
    be *omitted*, not set to `undefined`.
 8. **No agent-controlled mock switch in production.**
    `shouldUseFakeAgentService` checks `isPackaged` first.
+9. **Imports: types before values, in one statement** (convention, not
+   lint-enforced). When a single `import`
+   brings in both types and values, list all `type X` specifiers first, then the
+   value specifiers (each group alphabetical), using inline `type` modifiers -
+   not interleaved by name. Do not put a blank line between the groups
+   (Prettier strips it and `format:check` would fail). A separate
+   `import type { … }` statement is also acceptable when the type list is long.
+   Tool folders under `src/tools/**` import shared code through the `shared`
+   barrel (`'../../shared'`), not deep paths.
 
 ---
 
@@ -368,7 +415,7 @@ is how E2E drives the fake transport.
 
 ### The one contract change since Step 03
 
-`paginationMetadataSchema` in `src/shared/contracts/toolResult.ts` had no total
+`paginationMetadataSchema` in `toolResult.ts` (now `src/tools/aem-query/aemQuery.ts`) had no total
 and no accuracy indicator, which Step 08 mandates. It gained:
 
 ```ts
@@ -397,6 +444,19 @@ user** for a decision rather than change code to silence the analyzer. IntelliJ
 analysis is near-instant and needs no toolchain startup, so it is the cheapest
 first gate and catches type errors and inspections the CLI linters miss. Fix
 them there; then format, then run the verify gate.
+
+**This is mandatory before every handoff.** Before reporting work as done (and
+before `task_complete`), run the IntelliJ check (`lint_files` /
+`get_file_problems`) on **every file you created or modified** - source, tests
+and support files - and fix **all** reported problems, including warnings such as
+"import can be shortened" and deprecated-API notices. Do not skip a warning
+because tsc/ESLint/`npm run verify` is green; they check different things. Pass
+`projectPath` (the repo root) on every call, batch at most ~10 files, and
+re-run after a few seconds if a fresh disk write may not be indexed yet. The
+only acceptable leftovers are warnings that are intentional (e.g. deliberate
+XSS payload fixtures) or that contradict the file's intent; list each one
+explicitly in the handoff and escalate the doubtful ones to the user instead of
+silently ignoring them.
 
 **Mutation testing proves tests discriminate.** Inject a realistic defect into
 shipped source, run the suite, record which test catches it, restore, re-run.
@@ -472,6 +532,8 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
   argument-dump fallback. **When an agent adds a tool, it must ask the user**
   which arguments to expose and how the collapsed summary and expanded rows
   should read, before writing the composition. See §5.
+- **No handoff without a clean IntelliJ check.** Run it on every touched file
+  and fix every problem first (§9); report any deliberately-left warning.
 - **One step at a time.** Prove each step's success criteria by execution before
   starting the next. Do not mark several future steps complete on impression.
 - **Keep the plan bookkeeping current as you go**, not at the end.

@@ -6,11 +6,8 @@ import {
   type BrokerDeps,
   type BrokerOutcome,
 } from '../../../../src/main/aem/bridgeBroker';
-import {
-  toolRequestEnvelopeSchema,
-  type CurrentAemContext,
-  type ToolRequestEnvelope,
-} from '../../../../src/shared';
+import { type CurrentAemContext } from '../../../../src/shared';
+import { toolRequestEnvelopeSchema, type ToolRequestEnvelope } from '../../../support/toolUnions';
 import type { Logger } from '../../../../src/main/logger';
 import type {
   ToolHttpLogger,

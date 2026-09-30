@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { executeAemGetJson, type AemGetJsonRequest } from '../../../../src/shared';
+import {
+  executeAemGetJson,
+  type AemGetJsonRequest,
+} from '../../../../src/tools/aem-get-json/aemGetJson';
 import type { BrokerOutcome } from '../../../../src/shared';
-import type { ProjectedResourceData } from '../../../../src/shared';
-import { aemGetJsonArgsSchema, type AemGetJsonArgs } from '../../../../src/shared';
+import type { ProjectedResourceData } from '../../../../src/tools/aem-get-json/aemGetJson';
+import {
+  aemGetJsonArgsSchema,
+  type AemGetJsonArgs,
+} from '../../../../src/tools/aem-get-json/aemGetJson';
 import {
   chatIdSchema,
   requestIdSchema,
   serverIdSchema,
   turnIdSchema,
 } from '../../../../src/shared';
-import { toolResultSchema, type ToolResult } from '../../../../src/shared';
+import { toolResultSchema, type ToolResult } from '../../../support/toolUnions';
 import { TOOL_ERROR_CODES } from '../../../../src/shared';
 
 const ORIGIN = 'https://author.example';

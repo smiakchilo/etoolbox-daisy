@@ -1,15 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newChatId, newServerId, newTurnId, type IdGenerator } from '../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../src/shared';
-import { AEM_REQUEST_TIMEOUT_MS, toolRequestEnvelopeSchema } from '../../src/shared';
+import { AEM_REQUEST_TIMEOUT_MS } from '../../src/shared';
+import { toolRequestEnvelopeSchema } from '../support/toolUnions';
+import { type ToolErrorResult } from '../../src/shared';
 import {
   parseToolResult,
   renderToolResultForModel,
   serializeToolResult,
-  type ToolErrorResult,
   type ToolResult,
   type ToolSuccess,
-} from '../../src/shared';
+} from '../support/toolUnions';
 import { aemGetJsonCall, aemQueryCall, unknownOperationCall } from '../support/fakeAgent';
 import { FakeBrowserSide } from '../support/fakeBrowserSide';
 import { FixtureRepository } from '../support/fakeAemFixtures';

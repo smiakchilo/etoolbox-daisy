@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import { AEM_GET_JSON_TOOL_NAME } from '../../src/shared';
+import { AEM_GET_JSON_TOOL_NAME } from '../../src/tools/aem-get-json/aemGetJson';
 import type { ScriptedTurn } from '../../src/agent/fakeAgentService';
 import {
   FAKE_AGENT_SERVICE_ENV_VAR,

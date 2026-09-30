@@ -31,14 +31,13 @@ import {
   ok,
   parseAuthStatus,
   renderFoldedText,
-  renderToolResultForModel,
+  renderToolFailureForModel,
   type Result,
   reasoningIdSchema,
   type SdkSessionId,
   sdkSessionIdSchema,
   type SessionStatus,
   type SessionStreamState,
-  TOOL_DESCRIPTORS,
   type ToolCallId,
   toolCallIdSchema,
   type ToolDescriptor,
@@ -206,6 +205,13 @@ export interface SdkAgentServiceOptions {
    * allowlist (see finding 5), and s07-tool must keep it that way.
    */
   readonly toolHandlers?: Readonly<Record<string, AemToolExecutor>>;
+  /**
+   * The model-facing `description`/`parameters` for each registered tool,
+   * supplied by the composition root from the tool registry (this adapter
+   * imports no tool). A `toolHandlers` key without a descriptor here still
+   * registers with `name`/`handler` only.
+   */
+  readonly toolDescriptors?: readonly ToolDescriptor[];
   /**
    * The user's persisted model / reasoning-effort defaults
    * (implementation-plan.md step 09), read fresh on every use rather than
@@ -500,7 +506,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
    * What is returned to the SDK itself (as opposed to what `tool.result`
    * carries) is a *rendering* of that same `outcome`, not a second source of
    * truth: success returns the executor's own `Result.value` untouched;
-   * failure renders `outcome.error` via `renderToolResultForModel` instead
+   * failure renders `outcome.error` x
    * of throwing, so the model reads the identical error text the UI's
    * `tool.result` is built from - see the `resultType` branch below.
    *
@@ -565,7 +571,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       // so the UI and the model now see the same failure.
       if (!outcome.ok) {
         return {
-          textResultForLlm: renderToolResultForModel({ ok: false, error: outcome.error }),
+          textResultForLlm: renderToolFailureForModel(outcome.error),
           resultType: 'failure',
         };
       }
@@ -575,15 +581,14 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
 
   /**
    * Looks up the shared, zod-derived `description`/`parameters` for a
-   * registered tool name from `toolContracts.ts`'s own closed `TOOL_DESCRIPTORS`
-   * list - the same table `aemTool.ts` builds its model-facing tool from - so
-   * this adapter never hand-writes (and cannot drift from) that schema. A
-   * `toolHandlers` key that names something outside that table (there is
-   * none today) still registers with `name`/`handler` only, matching this
+   * registered tool name from `options.toolDescriptors` - the registry's own
+   * descriptors - so this adapter never hand-writes (and cannot drift from)
+   * that schema. A `toolHandlers` key that names something outside that list
+   * still registers with `name`/`handler` only, matching this
    * function's prior behaviour, rather than silently failing to register.
    */
   const toolDescriptorsByName: ReadonlyMap<string, ToolDescriptor> = new Map(
-    TOOL_DESCRIPTORS.map((descriptor) => [descriptor.name, descriptor]),
+    (options.toolDescriptors ?? []).map((descriptor) => [descriptor.name, descriptor]),
   );
 
   /**

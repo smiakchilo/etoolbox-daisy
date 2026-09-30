@@ -28,8 +28,6 @@ import { APP_USER_MODEL_ID, createMainWindow } from './windows';
 import { createStartupGatedAgentChatController } from './agentChatController';
 import {
   createBridgeCurrentContext,
-  createBrokeredExecute,
-  createBrokeredQueryExecute,
   createCurrentAemServerContext,
   createCurrentPageContext,
   createLateBoundAemToolContext,
@@ -52,13 +50,8 @@ import {
 } from '../agent';
 import { createCopilotRuntimeManager, type CopilotRuntimeManager } from './copilotRuntimeManager';
 import { resolveAgentGithubToken, resolveAgentProxyOverrides } from './agentRuntimeProxy';
-import {
-  createAemGetJsonExecutor,
-  createAemQueryExecutor,
-  AEM_GET_JSON_TOOL_NAME,
-  AEM_QUERY_TOOL_NAME,
-  buildAemToolPolicy,
-} from '../agent/aemTool';
+import { buildAemToolPolicy } from '../agent/aemTool';
+import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import { createSdkAgentService } from '../agent/sdkAgentService';
 import {
   createFakeAgentService,
@@ -493,19 +486,21 @@ if (!gotSingleInstanceLock) {
     });
 
     const lateBoundAemToolContext = createLateBoundAemToolContext();
-    const aemGetJsonExecutor = createAemGetJsonExecutor({
-      execute: createBrokeredExecute(aemBridgeBroker),
-      runtimeDeps: { now: Date.now },
-      currentContext: lateBoundAemToolContext.currentContext,
-      clock: Date.now,
-      idGenerator: randomUUID,
-    });
-    const aemQueryExecutor = createAemQueryExecutor({
-      execute: createBrokeredQueryExecute(aemBridgeBroker),
-      runtimeDeps: { now: Date.now },
-      currentContext: lateBoundAemToolContext.currentContext,
-      clock: Date.now,
-      idGenerator: randomUUID,
+    // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
+    // load or construct is logged and left out, never fatal.
+    const toolRegistry = await buildToolRegistry({
+      loaders: discoverToolLoaders(),
+      host: {
+        bridge: aemBridgeBroker,
+        currentContext: lateBoundAemToolContext.currentContext,
+        clock: Date.now,
+        idGenerator: randomUUID,
+      },
+      onFailure: (failure) => {
+        // The logger has no free-text field by design, so the reason goes to stderr.
+        console.error(`Tool ${failure.source} was not registered: ${failure.reason}`);
+        logger.warn('TOOL_REGISTRATION_FAILED', { count: 1 });
+      },
     });
     const bundledSkillsDirectory = resolveBundledSkillsDirectory({
       isPackaged: app.isPackaged,
@@ -628,7 +623,11 @@ if (!gotSingleInstanceLock) {
               }
               return createSdkAgentService({
                 client,
-                policy: buildAemToolPolicy([bundledSkillsDirectory]),
+                policy: buildAemToolPolicy({
+                  allowlistEntries: toolRegistry.allowlistEntries,
+                  instructions: toolRegistry.instructions,
+                  bundledSkillDirectories: [bundledSkillsDirectory],
+                }),
                 // The SDK's raw `auth.getStatus` response carries no
                 // `apiVersion`; `toAuthStatus` projects it onto this app's
                 // `AuthStatus` DTO. Passing the bare `client` here (whose
@@ -637,10 +636,8 @@ if (!gotSingleInstanceLock) {
                 authSource: {
                   getAuthStatus: async () => toAuthStatus(await client.getAuthStatus()),
                 },
-                toolHandlers: {
-                  [AEM_GET_JSON_TOOL_NAME]: aemGetJsonExecutor,
-                  [AEM_QUERY_TOOL_NAME]: aemQueryExecutor,
-                },
+                toolHandlers: toolRegistry.toolHandlers,
+                toolDescriptors: toolRegistry.descriptors,
                 // Step 09: read from the cache below on every use, so a
                 // model chosen in Settings reaches the next prompt without
                 // a restart. Deliberately synchronous - `sendPrompt` must

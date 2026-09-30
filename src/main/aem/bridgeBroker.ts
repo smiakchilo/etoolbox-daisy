@@ -5,7 +5,7 @@ import type {
   AemBridgeReply,
 } from '../../shared/contracts/aemBridge';
 import { AEM_BRIDGE_REQUEST_HEADERS, aemBridgeReplySchema } from '../../shared/contracts/aemBridge';
-import type { Clock, CurrentAemContext, ToolRequestEnvelope } from '../../shared';
+import type { Clock, CurrentAemContext, ToolEnvelopeBase } from '../../shared';
 import { classifyStaleness, isDeadlineExpired } from '../../shared';
 import type { BrokerOutcome } from '../../shared';
 import { toLoggableUrl, type LogOutcome, type Logger } from '../logger';
@@ -100,7 +100,7 @@ function toLogOutcome(outcome: BrokerOutcome): LogOutcome {
  */
 export interface AemBridgeBroker {
   /** Issues one fetch. Resolves exactly once. */
-  request(envelope: ToolRequestEnvelope, url: string): Promise<BrokerOutcome>;
+  request(envelope: ToolEnvelopeBase, url: string): Promise<BrokerOutcome>;
   /**
    * Cancels the in-flight request and every queued one. Used on stop, chat
    * switch, and server switch. Takes no reason argument on purpose: nothing
@@ -113,7 +113,7 @@ export interface AemBridgeBroker {
 }
 
 interface PendingRequest {
-  readonly envelope: ToolRequestEnvelope;
+  readonly envelope: ToolEnvelopeBase;
   readonly url: string;
   readonly resolve: (outcome: BrokerOutcome) => void;
   /** When the request was enqueued, so `AEM_REQUEST_COMPLETED` can report total wait. */

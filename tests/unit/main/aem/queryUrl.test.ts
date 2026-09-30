@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildQueryUrl } from '../../../../src/shared';
-import { aemQueryArgsSchema } from '../../../../src/shared';
+import { buildQueryUrl } from '../../../../src/tools/aem-query/aemQuery';
+import { aemQueryArgsSchema } from '../../../../src/tools/aem-query/aemQuery';
 
 const ORIGIN = 'https://author.example';
 
@@ -220,6 +220,7 @@ describe('buildQueryUrl - encoding', () => {
   });
 
   it('carries Unicode predicate keys through without corruption', () => {
+    // noinspection JSNonASCIINames
     const url = urlOf(build({ path: '/content/site', 'property.value_日本': 'x' }));
     expect(url.searchParams.get('property.value_日本')).toBe('x');
   });

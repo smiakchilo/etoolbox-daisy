@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { projectGetJsonResult, type ProjectedResourceData } from '../../../../src/shared';
-import { aemGetJsonArgsSchema, type AemGetJsonArgs } from '../../../../src/shared';
+import {
+  projectGetJsonResult,
+  type ProjectedResourceData,
+} from '../../../../src/tools/aem-get-json/aemGetJson';
+import {
+  aemGetJsonArgsSchema,
+  type AemGetJsonArgs,
+} from '../../../../src/tools/aem-get-json/aemGetJson';
 import { requestIdSchema } from '../../../../src/shared';
-import { toolResultSchema } from '../../../../src/shared';
-import type { AemGetJsonSuccess } from '../../../../src/shared';
+import { toolResultSchema } from '../../../support/toolUnions';
+import type { AemGetJsonSuccess } from '../../../../src/tools/aem-get-json/aemGetJson';
 import type { JsonObject } from '../../../../src/shared';
 
 const REQUEST_ID = requestIdSchema.parse('req-1');

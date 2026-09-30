@@ -2,11 +2,10 @@ import {
   classifyStaleness,
   computeDeadline,
   isDeadlineExpired,
-  toolRequestEnvelopeSchema,
   type Clock,
   type CurrentAemContext,
-  type ToolRequestEnvelope,
 } from '../../src/shared';
+import { toolRequestEnvelopeSchema, type ToolRequestEnvelope } from './toolUnions';
 import { createToolError } from '../../src/shared';
 import {
   newMessageId,
@@ -35,12 +34,8 @@ import {
   type SessionStatus,
 } from '../../src/shared';
 import { bumpRevision, type ServerConfig, type ServerTargetingChanges } from '../../src/shared';
-import {
-  serializeToolResult,
-  toolResultSchema,
-  type ToolErrorResult,
-  type ToolResult,
-} from '../../src/shared';
+import { type ToolErrorResult } from '../../src/shared';
+import { serializeToolResult, toolResultSchema, type ToolResult } from './toolUnions';
 import type { FakeAgentToolCall } from './fakeAgent';
 import type { FakeBrowserSide } from './fakeBrowserSide';
 
