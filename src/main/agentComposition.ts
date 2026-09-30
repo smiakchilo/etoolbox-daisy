@@ -1,23 +1,25 @@
-import { deriveCurrentPageContext, renderCurrentPageContextForModel } from '../shared';
-import type { ActiveAemServer } from './browser/browserController';
-import type { NavigationEpochTracker } from './browser/navigationEpoch';
 import {
   createAgentChatController,
   type AgentChatController,
   type AemServerContext,
   type StartupGatedAgentChatController,
 } from './agentChatController';
+import type { FakeAgentService } from './agents/fakeAgentService';
+import { type ActiveAemServer } from './browser/browserController';
+import { type NavigationEpochTracker } from './browser/navigationEpoch';
 import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
-import type { AgentService } from '../agent/agentService';
-import type { CurrentAemToolContext } from '../shared';
-import type { CopilotClient } from '../agent';
-import type { FakeAgentService } from '../agent/fakeAgentService';
-import type { ModelPreference } from '../agent/sdkAgentService';
-import type { ModelCatalogEntry } from '../shared';
-import type { IdGenerator } from '../shared';
-import type { CurrentAemContext } from '../shared';
-import type { SessionStreamState } from '../shared';
+import {
+  type AgentService,
+  type CurrentAemContext,
+  type CurrentAemToolContext,
+  type IdGenerator,
+  type ModelCatalogEntry,
+  type ModelPreference,
+  type SessionStreamState,
+  deriveCurrentPageContext,
+  renderCurrentPageContextForModel
+} from '../shared';
 
 /**
  * The production composition root (`src/main/index.ts`) wires together every
@@ -203,7 +205,7 @@ export function wireNavigationEpochCancellation(
 }
 
 // ---------------------------------------------------------------------------
-// Fake-vs-real AgentService selection
+// Fake-vs-real agent selection
 // ---------------------------------------------------------------------------
 
 /**
@@ -246,9 +248,8 @@ export const TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY = '__etoolboxDaisyTestFakeAgentS
 /**
  * Publishes `fakeService` for the E2E suite to reach via
  * `TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY`. Called from exactly one place -
- * `index.ts`'s `createFakeService` factory passed to `selectAgentService`
- * below - which `selectAgentService`'s own doc comment guarantees is "only
- * called when `shouldUseFakeAgentService` is true". `isPackaged` makes that
+ * the fake runtime (`agents/fakeRuntime.ts`), which the agent hub only
+ * builds when `shouldUseFakeAgentService` is true. `isPackaged` makes that
  * false unconditionally in a packaged build (see `shouldUseFakeAgentService`
  * above), so this global can never exist there, regardless of environment.
  */
@@ -256,60 +257,16 @@ export function exposeFakeAgentServiceForTests(fakeService: FakeAgentService): v
   (globalThis as Record<string, unknown>)[TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY] = fakeService;
 }
 
-export interface SelectAgentServiceOptions {
-  readonly env: Readonly<Record<string, string | undefined>>;
-  readonly isPackaged: boolean;
-  readonly logger: Logger;
-  /** Builds the deterministic fake. Only called when `shouldUseFakeAgentService` is true. */
-  readonly createFakeService: () => AgentService;
-  /** Builds the real SDK-backed adapter. Only called when `shouldUseFakeAgentService` is false. */
-  readonly createRealService: () => AgentService;
-}
-
-/**
- * Selects and constructs the `AgentService` the rest of the composition root
- * wires up. A plain decision-plus-factory-call function, deliberately
- * synchronous: any async work a real construction needs (starting the SDK
- * client process, `agentService.initialize()`) is the composition root's own
- * job, ordered around this call - not this function's.
- */
-export function selectAgentService(options: SelectAgentServiceOptions): AgentService {
-  if (shouldUseFakeAgentService(options.env, options.isPackaged)) {
-    // "Log clearly when the fake is selected - a silent swap would be very
-    // confusing to debug."
-    options.logger.warn('AGENT_SERVICE_FAKE_SELECTED');
-    return options.createFakeService();
-  }
-  return options.createRealService();
-}
-
 // ---------------------------------------------------------------------------
-// Non-blocking Copilot runtime startup
+// Non-blocking agent service installation
 // ---------------------------------------------------------------------------
 
 /**
- * Everything `startAgentServiceInBackground` needs to take the real (or
- * fake) `AgentService` from "not started" to "an `AgentChatController` the
- * rest of the app can use", entirely off the critical path that gets the
- * window visible and interactive.
+ * Everything `installAgentService` needs to take an already-constructed
+ * `AgentService` (from whichever agent is configured) to "an
+ * `AgentChatController` the rest of the app can use".
  */
-export interface StartAgentServiceInBackgroundDeps {
-  /**
-   * The real path's not-yet-started SDK client, or `undefined` on the fake
-   * path (mirrors `index.ts`'s own `useFakeAgentService ? undefined :
-   * createHardenedCopilotClient()`). `Pick<CopilotClient, "start">` rather
-   * than the full type: this module needs nothing else from it, and a
-   * narrower dependency is easier to fake in tests.
-   */
-  readonly copilotClient: Pick<CopilotClient, 'start'> | undefined;
-  /**
-   * Builds the `AgentService` - i.e. `selectAgentService(...)` - deferred
-   * until *after* `copilotClient.start()` resolves. Must not be called
-   * before that resolves: the real adapter's `authSource`/`toolHandlers`
-   * assume a started client (see `index.ts`'s own comment on why
-   * `client.start()` must run first).
-   */
-  readonly buildAgentService: () => AgentService;
+export interface InstallAgentServiceDeps {
   readonly logger: Logger;
   readonly idGenerator: IdGenerator;
   readonly currentAemServerContext: () => AemServerContext | undefined;
@@ -331,29 +288,21 @@ export interface StartAgentServiceInBackgroundDeps {
 }
 
 /**
- * Runs the slow part of standing up the agent chat surface -
- * `copilotClient.start()` and `agentService.initialize()`, seconds on the
- * real path - and, once both succeed, builds the real `AgentChatController`
- * and hands it to `deps.gatedController.replaceDelegate`. The composition root
- * (`index.ts`) calls this without awaiting it (`void
- * startAgentServiceInBackground(...).catch(...)`), so none of this can ever
- * delay registering any other IPC handler or the window becoming
- * interactive - that is the entire point of this function existing
- * separately from `index.ts`'s synchronous wiring.
+ * Runs `agentService.initialize()` and, once it succeeds, builds the real
+ * `AgentChatController` and hands it to `deps.gatedController.replaceDelegate`.
+ * Agent-neutral: the agent's own runtime (SDK client, child process, ...) has
+ * already been started by its plugin folder, which then calls this through
+ * `AgentHost.installService`. Any of this can run long after the window is
+ * interactive; it is never on the startup critical path.
  *
- * Deliberately returns the rejection to its caller instead of swallowing it:
- * a failure here (Copilot CLI missing, corrupt install, `initialize()`
- * itself rejecting) must not leave `gatedController` silently stuck
- * answering `serviceState: "starting"` forever with no trace in the logs -
- * see `index.ts`'s own `.catch()` on this call.
+ * Deliberately returns the rejection to its caller instead of swallowing it: a
+ * failure here must not leave `gatedController` silently stuck answering
+ * `serviceState: "starting"` forever with no trace in the logs.
  */
-export async function startAgentServiceInBackground(
-  deps: StartAgentServiceInBackgroundDeps,
+export async function installAgentService(
+  deps: InstallAgentServiceDeps,
+  agentService: AgentService,
 ): Promise<void> {
-  if (deps.copilotClient) {
-    await deps.copilotClient.start();
-  }
-  const agentService = deps.buildAgentService();
   await agentService.initialize();
   const controller = createAgentChatController({
     agentService,
@@ -372,9 +321,8 @@ export async function startAgentServiceInBackground(
 }
 
 /**
- * Registers everything that does not depend on the Copilot runtime, then
- * kicks off `startAgentService` (in practice, `startAgentServiceInBackground`
- * above) without ever awaiting it - so the agent runtime's own startup
+ * Registers everything that does not depend on an agent runtime, then
+ * kicks off `startAgentService` (in practice, the agent hub's `start`) without ever awaiting it - so the agent runtime's own startup
  * latency can never delay, gate, or skip `registerNonAgentHandlers`, no
  * matter what is added to either side later. This is the one place that
  * encodes "startup order must reflect real dependencies, not the order
@@ -384,7 +332,7 @@ export async function startAgentServiceInBackground(
  * A rejection from `startAgentService()` is always routed to
  * `onAgentServiceStartupFailed` - never left unhandled, never silently
  * dropped. `index.ts` wires that parameter to log loudly through the
- * existing `logger`, so a partially-wired app (Copilot CLI missing, corrupt
+ * existing `logger`, so a partially-wired app (agent runtime missing, corrupt
  * install, ...) is diagnosable from the log file instead of silent.
  */
 export function startAppRuntime(deps: {
@@ -470,7 +418,7 @@ export function isModelSelectionLocked(state: SessionStreamState): boolean {
  * A fixed model catalogue used in place of the SDK's when the deterministic
  * fake agent service is in use.
  *
- * The Copilot runtime is never started under the fake, so `listModels()` has
+ * No real agent runtime is started under the fake, so `listModels()` has
  * nothing to answer and the Models section would otherwise be permanently
  * stuck on "the list of models could not be loaded" - leaving every selection
  * and persistence path in step 09 unreachable by the E2E suite.

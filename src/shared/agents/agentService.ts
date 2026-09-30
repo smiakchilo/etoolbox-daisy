@@ -1,8 +1,13 @@
-import type { Result } from '../shared';
-import type { AgentEvent } from '../shared';
-import type { ChatId, SdkSessionId, TurnId } from '../shared';
-import type { RequiredAction, ToolErrorCode } from '../shared';
-import type { AuthStatus } from '../shared';
+import type { AuthStatus } from '../agent-auth';
+import type { Result } from '../result';
+import type {
+  AgentEvent,
+  ChatId,
+  RequiredAction,
+  SdkSessionId,
+  ToolErrorCode,
+  TurnId,
+} from '../contracts';
 
 /**
  * The application-owned agent boundary (implementation-plan.md step 07:

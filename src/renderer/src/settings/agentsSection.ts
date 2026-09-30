@@ -1,12 +1,13 @@
 import { el } from '../lib/dom';
+import { AGENT_DEFINITIONS } from '../agents/agentCatalog';
 import {
-  AGENT_DEFINITIONS,
   type AgentDefinition,
   type AgentId,
   type AgentSettingsSnapshot,
   type AppSettingsSnapshot,
   type AuthStatus,
   isAgentEligible,
+  resolveConfiguredAgentId,
   type ModelSelectionState,
   type ProxyId,
   type ProxySnapshot,
@@ -26,8 +27,8 @@ import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import type { SaveOutcome, StatusBannerSink } from './statusBanner';
 
 /**
- * The Settings panel's Agents tab: one item per `AGENT_DEFINITIONS` entry
- * (today, GitHub Copilot alone), each carrying its name with either an
+ * The Settings panel's Agents tab: one item per agent this build
+ * contains (`AGENT_DEFINITIONS`; none when every agent folder is removed or disabled), each carrying its name with either an
  * "Active" badge or a "Set active" button, the provider's sign-in status with
  * its one action button, a Proxy combobox drawn from the Proxies tab's library,
  * and the Model/Reasoning-effort pair.
@@ -63,7 +64,7 @@ export interface AgentsSectionOptions {
    * The providers to render, one item each. Defaults to the compiled-in
    * {@link AGENT_DEFINITIONS}; overridable so a two-provider interaction (an
    * eligible provider that is *not* the active one, whose "Set active" control
-   * is therefore live) can be exercised while this build ships one provider.
+   * is therefore live) can be exercised while a build ships a single provider.
    */
   readonly definitions?: readonly AgentDefinition[];
 }
@@ -214,10 +215,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
    * The sign-in round trip. The button is disabled for its duration; the
    * failure is reported in the panel's one banner, never inside the item.
    */
-  async function startSignIn(button: HTMLElement): Promise<void> {
+  async function startSignIn(agentId: AgentId, button: HTMLElement): Promise<void> {
     button.setAttribute('disabled', '');
     try {
-      const outcome = await window.daisy.agent.login();
+      const outcome = await window.daisy.agent.login(agentId);
       if (outcome.status === 'failed') {
         options.status.showError(`Sign-in failed: ${outcome.message}`);
       }
@@ -232,9 +233,9 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   }
 
   /** `logout`'s own warning is the copy shown; it is never re-derived here. */
-  async function startSignOut(): Promise<void> {
+  async function startSignOut(agentId: AgentId): Promise<void> {
     try {
-      const result = await window.daisy.agent.logout();
+      const result = await window.daisy.agent.logout(agentId);
       options.status.showStatus(result.warning);
     } catch (error) {
       options.status.showError(
@@ -291,8 +292,8 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     });
     let authAction: AgentItemViewModel['authAction'];
     actionButton.addEventListener('click', () => {
-      if (authAction === 'sign-in') void startSignIn(actionButton);
-      else if (authAction === 'sign-out') void startSignOut();
+      if (authAction === 'sign-in') void startSignIn(id, actionButton);
+      else if (authAction === 'sign-out') void startSignOut(id);
     });
 
     const authControl = el('div', {
@@ -499,8 +500,12 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
 
   async function readLiveState(): Promise<void> {
     const activeId = snapshot === undefined ? undefined : activeAgentIdFrom(snapshot);
+    const authAgentId =
+      activeId ?? (snapshot === undefined ? undefined : resolveConfiguredAgentId(snapshot.agents, definitions));
     const [authResult, modelResult] = await Promise.allSettled([
-      window.daisy.agent.getAuthStatus(),
+      authAgentId === undefined
+        ? Promise.reject(new Error('No agent is available.'))
+        : window.daisy.agent.getAuthStatus(authAgentId),
       window.daisy.settings.getModelSelection(),
     ]);
     if (authResult.status === 'fulfilled') auth = authResult.value;

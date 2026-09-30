@@ -13,6 +13,6 @@
     "outDir": ".tsc-out/shared",
     "types": []
   },
-  "include": ["src/shared/**/*.ts", "src/tools/**/*.ts"],
+  "include": ["src/shared/**/*.ts", "src/tools/**/*.ts", "src/agents/*/meta.ts"],
   "exclude": ["src/tools/*/renderer/**"]
 }

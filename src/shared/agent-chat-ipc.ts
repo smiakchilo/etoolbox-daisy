@@ -1,13 +1,16 @@
 import { z } from 'zod';
 import { authStatusSchema } from './agent-auth';
-import { agentEventSchema, sessionStreamStateSchema, type AgentEvent } from './contracts';
 import {
+  type AgentEvent,
+  agentEventSchema,
   chatIdSchema,
   chatJournalRecordSchema,
+  requiredActionSchema,
   sdkSessionIdSchema,
+  sessionStreamStateSchema,
+  toolErrorCodeSchema,
   turnIdSchema,
 } from './contracts';
-import { requiredActionSchema, toolErrorCodeSchema } from './contracts';
 
 /**
  * Wire contracts for the `agent-chat:*` IPC surface (implementation-plan.md
@@ -75,8 +78,13 @@ export function parseAgentChatVoidResult(candidate: unknown): AgentChatVoidResul
  * the user may well be signed in and merely a few seconds early. A chat pane
  * must be able to render "connecting to agent..." for `"starting"`,
  * distinct from whatever `auth`/`sessionState` say once `"ready"`.
+ *
+ * `"unavailable"` is terminal for the current build/settings: no agent exists
+ * to serve the chat (every agent folder removed or disabled, or the configured
+ * one failed to load). It is not "starting" - waiting will not change it - so
+ * the pane says so instead of showing "connecting".
  */
-export const AGENT_SERVICE_LIFECYCLE_STATES = ['starting', 'ready'] as const;
+export const AGENT_SERVICE_LIFECYCLE_STATES = ['starting', 'ready', 'unavailable'] as const;
 
 export type AgentServiceLifecycleState = (typeof AGENT_SERVICE_LIFECYCLE_STATES)[number];
 

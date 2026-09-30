@@ -3,12 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newProxyId, newServerId } from '../../../../src/shared';
-import {
-  defaultAppSettings,
-  DEFAULT_AGENT_ID,
-  type AgentId,
-  type AppSettings,
-} from '../../../../src/shared';
+import { defaultAppSettings, type AgentId, type AppSettings } from '../../../../src/shared';
 import { serverConfigSchema } from '../../../../src/shared';
 import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
@@ -32,6 +27,7 @@ import {
   type SettingsIpcSenderInfo,
   type TrustedSenderExpectation,
 } from '../../../../src/main/ipc/settings';
+import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 const CANARY_PASSWORD = 'CANARY-PASSWORD-8f14e45fceea167a';
 
@@ -90,7 +86,7 @@ function settingsWithProxy(secretRef: string, options: { username?: string } = {
         credentials: { username: options.username ?? 'alice', secretRef },
       },
     ],
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
   };
 }
@@ -120,10 +116,15 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, settingsWithProxy(PROXY_SECRET_REF));
 
-    const setResult = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: PROXY_ID },
-      password: CANARY_PASSWORD,
-    });
+    const setResult = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: PROXY_ID },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
     expect(setResult).toEqual({ ok: true });
     // The success result carries no data - `Object.keys` proves nothing but
     // `ok` is present, not merely that a stringify happens not to include it.
@@ -164,14 +165,24 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, settingsWithProxy(PROXY_SECRET_REF));
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: PROXY_ID },
-      password: CANARY_PASSWORD,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: PROXY_ID },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
-    const clearResult = await clearPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: PROXY_ID },
-    });
+    const clearResult = await clearPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: PROXY_ID },
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(clearResult).toEqual({ ok: true });
     await expect(secretStore.get(PROXY_SECRET_REF)).resolves.toBeUndefined();
@@ -197,10 +208,15 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     };
     await writeSettings(settingsDir, settings);
 
-    const setResult = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId },
-      password: CANARY_PASSWORD,
-    });
+    const setResult = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
     expect(setResult).toEqual({ ok: true });
 
     await expect(secretStore.get('proxy:proxy-a')).resolves.toBe(CANARY_PASSWORD);
@@ -220,10 +236,15 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
       proxies: [{ id: PROXY_ID, label: 'Corporate', url: 'https://proxy.example' }],
     });
 
-    const result = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: PROXY_ID },
-      password: CANARY_PASSWORD,
-    });
+    const result = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: PROXY_ID },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');
@@ -235,9 +256,14 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const result = await clearPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: newProxyId(() => 'unknown-proxy') },
-    });
+    const result = await clearPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: newProxyId(() => 'unknown-proxy') },
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');
@@ -280,7 +306,7 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
           },
         ],
         proxies: [],
-        agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        agents: { [TEST_AGENT_ID]: { active: true } },
       }),
       'utf8',
     );
@@ -304,10 +330,15 @@ describe('getSettingsSnapshot / setPassword / clearPassword (round trip)', () =>
     );
     await writeSettings(settingsDir, settingsWithProxy(PROXY_SECRET_REF));
 
-    const result = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: PROXY_ID },
-      password: CANARY_PASSWORD,
-    });
+    const result = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: PROXY_ID },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');
@@ -436,7 +467,7 @@ describe('reorderServers', () => {
     return {
       hosts: [a, b],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
       browser: { disableNativeWebAuthn: true },
     };
   }
@@ -660,10 +691,15 @@ describe('addProxy / updateProxy / removeProxy / reorderProxies', () => {
       ],
     };
     await writeSettings(settingsDir, settings);
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId },
-      password: CANARY_PASSWORD,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     const result = await updateProxy(settingsDir, secretStore, {
       proxyId,
@@ -711,10 +747,15 @@ describe('addProxy / updateProxy / removeProxy / reorderProxies', () => {
       ],
     };
     await writeSettings(settingsDir, settings);
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId },
-      password: CANARY_PASSWORD,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     const result = await removeProxy(settingsDir, secretStore, { proxyId });
 
@@ -866,10 +907,15 @@ describe('toAppSettingsSnapshot via getSettingsSnapshot never leaks the canary p
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, settingsWithProxy(PROXY_SECRET_REF));
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'proxy', proxyId: PROXY_ID },
-      password: CANARY_PASSWORD,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'proxy', proxyId: PROXY_ID },
+        password: CANARY_PASSWORD,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     const result = await getSettingsSnapshot(settingsDir, secretStore);
     if (!result.ok) throw new Error('expected ok snapshot result');
@@ -887,17 +933,22 @@ describe('toAppSettingsSnapshot via getSettingsSnapshot never leaks the canary p
 
 describe('agent token (setPassword / clearPassword targeting an agent)', () => {
   const CANARY_TOKEN = 'ghp_CANARY_TOKEN_7f3a91c4';
-  const AGENT_TOKEN_REF = `agent-token:${DEFAULT_AGENT_ID}`;
+  const AGENT_TOKEN_REF = `agent-token:${TEST_AGENT_ID}`;
 
   it('stores a token, reports hasToken: true, and never leaks the token or its secretRef', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const setResult = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-      password: CANARY_TOKEN,
-    });
+    const setResult = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+        password: CANARY_TOKEN,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
     expect(setResult).toEqual({ ok: true });
     // The success result carries no data, so there is nothing to echo back.
     expect(Object.keys(setResult)).toEqual(['ok']);
@@ -908,7 +959,7 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
 
     const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(true);
+    expect(snapshotResult.snapshot.agents[TEST_AGENT_ID]?.hasToken).toBe(true);
 
     const serialized = JSON.stringify(snapshotResult);
     expect(serialized).not.toContain(CANARY_TOKEN);
@@ -920,14 +971,24 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-      password: 'first-token',
-    });
-    const second = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-      password: CANARY_TOKEN,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+        password: 'first-token',
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
+    const second = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+        password: CANARY_TOKEN,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(second).toEqual({ ok: true });
     await expect(secretStore.get(AGENT_TOKEN_REF)).resolves.toBe(CANARY_TOKEN);
@@ -937,20 +998,30 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-      password: CANARY_TOKEN,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+        password: CANARY_TOKEN,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
-    const cleared = await clearPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-    });
+    const cleared = await clearPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(cleared).toEqual({ ok: true });
     await expect(secretStore.get(AGENT_TOKEN_REF)).resolves.toBeUndefined();
     const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+    expect(snapshotResult.snapshot.agents[TEST_AGENT_ID]?.hasToken).toBe(false);
   });
 
   it('returns no_token_configured when clearing an agent that has none', async () => {
@@ -958,9 +1029,14 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const cleared = await clearPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-    });
+    const cleared = await clearPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(cleared.ok).toBe(false);
     if (cleared.ok) return;
@@ -972,10 +1048,15 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const setResult = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: 'not-shipped' as AgentId },
-      password: CANARY_TOKEN,
-    });
+    const setResult = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: 'not-shipped' as AgentId },
+        password: CANARY_TOKEN,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(setResult.ok).toBe(false);
     if (setResult.ok) return;
@@ -990,10 +1071,15 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
     );
     await writeSettings(settingsDir, defaultAppSettings());
 
-    const setResult = await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-      password: CANARY_TOKEN,
-    });
+    const setResult = await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+        password: CANARY_TOKEN,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
 
     expect(setResult.ok).toBe(false);
     if (setResult.ok) return;
@@ -1003,7 +1089,7 @@ describe('agent token (setPassword / clearPassword targeting an agent)', () => {
     // still reports no token.
     const snapshotResult = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshotResult.ok) throw new Error('expected ok snapshot result');
-    expect(snapshotResult.snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+    expect(snapshotResult.snapshot.agents[TEST_AGENT_ID]?.hasToken ?? false).toBe(false);
   });
 });
 
@@ -1019,7 +1105,8 @@ describe('agent token change notification (onAgentTokenChanged)', () => {
     const result = await setPassword(
       settingsDir,
       secretStore,
-      { target: { kind: 'agent', agentId: DEFAULT_AGENT_ID }, password: CANARY_TOKEN },
+      { target: { kind: 'agent', agentId: TEST_AGENT_ID }, password: CANARY_TOKEN },
+      TEST_AGENT_DEFINITIONS,
       onAgentTokenChanged,
     );
 
@@ -1031,16 +1118,22 @@ describe('agent token change notification (onAgentTokenChanged)', () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
-    await setPassword(settingsDir, secretStore, {
-      target: { kind: 'agent', agentId: DEFAULT_AGENT_ID },
-      password: CANARY_TOKEN,
-    });
+    await setPassword(
+      settingsDir,
+      secretStore,
+      {
+        target: { kind: 'agent', agentId: TEST_AGENT_ID },
+        password: CANARY_TOKEN,
+      },
+      TEST_AGENT_DEFINITIONS,
+    );
     const onAgentTokenChanged = vi.fn();
 
     const result = await clearPassword(
       settingsDir,
       secretStore,
-      { target: { kind: 'agent', agentId: DEFAULT_AGENT_ID } },
+      { target: { kind: 'agent', agentId: TEST_AGENT_ID } },
+      TEST_AGENT_DEFINITIONS,
       onAgentTokenChanged,
     );
 
@@ -1058,6 +1151,7 @@ describe('agent token change notification (onAgentTokenChanged)', () => {
       settingsDir,
       secretStore,
       { target: { kind: 'proxy', proxyId: PROXY_ID }, password: CANARY_PASSWORD },
+      TEST_AGENT_DEFINITIONS,
       onAgentTokenChanged,
     );
 
@@ -1077,7 +1171,8 @@ describe('agent token change notification (onAgentTokenChanged)', () => {
     const result = await setPassword(
       settingsDir,
       secretStore,
-      { target: { kind: 'agent', agentId: DEFAULT_AGENT_ID }, password: CANARY_TOKEN },
+      { target: { kind: 'agent', agentId: TEST_AGENT_ID }, password: CANARY_TOKEN },
+      TEST_AGENT_DEFINITIONS,
       onAgentTokenChanged,
     );
 

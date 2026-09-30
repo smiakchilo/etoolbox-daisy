@@ -1,10 +1,11 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src/agent",
+    "rootDir": "src",
     "outDir": ".tsc-out/agent",
     "types": ["node"]
   },
-  "include": ["src/agent/**/*.ts"],
+  "include": ["src/agents/**/*.ts"],
+  "exclude": ["src/agents/*/meta.ts"],
   "references": [{ "path": "./tsconfig.shared.json" }]
 }

@@ -8,7 +8,7 @@ import {
   SKILL_INVOCATION_TOOL,
   type HardenedSessionClient,
   type HardenedToolPolicy,
-} from '../../../src/agent/toolPolicy';
+} from '../../../../src/agents/copilot/toolPolicy';
 
 // Derived structurally from `HardenedSessionClient` instead of importing
 // `CopilotSession`/`SessionUpdateOptionsResult` from `@github/copilot-sdk`

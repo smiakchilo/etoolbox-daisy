@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import type {
   ReasoningSummary,
   SessionConfig,
@@ -7,43 +5,46 @@ import type {
   Tool,
   ToolInvocation,
 } from '@github/copilot-sdk';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 
 import {
-  type AgentEvent,
   type AemToolExecutor,
-  agentEventSchema,
-  applyAgentEvent,
+  type AgentEvent,
   type AssistantTextDeltaEvent,
   type CanSendBlockReason,
-  canSendMessage,
   type ChatId,
-  createDeltaFoldState,
-  createToolError,
   type DeltaFoldState,
-  err,
-  foldTextDelta,
   type IdGenerator,
   type JsonValue,
-  jsonValueSchema,
   type MessageId,
+  type ModelPreference,
+  type Result,
+  type SdkSessionId,
+  type SessionStatus,
+  type SessionStreamState,
+  type ToolCallId,
+  type ToolDescriptor,
+  type ToolError,
+  type TurnId,
+  agentEventSchema,
+  applyAgentEvent,
+  canSendMessage,
+  createDeltaFoldState,
+  createToolError,
+  err,
+  foldTextDelta,
+  jsonValueSchema,
   messageIdSchema,
   newRequestId,
   ok,
   parseAuthStatus,
   renderFoldedText,
   renderToolFailureForModel,
-  type Result,
   reasoningIdSchema,
-  type SdkSessionId,
   sdkSessionIdSchema,
-  type SessionStatus,
-  type SessionStreamState,
-  type ToolCallId,
   toolCallIdSchema,
-  type ToolDescriptor,
-  type ToolError,
-  type TurnId,
-} from '../shared';
+} from '../../shared';
 import {
   type AgentAuthState,
   type AgentService,
@@ -52,7 +53,7 @@ import {
   type OpenConversationRequest,
   type SendPromptRequest,
   type Unsubscribe,
-} from './agentService';
+} from '../../shared';
 import {
   createHardenedSession,
   type HardenedSessionClient,
@@ -257,19 +258,6 @@ type ReasoningEffort = NonNullable<SessionConfig['reasoningEffort']>;
 const REASONING_SUMMARY: ReasoningSummary = 'concise';
 
 /**
- * A model choice and, optionally, the reasoning effort to run it at.
- *
- * `model: null` means "no preference" - not "the default model". The
- * distinction matters on resume: with no preference there is nothing to apply,
- * so a resumed session keeps whatever model it was already using, which is
- * what "Do not silently replace the model when resuming" requires.
- */
-export interface ModelPreference {
-  readonly model: string | null;
-  readonly reasoningEffort: string | null;
-}
-
-/**
  * Whether two preferences are the same choice. Used to decide if
  * `session.setModel` needs calling at all, so that an unchanged preference
  * costs no RPC before every prompt.
@@ -339,9 +327,9 @@ function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
       return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed.');
     case 'not_authenticated':
       return createAgentServiceError(
-        'COPILOT_UNAVAILABLE',
+        'AGENT_UNAVAILABLE',
         'Not signed in to Copilot.',
-        'sign_in_to_copilot',
+        'sign_in_to_agent',
       );
     case 'session_error':
       return createAgentServiceError(
@@ -928,7 +916,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           currentTurn = undefined;
           pendingPermissionsByRequestId.clear();
           const toolError = createToolError(
-            'COPILOT_UNAVAILABLE',
+            'AGENT_UNAVAILABLE',
             'The Copilot agent reported an error.',
             newRequestId(idGenerator),
           );
@@ -957,9 +945,9 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         console.error('sdkAgentService: failed to read initial Copilot auth status', error);
         return err(
           createAgentServiceError(
-            'COPILOT_UNAVAILABLE',
+            'AGENT_UNAVAILABLE',
             'Could not determine Copilot sign-in status.',
-            'sign_in_to_copilot',
+            'sign_in_to_agent',
           ),
         );
       }
@@ -1034,7 +1022,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         console.error(`sdkAgentService: failed to ${action} SDK session`, error);
         return err(
           createAgentServiceError(
-            request.resume ? 'RESUME_FAILED' : 'COPILOT_UNAVAILABLE',
+            request.resume ? 'RESUME_FAILED' : 'AGENT_UNAVAILABLE',
             request.resume
               ? 'Could not resume the existing Copilot session.'
               : 'Could not start a new Copilot session.',
@@ -1108,7 +1096,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           console.error('sdkAgentService: session.setModel() rejected', error);
           return err(
             createAgentServiceError(
-              'COPILOT_UNAVAILABLE',
+              'AGENT_UNAVAILABLE',
               `Copilot could not switch to the model "${preference.model}". Choose a different model in Settings.`,
             ),
           );
@@ -1131,7 +1119,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         console.error('sdkAgentService: session.send() rejected', error);
         currentTurn = undefined;
         const toolError = createToolError(
-          'COPILOT_UNAVAILABLE',
+          'AGENT_UNAVAILABLE',
           'Could not send the prompt to Copilot.',
           newRequestId(idGenerator),
         );
@@ -1143,7 +1131,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           error: toolError,
         });
         return err(
-          createAgentServiceError('COPILOT_UNAVAILABLE', 'Could not send the prompt to Copilot.'),
+          createAgentServiceError('AGENT_UNAVAILABLE', 'Could not send the prompt to Copilot.'),
         );
       }
     },

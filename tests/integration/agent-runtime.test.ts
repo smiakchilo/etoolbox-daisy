@@ -5,10 +5,10 @@ import {
   createHardenedCopilotClient,
   getAuthStatus,
   getRuntimeStatus,
-  resolveSdkRuntimeExePath,
   type CopilotClient,
-} from '../../src/agent';
-import type { RuntimePathsEnv } from '../../src/agent/runtimePaths';
+} from '../../src/agents/copilot/copilotClient';
+import { resolveSdkRuntimeExePath } from '../../src/agents/copilot/runtimePaths';
+import type { RuntimePathsEnv } from '../../src/agents/copilot/runtimePaths';
 
 /**
  * Starts the *real* bundled runtime (`copilot-runtime.exe`) through

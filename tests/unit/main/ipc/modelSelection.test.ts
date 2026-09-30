@@ -9,8 +9,8 @@ import {
   type ModelSelectionDependencies,
 } from '../../../../src/main/ipc/settings';
 import { err, ok } from '../../../../src/shared';
-import { DEFAULT_AGENT_ID } from '../../../../src/shared';
 import type { ModelCatalogEntry } from '../../../../src/shared';
+import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 /**
  * Tests for the `settings:get-model-selection` / `settings:set-model-preferences`
@@ -44,6 +44,7 @@ const catalog: readonly ModelCatalogEntry[] = [
 
 function deps(overrides: Partial<ModelSelectionDependencies> = {}): ModelSelectionDependencies {
   return {
+    definitions: TEST_AGENT_DEFINITIONS,
     loadCatalog: () => Promise.resolve(ok(catalog)),
     isTurnInFlight: () => false,
     ...overrides,
@@ -126,8 +127,8 @@ describe('setModelPreferences', () => {
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBe('model-a');
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBe('high');
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.model).toBe('model-a');
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.reasoningEffort).toBe('high');
   });
 
   it('refuses while a turn is in flight', async () => {
@@ -193,7 +194,7 @@ describe('setModelPreferences', () => {
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBeUndefined();
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.model).toBeUndefined();
   });
 
   it('refuses a model the SDK does not offer', async () => {
@@ -237,9 +238,9 @@ describe('setModelPreferences', () => {
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBeUndefined();
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.model).toBeUndefined();
     // An orphaned effort would be re-applied to whatever model Copilot picks.
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBeUndefined();
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.reasoningEffort).toBeUndefined();
   });
 
   it('notifies the cache only AFTER a successful persist', async () => {

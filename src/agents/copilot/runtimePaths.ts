@@ -86,3 +86,19 @@ export function resolveBundledSkillsDir(env: RuntimePathsEnv): string {
   }
   return dir;
 }
+
+/**
+ * The nearest ancestor of `start` holding a `package.json`, else `start`. The
+ * dev-mode runtime lives under the project's `node_modules`; the bundled
+ * module's depth below `out/main` is a bundler detail, so it is searched for
+ * rather than counted.
+ */
+export function findProjectRoot(start: string): string {
+  let dir = start;
+  for (;;) {
+    if (existsSync(path.join(dir, 'package.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}

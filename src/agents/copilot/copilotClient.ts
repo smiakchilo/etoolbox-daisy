@@ -8,8 +8,8 @@ import type {
   GetStatusResponse,
 } from '@github/copilot-sdk';
 import { getCopilotHomeDir } from './copilotHome';
-import { resolveSdkRuntimeExePath, type RuntimePathsEnv } from './runtimePaths';
-import type { AuthStatus } from '../shared';
+import { findProjectRoot, resolveSdkRuntimeExePath, type RuntimePathsEnv } from './runtimePaths';
+import type { AuthStatus } from '../../shared';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,11 +23,11 @@ export function resolveDefaultRuntimePathsEnv(): RuntimePathsEnv {
   return {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
-    // This module is bundled by electron-vite into a single out/main/index.js
-    // in both dev and packaged builds, so "two levels up from the bundle" is
-    // always the project root in dev. In packaged builds this value is
-    // unused (the packaged branch resolves from resourcesPath instead).
-    devRootDir: path.resolve(currentDir, '..', '..'),
+    // Unused in packaged builds (they resolve from resourcesPath). This module
+    // is code-split into a lazily-loaded chunk whose depth under out/main is an
+    // electron-vite detail, so the project root is found by walking up to the
+    // nearest package.json rather than by counting directory levels.
+    devRootDir: findProjectRoot(currentDir),
   };
 }
 

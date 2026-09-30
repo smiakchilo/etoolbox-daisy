@@ -1,6 +1,6 @@
-import type { CopilotClient, ProxyEnvOverrides } from '../agent';
-import { configuredAgentId } from './settingsStore';
-import type { AppSettings } from '../shared';
+import type { AppSettings } from '../../shared';
+import type { CopilotClient, ProxyEnvOverrides } from './copilotClient';
+import { meta } from './meta';
 
 /**
  * Owns the one Copilot runtime client the whole app talks to - both the
@@ -71,9 +71,9 @@ export interface CopilotRuntimeManagerDeps {
    * Starts `client` (skipped when `undefined`, i.e. the fake path), builds
    * and initializes the `AgentService`, and installs its controller via
    * `gatedController.replaceDelegate`. In practice this is
-   * `startAgentServiceInBackground` from `agentComposition.ts`, bound to the
-   * composition root's executors and skill directory - so the manager adds
-   * no second startup ordering of its own.
+   * `runtime.ts`'s installer, which builds the SDK-backed service and hands it
+   * to `AgentHost.installService` - so the manager adds no second startup
+   * ordering of its own.
    */
   readonly startRuntime: (client: CopilotClient | undefined) => Promise<void>;
   /** Stops a client that is no longer serving the app. Never throws. */
@@ -156,8 +156,9 @@ export function createCopilotRuntimeManager(
 
   function describe(settings: AppSettings | undefined): string {
     if (settings === undefined) return NO_RUNTIME_DESCRIPTOR;
-    const agentId = configuredAgentId(settings);
-    return `${agentId}|${settings.agents[agentId]?.proxy ?? ''}`;
+    // Which agent is configured is the host's concern (it recycles across agents);
+    // this runtime only cares about the proxy that shapes its own child process.
+    return `${meta.id}|${settings.agents[meta.id]?.proxy ?? ''}`;
   }
 
   function install(settings: AppSettings | undefined): Promise<void> {

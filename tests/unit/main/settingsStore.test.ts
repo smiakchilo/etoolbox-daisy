@@ -1,40 +1,51 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  appSettingsSchema,
-  defaultAppSettings,
-  DEFAULT_AGENT_ID,
-  type AgentId,
-  type AppSettings,
-} from '../../../src/shared';
-import { HOST_PROXY_NONE, newProxyId, newServerId } from '../../../src/shared';
-import { proxyConfigSchema, serverConfigSchema, type ServerConfig } from '../../../src/shared';
-import {
-  configuredAgentId,
   addProxy,
   addServer,
+  agentTokenSecretRef,
   applyBrowserSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
+  configuredAgentId,
   loadSettings,
   loadSettingsSync,
   normalizeSettingsDocument,
   proxySecretRef,
   removeProxy,
-  repairProxyEntries,
   removeServer,
+  repairProxyEntries,
   reorderProxies,
   reorderServers,
   saveSettings,
   settingsFilePath,
   updateAgentToken,
-  agentTokenSecretRef,
   updateModelPreferences,
   updateProxy,
 } from '../../../src/main/settingsStore';
+import {
+  type AgentId,
+  type AppSettings,
+  type ServerConfig,
+  appSettingsSchema,
+  defaultAppSettings,
+  HOST_PROXY_NONE,
+  newProxyId,
+  newServerId,
+  proxyConfigSchema,
+  serverConfigSchema,
+} from '../../../src/shared';
+import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../support/agentDefinitions';
 
 /**
  * Scratch directories live under the project's own `test-results/` (already
@@ -77,7 +88,7 @@ function makeSettings(hosts: ServerConfig[], proxies: readonly unknown[] = []): 
   return appSettingsSchema.parse({
     hosts,
     proxies,
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: { [TEST_AGENT_ID]: { active: true } },
   });
 }
 
@@ -111,7 +122,7 @@ describe('saveSettings / loadSettings round trip', () => {
       proxies: [proxyEntry],
       browser: { disableNativeWebAuthn: true, proxy: proxyEntry.id },
       agents: {
-        [DEFAULT_AGENT_ID]: { active: true, model: 'gpt-5', reasoningEffort: 'high' },
+        [TEST_AGENT_ID]: { active: true, model: 'gpt-5', reasoningEffort: 'high' },
       },
     });
 
@@ -150,7 +161,7 @@ describe('loadSettings: tolerant agent node', () => {
       JSON.stringify({
         hosts: [],
         proxies: [],
-        agents: { [DEFAULT_AGENT_ID]: { model: 'gpt-5' } },
+        agents: { [TEST_AGENT_ID]: { model: 'gpt-5' } },
       }),
       'utf8',
     );
@@ -160,10 +171,10 @@ describe('loadSettings: tolerant agent node', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.status).toBe('loaded');
-      expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.active).toBe(false);
-      expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.model).toBe('gpt-5');
+      expect(result.value.settings.agents[TEST_AGENT_ID]?.active).toBe(false);
+      expect(result.value.settings.agents[TEST_AGENT_ID]?.model).toBe('gpt-5');
       // "No stored node is active" is well-defined: the default provider.
-      expect(configuredAgentId(result.value.settings)).toBe(DEFAULT_AGENT_ID);
+      expect(configuredAgentId(result.value.settings, TEST_AGENT_DEFINITIONS)).toBe(TEST_AGENT_ID);
     }
   });
 });
@@ -221,7 +232,7 @@ describe('loadSettings: corruption handling', () => {
       JSON.stringify({
         hosts: [server],
         proxies: [],
-        agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        agents: { [TEST_AGENT_ID]: { active: true } },
       }),
       'utf8',
     );
@@ -284,7 +295,7 @@ describe('loadSettings: repairs a legacy-shaped proxy entry instead of failing',
           credentials: { username: 'proxyuser', secretRef: 'copilotProxy' },
         },
       ],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
     writeFileSync(settingsFilePath(dir), onDisk, 'utf8');
 
@@ -312,9 +323,7 @@ describe('normalizeSettingsDocument', () => {
 
     expect(normalized['hosts']).toEqual([]);
     expect(normalized['proxies']).toEqual([]);
-    expect(
-      (normalized['agents'] as Record<string, Record<string, unknown>>)[DEFAULT_AGENT_ID],
-    ).toEqual({ active: true });
+    expect(normalized['agents']).toEqual({});
   });
 
   it('keeps a boolean browser flag and drops an unrecognised or non-boolean one', () => {
@@ -371,7 +380,7 @@ describe('normalizeSettingsDocument', () => {
           credentials: { username: 'u', secretRef: 's', password: 'hunter2' },
         },
       ],
-      agents: { [DEFAULT_AGENT_ID]: { active: true, extra: 'gone' } },
+      agents: { [TEST_AGENT_ID]: { active: true, extra: 'gone' } },
     });
 
     expect(normalized).not.toHaveProperty('extra');
@@ -384,9 +393,7 @@ describe('normalizeSettingsDocument', () => {
       secretRef: 's',
       password: 'hunter2',
     });
-    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[
-      DEFAULT_AGENT_ID
-    ];
+    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[TEST_AGENT_ID];
     expect(agent).not.toHaveProperty('extra');
   });
 
@@ -394,12 +401,10 @@ describe('normalizeSettingsDocument', () => {
     const normalized = normalize({
       hosts: [],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: 'agent-token:copilot' } } },
+      agents: { [TEST_AGENT_ID]: { active: true, token: { secretRef: 'agent-token:copilot' } } },
     });
 
-    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[
-      DEFAULT_AGENT_ID
-    ];
+    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[TEST_AGENT_ID];
     expect(agent?.['token']).toEqual({ secretRef: 'agent-token:copilot' });
   });
 
@@ -418,7 +423,7 @@ describe('normalizeSettingsDocument', () => {
         { id: 'server-d', origin: 'not a url' },
       ],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const hosts = normalized['hosts'] as Record<string, unknown>[];
@@ -430,7 +435,7 @@ describe('normalizeSettingsDocument', () => {
     const normalized = normalize({
       hosts: [{ id: 'server-a', origin: 'https://author.example:4502' }],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     expect((normalized['hosts'] as Record<string, unknown>[])[0]).toMatchObject({
@@ -455,13 +460,11 @@ describe('normalizeSettingsDocument', () => {
         },
       ],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true, proxy: 'ghost', reasoningEffort: 'high' } },
+      agents: { [TEST_AGENT_ID]: { active: true, proxy: 'ghost', reasoningEffort: 'high' } },
     });
 
     expect((normalized['hosts'] as Record<string, unknown>[])[0]).not.toHaveProperty('proxyId');
-    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[
-      DEFAULT_AGENT_ID
-    ];
+    const agent = (normalized['agents'] as Record<string, Record<string, unknown>>)[TEST_AGENT_ID];
     expect(agent).not.toHaveProperty('proxy');
     expect(agent).not.toHaveProperty('reasoningEffort');
   });
@@ -486,14 +489,14 @@ describe('normalizeSettingsDocument', () => {
       ],
       proxies: [],
       agents: {
-        [DEFAULT_AGENT_ID]: { active: true },
+        [TEST_AGENT_ID]: { active: true },
         opencode: { active: true },
       },
     });
 
     expect(normalized['hosts']).toHaveLength(1);
     const agents = normalized['agents'] as Record<string, Record<string, unknown>>;
-    expect(agents[DEFAULT_AGENT_ID]?.['active']).toBe(true);
+    expect(agents[TEST_AGENT_ID]?.['active']).toBe(true);
     expect(agents['opencode']?.['active']).toBe(false);
   });
 });
@@ -1082,7 +1085,7 @@ describe('proxy library mutations', () => {
       hosts: [],
       proxies: [{ id: proxyId, label: 'Corporate', url: 'https://proxy.example:8080' }],
       agents: {
-        [DEFAULT_AGENT_ID]: { active: true, proxy: proxyId },
+        [TEST_AGENT_ID]: { active: true, proxy: proxyId },
       },
       browser: { disableNativeWebAuthn: true, proxy: proxyId },
     });
@@ -1093,7 +1096,7 @@ describe('proxy library mutations', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.settings.browser.proxy).toBeUndefined();
-      expect(result.value.settings.agents[DEFAULT_AGENT_ID]?.proxy).toBeUndefined();
+      expect(result.value.settings.agents[TEST_AGENT_ID]?.proxy).toBeUndefined();
       expect(() => appSettingsSchema.parse(result.value.settings)).not.toThrow();
     }
   });
@@ -1138,7 +1141,7 @@ describe('repairProxyEntries', () => {
           credentials: { username: 'proxyuser', secretRef: 'copilotProxy' },
         },
       ],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     };
 
     const repaired = repairProxyEntries(raw) as Record<string, unknown>;
@@ -1217,7 +1220,7 @@ describe('canary: plaintext secrets never reach settings', () => {
           credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
         },
       ],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     };
 
     expect(() => appSettingsSchema.parse(raw)).toThrow();
@@ -1236,7 +1239,7 @@ describe('canary: plaintext secrets never reach settings', () => {
           credentials: { username: 'alice', secretRef: 'vault://alice', password: CANARY },
         },
       ],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     };
     writeFileSync(settingsFilePath(dir), JSON.stringify(rawWithCanary), 'utf8');
 
@@ -1274,72 +1277,77 @@ describe('canary: plaintext secrets never reach settings', () => {
 
 describe('agent token mutations', () => {
   it('mints a deterministic secretRef per provider', () => {
-    expect(agentTokenSecretRef(DEFAULT_AGENT_ID)).toBe(`agent-token:${DEFAULT_AGENT_ID}`);
+    expect(agentTokenSecretRef(TEST_AGENT_ID)).toBe(`agent-token:${TEST_AGENT_ID}`);
     // Scoped by provider id, not a single shared key.
-    expect(agentTokenSecretRef(DEFAULT_AGENT_ID)).not.toBe(agentTokenSecretRef('other' as AgentId));
+    expect(agentTokenSecretRef(TEST_AGENT_ID)).not.toBe(agentTokenSecretRef('other' as AgentId));
   });
 
   it('adds a token reference for an existing provider', () => {
-    const result = updateAgentToken(defaultAppSettings(), DEFAULT_AGENT_ID, {
-      secretRef: agentTokenSecretRef(DEFAULT_AGENT_ID),
+    const result = updateAgentToken(defaultAppSettings(), TEST_AGENT_ID, {
+      secretRef: agentTokenSecretRef(TEST_AGENT_ID),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.agents[DEFAULT_AGENT_ID]?.token).toEqual({
-      secretRef: agentTokenSecretRef(DEFAULT_AGENT_ID),
+    expect(result.value.agents[TEST_AGENT_ID]?.token).toEqual({
+      secretRef: agentTokenSecretRef(TEST_AGENT_ID),
     });
-    // The other settings are untouched.
-    expect(result.value.agents[DEFAULT_AGENT_ID]?.active).toBe(true);
+    // A node created by the mutation is not marked active.
+    expect(result.value.agents[TEST_AGENT_ID]?.active).toBe(false);
   });
 
   it('replaces an existing token reference', () => {
-    const withToken = updateAgentToken(defaultAppSettings(), DEFAULT_AGENT_ID, {
+    const withToken = updateAgentToken(defaultAppSettings(), TEST_AGENT_ID, {
       secretRef: 'agent-token:old',
     });
     expect(withToken.ok).toBe(true);
     if (!withToken.ok) return;
 
-    const replaced = updateAgentToken(withToken.value, DEFAULT_AGENT_ID, {
+    const replaced = updateAgentToken(withToken.value, TEST_AGENT_ID, {
       secretRef: 'agent-token:new',
     });
     expect(replaced.ok).toBe(true);
     if (!replaced.ok) return;
-    expect(replaced.value.agents[DEFAULT_AGENT_ID]?.token?.secretRef).toBe('agent-token:new');
+    expect(replaced.value.agents[TEST_AGENT_ID]?.token?.secretRef).toBe('agent-token:new');
   });
 
   it('clears a token reference with null', () => {
-    const withToken = updateAgentToken(defaultAppSettings(), DEFAULT_AGENT_ID, {
-      secretRef: agentTokenSecretRef(DEFAULT_AGENT_ID),
+    const withToken = updateAgentToken(defaultAppSettings(), TEST_AGENT_ID, {
+      secretRef: agentTokenSecretRef(TEST_AGENT_ID),
     });
     expect(withToken.ok).toBe(true);
     if (!withToken.ok) return;
 
-    const cleared = updateAgentToken(withToken.value, DEFAULT_AGENT_ID, null);
+    const cleared = updateAgentToken(withToken.value, TEST_AGENT_ID, null);
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
-    expect(cleared.value.agents[DEFAULT_AGENT_ID]?.token).toBeUndefined();
+    expect(cleared.value.agents[TEST_AGENT_ID]?.token).toBeUndefined();
   });
 
-  it('reports agent_not_found rather than conjuring a node', () => {
-    const result = updateAgentToken(defaultAppSettings(), 'not-shipped' as AgentId, {
+  it('creates an inactive node for a provider with no stored node', () => {
+    // Unknown ids are refused earlier, at the IPC boundary, against the
+    // discovered definitions; the store itself just records the change.
+    const result = updateAgentToken(defaultAppSettings(), TEST_AGENT_ID, {
       secretRef: 'agent-token:x',
     });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error.kind).toBe('agent_not_found');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.agents[TEST_AGENT_ID]).toEqual({
+      active: false,
+      token: { secretRef: 'agent-token:x' },
+    });
   });
 });
 
 describe('updateModelPreferences', () => {
   it('stores a model and its reasoning effort', () => {
-    const result = updateModelPreferences(defaultAppSettings(), {
+    const result = updateModelPreferences(defaultAppSettings(), TEST_AGENT_ID, {
       model: 'model-a',
       reasoningEffort: 'high',
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.agents[DEFAULT_AGENT_ID]?.model).toBe('model-a');
-    expect(result.value.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBe('high');
+    expect(result.value.agents[TEST_AGENT_ID]?.model).toBe('model-a');
+    expect(result.value.agents[TEST_AGENT_ID]?.reasoningEffort).toBe('high');
   });
 
   it('forces the reasoning effort to null when the model is cleared', () => {
@@ -1347,36 +1355,39 @@ describe('updateModelPreferences', () => {
     // effort without a model, so this combination cannot arrive over IPC - but
     // an orphaned effort persisted here would be re-applied against whatever
     // model Copilot picks next, which is precisely a silently-changed setting.
-    const result = updateModelPreferences(defaultAppSettings(), {
+    const result = updateModelPreferences(defaultAppSettings(), TEST_AGENT_ID, {
       model: null,
       reasoningEffort: 'high',
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.agents[DEFAULT_AGENT_ID]?.model).toBeUndefined();
-    expect(result.value.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBeUndefined();
+    expect(result.value.agents[TEST_AGENT_ID]?.model).toBeUndefined();
+    expect(result.value.agents[TEST_AGENT_ID]?.reasoningEffort).toBeUndefined();
   });
 
   it('clears a previously stored effort when the model is cleared', () => {
-    const withBoth = updateModelPreferences(defaultAppSettings(), {
+    const withBoth = updateModelPreferences(defaultAppSettings(), TEST_AGENT_ID, {
       model: 'model-a',
       reasoningEffort: 'high',
     });
     expect(withBoth.ok).toBe(true);
     if (!withBoth.ok) return;
 
-    const cleared = updateModelPreferences(withBoth.value, {
+    const cleared = updateModelPreferences(withBoth.value, TEST_AGENT_ID, {
       model: null,
       reasoningEffort: null,
     });
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) return;
-    expect(cleared.value.agents[DEFAULT_AGENT_ID]?.reasoningEffort).toBeUndefined();
+    expect(cleared.value.agents[TEST_AGENT_ID]?.reasoningEffort).toBeUndefined();
   });
 
   it('leaves every other setting untouched', () => {
     const before = defaultAppSettings();
-    const result = updateModelPreferences(before, { model: 'model-a', reasoningEffort: null });
+    const result = updateModelPreferences(before, TEST_AGENT_ID, {
+      model: 'model-a',
+      reasoningEffort: null,
+    });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.hosts).toEqual(before.hosts);
@@ -1384,7 +1395,7 @@ describe('updateModelPreferences', () => {
   });
 
   it('rejects a model id the settings contract will not accept', () => {
-    const result = updateModelPreferences(defaultAppSettings(), {
+    const result = updateModelPreferences(defaultAppSettings(), TEST_AGENT_ID, {
       model: 'x'.repeat(5000),
       reasoningEffort: null,
     });

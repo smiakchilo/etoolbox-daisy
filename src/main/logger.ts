@@ -1,24 +1,25 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { TOOL_ERROR_CODES, type ToolErrorCode } from '../shared';
 import {
-  chatIdSchema,
-  messageIdSchema,
-  requestIdSchema,
-  serverIdSchema,
-  sdkSessionIdSchema,
-  toolCallIdSchema,
-  turnIdSchema,
   type ChatId,
   type MessageId,
   type RequestId,
-  type ServerId,
   type SdkSessionId,
+  type ServerId,
   type ToolCallId,
+  type ToolErrorCode,
   type TurnId,
+  chatIdSchema,
+  messageIdSchema,
+  parseOrigin,
+  requestIdSchema,
+  sdkSessionIdSchema,
+  serverIdSchema,
+  TOOL_ERROR_CODES,
+  toolCallIdSchema,
+  turnIdSchema,
 } from '../shared';
-import { parseOrigin } from '../shared';
 
 /**
  * Diagnostics-only logger (implementation-plan.md step 04;
@@ -91,6 +92,7 @@ export const DIAGNOSTIC_CODES = [
   'AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED',
   'AGENT_SERVICE_FAKE_SELECTED',
   'TOOL_REGISTRATION_FAILED',
+  'AGENT_REGISTRATION_FAILED',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];

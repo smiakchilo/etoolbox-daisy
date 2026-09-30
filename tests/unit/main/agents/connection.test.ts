@@ -1,16 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildRuntimeProxyOverrides,
-  resolveAgentGithubToken,
-  resolveAgentProxyOverrides,
-} from '../../../src/main/agentRuntimeProxy';
+  resolveConnection,
+} from '../../../../src/main/agents/connection';
 import {
-  DEFAULT_AGENT_ID,
   type AgentId,
   type AppSettings,
   type ProxyConfig,
   type ProxyId,
-} from '../../../src/shared';
+} from '../../../../src/shared';
 
 /**
  * The runtime's proxy is applied as `HTTPS_PROXY`/`HTTP_PROXY` on the child
@@ -22,6 +20,8 @@ import {
  */
 
 const SECRET_REF = 'proxy-1/secret';
+const AGENT = 'test-agent' as AgentId;
+const OTHER = 'other-agent' as AgentId;
 
 function proxyWith(overrides: Partial<ProxyConfig> = {}): ProxyConfig {
   return {
@@ -37,8 +37,7 @@ function settingsWith(proxyId: ProxyId | undefined): AppSettings {
     hosts: [],
     proxies: [proxyWith()],
     agents: {
-      [DEFAULT_AGENT_ID]:
-        proxyId === undefined ? { active: true } : { active: true, proxy: proxyId },
+      [AGENT]: proxyId === undefined ? { active: true } : { active: true, proxy: proxyId },
     },
     browser: { disableNativeWebAuthn: true },
   };
@@ -104,61 +103,86 @@ describe('buildRuntimeProxyOverrides', () => {
   });
 });
 
-describe('resolveAgentProxyOverrides', () => {
-  it('resolves to no proxy when there is no settings document', async () => {
+describe('resolveConnection', () => {
+  const TOKEN_REF = 'agent-token:test-agent';
+
+  it('resolves to nothing when there is no settings document', async () => {
     const get = vi.fn();
-    await expect(resolveAgentProxyOverrides(undefined, { get })).resolves.toBeUndefined();
+    await expect(resolveConnection(AGENT, undefined, { get })).resolves.toEqual({});
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('resolves to no proxy when the active agent has none selected', async () => {
+  it('resolves to nothing when the agent has no stored node', async () => {
     const get = vi.fn();
-    await expect(
-      resolveAgentProxyOverrides(settingsWith(undefined), { get }),
-    ).resolves.toBeUndefined();
+    const settings = { ...settingsWith(undefined), agents: {} } as AppSettings;
+    await expect(resolveConnection(AGENT, settings, { get })).resolves.toEqual({});
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('resolves to no proxy and no token when neither is selected', async () => {
+    const get = vi.fn();
+    await expect(resolveConnection(AGENT, settingsWith(undefined), { get })).resolves.toEqual({});
     expect(get).not.toHaveBeenCalled();
   });
 
   it('does not read secure storage for a proxy without credentials', async () => {
     const get = vi.fn();
     await expect(
-      resolveAgentProxyOverrides(settingsWith('proxy-1' as ProxyId), { get }),
+      resolveConnection(AGENT, settingsWith('proxy-1' as ProxyId), { get }),
     ).resolves.toEqual({
-      httpsProxy: 'http://proxy.example:8080',
-      httpProxy: 'http://proxy.example:8080',
+      proxy: { httpsProxy: 'http://proxy.example:8080', httpProxy: 'http://proxy.example:8080' },
     });
     expect(get).not.toHaveBeenCalled();
   });
 
-  it('reads the entry password from secure storage by secret reference', async () => {
+  it('reads the proxy password from secure storage by secret reference', async () => {
     const get = vi.fn().mockResolvedValue('hunter2');
     const settings = {
       ...settingsWith('proxy-1' as ProxyId),
       proxies: [proxyWith({ credentials: { username: 'svc', secretRef: SECRET_REF } })],
     } as AppSettings;
 
-    await expect(resolveAgentProxyOverrides(settings, { get })).resolves.toEqual({
-      httpsProxy: 'http://svc:hunter2@proxy.example:8080',
-      httpProxy: 'http://svc:hunter2@proxy.example:8080',
-    });
+    const connection = await resolveConnection(AGENT, settings, { get });
+    expect(connection.proxy?.httpsProxy).toBe(
+      buildRuntimeProxyOverrides(settings.proxies[0] as ProxyConfig, 'hunter2').httpsProxy,
+    );
     expect(get).toHaveBeenCalledWith(SECRET_REF);
   });
 
-  it('follows the active agent, not merely the first stored node', async () => {
-    const get = vi.fn();
+  it('reads the token plaintext from secure storage by secret reference', async () => {
+    const get = vi.fn().mockResolvedValue('ghp_stored');
+    const settings = {
+      ...settingsWith(undefined),
+      agents: { [AGENT]: { active: true, token: { secretRef: TOKEN_REF } } },
+    } as AppSettings;
+
+    await expect(resolveConnection(AGENT, settings, { get })).resolves.toEqual({
+      accessToken: 'ghp_stored',
+    });
+    expect(get).toHaveBeenCalledWith(TOKEN_REF);
+  });
+
+  it('follows the requested agent, not merely the first stored node', async () => {
+    const get = vi.fn().mockResolvedValue('ghp_other');
     const settings = {
       ...settingsWith(undefined),
       proxies: [proxyWith({ id: 'proxy-2' as ProxyId, url: 'http://other.example:3128' })],
       agents: {
-        [DEFAULT_AGENT_ID]: { active: false },
-        ['opencode' as AgentId]: { active: true, proxy: 'proxy-2' as ProxyId },
+        [AGENT]: { active: false, token: { secretRef: TOKEN_REF } },
+        [OTHER]: {
+          active: true,
+          proxy: 'proxy-2' as ProxyId,
+          token: { secretRef: 'agent-token:other-agent' },
+        },
       },
     } as AppSettings;
 
-    await expect(resolveAgentProxyOverrides(settings, { get })).resolves.toEqual({
-      httpsProxy: 'http://other.example:3128',
-      httpProxy: 'http://other.example:3128',
+    await expect(resolveConnection(OTHER, settings, { get })).resolves.toEqual({
+      proxy: { httpsProxy: 'http://other.example:3128', httpProxy: 'http://other.example:3128' },
+      accessToken: 'ghp_other',
     });
+    expect(get).toHaveBeenCalledWith('agent-token:other-agent');
+    expect(get).not.toHaveBeenCalledWith(TOKEN_REF);
   });
 
   it('treats a dangling proxy reference as a direct connection', async () => {
@@ -166,69 +190,21 @@ describe('resolveAgentProxyOverrides', () => {
     // refusing to start the runtime over it would be worse than ignoring it.
     const get = vi.fn();
     await expect(
-      resolveAgentProxyOverrides(settingsWith('missing' as ProxyId), { get }),
-    ).resolves.toBeUndefined();
+      resolveConnection(AGENT, settingsWith('missing' as ProxyId), { get }),
+    ).resolves.toEqual({});
     expect(get).not.toHaveBeenCalled();
-  });
-});
-
-describe('resolveAgentGithubToken', () => {
-  const AGENT_TOKEN_REF = 'agent-token:copilot';
-
-  it('resolves to no token when there is no settings document', async () => {
-    const get = vi.fn();
-    await expect(resolveAgentGithubToken(undefined, { get })).resolves.toBeUndefined();
-    expect(get).not.toHaveBeenCalled();
-  });
-
-  it('resolves to no token when the active agent has none stored', async () => {
-    const get = vi.fn();
-    await expect(
-      resolveAgentGithubToken(settingsWith(undefined), { get }),
-    ).resolves.toBeUndefined();
-    expect(get).not.toHaveBeenCalled();
-  });
-
-  it('reads the token plaintext from secure storage by secret reference', async () => {
-    const get = vi.fn().mockResolvedValue('ghp_stored');
-    const settings = {
-      ...settingsWith(undefined),
-      agents: {
-        [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: AGENT_TOKEN_REF } },
-      },
-    } as AppSettings;
-
-    await expect(resolveAgentGithubToken(settings, { get })).resolves.toBe('ghp_stored');
-    expect(get).toHaveBeenCalledWith(AGENT_TOKEN_REF);
-  });
-
-  it('follows the active agent, not merely the first stored node', async () => {
-    const get = vi.fn().mockResolvedValue('ghp_other');
-    const settings = {
-      ...settingsWith(undefined),
-      agents: {
-        [DEFAULT_AGENT_ID]: { active: false, token: { secretRef: 'agent-token:copilot' } },
-        ['opencode' as AgentId]: { active: true, token: { secretRef: 'agent-token:opencode' } },
-      },
-    } as AppSettings;
-
-    await expect(resolveAgentGithubToken(settings, { get })).resolves.toBe('ghp_other');
-    expect(get).toHaveBeenCalledWith('agent-token:opencode');
   });
 
   it('propagates a secret-store failure rather than starting without the token', async () => {
     // A rejection aborts the runtime install before the working runtime is
-    // touched (see `copilotRuntimeManager.ts`), so it must not be swallowed
-    // into `undefined` here.
+    // touched, so it must not be swallowed into "no token" here.
     const get = vi.fn().mockRejectedValue(new Error('secure storage unavailable'));
     const settings = {
       ...settingsWith(undefined),
-      agents: {
-        [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: AGENT_TOKEN_REF } },
-      },
+      agents: { [AGENT]: { active: true, token: { secretRef: TOKEN_REF } } },
     } as AppSettings;
 
-    await expect(resolveAgentGithubToken(settings, { get })).rejects.toThrow(
+    await expect(resolveConnection(AGENT, settings, { get })).rejects.toThrow(
       'secure storage unavailable',
     );
   });

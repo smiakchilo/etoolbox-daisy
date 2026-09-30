@@ -2,12 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  findProjectRoot,
   resolveBundledSkillsDir,
   resolveCliExePath,
   resolvePlatformPackageDir,
   resolveSdkRuntimeExePath,
   type RuntimePathsEnv,
-} from '../../../src/agent/runtimePaths';
+} from '../../../../src/agents/copilot/runtimePaths';
 
 /**
  * Scratch directories are created under the project's own `test-results/`
@@ -125,5 +126,16 @@ describe('resolveBundledSkillsDir', () => {
     expect(() =>
       resolveBundledSkillsDir({ isPackaged: true, resourcesPath: root, devRootDir: 'unused' }),
     ).toThrow(/extraResources/);
+  });
+});
+
+describe('findProjectRoot', () => {
+  it('finds the nearest ancestor holding a package.json, at any bundle depth', () => {
+    const root = createScratchRoot();
+    const deep = path.join(root, 'out', 'main', 'chunks');
+    mkdirSync(deep, { recursive: true });
+    writeFileSync(path.join(root, 'package.json'), '{}');
+    expect(findProjectRoot(deep)).toBe(root);
+    expect(findProjectRoot(path.join(root, 'out', 'main'))).toBe(root);
   });
 });

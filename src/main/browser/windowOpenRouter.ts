@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 import type { HandlerDetails, Session, WebContents } from 'electron';
 import { attachChromeContextMenu } from '../contextMenu';
-import { APP_ICON_PATH, applyTaskbarAppDetails } from '../windows';
+import { applyTaskbarAppDetails, getAppIconPath } from '../windows';
 import { decideAllowedUrl } from './urlPolicy';
 import { decideWindowOpen } from './windowOpenPolicy';
 
@@ -64,13 +64,14 @@ export function createWindowOpenRouter(session: Session): WindowOpenRouter {
     webContents.setWindowOpenHandler((details: HandlerDetails) => {
       const decision = decideWindowOpen(details);
       if (decision.kind === 'popup') {
+        const appIconPath = getAppIconPath();
         return {
           action: 'allow',
           overrideBrowserWindowOptions: {
             // Same window icon as the main window (see `windows.ts`),
             // otherwise Electron's default is used and an SSO popup shows the
             // Electron icon in the taskbar.
-            ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
+            ...(appIconPath ? { icon: appIconPath } : {}),
             webPreferences: popupWebPreferences(),
           },
         };

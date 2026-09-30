@@ -4,21 +4,23 @@ import {
   createSdkAgentService,
   type AemToolExecutor,
   type AgentAuthStatusSource,
-  type ModelPreference,
-} from '../../../src/agent/sdkAgentService';
-import type { HardenedSessionClient, HardenedToolPolicy } from '../../../src/agent/toolPolicy';
-import type { AgentEvent } from '../../../src/shared';
-import { createToolError, type ToolError } from '../../../src/shared';
+} from '../../../../src/agents/copilot/sdkAgentService';
+import type {
+  HardenedSessionClient,
+  HardenedToolPolicy,
+} from '../../../../src/agents/copilot/toolPolicy';
+import type { AgentEvent, ModelPreference } from '../../../../src/shared';
+import { createToolError, type ToolError } from '../../../../src/shared';
 import {
   newChatId,
   newRequestId,
   newTurnId,
   sdkSessionIdSchema,
   type IdGenerator,
-} from '../../../src/shared';
-import { applyAgentEvent, type SessionStatus } from '../../../src/shared';
-import { err, ok } from '../../../src/shared';
-import type { AuthStatus } from '../../../src/shared';
+} from '../../../../src/shared';
+import { applyAgentEvent, type SessionStatus } from '../../../../src/shared';
+import { err, ok } from '../../../../src/shared';
+import type { AuthStatus } from '../../../../src/shared';
 
 /** Mints reproducible `ChatId`/`TurnId` values - never SDK-facing ids, which the adapter adopts instead. */
 function counterIdGenerator(): IdGenerator {
@@ -1035,7 +1037,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     preference = { model: 'model-a', reasoningEffort: null };
     const failed = await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
     expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.error.code).toBe('COPILOT_UNAVAILABLE');
+    if (!failed.ok) expect(failed.error.code).toBe('AGENT_UNAVAILABLE');
 
     // The turn never started, so the prompt was never sent...
     expect(sessionHandle.send).not.toHaveBeenCalled();

@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { agentIdSchema, proxyIdSchema } from './ids';
-import { DEFAULT_AGENT_ID } from './agents';
 import { originSchema } from './origin';
 import {
   HOST_PROXY_NONE,
@@ -105,7 +104,7 @@ export type AgentToken = Readonly<z.infer<typeof agentTokenSchema>>;
  * document failing to load over one missing flag is a needlessly harsh failure
  * for a value whose only job is to answer "which provider?" - and that question
  * already has a well-defined fallback (`resolveConfiguredAgentId` treats
- * "none active" as {@link DEFAULT_AGENT_ID}). The field is therefore required
+ * "none active" as the first discovered agent). The field is therefore required
  * in the parsed
  * output but optional on disk. `proxy`, `model` and `reasoningEffort` are all
  * optional so a node carrying only `active` is still a valid document, and
@@ -273,14 +272,14 @@ export type AppSettings = Readonly<Omit<z.infer<typeof appSettingsSchema>, 'host
 };
 
 /**
- * A valid, empty settings document: no hosts, no proxies, the default provider
- * active, and the browser defaults (`browser.disableNativeWebAuthn: true`).
+ * A valid, empty settings document: no hosts, no proxies, no agent nodes (the
+ * agent catalogue is discovered, not seeded here), and the browser defaults (`browser.disableNativeWebAuthn: true`).
  */
 export function defaultAppSettings(): AppSettings {
   return appSettingsSchema.parse({
     hosts: [],
     proxies: [],
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: {},
     browser: {},
   });
 }

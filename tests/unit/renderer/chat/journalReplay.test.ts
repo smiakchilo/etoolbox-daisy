@@ -1,6 +1,6 @@
-import {describe, expect, it} from 'vitest';
-import {replayJournalIntoTranscript} from '../../../../src/renderer/src/chat/journalReplay';
-import {createTranscriptStore} from '../../../../src/renderer/src/chat/transcriptStore';
+import { describe, expect, it } from 'vitest';
+import { replayJournalIntoTranscript } from '../../../../src/renderer/src/chat/journalReplay';
+import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import type {
   ChatId,
   ChatJournalAbandonedToolCallRecord,

@@ -1,12 +1,9 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  DEFAULT_AGENT_ID,
-  parseAppSettingsSnapshot,
-  type BrowserNavigationState,
-} from '../../../src/shared';
+import { parseAppSettingsSnapshot, type BrowserNavigationState } from '../../../src/shared';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
 import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPanel';
+import { TEST_AGENT_ID } from '../../support/agentDefinitions';
 
 /**
  * The Settings panel's dismissal contract (settingsPanel.ts + mainShell.ts),
@@ -25,7 +22,7 @@ import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPan
 const snapshotStub = parseAppSettingsSnapshot({
   hosts: [],
   proxies: [],
-  agents: { [DEFAULT_AGENT_ID]: { active: true } },
+  agents: { [TEST_AGENT_ID]: { active: true } },
   browser: { disableNativeWebAuthn: true },
 });
 

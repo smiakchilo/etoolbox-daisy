@@ -29,6 +29,8 @@ export interface ComposerStatus {
 
 export type ComposerButtonState =
   | { readonly kind: 'connecting' }
+  /** No agent exists to serve the chat; the pane's banner says so. */
+  | { readonly kind: 'unavailable' }
   | { readonly kind: 'stop' }
   | { readonly kind: 'send-enabled' }
   | { readonly kind: 'send-disabled'; readonly reason: CanSendBlockReason }
@@ -90,6 +92,7 @@ export function isTurnInFlight(state: SessionStreamState): boolean {
  *    send would be accepted.
  */
 export function computeComposerButtonState(status: ComposerStatus): ComposerButtonState {
+  if (status.serviceState === 'unavailable') return { kind: 'unavailable' };
   if (status.serviceState === 'starting') return { kind: 'connecting' };
   if (isTurnInFlight(status.session.state)) return { kind: 'stop' };
   if (!status.agentActive) return { kind: 'agent-inactive' };
@@ -105,7 +108,7 @@ export function describeCanSendBlockReason(reason: CanSendBlockReason): string {
     case 'session_closed':
       return 'This conversation is closed';
     case 'not_authenticated':
-      return 'Sign in to Copilot to send a message';
+      return 'Sign in to the agent to send a message';
     case 'session_error':
       return 'The last turn ended in an error';
     case 'turn_in_progress':

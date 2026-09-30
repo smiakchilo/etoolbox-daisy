@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { agentIdSchema } from './contracts';
 
 /**
  * Runtime schema for `agent.getAuthStatus()` / the `session.error`-free path of
@@ -54,4 +55,17 @@ export type LogoutResult = z.infer<typeof logoutResultSchema>;
 
 export function parseLogoutResult(candidate: unknown): LogoutResult {
   return logoutResultSchema.parse(candidate);
+}
+
+/**
+ * The request every `agent:*` auth channel takes. Auth is per agent: the
+ * channel does not assume there is only one provider, and an id the registry
+ * does not know is answered as "no such agent" rather than routed anywhere.
+ */
+export const agentAuthRequestSchema = z.object({ agentId: agentIdSchema }).strict();
+
+export type AgentAuthRequest = z.infer<typeof agentAuthRequestSchema>;
+
+export function parseAgentAuthRequest(candidate: unknown): AgentAuthRequest {
+  return agentAuthRequestSchema.parse(candidate);
 }

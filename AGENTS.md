@@ -1,6 +1,10 @@
 # AGENTS.md — EToolbox Daisy
 
-**Read this file first, then `docs/handoff-steps-09-12.md`.** Together they are
+**Read this file first.** If the task is to **add, remove or disable an agent/SDK
+or a tool**, go straight to §5 "Agents are plugins" / "Tools are plugins" and
+follow their step-by-step recipes; the deeper rationale is in
+`docs/agent-plugin-architecture.md` and `docs/tool-plugin-architecture.md`.
+For step-plan work, then read `docs/handoff-steps-09-12.md`. Together they are
 enough to start work without re-deriving anything.
 
 ---
@@ -31,6 +35,8 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/requirements-decisions.md` | The reasoning and agreed decisions behind the plan. | Read when a plan bullet seems arbitrary — the justification is here. |
 | `docs/compatibility.md` | Verified-API fact table (**U1–U12**, ~lines 801–810) plus SDK behaviour notes. | **Authoritative.** If it says an API behaves a certain way, that was proven by running it. Don't re-test; don't contradict it from intuition. |
 | `docs/verification.md` | The **evidence log**, one section per completed step. | Append a section per step. Record what was *executed*, not what was written. |
+| `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits. | Read before adding, removing or restructuring an agent/SDK. |
+| `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
 | `docs/handoff-steps-09-12.md` | Current state, open items, traps, and the next permitted step. | Your starting point for new work. |
 
 ---
@@ -48,9 +54,9 @@ Milestone A (steps 00–07) is functionally complete, **except that the 15-row
 manual smoke checklist at the end of `docs/verification.md` has never been run
 by a human.** It needs a real Copilot sign-in and a real AEM instance.
 
-**The repository has zero commits.** Nothing has ever been committed, so
-`git diff` tells you nothing — if you need to confirm you restored a file,
-**re-run the tests**. Do not commit unless the user asks.
+**The repository has commits** (`git log`/`git diff` work), but the agent- and
+tool-plugin refactors may still be uncommitted in the working tree. **Do not
+commit unless the user asks.**
 
 ---
 
@@ -65,8 +71,9 @@ by a human.** It needs a real Copilot sign-in and a real AEM instance.
 │    ipc/ ................ typed IPC handlers, sender guards           │
 │    settingsStore / secretStore / logger / appPaths                   │
 │                                                                      │
-│  src/agent/  ← the ONLY place allowed to import the Copilot SDK      │
-│    copilotClient · toolPolicy · sdkAgentService · aemTool (tool-agnostic)│
+│  src/agents/<name>/  ← agent plugins; the ONLY place an SDK is imported│
+│    copilot/: meta · agent · runtime · sdkAgentService · toolPolicy … │
+│  (discovered by src/main/agents/registry.ts, run by agents/hub.ts)   │
 └──────────┬───────────────────────────────────┬───────────────────────┘
            │ typed IPC                         │ stdio
 ┌──────────┴───────────┐            ┌──────────┴─────────────────────┐
@@ -151,22 +158,102 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
 
-### `src/agent/` — the only SDK boundary
+### Agents are plugins: one folder under `src/agents/<name>/`
 
-ESLint forbids importing `@github/copilot-sdk` or `@github/copilot` anywhere
-except here. Keep it that way; it is what makes the tool policy auditable.
+An agent (an SDK such as GitHub Copilot) is a self-contained folder; **deleting
+the folder removes the agent**. Design and rationale:
+`docs/agent-plugin-architecture.md`. Nothing outside the folder may import from
+it except by the glob discovery.
 
-| File | Owns |
-| --- | --- |
-| `copilotClient.ts` | `createHardenedCopilotClient`; needs Electron `app.isPackaged` |
-| `runtimePaths.ts` | Locating the bundled runtime, packaged vs dev. Electron-free and unit-testable |
-| `copilotHome.ts` | The app-specific `copilot` home directory |
-| `toolPolicy.ts` | **The hardening core** — `HardenedToolPolicy`, `createHardenedSession`, `resumeHardenedSession`, `SKILL_INVOCATION_TOOL` |
-| `aemTool.ts` | `createAemGetJsonExecutor`, `createAemQueryExecutor`, `AEM_ASSISTANT_INSTRUCTIONS`, `buildAemToolPolicy()` |
-| `agentService.ts` | The `AgentService` interface the rest of the app codes against |
-| `sdkAgentService.ts` | The real implementation |
-| `fakeAgentService.ts` | The deterministic fake used by E2E |
-| `auth.ts` | Sign-in status |
+```
+src/agents/<name>/
+  meta.ts     exports `meta: AgentMeta` - SDK-free, imports only src/shared;
+              globbed eagerly by main and renderer; `disabled: true` switches off
+  agent.ts    exports `agent: AgentModule` ({ id, createRuntime(host) }); loaded
+              lazily and in isolation by src/main/agents/registry.ts
+  ...         the agent's own runtime, auth, model catalog, tool policy, SDK client
+```
+
+- Contract: `src/shared/agents/` (`agentModule.ts`, `agentService.ts`).
+  `AgentHost` is the only thing an agent receives; `AgentRuntime` is what it
+  returns. The agent list is **not** a constant any more: contract helpers in
+  `src/shared/contracts/agents.ts` take `definitions`.
+- Main: `src/main/agents/` - `registry.ts` (lazy discovery, isolation),
+  `catalog.ts` (eager `meta.ts`), `hub.ts` (one runtime per enabled agent,
+  switching, auth routing), `connection.ts`, `fakeRuntime.ts` /
+  `fakeAgentService.ts` (E2E fake). Renderer: `src/renderer/src/agents/agentCatalog.ts`.
+- A load failure, malformed module, id mismatch, duplicate id or a throwing
+  runtime disables **only that agent** (`AGENT_UNAVAILABLE`); zero agents shows
+  "No agent available" while AEM browsing keeps working.
+- ESLint confines an agent folder to itself plus `src/shared`; SDK imports are
+  legal only there. Proof fixture:
+  `tests/fixtures/eslint-violations/agent-boundary-violation.ts`.
+- Limits: a **type error** in an agent folder fails global `tsc`, even if
+  `disabled`; its tests are deleted with it; agent code is a lazy chunk, so it
+  must not derive paths from its depth under `out/main` (use
+  `findProjectRoot`-style lookups).
+- Removing an agent: delete the folder and `tests/unit/agents/<name>/`, plus the
+  `electron-builder.yml` filters and `package.json` deps. For Copilot also the
+  integration tests `proxy-login`, `agent-runtime`, `packaged-skill`,
+  `proxy-runtime`, `live-github-auth`, `support/syntheticLogin.ts`.
+- Not lint-enforced but load-bearing: the eager `meta.ts` glob (main + renderer)
+  and the lazy `agent.ts` glob (main) both need the folder to match
+  `src/agents/*/`; `agent.id` must equal an enabled `meta.id` (otherwise the
+  registry reports it and skips the agent; duplicates likewise). The persisted settings shape per agent is the shared
+  `agentSettingsSchema` (`active`, `proxy`, `model`, `reasoningEffort`,
+  `token`); an agent that needs other settings would have to extend that shared
+  contract - **say so and ask**.
+- Copilot's files: `copilotClient.ts` (`createHardenedCopilotClient`),
+  `runtimePaths.ts` (+ `findProjectRoot`), `copilotHome.ts`, `toolPolicy.ts`
+  (**the hardening core**), `aemToolPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
+  `modelCatalog.ts`, `runtimeManager.ts`, `runtime.ts`.
+
+#### Recipe: add a new agent / SDK (e.g. OpenCode, Claude)
+
+1. **Design check with the user first** if the SDK needs anything the contract
+   lacks (extra per-agent settings, a non-token credential, non-stdio transport):
+   those mean changing `src/shared/**`, which must be reported loudly (§12).
+2. `src/agents/<name>/meta.ts` — `export const meta: AgentMeta = { id, label,
+   requiresAuth }` (id cast `as AgentMeta['id']`). Import only `../../shared`;
+   **never** the SDK (the renderer globs this file).
+3. `src/agents/<name>/agent.ts` — `export const agent: AgentModule = { id:
+   meta.id, createRuntime }`. Model it on `src/agents/copilot/agent.ts` /
+   `runtime.ts`.
+4. Implement `createRuntime(host: AgentHost): AgentRuntime` (`start`,
+   `reconcile`, `refresh`, `stop`, `whenReady`, `getAuthStatus`,
+   `loadModelCatalog`; `login`/`cancelLogin`/`logout` only if the SDK signs in
+   interactively). Get proxy/token from `host.resolveConnection(meta.id,
+   settings)` — an agent never touches the secret store or settings store.
+5. Build an `AgentService` (`src/shared/agents/agentService.ts`) around the SDK
+   and hand it to `host.installService(service)`. It must emit normalized
+   `AgentEvent`s only — no SDK type may cross the boundary. Map the tools from
+   `host.toolkit()` (`toolHandlers`, `toolDescriptors`, `allowlistEntries`,
+   `instructions`, `bundledSkillDirectories`) onto the SDK. `allowlistEntries`
+   are in Copilot's `custom:<name>` form; translate if the SDK differs. **Do not
+   import `src/tools` or `src/main`** — everything arrives through the host.
+6. **Hardening is per-agent.** Copilot's `toolPolicy.ts` denies every built-in
+   tool except the AEM tools and `skill`; a new SDK must get an equivalent
+   deny-by-default policy (and equivalent verification, cf. AGENTS.md §8 skill
+   facts) *before* it may see a tool. Read-only against AEM stays absolute (§7.4).
+7. Keep all SDK-specific paths robust to **code-splitting**: agent code lives in
+   `out/main/chunks/`, so never derive a root from `__dirname` depth (use
+   `findProjectRoot` from `src/agents/copilot/runtimePaths.ts` as the pattern —
+   copy, don't import).
+8. Dependencies: add the SDK to `package.json`; if it ships a native runtime, add
+   its `electron-builder.yml` filters/`asarUnpack` (see Copilot's).
+9. Tests in `tests/unit/agents/<name>/`. The fake E2E path needs **nothing**: with
+   the fake enabled the hub gives *every* discovered definition a fake runtime.
+   Do check that `tests/unit/main/agents/registry.test.ts` / `hub.test.ts` still
+   pass, run `npm run typecheck`, `npm run build`, launch the built app, and run
+   the Playwright suite. If SDK is Node-heavy, verify the packaged/`out/`
+   layout in real (non-fake) mode — unit tests cannot see chunk-path bugs.
+10. Record evidence in `docs/verification.md`; update this section and
+    `docs/agent-plugin-architecture.md`.
+
+**Disable temporarily:** `disabled: true` in `meta.ts` (agent.ts is never
+loaded). **Remove:** see "Removing an agent" above. With one agent left the
+active agent falls back to the first definition; with none the chat pane says
+"No agent available".
 
 ### `src/main/`
 
@@ -239,6 +326,46 @@ src/tools/<name>/
   `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
   snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
 
+#### Recipe: add a new tool
+
+1. **Ask the user first** what the tool exposes: its arguments, what the
+   collapsed billet summary says, how the expanded rows read (`getDetails()`,
+   see below). The tool is not done until that is agreed and implemented.
+2. `src/tools/<name>/<name>.ts` — the tool's own args/result zod schemas, URL
+   building, projection and `create<Name>Executor` (use `createToolExecutor`
+   from `src/shared/tools/core/toolModule.ts`). Export a `ToolDescriptor`, the
+   tool name (`snake_case`, e.g. `aem_get_json`) and its allowlist entry.
+3. `src/tools/<name>/tool.ts` — `export const tool: ToolModule = { name,
+   descriptor, allowlistEntry: 'custom:<name>', instructions, createExecutor(host)
+   }`. `name` must equal `descriptor.name`. `instructions` is a paragraph telling
+   the model when to use it; it is composed into the session prompt only while
+   the tool is enabled. Copy `src/tools/aem-get-json/tool.ts`.
+4. Network access only via `host.bridge.request(envelope, url)` (GET through the
+   AEM pane). **No write path exists** (§7.4); a POST-capable tool needs an
+   owner decision and a bridge change — ask.
+5. `src/tools/<name>/renderer/index.ts` — `export const renderer:
+   ToolRendererModule` with `toolName`, `describeCall` and optionally
+   `readResultTable` (see `aem-query/renderer`). Pure data, no DOM/`innerHTML`.
+6. Imports: a tool folder may import only its own files and the shared barrel
+   (`../../shared`); never another tool, `src/main`, `src/renderer` or an agent.
+   Something two tools need goes into `src/shared/tools/core/`.
+7. Shared, closed vocabularies: error codes (`ToolErrorCode`) stay shared; a tool
+   cannot invent one. Add a code to `src/shared/contracts/errors.ts` only with
+   the user's agreement and report it.
+8. Tests: `tests/unit/tools/` (manifest + executor), the renderer composition in
+   `tests/unit/renderer/chat/toolCallDetails.test.ts`, and **update the exact
+   enabled/disabled-set assertions** in `tests/unit/main/toolRegistry.test.ts`
+   and `tests/unit/renderer/chat/toolRegistry.test.ts` — they deliberately fail
+   when a dropped-in folder silently becomes model-callable. Add an E2E if the
+   rendering hinges on a custom element.
+9. Consider whether a bundled skill in `resources/skills/` should mention it
+   (skills are global and are not hidden when a tool is disabled).
+10. `npm run typecheck`, `npm run build`, launch the app, run Playwright; record
+    evidence in `docs/verification.md`.
+
+**Disable temporarily:** `disabled: true` in `tool.ts`. **Remove:** delete the
+folder and its `tests/unit/tools/*` cases (and any registry-set assertion).
+
 ### Adding a tool: design its `getDetails()` by hand
 
 `transcriptView.ts` renders every tool call as a borderless, icon-led billet
@@ -272,13 +399,16 @@ the user's home, a project directory, or an AEM response.
 
 ### `tests/`
 
-- `tests/unit/**` — mirrors `src/` one-for-one. jsdom for renderer tests.
+- `tests/unit/**` — mirrors `src/` one-for-one (`tests/unit/agents/<name>/` for
+  an agent folder, `tests/unit/tools/` for tools, `tests/unit/main/agents/` for
+  registry/hub). jsdom for renderer tests.
 - `tests/integration/**` — real sockets, real proxies, real CA, real runtime
   (`proxy-runtime.test.ts`, `agent-runtime.test.ts`, `packaged-skill.test.ts`).
 - `tests/e2e/**` — Playwright driving the **built** Electron app, one spec per
   step.
 - `tests/support/**` — shared fakes (`fakeAgent`, `fakeBrowserSide`,
-  `fakeAemTransport`, `testClock`, `testIds`).
+  `fakeAemTransport`, `testClock`, `testIds`, `agentDefinitions` — the agent
+  definitions used where a real `meta.ts` glob is not wanted, `toolUnions`).
 - `tests/fixtures/eslint-violations/**` — files that **must** fail lint; they
   prove the architectural boundary rules are actually switched on.
 
@@ -300,9 +430,10 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2380 passed / 1 failed / 14 skipped** (the one failure is
-`tests/integration/proxy-login.test.ts` case 7, an environmental
-untrusted-certificate case that predates the tool refactor);
+Current baseline: **`npm run test` → 2407 passed / 14 skipped** (`proxy-login.test.ts`
+case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
+TLS handshake, so the test now asserts "no request over the untrusted tunnel"
+instead of a proxy-side handshake error);
 **Playwright → 86 tests, all green** (includes `message-links.spec.ts`, the assistant
 message-link case, now 6 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
@@ -312,8 +443,8 @@ never-focused popover buttons, and the external-browser path, and
 billet). (The Session "Authentication"/"Models"
 → "Agents" tab merge moved the unit baseline from 1658, and later work moved it
 on — see `docs/verification.md`.) **`npm run verify`** typechecks cleanly (the old red WIP file is now the
-registered-but-disabled `src/tools/aem-create-page/`); it is red only on the
-proxy-login case above and pre-existing lint errors in
+registered-but-disabled `src/tools/aem-create-page/`); it is red only on
+pre-existing lint errors in
 `tests/unit/main/aem/session.test.ts:12` and `tests/e2e/step05-aem-session.spec.ts`
 (prefer-const).
 The repository now has **commits** (HEAD `eab74e6`), so `git status`/`git log`
@@ -340,14 +471,14 @@ E2E tests".
 `aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
 because it is injected into a remote AEM page and cannot share the app preload's
 privileges. `npm run build` runs both. TypeScript is a **project-references
-build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/agent/test.json`).
+build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/agent/test.json (`agent` covers `src/agents/**`)`).
 
 ---
 
 ## 7. Rules that are enforced, not merely preferred
 
 1. **Adobe Spectrum Web Components for all UI.** Pin `1.12.2`.
-2. **The Copilot SDK is importable only from `src/agent/`.** ESLint-enforced.
+2. **An agent SDK (e.g. the Copilot SDK) is importable only from its own `src/agents/<name>/` folder.** ESLint-enforced.
 3. **Everything under `src/shared` imports no Electron, no Node built-ins and
    no browser globals.** ESLint-enforced, with deliberately-failing fixtures in
    `tests/fixtures/eslint-violations/` to prove the rule is switched on.
@@ -359,15 +490,19 @@ build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/age
    be *omitted*, not set to `undefined`.
 8. **No agent-controlled mock switch in production.**
    `shouldUseFakeAgentService` checks `isPackaged` first.
-9. **Imports: types before values, in one statement** (convention, not
-   lint-enforced). When a single `import`
-   brings in both types and values, list all `type X` specifiers first, then the
-   value specifiers (each group alphabetical), using inline `type` modifiers -
-   not interleaved by name. Do not put a blank line between the groups
-   (Prettier strips it and `format:check` would fail). A separate
-   `import type { … }` statement is also acceptable when the type list is long.
-   Tool folders under `src/tools/**` import shared code through the `shared`
-   barrel (`'../../shared'`), not deep paths.
+9. **TypeScript imports** (convention, not lint-enforced). Use IntelliJ MCP
+   inspections to identify and shorten imports where possible (§9). Combine
+   imports from the same module path into one declaration with inline `type`
+   modifiers, e.g. `import { type A, b } from '../shared';` rather than separate
+   `import type` and value declarations. <!-- refined: same-path imports must be merged, including type imports -->
+   Within the braces, list type names first, alphabetically, then value names,
+   alphabetically; if there are more than three names, put each on its own line.
+   Do not put a blank line between type and value names (Prettier removes it).
+   Sort declarations with external libraries first (alphabetically by library
+   name), then internal imports (alphabetically by relative path). Preserve
+   side-effect-only imports and existing behavior. Tool folders under
+   `src/tools/**` import shared code through the `shared` barrel
+   (`'../../shared'`), not deep paths.
 
 ---
 
@@ -512,12 +647,12 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 | Item | State |
 | --- | --- |
 | Step 07 manual smoke checklist | **Written, never run by a human.** Needs real Copilot + real AEM. |
-| Two Copilot clients | **Design fixed.** `src/main/copilotRuntimeManager.ts` owns one `CopilotClient` for auth and chat (`replaceDelegate`), replacing `ipc/agent.ts`'s separate `cachedClient`; fake mode answers auth from the fake, so it spawns no runtime at all. The **real-path process count is still unmeasured** — measure before Step 10's shutdown work. Plan: `docs/handoff-two-copilot-clients.md`. |
+| Two Copilot clients | **Design fixed.** `src/agents/copilot/runtimeManager.ts` owns one `CopilotClient` for auth and chat (`replaceDelegate`), replacing `ipc/agent.ts`'s separate `cachedClient`; fake mode answers auth from the fake, so it spawns no runtime at all. The **real-path process count is still unmeasured** — measure before Step 10's shutdown work. Plan: `docs/handoff-two-copilot-clients.md`. |
 | `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — covered by the same handoff. |
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory. |
 | Host `proxyId` | Persisted, integrity-checked and projected, but **not applied** to the live AEM session/bridge fetch. (The *active agent's* proxy is applied to the Copilot runtime and sign-in.) |
 | `step05-address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
-| Git | Zero commits. `.idea/` is staged. |
+| Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 
 ---
 

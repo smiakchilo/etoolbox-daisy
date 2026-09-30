@@ -1,33 +1,32 @@
-import type { AgentService, AgentServiceError } from '../agent/agentService';
-import type { CurrentAemToolContext } from '../shared';
-import type {
-  AgentChatByIdRequest,
-  AgentChatError,
-  AgentChatOpenConversationRequest,
-  AgentChatOpenResult,
-  AgentChatSendMessageRequest,
-  AgentChatSendResult,
-  AgentChatStatus,
-  AgentChatVoidResult,
-  AgentEvent,
-  RequiredAction,
-  SessionStatus,
-  ToolErrorCode,
-} from '../shared';
-import {
-  applyAgentEvent,
-  type CanSendBlockReason,
-  canSendMessage,
-  type ChatId,
-  type IdGenerator,
-  type MessageId,
-  newTurnId,
-  type ServerId,
-  type ToolCallId,
-  type TurnId,
-} from '../shared';
 import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
+import {
+  type AgentChatByIdRequest,
+  type AgentChatError,
+  type AgentChatOpenConversationRequest,
+  type AgentChatOpenResult,
+  type AgentChatSendMessageRequest,
+  type AgentChatSendResult,
+  type AgentChatStatus,
+  type AgentChatVoidResult,
+  type AgentEvent,
+  type AgentService,
+  type AgentServiceError,
+  type CanSendBlockReason,
+  type ChatId,
+  type CurrentAemToolContext,
+  type IdGenerator,
+  type MessageId,
+  type RequiredAction,
+  type ServerId,
+  type SessionStatus,
+  type ToolCallId,
+  type ToolErrorCode,
+  type TurnId,
+  applyAgentEvent,
+  canSendMessage,
+  newTurnId,
+} from '../shared';
 
 /**
  * Puts the application-owned `AgentService` (implementation-plan.md step 07)
@@ -198,7 +197,7 @@ function notOpenConversationError(chatId: ChatId): AgentChatError {
 
 const BLOCK_REASON_MESSAGES: Readonly<Record<CanSendBlockReason, string>> = {
   session_closed: 'This conversation is closed',
-  not_authenticated: 'Sign in to Copilot before sending a message',
+  not_authenticated: 'Sign in to the agent before sending a message',
   session_error: 'Dismiss the current error before sending another message.',
   turn_in_progress:
     'Wait for the current response to finish (or press Stop) before sending another message.',
@@ -207,9 +206,9 @@ const BLOCK_REASON_MESSAGES: Readonly<Record<CanSendBlockReason, string>> = {
 function blockReasonError(reason: CanSendBlockReason): AgentChatError {
   if (reason === 'not_authenticated') {
     return createAgentChatError(
-      'COPILOT_UNAVAILABLE',
+      'AGENT_UNAVAILABLE',
       BLOCK_REASON_MESSAGES[reason],
-      'sign_in_to_copilot',
+      'sign_in_to_agent',
     );
   }
   return createAgentChatError('PRECONDITION_FAILED', BLOCK_REASON_MESSAGES[reason]);
@@ -572,7 +571,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 
 /**
  * The error every request this placeholder refuses carries. `PRECONDITION_FAILED`
- * (not `COPILOT_UNAVAILABLE`) is deliberate: this is not a claim about the
+ * (not `AGENT_UNAVAILABLE`) is deliberate: this is not a claim about the
  * user's Copilot entitlement or sign-in state - main has not even asked yet -
  * it is "the session is not in a state that permits the operation, and the
  * identical request may succeed once the blocking condition clears" (see
@@ -584,16 +583,25 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 function agentServiceStartingError(): AgentChatError {
   return createAgentChatError(
     'PRECONDITION_FAILED',
-    'The Copilot agent service is still starting. Try again in a moment.',
+    'The agent service is still starting. Try again in a moment.',
   );
+}
+
+/**
+ * The refusal while no agent exists at all (every agent folder removed or
+ * disabled, or the configured one failed to load). Unlike the starting error,
+ * waiting does not help, so it names the state instead of asking to retry.
+ */
+function agentUnavailableError(): AgentChatError {
+  return createAgentChatError('AGENT_UNAVAILABLE', 'No agent is available.');
 }
 
 /**
  * Returned by `createStartupGatedAgentChatController` in addition to the
  * full `AgentChatController` surface: `replaceDelegate` is how the composition
  * root swaps in a fully-initialized controller - first once the background
- * Copilot startup finishes, and again whenever the Copilot runtime is recycled
- * (a proxy or active-provider change; see `copilotRuntimeManager.ts`) -
+ * agent startup finishes, and again whenever the agent runtime is recycled
+ * (a proxy or active-provider change; see `agents/copilot/runtimeManager.ts`) -
  * without the IPC handlers (`ipc/agentChat.ts`) or the tool-context binding
  * (`agentComposition.ts`'s `createLateBoundAemToolContext`) ever having to be
  * re-wired: they were already pointed at this same object.
@@ -606,20 +614,27 @@ export interface StartupGatedAgentChatController extends AgentChatController {
    * disposes that previous one.
    *
    * Calling this more than once is a deliberate, supported operation, not a
-   * bug: recycling the Copilot runtime necessarily replaces the
+   * bug: recycling the agent runtime necessarily replaces the
    * `AgentService` (and so the chat controller built from it) while the
    * request never moves off this one long-lived gated object. The previous
    * delegate is disposed *after* the new one is installed, so a listener
    * registered at any point sees no gap in coverage.
    */
   replaceDelegate(controller: AgentChatController): Promise<void>;
+  /**
+   * Reports that no agent can serve the chat: `getStatus` answers
+   * `serviceState: "unavailable"`, writes are refused with an explicit error,
+   * and any installed delegate is disposed. A later `replaceDelegate` clears
+   * the state again.
+   */
+  markUnavailable(): Promise<void>;
 }
 
 /**
  * Registering the `agent-chat:*` IPC handlers (`ipc/agentChat.ts`) requires
  * an `AgentChatController` to exist *before* the real one can - building the
  * real one needs an `AgentService`, and building that needs
- * `copilotClient.start()` (seconds, on the real path; see this module's own
+ * the agent runtime starting (seconds, on the real path; see this module's own
  * top-of-file doc comment and `agentComposition.ts`'s
  * `startAgentServiceInBackground`). Registering the handlers late instead
  * would leave the `agent-chat:*` channels entirely unanswered for that same
@@ -641,6 +656,7 @@ export interface StartupGatedAgentChatController extends AgentChatController {
  */
 export function createStartupGatedAgentChatController(): StartupGatedAgentChatController {
   let real: AgentChatController | undefined;
+  let unavailable = false;
   let unsubscribeRealEvents: (() => void) | undefined;
   let unsubscribeRealStatus: (() => void) | undefined;
   const forwardListeners = new Set<(event: AgentEvent) => void>();
@@ -662,19 +678,23 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
       activeChatId: null,
       sdkSessionId: null,
       sessionState: 'idle',
-      serviceState: 'starting',
+      serviceState: unavailable ? 'unavailable' : 'starting',
     };
+  }
+
+  function notReadyError(): AgentChatError {
+    return unavailable ? agentUnavailableError() : agentServiceStartingError();
   }
 
   async function openConversation(
     request: AgentChatOpenConversationRequest,
   ): Promise<AgentChatOpenResult> {
-    if (!real) return { ok: false, error: agentServiceStartingError() };
+    if (!real) return { ok: false, error: notReadyError() };
     return real.openConversation(request);
   }
 
   async function sendMessage(request: AgentChatSendMessageRequest): Promise<AgentChatSendResult> {
-    if (!real) return { ok: false, error: agentServiceStartingError() };
+    if (!real) return { ok: false, error: notReadyError() };
     return real.sendMessage(request);
   }
 
@@ -731,6 +751,7 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     // new controller, and the old delegate's teardown (emitted by `dispose`
     // below) is excluded by its own now-detached subscription.
     real = controller;
+    unavailable = false;
     unsubscribeRealEvents = controller.onEvent((event) => {
       for (const listener of [...forwardListeners]) listener(event);
     });
@@ -745,6 +766,18 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     return previous.dispose();
   }
 
+  async function markUnavailable(): Promise<void> {
+    const previous = real;
+    unsubscribeRealEvents?.();
+    unsubscribeRealStatus?.();
+    unsubscribeRealEvents = undefined;
+    unsubscribeRealStatus = undefined;
+    real = undefined;
+    unavailable = true;
+    notifyStatusChanged();
+    if (previous !== undefined) await previous.dispose();
+  }
+
   return {
     getStatus,
     openConversation,
@@ -757,6 +790,7 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     handleAemContextInvalidated,
     dispose,
     replaceDelegate,
+    markUnavailable,
   };
 }
 

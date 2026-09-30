@@ -2,29 +2,11 @@ import { app, BrowserWindow, Menu, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
-import { mergeDisabledFeatures } from './disabledFeatures';
-import { registerAgentAuthHandlers } from './ipc/agent';
-import { registerAgentChatIpcHandlers } from './ipc/agentChat';
-import { registerAppInfoHandler } from './ipc/app-info';
-import { registerBrowserIpcHandlers } from './ipc/browser';
-import { registerSettingsIpcHandlers } from './ipc/settings';
-import { createTrustedWindowRegistry } from './ipc/trustedWindows';
-import { createChatJournal } from './chatJournal';
-import { createSkillCatalog } from './skills/skillCatalog';
-import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
-import { createLogger } from './logger';
-import { createSecretStore } from './secretStore';
-import { loadSettings, loadSettingsSync, configuredAgentId } from './settingsStore';
-import { installContentSecurityPolicy } from './csp';
-import { installWebContentsSecurityGuard } from './security';
+import { err, resolveSkillPrompt, type AuthStatus } from '../shared';
 import { createAemSession } from './aem';
 import { createAemBridgeBroker } from './aem/bridgeBroker';
 import { createAemBridgeTransport } from './aem/bridgeTransport';
 import { createToolHttpLogger } from './aem/toolHttpLog';
-import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
-import { createBrowserController } from './browser/browserController';
-import { APP_USER_MODEL_ID, createMainWindow } from './windows';
 import { createStartupGatedAgentChatController } from './agentChatController';
 import {
   createBridgeCurrentContext,
@@ -32,33 +14,37 @@ import {
   createCurrentPageContext,
   createLateBoundAemToolContext,
   createModelPreferenceCache,
-  exposeFakeAgentServiceForTests,
-  fakeModelCatalog,
+  installAgentService,
   isModelSelectionLocked,
   resolveBundledSkillsDirectory,
-  selectAgentService,
   shouldUseFakeAgentService,
-  startAgentServiceInBackground,
   startAppRuntime,
   wireNavigationEpochCancellation,
 } from './agentComposition';
-import {
-  createHardenedCopilotClient,
-  loadModelCatalog,
-  toAuthStatus,
-  type CopilotClient,
-} from '../agent';
-import { createCopilotRuntimeManager, type CopilotRuntimeManager } from './copilotRuntimeManager';
-import { resolveAgentGithubToken, resolveAgentProxyOverrides } from './agentRuntimeProxy';
-import { buildAemToolPolicy } from '../agent/aemTool';
+import { discoverAgentCatalog } from './agents/catalog';
+import { resolveConnection } from './agents/connection';
+import { createAgentHub, type AgentHub } from './agents/hub';
+import { buildAgentRegistry, discoverAgentLoaders } from './agents/registry';
+import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
+import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
+import { createBrowserController } from './browser/browserController';
+import { createChatJournal } from './chatJournal';
+import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
+import { installContentSecurityPolicy } from './csp';
+import { mergeDisabledFeatures } from './disabledFeatures';
+import { registerAgentAuthHandlers } from './ipc/agent';
+import { registerAgentChatIpcHandlers } from './ipc/agentChat';
+import { registerAppInfoHandler } from './ipc/app-info';
+import { registerBrowserIpcHandlers } from './ipc/browser';
+import { registerSettingsIpcHandlers } from './ipc/settings';
+import { createTrustedWindowRegistry } from './ipc/trustedWindows';
+import { createLogger } from './logger';
+import { createSecretStore } from './secretStore';
+import { installWebContentsSecurityGuard } from './security';
+import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
+import { createSkillCatalog } from './skills/skillCatalog';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
-import { createSdkAgentService } from '../agent/sdkAgentService';
-import {
-  createFakeAgentService,
-  DEFAULT_FAKE_AUTH_STATE,
-  type FakeAgentService,
-} from '../agent/fakeAgentService';
-import { err, ok, resolveSkillPrompt, type ModelCatalogEntry, type Result } from '../shared';
+import { APP_USER_MODEL_ID, createMainWindow } from './windows';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
@@ -194,43 +180,49 @@ if (!gotSingleInstanceLock) {
     installWebContentsSecurityGuard(rendererDistDir);
     installAppProtocolHandler(rendererDistDir);
     registerAppInfoHandler();
-    // `runtimeManager` is assigned further below, once the AEM tool executors
-    // and skill directory it (and the chat runtime) needs exist. These three
-    // closures only ever run on a user action - an auth-status poll or a
-    // sign-in click - long after this synchronous block has finished, so
-    // reading it lazily here is safe and is what lets the auth handlers and
-    // the chat surface share a single client.
-    // Decided once, here, from the exact same `(env, isPackaged)` inputs
-    // `selectAgentService` uses internally - so the auth surface below and the
-    // agent service it must agree with can never disagree about whether the
-    // deterministic fake is in use. Reused further down for the runtime
-    // manager and the model catalogue.
+    // Which agents this build contains: the eager glob of `src/agents/*/meta.ts`
+    // (SDK-free). Read before anything else so the settings and auth surfaces
+    // below all agree on the list. A `meta.ts` that is malformed is skipped
+    // and reported once the logger exists.
+    const agentCatalog = discoverAgentCatalog();
+    const agentDefinitions = agentCatalog.definitions;
+    // Decided once, from the same inputs everything else uses - so the auth
+    // surface and the runtimes it fronts can never disagree about whether the
+    // deterministic fake is in use.
     const useFakeAgentService = shouldUseFakeAgentService(process.env, app.isPackaged);
 
+    // Assigned once the tool registry (which an agent's toolkit reads) exists,
+    // further below. The window created above can load and poll
+    // `agent:get-auth-status` before then; those calls must answer "still
+    // starting" rather than hit an unregistered channel or throw.
+    let agentHub: AgentHub | undefined = undefined;
+    const STARTING: AuthStatus = {
+      apiVersion: 1,
+      isAuthenticated: false,
+      statusMessage: 'The agent is still starting.',
+    };
     registerAgentAuthHandlers({
-      getClient: () => runtimeManager?.getClient(),
-      refreshRuntime: () => runtimeManager?.refresh() ?? Promise.resolve(),
-      // Read fresh, not from the startup snapshot: the user may have changed
-      // the active provider's proxy since launch, and sign-in must use the
-      // proxy the runtime is *currently* configured with.
-      getProxyOverrides: async () => {
-        const loaded = await loadSettings(appPaths.settings);
-        return loaded.ok
-          ? resolveAgentProxyOverrides(loaded.value.settings, secretStore)
-          : undefined;
+      hub: {
+        getAuthStatus: async (agentId) => (await agentHub?.getAuthStatus(agentId)) ?? STARTING,
+        login: async (agentId, settings) =>
+          (await agentHub?.login(agentId, settings)) ?? {
+            status: 'failed',
+            message: 'The agent is still starting.',
+          },
+        cancelLogin: (agentId) => agentHub?.cancelLogin(agentId),
+        logout: async (agentId) =>
+          (await agentHub?.logout(agentId)) ?? {
+            apiVersion: 1,
+            warning: 'The agent is still starting.',
+          },
       },
-      // In fake mode the fake is the authority on sign-in (see the dependency's
-      // own doc comment); omitted entirely on the real path, which is what
-      // `exactOptionalPropertyTypes` requires rather than `undefined`. Read
-      // through the late-bound service below, falling back to the fake's own
-      // documented default for the instant before it exists - never to the real
-      // runtime, which fake mode deliberately never uses.
-      ...(useFakeAgentService
-        ? {
-            getFakeAuthStatus: () =>
-              fakeAgentService?.getAuthState() ?? { ...DEFAULT_FAKE_AUTH_STATE },
-          }
-        : {}),
+      // Read fresh, not from the startup snapshot: the user may have changed
+      // the agent's proxy since launch, and sign-in must use the proxy the
+      // runtime is *currently* configured with.
+      loadSettings: async () => {
+        const loaded = await loadSettings(appPaths.settings);
+        return loaded.ok ? loaded.value.settings : undefined;
+      },
     });
 
     // Step 04: diagnostics-only logger, and the OS-backed secret store for
@@ -248,7 +240,7 @@ if (!gotSingleInstanceLock) {
     const toolLogger = createToolHttpLogger(appPaths.logs);
     // The append-only chat journal (implementation-plan.md step 09): one JSON
     // Lines file per chat under `<home>/etoolbox-daisy/chats`. Owned here for
-    // the app's lifetime, not by a controller - the Copilot runtime recycles
+    // the app's lifetime, not by a controller - an agent runtime recycles
     // (replacing the controller) while the same journal keeps appending.
     const chatJournal = createChatJournal(appPaths.chats);
     const secretsDir = path.join(appPaths.settings, 'secrets');
@@ -310,19 +302,6 @@ if (!gotSingleInstanceLock) {
     // lifetime.
     const trustedWindows = createTrustedWindowRegistry([mainWindow.webContents.id]);
 
-    // Decided once, from the exact same pure function `selectAgentService`
-    // calls internally with the same `env`/`isPackaged` - so the runtime
-    // `copilotRuntimeManager.ts` builds and the adapter `selectAgentService`
-    // builds always agree on which path was taken. The client itself is no
-    // longer constructed here: it is owned by
-    // `createCopilotRuntimeManager`, which also recycles it when the active
-    // provider or its proxy changes. Starting it (`client.start()`, several
-    // seconds on the real path) - together with `agentService.initialize()` -
-    // must never sit on this synchronous critical path; both run inside
-    // `startAgentServiceInBackground`, kicked off below without being awaited.
-    // (`useFakeAgentService` itself was decided above, next to the auth
-    // handlers that must agree with it.)
-
     // Seeded from the settings load above so the first prompt after launch
     // already uses the stored model, with no disk read on the send path. See
     // `createModelPreferenceCache`'s doc comment. A corrupt settings file
@@ -330,10 +309,14 @@ if (!gotSingleInstanceLock) {
     // guessed model. Read from the *configured* provider's node: the model is
     // now per-provider, not a single global default.
     const storedSettings = settingsLoadOutcome.ok ? settingsLoadOutcome.value.settings : undefined;
-    const storedAgent =
+    const storedAgentId =
       storedSettings === undefined
         ? undefined
-        : storedSettings.agents[configuredAgentId(storedSettings)];
+        : configuredAgentId(storedSettings, agentDefinitions);
+    const storedAgent =
+      storedSettings === undefined || storedAgentId === undefined
+        ? undefined
+        : storedSettings.agents[storedAgentId];
     const modelPreferenceCache = createModelPreferenceCache({
       model: storedAgent?.model ?? null,
       reasoningEffort: storedAgent?.reasoningEffort ?? null,
@@ -349,51 +332,19 @@ if (!gotSingleInstanceLock) {
     // ordering reason as the model cache above.
     const agentChatController = createStartupGatedAgentChatController();
 
-    // Assigned once the AEM tool executors and skill directory below exist -
-    // `startRuntime` closes over all three. Every reader (`loadCatalog`,
-    // `onAgentSettingsSaved`) looks it up lazily through this `let`, since
-    // those closures only ever run after a user action, long after this
-    // synchronous block has finished. Explicitly `undefined` until then: the
-    // window created above can load and poll `agent:get-auth-status` before
-    // this assignment runs, and that read must answer "still starting" rather
-    // than throw.
-    let runtimeManager: CopilotRuntimeManager | undefined = undefined;
-
-    // The deterministic fake service, once `startRuntime` has built it. Same
-    // late-binding reason as `runtimeManager`: `agent:get-auth-status` must
-    // answer from the fake as soon as it exists, and the renderer can poll it
-    // before this block has finished. Always `undefined` on the real path.
-    let fakeAgentService: FakeAgentService | undefined = undefined;
-
-    // Resolved per call, not captured: the Copilot client is started - and on
-    // a proxy change, restarted - well after this registration runs. A read
-    // waits for that (re)install via `whenReady()` and then reads whatever
-    // client is current, so an early Settings open waits for the runtime
-    // rather than reporting a catalogue failure; a genuinely unreadable
-    // catalogue still comes back as `err` and is reported honestly (see
-    // `getModelSelection`). Shared by the step-09 model channels and the
-    // agents channel: both read the one catalogue.
-    const loadCatalog = async (): Promise<
-      Result<readonly ModelCatalogEntry[], { readonly message: string }>
-    > => {
-      // The fake agent never starts a Copilot runtime, so there is no
-      // catalogue to read; a fixed one keeps the section exercisable.
-      // Unreachable when packaged - see `shouldUseFakeAgentService`.
-      if (useFakeAgentService) return ok(fakeModelCatalog());
-      if (runtimeManager === undefined) {
-        return err({
-          message: 'Copilot is still starting. Reopen Settings in a moment.',
-        });
+    // Resolved per call: the agent's runtime is started - and on a proxy change,
+    // restarted - well after this registration runs. The hub waits for that
+    // (re)install and reads the configured agent's catalogue, so an early
+    // Settings open waits for the runtime rather than reporting a failure; a
+    // genuinely unreadable catalogue still comes back as `err` and is reported
+    // honestly (see `getModelSelection`). Shared by the step-09 model channels
+    // and the agents channel: both read the one catalogue.
+    const loadCatalog = async () => {
+      if (agentHub === undefined) {
+        return err({ message: 'The agent is still starting. Reopen Settings in a moment.' });
       }
-      // Wait out an in-flight (re)install before reading. A proxy change
-      // recycles the runtime, and reading the freshly-created client before
-      // its `start()` has resolved fails the catalogue even though the runtime
-      // is seconds from being usable - which is what made a proxy switch show
-      // a spurious "could not retrieve the list of models" instead of the new
-      // runtime's catalogue. `whenReady()` never rejects, so a failed install
-      // still reaches the honest `loadModelCatalog` failure below.
-      await runtimeManager.whenReady();
-      return loadModelCatalog(runtimeManager.getClient());
+      await agentHub.whenReady();
+      return agentHub.loadModelCatalog();
     };
     // Step 09's "disable changes during an active turn". Read through the
     // gated controller so it answers honestly ("starting", hence not in a
@@ -401,19 +352,16 @@ if (!gotSingleInstanceLock) {
     const isTurnInFlight = (): boolean =>
       isModelSelectionLocked(agentChatController.getStatus().sessionState);
 
-    // Recycles the Copilot runtime after a stored personal-access token has
-    // been set or cleared. The settings document is reloaded rather than
-    // reusing the captured one, because the *first* token set mints its
+    // Recycles the configured agent's runtime after a stored personal-access
+    // token has been set or cleared. The settings document is reloaded rather
+    // than reusing the captured one, because the *first* token set mints its
     // `secretRef` into settings.json - the captured document would still
-    // describe no token, and `resolveAgentGithubToken` would find none. A
-    // failed reload falls back to the last-known document, which still names
-    // the same `secretRef`; the token's plaintext is re-read from the secret
-    // store either way.
+    // describe no token. A failed reload falls back to the hub's last-known
+    // document, which still names the same `secretRef`; the token's plaintext is
+    // re-read from the secret store either way.
     const refreshRuntimeAfterTokenChange = async (): Promise<void> => {
       const loaded = await loadSettings(appPaths.settings);
-      await (loaded.ok
-        ? runtimeManager?.refresh(loaded.value.settings)
-        : runtimeManager?.refresh());
+      await (loaded.ok ? agentHub?.refresh(loaded.value.settings) : agentHub?.refresh());
     };
 
     registerSettingsIpcHandlers({
@@ -422,30 +370,31 @@ if (!gotSingleInstanceLock) {
       logger,
       rendererDistDir,
       isTrustedWebContentsId: (id) => trustedWindows.has(id),
+      agentDefinitions,
       modelSelection: {
+        definitions: agentDefinitions,
         loadCatalog,
         isTurnInFlight,
         onPreferencesSaved: (preference) => modelPreferenceCache.set(preference),
       },
       agentSettings: {
+        definitions: agentDefinitions,
         loadCatalog,
         isTurnInFlight,
         // Recycles the runtime only when the change actually shapes it (the
         // active provider or its proxy) - a model/effort change is told to
-        // the runtime at prompt time instead. See `copilotRuntimeManager.ts`.
+        // the runtime at prompt time instead. See the agent's `runtimeManager`.
         onAgentSettingsSaved: (settings) => {
-          void runtimeManager?.reconcile(settings).catch(() => logger.error('COPILOT_UNAVAILABLE'));
+          void agentHub?.reconcile(settings).catch(() => logger.error('AGENT_UNAVAILABLE'));
         },
       },
-      // A stored token is a runtime credential (handed over as
-      // `COPILOT_GITHUB_TOKEN`), so setting or clearing one has to recycle the
-      // runtime - the running process resolved its old credential at start.
-      // Skipped in fake mode: no chat runtime consumes the token there, and
-      // recycling would discard the deterministic fake's state (see
-      // `recycleOnSettingsChange` in `copilotRuntimeManager.ts`).
+      // A stored token is a runtime credential, so setting or clearing one has
+      // to recycle the runtime - the running process resolved its old credential
+      // at start. Skipped in fake mode: no runtime consumes the token there, and
+      // recycling would discard the deterministic fake's state.
       onAgentTokenChanged: () => {
         if (useFakeAgentService) return;
-        void refreshRuntimeAfterTokenChange().catch(() => logger.error('COPILOT_UNAVAILABLE'));
+        void refreshRuntimeAfterTokenChange().catch(() => logger.error('AGENT_UNAVAILABLE'));
       },
     });
 
@@ -515,10 +464,6 @@ if (!gotSingleInstanceLock) {
     // through unchanged until the catalogue is known.
     const skillCatalog = createSkillCatalog(bundledSkillsDirectory);
 
-    // Decided once, from the exact same pure function `selectAgentService`
-    // calls internally with the same `env`/`isPackaged` - so the client
-    // constructed here and the adapter `selectAgentService` builds always
-    // agree on which path was taken. See the declaration above.
     lateBoundAemToolContext.bind(agentChatController);
 
     const unregisterAgentChatIpc = registerAgentChatIpcHandlers({
@@ -569,6 +514,7 @@ if (!gotSingleInstanceLock) {
       unwireNavigationEpochCancellation();
       unregisterAgentChatIpc();
       void agentChatController.dispose();
+      void agentHub?.stop();
       aemBridgeBroker.dispose();
       aemBridgeTransport.dispose();
       browserController.destroy();
@@ -580,143 +526,101 @@ if (!gotSingleInstanceLock) {
       }
     });
 
-    // `startRuntime` is the one startup/restart path, reused for the first
-    // start and for every recycle. It takes the client as a parameter
-    // (rather than closing over one) precisely because a recycle replaces
-    // it; everything else about it - executor wiring, skill directory,
-    // ordering of `client.start()` before `agentService.initialize()` before
-    // `replaceDelegate` - is identical either way, and lives in
-    // `startAgentServiceInBackground`.
-    const startRuntime = (client: CopilotClient | undefined): Promise<void> =>
-      startAgentServiceInBackground({
-        // The fake path must not spawn a real runtime for chat: the client is
-        // still created (auth uses it), but only `agent:*` starts it, lazily.
-        copilotClient: useFakeAgentService ? undefined : client,
-        buildAgentService: () =>
-          selectAgentService({
-            env: process.env,
-            isPackaged: app.isPackaged,
-            logger,
-            createFakeService: () => {
-              const fakeService = createFakeAgentService();
-              // Test-only: see `exposeFakeAgentServiceForTests`'s doc
-              // comment in `agentComposition.ts`. Reachable only because
-              // this factory itself only runs when
-              // `shouldUseFakeAgentService(env, isPackaged)` is true.
-              exposeFakeAgentServiceForTests(fakeService);
-              // Published for `agent:get-auth-status` (see the dependency's
-              // doc comment at the auth registration above).
-              fakeAgentService = fakeService;
-              return fakeService;
-            },
-            createRealService: () => {
-              if (client === undefined) {
-                // Unreachable: this factory only runs when
-                // `shouldUseFakeAgentService` returned false for
-                // `selectAgentService`'s own `(env, isPackaged)` - the
-                // same inputs `useFakeAgentService` above was computed
-                // from - so a client was necessarily constructed by
-                // `createClient` below.
-                throw new Error(
-                  'Internal error: real agent service selected without a Copilot client.',
-                );
-              }
-              return createSdkAgentService({
-                client,
-                policy: buildAemToolPolicy({
-                  allowlistEntries: toolRegistry.allowlistEntries,
-                  instructions: toolRegistry.instructions,
-                  bundledSkillDirectories: [bundledSkillsDirectory],
-                }),
-                // The SDK's raw `auth.getStatus` response carries no
-                // `apiVersion`; `toAuthStatus` projects it onto this app's
-                // `AuthStatus` DTO. Passing the bare `client` here (whose
-                // `getAuthStatus()` returns the raw shape) made every real
-                // `initialize()` fail its `apiVersion` validation.
-                authSource: {
-                  getAuthStatus: async () => toAuthStatus(await client.getAuthStatus()),
-                },
-                toolHandlers: toolRegistry.toolHandlers,
-                toolDescriptors: toolRegistry.descriptors,
-                // Step 09: read from the cache below on every use, so a
-                // model chosen in Settings reaches the next prompt without
-                // a restart. Deliberately synchronous - `sendPrompt` must
-                // not wait on a disk read before every turn - which is why
-                // the settings file is not consulted directly here.
-                modelPreferences: () => modelPreferenceCache.current(),
-              });
-            },
-          }),
-        logger,
-        idGenerator: randomUUID,
-        currentAemServerContext: createCurrentAemServerContext(() =>
-          browserController.activeServer(),
-        ),
-        navigationEpoch: () => browserController.navigationEpoch.current(),
-        currentPageContext: createCurrentPageContext(
-          () => browserController.activeServer(),
-          () => browserController.currentDocumentUrl(),
-        ),
-        chatJournal,
-        // Stop / chat switch / close / context change all cancel the bridge's
-        // in-flight and queued AEM requests, so a stopped tool call releases the
-        // concurrency-1 slot immediately instead of running to its 90 s deadline.
-        cancelAemRequests: () => aemBridgeBroker.cancelAll(),
-        // A prompt that begins with a known `/skillname` becomes an explicit
-        // directive to load that skill; the user's own text is kept for the
-        // transcript and the journal by the controller. `current()` is empty
-        // until the catalogue read lands, so an unknown or not-yet-loaded name
-        // is passed through unchanged.
-        resolveSkillPrompt: (prompt) =>
-          resolveSkillPrompt(
-            prompt,
-            skillCatalog.current().map((skill) => skill.name),
-          ),
-        gatedController: agentChatController,
-      });
+    // Agents are discovered from `src/agents/*/agent.ts`; one that fails to load
+    // or construct is logged and left out, never fatal. The fake path builds no
+    // real module at all (and so never imports an SDK).
+    const agentRegistry = useFakeAgentService
+      ? { modules: [], failures: [] }
+      : await buildAgentRegistry({
+          loaders: discoverAgentLoaders(),
+          definitions: agentDefinitions,
+          disabledSources: agentCatalog.disabledSources,
+          onFailure: (failure) => {
+            // The logger has no free-text field by design, so the reason goes to stderr.
+            console.error(`Agent ${failure.source} was not registered: ${failure.reason}`);
+            logger.warn('AGENT_REGISTRATION_FAILED', { count: 1 });
+          },
+        });
+    for (const failure of agentCatalog.failures) {
+      console.error(`Agent ${failure.source} was not registered: ${failure.reason}`);
+      logger.warn('AGENT_REGISTRATION_FAILED', { count: 1 });
+    }
+    if (useFakeAgentService) {
+      logger.warn('AGENT_SERVICE_FAKE_SELECTED');
+    }
 
-    runtimeManager = createCopilotRuntimeManager({
-      recycleOnSettingsChange: !useFakeAgentService,
-      startRuntime,
-      // The runtime resolves its active credential inside its own process, so
-      // a still-running one reports stale auth after the active account
-      // changes - and it would keep using the old proxy regardless. Recycled
-      // clients are therefore always stopped, never left running; already
-      // exited is the normal case and is not an error.
-      stopClient: async (client) => {
-        try {
-          await client.stop();
-        } catch {
-          // Already exited or never started - nothing to clean up.
-        }
-      },
-      createClient: ({ proxy, githubToken }) =>
-        createHardenedCopilotClient({
-          ...(proxy !== undefined ? { proxy } : {}),
-          ...(githubToken !== undefined ? { githubToken } : {}),
+    // The one owner of every agent's runtime: startup, recycle on a proxy or
+    // active-agent change, sign-in and the model catalogue. It knows agents only
+    // through the `AgentRuntime` contract; the SDK-specific code stays in
+    // `src/agents/<name>/`.
+    agentHub = createAgentHub({
+      definitions: agentDefinitions,
+      modules: agentRegistry.modules,
+      useFake: useFakeAgentService,
+      host: {
+        isPackaged: app.isPackaged,
+        resolveConnection: (agentId, settings) =>
+          resolveConnection(agentId, settings ?? storedSettings, secretStore),
+        toolkit: () => ({
+          allowlistEntries: toolRegistry.allowlistEntries,
+          instructions: toolRegistry.instructions,
+          toolHandlers: toolRegistry.toolHandlers,
+          toolDescriptors: toolRegistry.descriptors,
+          bundledSkillDirectories: [bundledSkillsDirectory],
         }),
-      // A rejection here (secret storage unavailable, ...) aborts the recycle
-      // *before* the working runtime is touched - see the manager's own doc
-      // comment - so the user keeps a functioning (if stale) runtime rather
-      // than none.
-      resolveProxyOverrides: (settings) => resolveAgentProxyOverrides(settings, secretStore),
-      // The stored personal-access token, handed to the runtime as
-      // `COPILOT_GITHUB_TOKEN` (the one supported path; ambient tokens stay
-      // stripped - see `buildRuntimeChildEnv`). `undefined` leaves the runtime
-      // to interactive sign-in.
-      resolveGithubToken: (settings) => resolveAgentGithubToken(settings, secretStore),
+        // Step 09: read from the cache on every use, so a model chosen in
+        // Settings reaches the next prompt without a restart. Deliberately
+        // synchronous - `sendPrompt` must not wait on a disk read.
+        modelPreferences: () => modelPreferenceCache.current(),
+      },
+      installService: (service) =>
+        installAgentService(
+          {
+            logger,
+            idGenerator: randomUUID,
+            currentAemServerContext: createCurrentAemServerContext(() =>
+              browserController.activeServer(),
+            ),
+            navigationEpoch: () => browserController.navigationEpoch.current(),
+            currentPageContext: createCurrentPageContext(
+              () => browserController.activeServer(),
+              () => browserController.currentDocumentUrl(),
+            ),
+            chatJournal,
+            // Stop / chat switch / close / context change all cancel the bridge's
+            // in-flight and queued AEM requests, so a stopped tool call releases
+            // the concurrency-1 slot immediately instead of running to its 90 s
+            // deadline.
+            cancelAemRequests: () => aemBridgeBroker.cancelAll(),
+            // A prompt that begins with a known `/skillname` becomes an explicit
+            // directive to load that skill; the user's own text is kept for the
+            // transcript and the journal by the controller.
+            resolveSkillPrompt: (prompt) =>
+              resolveSkillPrompt(
+                prompt,
+                skillCatalog.current().map((skill) => skill.name),
+              ),
+            gatedController: agentChatController,
+          },
+          service,
+        ),
+      markUnavailable: () => agentChatController.markUnavailable(),
+      onRuntimeFailure: (agentId, error) => {
+        console.error(
+          `Agent ${agentId} runtime failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        logger.error('AGENT_UNAVAILABLE');
+      },
     });
+    const hub = agentHub;
 
     // Everything above is already fully wired and interactive - nothing the
-    // user can see or click depends on the Copilot runtime. Only now does
-    // startup touch it, and never by blocking anything else on it:
-    // `registerNonAgentHandlers` runs synchronously first, then
-    // `startAgentServiceInBackground` (`client.start()` +
-    // `agentService.initialize()`) runs in the background - `startAppRuntime`
-    // never awaits it. A startup failure there (Copilot CLI missing, corrupt
-    // install, `initialize()` itself rejecting, ...) is logged loudly
-    // instead of leaving a silently half-wired app or an unhandled
-    // rejection; see `startAppRuntime`'s own doc comment in
+    // user can see or click depends on an agent. Only now does startup touch
+    // one, and never by blocking anything else on it: `hub.start` runs in the
+    // background - `startAppRuntime` never awaits it. A startup failure there
+    // (runtime missing, corrupt install, `initialize()` rejecting, ...) is
+    // logged loudly instead of leaving a silently half-wired app or an
+    // unhandled rejection; see `startAppRuntime`'s doc comment in
     // `agentComposition.ts`.
     startAppRuntime({
       registerNonAgentHandlers: () => {
@@ -726,14 +630,14 @@ if (!gotSingleInstanceLock) {
         // registering here beyond the always-present IPC sets above.
         return;
       },
-      startAgentService: () => runtimeManager.start(storedSettings),
+      startAgentService: () => hub.start(storedSettings),
       // No free-text field exists on `Logger` by design (see its own module
-      // doc comment): `COPILOT_UNAVAILABLE` is already the closed-vocabulary
-      // code for exactly this failure ("the Copilot runtime ... is
+      // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary
+      // code for exactly this failure ("the agent runtime ... is
       // unusable"), so the rejection reason itself is deliberately not
       // forwarded anywhere near the log.
       onAgentServiceStartupFailed: () => {
-        logger.error('COPILOT_UNAVAILABLE');
+        logger.error('AGENT_UNAVAILABLE');
       },
     });
   });

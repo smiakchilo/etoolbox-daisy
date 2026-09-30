@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   appSettingsSchema,
   appSettingsSnapshotSchema,
-  DEFAULT_AGENT_ID,
   HOST_PROXY_NONE,
   newProxyId,
   newServerId,
@@ -11,6 +10,7 @@ import {
   serverSnapshotSchema,
   toAppSettingsSnapshot,
 } from '../../../../src/shared';
+import { TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 const CANARY_SECRET_REF = 'CANARY-SECRETREF-8f14e45fceea167a';
 
@@ -36,7 +36,7 @@ function settingsWithProxyCredentials(secretRef: string) {
   return appSettingsSchema.parse({
     hosts: [serverA],
     proxies: [proxyEntry],
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: { [TEST_AGENT_ID]: { active: true } },
   });
 }
 
@@ -79,7 +79,7 @@ describe('toAppSettingsSnapshot', () => {
     const settings = appSettingsSchema.parse({
       hosts: [serverA],
       proxies: [proxyEntry],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
@@ -106,7 +106,7 @@ describe('toAppSettingsSnapshot', () => {
     const settings = appSettingsSchema.parse({
       hosts: [serverA],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
@@ -119,15 +119,15 @@ describe('toAppSettingsSnapshot', () => {
     const settings = appSettingsSchema.parse({
       hosts: [],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
+      agents: { [TEST_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    expect(snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(true);
+    expect(snapshot.agents[TEST_AGENT_ID]?.hasToken).toBe(true);
     expect(JSON.stringify(snapshot)).not.toContain(CANARY_SECRET_REF);
     // Exactly the non-secret fields plus the resolved flag - no `token` pointer.
-    expect(Object.keys(snapshot.agents[DEFAULT_AGENT_ID] ?? {}).sort()).toEqual([
+    expect(Object.keys(snapshot.agents[TEST_AGENT_ID] ?? {}).sort()).toEqual([
       'active',
       'hasToken',
     ]);
@@ -137,19 +137,19 @@ describe('toAppSettingsSnapshot', () => {
     const settings = appSettingsSchema.parse({
       hosts: [],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
+      agents: { [TEST_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
 
-    expect(snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+    expect(snapshot.agents[TEST_AGENT_ID]?.hasToken).toBe(false);
   });
 
   it('calls the predicate with the agent token secretRef', () => {
     const settings = appSettingsSchema.parse({
       hosts: [],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
+      agents: { [TEST_AGENT_ID]: { active: true, token: { secretRef: CANARY_SECRET_REF } } },
     });
     const seenRefs: string[] = [];
 
@@ -165,12 +165,12 @@ describe('toAppSettingsSnapshot', () => {
     const settings = appSettingsSchema.parse({
       hosts: [],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
 
-    expect(snapshot.agents[DEFAULT_AGENT_ID]?.hasToken).toBe(false);
+    expect(snapshot.agents[TEST_AGENT_ID]?.hasToken).toBe(false);
   });
 
   it('maps a proxy-library entry with its id and label, and hashes its password', () => {
@@ -185,7 +185,7 @@ describe('toAppSettingsSnapshot', () => {
           credentials: { username: 'bob', secretRef: CANARY_SECRET_REF },
         },
       ],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => true);
@@ -212,7 +212,7 @@ describe('toAppSettingsSnapshot', () => {
     const settings = appSettingsSchema.parse({
       hosts: [serverA],
       proxies: [],
-      agents: { [DEFAULT_AGENT_ID]: { active: true } },
+      agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
@@ -265,7 +265,7 @@ describe('serverSnapshotSchema / appSettingsSnapshotSchema (.strict())', () => {
       appSettingsSnapshotSchema.parse({
         hosts: [],
         proxies: [],
-        agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        agents: { [TEST_AGENT_ID]: { active: true } },
         secretsDir: '/should/not/be/here',
       }),
     ).toThrow();
@@ -277,7 +277,7 @@ describe('serverSnapshotSchema / appSettingsSnapshotSchema (.strict())', () => {
         hosts: [],
         proxies: [],
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true, hasToken: true, token: { secretRef: 'x' } },
+          [TEST_AGENT_ID]: { active: true, hasToken: true, token: { secretRef: 'x' } },
         },
         browser: { disableNativeWebAuthn: true },
       }),

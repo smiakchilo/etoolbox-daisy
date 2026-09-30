@@ -7,7 +7,6 @@ import {
 } from '../../../../src/renderer/src/settings/agentsViewModel';
 import { NO_PREFERENCE_VALUE } from '../../../../src/renderer/src/settings/modelsViewModel';
 import {
-  DEFAULT_AGENT_ID,
   type AgentDefinition,
   type AgentId,
   type AgentSettingsSnapshot,
@@ -15,6 +14,7 @@ import {
   type ModelSelectionState,
   type ProxyId,
 } from '../../../../src/shared';
+import { TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 /**
  * Pure presentation tests for the Settings panel's Agents tab
@@ -29,7 +29,7 @@ const SECOND_AGENT: AgentDefinition = {
   requiresAuth: false,
 };
 const DEFINITIONS: readonly AgentDefinition[] = [
-  { id: DEFAULT_AGENT_ID, label: 'GitHub Copilot', requiresAuth: true },
+  { id: TEST_AGENT_ID, label: 'GitHub Copilot', requiresAuth: true },
   SECOND_AGENT,
 ];
 
@@ -53,8 +53,8 @@ function selectionWith(overrides: Partial<ModelSelectionState> = {}): ModelSelec
 
 function inputWith(overrides: Partial<AgentsViewModelInput> = {}): AgentsViewModelInput {
   return {
-    agents: { [DEFAULT_AGENT_ID]: { active: true, hasToken: false } },
-    activeAgentId: DEFAULT_AGENT_ID,
+    agents: { [TEST_AGENT_ID]: { active: true, hasToken: false } },
+    activeAgentId: TEST_AGENT_ID,
     auth: undefined,
     modelSelection: undefined,
     ...overrides,
@@ -68,9 +68,9 @@ function nodeWith(overrides: Partial<AgentSettingsSnapshot> = {}): AgentSettings
 describe('buildAgentsViewModel', () => {
   it('renders one item per registered provider, in registry order', () => {
     const vm = buildAgentsViewModel(inputWith({ definitions: DEFINITIONS }), undefined);
-    expect(vm.items.map((item) => item.id)).toEqual([DEFAULT_AGENT_ID, SECOND_AGENT.id]);
+    expect(vm.items.map((item) => item.id)).toEqual([TEST_AGENT_ID, SECOND_AGENT.id]);
     expect(vm.items.map((item) => item.label)).toEqual(['GitHub Copilot', 'OpenCode']);
-    expect(vm.activeAgentId).toBe(DEFAULT_AGENT_ID);
+    expect(vm.activeAgentId).toBe(TEST_AGENT_ID);
   });
 
   it('ignores a stored agent node with no matching provider definition', () => {
@@ -80,7 +80,7 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         definitions: DEFINITIONS,
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true, hasToken: false },
+          [TEST_AGENT_ID]: { active: true, hasToken: false },
           ['ghost' as AgentId]: { active: false, hasToken: false },
         },
       }),
@@ -129,7 +129,7 @@ describe('buildAgentsViewModel', () => {
   it('treats a stored token as authenticated and active while signed out', () => {
     const [item] = buildAgentsViewModel(
       inputWith({
-        agents: { [DEFAULT_AGENT_ID]: { active: true, hasToken: true } },
+        agents: { [TEST_AGENT_ID]: { active: true, hasToken: true } },
         auth: authWith(),
       }),
       undefined,
@@ -151,7 +151,7 @@ describe('buildAgentsViewModel', () => {
     // could not end that, so the row must offer sign-in instead.
     const [item] = buildAgentsViewModel(
       inputWith({
-        agents: { [DEFAULT_AGENT_ID]: { active: true, hasToken: true } },
+        agents: { [TEST_AGENT_ID]: { active: true, hasToken: true } },
         auth: authWith({
           isAuthenticated: true,
           authType: 'env',
@@ -198,7 +198,7 @@ describe('buildAgentsViewModel', () => {
   it('keeps the stored model visible but inert before the catalogue is readable', () => {
     const [item] = buildAgentsViewModel(
       inputWith({
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
+        agents: { [TEST_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -214,7 +214,7 @@ describe('buildAgentsViewModel', () => {
   it("collapses a stored Copilot 'auto' to the generic '(Auto)' on an inert item", () => {
     const [item] = buildAgentsViewModel(
       inputWith({
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'auto', hasToken: false } },
+        agents: { [TEST_AGENT_ID]: { active: true, model: 'auto', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -230,7 +230,7 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         auth: authWith(),
         modelSelection: selectionWith(),
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
+        agents: { [TEST_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -257,7 +257,7 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         auth: authWith({ isAuthenticated: true }),
         modelSelection: selectionWith({ models: [], catalogUnavailable: true }),
-        agents: { [DEFAULT_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
+        agents: { [TEST_AGENT_ID]: { active: true, model: 'stored-model', hasToken: false } },
       }),
       undefined,
     ).items;
@@ -317,7 +317,7 @@ describe('buildAgentsViewModel', () => {
       inputWith({
         definitions: DEFINITIONS,
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true, hasToken: false },
+          [TEST_AGENT_ID]: { active: true, hasToken: false },
           [SECOND_AGENT.id]: nodeWith({ model: 'stored-model', proxy: 'proxy-1' as ProxyId }),
         },
       }),
@@ -345,7 +345,7 @@ describe('buildAgentsViewModel', () => {
         definitions: DEFINITIONS,
         modelSelection: selectionWith(),
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true, hasToken: false },
+          [TEST_AGENT_ID]: { active: true, hasToken: false },
           [SECOND_AGENT.id]: nodeWith(),
         },
       }),

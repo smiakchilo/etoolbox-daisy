@@ -282,6 +282,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
     switch (current.kind) {
       case 'connecting':
+      case 'unavailable':
         sendButton.setAttribute('disabled', '');
         return;
       case 'stop':

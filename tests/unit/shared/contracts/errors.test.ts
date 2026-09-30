@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type RequestId,
+  type ToolErrorCode,
   TOOL_ERROR_CODES,
   classifyHttpStatus,
   classifyNetworkFailure,
   createToolError,
+  newRequestId,
   toolErrorSchema,
-  type ToolErrorCode,
-} from '../../../../src/shared/contracts/errors';
-import { newRequestId, type RequestId } from '../../../../src/shared/contracts/ids';
+} from '../../../../src/shared';
 
 const requestId = newRequestId(() => 'req-1');
 
@@ -39,8 +40,8 @@ describe('createToolError', () => {
       'check_proxy_settings',
     );
     expect(createToolError('TLS_ERROR', 'x', requestId).requiredAction).toBe('review_certificate');
-    expect(createToolError('COPILOT_UNAVAILABLE', 'x', requestId).requiredAction).toBe(
-      'sign_in_to_copilot',
+    expect(createToolError('AGENT_UNAVAILABLE', 'x', requestId).requiredAction).toBe(
+      'sign_in_to_agent',
     );
     expect(createToolError('RESUME_FAILED', 'x', requestId).requiredAction).toBe('start_new_chat');
     expect(createToolError('RESULT_TOO_LARGE_FOR_MODEL', 'x', requestId).requiredAction).toBe(
@@ -78,6 +79,7 @@ describe('createToolError', () => {
 
 describe('toolErrorSchema', () => {
   it('rejects unknown keys so a raw SDK or AEM payload cannot ride along', () => {
+    // noinspection HtmlRequiredLangAttribute
     const result = toolErrorSchema.safeParse({
       code: 'NOT_FOUND',
       message: 'm',

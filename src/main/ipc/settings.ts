@@ -71,7 +71,7 @@ import type {
   ServerTargetingChanges,
 } from '../../shared';
 import { newProxyId, newServerId } from '../../shared';
-import { isKnownAgentId } from '../../shared';
+import { isKnownAgentId, type AgentDefinition } from '../../shared';
 import { err, ok, type Result } from '../../shared';
 import {
   configuredAgentId,
@@ -265,8 +265,9 @@ async function setAgentTokenSecret(
   secretStore: SecretStore,
   agentId: AgentId,
   token: string,
+  definitions: readonly AgentDefinition[],
 ): Promise<SettingsIpcVoidResult> {
-  if (!isKnownAgentId(agentId)) {
+  if (!isKnownAgentId(agentId, definitions)) {
     return {
       ok: false,
       error: {
@@ -313,8 +314,9 @@ async function clearAgentTokenSecret(
   settings: AppSettings,
   secretStore: SecretStore,
   agentId: AgentId,
+  definitions: readonly AgentDefinition[],
 ): Promise<SettingsIpcVoidResult> {
-  if (!isKnownAgentId(agentId)) {
+  if (!isKnownAgentId(agentId, definitions)) {
     return {
       ok: false,
       error: {
@@ -359,6 +361,7 @@ export async function setPassword(
   settingsDir: string,
   secretStore: SecretStore,
   request: SetPasswordRequest,
+  definitions: readonly AgentDefinition[],
   onAgentTokenChanged?: () => void,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
@@ -373,6 +376,7 @@ export async function setPassword(
       secretStore,
       request.target.agentId,
       request.password,
+      definitions,
     );
     if (result.ok) onAgentTokenChanged?.();
     return result;
@@ -400,6 +404,7 @@ export async function clearPassword(
   settingsDir: string,
   secretStore: SecretStore,
   request: ClearPasswordRequest,
+  definitions: readonly AgentDefinition[],
   onAgentTokenChanged?: () => void,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
@@ -413,6 +418,7 @@ export async function clearPassword(
       loaded.value,
       secretStore,
       request.target.agentId,
+      definitions,
     );
     if (result.ok) onAgentTokenChanged?.();
     return result;
@@ -823,7 +829,9 @@ export async function reorderProxies(
  * of the call, not at wiring time.
  */
 export interface ModelSelectionDependencies {
-  /** Reads the SDK model catalogue - in practice `loadModelCatalog(copilotClient)`. */
+  /** The discovered agents; decides which node is the configured one. */
+  readonly definitions: readonly AgentDefinition[];
+  /** Reads the SDK model catalogue - in practice the configured agent's runtime `loadModelCatalog`. */
   readonly loadCatalog: () => Promise<
     Result<readonly ModelCatalogEntry[], { readonly message: string }>
   >;
@@ -859,8 +867,21 @@ export async function getModelSelection(
     return { ok: false, error: loaded.error };
   }
   const settings = loaded.value;
+  const agentId = configuredAgentId(settings, deps.definitions);
+  if (agentId === undefined) {
+    return {
+      ok: true,
+      state: {
+        models: [],
+        selectedModel: null,
+        selectedReasoningEffort: null,
+        changesLocked: deps.isTurnInFlight(),
+        catalogUnavailable: true,
+      },
+    };
+  }
   const catalog = await deps.loadCatalog();
-  const configuredNode = settings.agents[configuredAgentId(settings)];
+  const configuredNode = settings.agents[agentId];
 
   return {
     ok: true,
@@ -923,7 +944,7 @@ export async function setModelPreferences(
         ok: false,
         error: {
           code: 'model_not_available',
-          message: `Copilot does not currently offer the model "${request.model}".`,
+          message: `The agent does not currently offer the model "${request.model}".`,
         },
       };
     }
@@ -943,7 +964,11 @@ export async function setModelPreferences(
     return { ok: false, error: loaded.error };
   }
 
-  const updated = updateModelPreferencesEntry(loaded.value, {
+  const agentId = configuredAgentId(loaded.value, deps.definitions);
+  if (agentId === undefined) {
+    return { ok: false, error: { code: 'agent_not_found', message: 'No agent is available.' } };
+  }
+  const updated = updateModelPreferencesEntry(loaded.value, agentId, {
     model: request.model,
     reasoningEffort: request.reasoningEffort,
   });
@@ -957,7 +982,7 @@ export async function setModelPreferences(
   }
   // After the write, never before: a cache updated ahead of a failed save
   // would send the next prompt to a model the settings file does not record.
-  const savedNode = updated.value.agents[configuredAgentId(updated.value)];
+  const savedNode = updated.value.agents[agentId];
   deps.onPreferencesSaved?.({
     model: savedNode?.model ?? null,
     reasoningEffort: savedNode?.reasoningEffort ?? null,
@@ -977,7 +1002,9 @@ export async function setModelPreferences(
  * {@link ModelSelectionDependencies}.
  */
 export interface AgentSettingsDependencies {
-  /** Reads the SDK model catalogue - in practice `loadModelCatalog(copilotClient)`. */
+  /** The discovered agents; an id outside this list is `agent_not_found`. */
+  readonly definitions: readonly AgentDefinition[];
+  /** Reads the SDK model catalogue - in practice the configured agent's runtime `loadModelCatalog`. */
   readonly loadCatalog: () => Promise<
     Result<readonly ModelCatalogEntry[], { readonly message: string }>
   >;
@@ -988,7 +1015,7 @@ export interface AgentSettingsDependencies {
    * persisted successfully, with the whole new document. The composition root
    * decides whether the change requires recycling the Copilot runtime (a proxy
    * or active-provider change does; a model/effort change does not) - see
-   * `copilotRuntimeManager.ts`. Never called on a failed save, so the runtime
+   * `agents/copilot/runtimeManager.ts`. Never called on a failed save, so the runtime
    * is never recycled for a change the file does not record.
    */
   readonly onAgentSettingsSaved: (settings: AppSettings) => void;
@@ -1038,7 +1065,7 @@ export async function setAgentSettings(
     };
   }
 
-  if (!isKnownAgentId(request.agentId)) {
+  if (!isKnownAgentId(request.agentId, deps.definitions)) {
     return {
       ok: false,
       error: {
@@ -1104,7 +1131,7 @@ export async function setAgentSettings(
         ok: false,
         error: {
           code: 'model_not_available',
-          message: `Copilot does not currently offer the model "${effectiveModel}".`,
+          message: `The agent does not currently offer the model "${effectiveModel}".`,
         },
       };
     }
@@ -1275,11 +1302,13 @@ export interface SettingsIpcDependencies {
   readonly modelSelection: ModelSelectionDependencies;
   /** Backs the agent-settings channel. See {@link AgentSettingsDependencies}. */
   readonly agentSettings: AgentSettingsDependencies;
+  /** The discovered agents, for the agent-token channels. */
+  readonly agentDefinitions: readonly AgentDefinition[];
   /**
    * Called after an agent personal-access token has been successfully set or
    * cleared. The Copilot runtime resolves its credential once, at process
    * start, so a token change needs an unconditional recycle - which the
-   * composition root performs (`CopilotRuntimeManager.refresh`). Deliberately
+   * composition root performs (the agent hub's `refresh`). Deliberately
    * not called for a server/proxy password (the runtime does not consume one),
    * nor on a failed change.
    */
@@ -1327,7 +1356,13 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
       if (!parsed.success) {
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
-      return setPassword(deps.settingsDir, deps.secretStore, parsed.data, deps.onAgentTokenChanged);
+      return setPassword(
+        deps.settingsDir,
+        deps.secretStore,
+        parsed.data,
+        deps.agentDefinitions,
+        deps.onAgentTokenChanged,
+      );
     },
   );
 
@@ -1345,6 +1380,7 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         deps.settingsDir,
         deps.secretStore,
         parsed.data,
+        deps.agentDefinitions,
         deps.onAgentTokenChanged,
       );
     },

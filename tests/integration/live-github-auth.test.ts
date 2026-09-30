@@ -3,19 +3,22 @@ import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
   assertNoPlaintextCredentials,
-  createHardenedCopilotClient,
-  createHardenedSession,
-  getAuthStatus,
   localSignOut,
-  resolveCliExePath,
-  resolveSdkRuntimeExePath,
-  resumeHardenedSession,
-  SKILL_INVOCATION_TOOL,
   startWebFlowLogin,
+} from '../../src/agents/copilot/auth';
+import {
+  createHardenedCopilotClient,
+  getAuthStatus,
   type CopilotClient,
   type ProxyEnvOverrides,
-} from '../../src/agent';
-import type { RuntimePathsEnv } from '../../src/agent/runtimePaths';
+} from '../../src/agents/copilot/copilotClient';
+import {
+  createHardenedSession,
+  resumeHardenedSession,
+  SKILL_INVOCATION_TOOL,
+} from '../../src/agents/copilot/toolPolicy';
+import { resolveCliExePath, resolveSdkRuntimeExePath } from '../../src/agents/copilot/runtimePaths';
+import type { RuntimePathsEnv } from '../../src/agents/copilot/runtimePaths';
 import { realGithubLoginApproved, realLoginSuite } from './support/liveAuthPolicy';
 import { runSyntheticWebFlowLogin } from './support/syntheticLogin';
 import {

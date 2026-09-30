@@ -9,7 +9,7 @@ import {
 /**
  * The chat pane's "no usable agent" state, proven against the REAL built app
  * (`out/main/index.js` + `out/preload/app-preload.js`) driven by the
- * deterministic fake agent (`src/agent/fakeAgentService.ts`).
+ * deterministic fake agent (`src/main/agents/fakeAgentService.ts`).
  *
  * What only the real app can prove here (jsdom cannot):
  * - `sp-alert-banner` genuinely exists and is only *visible* while the state

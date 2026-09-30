@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_AGENT_ID, newProxyId, newServerId } from '../../../src/shared';
 import {
   addProxyRequestSchema,
   addServerRequestSchema,
   clearPasswordRequestSchema,
   getSettingsSnapshotResultSchema,
+  newProxyId,
+  newServerId,
   parseAddProxyResult,
   parseGetSettingsSnapshotResult,
   parseSettingsIpcVoidResult,
@@ -20,6 +21,7 @@ import {
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
 } from '../../../src/shared';
+import { TEST_AGENT_ID } from '../../support/agentDefinitions';
 
 const serverId = newServerId(() => 'server-a');
 const proxyId = newProxyId(() => 'proxy-a');
@@ -127,7 +129,7 @@ describe('getSettingsSnapshotResultSchema', () => {
       snapshot: {
         hosts: [],
         proxies: [],
-        agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        agents: { [TEST_AGENT_ID]: { active: true } },
         browser: { disableNativeWebAuthn: true },
       },
     });
@@ -148,7 +150,7 @@ describe('getSettingsSnapshotResultSchema', () => {
       snapshot: {
         hosts: [],
         proxies: [],
-        agents: { [DEFAULT_AGENT_ID]: { active: true } },
+        agents: { [TEST_AGENT_ID]: { active: true } },
         browser: { disableNativeWebAuthn: true },
       },
       error: { code: 'storage_error', message: 'x' },

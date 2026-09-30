@@ -327,9 +327,7 @@ test('an auto-save does not steal focus from the field being typed in', async ()
     // The very same field node is still focused and still connected: had the
     // reload rebuilt the rows, it would have been detached from the document.
     expect(
-      await labelHost.evaluate(
-        (el) => el.isConnected && el === el.ownerDocument.activeElement,
-      ),
+      await labelHost.evaluate((el) => el.isConnected && el === el.ownerDocument.activeElement),
     ).toBe(true);
   } finally {
     await app.close();

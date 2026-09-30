@@ -1,4 +1,5 @@
 import { el } from '../lib/dom';
+import { AGENT_DEFINITIONS } from '../agents/agentCatalog';
 import { buildBannerCopy, createBannerActionButton } from '../lib/alertBanner';
 import { createChatToolbar } from './chatToolbar';
 import type { SettingsTab } from './settingsPanel';
@@ -15,7 +16,6 @@ import { createTranscriptView, type TranscriptView } from '../chat/transcriptVie
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { repaintAndFollow } from '../chat/transcriptScroll';
 import {
-  AGENT_DEFINITIONS,
   applyAgentEvent,
   type AgentChatOpenResult,
   type AgentChatSkill,
@@ -175,6 +175,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // flight. Built once so re-asserting it on every status refresh is a no-op.
   const connectingContent: readonly Node[] = [buildBannerCopy(['Connecting to agent...'])];
 
+  // Shown when no agent exists at all (removed, disabled or failed to load).
+  const unavailableContent: readonly Node[] = [
+    buildBannerCopy(['No agent available. Browsing AEM still works.']),
+  ];
+
   // Shown in place of the connecting row once a saved conversation's journal is
   // already on screen but its SDK session has not resumed yet: the same loading
   // presentation, but naming the work the user is actually waiting on.
@@ -283,7 +288,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // the "no usable agent" prompt and a send-blocked reason are plain rows.
     // The `agent-inactive`/`stop` states are ordered so a turn already running
     // can always be stopped without the prompt displacing the Stop control.
-    if (pendingStartup !== undefined) {
+    if (buttonState.kind === 'unavailable') {
+      statusBanner.setStanding(unavailableContent);
+    } else if (pendingStartup !== undefined) {
       // A restored transcript is on screen but the session that owns it has not
       // resumed yet; name that, rather than the generic connecting row.
       statusBanner.setStanding(restoringContent, 'loading');
@@ -552,7 +559,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
     if (chatId === undefined) {
-      statusBanner.showError('Not connected to Copilot yet.');
+      statusBanner.showError('Not connected to the agent yet.');
       return { ok: false };
     }
     const result = await window.daisy.agentChat.sendMessage({ chatId, prompt });

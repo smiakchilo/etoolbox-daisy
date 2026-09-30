@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   appSettingsSchema,
   defaultAppSettings,
-  DEFAULT_AGENT_ID,
   HOST_PROXY_NONE,
   newProxyId,
   newServerId,
@@ -10,6 +9,7 @@ import {
   proxyConfigSchema,
   serverConfigSchema,
 } from '../../../../src/shared';
+import { TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 function server(id: string, origin: string) {
   return serverConfigSchema.parse({
@@ -34,7 +34,7 @@ function validSettings() {
   return {
     hosts: [serverA],
     proxies: [],
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
   };
 }
@@ -49,7 +49,7 @@ describe('appSettingsSchema', () => {
     const input = {
       ...validSettings(),
       agents: {
-        [DEFAULT_AGENT_ID]: {
+        [TEST_AGENT_ID]: {
           active: true,
           model: 'some-brand-new-model-2099',
           reasoningEffort: 'ultra-deep-think',
@@ -62,13 +62,13 @@ describe('appSettingsSchema', () => {
   it('defaults a missing agent `active` to false instead of rejecting the document', () => {
     const input = {
       ...validSettings(),
-      agents: { [DEFAULT_AGENT_ID]: { model: 'gpt-5' } },
+      agents: { [TEST_AGENT_ID]: { model: 'gpt-5' } },
     };
 
     const parsed = appSettingsSchema.parse(input);
 
-    expect(parsed.agents[DEFAULT_AGENT_ID]?.active).toBe(false);
-    expect(parsed.agents[DEFAULT_AGENT_ID]?.model).toBe('gpt-5');
+    expect(parsed.agents[TEST_AGENT_ID]?.active).toBe(false);
+    expect(parsed.agents[TEST_AGENT_ID]?.model).toBe('gpt-5');
   });
 
   it('defaults a missing `browser` object to suppressing the native WebAuthn API', () => {
@@ -91,7 +91,7 @@ describe('appSettingsSchema', () => {
         appSettingsSchema.parse({
           hosts: [serverA, duplicate],
           proxies: [],
-          agents: { [DEFAULT_AGENT_ID]: { active: true } },
+          agents: { [TEST_AGENT_ID]: { active: true } },
         }),
       ).toThrow();
     });
@@ -103,7 +103,7 @@ describe('appSettingsSchema', () => {
         appSettingsSchema.parse({
           hosts: [serverA, serverB],
           proxies: [],
-          agents: { [DEFAULT_AGENT_ID]: { active: true } },
+          agents: { [TEST_AGENT_ID]: { active: true } },
         }),
       ).toThrow();
     });
@@ -213,7 +213,7 @@ describe('appSettingsSchema', () => {
       const accepted = {
         ...validSettings(),
         agents: {
-          [DEFAULT_AGENT_ID]: { active: true, token: { secretRef: 'agent-token:copilot' } },
+          [TEST_AGENT_ID]: { active: true, token: { secretRef: 'agent-token:copilot' } },
         },
       };
       expect(appSettingsSchema.parse(accepted)).toEqual(accepted);
@@ -221,7 +221,7 @@ describe('appSettingsSchema', () => {
       expect(() =>
         appSettingsSchema.parse({
           ...validSettings(),
-          agents: { [DEFAULT_AGENT_ID]: { active: true, token: 'ghp_plaintext' } },
+          agents: { [TEST_AGENT_ID]: { active: true, token: 'ghp_plaintext' } },
         }),
       ).toThrow();
     });
@@ -231,7 +231,7 @@ describe('appSettingsSchema', () => {
         appSettingsSchema.parse({
           ...validSettings(),
           agents: {
-            [DEFAULT_AGENT_ID]: {
+            [TEST_AGENT_ID]: {
               active: true,
               token: { secretRef: 'agent-token:copilot', token: 'leak' },
             },

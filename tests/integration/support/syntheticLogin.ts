@@ -8,7 +8,7 @@ import {
   type LoginEnvOptions,
   type LoginOutcome,
   type SpawnFn,
-} from '../../../src/agent';
+} from '../../../src/agents/copilot/auth';
 
 const AUTHORIZE_URL_PATTERN = /https:\/\/github\.com\/login\/oauth\/authorize\?\S+/;
 

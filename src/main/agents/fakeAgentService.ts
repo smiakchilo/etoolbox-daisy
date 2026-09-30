@@ -1,19 +1,26 @@
-import type {
-  AgentEvent,
-  ChatId,
-  IdGenerator,
-  JsonValue,
-  MessageId,
-  ReasoningId,
-  RequiredAction,
-  SdkSessionId,
-  ToolCallId,
-  ToolErrorCode,
-  TurnId,
-} from '../shared';
 import {
-  applyAgentEvent,
+  type AgentAuthState,
+  type AgentEvent,
+  type AgentService,
+  type AgentServiceError,
   type CanSendBlockReason,
+  type ChatId,
+  type IdGenerator,
+  type JsonValue,
+  type MessageId,
+  type OpenConversationRequest,
+  type ReasoningId,
+  type RequiredAction,
+  type Result,
+  type SdkSessionId,
+  type SendPromptRequest,
+  type SessionStatus,
+  type SessionStreamState,
+  type ToolCallId,
+  type ToolErrorCode,
+  type TurnId,
+  type Unsubscribe,
+  applyAgentEvent,
   canSendMessage,
   createToolError,
   err,
@@ -22,20 +29,9 @@ import {
   newRequestId,
   newToolCallId,
   ok,
-  type Result,
   sdkSessionIdSchema,
-  type SessionStatus,
-  type SessionStreamState,
-} from '../shared';
-import {
-  type AgentAuthState,
-  type AgentService,
-  type AgentServiceError,
   createAgentServiceError,
-  type OpenConversationRequest,
-  type SendPromptRequest,
-  type Unsubscribe,
-} from './agentService';
+} from '../../shared';
 
 /**
  * A deterministic, scriptable `AgentService` (implementation-plan.md step 07:
@@ -230,7 +226,7 @@ function defaultIdGenerator(): IdGenerator {
  * `AgentServiceError`. `session_closed` reuses `STALE_CONTEXT` ("issued
  * against configuration that has since changed" fits a request aimed at a
  * conversation that has since been closed). `not_authenticated` reuses
- * `COPILOT_UNAVAILABLE` with its already-defined `sign_in_to_copilot`
+ * `AGENT_UNAVAILABLE` with its already-defined `sign_in_to_agent`
  * required action (`errors.ts`'s `REQUIRED_ACTION_BY_CODE`), since that is
  * exactly what being signed out of Copilot means at this boundary.
  * `session_error` and `turn_in_progress` both reuse `ACCESS_DENIED` - "The
@@ -246,9 +242,9 @@ function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
       return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed.');
     case 'not_authenticated':
       return createAgentServiceError(
-        'COPILOT_UNAVAILABLE',
+        'AGENT_UNAVAILABLE',
         'Not signed in to Copilot.',
-        'sign_in_to_copilot',
+        'sign_in_to_agent',
       );
     case 'session_error':
       return createAgentServiceError(

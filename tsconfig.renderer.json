@@ -7,6 +7,6 @@
     "outDir": ".tsc-out/renderer",
     "types": ["vite/client"]
   },
-  "include": ["src/renderer/src/**/*.ts", "src/tools/*/renderer/**/*.ts"],
+  "include": ["src/renderer/src/**/*.ts", "src/tools/*/renderer/**/*.ts", "src/agents/*/meta.ts"],
   "references": [{ "path": "./tsconfig.shared.json" }]
 }

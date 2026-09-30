@@ -253,11 +253,11 @@ describe('createTranscriptStore', () => {
           chatId,
           sequence: 0,
           error: {
-            code: 'COPILOT_UNAVAILABLE',
+            code: 'AGENT_UNAVAILABLE',
             message: 'Copilot is unavailable.',
             requestId,
             retryable: true,
-            requiredAction: 'sign_in_to_copilot',
+            requiredAction: 'sign_in_to_agent',
           },
         }),
       );

@@ -23,19 +23,33 @@ const APP_PRELOAD_PATH = path.join(currentDir, '../preload/app-preload.js');
  */
 export const APP_USER_MODEL_ID = 'com.etoolboxdaisy.app';
 
+let cachedAppIconPath: string | undefined;
+let appIconPathResolved = false;
+
 /**
- * The app's own icon, resolved once for the main window this process creates.
- * `undefined` when the icon is missing, so
- * `exactOptionalPropertyTypes` requires the `icon` option to be omitted rather
- * than set to `undefined`; hence the conditional spread at each use.
+ * The app's own icon, resolved once on first use for the windows this process
+ * creates. Resolved lazily - not at module scope - because `app.isPackaged`
+ * requires a running Electron process, which would make merely importing this
+ * module fail anywhere Electron is absent (unit tests importing any module
+ * that transitively reaches here).
+ *
+ * `undefined` when the icon is missing, so `exactOptionalPropertyTypes`
+ * requires the `icon` option to be omitted rather than set to `undefined`;
+ * hence the conditional spread at each use.
  */
-export const APP_ICON_PATH = resolveAppIconPath({
-  isPackaged: app.isPackaged,
-  resourcesPath: process.resourcesPath,
-  mainDir: currentDir,
-  join: (...segments) => path.join(...segments),
-  exists: existsSync,
-});
+export function getAppIconPath(): string | undefined {
+  if (!appIconPathResolved) {
+    cachedAppIconPath = resolveAppIconPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      mainDir: currentDir,
+      join: (...segments) => path.join(...segments),
+      exists: existsSync,
+    });
+    appIconPathResolved = true;
+  }
+  return cachedAppIconPath;
+}
 
 /**
  * Points a window's taskbar button at the app's own identity (name + icon).
@@ -58,13 +72,15 @@ export function applyTaskbarAppDetails(window: BrowserWindow): void {
     return;
   }
 
+  const appIconPath = getAppIconPath();
+
   const relaunchCommand = app.isPackaged
     ? `"${process.execPath}"`
     : `"${process.execPath}" "${app.getAppPath()}"`;
 
   window.setAppDetails({
     appId: APP_USER_MODEL_ID,
-    ...(APP_ICON_PATH ? { appIconPath: APP_ICON_PATH, appIconIndex: 0 } : {}),
+    ...(appIconPath ? { appIconPath, appIconIndex: 0 } : {}),
     relaunchCommand,
     relaunchDisplayName: app.getName(),
   });
@@ -99,6 +115,8 @@ export interface CreateMainWindowOptions {
  * back to the electron-vite dev server URL unchanged.
  */
 export function createMainWindow(options: CreateMainWindowOptions): BrowserWindow {
+  const appIconPath = getAppIconPath();
+
   const restored = fitWindowStateToWorkArea(
     readWindowState(options.windowStateFilePath),
     screen.getPrimaryDisplay().workAreaSize,
@@ -108,7 +126,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
     width: restored.width,
     height: restored.height,
     show: false,
-    ...(APP_ICON_PATH ? { icon: APP_ICON_PATH } : {}),
+    ...(appIconPath ? { icon: appIconPath } : {}),
     webPreferences: {
       preload: APP_PRELOAD_PATH,
       contextIsolation: true,

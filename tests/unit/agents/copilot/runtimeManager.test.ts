@@ -1,16 +1,15 @@
 import { describe, expect, it, vi, type Mock } from 'vitest';
-import type { CopilotClient, ProxyEnvOverrides } from '../../../src/agent';
+import type {
+  CopilotClient,
+  ProxyEnvOverrides,
+} from '../../../../src/agents/copilot/copilotClient';
 import {
   createCopilotRuntimeManager,
   type CopilotRuntimeManagerDeps,
   type RuntimeClientOptions,
-} from '../../../src/main/copilotRuntimeManager';
-import {
-  DEFAULT_AGENT_ID,
-  type AgentId,
-  type AppSettings,
-  type ProxyId,
-} from '../../../src/shared';
+} from '../../../../src/agents/copilot/runtimeManager';
+import { type AgentId, type AppSettings, type ProxyId } from '../../../../src/shared';
+import { TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 /**
  * The manager is what makes "one runtime for the whole app" true, and what
@@ -32,12 +31,12 @@ interface TaggedClient extends CopilotClient {
 }
 
 function settingsWith(overrides: { active?: AgentId; proxy?: ProxyId } = {}): AppSettings {
-  const active = overrides.active ?? DEFAULT_AGENT_ID;
+  const active = overrides.active ?? TEST_AGENT_ID;
   return {
     hosts: [],
     proxies: [],
     agents: {
-      [DEFAULT_AGENT_ID]: { active: active === DEFAULT_AGENT_ID },
+      [TEST_AGENT_ID]: { active: active === TEST_AGENT_ID },
       ['opencode' as AgentId]: { active: active === 'opencode' },
       ...(overrides.proxy === undefined
         ? {}
@@ -214,7 +213,7 @@ describe('createCopilotRuntimeManager', () => {
     expect(h.stopClient).toHaveBeenCalledWith(before);
   });
 
-  it('recycles when a different provider becomes active', async () => {
+  it('does not recycle when a different agent becomes active - the hub owns switching', async () => {
     const h = createHarness();
     const manager = createCopilotRuntimeManager(h.deps);
     await manager.start(settingsWith());
@@ -222,8 +221,8 @@ describe('createCopilotRuntimeManager', () => {
 
     await manager.reconcile(settingsWith({ active: 'opencode' as AgentId }));
 
-    expect(manager.getClient()).not.toBe(before);
-    expect(h.startRuntime).toHaveBeenCalledTimes(2);
+    expect(manager.getClient()).toBe(before);
+    expect(h.startRuntime).toHaveBeenCalledTimes(1);
   });
 
   it('steps aside entirely on the fake-agent path', async () => {

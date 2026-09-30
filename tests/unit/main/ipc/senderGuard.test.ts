@@ -1,3 +1,4 @@
+import { TEST_AGENT_DEFINITIONS } from '../../../support/agentDefinitions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -139,14 +140,17 @@ beforeEach(() => {
     logger,
     rendererDistDir,
     isTrustedWebContentsId: (id) => id === MAIN_WEB_CONTENTS_ID,
+    agentDefinitions: TEST_AGENT_DEFINITIONS,
     modelSelection: {
       // Recorders, not throwers: the "does NOT reject the app's own renderer"
       // case drives every registered handler with a trusted sender, so these
       // must be callable. The guard itself is asserted by the untrusted sweeps.
+      definitions: TEST_AGENT_DEFINITIONS,
       loadCatalog: () => Promise.resolve(err({ message: 'catalogue not available in this suite' })),
       isTurnInFlight: () => false,
     },
     agentSettings: {
+      definitions: TEST_AGENT_DEFINITIONS,
       loadCatalog: () => Promise.resolve(err({ message: 'catalogue not available in this suite' })),
       isTurnInFlight: () => false,
       onAgentSettingsSaved: vi.fn(),

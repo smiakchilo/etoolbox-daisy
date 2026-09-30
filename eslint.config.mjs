@@ -12,20 +12,20 @@ const appTsconfigs = [
   './tsconfig.shared.json',
 ];
 
-// Rule 1 (all app code except src/agent): the Copilot SDK/CLI packages may
-// only be imported through the future adapter in `src/agent`, per
-// docs/implementation-plan.md ("Import the SDK only through `src/agent`").
+// Rule 1 (all app code except agent folders, `src/agents/<name>/`): the
+// Copilot SDK/CLI packages may only be imported from an agent folder, per
+// docs/implementation-plan.md ("Import the SDK only through the agent adapter").
 const sdkOutsideAgentRestriction = [
   'error',
   {
     paths: [
       {
         name: '@github/copilot-sdk',
-        message: 'Import the Copilot SDK only inside src/agent (step 02+).',
+        message: 'Import the Copilot SDK only inside an agent folder (src/agents/<name>/).',
       },
       {
         name: '@github/copilot',
-        message: 'Import the Copilot CLI package only inside src/agent (step 02+).',
+        message: 'Import the Copilot CLI package only inside an agent folder (src/agents/<name>/).',
       },
     ],
   },
@@ -41,12 +41,12 @@ const sharedPurityRestriction = [
       { name: 'electron', message: 'src/shared must not import Electron.' },
       {
         name: '@github/copilot-sdk',
-        message: 'src/shared must not import the Copilot SDK; it belongs only in src/agent.',
+        message: 'src/shared must not import the Copilot SDK; it belongs only in an agent folder.',
       },
       {
         name: '@github/copilot',
         message:
-          'src/shared must not import the Copilot CLI package; it belongs only in src/agent.',
+          'src/shared must not import the Copilot CLI package; it belongs only in an agent folder.',
       },
     ],
     patterns: [
@@ -92,14 +92,15 @@ const sharedGlobalsRestriction = [
 
 // Rule 4 (src/tools/<name>/): a tool folder is a plugin. It may import the
 // shared kit (src/shared) and its own files - never the app (src/main,
-// src/agent, src/renderer, src/preload), never Electron, Node or the SDK, and
-// never another tool, so deleting any one folder cannot break another. The
+// src/agents, src/renderer, src/preload), never Electron, Node or the SDK, and
+// never another tool, so deleting any one folder cannot break another. (Agent
+// folders, `src/agents/<name>/`, follow the same shape - see rule 5.) The
 // regexes are relative-path shapes: at a tool folder's top level `../../shared`
 // is the only permitted way out; inside `renderer/` `../` (the tool's own
 // files) and `../../../shared` are.
 const toolBoundaryPaths = sharedPurityRestriction[1].paths;
 const toolBoundaryNodePattern = sharedPurityRestriction[1].patterns;
-const toolRestriction = (escape) => [
+const pluginRestriction = (escape, noun) => [
   'error',
   {
     paths: toolBoundaryPaths,
@@ -107,14 +108,37 @@ const toolRestriction = (escape) => [
       ...toolBoundaryNodePattern,
       {
         regex: escape,
-        message:
-          'A tool folder may import only its own files and src/shared - not the app or another tool.',
+        message: `${noun} may import only its own files and src/shared - not the app or a sibling plugin.`,
       },
     ],
   },
 ];
-const toolTopLevelRestriction = toolRestriction('^\\.\\./(?!\\.\\./shared(/|$))');
-const toolRendererRestriction = toolRestriction('^\\.\\./\\.\\./(?!\\.\\./shared(/|$))');
+const toolTopLevelRestriction = pluginRestriction(
+  '^\\.\\./(?!\\.\\./shared(/|$))',
+  'A tool folder',
+);
+const toolRendererRestriction = pluginRestriction(
+  '^\\.\\./\\.\\./(?!\\.\\./shared(/|$))',
+  'A tool folder',
+);
+// Rule 5 (src/agents/<name>/): an agent folder is a plugin too. Its `meta.ts`
+// is shared code (pure, SDK-free - the renderer imports it) and gets the tool
+// rule; the rest of the folder runs in main, so Electron, Node and the SDK are
+// allowed, but it may still reach only its own files and src/shared - never
+// src/main or a sibling agent - so deleting the folder cannot break another.
+const agentMetaRestriction = pluginRestriction('^\\.\\./(?!\\.\\./shared(/|$))', 'An agent folder');
+const agentRestriction = [
+  'error',
+  {
+    patterns: [
+      {
+        regex: '^\\.\\./(?!\\.\\./shared(/|$))',
+        message:
+          'An agent folder may import only its own files and src/shared - not the app or another agent.',
+      },
+    ],
+  },
+];
 const nodeOnlyGlobals = ['process', '__dirname', '__filename', 'require', 'global', 'Buffer'];
 
 export default tseslint.config(
@@ -201,11 +225,20 @@ export default tseslint.config(
     },
   },
   {
-    // src/agent is the one place allowed to import the SDK/CLI packages -
-    // undo the blanket restriction applied to "**/*.ts" above.
-    files: ['src/agent/**/*.ts'],
+    // Agent folders are the only place allowed to import an SDK/CLI package:
+    // the blanket restriction above is replaced by the plugin boundary.
+    files: ['src/agents/**/*.ts'],
     rules: {
-      'no-restricted-imports': 'off',
+      'no-restricted-imports': agentRestriction,
+    },
+  },
+  {
+    // An agent's `meta.ts` is shared code (the renderer imports it): same
+    // purity as src/shared, plus the plugin boundary.
+    files: ['src/agents/*/meta.ts'],
+    rules: {
+      'no-restricted-imports': agentMetaRestriction,
+      'no-restricted-globals': sharedGlobalsRestriction,
     },
   },
   {
@@ -234,6 +267,13 @@ export default tseslint.config(
     files: ['tests/fixtures/eslint-violations/tool-boundary-violation.ts'],
     rules: {
       'no-restricted-imports': toolTopLevelRestriction,
+    },
+  },
+  {
+    // Proves the agent-folder boundary fires (run directly with --no-ignore).
+    files: ['tests/fixtures/eslint-violations/agent-boundary-violation.ts'],
+    rules: {
+      'no-restricted-imports': agentRestriction,
     },
   },
 );

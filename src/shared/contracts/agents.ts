@@ -1,23 +1,20 @@
 import type { AgentId } from './ids';
 
 /**
- * The registry of coding-agent providers this application can be configured
- * against. It is the *definition* half of the "Agents" settings surface: the
- * persisted half lives in `appSettings.ts` as an `agents` map keyed by these
- * same ids, so a stored node and the item rendered for it are always paired by
- * an id that appears here.
+ * The *definition* half of the "Agents" settings surface: what an agent
+ * provider is called and whether it needs a sign-in. The persisted half lives
+ * in `appSettings.ts` as an `agents` map keyed by the same ids, so a stored node
+ * and the item rendered for it are always paired by an id.
  *
- * The registry is application-owned and compiled in - deliberately not
- * discovered at runtime, not loaded from disk, and not derived from anything
- * an AEM response or a model could influence. Only the providers this build
- * actually knows how to drive can appear.
+ * The list of definitions is not fixed here. Every agent is one folder,
+ * `src/agents/<name>/`, whose SDK-free `meta.ts` describes it; the main process
+ * and the renderer each collect those with a glob. Deleting a folder therefore
+ * removes its definition everywhere, and a persisted node for a provider that
+ * is no longer built is simply left untouched in `settings.json` (it is only
+ * ever read through a definition).
  *
- * {@link AgentId} is a branded *string* rather than a closed enum on purpose:
- * a settings file written by a future build that adds a provider must still be
- * readable here (the alternative is every unknown provider invalidating the
- * whole document - see `appSettingsSchema`'s `superRefine` for where an unknown
- * id is rejected instead). `AGENT_DEFINITIONS` stays the only place a *known*
- * provider is described.
+ * {@link AgentId} is a branded *string* rather than a closed enum for that
+ * reason: a settings file may name a provider this build does not contain.
  */
 export interface AgentDefinition {
   readonly id: AgentId;
@@ -25,7 +22,7 @@ export interface AgentDefinition {
   readonly label: string;
   /**
    * Whether this provider needs an authenticated session before it can be
-   * used. True for GitHub Copilot. A provider with `requiresAuth: false` - a
+   * used. A provider with `requiresAuth: false` - a
    * future locally hosted runtime, for example - is usable as soon as it is
    * selected, with no sign-in step at all.
    */
@@ -33,38 +30,21 @@ export interface AgentDefinition {
 }
 
 /**
- * The providers this build ships. GitHub Copilot is the one implemented
- * provider; the list exists so the Agents surface is a list, not a special
- * case, and so a second provider can be added without reshaping settings.
+ * True when `id` names a provider in `definitions` - the list the agent
+ * registry built from the `src/agents/<name>/meta.ts` files present in this
+ * build. Nothing in this module names a concrete provider.
  */
-const GITHUB_COPILOT: AgentDefinition = {
-  id: 'copilot' as AgentId,
-  label: 'GitHub Copilot',
-  requiresAuth: true,
-};
-
-export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [GITHUB_COPILOT];
-
-/**
- * The provider a settings document with no explicit active agent is treated as
- * targeting. Also the id `defaultAppSettings()` seeds when no stored node names
- * another provider as active.
- */
-export const DEFAULT_AGENT_ID: AgentId = GITHUB_COPILOT.id;
-
-/** The definition {@link DEFAULT_AGENT_ID} names, without a registry lookup. */
-export const DEFAULT_AGENT_DEFINITION: AgentDefinition = GITHUB_COPILOT;
-
-/** True when `id` names a provider in {@link AGENT_DEFINITIONS}. */
-export function isKnownAgentId(id: string): boolean {
-  return AGENT_DEFINITIONS.some((definition) => definition.id === id);
+export function isKnownAgentId(id: string, definitions: readonly AgentDefinition[]): boolean {
+  return definitions.some((definition) => definition.id === id);
 }
 
 /** The definition for `id`, or `undefined` when this build does not know it. */
-export function agentDefinition(id: AgentId): AgentDefinition | undefined {
-  return AGENT_DEFINITIONS.find((definition) => definition.id === id);
+export function agentDefinition(
+  id: AgentId,
+  definitions: readonly AgentDefinition[],
+): AgentDefinition | undefined {
+  return definitions.find((definition) => definition.id === id);
 }
-
 /**
  * The minimum an agent's activation criterion needs to know about its live
  * sign-in state.
@@ -100,22 +80,23 @@ export function isAgentEligible(
 }
 
 /**
- * The provider a settings document names as *configured*: the entry whose
- * `active` flag is set, or {@link DEFAULT_AGENT_ID} when none is. This is a
- * storage concern - which provider the app is set up to drive - and is
- * deliberately *not* the UI's notion of "the active agent". The main process
- * uses it to choose the runtime and its proxy, which must exist even while the
- * configured provider is signed out (otherwise it could never be signed in to).
+ * The provider a settings document names as *configured*: the known entry
+ * whose `active` flag is set, or else the first definition, or `undefined` when
+ * this build contains no agent at all. This is a storage concern - which
+ * provider the app is set up to drive - and is deliberately *not* the UI's
+ * notion of "the active agent". The main process uses it to choose the runtime
+ * and its proxy, which must exist even while the configured provider is signed
+ * out (otherwise it could never be signed in to).
  */
 export function resolveConfiguredAgentId(
   agents: Readonly<Record<string, { readonly active: boolean }>>,
-): AgentId {
+  definitions: readonly AgentDefinition[],
+): AgentId | undefined {
   for (const [id, node] of Object.entries(agents)) {
-    if (node.active) return id as AgentId;
+    if (node.active && isKnownAgentId(id, definitions)) return id as AgentId;
   }
-  return DEFAULT_AGENT_ID;
+  return definitions[0]?.id;
 }
-
 /**
  * The provider that is *actually active* right now, or `undefined` when none
  * is. This is the one value the Settings badge, the composer gate and the chat

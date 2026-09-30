@@ -3,7 +3,6 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   defaultAppSettings,
-  DEFAULT_AGENT_ID,
   err,
   newProxyId,
   ok,
@@ -21,6 +20,7 @@ import {
   setAgentSettings,
   type AgentSettingsDependencies,
 } from '../../../../src/main/ipc/settings';
+import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 /**
  * Tests for `settings:set-agent-settings` (the Agents surface).
@@ -60,6 +60,7 @@ const UNAVAILABLE = err({ message: 'Copilot is still starting' });
 
 function deps(overrides: Partial<AgentSettingsDependencies> = {}): AgentSettingsDependencies {
   return {
+    definitions: TEST_AGENT_DEFINITIONS,
     loadCatalog: () => Promise.resolve(ok(catalog)),
     isTurnInFlight: () => false,
     onAgentSettingsSaved: () => undefined,
@@ -80,7 +81,7 @@ async function seedProxyAndModel(dir: string): Promise<ProxyId> {
   });
   if (!created.ok) throw new Error('could not seed proxy');
 
-  const withModel = updateAgentSettings(created.value.settings, DEFAULT_AGENT_ID, {
+  const withModel = updateAgentSettings(created.value.settings, TEST_AGENT_ID, {
     model: 'model-a',
     reasoningEffort: 'high',
   });
@@ -99,14 +100,14 @@ describe('setAgentSettings', () => {
     const result = await setAgentSettings(
       dir,
       deps({ loadCatalog: () => Promise.resolve(UNAVAILABLE) }),
-      { agentId: DEFAULT_AGENT_ID, changes: { proxy: proxyId } },
+      { agentId: TEST_AGENT_ID, changes: { proxy: proxyId } },
     );
 
     expect(result.ok).toBe(true);
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.proxy).toBe(proxyId);
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.proxy).toBe(proxyId);
   });
 
   it('persists CLEARING the proxy even when the catalogue cannot be read', async () => {
@@ -116,14 +117,14 @@ describe('setAgentSettings', () => {
     const result = await setAgentSettings(
       dir,
       deps({ loadCatalog: () => Promise.resolve(UNAVAILABLE) }),
-      { agentId: DEFAULT_AGENT_ID, changes: { proxy: null } },
+      { agentId: TEST_AGENT_ID, changes: { proxy: null } },
     );
 
     expect(result.ok).toBe(true);
     const loaded = await loadSettings(dir);
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) return;
-    expect(loaded.value.settings.agents[DEFAULT_AGENT_ID]?.proxy).toBeUndefined();
+    expect(loaded.value.settings.agents[TEST_AGENT_ID]?.proxy).toBeUndefined();
   });
 
   it('persists an active-provider change even when the catalogue cannot be read', async () => {
@@ -134,7 +135,7 @@ describe('setAgentSettings', () => {
     const result = await setAgentSettings(
       dir,
       deps({ loadCatalog: () => Promise.resolve(UNAVAILABLE), onAgentSettingsSaved }),
-      { agentId: DEFAULT_AGENT_ID, changes: { active: true } },
+      { agentId: TEST_AGENT_ID, changes: { active: true } },
     );
 
     expect(result.ok).toBe(true);
@@ -148,7 +149,7 @@ describe('setAgentSettings', () => {
     const result = await setAgentSettings(
       dir,
       deps({ loadCatalog: () => Promise.resolve(UNAVAILABLE) }),
-      { agentId: DEFAULT_AGENT_ID, changes: { model: 'model-b' } },
+      { agentId: TEST_AGENT_ID, changes: { model: 'model-b' } },
     );
 
     expect(errorCodeOf(result)).toBe('model_catalog_unavailable');
@@ -163,7 +164,7 @@ describe('setAgentSettings', () => {
     const result = await setAgentSettings(
       dir,
       deps({ loadCatalog: () => Promise.resolve(UNAVAILABLE) }),
-      { agentId: DEFAULT_AGENT_ID, changes: { reasoningEffort: 'low' } },
+      { agentId: TEST_AGENT_ID, changes: { reasoningEffort: 'low' } },
     );
 
     expect(errorCodeOf(result)).toBe('model_catalog_unavailable');
@@ -174,7 +175,7 @@ describe('setAgentSettings', () => {
     await seedProxyAndModel(dir);
 
     const result = await setAgentSettings(dir, deps(), {
-      agentId: DEFAULT_AGENT_ID,
+      agentId: TEST_AGENT_ID,
       changes: { model: 'model-ghost' },
     });
 
@@ -186,7 +187,7 @@ describe('setAgentSettings', () => {
     await seedProxyAndModel(dir);
 
     const result = await setAgentSettings(dir, deps(), {
-      agentId: DEFAULT_AGENT_ID,
+      agentId: TEST_AGENT_ID,
       changes: { proxy: newProxyId(() => 'ghost') },
     });
 
@@ -201,13 +202,13 @@ describe('setAgentSettings', () => {
     const result = await setAgentSettings(
       dir,
       deps({ onAgentSettingsSaved, loadCatalog: () => Promise.resolve(UNAVAILABLE) }),
-      { agentId: DEFAULT_AGENT_ID, changes: { proxy: proxyId } },
+      { agentId: TEST_AGENT_ID, changes: { proxy: proxyId } },
     );
 
     expect(result.ok).toBe(true);
     expect(onAgentSettingsSaved).toHaveBeenCalledTimes(1);
     const saved = onAgentSettingsSaved.mock.calls[0]?.[0];
-    expect(saved?.agents[DEFAULT_AGENT_ID]?.proxy).toBe(proxyId);
+    expect(saved?.agents[TEST_AGENT_ID]?.proxy).toBe(proxyId);
   });
 
   it('checks the turn lock BEFORE the catalogue', async () => {
@@ -216,7 +217,7 @@ describe('setAgentSettings', () => {
     const loadCatalog = vi.fn(() => Promise.resolve(UNAVAILABLE));
 
     const result = await setAgentSettings(dir, deps({ isTurnInFlight: () => true, loadCatalog }), {
-      agentId: DEFAULT_AGENT_ID,
+      agentId: TEST_AGENT_ID,
       changes: { model: 'model-a' },
     });
 

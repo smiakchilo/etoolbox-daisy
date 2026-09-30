@@ -4,11 +4,11 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
   createHardenedCopilotClient,
   getAuthStatus,
-  resolveSdkRuntimeExePath,
   type CopilotClient,
   type ProxyEnvOverrides,
-} from '../../src/agent';
-import type { RuntimePathsEnv } from '../../src/agent/runtimePaths';
+} from '../../src/agents/copilot/copilotClient';
+import { resolveSdkRuntimeExePath } from '../../src/agents/copilot/runtimePaths';
+import type { RuntimePathsEnv } from '../../src/agents/copilot/runtimePaths';
 import { generateTestCa, issueTrustedLeafCert, issueUntrustedLeafCert } from './support/testCa';
 import {
   reserveClosedPort,

@@ -1,6 +1,11 @@
 import { z } from 'zod';
-import { modelCatalogEntrySchema, type ModelCatalogEntry } from '../shared/contracts/modelCatalog';
-import { err, ok, type Result } from '../shared/result';
+import {
+  type ModelCatalogEntry,
+  type Result,
+  err,
+  modelCatalogEntrySchema,
+  ok,
+} from '../../shared';
 
 /**
  * Reads the Copilot model catalogue through the SDK and projects it to this

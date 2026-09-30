@@ -8,7 +8,7 @@ import {
   localSignOut,
   startWebFlowLogin,
   type SpawnFn,
-} from '../../../src/agent/auth';
+} from '../../../../src/agents/copilot/auth';
 
 const scratchRoots: string[] = [];
 

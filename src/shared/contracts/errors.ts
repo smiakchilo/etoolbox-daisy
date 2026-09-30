@@ -53,8 +53,8 @@ export const TOOL_ERROR_CODES = [
   'PRECONDITION_FAILED',
   /** The result could not be handed to the model because of its size. */
   'RESULT_TOO_LARGE_FOR_MODEL',
-  /** The Copilot runtime or the user's Copilot entitlement is unusable. */
-  'COPILOT_UNAVAILABLE',
+  /** The active agent's runtime is unusable, absent, or not signed in. */
+  'AGENT_UNAVAILABLE',
   /** Reading or writing the application's own settings/history failed. */
   'STORAGE_ERROR',
   /** An existing SDK session could not be resumed. */
@@ -74,7 +74,7 @@ export const toolErrorCodeSchema = z.enum(TOOL_ERROR_CODES);
 export const REQUIRED_ACTIONS = [
   'none',
   'sign_in_to_aem',
-  'sign_in_to_copilot',
+  'sign_in_to_agent',
   'add_server',
   'select_server',
   'review_certificate',
@@ -118,7 +118,7 @@ const RETRYABLE_BY_DEFAULT: ReadonlySet<ToolErrorCode> = new Set<ToolErrorCode>(
   'NETWORK_ERROR',
   'PROXY_ERROR',
   'TIMEOUT',
-  'COPILOT_UNAVAILABLE',
+  'AGENT_UNAVAILABLE',
   'STORAGE_ERROR',
 ]);
 
@@ -138,7 +138,7 @@ const REQUIRED_ACTION_BY_CODE: Readonly<Record<ToolErrorCode, RequiredAction>> =
   STALE_CONTEXT: 'none',
   PRECONDITION_FAILED: 'none',
   RESULT_TOO_LARGE_FOR_MODEL: 'reduce_result_size',
-  COPILOT_UNAVAILABLE: 'sign_in_to_copilot',
+  AGENT_UNAVAILABLE: 'sign_in_to_agent',
   STORAGE_ERROR: 'none',
   RESUME_FAILED: 'start_new_chat',
 };

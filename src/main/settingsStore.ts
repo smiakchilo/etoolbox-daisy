@@ -20,7 +20,7 @@ import {
   type ProxyConfig,
 } from '../shared';
 import type { ProxyId, ServerId } from '../shared';
-import { DEFAULT_AGENT_ID, resolveConfiguredAgentId } from '../shared';
+import { resolveConfiguredAgentId, type AgentDefinition } from '../shared';
 import type { AgentId } from '../shared';
 import {
   HOST_PROXY_NONE,
@@ -423,7 +423,7 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
 
   const agentsSource: Record<string, unknown> = isPlainObject(document['agents'])
     ? document['agents']
-    : { [DEFAULT_AGENT_ID]: { active: true } };
+    : {};
   const agents: Record<string, Record<string, unknown>> = {};
   let activeSeen = false;
   for (const [key, value] of Object.entries(agentsSource)) {
@@ -1295,11 +1295,11 @@ export interface ModelPreferencesInput {
 
 /**
  * The provider the document is *configured* to drive: the single node in
- * `agents` whose `active` flag is set, or {@link DEFAULT_AGENT_ID} when the
- * document has no active node at all (a freshly hand-edited file, or a user
- * who turned every provider's radio off). Falling back rather than returning
- * `undefined` keeps every reader - the runtime, its proxy, the model-selection
- * channel - total, and matches `defaultAppSettings()`'s own seed.
+ * `agents` whose `active` flag is set and that this build actually has, else
+ * the first discovered agent when the document has no usable active node (a
+ * fresh file, or a user who turned every provider's radio off). `undefined`
+ * only when no agent is discovered at all, which every reader treats as "no
+ * agent to drive" rather than an error.
  *
  * Deliberately *not* the renderer's notion of "the active agent": the runtime
  * must exist (and be reachable through the configured proxy) even while the
@@ -1307,8 +1307,11 @@ export interface ModelPreferencesInput {
  * What the UI shows as active is gated by eligibility - see
  * `resolveEffectiveActiveAgentId` in `src/shared/contracts/agents.ts`.
  */
-export function configuredAgentId(settings: AppSettings): AgentId {
-  return resolveConfiguredAgentId(settings.agents);
+export function configuredAgentId(
+  settings: AppSettings,
+  definitions: readonly AgentDefinition[],
+): AgentId | undefined {
+  return resolveConfiguredAgentId(settings.agents, definitions);
 }
 
 /**
@@ -1326,8 +1329,6 @@ export interface AgentSettingsChanges {
 
 /** Distinguishable reasons {@link updateAgentSettings} can fail. */
 export const AGENT_MUTATION_ERROR_KINDS = [
-  /** No node for this provider exists in `agents`. */
-  'agent_not_found',
   /** The change does not produce a valid settings document. */
   'invalid_change',
 ] as const;
@@ -1360,12 +1361,7 @@ export function updateAgentSettings(
   agentId: AgentId,
   changes: AgentSettingsChanges,
 ): Result<AppSettings, AgentMutationError> {
-  const existing = settings.agents[agentId];
-  if (!existing) {
-    return err({ kind: 'agent_not_found', message: `no agent with id ${agentId}` });
-  }
-
-  const nextNode: Record<string, unknown> = { ...existing };
+  const nextNode: Record<string, unknown> = { active: false, ...settings.agents[agentId] };
 
   if (changes.active !== undefined) {
     nextNode['active'] = changes.active;
@@ -1429,21 +1425,17 @@ export function updateAgentSettings(
  * and I/O-free, like every other mutation helper: the caller loads, applies,
  * saves, and stores or deletes the actual secret.
  *
- * A missing node is `agent_not_found` rather than being created implicitly,
- * matching {@link updateAgentSettings}: an agent's node is part of the
- * document, not something a secret write conjures up.
+ * A missing node is created (inactive), matching {@link updateAgentSettings}:
+ * the document starts with no agent nodes, so the first write for a discovered
+ * agent has to make its node. Whether the id names a real agent is the IPC
+ * layer's check, against the discovered catalogue.
  */
 export function updateAgentToken(
   settings: AppSettings,
   agentId: AgentId,
   token: AgentToken | null,
 ): Result<AppSettings, AgentMutationError> {
-  const existing = settings.agents[agentId];
-  if (!existing) {
-    return err({ kind: 'agent_not_found', message: `no agent with id ${agentId}` });
-  }
-
-  const nextNode: Record<string, unknown> = { ...existing };
+  const nextNode: Record<string, unknown> = { active: false, ...settings.agents[agentId] };
   if (token === null) {
     delete nextNode['token'];
   } else {
@@ -1468,8 +1460,8 @@ export function updateAgentToken(
 /**
  * Replaces the *active* provider's model/reasoning-effort pair. The persisted
  * pair moved from a top-level `defaultModel`/`defaultReasoningEffort` to each
- * agent's own node, so this now targets {@link configuredAgentId} - the
- * provider the app is set up to drive - rather than the document as a whole.
+ * agent's own node, so this targets the `agentId` the caller resolved with
+ * {@link configuredAgentId} - the provider the app is set up to drive.
  *
  * Note what this function deliberately does *not* do: it never checks the
  * model against the SDK catalogue. That check belongs to the IPC layer, which
@@ -1481,9 +1473,10 @@ export function updateAgentToken(
  */
 export function updateModelPreferences(
   settings: AppSettings,
+  agentId: AgentId,
   input: ModelPreferencesInput,
 ): Result<AppSettings, AgentMutationError> {
-  return updateAgentSettings(settings, configuredAgentId(settings), {
+  return updateAgentSettings(settings, agentId, {
     model: input.model,
     reasoningEffort: input.model === null ? null : input.reasoningEffort,
   });

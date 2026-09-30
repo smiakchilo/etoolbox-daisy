@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadModelCatalog, projectModelCatalog } from '../../../src/agent/modelCatalog';
+import { loadModelCatalog, projectModelCatalog } from '../../../../src/agents/copilot/modelCatalog';
 
 /**
  * Tests for the SDK -> application projection of the model catalogue

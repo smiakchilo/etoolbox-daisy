@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, type Page, test } from '@playwright/test';
 import { AEM_QUERY_TOOL_NAME } from '../../src/tools/aem-query/aemQuery';
-import type { ScriptedTurn } from '../../src/agent/fakeAgentService';
+import type { ScriptedTurn } from '../../src/main/agents/fakeAgentService';
 import {
   FAKE_AGENT_SERVICE_ENV_VAR,
   TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,

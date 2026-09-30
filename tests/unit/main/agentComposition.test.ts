@@ -1,28 +1,32 @@
-import { describe, expect, it, vi, type Mock } from 'vitest';
+import { type Mock, describe, expect, it, vi } from 'vitest';
 import {
-  createCurrentAemServerContext,
-  createBridgeCurrentContext,
-  createCurrentPageContext,
-  resolveBundledSkillsDirectory,
-  createLateBoundAemToolContext,
-  wireNavigationEpochCancellation,
-  shouldUseFakeAgentService,
-  selectAgentService,
-  startAgentServiceInBackground,
-  startAppRuntime,
-  FAKE_AGENT_SERVICE_ENV_VAR,
-} from '../../../src/main/agentComposition';
-import type { ActiveAemServer } from '../../../src/main/browser/browserController';
-import {
-  createStartupGatedAgentChatController,
   type AgentChatController,
+  createStartupGatedAgentChatController,
 } from '../../../src/main/agentChatController';
+import {
+  type InstallAgentServiceDeps,
+  createBridgeCurrentContext,
+  createCurrentAemServerContext,
+  createCurrentPageContext,
+  createLateBoundAemToolContext,
+  FAKE_AGENT_SERVICE_ENV_VAR,
+  installAgentService,
+  resolveBundledSkillsDirectory,
+  shouldUseFakeAgentService,
+  startAppRuntime,
+  wireNavigationEpochCancellation,
+} from '../../../src/main/agentComposition';
+import { createFakeAgentService } from '../../../src/main/agents/fakeAgentService';
+import type { ActiveAemServer } from '../../../src/main/browser/browserController';
 import type { ChatJournal } from '../../../src/main/chatJournal';
 import type { Logger } from '../../../src/main/logger';
-import type { AgentService } from '../../../src/agent/agentService';
-import { createFakeAgentService } from '../../../src/agent/fakeAgentService';
-import type { CurrentAemToolContext } from '../../../src/shared';
-import { newChatId, newServerId, newTurnId } from '../../../src/shared';
+import {
+  type AgentService,
+  type CurrentAemToolContext,
+  newChatId,
+  newServerId,
+  newTurnId,
+} from '../../../src/shared';
 
 function counterIds(prefix: string): () => string {
   let n = 0;
@@ -302,66 +306,9 @@ function fakeAgentServiceDouble(): AgentService {
   };
 }
 
-describe('selectAgentService', () => {
-  it('builds and returns the fake, and logs clearly, when the env var is set and the build is not packaged', () => {
-    const fake = fakeAgentServiceDouble();
-    const real = fakeAgentServiceDouble();
-    const createFakeService = vi.fn(() => fake);
-    const createRealService = vi.fn(() => real);
-    const { logger, spies } = noopLogger();
-
-    const selected = selectAgentService({
-      env: { [FAKE_AGENT_SERVICE_ENV_VAR]: '1' },
-      isPackaged: false,
-      logger,
-      createFakeService,
-      createRealService,
-    });
-
-    expect(selected).toBe(fake);
-    expect(createRealService).not.toHaveBeenCalled();
-    expect(spies.warn).toHaveBeenCalledWith('AGENT_SERVICE_FAKE_SELECTED');
-  });
-
-  it('builds and returns the real adapter when packaged, even with the env var set, and never logs the fake-selected message', () => {
-    const fake = fakeAgentServiceDouble();
-    const real = fakeAgentServiceDouble();
-    const createFakeService = vi.fn(() => fake);
-    const createRealService = vi.fn(() => real);
-    const { logger, spies } = noopLogger();
-
-    const selected = selectAgentService({
-      env: { [FAKE_AGENT_SERVICE_ENV_VAR]: '1' },
-      isPackaged: true,
-      logger,
-      createFakeService,
-      createRealService,
-    });
-
-    expect(selected).toBe(real);
-    expect(createFakeService).not.toHaveBeenCalled();
-    expect(spies.warn).not.toHaveBeenCalled();
-  });
-
-  it('builds and returns the real adapter when the env var is absent', () => {
-    const real = fakeAgentServiceDouble();
-    const createRealService = vi.fn(() => real);
-
-    const selected = selectAgentService({
-      env: {},
-      isPackaged: false,
-      logger: noopLogger().logger,
-      createFakeService: () => fakeAgentServiceDouble(),
-      createRealService,
-    });
-
-    expect(selected).toBe(real);
-  });
-});
-
 // ---------------------------------------------------------------------------
-// startAgentServiceInBackground - the slow (real-path) part of standing up
-// the agent chat surface, run off the critical path.
+// installAgentService - what any agent's runtime calls, once started, to put
+// its AgentService behind the chat surface. Agent-neutral by construction.
 // ---------------------------------------------------------------------------
 
 /** Resolves/rejects on demand from the test, so ordering can be asserted precisely. */
@@ -379,84 +326,57 @@ function deferred<T>(): {
   return { promise, resolve, reject };
 }
 
-describe('startAgentServiceInBackground', () => {
-  it("awaits copilotClient.start() before building the agent service - the real path's client must be started first", async () => {
-    const startGate = deferred<void>();
-    const copilotClient = { start: vi.fn(() => startGate.promise) };
-    const buildAgentService = vi.fn(() => fakeAgentServiceDouble());
+function installDeps(
+  gatedController: ReturnType<typeof createStartupGatedAgentChatController>,
+  extra: Partial<InstallAgentServiceDeps> = {},
+): InstallAgentServiceDeps {
+  return {
+    logger: noopLogger().logger,
+    idGenerator: counterIds('turn'),
+    currentAemServerContext: () => undefined,
+    navigationEpoch: () => 0,
+    currentPageContext: () => undefined,
+    gatedController,
+    ...extra,
+  };
+}
+
+describe('installAgentService', () => {
+  it('initializes the service before the controller becomes ready', async () => {
+    const gate = deferred<{ ok: true; value: undefined }>();
+    const service = { ...fakeAgentServiceDouble(), initialize: vi.fn(() => gate.promise) };
     const gatedController = createStartupGatedAgentChatController();
 
-    const runPromise = startAgentServiceInBackground({
-      copilotClient,
-      buildAgentService,
-      logger: noopLogger().logger,
-      idGenerator: counterIds('turn'),
-      currentAemServerContext: () => undefined,
-      navigationEpoch: () => 0,
-      currentPageContext: () => undefined,
-      gatedController,
-    });
+    const run = installAgentService(installDeps(gatedController), service);
 
-    // Still pending: copilotClient.start() has not resolved yet.
     await Promise.resolve();
-    await Promise.resolve();
-    expect(copilotClient.start).toHaveBeenCalledTimes(1);
-    expect(buildAgentService).not.toHaveBeenCalled();
+    expect(service.initialize).toHaveBeenCalledTimes(1);
     expect(gatedController.getStatus().serviceState).toBe('starting');
 
-    startGate.resolve(undefined);
-    await runPromise;
+    gate.resolve({ ok: true, value: undefined });
+    await run;
 
-    expect(buildAgentService).toHaveBeenCalledTimes(1);
     expect(gatedController.getStatus().serviceState).toBe('ready');
   });
 
-  it('skips copilotClient.start() entirely on the fake path (copilotClient undefined) and still marks the gated controller ready', async () => {
-    const buildAgentService = vi.fn(() => fakeAgentServiceDouble());
+  it('propagates an initialize rejection to its caller and leaves the controller starting', async () => {
+    const service = {
+      ...fakeAgentServiceDouble(),
+      initialize: () => Promise.reject(new Error('boom')),
+    };
     const gatedController = createStartupGatedAgentChatController();
 
-    await startAgentServiceInBackground({
-      copilotClient: undefined,
-      buildAgentService,
-      logger: noopLogger().logger,
-      idGenerator: counterIds('turn'),
-      currentAemServerContext: () => undefined,
-      navigationEpoch: () => 0,
-      currentPageContext: () => undefined,
-      gatedController,
-    });
+    await expect(installAgentService(installDeps(gatedController), service)).rejects.toThrow(
+      'boom',
+    );
 
-    expect(buildAgentService).toHaveBeenCalledTimes(1);
-    expect(gatedController.getStatus().serviceState).toBe('ready');
-  });
-
-  it('propagates a copilotClient.start() rejection to its own caller, without building the agent service or marking the controller ready', async () => {
-    const copilotClient = { start: () => Promise.reject(new Error('boom')) };
-    const buildAgentService = vi.fn(() => fakeAgentServiceDouble());
-    const gatedController = createStartupGatedAgentChatController();
-
-    await expect(
-      startAgentServiceInBackground({
-        copilotClient,
-        buildAgentService,
-        logger: noopLogger().logger,
-        idGenerator: counterIds('turn'),
-        currentAemServerContext: () => undefined,
-        navigationEpoch: () => 0,
-        currentPageContext: () => undefined,
-        gatedController,
-      }),
-    ).rejects.toThrow('boom');
-
-    expect(buildAgentService).not.toHaveBeenCalled();
     expect(gatedController.getStatus().serviceState).toBe('starting');
   });
 
   it('threads cancelAemRequests and the chat journal into the controller it builds', async () => {
     // Both are optional dependencies wired only here; a silent drop would leave
     // Stop not cancelling the AEM fetch and the journal never writing, with no
-    // type error to catch it - exactly the class of wiring bug the project has
-    // hit before (the preload bridge argument list).
+    // type error to catch it.
     const agentService = createFakeAgentService({ idGenerator: counterIds('fake') });
     const gatedController = createStartupGatedAgentChatController();
     const cancelAemRequests = vi.fn();
@@ -470,18 +390,10 @@ describe('startAgentServiceInBackground', () => {
       getHealth: () => ({ writeFailureCount: 0, droppedRecordCount: 0, lastFailureCode: null }),
     };
 
-    await startAgentServiceInBackground({
-      copilotClient: undefined,
-      buildAgentService: () => agentService,
-      logger: noopLogger().logger,
-      idGenerator: counterIds('turn'),
-      currentAemServerContext: () => undefined,
-      navigationEpoch: () => 0,
-      currentPageContext: () => undefined,
-      chatJournal,
-      cancelAemRequests,
-      gatedController,
-    });
+    await installAgentService(
+      installDeps(gatedController, { chatJournal, cancelAemRequests }),
+      agentService,
+    );
 
     const chatId = newChatId(counterIds('chat'));
     await gatedController.openConversation({ chatId });

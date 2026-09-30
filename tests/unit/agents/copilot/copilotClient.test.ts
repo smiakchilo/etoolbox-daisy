@@ -32,8 +32,8 @@ vi.mock('@github/copilot-sdk', () => {
 
 // Imported after the mock so the mocked module is what copilotClient.ts sees.
 const { buildRuntimeChildEnv, createHardenedCopilotClient, toAuthStatus } =
-  await import('../../../src/agent/copilotClient');
-const { parseAuthStatus } = await import('../../../src/shared/agent-auth');
+  await import('../../../../src/agents/copilot/copilotClient');
+const { parseAuthStatus } = await import('../../../../src/shared/agent-auth');
 
 describe('toAuthStatus', () => {
   it('adds the apiVersion the raw SDK auth response does not carry', () => {

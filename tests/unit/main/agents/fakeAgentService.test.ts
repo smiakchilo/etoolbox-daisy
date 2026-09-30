@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { createAgentServiceError } from '../../../src/agent/agentService';
-import { createFakeAgentService, type ScriptedTurn } from '../../../src/agent/fakeAgentService';
-import type { AgentEvent } from '../../../src/shared';
-import { newChatId, newTurnId, type IdGenerator } from '../../../src/shared';
-import { applyAgentEvent, type SessionStatus } from '../../../src/shared';
+import {
+  type AgentEvent,
+  type IdGenerator,
+  type SessionStatus,
+  applyAgentEvent,
+  createAgentServiceError,
+  newChatId,
+  newTurnId,
+} from '../../../../src/shared';
+import {
+  type ScriptedTurn,
+  createFakeAgentService,
+} from '../../../../src/main/agents/fakeAgentService';
 
 /**
  * A plain incrementing-counter id generator, used only to mint `ChatId`s and
@@ -58,12 +66,8 @@ describe('createAgentServiceError (folded in from D1 - agentService.ts is otherw
   });
 
   it('includes requiredAction when supplied', () => {
-    const error = createAgentServiceError(
-      'COPILOT_UNAVAILABLE',
-      'not signed in',
-      'sign_in_to_copilot',
-    );
-    expect(error.requiredAction).toBe('sign_in_to_copilot');
+    const error = createAgentServiceError('AGENT_UNAVAILABLE', 'not signed in', 'sign_in_to_agent');
+    expect(error.requiredAction).toBe('sign_in_to_agent');
   });
 });
 
@@ -486,7 +490,7 @@ describe('FakeAgentService - one turn at a time', () => {
 });
 
 describe('FakeAgentService - authentication gating', () => {
-  it('refuses sendPrompt while not authenticated, with a sign_in_to_copilot required action', async () => {
+  it('refuses sendPrompt while not authenticated, with a sign_in_to_agent required action', async () => {
     const ids = counterIdGenerator();
     const fake = createFakeAgentService({
       initialAuthState: { apiVersion: 1, isAuthenticated: false },
@@ -497,8 +501,8 @@ describe('FakeAgentService - authentication gating', () => {
     const blocked = await fake.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
     expect(blocked.ok).toBe(false);
     if (!blocked.ok) {
-      expect(blocked.error.code).toBe('COPILOT_UNAVAILABLE');
-      expect(blocked.error.requiredAction).toBe('sign_in_to_copilot');
+      expect(blocked.error.code).toBe('AGENT_UNAVAILABLE');
+      expect(blocked.error.requiredAction).toBe('sign_in_to_agent');
     }
 
     fake.setAuthState({ apiVersion: 1, isAuthenticated: true });

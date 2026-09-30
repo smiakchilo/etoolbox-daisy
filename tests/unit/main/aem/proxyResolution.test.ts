@@ -3,7 +3,6 @@ import { findProxyEntry, resolveEffectiveProxy } from '../../../../src/main/aem'
 import {
   appSettingsSchema,
   defaultAppSettings,
-  DEFAULT_AGENT_ID,
   HOST_PROXY_NONE,
   newProxyId,
   newServerId,
@@ -11,6 +10,7 @@ import {
   serverConfigSchema,
   type AppSettings,
 } from '../../../../src/shared';
+import { TEST_AGENT_ID } from '../../../support/agentDefinitions';
 
 const corporate = proxyConfigSchema.parse({
   id: newProxyId(() => 'proxy-corp'),
@@ -41,7 +41,7 @@ function settings(options: {
   return appSettingsSchema.parse({
     hosts: options.hosts ?? [],
     proxies: [corporate, fallback],
-    agents: { [DEFAULT_AGENT_ID]: { active: true } },
+    agents: { [TEST_AGENT_ID]: { active: true } },
     browser: {
       disableNativeWebAuthn: true,
       ...(options.browserProxy !== undefined ? { proxy: options.browserProxy } : {}),

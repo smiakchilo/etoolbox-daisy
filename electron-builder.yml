@@ -7,7 +7,7 @@ files:
   - out/**/*
   - package.json
   # The Copilot SDK/CLI platform packages ship payload this app never uses:
-  # src/agent only ever spawns copilot-runtime.exe (via the explicit-path
+  # src/agents/copilot only ever spawns copilot-runtime.exe (via the explicit-path
   # RuntimeConnection, see runtimePaths.ts/copilotClient.ts) and copilot.exe
   # (only for `login --web-flow`, see auth.ts). Everything below is dead
   # weight for those two entry points - the `plugins/computer-use` MCP

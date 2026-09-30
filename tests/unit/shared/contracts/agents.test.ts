@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AGENT_DEFINITIONS,
   agentDefinition,
-  DEFAULT_AGENT_DEFINITION,
-  DEFAULT_AGENT_ID,
   isAgentEligible,
   isKnownAgentId,
   resolveConfiguredAgentId,
@@ -11,45 +8,65 @@ import {
   type AgentDefinition,
   type AgentId,
 } from '../../../../src/shared';
+import {
+  TEST_AGENT_DEFINITION,
+  TEST_AGENT_DEFINITIONS,
+  TEST_AGENT_ID,
+} from '../../../support/agentDefinitions';
 
-describe('agent registry', () => {
-  it('describes GitHub Copilot as needing authentication', () => {
-    const copilot = agentDefinition(DEFAULT_AGENT_ID);
-    expect(copilot).toBeDefined();
+const OPENCODE: AgentDefinition = {
+  id: 'opencode' as AgentId,
+  label: 'OpenCode',
+  requiresAuth: false,
+};
+
+describe('agent definitions', () => {
+  it('finds a definition by id', () => {
+    const copilot = agentDefinition(TEST_AGENT_ID, TEST_AGENT_DEFINITIONS);
+    expect(copilot).toBe(TEST_AGENT_DEFINITION);
     expect(copilot?.requiresAuth).toBe(true);
   });
 
-  it('exposes the same object the configured-agent default names', () => {
-    expect(DEFAULT_AGENT_DEFINITION).toBe(agentDefinition(DEFAULT_AGENT_ID));
-  });
-
   it('returns undefined for a provider this build does not know', () => {
-    expect(agentDefinition('not-shipped' as AgentId)).toBeUndefined();
+    expect(agentDefinition('not-shipped' as AgentId, TEST_AGENT_DEFINITIONS)).toBeUndefined();
   });
 
-  it('reports known ids honestly', () => {
-    for (const definition of AGENT_DEFINITIONS) {
-      expect(isKnownAgentId(definition.id)).toBe(true);
+  it('reports known ids honestly, and none when no agent is built', () => {
+    for (const definition of TEST_AGENT_DEFINITIONS) {
+      expect(isKnownAgentId(definition.id, TEST_AGENT_DEFINITIONS)).toBe(true);
     }
-    expect(isKnownAgentId('not-shipped')).toBe(false);
+    expect(isKnownAgentId('not-shipped', TEST_AGENT_DEFINITIONS)).toBe(false);
+    expect(isKnownAgentId(TEST_AGENT_ID, [])).toBe(false);
   });
 });
 
 describe('resolveConfiguredAgentId', () => {
-  it('returns the entry whose active flag is set', () => {
+  const both = [TEST_AGENT_DEFINITION, OPENCODE];
+
+  it('returns the known entry whose active flag is set', () => {
     expect(
-      resolveConfiguredAgentId({
-        [DEFAULT_AGENT_ID]: { active: false },
-        opencode: { active: true },
-      }),
+      resolveConfiguredAgentId(
+        { [TEST_AGENT_ID]: { active: false }, opencode: { active: true } },
+        both,
+      ),
     ).toBe('opencode');
   });
 
-  it('falls back to the default provider when none is active or the map is empty', () => {
-    expect(resolveConfiguredAgentId({})).toBe(DEFAULT_AGENT_ID);
-    expect(resolveConfiguredAgentId({ [DEFAULT_AGENT_ID]: { active: false } })).toBe(
-      DEFAULT_AGENT_ID,
+  it('ignores an active entry this build does not contain', () => {
+    expect(resolveConfiguredAgentId({ opencode: { active: true } }, TEST_AGENT_DEFINITIONS)).toBe(
+      TEST_AGENT_ID,
     );
+  });
+
+  it('falls back to the first definition when none is active or the map is empty', () => {
+    expect(resolveConfiguredAgentId({}, both)).toBe(TEST_AGENT_ID);
+    expect(resolveConfiguredAgentId({ [TEST_AGENT_ID]: { active: false } }, both)).toBe(
+      TEST_AGENT_ID,
+    );
+  });
+
+  it('is undefined when the build contains no agent', () => {
+    expect(resolveConfiguredAgentId({ [TEST_AGENT_ID]: { active: true } }, [])).toBeUndefined();
   });
 });
 

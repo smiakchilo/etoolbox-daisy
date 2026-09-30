@@ -43,7 +43,7 @@ import type {
   AgentChatStatus,
   AgentChatVoidResult,
 } from './agent-chat-ipc';
-import type { AgentEvent } from './contracts';
+import type { AgentEvent, AgentId } from './contracts';
 
 /**
  * Contract for the API the app-preload bridge exposes on
@@ -178,11 +178,12 @@ export interface DaisySettingsApi {
   updateBrowserSettings(request: UpdateBrowserSettingsRequest): Promise<SettingsIpcVoidResult>;
 }
 
+/** Sign-in surface, one call per agent - see gentAuthRequestSchema. */
 export interface DaisyAgentAuthApi {
-  getAuthStatus(): Promise<AuthStatus>;
-  login(): Promise<LoginOutcome>;
-  cancelLogin(): Promise<void>;
-  logout(): Promise<LogoutResult>;
+  getAuthStatus(agentId: AgentId): Promise<AuthStatus>;
+  login(agentId: AgentId): Promise<LoginOutcome>;
+  cancelLogin(agentId: AgentId): Promise<void>;
+  logout(agentId: AgentId): Promise<LogoutResult>;
 }
 
 /**

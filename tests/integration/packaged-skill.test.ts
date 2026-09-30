@@ -5,7 +5,7 @@ import {
   resolveBundledSkillsDir,
   resolveCliExePath,
   resolveSdkRuntimeExePath,
-} from '../../src/agent';
+} from '../../src/agents/copilot/runtimePaths';
 
 /**
  * Confirms the bundled-skill directory really lands where

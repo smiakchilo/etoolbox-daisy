@@ -1,5 +1,5 @@
+import { AGENT_DEFINITIONS } from '../agents/agentCatalog';
 import {
-  AGENT_DEFINITIONS,
   type AgentDefinition,
   type AgentId,
   type AgentSettingsSnapshot,
@@ -24,7 +24,7 @@ import {
  * no custom elements involved.
  *
  * The tab is a list, not a special case: one item per
- * {@link AGENT_DEFINITIONS} entry, even though this build ships exactly one
+ * {@link AGENT_DEFINITIONS} entry, even when a build contains a single
  * provider. Only the one running runtime advertises a model catalogue, and
  * `settings:get-model-selection` reads the *configured* provider's stored model
  * plus that catalogue - so an item that is not the effective-active one renders

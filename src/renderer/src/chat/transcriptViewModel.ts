@@ -54,7 +54,7 @@ export function describeRequiredAction(action: RequiredAction): string | undefin
       return undefined;
     case 'sign_in_to_aem':
       return 'Sign in to AEM in the browser pane, then try again.';
-    case 'sign_in_to_copilot':
+    case 'sign_in_to_agent':
       return 'Sign in to Copilot, then try again.';
     case 'add_server':
       return 'Add an AEM server in Settings.';

@@ -62,6 +62,7 @@ import {
   parseAgentChatStatus,
   parseAgentChatVoidResult,
   parseAppInfo,
+  agentAuthRequestSchema,
   parseAuthStatus,
   parseBrowserIpcVoidResult,
   parseBrowserNavigationState,
@@ -103,6 +104,7 @@ import {
   type AgentChatStatus,
   type AgentChatVoidResult,
   type AgentEvent,
+  type AgentId,
   type ApproveCertificateExceptionRequest,
   type AppInfo,
   type AuthStatus,
@@ -147,19 +149,23 @@ const daisyApi: DaisyAppApi = {
     return parseAppInfo(raw);
   },
   agent: {
-    async getAuthStatus(): Promise<AuthStatus> {
-      const raw: unknown = await ipcRenderer.invoke(AGENT_GET_AUTH_STATUS_CHANNEL);
+    async getAuthStatus(agentId: AgentId): Promise<AuthStatus> {
+      const request = agentAuthRequestSchema.parse({ agentId });
+      const raw: unknown = await ipcRenderer.invoke(AGENT_GET_AUTH_STATUS_CHANNEL, request);
       return parseAuthStatus(raw);
     },
-    async login(): Promise<LoginOutcome> {
-      const raw: unknown = await ipcRenderer.invoke(AGENT_LOGIN_CHANNEL);
+    async login(agentId: AgentId): Promise<LoginOutcome> {
+      const request = agentAuthRequestSchema.parse({ agentId });
+      const raw: unknown = await ipcRenderer.invoke(AGENT_LOGIN_CHANNEL, request);
       return parseLoginOutcome(raw);
     },
-    async cancelLogin(): Promise<void> {
-      await ipcRenderer.invoke(AGENT_CANCEL_LOGIN_CHANNEL);
+    async cancelLogin(agentId: AgentId): Promise<void> {
+      const request = agentAuthRequestSchema.parse({ agentId });
+      await ipcRenderer.invoke(AGENT_CANCEL_LOGIN_CHANNEL, request);
     },
-    async logout(): Promise<LogoutResult> {
-      const raw: unknown = await ipcRenderer.invoke(AGENT_LOGOUT_CHANNEL);
+    async logout(agentId: AgentId): Promise<LogoutResult> {
+      const request = agentAuthRequestSchema.parse({ agentId });
+      const raw: unknown = await ipcRenderer.invoke(AGENT_LOGOUT_CHANNEL, request);
       return parseLogoutResult(raw);
     },
   },

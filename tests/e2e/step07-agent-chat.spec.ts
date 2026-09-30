@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 import { AEM_GET_JSON_TOOL_NAME } from '../../src/tools/aem-get-json/aemGetJson';
-import type { ScriptedTurn } from '../../src/agent/fakeAgentService';
+import type { ScriptedTurn } from '../../src/main/agents/fakeAgentService';
 import {
   FAKE_AGENT_SERVICE_ENV_VAR,
   TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
@@ -14,7 +14,7 @@ import { newChatId, type AgentEvent, type ChatId, type DaisyAppApi } from '../..
  * Step 07 Milestone A, criteria #3/#4/#6/#7 (docs/implementation-plan.md
  * lines 347-400), proven against the REAL shipped `out/main/index.js` and
  * `out/preload/app-preload.js`, driven with the deterministic
- * `createFakeAgentService` fake (`src/agent/fakeAgentService.ts`) instead of
+ * `createFakeAgentService` fake (`src/main/agents/fakeAgentService.ts`) instead of
  * a real Copilot sign-in - criteria #1, #2 and #5 need that and are covered
  * by a separate manual checklist, not here.
  *

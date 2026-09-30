@@ -9,3 +9,4 @@ export * from './agent-chat-ipc';
 export * from './skillInvocation';
 export * from './contracts';
 export * from './tools';
+export * from './agents';

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createFakeAgentService } from '../../../src/agent/fakeAgentService';
 import {
   createAgentChatController,
   composeModelPrompt,
@@ -11,18 +10,21 @@ import {
   type AgentChatEventSink,
 } from '../../../src/main/agentChatController';
 import type { ChatJournal } from '../../../src/main/chatJournal';
+import { createFakeAgentService } from '../../../src/main/agents/fakeAgentService';
 import type { Logger } from '../../../src/main/logger';
-import type {
-  AgentAuthState,
-  AgentService,
-  AgentServiceError,
-  OpenConversationRequest,
-  SendPromptRequest,
-  Unsubscribe,
-} from '../../../src/agent/agentService';
-import { ok, type Result } from '../../../src/shared';
-import type { AgentEvent } from '../../../src/shared';
-import type { ChatId, ServerId } from '../../../src/shared';
+import {
+  type AgentAuthState,
+  type AgentEvent,
+  type AgentService,
+  type AgentServiceError,
+  type ChatId,
+  type OpenConversationRequest,
+  type Result,
+  type SendPromptRequest,
+  type ServerId,
+  type Unsubscribe,
+  ok,
+} from '../../../src/shared';
 
 /**
  * Unit tests for `agentChatController.ts` against `fakeAgentService.ts` -
@@ -741,7 +743,7 @@ describe('agentChatController chat journal', () => {
       sendPrompt: () =>
         Promise.resolve({
           ok: false as const,
-          error: { code: 'COPILOT_UNAVAILABLE' as const, message: 'no' },
+          error: { code: 'AGENT_UNAVAILABLE' as const, message: 'no' },
         }),
     };
     const { journal, calls } = createRecordingJournal();

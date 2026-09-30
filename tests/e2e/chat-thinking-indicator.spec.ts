@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import type { ScriptedTurn } from '../../src/agent/fakeAgentService';
+import type { ScriptedTurn } from '../../src/main/agents/fakeAgentService';
 import {
   FAKE_AGENT_SERVICE_ENV_VAR,
   TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
