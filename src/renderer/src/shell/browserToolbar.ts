@@ -35,7 +35,7 @@ import {
  * (requirements-decisions.md section 8).
  *
  * The address bar (`addressField`) is an ordinary `sp-textfield`: typing a
- * URL and committing it (Enter/blur) navigates exactly as before. The
+ * URL and pressing Enter navigates exactly as before. The
  * `sp-picker-button` beside it (`hostsButton`) is a combobox-style
  * affordance, not a value-holding control - clicking it asks the owning pane
  * to suspend the native `WebContentsView` and reveal the whole-size hosts
@@ -874,31 +874,20 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     truncatedValueTooltipController.render = () => undefined;
   }
 
-  // Enter keydown navigates immediately regardless of whether the value
-  // changed.  sp-textfield's `change` event only fires when the committed
-  // value differs from the previous commit (same as native <input>), so
-  // pressing Enter on an unchanged URL — e.g. after dismissing an
-  // unknown-origin prompt — would silently do nothing without this handler.
-  // A guard prevents double-firing: when keydown fires first it sets the
-  // flag so the subsequent `change` event (if one fires) is skipped.
-  let keydownNavigated = false;
-
+  // Navigation is committed only by an explicit action: pressing Enter while
+  // the field has focus, or the toolbar's Refresh button (see `reload`). The
+  // field's `change` event is deliberately NOT wired up: sp-textfield forwards
+  // the underlying <input>'s `change`, which fires on *blur* — so merely
+  // moving focus away (e.g. clicking the hosts picker beside the field, or a
+  // banner button) would otherwise launch a navigation for a half-typed value
+  // such as "loc". Enter navigates unconditionally, even when the value is
+  // unchanged (pressing Enter again after dismissing the unknown-origin prompt
+  // must re-request the refused URL).
   addressField.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
     const value = addressField.value.trim();
     if (value === '') return;
     event.preventDefault();
-    keydownNavigated = true;
-    performNavigate(value);
-  });
-
-  addressField.addEventListener('change', () => {
-    if (keydownNavigated) {
-      keydownNavigated = false;
-      return;
-    }
-    const value = addressField.value.trim();
-    if (value === '') return;
     performNavigate(value);
   });
 

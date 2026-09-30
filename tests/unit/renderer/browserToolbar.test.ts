@@ -276,7 +276,9 @@ describe('createBrowserToolbar loading state machine', () => {
       value: string;
     };
     address.value = 'https://author.example/content/page.html';
-    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
     stateListeners[0]?.(loadingState(true));
     expect(message.hasAttribute('open')).toBe(false);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
@@ -312,7 +314,9 @@ describe('createBrowserToolbar loading state machine', () => {
       value: string;
     };
     address.value = 'https://author.example/content/page.html';
-    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
     stateListeners[0]?.(loadingState(true));
     expect(message.hasAttribute('open')).toBe(false);
     expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
@@ -367,7 +371,9 @@ describe('createBrowserToolbar loading state machine', () => {
       value: string;
     };
     address.value = 'https://dead.example';
-    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
 
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
@@ -562,7 +568,9 @@ describe('createBrowserToolbar loading state machine', () => {
       value: string;
     };
     address.value = 'https://dead.example';
-    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
     // A loading push arms the 200ms timer; the error arrives first and
     // supersedes it.
     stateListeners[0]?.(loadingState(true));
@@ -605,7 +613,9 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       value: string;
     };
     address.value = value;
-    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    address.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+    );
   }
 
   const TIMEOUT_ERROR = {
@@ -995,7 +1005,9 @@ function triggerUnknownOrigin(
     value: string;
   };
   address.value = url;
-  address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  address.dispatchEvent(
+    new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
+  );
 }
 
 describe('createBrowserToolbar unknown-origin prompt', () => {
@@ -1143,7 +1155,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     const UNKNOWN_URL = 'https://unknown.example/content/page.html';
     const UNKNOWN_ORIGIN = 'https://unknown.example';
 
-    // First attempt: type + change → banner.
+    // First attempt: type + Enter → banner.
     triggerUnknownOrigin(toolbar, UNKNOWN_URL, UNKNOWN_ORIGIN);
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
@@ -1300,7 +1312,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     );
   });
 
-  it('keydown Enter does not double-fire when change also fires', async () => {
+  it('navigates on Enter exactly once and ignores a stray change (blur)', async () => {
     const toolbar = build();
     const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
       value: string;
@@ -1308,17 +1320,33 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
 
     browser.navigate.mockResolvedValue({ ok: true });
     address.value = 'https://author.example/content/page.html';
-    // Simulate the browser event order: keydown fires first, then change.
     address.dispatchEvent(
       new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true }),
     );
-    address.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    // A blur-driven `change` (the native event sp-textfield forwards when
+    // focus leaves the field) must not navigate again — or at all.
+    const blurChange = new dom.window.Event('change', { bubbles: true });
+    address.dispatchEvent(blurChange);
 
-    // Only one navigate call must have been made (keydown navigated, change
-    // was suppressed by the guard).
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('does not navigate on a blur-driven change (e.g. clicking the hosts picker)', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    browser.navigate.mockResolvedValue({ ok: true });
+
+    // "loc" typed, then focus moves to the hosts picker: the field blurs and
+    // sp-textfield forwards the native `change`. No navigation may start.
+    address.value = 'loc';
+    const blurChange = new dom.window.Event('change', { bubbles: true });
+    address.dispatchEvent(blurChange);
+
+    expect(browser.navigate).not.toHaveBeenCalled();
   });
 });
 
