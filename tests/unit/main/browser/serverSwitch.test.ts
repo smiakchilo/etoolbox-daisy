@@ -178,18 +178,25 @@ describe('ServerSwitchController', () => {
     expect(states).toEqual(['switching', 'idle']);
   });
 
-  it('rejects a second switch while one is already in progress, rather than interleaving them', async () => {
+  it('supersedes an in-flight switch instead of rejecting it: the newer target loads and the older one is abandoned', async () => {
     const harness = makeRecordingHarness();
-    let resolveSwitchProxy: (() => void) | undefined;
+    let releaseFirstSwitchProxy: (() => void) | undefined;
+    let switchProxyCalls = 0;
     const aemSession: AemSwitchSession = {
-      switchProxy() {
-        harness.calls.push('aemSession.switchProxy:start');
-        return new Promise((resolve) => {
-          resolveSwitchProxy = () => {
-            harness.calls.push('aemSession.switchProxy:end');
-            resolve();
-          };
-        });
+      switchProxy(_proxy, resolveCredentials) {
+        switchProxyCalls += 1;
+        resolveCredentials();
+        if (switchProxyCalls === 1) {
+          harness.calls.push('aemSession.switchProxy:first:start');
+          return new Promise((resolve) => {
+            releaseFirstSwitchProxy = () => {
+              harness.calls.push('aemSession.switchProxy:first:end');
+              resolve();
+            };
+          });
+        }
+        harness.calls.push(`aemSession.switchProxy:${String(switchProxyCalls)}`);
+        return Promise.resolve();
       },
     };
 
@@ -202,27 +209,69 @@ describe('ServerSwitchController', () => {
     });
 
     const firstSwitch = controller.switchTo(makeServer({ origin: 'https://first.example' }));
-    // Give the microtask queue a chance to reach the in-flight `switchProxy` await.
+    // Let the first procedure reach its in-flight switchProxy await.
     await Promise.resolve();
     await Promise.resolve();
+    expect(controller.getState()).toBe('switching');
 
-    const secondOutcome = await controller.switchTo(
-      makeServer({ origin: 'https://second.example' }),
-    );
-    expect(secondOutcome).toEqual({ ok: false, reason: 'already_switching' });
+    // A second switch arrives while the first is still mid-switch. It must not
+    // be rejected; it supersedes, and it is the one that loads.
+    const secondSwitch = controller.switchTo(makeServer({ origin: 'https://second.example' }));
+    // The second switch waits for the first to unwind, so release it.
+    releaseFirstSwitchProxy?.();
 
-    resolveSwitchProxy?.();
-    const firstOutcome = await firstSwitch;
-    expect(firstOutcome).toEqual({ ok: true });
+    const [firstOutcome, secondOutcome] = await Promise.all([firstSwitch, secondSwitch]);
+    expect(secondOutcome).toEqual({ ok: true });
+    expect(firstOutcome).toEqual({ ok: false, reason: 'superseded' });
 
-    // The second switch must never have touched stop/closePopups/loadURL at all.
-    expect(harness.calls).toEqual([
-      'view.stop',
-      'closePopups',
-      'aemSession.switchProxy:start',
-      'aemSession.switchProxy:end',
-      'view.loadURL:https://first.example',
+    // Only the newer target was ever loaded; the superseded switch bailed
+    // before its own loadURL.
+    expect(harness.calls.filter((call) => call.startsWith('view.loadURL'))).toEqual([
+      'view.loadURL:https://second.example',
     ]);
+    expect(controller.getState()).toBe('idle');
+  });
+
+  it('reports a superseded switch whose own load is stopped as superseded, not as a network error', async () => {
+    const harness = makeRecordingHarness();
+    let rejectFirstLoad: ((error: Error) => void) | undefined;
+    const view: SwitchableAemView = {
+      stop() {
+        harness.calls.push('view.stop');
+        // A superseding switch stops the pane, which aborts the in-flight
+        // loadURL exactly as Electron would.
+        rejectFirstLoad?.(new Error("ERR_ABORTED (-3) loading 'https://first.example'"));
+      },
+      loadURL(url: string) {
+        harness.calls.push(`view.loadURL:${url}`);
+        if (url === 'https://first.example') {
+          return new Promise((_resolve, reject) => {
+            rejectFirstLoad = reject;
+          });
+        }
+        return Promise.resolve();
+      },
+    };
+
+    const controller = new ServerSwitchController({
+      getView: () => view,
+      closePopups: harness.closePopups,
+      aemSession: harness.aemSession,
+      resolveProxyCredentials: () => () => undefined,
+      resolveProxy: () => undefined,
+    });
+
+    const firstSwitch = controller.switchTo(makeServer({ origin: 'https://first.example' }));
+    // Let the first procedure reach its in-flight loadURL.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const secondSwitch = controller.switchTo(makeServer({ origin: 'https://second.example' }));
+    const [firstOutcome, secondOutcome] = await Promise.all([firstSwitch, secondSwitch]);
+
+    // The stop() rejection is caused by the supersede, so the older call sees
+    // `superseded` - not a `network_error` that would paint a spurious error.
+    expect(firstOutcome).toEqual({ ok: false, reason: 'superseded' });
+    expect(secondOutcome).toEqual({ ok: true });
   });
 
   it('reports no_active_view without touching the session when there is no view yet', async () => {

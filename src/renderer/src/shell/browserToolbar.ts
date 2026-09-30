@@ -578,8 +578,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         forwardButton.setAttribute('disabled', '');
       }
     }
-    // Picker: disabled while switching, or when no hosts are configured.
-    if (switching || !hasHosts) {
+    // Picker: enabled whenever hosts are configured, even mid-switch. Like
+    // the address field, it must never trap the user in a slow or flaky load
+    // with no way out: picking another host supersedes the in-flight switch
+    // (`serverSwitch.ts`). Only "no hosts to pick from" disables it.
+    if (!hasHosts) {
       hostsButton.setAttribute('disabled', '');
     } else {
       hostsButton.removeAttribute('disabled');

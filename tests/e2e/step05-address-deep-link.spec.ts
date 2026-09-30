@@ -128,12 +128,11 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     await page.locator(`.hosts-item[data-origin="${aem.origin}"]`).click();
     // The address bar is always visible (the toolbar never hides), so waiting
     // on it synchronizes nothing. What must settle first is the picker's
-    // server switch: typing the deep link before it finishes races the
-    // in-flight switch, and main serializes switches
-    // (`ServerSwitchController.switchTo` rejects a second switch with
-    // `already_switching`), which would swallow the deep-link navigation. The
-    // origin echo of the load and the address bar reflecting the loaded URL
-    // together prove the switch has fully settled.
+    // server switch: this assertion is about the deep link replacing a
+    // *settled* page, not about superseding an in-flight navigation (covered
+    // by address-hosts-picker.spec.ts). The origin echo of the load and the
+    // address bar reflecting the loaded URL together prove the switch has
+    // fully settled.
     await expect.poll(() => aem.paths.includes('/'), { timeout: 30_000 }).toBe(true);
     const addressInput = page.locator('#browser-address-bar input');
     await expect
@@ -303,9 +302,8 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
     // until a page sits under it - pick the echo host first (it closes the
     // panel AND loads a page in one step).
     await page.locator(`.hosts-item[data-origin="${aem.origin}"]`).click();
-    // Same synchronization as test 1: the picker's switch must settle before
-    // the unknown deep link is submitted, or `already_switching` swallows it
-    // and the prompt never appears.
+    // Same synchronization as test 1: wait for the picked page to settle so
+    // this assertion measures the unknown-origin prompt for a *settled* page.
     await expect.poll(() => aem.paths.includes('/'), { timeout: 30_000 }).toBe(true);
     const addressInput = page.locator('#browser-address-bar input');
     await expect

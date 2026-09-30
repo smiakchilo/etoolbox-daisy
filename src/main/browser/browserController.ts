@@ -468,25 +468,26 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
     const outcome = await switchController.switchTo(server, targetUrl);
     if (!outcome.ok) {
+      if (outcome.reason === 'superseded') {
+        // A newer navigation replaced this one before it reached its load, so
+        // there is nothing to report and nothing to roll back: the
+        // superseding switch owns the active-server/proxy state and will
+        // report its own result. Returning a failure here would paint a
+        // spurious error row for a navigation the user already replaced.
+        logger.info('BROWSER_SWITCH_SUPERSEDED');
+        return ok();
+      }
       // Whatever the view now shows - a half-loaded document, an error page,
-      // or (for "already_switching") whatever a *different* in-flight switch
-      // leaves it showing - it is not reliably `server`, so no server is
-      // reported as active rather than leaving a stale or guessed one in
-      // place. Mirrors the epoch bump just above: the same event that makes
-      // in-flight requests untrustworthy makes the "which server is this"
-      // answer untrustworthy too.
+      // or (for "no_active_view") nothing - it is not reliably `server`, so
+      // no server is reported as active rather than leaving a stale or
+      // guessed one in place. Mirrors the epoch bump just above: the same
+      // event that makes in-flight requests untrustworthy makes the "which
+      // server is this" answer untrustworthy too.
       activeServerState = undefined;
       // The proxy may or may not have been applied before the failure, so
       // forget what is in effect and let the next navigation reconcile it.
       appliedProxyKey = undefined;
       if (outcome.reason === 'network_error') {
-        // Checked first (rather than last) because "network_error" is the
-        // only union member with a single-literal `reason`; narrowing on it
-        // positively lets the compiler exclude this whole member from what
-        // remains below, instead of trying to narrow a property that is
-        // itself a union (`"already_switching" | "no_active_view"`) via two
-        // sequential equality checks.
-        //
         // The proxy switch or page load rejected with a Chromium `ERR_*`
         // error (see `serverSwitch.ts`'s `extractChromiumErrorCode` doc
         // comment). Surfaced as a structured result carrying that code, not
@@ -502,12 +503,6 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
           // load (`targetUrl` when one was given, the server origin otherwise).
           message: describeNetworkError(outcome.errorCode, targetUrl ?? server.origin),
           errorCode: outcome.errorCode,
-        });
-      }
-      if (outcome.reason === 'already_switching') {
-        return fail({
-          code: 'switch_in_progress',
-          message: 'a server switch is already in progress',
         });
       }
       return fail({ code: 'no_active_view', message: 'no AEM view is available' });

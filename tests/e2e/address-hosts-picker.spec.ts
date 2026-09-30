@@ -53,6 +53,43 @@ async function startEchoOrigin(): Promise<{ origin: string; hits: number; close:
   };
 }
 
+/**
+ * Like {@link startEchoOrigin}, but the response is held back for `delayMs`
+ * so the pane sits in the "Loading…" state long enough to interact with it.
+ * Records whether the client aborted the request before the delayed response
+ * was written - the direct evidence that a superseding navigation cancelled
+ * the pending load rather than leaving it running.
+ */
+async function startSlowOrigin(
+  delayMs: number,
+): Promise<{ origin: string; hits: number; aborted: boolean; close: () => void }> {
+  const state = { hits: 0, aborted: false };
+  const server: Server = createServer((_req, res) => {
+    state.hits += 1;
+    const timer = setTimeout(() => {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><title>slow</title><p>ok</p>`);
+    }, delayMs);
+    res.on('close', () => {
+      clearTimeout(timer);
+      if (!res.writableEnded) state.aborted = true;
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  return {
+    origin: `http://127.0.0.1:${String(address.port)}`,
+    get hits() {
+      return state.hits;
+    },
+    get aborted() {
+      return state.aborted;
+    },
+    close: () => server.close(),
+  };
+}
+
 function launchProfile(): { home: string; env: Record<string, string> } {
   mkdirSync(scratchBase, { recursive: true });
   const root = mkdtempSync(path.join(scratchBase, 'profile-'));
@@ -241,12 +278,11 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     await itemA.click();
     await expect.poll(() => serverA.hits > baselineA, { timeout: 30_000 }).toBe(true);
 
-    // Let the picker-initiated switch fully settle before typing the next
-    // address. `browser:navigate` is deliberately rejected while a switch is
-    // in progress (`switch_in_progress`), and the server records the request
-    // before the load finishes - so waiting only on `serverA.hits` can race the
-    // still-running switch and see the typed navigation silently dropped. The
-    // toolbar's Refresh (rather than Stop) is the "not loading" signal.
+    // Let the picker-initiated switch settle before typing the next address,
+    // so this assertion measures "typing to a different host works" rather than
+    // "a superseding navigation works" (that supersede path is covered by the
+    // dedicated test below). The toolbar's Refresh (rather than Stop) is the
+    // "not loading" signal.
     await expect(page.locator('.browser-toolbar [aria-label="Refresh"]')).toHaveCount(1, {
       timeout: 30_000,
     });
@@ -288,5 +324,80 @@ test("with no configured hosts, the address bar's hosts button stays visible but
     await expect(addressInput).toBeEnabled();
   } finally {
     await app.close();
+  }
+});
+
+test('the hosts picker stays enabled while a page loads, and picking another host aborts the pending load', async () => {
+  test.setTimeout(120_000);
+
+  const slow = await startSlowOrigin(15_000);
+  const fast = await startEchoOrigin();
+  const { home, env } = launchProfile();
+
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label: 'Slow',
+        origin: slow.origin,
+        color: { kind: 'swatch', swatch: 'blue' },
+        revision: 0,
+      },
+      {
+        id: randomUUID(),
+        label: 'Fast',
+        origin: fast.origin,
+        color: { kind: 'swatch', swatch: 'green' },
+        revision: 0,
+      },
+    ],
+  });
+  writeSettings(home, seeded);
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const addressBar = page.locator('#browser-address-bar');
+    await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
+    const addressInput = addressBar.locator('input').first();
+    const pickerButton = page.locator('#hosts-button');
+    const panel = page.locator('.hosts-panel');
+    const message = page.locator('.browser-toolbar-message');
+
+    // Startup panel is open; pick the slow host to begin a long load.
+    await page.locator(`.hosts-item[data-origin="${slow.origin}"]`).click();
+    await expect.poll(() => slow.hits > 0, { timeout: 30_000 }).toBe(true);
+
+    // The loading presentation appears (debounced) while the request hangs.
+    await expect(message).toContainText('Loading', { timeout: 20_000 });
+
+    // The picker must not be disabled mid-load - that was the usability trap:
+    // a slow or wrong address must never leave the user with no way to pick
+    // another host.
+    await expect(pickerButton).toBeEnabled();
+
+    // It must actually open the hosts panel while the page is still loading.
+    await pickerButton.click();
+    await expect(panel).toBeVisible({ timeout: 10_000 });
+    await expect(pickerButton).toHaveAttribute('open', '');
+
+    // Picking another host aborts the pending slow load and navigates instead.
+    await page.locator(`.hosts-item[data-origin="${fast.origin}"]`).click();
+    await expect.poll(() => fast.hits > 0, { timeout: 30_000 }).toBe(true);
+    await expect
+      .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
+      .toMatch(new RegExp(`^${fast.origin}/?$`));
+    await expect(panel).toBeHidden();
+
+    // The abandoned navigation was genuinely aborted, not merely left to race
+    // the new one.
+    await expect.poll(() => slow.aborted, { timeout: 20_000 }).toBe(true);
+  } finally {
+    await app.close();
+    slow.close();
+    fast.close();
   }
 });

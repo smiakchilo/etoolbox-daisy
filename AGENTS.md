@@ -290,8 +290,9 @@ provisions a scratch storage home like every sibling spec (see
 flakes, all load-correlated and green in isolation:
 `step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
 closeability section), `settings-color-picker.spec.ts` (its 1–2 px geometry
-assertions), `agent-token-canary.spec.ts`, and `step05-loading-indicator.spec.ts`
-("Stop mid-load" can see a one-off `switch_in_progress` banner). The two
+assertions), `agent-token-canary.spec.ts`, `step05-loading-indicator.spec.ts`,
+and `host-proxy-selection.spec.ts` (its Settings proxy-combobox persistence).
+The two
 previously-*consistent* failures — `step05-settings-servers.spec.ts` (an
 orphaned banner collapse timer detached the OK button mid-click) and
 `step08-query-results.spec.ts`'s markup case (a stale `onerror=` fixture) — were

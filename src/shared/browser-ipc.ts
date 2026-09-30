@@ -65,7 +65,7 @@ export function parseBrowserNavigationState(candidate: unknown): BrowserNavigati
   return browserNavigationStateSchema.parse(candidate);
 }
 
-/** Pushed on `browser:switch-state-changed`. Tools/navigation must stay disabled while `switching` is true (requirements-decisions.md section 4). */
+/** Pushed on `browser:switch-state-changed`. The toolbar keeps its loading presentation (and Stop) up while `switching` is true; a new navigation requested during the window supersedes the in-flight switch instead of being rejected (`serverSwitch.ts`). */
 export const browserSwitchStateSchema = z.object({ switching: z.boolean() }).strict();
 
 export type BrowserSwitchState = Readonly<z.infer<typeof browserSwitchStateSchema>>;
@@ -110,8 +110,6 @@ export const BROWSER_IPC_ERROR_CODES = [
   'no_active_view',
   /** No configured server has the given id. */
   'server_not_found',
-  /** A server switch is already in progress; the request was rejected rather than interleaved. */
-  'switch_in_progress',
   /**
    * The proxy switch or the subsequent page load rejected with a Chromium
    * network error (a down server, a mistyped address, a bad proxy, an

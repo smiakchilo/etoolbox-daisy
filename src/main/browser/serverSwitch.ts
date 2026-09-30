@@ -3,13 +3,22 @@ import { originsMatch, parseNavigationTarget } from '../../shared';
 import type { ProxyPlainCredentials } from '../aem';
 
 /**
- * The sequential server-switch state machine (implementation-plan.md step
+ * The server-switch state machine (implementation-plan.md step
  * 05; requirements-decisions.md section 4: "AEM server switching is
  * sequential: enter a switching state, stop in-flight operations, close
  * auxiliary windows, apply the new proxy configuration, close previous
- * connections, and then load the new address. Tools remain disabled until
- * the transition completes."). "Auxiliary windows" here are the popups this
- * app still opens for SSO/login dialogs - `closePopups` below.
+ * connections, and then load the new address."). "Auxiliary windows" here
+ * are the popups this app still opens for SSO/login dialogs - `closePopups`
+ * below.
+ *
+ * The *proxy* sequence stays strictly sequential - two `setProxy`/
+ * `closeAllConnections` pairs must never interleave on the one session-wide
+ * proxy - but a switch requested while another is in flight is no longer
+ * rejected. It supersedes the older one: the pane is stopped immediately so
+ * the older load settles, the older procedure unwinds without loading its
+ * target or resetting state, and only then does the newer switch apply its
+ * proxy and load. This is what lets a user retype an address or pick another
+ * host while a flaky page is still loading - the newer navigation wins.
  *
  * `switching` is a real, checkable field on this object - not an implicit
  * race between "did the proxy finish applying" and "did the load start" -
@@ -109,7 +118,7 @@ export interface ServerSwitchDeps {
 
 export type ServerSwitchOutcome =
   | { readonly ok: true }
-  | { readonly ok: false; readonly reason: 'already_switching' | 'no_active_view' }
+  | { readonly ok: false; readonly reason: 'no_active_view' | 'superseded' }
   | {
       readonly ok: false;
       readonly reason: 'network_error';
@@ -126,6 +135,22 @@ export type ServerSwitchOutcome =
  */
 export class ServerSwitchController {
   private state: ServerSwitchState = 'idle';
+  /**
+   * Monotonic switch generation. Every `switchTo` bumps it; a running
+   * procedure compares its own captured value before each side effect that
+   * must not happen for a superseded switch (notably `loadURL`), and before
+   * resetting `switching` to `idle`. This is what makes "latest wins" exact
+   * without an `AbortController` - `view.stop()` aborts the pane's load, and
+   * the generation check stops an older procedure from doing anything after
+   * it has been overtaken.
+   */
+  private generation = 0;
+  /**
+   * Resolves once the currently-scheduled procedure has fully unwound. A
+   * superseding `switchTo` awaits it before touching the session-wide proxy,
+   * so two `setProxy`/`closeAllConnections` pairs can never interleave.
+   */
+  private inFlight: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: ServerSwitchDeps) {}
 
@@ -140,11 +165,13 @@ export class ServerSwitchController {
 
   /**
    * Performs the switch to `server`, in the exact order
-   * requirements-decisions.md section 4 mandates. Rejects immediately
-   * (`already_switching`) rather than queuing or interleaving a second
-   * switch on top of one already in progress - "tools remain disabled until
-   * the transition completes" is meaningless if a second switch could start
-   * before the first one finished stopping/closing/re-proxying.
+   * requirements-decisions.md section 4 mandates. A switch requested while
+   * another is still running supersedes it: the pane is stopped at once (so
+   * the older `loadURL`, if any, settles), the older procedure unwinds
+   * without loading or resetting state, and this one then runs the full
+   * sequence. The superseded call resolves with `{ ok: false, reason:
+   * "superseded" }` - a benign outcome, because the navigation it stood for
+   * was replaced by the newer one, which owns the final result.
    *
    * `targetUrl` lets the caller land on a specific page of `server` (an
    * address-bar deep link) instead of its root. It is re-checked against
@@ -153,10 +180,6 @@ export class ServerSwitchController {
    * string and the URL from another cannot make it navigate off-origin.
    */
   async switchTo(server: ServerConfig, targetUrl?: string): Promise<ServerSwitchOutcome> {
-    if (this.state === 'switching') {
-      return { ok: false, reason: 'already_switching' };
-    }
-
     if (targetUrl !== undefined) {
       const target = parseNavigationTarget(targetUrl);
       if (!target.ok || !originsMatch(server.origin, target.origin)) {
@@ -167,6 +190,43 @@ export class ServerSwitchController {
     const view = this.deps.getView();
     if (!view) {
       return { ok: false, reason: 'no_active_view' };
+    }
+
+    const myGeneration = ++this.generation;
+
+    // Supersede whatever is running: stop the pane immediately so the older
+    // procedure's in-flight `loadURL` (if it reached one) rejects promptly
+    // and its generation check bails instead of loading on top of us.
+    if (this.state === 'switching') {
+      view.stop();
+    }
+
+    const previous = this.inFlight;
+    const outcome = this.run(server, targetUrl, view, myGeneration, previous);
+    // Swallow rejections in the chain so a programmer error propagating out
+    // of one switch never wedges a later switch's `await previous`.
+    this.inFlight = outcome.then(
+      () => undefined,
+      () => undefined,
+    );
+    return outcome;
+  }
+
+  private async run(
+    server: ServerConfig,
+    targetUrl: string | undefined,
+    view: SwitchableAemView,
+    myGeneration: number,
+    previous: Promise<void>,
+  ): Promise<ServerSwitchOutcome> {
+    // Serialize the proxy sequence: never begin until the prior procedure has
+    // fully unwound (its `setProxy`/`closeAllConnections` can still be
+    // running when a very rapid second request arrives).
+    await previous;
+
+    // Overtaken while we waited: the newer switch owns the outcome.
+    if (myGeneration !== this.generation) {
+      return { ok: false, reason: 'superseded' };
     }
 
     this.setState('switching');
@@ -191,11 +251,31 @@ export class ServerSwitchController {
         this.deps.resolveProxyCredentials(server),
       );
 
+      // A newer switch may have superseded us during the proxy switch. Loading
+      // the old target now would race the new switch's load in either
+      // direction, so bail before the load.
+      if (myGeneration !== this.generation) {
+        return { ok: false, reason: 'superseded' };
+      }
+
       // 4. Only now load the new address - never before the proxy switch
       //    above has fully resolved, so no request for the new server can
       //    race ahead of its own proxy configuration.
       await view.loadURL(targetUrl ?? server.origin);
+
+      // A newer switch may have superseded us while this load was settling
+      // (its own `view.stop()` normally aborts it, but a load that completed
+      // in the same window must still not claim success for a superseded
+      // navigation).
+      if (myGeneration !== this.generation) {
+        return { ok: false, reason: 'superseded' };
+      }
     } catch (error) {
+      // A superseded switch's `view.stop()` aborts its own load; that
+      // rejection must not be reported as a network failure by the older call.
+      if (myGeneration !== this.generation) {
+        return { ok: false, reason: 'superseded' };
+      }
       // `switchProxy`/`loadURL` reject constantly in real use - a down AEM
       // server, a mistyped address, a bad proxy, an untrusted certificate
       // are all Electron rejecting with a Chromium `ERR_*` message, not an
@@ -223,7 +303,11 @@ export class ServerSwitchController {
         message: error instanceof Error ? error.message : String(error),
       };
     } finally {
-      this.setState('idle');
+      // Only the current generation owns the state: a superseded procedure
+      // must not flip a newer switch back to `idle`.
+      if (myGeneration === this.generation) {
+        this.setState('idle');
+      }
     }
     return { ok: true };
   }

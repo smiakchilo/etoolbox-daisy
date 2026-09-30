@@ -552,7 +552,7 @@ describe('browserController.switchServer', () => {
     expect(result.error.code).toBe('server_not_found');
   });
 
-  it('fails with switch_in_progress when a second switch is requested while one is still in flight', async () => {
+  it('supersedes an in-flight switch when a second switch is requested, and lands on the newer server', async () => {
     const serverA = makeServer({ id: newServerId(() => 'server-a'), origin: 'https://a.example' });
     const serverB = makeServer({ id: newServerId(() => 'server-b'), origin: 'https://b.example' });
     const harness = makeControllerHarness();
@@ -561,13 +561,23 @@ describe('browserController.switchServer', () => {
       hosts: [serverA, serverB],
     });
 
-    let releaseFirstLoad!: () => void;
-    const firstLoadGate = new Promise<void>((resolve) => {
-      releaseFirstLoad = resolve;
-    });
-    harness.aemViewControls.loadURLImpl = async () => {
-      await firstLoadGate;
+    let loadURLCalls = 0;
+    let rejectFirstLoad: ((error: Error) => void) | undefined;
+    harness.aemViewControls.loadURLImpl = () => {
+      loadURLCalls += 1;
+      if (loadURLCalls === 1) {
+        // The first switch's load never settles on its own; only the
+        // superseding switch's `view.stop()` rejects it, exactly as Electron
+        // aborts an in-flight `loadURL` when the pane is stopped.
+        return new Promise<void>((_resolve, reject) => {
+          rejectFirstLoad = reject;
+        });
+      }
+      return Promise.resolve();
     };
+    harness.aemViewControls.stop.mockImplementation(() => {
+      rejectFirstLoad?.(new Error("ERR_ABORTED (-3) loading 'https://a.example'"));
+    });
 
     const firstSwitch = harness.controller.switchServer(serverA.id);
     // `switchServer` awaits a real settings-file read before `switchTo` ever
@@ -581,15 +591,23 @@ describe('browserController.switchServer', () => {
       });
     });
 
-    const secondResult = await harness.controller.switchServer(serverB.id);
-    releaseFirstLoad();
-    const firstResult = await firstSwitch;
+    const secondSwitch = harness.controller.switchServer(serverB.id);
+    // The superseding switch stops the pane, which aborts the first (gated)
+    // load; the first call then unwinds and the newer switch proceeds.
+    const [firstResult, secondResult] = await Promise.all([firstSwitch, secondSwitch]);
 
-    expect(secondResult).toEqual({
-      ok: false,
-      error: { code: 'switch_in_progress', message: 'a server switch is already in progress' },
-    });
+    // The superseded switch is a benign no-op: the newer navigation owns the
+    // outcome, so no spurious failure reaches the renderer.
     expect(firstResult).toEqual({ ok: true });
+    expect(secondResult).toEqual({ ok: true });
+    expect(harness.loggerSpies.info).toHaveBeenCalledWith('BROWSER_SWITCH_SUPERSEDED');
+    // The active server is the newer one.
+    expect(harness.controller.activeServer()).toEqual({
+      serverId: serverB.id,
+      origin: 'https://b.example',
+      revision: serverB.revision,
+    });
+    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(serverB.origin);
   });
 
   // NOTE: no test for the "no_active_view" outcome exists in this file,

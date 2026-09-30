@@ -432,6 +432,31 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(address.hasAttribute('disabled')).toBe(false);
   });
 
+  it('keeps the hosts picker enabled during a server switch when hosts are configured', () => {
+    const toolbar = build();
+    const picker = toolbar.element.querySelector('#hosts-button') as HTMLElement;
+    toolbar.setHostOptions([hostOption()]);
+
+    // The user must never be trapped in a slow/flaky load with no way to pick
+    // another host: the picker stays live through the whole switch.
+    switchListeners[0]?.({ switching: true });
+    expect(picker.hasAttribute('disabled')).toBe(false);
+
+    switchListeners[0]?.({ switching: false });
+    expect(picker.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('disables the hosts picker only when no hosts are configured', () => {
+    const toolbar = build();
+    const picker = toolbar.element.querySelector('#hosts-button') as HTMLElement;
+
+    toolbar.setHostOptions([]);
+    expect(picker.hasAttribute('disabled')).toBe(true);
+
+    toolbar.setHostOptions([hostOption()]);
+    expect(picker.hasAttribute('disabled')).toBe(false);
+  });
+
   it('tracks an in-page navigation in the address field immediately', () => {
     const toolbar = build();
     const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
