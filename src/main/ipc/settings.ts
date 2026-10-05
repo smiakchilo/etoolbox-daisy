@@ -38,6 +38,7 @@ import {
   type AddServerRequest,
   type AddServerResult,
   type AgentId,
+  type AuthPresence,
   type ClearPasswordRequest,
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
@@ -308,13 +309,46 @@ async function setAgentTokenSecret(
   return { ok: true };
 }
 
-/** Removes an agent's token reference and its stored secret (best effort). */
+/**
+ * Applies the token-clear activation rule: a provider whose only credential was
+ * the token it just lost must not stay active. It is switched off in the same
+ * write, so the settings document never records an active provider that cannot
+ * serve - and the active badge, the composer gate and the hub all agree.
+ *
+ * An interactive provider may still hold an SSO session that outlives the token
+ * (Copilot's own vault/config sign-in); `hasSsoSession` reports that cheap,
+ * non-starting fact, and the `active` flag is kept when it is true. A token-only
+ * provider has no such session, so it is always deactivated. A provider that
+ * needs no authentication is never touched.
+ */
+async function deactivateIfTokenWasTheOnlyCredential(
+  settings: AppSettings,
+  agentId: AgentId,
+  definitions: readonly AgentDefinition[],
+  hasSsoSession: ((agentId: AgentId) => Promise<boolean>) | undefined,
+): Promise<AppSettings> {
+  const definition = definitions.find((candidate) => candidate.id === agentId);
+  if (definition?.requiresAuth !== true) return settings;
+  if (settings.agents[agentId]?.active !== true) return settings;
+  if (definition.supportsInteractiveLogin && (await hasSsoSession?.(agentId)) === true) {
+    return settings;
+  }
+  const deactivated = updateAgentSettingsEntry(settings, agentId, { active: false });
+  return deactivated.ok ? deactivated.value : settings;
+}
+
+/**
+ * Removes an agent's token reference and its stored secret (best effort), and
+ * switches the provider off when the token was its only credential (see
+ * {@link deactivateIfTokenWasTheOnlyCredential}).
+ */
 async function clearAgentTokenSecret(
   settingsDir: string,
   settings: AppSettings,
   secretStore: SecretStore,
   agentId: AgentId,
   definitions: readonly AgentDefinition[],
+  hasSsoSession?: (agentId: AgentId) => Promise<boolean>,
 ): Promise<SettingsIpcVoidResult> {
   if (!isKnownAgentId(agentId, definitions)) {
     return {
@@ -341,7 +375,13 @@ async function clearAgentTokenSecret(
   if (!updated.ok) {
     return { ok: false, error: { code: updated.error.kind, message: updated.error.message } };
   }
-  const saved = await persist(settingsDir, updated.value);
+  const next = await deactivateIfTokenWasTheOnlyCredential(
+    updated.value,
+    agentId,
+    definitions,
+    hasSsoSession,
+  );
+  const saved = await persist(settingsDir, next);
   if (!saved.ok) {
     return { ok: false, error: saved.error };
   }
@@ -399,6 +439,10 @@ export async function setPassword(
  * Implements `settings:clear-password`. `onAgentTokenChanged` mirrors
  * {@link setPassword}: the runtime must be recycled so the cleared token is
  * not still in the running process's environment.
+ *
+ * `hasSsoSession` is the cheap, non-starting check that lets an interactive
+ * provider keep its `active` flag when an SSO session outlives the cleared
+ * token; see {@link deactivateIfTokenWasTheOnlyCredential}.
  */
 export async function clearPassword(
   settingsDir: string,
@@ -406,6 +450,7 @@ export async function clearPassword(
   request: ClearPasswordRequest,
   definitions: readonly AgentDefinition[],
   onAgentTokenChanged?: () => void,
+  hasSsoSession?: (agentId: AgentId) => Promise<boolean>,
 ): Promise<SettingsIpcVoidResult> {
   const loaded = await loadSettingsOrError(settingsDir);
   if (!loaded.ok) {
@@ -419,6 +464,7 @@ export async function clearPassword(
       secretStore,
       request.target.agentId,
       definitions,
+      hasSsoSession,
     );
     if (result.ok) onAgentTokenChanged?.();
     return result;
@@ -1315,6 +1361,13 @@ export interface SettingsIpcDependencies {
   /** The discovered agents, for the agent-token channels. */
   readonly agentDefinitions: readonly AgentDefinition[];
   /**
+   * Cheap, non-starting sign-in presence per provider. Consulted only when a
+   * token is cleared: an interactive provider that still has an SSO session
+   * keeps its `active` flag, every other provider is switched off in the same
+   * write. Never starts a provider's runtime.
+   */
+  readonly getAgentAuthPresence: (agentId: AgentId) => Promise<AuthPresence>;
+  /**
    * Called after an agent personal-access token has been successfully set or
    * cleared. The Copilot runtime resolves its credential once, at process
    * start, so a token change needs an unconditional recycle - which the
@@ -1392,6 +1445,7 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         parsed.data,
         deps.agentDefinitions,
         deps.onAgentTokenChanged,
+        (agentId) => deps.getAgentAuthPresence(agentId).then((presence) => presence.present),
       );
     },
   );

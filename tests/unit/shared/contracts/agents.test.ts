@@ -132,20 +132,19 @@ describe('resolveEffectiveActiveAgentId', () => {
     ).toBe('local');
   });
 
-  it('auto-activates the first eligible provider when none is configured', () => {
-    expect(
-      resolveEffectiveActiveAgentId([copilot, local], {}, (id) =>
-        id === 'copilot' ? signedOut() : undefined,
-      ),
-    ).toBe('local');
+  it('falls back to the first definition when the document names no active provider', () => {
+    expect(resolveEffectiveActiveAgentId([copilot, local], {}, () => signedIn())).toBe('copilot');
   });
 
-  it('falls through a configured provider whose criterion is unmet', () => {
+  it('does not fall back to another eligible provider when the configured one is ineligible', () => {
+    // The reported bug: OpenRouter (second) was flagged active but had no key,
+    // and the old "first eligible" fallback lit the badge on Copilot instead.
+    // "None active" is the honest answer; the user activates a provider.
     expect(
       resolveEffectiveActiveAgentId([copilot, local], { copilot: { active: true } }, (id) =>
         id === 'copilot' ? signedOut() : undefined,
       ),
-    ).toBe('local');
+    ).toBeUndefined();
   });
 
   it('returns undefined when no provider is eligible', () => {
@@ -164,7 +163,7 @@ describe('resolveEffectiveActiveAgentId', () => {
     ).toBe('copilot');
   });
 
-  it('keeps registration order among eligible fallbacks', () => {
-    expect(resolveEffectiveActiveAgentId([copilot, local], {}, () => signedIn())).toBe('copilot');
+  it('is undefined when the build contains no agent', () => {
+    expect(resolveEffectiveActiveAgentId([], {}, () => signedIn())).toBeUndefined();
   });
 });

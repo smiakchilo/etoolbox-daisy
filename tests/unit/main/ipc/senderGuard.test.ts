@@ -141,6 +141,7 @@ beforeEach(() => {
     rendererDistDir,
     isTrustedWebContentsId: (id) => id === MAIN_WEB_CONTENTS_ID,
     agentDefinitions: TEST_AGENT_DEFINITIONS,
+    getAgentAuthPresence: () => Promise.resolve({ present: false }),
     modelSelection: {
       // Recorders, not throwers: the "does NOT reject the app's own renderer"
       // case drives every registered handler with a trusted sender, so these

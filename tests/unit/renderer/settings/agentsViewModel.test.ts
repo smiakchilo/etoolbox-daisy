@@ -29,15 +29,21 @@ const SECOND_AGENT: AgentDefinition = {
   requiresAuth: false,
   supportsInteractiveLogin: false,
 };
-const DEFINITIONS: readonly AgentDefinition[] = [
-  {
-    id: TEST_AGENT_ID,
-    label: 'GitHub Copilot',
-    requiresAuth: true,
-    supportsInteractiveLogin: true,
-  },
-  SECOND_AGENT,
-];
+const COPILOT: AgentDefinition = {
+  id: TEST_AGENT_ID,
+  label: 'GitHub Copilot',
+  requiresAuth: true,
+  supportsInteractiveLogin: true,
+};
+const DEFINITIONS: readonly AgentDefinition[] = [COPILOT, SECOND_AGENT];
+/** A token-only provider (OpenRouter-like): authenticates by API key, never interactively. */
+const TOKEN_ONLY: AgentDefinition = {
+  id: 'openrouter' as AgentId,
+  label: 'OpenRouter',
+  requiresAuth: true,
+  supportsInteractiveLogin: false,
+};
+const TOKEN_ONLY_DEFINITIONS: readonly AgentDefinition[] = [COPILOT, TOKEN_ONLY];
 
 function authWith(overrides: Partial<AuthStatus> = {}): AuthStatus {
   return { apiVersion: 1, isAuthenticated: false, statusMessage: 'Not signed in', ...overrides };
@@ -147,7 +153,7 @@ describe('buildAgentsViewModel', () => {
     expect(item?.isActive).toBe(true);
     expect(item?.activationDisabled).toBe(false);
     expect(item?.authVariant).toBe('positive');
-    expect(item?.authText).toBe('Authenticated with token');
+    expect(item?.authText).toBe('Authenticated with API key (token)');
     // No interactive session either, so the one action offered is sign-in.
     expect(item?.authAction).toBe('sign-in');
   });
@@ -174,7 +180,7 @@ describe('buildAgentsViewModel', () => {
     expect(item?.isActive).toBe(true);
     expect(item?.activationDisabled).toBe(false);
     expect(item?.authVariant).toBe('positive');
-    expect(item?.authText).toBe('Authenticated with token');
+    expect(item?.authText).toBe('Authenticated with API key (token)');
     expect(item?.authAction).toBe('sign-in');
     expect(item?.authActionDisabled).toBe(false);
   });
@@ -187,6 +193,86 @@ describe('buildAgentsViewModel', () => {
       undefined,
     ).items;
     expect(item?.authAction).toBe('sign-out');
+  });
+
+  it('shows a settings-derived marker for a non-configured interactive provider', () => {
+    // Copilot is not the configured provider here (a token-only provider is),
+    // so its runtime is not running: its marker comes from the cheap presence
+    // signal, never from the live status - and it offers no action.
+    const vm = buildAgentsViewModel(
+      inputWith({
+        definitions: TOKEN_ONLY_DEFINITIONS,
+        activeAgentId: undefined,
+        configuredAgentId: TOKEN_ONLY.id,
+        presence: { [TEST_AGENT_ID]: true },
+        auth: authWith({ isAuthenticated: true, login: 'octocat' }),
+      }),
+      undefined,
+    );
+    const copilot = vm.items[0];
+    expect(copilot?.showAuth).toBe(true);
+    expect(copilot?.authVariant).toBe('positive');
+    expect(copilot?.authText).toBe('Signed in');
+    expect(copilot?.authAction).toBeUndefined();
+    expect(copilot?.activationDisabled).toBe(false);
+  });
+
+  it("says 'Not signed in' for a non-configured interactive provider with no session", () => {
+    const vm = buildAgentsViewModel(
+      inputWith({
+        definitions: TOKEN_ONLY_DEFINITIONS,
+        activeAgentId: undefined,
+        configuredAgentId: TOKEN_ONLY.id,
+        presence: {},
+      }),
+      undefined,
+    );
+    const copilot = vm.items[0];
+    expect(copilot?.authVariant).toBe('negative');
+    expect(copilot?.authText).toBe('Not signed in');
+    expect(copilot?.authAction).toBeUndefined();
+    expect(copilot?.activationDisabled).toBe(true);
+  });
+
+  it("shows the token-only provider's stored-key marker on a non-configured row", () => {
+    const vm = buildAgentsViewModel(
+      inputWith({
+        definitions: TOKEN_ONLY_DEFINITIONS,
+        activeAgentId: undefined,
+        configuredAgentId: TEST_AGENT_ID,
+        agents: {
+          [TEST_AGENT_ID]: { active: true, hasToken: false },
+          [TOKEN_ONLY.id]: nodeWith({ hasToken: true }),
+        },
+      }),
+      undefined,
+    );
+    const tokenOnly = vm.items[1];
+    expect(tokenOnly?.showAuth).toBe(true);
+    expect(tokenOnly?.authVariant).toBe('positive');
+    expect(tokenOnly?.authText).toBe('Authenticated with API key (token)');
+    expect(tokenOnly?.authAction).toBeUndefined();
+    expect(tokenOnly?.activationDisabled).toBe(false);
+  });
+
+  it('tells the token-only provider to set a key before it can be activated', () => {
+    const vm = buildAgentsViewModel(
+      inputWith({
+        definitions: TOKEN_ONLY_DEFINITIONS,
+        activeAgentId: undefined,
+        configuredAgentId: TEST_AGENT_ID,
+        agents: {
+          [TEST_AGENT_ID]: { active: true, hasToken: false },
+          [TOKEN_ONLY.id]: nodeWith(),
+        },
+      }),
+      undefined,
+    );
+    const tokenOnly = vm.items[1];
+    expect(tokenOnly?.authVariant).toBe('negative');
+    expect(tokenOnly?.authText).toBe('Set API key (token) before activating');
+    expect(tokenOnly?.authAction).toBeUndefined();
+    expect(tokenOnly?.activationDisabled).toBe(true);
   });
 
   it('renders no active item, only the still-inert control, when none is active', () => {
@@ -333,8 +419,9 @@ describe('buildAgentsViewModel', () => {
     );
     const item = vm.items[1];
     expect(item?.isActive).toBe(false);
-    expect(item?.showAuth).toBe(false);
-    expect(item?.authText).toBe('');
+    // Every provider shows a marker, even one that needs no sign-in.
+    expect(item?.showAuth).toBe(true);
+    expect(item?.authText).toBe('No sign-in required');
     // No auth session to manage, so no button - but the provider needs no
     // sign-in, so it *could* be activated.
     expect(item?.authAction).toBeUndefined();

@@ -118,15 +118,21 @@ export function resolveConfiguredAgentId(
  * is. This is the one value the Settings badge, the composer gate and the chat
  * banner all read, so they can never disagree about which agent is current.
  *
- * The rules, in order:
+ * The rule:
  *
- *  1. The configured provider (its persisted `active` flag set), when it is
- *     eligible - an explicit choice is honoured.
- *  2. Otherwise the first eligible provider in registration order. This is what
- *     makes the app come up with an active agent whenever one *can* be active:
- *     an eligible provider is never left inactive for want of a stored flag.
- *  3. Otherwise `undefined` - genuinely no agent is active, and sending stays
- *     disabled until one becomes eligible.
+ *  1. The configured provider - the known node whose persisted `active` flag is
+ *     set, or else the first definition ({@link resolveConfiguredAgentId}) -
+ *     when it is eligible.
+ *  2. Otherwise `undefined` - none is active, and sending stays disabled until
+ *     the user activates a provider that can serve.
+ *
+ * There is deliberately no fallback to a *different* eligible provider. When a
+ * document names one provider active but that provider cannot serve (its token
+ * was removed, its sign-in lapsed), falling back would light the "(active)"
+ * badge on some other provider while the hub still drives the configured one -
+ * the exact contradiction between the badge and the persisted flag this
+ * function exists to prevent. "None active" is the honest answer; the user
+ * activates a provider explicitly.
  *
  * `authFor` supplies each provider's eligibility. With the single-provider
  * registry every id resolves to the one live runtime's status, but the lookup
@@ -138,12 +144,9 @@ export function resolveEffectiveActiveAgentId(
   agents: Readonly<Record<string, { readonly active: boolean }>>,
   authFor: (id: AgentId) => AgentEligibilityInput | undefined,
 ): AgentId | undefined {
-  for (const definition of definitions) {
-    if (agents[definition.id]?.active !== true) continue;
-    if (isAgentEligible(definition, authFor(definition.id))) return definition.id;
-  }
-  for (const definition of definitions) {
-    if (isAgentEligible(definition, authFor(definition.id))) return definition.id;
-  }
-  return undefined;
+  const configuredId = resolveConfiguredAgentId(agents, definitions);
+  if (configuredId === undefined) return undefined;
+  const definition = definitions.find((candidate) => candidate.id === configuredId);
+  if (definition === undefined) return undefined;
+  return isAgentEligible(definition, authFor(configuredId)) ? configuredId : undefined;
 }

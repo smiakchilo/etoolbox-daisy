@@ -15,7 +15,11 @@ function hasKey(token: string | undefined): boolean {
 export function authStatusFromToken(token: string | undefined): AuthStatus {
   return hasKey(token)
     ? { apiVersion: 1, isAuthenticated: true, authType: 'token' }
-    : { apiVersion: 1, isAuthenticated: false, statusMessage: 'No API key is set.' };
+    : {
+        apiVersion: 1,
+        isAuthenticated: false,
+        statusMessage: 'Set API key (token) before activating.',
+      };
 }
 
 export function authPresenceFromToken(token: string | undefined): AuthPresence {

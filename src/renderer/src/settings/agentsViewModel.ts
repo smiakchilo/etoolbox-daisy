@@ -56,17 +56,17 @@ export interface AgentItemViewModel {
    * Whether a personal-access token is stored for this provider. A stored
    * token satisfies the provider's activation criterion, so it both counts as
    * authentication for `isActive` and changes the status light to
-   * "Authenticated with token".
+   * "Authenticated with API key (token)".
    */
   readonly hasToken: boolean;
   /** The agent's stored proxy-library reference, if any. */
   readonly proxyId: ProxyId | undefined;
   /**
-   * Whether this item renders the auth row at all. Only the effective-active
-   * provider shows a sign-in status; an inactive row's runtime is never
-   * started to read it, so displaying a stale or borrowed status there would
-   * be misleading. The "Set active" control (not the status) is what tells an
-   * inactive row whether it can be activated.
+   * Whether this item renders the auth row. Always true: every provider shows
+   * its authentication marker. Only the configured provider has a running
+   * runtime, so its marker is the live status; every other row's marker is
+   * derived from the cheap, non-starting signals (a stored token, a detected
+   * local session), so reading it never starts an SDK.
    */
   readonly showAuth: boolean;
   readonly authVariant: 'neutral' | 'positive' | 'negative';
@@ -105,9 +105,10 @@ export interface AgentsViewModelInput {
   /**
    * The provider the app is *configured* to drive (the persisted `active`
    * flag, else the first). It is the one the hub runs and therefore the only
-   * row whose live auth row is shown - including while it is signed out, which
-   * is exactly when its Sign in control is needed. Every other row hides the
-   * auth row (its runtime is not started).
+   * row with a live auth status and a sign-in/out control - including while it
+   * is signed out, which is exactly when its Sign in control is needed. Every
+   * other row shows a settings-derived marker instead (its runtime is not
+   * started).
    */
   readonly configuredAgentId: AgentId | undefined;
   /**
@@ -157,7 +158,9 @@ function buildItem(
 ): AgentItemViewModel {
   const node = input.agents[definition.id];
   const isActive = definition.id === input.activeAgentId;
-  const showAuth = definition.id === input.configuredAgentId;
+  // Only the configured provider's runtime is running, so only its row may read
+  // the live status; every other row renders a settings-derived marker.
+  const live = definition.id === input.configuredAgentId;
   const hasToken = node?.hasToken === true;
   const sessionPresent = input.presence[definition.id] === true;
   const eligibility = isAgentEligible(definition, {
@@ -167,7 +170,7 @@ function buildItem(
     // live status is deliberately not read.
     hasToken: hasToken || sessionPresent,
   });
-  const auth = authView(definition, showAuth, hasToken, input.auth);
+  const auth = authView(definition, live, hasToken, sessionPresent, input.auth);
 
   const base = {
     id: definition.id,
@@ -175,7 +178,7 @@ function buildItem(
     isActive,
     activationDisabled: !eligibility,
     hasToken,
-    showAuth,
+    showAuth: true,
     proxyId: node?.proxy,
     ...auth,
   };
@@ -261,11 +264,14 @@ interface AuthView {
 }
 
 /**
- * The sign-in row for one provider.
+ * The authentication marker for one provider.
  *
- * A provider whose activation criterion is authentication always shows its
- * live status and its one sign-in/out action - including while it is *not*
- * yet active, because signing in is exactly how it becomes able to be active.
+ * Every provider shows a marker - a signed-out one must not look unconfigured
+ * just because its runtime is not the one running. Only the configured provider
+ * has a live runtime, so only it can report the runtime's own sign-in status
+ * and offer the one sign-in/out action; every other row's marker is derived
+ * from the cheap, non-starting signals ({@link settingsAuth}), so reading it
+ * never starts an SDK.
  *
  * When a personal-access token is stored the status is reported as
  * authenticated with that token, whatever the interactive session says. The
@@ -279,20 +285,11 @@ interface AuthView {
  */
 function authView(
   definition: AgentDefinition,
-  showAuth: boolean,
+  live: boolean,
   hasToken: boolean,
+  sessionPresent: boolean,
   auth: AuthStatus | undefined,
 ): AuthView {
-  // Only the configured provider renders the auth row (showAuth); this is an
-  // inert placeholder the section never displays for any other row.
-  if (!showAuth) {
-    return {
-      authVariant: 'neutral',
-      authText: '',
-      authAction: undefined,
-      authActionDisabled: true,
-    };
-  }
   if (!definition.requiresAuth) {
     return {
       authVariant: 'neutral',
@@ -302,27 +299,52 @@ function authView(
     };
   }
   if (!definition.supportsInteractiveLogin) {
-    // A token-only provider has no interactive flow; the Token field is the
+    // A token-only provider has no interactive flow; the API-key field is the
     // whole control, so there is no action button to offer.
     return hasToken
       ? {
           authVariant: 'positive',
-          authText: 'Authenticated with token',
+          authText: 'Authenticated with API key (token)',
           authAction: undefined,
           authActionDisabled: true,
         }
       : {
           authVariant: 'negative',
-          authText: 'No API key',
+          authText: 'Set API key (token) before activating',
           authAction: undefined,
           authActionDisabled: true,
         };
   }
-  const session = sessionAuth(auth);
+  const session = live ? sessionAuth(auth) : settingsAuth(sessionPresent);
   if (hasToken) {
-    return { ...session, authVariant: 'positive', authText: 'Authenticated with token' };
+    return {
+      ...session,
+      authVariant: 'positive',
+      authText: 'Authenticated with API key (token)',
+    };
   }
   return session;
+}
+
+/**
+ * The marker for an interactive provider whose runtime is not running: only the
+ * cheap, non-starting facts are available, so it states whether a local session
+ * was detected and never offers an action.
+ */
+function settingsAuth(sessionPresent: boolean): AuthView {
+  return sessionPresent
+    ? {
+        authVariant: 'positive',
+        authText: 'Signed in',
+        authAction: undefined,
+        authActionDisabled: true,
+      }
+    : {
+        authVariant: 'negative',
+        authText: 'Not signed in',
+        authAction: undefined,
+        authActionDisabled: true,
+      };
 }
 
 /**

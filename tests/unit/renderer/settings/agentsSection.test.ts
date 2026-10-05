@@ -155,6 +155,10 @@ describe('createAgentsSection', () => {
     expect(section.element.querySelector('.agent-item__header')?.textContent).toBe(
       'GitHub Copilot(active)',
     );
+    // The active item carries the highlight class the light-blue wash is keyed on.
+    expect(
+      section.element.querySelector('.agent-item')?.classList.contains('agent-item--active'),
+    ).toBe(true);
   });
 
   it('shows no badge and a disabled control while the provider is signed out', async () => {
@@ -170,6 +174,9 @@ describe('createAgentsSection', () => {
     expect(setActive?.textContent).toBe('Set active');
     expect(setActive?.hasAttribute('disabled')).toBe(true);
     expect(section.element.querySelector('.agent-item__action')?.textContent).toBe('Sign in');
+    expect(
+      section.element.querySelector('.agent-item')?.classList.contains('agent-item--active'),
+    ).toBe(false);
   });
 
   it('does not persist an activation for a provider that cannot be active', async () => {
@@ -251,7 +258,24 @@ describe('createAgentsSection', () => {
       [...(firstItem?.querySelectorAll('.host-field sp-field-label') ?? [])].map(
         (label) => label.textContent,
       ),
-    ).toEqual(['Token', 'Proxy', 'Model', 'Reasoning effort']);
+    ).toEqual(['API key (token)', 'Proxy', 'Model', 'Reasoning effort']);
+  });
+
+  it('shows a settings-derived marker on a provider whose runtime is not running', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const rows = section.element.querySelectorAll('.agent-item__auth');
+    expect(rows).toHaveLength(2);
+    // The second provider (OpenRouter) is not the configured one, so its
+    // runtime is not started; its marker is derived from settings alone and the
+    // row must remain visible (the defect: a non-configured row had no marker).
+    expect(rows[1]?.hasAttribute('hidden')).toBe(false);
+    expect(rows[1]?.querySelector('sp-status-light')?.textContent).toBe(
+      'Set API key (token) before activating',
+    );
+    // Only the configured provider offers a sign-in/out action.
+    expect(rows[1]?.querySelector('.agent-item__action')).toBeNull();
   });
 
   it('renders a Token field whose Set/Clear actions target the agent', async () => {
@@ -260,7 +284,9 @@ describe('createAgentsSection', () => {
 
     const control = section.element.querySelector('.password-control');
     expect(control).not.toBeNull();
-    expect(control?.querySelector('sp-textfield')?.getAttribute('aria-label')).toBe('Token');
+    expect(control?.querySelector('sp-textfield')?.getAttribute('aria-label')).toBe(
+      'API key (token)',
+    );
     const buttons = [...(control?.querySelectorAll('sp-action-button') ?? [])];
     expect(buttons.map((button) => button.textContent)).toEqual(['Set', 'Clear']);
     for (const button of buttons) expect(button.hasAttribute('quiet')).toBe(true);
@@ -307,13 +333,13 @@ describe('createAgentsSection', () => {
     expect(section.element.querySelector('.agent-item__active')?.textContent).toBe('(active)');
     const light = section.element.querySelector('.agent-item__auth sp-status-light');
     expect(light?.getAttribute('variant')).toBe('positive');
-    expect(light?.textContent).toBe('Authenticated with token');
+    expect(light?.textContent).toBe('Authenticated with API key (token)');
   });
 
   it('offers "Sign in", not "Sign out", when the stored token is what authenticates the runtime', async () => {
     // The runtime resolves the injected COPILOT_GITHUB_TOKEN before the vault
     // session, so a token-only setup reports `authType: "env"`. The status row
-    // still says "Authenticated with token", but the action must describe the
+    // still says "Authenticated with API key (token)", but the action must describe the
     // (absent) interactive session - a local sign-out would change nothing.
     getAuthStatus.mockResolvedValue({
       apiVersion: 1,
@@ -326,7 +352,7 @@ describe('createAgentsSection', () => {
 
     const light = section.element.querySelector('.agent-item__auth sp-status-light');
     expect(light?.getAttribute('variant')).toBe('positive');
-    expect(light?.textContent).toBe('Authenticated with token');
+    expect(light?.textContent).toBe('Authenticated with API key (token)');
 
     const actions = section.element.querySelectorAll('.agent-item__action');
     expect(actions).toHaveLength(1);

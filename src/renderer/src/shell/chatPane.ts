@@ -36,8 +36,8 @@ export interface ChatPane {
   readonly element: HTMLElement;
   /**
    * Updates the persisted per-provider flags (from the settings snapshot). The
-   * pane derives which agent is *actually* active - configured-and-eligible,
-   * else the first eligible provider, else none - on every auth change, so the
+   * pane derives which agent is *actually* active - the configured provider when
+   * it is eligible, else none - on every auth change, so the
    * banner and composer always agree with the Settings badge and with each
    * other.
    */
@@ -263,10 +263,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    */
   function refreshSessionPresentation(): void {
     // "Active agent" is the one derived fact the badge, the composer and the
-    // banner all read: the configured provider when it is eligible, else the
-    // first eligible provider, else none. Eligibility is the provider's own
-    // criterion (an interactive sign-in or a stored token, for Copilot), so
-    // this tracks both auth changes and token presence for free.
+    // banner all read: the configured provider when it is eligible, else none.
+    // Eligibility is the provider's own criterion (an interactive sign-in or a
+    // stored token, for Copilot), so this tracks both auth changes and token
+    // presence for free.
     const activeAgentId = resolveEffectiveActiveAgentId(AGENT_DEFINITIONS, agents, (id) => ({
       // Only the running (configured) provider has a live auth answer; for any
       // other id a stored token is the only honest signal. Feeding the active

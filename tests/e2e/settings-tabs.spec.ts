@@ -135,10 +135,13 @@ test('Settings sections are real tab panels, switching their content', async () 
     await expect(agentsSection.locator('sp-picker[aria-label="Model"]')).toHaveCount(2);
 
     // The personal-access-token field is the Proxies tab's password control,
-    // labelled Token, with its Set/Clear actions - one per provider.
+    // labelled "API key (token)", with its Set/Clear actions - one per provider.
     await expect(agentsSection.locator('.password-control')).toHaveCount(2);
     const tokenControl = agentsSection.locator('.password-control').first();
-    await expect(tokenControl.locator('sp-textfield')).toHaveAttribute('aria-label', 'Token');
+    await expect(tokenControl.locator('sp-textfield')).toHaveAttribute(
+      'aria-label',
+      'API key (token)',
+    );
     await expect(tokenControl.locator('sp-action-button')).toHaveCount(2);
 
     // Which provider is active is derived from eligibility, not merely stored:
@@ -183,15 +186,16 @@ test('Settings sections are real tab panels, switching their content', async () 
       }),
     ).toBe(true);
 
-    // A provider that is not the configured one hides its auth row wholesale,
-    // not merely its label: its runtime is never started, so there is no honest
-    // status to display there. This guards the CSS regression where
-    // `.agent-item__auth`'s `display: flex` outranked the UA `[hidden]` rule and
-    // leaked the row's empty status light as a lone gray dot with no text (the
-    // second row here is OpenRouter, which is not the configured provider).
+    // Every provider shows its authentication marker, including one whose
+    // runtime is not running (the second row here is OpenRouter, which is not
+    // the configured provider): its marker is derived from settings alone, so a
+    // non-configured provider never looks unconfigured.
     const authRows = agentsSection.locator('.agent-item__auth');
     await expect(authRows).toHaveCount(2);
-    await expect(authRows.nth(1)).toBeHidden();
+    await expect(authRows.nth(1)).toBeVisible();
+    await expect(authRows.nth(1).locator('sp-status-light')).toHaveText(
+      'Set API key (token) before activating',
+    );
 
     // The action is right-aligned, and it is the shared `.agent-item__button`
     // that gives it (and "Set active" when it appears) one width - so the two

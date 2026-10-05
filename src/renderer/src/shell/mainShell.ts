@@ -145,8 +145,8 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   /**
    * Applies one loaded settings snapshot to the browser pane and hands the
    * chat pane the persisted per-provider flags. The chat pane derives which
-   * agent is *actually* active (configured-and-eligible, else first eligible)
-   * from those flags plus the live sign-in status, so it stays correct as auth
+   * agent is *actually* active (configured-and-eligible, else none) from those
+   * flags plus the live sign-in status, so it stays correct as auth
    * changes without the shell having to know the rule.
    */
   function applySnapshot(snapshot: AppSettingsSnapshot): void {

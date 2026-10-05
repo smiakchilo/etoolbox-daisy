@@ -9,13 +9,8 @@ import { type ActiveAemServer } from './browser/browserController';
 import { type NavigationEpochTracker } from './browser/navigationEpoch';
 import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
-import { updateAgentSettings } from './settingsStore';
 import {
-  type AgentDefinition,
-  type AgentId,
   type AgentService,
-  type AppSettings,
-  type AuthPresence,
   type CurrentAemContext,
   type CurrentAemToolContext,
   type IdGenerator,
@@ -24,8 +19,6 @@ import {
   type SessionStreamState,
   deriveCurrentPageContext,
   renderCurrentPageContextForModel,
-  resolveConfiguredAgentId,
-  resolveEffectiveActiveAgentId,
 } from '../shared';
 
 /**
@@ -419,51 +412,6 @@ export const MODEL_SELECTION_LOCKED_STATES: ReadonlySet<SessionStreamState> = ne
 /** Whether model selection must be refused/disabled in `state`. */
 export function isModelSelectionLocked(state: SessionStreamState): boolean {
   return MODEL_SELECTION_LOCKED_STATES.has(state);
-}
-
-/**
- * Persists the provider the UI already shows as active when the settings
- * document names none explicitly, and returns the document to drive.
- *
- * With no `active` flag set, the main process falls back to the *first*
- * discovered agent (`resolveConfiguredAgentId`), while the UI shows the first
- * *eligible* one (`resolveEffectiveActiveAgentId`). A token stored for a later
- * provider (OpenRouter) therefore marked it "(active)" in Settings while the
- * hub kept driving the first one (Copilot) - and every per-provider read
- * (model, proxy) kept targeting that first node. Writing the flag makes the
- * two notions one again, through the same `active` field the Settings
- * "Set active" control writes.
- *
- * Deliberately narrow: an explicit choice is never overridden, nothing is
- * written when the two notions already agree, and a failed save leaves the
- * document - and so the running agent - exactly as it was. Eligibility uses
- * the cheap, non-starting `getAuthPresence` plus the stored token reference,
- * so no inactive provider's runtime is started to decide it.
- */
-export async function pinEffectiveActiveAgent(deps: {
-  readonly settings: AppSettings;
-  readonly definitions: readonly AgentDefinition[];
-  readonly getAuthPresence: (agentId: AgentId) => Promise<AuthPresence>;
-  /** Persists `settings`; resolves `true` only when the write succeeded. */
-  readonly save: (settings: AppSettings) => Promise<boolean>;
-}): Promise<AppSettings> {
-  const { settings, definitions } = deps;
-  const configured = resolveConfiguredAgentId(settings.agents, definitions);
-  if (configured === undefined || settings.agents[configured]?.active === true) return settings;
-
-  const present = new Set<AgentId>();
-  for (const definition of definitions) {
-    if ((await deps.getAuthPresence(definition.id)).present) present.add(definition.id);
-  }
-  const effective = resolveEffectiveActiveAgentId(definitions, settings.agents, (id) => ({
-    isAuthenticated: present.has(id),
-    hasToken: settings.agents[id]?.token !== undefined,
-  }));
-  if (effective === undefined || effective === configured) return settings;
-
-  const updated = updateAgentSettings(settings, effective, { active: true });
-  if (!updated.ok) return settings;
-  return (await deps.save(updated.value)) ? updated.value : settings;
 }
 
 /**

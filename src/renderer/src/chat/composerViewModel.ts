@@ -20,7 +20,7 @@ export interface ComposerStatus {
   /**
    * Whether an agent is actually active right now (see
    * `resolveEffectiveActiveAgentId` in `src/shared/contracts/agents.ts`): the
-   * configured provider when eligible, else the first eligible one, else none.
+   * configured provider when it is eligible, else none.
    * When false, the chat pane shows its own "activate an agent" banner instead
    * of the composer's inline notice, so this state disables Send silently.
    */

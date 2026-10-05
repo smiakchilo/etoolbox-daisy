@@ -353,6 +353,12 @@
   border-radius: 4px;
 }
 
+/* The provider the app is actually driving gets a light-blue wash, so the
+   current agent is obvious at a glance beyond the small "(active)" badge. */
+.agent-item--active {
+  background: var(--spectrum-accent-color-100, #e0f2ff);
+}
+
 .agents-section__group {
   display: flex;
   flex-direction: column;
@@ -383,10 +389,9 @@
   gap: 8px;
 }
 
-/* An inactive provider's auth row is hidden wholesale (the section sets
-   `hidden`; its runtime is not started, so there is no honest status to show).
-   The `display: flex` above would otherwise outrank the UA `[hidden]` rule,
-   painting the row's empty status light as a lone gray dot with no label. */
+/* Defensive: the section currently always shows an auth marker, but if it ever
+   sets `hidden` on the row, the `display: flex` above would otherwise outrank
+   the UA `[hidden]` rule and paint an empty status light as a lone gray dot. */
 .agent-item__auth[hidden] {
   display: none;
 }

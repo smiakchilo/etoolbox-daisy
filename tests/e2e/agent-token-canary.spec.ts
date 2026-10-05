@@ -135,12 +135,12 @@ test('a token typed into Settings is never written in plaintext, and activates t
       .poll(async () => statusLight.getAttribute('variant'), { timeout: 60_000 })
       .toBe('negative');
 
-    // Type the canary into the real Token field and Set it (the first provider's
-    // field - GitHub Copilot's).
+    // Type the canary into the real API key (token) field and Set it (the first
+    // provider's field - GitHub Copilot's).
     const tokenField = agents
       .locator('.password-control')
       .first()
-      .locator('[aria-label="Token"] input');
+      .locator('[aria-label="API key (token)"] input');
     await tokenField.waitFor({ state: 'visible', timeout: 60_000 });
     await tokenField.fill(CANARY);
     await agents
@@ -151,15 +151,24 @@ test('a token typed into Settings is never written in plaintext, and activates t
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    await expect(shell.locator('.surface-status-banner')).toHaveText('Token saved', {
+    await expect(shell.locator('.surface-status-banner')).toHaveText('API key (token) saved', {
       timeout: 60_000,
     });
 
     // Behaviour: a stored token counts as authentication, so the provider is
     // active (badge) and its status light reads authenticated, green.
     await expect(agents.locator('.agent-item__active')).toHaveCount(1, { timeout: 60_000 });
-    await expect(statusLight).toHaveText('Authenticated with token', { timeout: 60_000 });
+    await expect(statusLight).toHaveText('Authenticated with API key (token)', { timeout: 60_000 });
     expect(await statusLight.getAttribute('variant')).toBe('positive');
+
+    // The active item is washed light-blue, so the highlight is visible beyond
+    // the badge. The accent token (or its fallback) must resolve to a real,
+    // non-transparent colour in the built app.
+    const activeItem = agents.locator('.agent-item--active');
+    await expect(activeItem).toHaveCount(1);
+    expect(await activeItem.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe(
+      'rgba(0, 0, 0, 0)',
+    );
 
     // Anti-vacuity: the pointer must genuinely be on disk, otherwise "not found
     // anywhere" would be true for the uninteresting reason that nothing

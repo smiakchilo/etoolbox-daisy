@@ -16,7 +16,6 @@ import {
   createModelPreferenceCache,
   installAgentService,
   isModelSelectionLocked,
-  pinEffectiveActiveAgent,
   resolveBundledSkillsDirectory,
   shouldUseFakeAgentService,
   startAppRuntime,
@@ -43,7 +42,7 @@ import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
 import { installWebContentsSecurityGuard } from './security';
-import { configuredAgentId, loadSettings, loadSettingsSync, saveSettings } from './settingsStore';
+import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
 import { createSkillCatalog } from './skills/skillCatalog';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import { APP_USER_MODEL_ID, createMainWindow, getAppIconPath } from './windows';
@@ -384,24 +383,10 @@ if (!gotSingleInstanceLock) {
     // document, which still names the same `secretRef`; the token's plaintext is
     // re-read from the secret store either way.
     //
-    // When no provider is explicitly active, a token can make a provider other
-    // than the hub's fallback the one Settings shows as active; that choice is
-    // persisted first and the hub switches to it (see `pinEffectiveActiveAgent`).
-    // Startup runs the same pin, so a document already in that state (a token
-    // stored by an earlier build) is healed without re-entering the token.
-    const pinActiveAgent = async (hub: AgentHub, settings: AppSettings): Promise<AppSettings> => {
-      const pinned = await pinEffectiveActiveAgent({
-        settings,
-        definitions: agentDefinitions,
-        getAuthPresence: (agentId) => hub.getAuthPresence(agentId),
-        save: async (next) => (await saveSettings(appPaths.settings, next)).ok,
-      });
-      if (pinned !== settings) {
-        logger.info('AGENT_ACTIVE_PINNED');
-        seedModelPreference(pinned);
-      }
-      return pinned;
-    };
+    // Clearing a token may also have switched the configured provider off - the
+    // settings write itself deactivates a provider whose only credential was
+    // that token (see `clearAgentTokenSecret`). `reconcile` therefore applies
+    // whichever provider the reloaded document now configures.
     const refreshRuntimeAfterTokenChange = async (): Promise<void> => {
       const hub = agentHub;
       if (hub === undefined) return;
@@ -410,12 +395,7 @@ if (!gotSingleInstanceLock) {
         await hub.refresh();
         return;
       }
-      const settings = await pinActiveAgent(hub, loaded.value.settings);
-      if (settings === loaded.value.settings) {
-        await hub.refresh(settings);
-        return;
-      }
-      await hub.reconcile(settings);
+      await hub.reconcile(loaded.value.settings);
     };
 
     registerSettingsIpcHandlers({
@@ -456,6 +436,12 @@ if (!gotSingleInstanceLock) {
           }
         },
       },
+      // Reads a provider's cheap, non-starting sign-in presence for the
+      // token-clear path. Clearing a token deactivates the provider unless an
+      // interactive (SSO) session still authenticates it; that is decided from
+      // this presence, never by starting the provider's SDK.
+      getAgentAuthPresence: async (agentId) =>
+        (await agentHub?.getAuthPresence(agentId)) ?? { present: false },
       // A stored token is a runtime credential, so setting or clearing one has
       // to recycle the runtime - the running process resolved its old credential
       // at start. Skipped in fake mode: no runtime consumes the token there, and
@@ -702,10 +688,7 @@ if (!gotSingleInstanceLock) {
         // registering here beyond the always-present IPC sets above.
         return;
       },
-      startAgentService: async () =>
-        hub.start(
-          storedSettings === undefined ? undefined : await pinActiveAgent(hub, storedSettings),
-        ),
+      startAgentService: async () => hub.start(storedSettings),
       // No free-text field exists on `Logger` by design (see its own module
       // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary
       // code for exactly this failure ("the agent runtime ... is

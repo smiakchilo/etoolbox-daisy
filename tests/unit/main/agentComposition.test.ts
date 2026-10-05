@@ -11,7 +11,6 @@ import {
   createLateBoundAemToolContext,
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
-  pinEffectiveActiveAgent,
   resolveBundledSkillsDirectory,
   shouldUseFakeAgentService,
   startAppRuntime,
@@ -22,12 +21,8 @@ import type { ActiveAemServer } from '../../../src/main/browser/browserControlle
 import type { ChatJournal } from '../../../src/main/chatJournal';
 import type { Logger } from '../../../src/main/logger';
 import {
-  type AgentDefinition,
   type AgentService,
-  type AppSettings,
   type CurrentAemToolContext,
-  agentIdSchema,
-  defaultAppSettings,
   newChatId,
   newServerId,
   newTurnId,
@@ -497,77 +492,5 @@ describe('resolveBundledSkillsDirectory', () => {
     });
     expect(packaged).not.toMatch(/Users|home|AppData/i);
     expect(packaged.endsWith('resources/skills')).toBe(true);
-  });
-});
-
-describe('pinEffectiveActiveAgent', () => {
-  const COPILOT = agentIdSchema.parse('copilot');
-  const OPENROUTER = agentIdSchema.parse('openrouter');
-  const definitions: readonly AgentDefinition[] = [
-    { id: COPILOT, label: 'GitHub Copilot', requiresAuth: true, supportsInteractiveLogin: true },
-    { id: OPENROUTER, label: 'OpenRouter', requiresAuth: true, supportsInteractiveLogin: false },
-  ];
-  const openRouterTokenOnly = (active: boolean): AppSettings => ({
-    ...defaultAppSettings(),
-    agents: { [OPENROUTER]: { active, token: { secretRef: 'agent-token:openrouter' } } },
-  });
-
-  function run(settings: AppSettings, presentIds: readonly string[] = []) {
-    const save = vi.fn<(settings: AppSettings) => Promise<boolean>>(() => Promise.resolve(true));
-    const result = pinEffectiveActiveAgent({
-      settings,
-      definitions,
-      getAuthPresence: (agentId) => Promise.resolve({ present: presentIds.includes(agentId) }),
-      save,
-    });
-    return { result, save };
-  }
-
-  it('persists the token-holding provider as active when none is flagged', async () => {
-    // The reported bug: Settings showed OpenRouter "(active)" while the hub
-    // drove the first agent (Copilot), which was not signed in.
-    const { result, save } = run(openRouterTokenOnly(false));
-
-    const pinned = await result;
-    expect(pinned.agents[OPENROUTER]?.active).toBe(true);
-    expect(save).toHaveBeenCalledWith(pinned);
-  });
-
-  it('never overrides an explicitly active provider', async () => {
-    const settings = openRouterTokenOnly(true);
-    const { result, save } = run(settings);
-
-    expect(await result).toBe(settings);
-    expect(save).not.toHaveBeenCalled();
-  });
-
-  it('writes nothing when the fallback provider is already the eligible one', async () => {
-    // Copilot signed in (cheap presence) comes first, so it is what both the
-    // UI and the hub already choose.
-    const settings = openRouterTokenOnly(false);
-    const { result, save } = run(settings, [COPILOT]);
-
-    expect(await result).toBe(settings);
-    expect(save).not.toHaveBeenCalled();
-  });
-
-  it('writes nothing when no provider is eligible', async () => {
-    const settings = defaultAppSettings();
-    const { result, save } = run(settings);
-
-    expect(await result).toBe(settings);
-    expect(save).not.toHaveBeenCalled();
-  });
-
-  it('keeps the document unchanged when the save fails', async () => {
-    const settings = openRouterTokenOnly(false);
-    const pinned = await pinEffectiveActiveAgent({
-      settings,
-      definitions,
-      getAuthPresence: () => Promise.resolve({ present: false }),
-      save: () => Promise.resolve(false),
-    });
-
-    expect(pinned).toBe(settings);
   });
 });

@@ -316,7 +316,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       {
         target: () => ({ kind: 'agent', agentId: id }),
         onChanged: () => options.onSettingsChanged(),
-        noun: 'token',
+        noun: 'API key (token)',
       },
       options.status,
     );
@@ -372,7 +372,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
             // No label above this row: the status light says what it is, and
             // the user's own wording for it is the light's text.
             authControl,
-            labelledField('', 'Token', tokenControl.element),
+            labelledField('', 'API key (token)', tokenControl.element),
             labelledField(proxyFieldId, 'Proxy', proxyPicker.element),
             labelledField(modelFieldId, 'Model', modelPicker),
             labelledField(effortFieldId, 'Reasoning effort', effortPicker),
@@ -386,6 +386,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
 
     function update(view: AgentItemViewModel, proxies: readonly ProxySnapshot[]): void {
       if (title.textContent !== view.label) title.textContent = view.label;
+
+      // The active provider's whole item carries a light-blue wash (see
+      // `settings.css`), so the current agent is obvious beyond the small badge.
+      element.classList.toggle('agent-item--active', view.isActive);
 
       if (view.isActive !== headerActive) {
         for (const node of [...header.children]) {
@@ -405,8 +409,8 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       if (statusLight.textContent !== view.authText) statusLight.textContent = view.authText;
 
       authAction = view.authAction;
-      // Only the active provider shows a status: an inactive one's runtime is
-      // not started, so there is no honest status to display there.
+      // Every provider shows a marker; a non-configured one's is settings-derived
+      // because its runtime is not started. `showAuth` is always true.
       authControl.hidden = !view.showAuth;
       if (view.authAction === undefined) {
         actionButton.remove();
@@ -505,8 +509,9 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   /**
    * The provider that is actually active, as the snapshot, the configured
    * provider's live status and each provider's cheap presence decide it: the
-   * configured provider when it is eligible, else the first eligible provider,
-   * else `undefined`.
+   * configured provider when it is eligible, else `undefined`. There is no
+   * fallback to another eligible provider - see
+   * `resolveEffectiveActiveAgentId`.
    */
   function activeAgentIdFrom(document: AppSettingsSnapshot): AgentId | undefined {
     return resolveEffectiveActiveAgentId(definitions, document.agents, (id) =>

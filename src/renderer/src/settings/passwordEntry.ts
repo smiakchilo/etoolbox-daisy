@@ -19,12 +19,12 @@ import type { StatusBannerSink } from './statusBanner';
  * captured: an item starts as an unsaved draft (no id) and becomes a real
  * entry after its first save, all on the same element instance. Results go to
  * the panel's one banner slot through `status` - "Password saved" / "Password
- * cleared" (or "Token saved" / "Token cleared") are transient statuses,
- * failures are sticky errors.
+ * cleared" (or "API key (token) saved" / "API key (token) cleared") are
+ * transient statuses, failures are sticky errors.
  *
- * The same control serves the Agents tab's Token field: `options.noun` names
- * what is being stored, and every label/message is derived from it, so the
- * defaults reproduce the Proxies tab's password wording exactly.
+ * The same control serves the Agents tab's API key (token) field:
+ * `options.noun` names what is being stored, and every label/message is derived
+ * from it, so the defaults reproduce the Proxies tab's password wording exactly.
  */
 export interface PasswordControlOptions {
   /** Resolves the target at click time; `undefined` while a draft has no id yet. */
@@ -48,6 +48,8 @@ export function createPasswordControl(
 ): PasswordControl {
   const noun = options.noun ?? 'password';
   const nounLabel = noun.charAt(0).toUpperCase() + noun.slice(1);
+  // "an API key (token)" but "a password"/"a token" - the noun is caller-chosen.
+  const article = /^[aeiou]/i.test(noun) ? 'an' : 'a';
 
   const passwordField = el('sp-textfield', {
     attrs: { type: 'password', placeholder: `New ${noun}`, 'aria-label': nounLabel },
@@ -72,12 +74,12 @@ export function createPasswordControl(
   setButton.addEventListener('click', () => {
     const target = options.target();
     if (target === undefined) {
-      status.showError(`Save the item before setting a ${noun}`);
+      status.showError(`Save the item before setting ${article} ${noun}`);
       return;
     }
     const password = passwordField.value;
     if (password === '') {
-      status.showError(`Enter a ${noun} first`);
+      status.showError(`Enter ${article} ${noun} first`);
       return;
     }
     setBusy(true);

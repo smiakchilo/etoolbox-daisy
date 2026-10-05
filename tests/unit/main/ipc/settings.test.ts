@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newProxyId, newServerId } from '../../../../src/shared';
-import { defaultAppSettings, type AgentId, type AppSettings } from '../../../../src/shared';
+import {
+  defaultAppSettings,
+  type AgentDefinition,
+  type AgentId,
+  type AppSettings,
+} from '../../../../src/shared';
 import { serverConfigSchema } from '../../../../src/shared';
 import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
@@ -1178,5 +1183,109 @@ describe('agent token change notification (onAgentTokenChanged)', () => {
 
     expect(result.ok).toBe(false);
     expect(onAgentTokenChanged).not.toHaveBeenCalled();
+  });
+});
+
+describe('clearing a token switches off a provider whose only credential it was', () => {
+  const CANARY_TOKEN = 'ghp_CANARY_TOKEN_7f3a91c4';
+  const OPENROUTER = 'openrouter' as AgentId;
+  const TOKEN_ONLY_DEFINITIONS: readonly AgentDefinition[] = [
+    ...TEST_AGENT_DEFINITIONS,
+    { id: OPENROUTER, label: 'OpenRouter', requiresAuth: true, supportsInteractiveLogin: false },
+  ];
+
+  /** An active agent node whose token reference points at a real stored secret. */
+  async function activeAgentWithToken(
+    agentId: AgentId,
+  ): Promise<{ settingsDir: string; secretStore: ReturnType<typeof createSecretStore> }> {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const secretRef = `agent-token:${agentId}`;
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      agents: { [agentId]: { active: true, token: { secretRef } } },
+    });
+    await secretStore.set(secretRef, CANARY_TOKEN);
+    return { settingsDir, secretStore };
+  }
+
+  async function activeFlagOf(
+    settingsDir: string,
+    secretStore: ReturnType<typeof createSecretStore>,
+    agentId: AgentId,
+  ): Promise<boolean | undefined> {
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected an ok snapshot result');
+    return snapshot.snapshot.agents[agentId]?.active;
+  }
+
+  it('switches off an active token-only provider and deletes the secret', async () => {
+    const { settingsDir, secretStore } = await activeAgentWithToken(OPENROUTER);
+
+    const result = await clearPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: OPENROUTER } },
+      TOKEN_ONLY_DEFINITIONS,
+      undefined,
+      // A token-only provider never has an SSO session; even a true presence
+      // must not keep it active.
+      () => Promise.resolve(true),
+    );
+
+    expect(result).toEqual({ ok: true });
+    await expect(secretStore.get(`agent-token:${OPENROUTER}`)).resolves.toBeUndefined();
+    expect(await activeFlagOf(settingsDir, secretStore, OPENROUTER)).toBe(false);
+  });
+
+  it('keeps an active interactive provider when an SSO session outlives the token', async () => {
+    const { settingsDir, secretStore } = await activeAgentWithToken(TEST_AGENT_ID);
+
+    await clearPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: TEST_AGENT_ID } },
+      TEST_AGENT_DEFINITIONS,
+      undefined,
+      () => Promise.resolve(true),
+    );
+
+    expect(await activeFlagOf(settingsDir, secretStore, TEST_AGENT_ID)).toBe(true);
+  });
+
+  it('switches off an active interactive provider when no SSO session remains', async () => {
+    const { settingsDir, secretStore } = await activeAgentWithToken(TEST_AGENT_ID);
+
+    await clearPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: TEST_AGENT_ID } },
+      TEST_AGENT_DEFINITIONS,
+      undefined,
+      () => Promise.resolve(false),
+    );
+
+    expect(await activeFlagOf(settingsDir, secretStore, TEST_AGENT_ID)).toBe(false);
+  });
+
+  it('leaves an inactive provider inactive (and does not need a presence read)', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const secretRef = `agent-token:${OPENROUTER}`;
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      agents: { [OPENROUTER]: { active: false, token: { secretRef } } },
+    });
+    await secretStore.set(secretRef, CANARY_TOKEN);
+
+    const result = await clearPassword(
+      settingsDir,
+      secretStore,
+      { target: { kind: 'agent', agentId: OPENROUTER } },
+      TOKEN_ONLY_DEFINITIONS,
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(await activeFlagOf(settingsDir, secretStore, OPENROUTER)).toBe(false);
   });
 });
