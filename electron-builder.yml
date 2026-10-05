@@ -71,6 +71,11 @@ win:
     - target: nsis
       arch:
         - x64
+mac:
+  # macOS needs .icns; without this electron-builder looks for
+  # build/icon.icns, finds nothing and ships Electron's default icon.
+  # resources/icon.icns is generated from resources/icon.ico (256 px source).
+  icon: resources/icon.icns
 nsis:
   oneClick: false
   perMachine: false

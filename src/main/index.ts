@@ -45,7 +45,7 @@ import { installWebContentsSecurityGuard } from './security';
 import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
 import { createSkillCatalog } from './skills/skillCatalog';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
-import { APP_USER_MODEL_ID, createMainWindow } from './windows';
+import { APP_USER_MODEL_ID, createMainWindow, getAppIconPath } from './windows';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
@@ -177,6 +177,16 @@ if (!gotSingleInstanceLock) {
   ensureAppDirectories(appPaths);
 
   void app.whenReady().then(async () => {
+    // macOS ignores the BrowserWindow `icon` option; the Dock shows the
+    // bundle's icon. A packaged build has ours (electron-builder.yml
+    // `mac.icon`), but an unpackaged run is Electron's own bundle, so without
+    // this the Dock shows Electron's icon.
+    if (process.platform === 'darwin' && !app.isPackaged) {
+      const appIconPath = getAppIconPath();
+      if (appIconPath) {
+        app.dock?.setIcon(appIconPath);
+      }
+    }
     installContentSecurityPolicy(isDev);
     installWebContentsSecurityGuard(rendererDistDir);
     installAppProtocolHandler(rendererDistDir);

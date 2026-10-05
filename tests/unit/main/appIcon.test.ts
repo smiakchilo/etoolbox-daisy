@@ -39,6 +39,7 @@ describe('resolveAppIconPath', () => {
 
     expect(
       resolveAppIconPath({
+        platform: 'win32',
         isPackaged: true,
         resourcesPath,
         mainDir: 'unused',
@@ -57,6 +58,7 @@ describe('resolveAppIconPath', () => {
 
     expect(
       resolveAppIconPath({
+        platform: 'win32',
         isPackaged: false,
         resourcesPath: 'unused',
         mainDir,
@@ -66,9 +68,28 @@ describe('resolveAppIconPath', () => {
     ).toBe(iconPath);
   });
 
+  it('resolves resources/icon.png on macOS, where Electron cannot load .ico/.icns', () => {
+    const root = createScratchRoot();
+    writeIcon(path.join(root, 'resources', 'icon.ico'));
+    const pngPath = path.join(root, 'resources', 'icon.png');
+    writeIcon(pngPath);
+
+    expect(
+      resolveAppIconPath({
+        platform: 'darwin',
+        isPackaged: false,
+        resourcesPath: 'unused',
+        mainDir: path.join(root, 'out', 'main'),
+        join,
+        exists: existsSync,
+      }),
+    ).toBe(pngPath);
+  });
+
   it('returns undefined when the icon is absent instead of a dead path', () => {
     expect(
       resolveAppIconPath({
+        platform: 'win32',
         isPackaged: true,
         resourcesPath: createScratchRoot(),
         mainDir: 'unused',

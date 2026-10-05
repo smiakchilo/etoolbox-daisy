@@ -40,6 +40,7 @@ let appIconPathResolved = false;
 export function getAppIconPath(): string | undefined {
   if (!appIconPathResolved) {
     cachedAppIconPath = resolveAppIconPath({
+      platform: process.platform,
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
       mainDir: currentDir,
