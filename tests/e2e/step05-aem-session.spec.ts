@@ -275,9 +275,6 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
           // `window.open`/`target="_blank"` requests into the pane view instead
           // - see `windowOpenRouter.ts`) with no preload, so the assertion
           // below is about what an AEM-opened window in this session can see.
-          let popupUrl: string;
-          let popupStatus: string;
-          let popupBridge: string;
           wc.setWindowOpenHandler(() => ({
             action: 'allow',
             overrideBrowserWindowOptions: {
@@ -307,14 +304,14 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
               }),
             );
           }
-          popupUrl = popupWindow.webContents.getURL();
+          const popupUrl = popupWindow.webContents.getURL();
           const statusValue: unknown = await popupWindow.webContents.executeJavaScript(
             `document.getElementById("popup-status")?.textContent ?? "(missing)"`,
           );
-          popupStatus = typeof statusValue === 'string' ? statusValue : '(non-string)';
+          const popupStatus = typeof statusValue === 'string' ? statusValue : '(non-string)';
           const bridgeValue: unknown =
             await popupWindow.webContents.executeJavaScript(`typeof window.daisy`);
-          popupBridge = typeof bridgeValue === 'string' ? bridgeValue : '(non-string)';
+          const popupBridge = typeof bridgeValue === 'string' ? bridgeValue : '(non-string)';
           const popupCookies = await aemSession.cookies.get({ name: input.popupCookieName });
           popupWindow.destroy();
 

@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
  * session must register a `will-download` listener that cancels every download.
  */
 
-type SessionEvent = 'will-download' | string;
+type SessionEvent = 'will-download';
 type SessionListener = (...args: unknown[]) => void;
 
 const { fakeSession, appOn } = vi.hoisted(() => {
