@@ -93,6 +93,7 @@ export const DIAGNOSTIC_CODES = [
   'AGENT_SERVICE_FAKE_SELECTED',
   'TOOL_REGISTRATION_FAILED',
   'AGENT_REGISTRATION_FAILED',
+  'AGENT_ACTIVE_PINNED',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];

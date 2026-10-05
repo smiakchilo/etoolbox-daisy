@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, safeStorage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { err, resolveSkillPrompt, type AuthStatus } from '../shared';
+import { type AppSettings, type AuthStatus, err, resolveSkillPrompt } from '../shared';
 import { createAemSession } from './aem';
 import { createAemBridgeBroker } from './aem/bridgeBroker';
 import { createAemBridgeTransport } from './aem/bridgeTransport';
@@ -16,6 +16,7 @@ import {
   createModelPreferenceCache,
   installAgentService,
   isModelSelectionLocked,
+  pinEffectiveActiveAgent,
   resolveBundledSkillsDirectory,
   shouldUseFakeAgentService,
   startAppRuntime,
@@ -42,7 +43,7 @@ import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
 import { installWebContentsSecurityGuard } from './security';
-import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
+import { configuredAgentId, loadSettings, loadSettingsSync, saveSettings } from './settingsStore';
 import { createSkillCatalog } from './skills/skillCatalog';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import { APP_USER_MODEL_ID, createMainWindow, getAppIconPath } from './windows';
@@ -334,6 +335,16 @@ if (!gotSingleInstanceLock) {
       model: storedAgent?.model ?? null,
       reasoningEffort: storedAgent?.reasoningEffort ?? null,
     });
+    // Re-seeds the cache from whichever provider `settings` now configures, so
+    // the next prompt uses that provider's model rather than the previous one's.
+    const seedModelPreference = (settings: AppSettings): void => {
+      const agentId = configuredAgentId(settings, agentDefinitions);
+      const node = agentId === undefined ? undefined : settings.agents[agentId];
+      modelPreferenceCache.set({
+        model: node?.model ?? null,
+        reasoningEffort: node?.reasoningEffort ?? null,
+      });
+    };
 
     // The `agent-chat:*` IPC handlers are registered against this
     // placeholder immediately, before any real `AgentService` exists: a
@@ -372,9 +383,39 @@ if (!gotSingleInstanceLock) {
     // describe no token. A failed reload falls back to the hub's last-known
     // document, which still names the same `secretRef`; the token's plaintext is
     // re-read from the secret store either way.
+    //
+    // When no provider is explicitly active, a token can make a provider other
+    // than the hub's fallback the one Settings shows as active; that choice is
+    // persisted first and the hub switches to it (see `pinEffectiveActiveAgent`).
+    // Startup runs the same pin, so a document already in that state (a token
+    // stored by an earlier build) is healed without re-entering the token.
+    const pinActiveAgent = async (hub: AgentHub, settings: AppSettings): Promise<AppSettings> => {
+      const pinned = await pinEffectiveActiveAgent({
+        settings,
+        definitions: agentDefinitions,
+        getAuthPresence: (agentId) => hub.getAuthPresence(agentId),
+        save: async (next) => (await saveSettings(appPaths.settings, next)).ok,
+      });
+      if (pinned !== settings) {
+        logger.info('AGENT_ACTIVE_PINNED');
+        seedModelPreference(pinned);
+      }
+      return pinned;
+    };
     const refreshRuntimeAfterTokenChange = async (): Promise<void> => {
+      const hub = agentHub;
+      if (hub === undefined) return;
       const loaded = await loadSettings(appPaths.settings);
-      await (loaded.ok ? agentHub?.refresh(loaded.value.settings) : agentHub?.refresh());
+      if (!loaded.ok) {
+        await hub.refresh();
+        return;
+      }
+      const settings = await pinActiveAgent(hub, loaded.value.settings);
+      if (settings === loaded.value.settings) {
+        await hub.refresh(settings);
+        return;
+      }
+      await hub.reconcile(settings);
     };
 
     registerSettingsIpcHandlers({
@@ -402,12 +443,7 @@ if (!gotSingleInstanceLock) {
           // "the" preference; re-seed the synchronous cache so the next prompt
           // uses the newly active provider's model rather than the previous
           // one's. Model/effort-only changes re-seed to the same value.
-          const nextActiveId = configuredAgentId(settings, agentDefinitions);
-          const nextNode = nextActiveId === undefined ? undefined : settings.agents[nextActiveId];
-          modelPreferenceCache.set({
-            model: nextNode?.model ?? null,
-            reasoningEffort: nextNode?.reasoningEffort ?? null,
-          });
+          seedModelPreference(settings);
           // Awaited by the handler: the switch/recycle must finish before the
           // write is reported done, so the renderer's reload does not read the
           // half-started runtime (which left the Model/Reasoning pickers
@@ -666,7 +702,10 @@ if (!gotSingleInstanceLock) {
         // registering here beyond the always-present IPC sets above.
         return;
       },
-      startAgentService: () => hub.start(storedSettings),
+      startAgentService: async () =>
+        hub.start(
+          storedSettings === undefined ? undefined : await pinActiveAgent(hub, storedSettings),
+        ),
       // No free-text field exists on `Logger` by design (see its own module
       // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary
       // code for exactly this failure ("the agent runtime ... is
