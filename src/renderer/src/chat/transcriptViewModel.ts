@@ -53,21 +53,21 @@ export function describeRequiredAction(action: RequiredAction): string | undefin
     case 'none':
       return undefined;
     case 'sign_in_to_aem':
-      return 'Sign in to AEM in the browser pane, then try again.';
+      return 'Sign in to AEM in the browser pane, then try again';
     case 'sign_in_to_agent':
-      return 'Sign in to Copilot, then try again.';
+      return 'Sign in to Copilot, then try again';
     case 'add_server':
-      return 'Add an AEM server in Settings.';
+      return 'Add an AEM server in Settings';
     case 'select_server':
-      return 'Select an AEM server first.';
+      return 'Select an AEM server first';
     case 'review_certificate':
-      return 'Approve the untrusted certificate in the banner above the browser pane, then try again.';
+      return 'Approve the untrusted certificate in the banner above the browser pane, then try again';
     case 'check_proxy_settings':
-      return 'Check the proxy settings in Settings.';
+      return 'Check the proxy settings in Settings';
     case 'reduce_result_size':
-      return 'Ask a narrower question so the result is smaller.';
+      return 'Ask a narrower question so the result is smaller';
     case 'start_new_chat':
-      return 'Start a new chat and try again.';
+      return 'Start a new chat and try again';
     default: {
       return action;
     }

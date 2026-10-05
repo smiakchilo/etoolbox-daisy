@@ -309,9 +309,7 @@ describe('createHostsSection', () => {
     await settle();
 
     expect(updateServerTargeting).not.toHaveBeenCalled();
-    expect(lastPrompt?.copy).toBe(
-      `Confirm changing the address. Press ${BANNER_ACTION_MARKER} to apply`,
-    );
+    expect(lastPrompt?.copy).toBe(`Press ${BANNER_ACTION_MARKER} to change the address`);
 
     lastPrompt?.action.onActivate();
     await settle();
@@ -350,7 +348,7 @@ describe('createHostsSection', () => {
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
     expect(lastPrompt?.copy).toBe(
-      `Removing the host cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the host`,
     );
     expect(removeServer).not.toHaveBeenCalled();
 

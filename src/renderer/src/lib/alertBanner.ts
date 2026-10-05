@@ -236,7 +236,7 @@ export function buildBannerCopy(parts: readonly (string | Node)[]): HTMLElement 
  * button(s) placed *inline in the sentence*, exactly like {@link buildBannerCopy}.
  *
  * `copy` marks the button's place with {@link BANNER_ACTION_MARKER} - e.g.
- * `'This host has an untrusted certificate. Press {action} to allow it'` - and
+ * `'Untrusted certificate. Press {action} to allow'` - and
  * the first button replaces that token, so text follows the control and the
  * control can never be orphaned on a line of its own. Any further buttons
  * replace further tokens; buttons left over when there are no more tokens are

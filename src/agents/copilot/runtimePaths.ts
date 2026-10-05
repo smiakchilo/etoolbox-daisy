@@ -49,7 +49,7 @@ function resolveExePath(packageName: string, exeSegments: string[], env: Runtime
     throw new Error(
       `Expected executable not found at "${exePath}". This means the "${packageName}" ` +
         "payload is missing or was trimmed too aggressively by electron-builder's " +
-        'files/asarUnpack configuration.',
+        'files/asarUnpack configuration',
     );
   }
   return exePath;
@@ -81,7 +81,7 @@ export function resolveBundledSkillsDir(env: RuntimePathsEnv): string {
   if (!existsSync(dir)) {
     throw new Error(
       `Bundled skills directory not found at "${dir}". It ships via the ` +
-        'electron-builder extraResources entry for resources/skills.',
+        'electron-builder extraResources entry for resources/skills',
     );
   }
   return dir;

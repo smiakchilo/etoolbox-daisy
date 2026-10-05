@@ -568,7 +568,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     const authAgentId = configuredId ?? activeId;
     const [authResult, modelResult] = await Promise.allSettled([
       authAgentId === undefined
-        ? Promise.reject(new Error('No agent is available.'))
+        ? Promise.reject(new Error('No agent is available'))
         : window.daisy.agent.getAuthStatus(authAgentId),
       window.daisy.settings.getModelSelection(),
     ]);

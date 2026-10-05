@@ -200,7 +200,7 @@ describe('createCommitSaver scheduler', () => {
       const saver = createCommitSaver();
       saver.arm(run);
       await expect(saver.flushNow()).resolves.toBeUndefined();
-      expect(consoleError).toHaveBeenCalledWith('[daisy] Settings save failed.');
+      expect(consoleError).toHaveBeenCalledWith('[daisy] Settings save failed');
     } finally {
       consoleError.mockRestore();
     }
@@ -213,7 +213,7 @@ describe('createCommitSaver scheduler', () => {
       const saver = createCommitSaver();
       saver.arm(run);
       await expect(saver.flushNow()).resolves.toBeUndefined();
-      expect(consoleError).toHaveBeenCalledWith('[daisy] Settings save failed.');
+      expect(consoleError).toHaveBeenCalledWith('[daisy] Settings save failed');
     } finally {
       consoleError.mockRestore();
     }

@@ -39,11 +39,11 @@ export function buildAgentCatalog(modules: Readonly<Record<string, unknown>>): A
   for (const source of Object.keys(modules).sort()) {
     const meta = (modules[source] as { meta?: unknown } | null | undefined)?.meta;
     if (!isAgentMeta(meta)) {
-      failures.push({ source, reason: 'Does not export a valid `meta` (AgentMeta).' });
+      failures.push({ source, reason: 'Does not export a valid `meta` (AgentMeta)' });
       continue;
     }
     if (seen.has(meta.id)) {
-      failures.push({ source, reason: `Duplicate agent id '${meta.id}'.` });
+      failures.push({ source, reason: `Duplicate agent id '${meta.id}'` });
       continue;
     }
     seen.add(meta.id);

@@ -191,16 +191,15 @@ function toAgentChatError(error: AgentServiceError): AgentChatError {
 function notOpenConversationError(chatId: ChatId): AgentChatError {
   return createAgentChatError(
     'PRECONDITION_FAILED',
-    `"${chatId}" is not the currently open conversation.`,
+    `"${chatId}" is not the currently open conversation`,
   );
 }
 
 const BLOCK_REASON_MESSAGES: Readonly<Record<CanSendBlockReason, string>> = {
   session_closed: 'This conversation is closed',
-  not_authenticated: 'Sign in to the agent before sending a message',
-  session_error: 'Dismiss the current error before sending another message.',
-  turn_in_progress:
-    'Wait for the current response to finish (or press Stop) before sending another message.',
+  not_authenticated: 'Sign in to the agent to send a message',
+  session_error: 'Dismiss the current error first',
+  turn_in_progress: 'A response is already in progress',
 };
 
 function blockReasonError(reason: CanSendBlockReason): AgentChatError {
@@ -515,10 +514,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // wrong.
     const server = deps.currentAemServerContext();
     if (server === undefined) {
-      throw new Error('AemToolContext requested with no AEM server currently selected.');
+      throw new Error('AemToolContext requested with no AEM server currently selected');
     }
     if (activeChatId === undefined || activeTurn === undefined) {
-      throw new Error('AemToolContext requested with no active chat/turn to bind to.');
+      throw new Error('AemToolContext requested with no active chat/turn to bind to');
     }
     return {
       origin: server.origin,
@@ -581,10 +580,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
  * nothing the user does makes this resolve faster except waiting.
  */
 function agentServiceStartingError(): AgentChatError {
-  return createAgentChatError(
-    'PRECONDITION_FAILED',
-    'The agent service is still starting. Try again in a moment.',
-  );
+  return createAgentChatError('PRECONDITION_FAILED', 'The agent service is still starting');
 }
 
 /**
@@ -593,7 +589,7 @@ function agentServiceStartingError(): AgentChatError {
  * waiting does not help, so it names the state instead of asking to retry.
  */
 function agentUnavailableError(): AgentChatError {
-  return createAgentChatError('AGENT_UNAVAILABLE', 'No agent is available.');
+  return createAgentChatError('AGENT_UNAVAILABLE', 'No agent is available');
 }
 
 /**
@@ -724,7 +720,7 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
 
   function currentAemToolContext(): CurrentAemToolContext {
     if (!real) {
-      throw new Error('AemToolContext requested before the agent service finished starting up.');
+      throw new Error('AemToolContext requested before the agent service finished starting up');
     }
     return real.currentAemToolContext();
   }

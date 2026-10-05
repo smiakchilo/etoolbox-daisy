@@ -161,7 +161,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     const addressField = items.first().locator('sp-textfield[aria-label="Address"] input');
     await addressField.fill('https://canary-moved.example');
     await addressField.press('Enter');
-    await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
+    await expect(banner).toContainText('Press OK to change the address', { timeout: 60_000 });
     await expect(addressField).toHaveValue('https://canary-moved.example');
 
     await second.page
@@ -178,7 +178,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     // warning, and only the banner's OK button performs it.
     await expect(items).toHaveCount(1);
     await items.first().locator('.multifield__action--remove').click();
-    await expect(banner).toContainText('Removing the host cannot be undone');
+    await expect(banner).toContainText("This can't be undone");
     await expect(items).toHaveCount(1);
 
     await second.page
@@ -259,7 +259,7 @@ test('the Settings banner keeps one height with and without an action button', a
     const heightAddress = item.locator('sp-textfield[aria-label="Address"] input');
     await heightAddress.fill('https://height-moved.example');
     await heightAddress.press('Enter');
-    await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
+    await expect(banner).toContainText('Press OK to change the address', { timeout: 60_000 });
     await expect(banner.locator('sp-action-button')).toHaveCount(1);
     await expect
       .poll(async () =>

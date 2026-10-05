@@ -65,7 +65,7 @@ function senderInfoFrom(
 
 const UNTRUSTED_SENDER_RESULT: BrowserIpcVoidResult = {
   ok: false,
-  error: { code: 'untrusted_sender', message: 'This request must come from the local app window.' },
+  error: { code: 'untrusted_sender', message: 'This request must come from the local app window' },
 };
 
 function invalidPayloadResult(message: string): BrowserIpcVoidResult {

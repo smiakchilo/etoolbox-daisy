@@ -127,7 +127,7 @@ export function projectModelCatalog(raw: unknown): Result<ModelCatalogEntry[], M
   if (!parsed.success) {
     return err({
       kind: 'malformed',
-      message: 'Copilot returned a model list of an unexpected shape.',
+      message: 'Copilot returned a model list of an unexpected shape',
     });
   }
 
@@ -167,7 +167,7 @@ export async function loadModelCatalog(
   } catch {
     return err({
       kind: 'unavailable',
-      message: 'Could not read the list of Copilot models. Copilot may still be starting.',
+      message: 'Could not read the list of Copilot models. Copilot may still be starting',
     });
   }
   return projectModelCatalog(raw);

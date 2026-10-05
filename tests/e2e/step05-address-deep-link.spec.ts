@@ -162,10 +162,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     await addressInput.fill(unknownDeepUrl);
     await addressInput.press('Enter');
 
-    await expect(message).toContainText(
-      'This host is unknown. Press OK to add it to the managed hosts',
-      { timeout: 60_000 },
-    );
+    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
     // The copy must never cite the URL/host: the address bar is right above
     // the banner and already shows it, and repeating it is noise.
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
@@ -184,10 +181,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     // fires no `change` for an unchanged value) must still navigate and prompt
     // again.
     await addressInput.press('Enter');
-    await expect(message).toContainText(
-      'This host is unknown. Press OK to add it to the managed hosts',
-      { timeout: 60_000 },
-    );
+    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
 
     // Case 2: dismissing again, then pressing Refresh - the address bar's URL
@@ -195,10 +189,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     // reload the stale page) and the prompt must reappear.
     await dismissMessage();
     await page.getByRole('button', { name: 'Refresh' }).click();
-    await expect(message).toContainText(
-      'This host is unknown. Press OK to add it to the managed hosts',
-      { timeout: 60_000 },
-    );
+    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
 
     // The prompt's OK action button persists the server (only after the
     // user's explicit click), then retries the address through the normal
@@ -315,10 +306,7 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
 
     await addressInput.fill(unknownDeepUrl);
     await addressInput.press('Enter');
-    await expect(message).toContainText(
-      'This host is unknown. Press OK to add it to the managed hosts',
-      { timeout: 60_000 },
-    );
+    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
 
     // Dismiss, then Refresh: the requested URL (the unknown deep link, which
     // the refused navigation never loaded) differs from the loaded echo page,
@@ -327,10 +315,7 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
     await page.locator('.browser-toolbar-message sp-close-button').click();
     await expect(message).not.toHaveAttribute('open');
     await page.getByRole('button', { name: 'Refresh' }).click();
-    await expect(message).toContainText(
-      'This host is unknown. Press OK to add it to the managed hosts',
-      { timeout: 60_000 },
-    );
+    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
     // The copy still never cites the host after the re-trigger.
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
   } finally {

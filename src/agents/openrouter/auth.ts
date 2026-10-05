@@ -18,7 +18,7 @@ export function authStatusFromToken(token: string | undefined): AuthStatus {
     : {
         apiVersion: 1,
         isAuthenticated: false,
-        statusMessage: 'Set API key (token) before activating.',
+        statusMessage: 'Set API key (token) before activating',
       };
 }
 

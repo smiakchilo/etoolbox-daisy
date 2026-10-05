@@ -88,23 +88,17 @@ function toToolArguments(value: unknown): Record<string, JsonValue> {
 function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
   switch (reason) {
     case 'session_closed':
-      return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed.');
+      return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed');
     case 'not_authenticated':
       return createAgentServiceError(
         'AGENT_UNAVAILABLE',
-        'No OpenRouter API key is set.',
+        'No OpenRouter API key is set',
         'sign_in_to_agent',
       );
     case 'session_error':
-      return createAgentServiceError(
-        'PRECONDITION_FAILED',
-        'The previous turn ended in an error; it must be dismissed before sending another prompt.',
-      );
+      return createAgentServiceError('PRECONDITION_FAILED', 'The previous turn ended in an error');
     case 'turn_in_progress':
-      return createAgentServiceError(
-        'PRECONDITION_FAILED',
-        'A turn is already in progress on this conversation.',
-      );
+      return createAgentServiceError('PRECONDITION_FAILED', 'A turn is already in progress');
     default: {
       return reason;
     }
@@ -126,19 +120,19 @@ function describeOpenRouterFailure(error: unknown): string {
   switch (status) {
     case 401:
     case 403:
-      return 'OpenRouter rejected the API key. Check the token in Settings.';
+      return 'OpenRouter rejected the API key. Check the token in Settings';
     case 402:
-      return 'OpenRouter refused the request for lack of credits or quota.';
+      return 'OpenRouter refused the request for lack of credits or quota';
     case 404:
-      return 'The selected OpenRouter model is not available to this key. Choose another model in Settings.';
+      return 'The selected OpenRouter model is not available to this key. Choose another model in Settings';
     case 408:
-      return 'OpenRouter timed out the request. Try again.';
+      return 'OpenRouter timed out the request. Try again';
     case 429:
-      return 'OpenRouter is rate-limiting this key. Wait a moment and try again.';
+      return 'OpenRouter is rate-limiting this key. Wait a moment and try again';
     default:
       return typeof status === 'number' && status >= 500
-        ? 'OpenRouter reported a server error. Try again in a moment.'
-        : 'The OpenRouter request failed.';
+        ? 'OpenRouter reported a server error. Try again in a moment'
+        : 'The OpenRouter request failed';
   }
 }
 
@@ -203,7 +197,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
     if (!applied.ok) {
       throw new Error(
         `openrouter agent service produced an illegal event sequence (${applied.error.message}). ` +
-          'This is a bug in this adapter, not in the caller.',
+          'This is a bug in this adapter, not in the caller',
       );
     }
     streamState = applied.value.state;
@@ -308,7 +302,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         ok: false as const,
         error: createToolError(
           'UNEXPECTED_RESPONSE',
-          caught instanceof Error ? caught.message.slice(0, 500) : 'Tool execution failed.',
+          caught instanceof Error ? caught.message.slice(0, 500) : 'Tool execution failed',
           newRequestId(idGenerator),
         ),
       };
@@ -575,7 +569,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         console.error('openrouter: failed to open conversation', error);
         return Promise.resolve(
           err(
-            createAgentServiceError('AGENT_UNAVAILABLE', 'Could not start an OpenRouter session.'),
+            createAgentServiceError('AGENT_UNAVAILABLE', 'Could not start an OpenRouter session'),
           ),
         );
       }
@@ -587,7 +581,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
           err(
             createAgentServiceError(
               'INVALID_ARGUMENT',
-              `"${request.chatId}" is not the open conversation.`,
+              `"${request.chatId}" is not the open conversation`,
             ),
           ),
         );
@@ -605,7 +599,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
           err(
             createAgentServiceError(
               'AGENT_UNAVAILABLE',
-              'No OpenRouter API key is set. Add one in Settings.',
+              'No OpenRouter API key is set. Add one in Settings',
               'sign_in_to_agent',
             ),
           ),
@@ -613,7 +607,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       }
       if (openState === undefined) {
         return Promise.resolve(
-          err(createAgentServiceError('PRECONDITION_FAILED', 'No active OpenRouter session.')),
+          err(createAgentServiceError('PRECONDITION_FAILED', 'No active OpenRouter session')),
         );
       }
 
@@ -644,10 +638,10 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         currentTurn = undefined;
         currentAbort = undefined;
         console.error('openrouter: callModel threw synchronously', error);
-        emitTurnError(request.chatId, turnId, 'Could not start the OpenRouter request.');
+        emitTurnError(request.chatId, turnId, 'Could not start the OpenRouter request');
         return Promise.resolve(
           err(
-            createAgentServiceError('AGENT_UNAVAILABLE', 'Could not start the OpenRouter request.'),
+            createAgentServiceError('AGENT_UNAVAILABLE', 'Could not start the OpenRouter request'),
           ),
         );
       }
@@ -667,10 +661,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       if (openChatId === undefined || openChatId !== chatId) {
         return Promise.resolve(
           err(
-            createAgentServiceError(
-              'INVALID_ARGUMENT',
-              `"${chatId}" is not the open conversation.`,
-            ),
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
           ),
         );
       }
@@ -687,10 +678,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       if (openChatId === undefined || openChatId !== chatId) {
         return Promise.resolve(
           err(
-            createAgentServiceError(
-              'INVALID_ARGUMENT',
-              `"${chatId}" is not the open conversation.`,
-            ),
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
           ),
         );
       }

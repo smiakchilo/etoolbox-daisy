@@ -136,7 +136,7 @@ export function startWebFlowLogin(
             'Sign-in was not completed in time. If you denied access on the GitHub page, ' +
             'your browser may have shown \u201C127.0.0.1 refused to connect\u201D - that is ' +
             'expected, and sign-in was not completed. Please try again and choose ' +
-            '\u201CAuthorize\u201D to continue.',
+            '\u201CAuthorize\u201D to continue',
         });
         return;
       }
@@ -201,7 +201,7 @@ export async function assertNoPlaintextCredentials(copilotHomeDir: string): Prom
       if (pattern.test(content)) {
         throw new Error(
           `Potential plaintext GitHub credential detected in "${fullPath}" ` +
-            `(matched ${pattern.toString()}). Failing closed.`,
+            `(matched ${pattern.toString()}). Failing closed`,
         );
       }
     }
@@ -236,6 +236,6 @@ export async function localSignOut(copilotHomeDir: string): Promise<{ warning: s
       'Windows Credential Manager and is shared machine-wide with any other Copilot CLI ' +
       'installation signed in as the same account - it was not revoked. To fully revoke ' +
       'it, sign out from those other installations or remove the entry from Credential ' +
-      'Manager directly.',
+      'Manager directly',
   };
 }

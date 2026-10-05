@@ -297,10 +297,7 @@ function buildHostItem(
 
   function showOriginPrompt(origin: string): void {
     pendingOrigin = origin;
-    ctx.status.showPrompt(
-      `Confirm changing the address. Press ${BANNER_ACTION_MARKER} to apply`,
-      applyOriginAction,
-    );
+    ctx.status.showPrompt(`Press ${BANNER_ACTION_MARKER} to change the address`, applyOriginAction);
   }
 
   const removeAction: StatusBannerAction = {
@@ -583,7 +580,7 @@ function buildHostItem(
     pendingOrigin = undefined;
     removeArmed = true;
     ctx.status.showPrompt(
-      `Removing the host cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the host`,
       removeAction,
     );
   }

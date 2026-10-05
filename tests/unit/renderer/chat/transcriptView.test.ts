@@ -249,9 +249,7 @@ describe('createTranscriptView', () => {
       expect(toolNode?.className).not.toContain('chat-tool-call--succeeded');
       expect(toolNode?.textContent).toContain('FAILED');
       expect(toolNode?.textContent).toContain('The requested page does not exist.');
-      expect(toolNode?.textContent).toContain(
-        'Sign in to AEM in the browser pane, then try again.',
-      );
+      expect(toolNode?.textContent).toContain('Sign in to AEM in the browser pane, then try again');
     });
   });
 

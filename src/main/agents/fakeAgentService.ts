@@ -239,23 +239,17 @@ function defaultIdGenerator(): IdGenerator {
 function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
   switch (reason) {
     case 'session_closed':
-      return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed.');
+      return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed');
     case 'not_authenticated':
       return createAgentServiceError(
         'AGENT_UNAVAILABLE',
-        'Not signed in to Copilot.',
+        'Not signed in to Copilot',
         'sign_in_to_agent',
       );
     case 'session_error':
-      return createAgentServiceError(
-        'PRECONDITION_FAILED',
-        'The previous turn ended in an error; it must be dismissed before sending another prompt.',
-      );
+      return createAgentServiceError('PRECONDITION_FAILED', 'The previous turn ended in an error');
     case 'turn_in_progress':
-      return createAgentServiceError(
-        'PRECONDITION_FAILED',
-        'A turn is already in progress on this conversation.',
-      );
+      return createAgentServiceError('PRECONDITION_FAILED', 'A turn is already in progress');
     default: {
       return reason;
     }
@@ -317,7 +311,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     if (!applied.ok) {
       throw new Error(
         `FakeAgentService produced an illegal event sequence (${applied.error.message}). ` +
-          'This is a bug in fakeAgentService.ts, not in the caller.',
+          'This is a bug in fakeAgentService.ts, not in the caller',
       );
     }
     streamState = applied.value.state;
@@ -542,7 +536,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
         if (step.text.length === 0) {
           throw new Error(
             'ScriptedTurn contains an empty reasoning step; assistant.reasoning.delta.delta ' +
-              'must be non-empty (agentEvents.ts).',
+              'must be non-empty (agentEvents.ts)',
           );
         }
         activeReasoningId ??= newReasoningId(idGenerator);
@@ -558,7 +552,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
         if (step.text.length === 0) {
           throw new Error(
             'ScriptedTurn contains an empty delta step; assistant.text.delta.delta must be ' +
-              'non-empty (agentEvents.ts).',
+              'non-empty (agentEvents.ts)',
           );
         }
         deltaTexts.push(step.text);
@@ -617,7 +611,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     const turn = pendingTurn;
     if (turn === undefined) {
       throw new Error(
-        'FakeAgentService.performAbort called with no turn in flight - internal invariant violated.',
+        'FakeAgentService.performAbort called with no turn in flight - internal invariant violated',
       );
     }
     pendingTurn = undefined;
@@ -720,7 +714,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
           err(
             createAgentServiceError(
               'INVALID_ARGUMENT',
-              `"${request.chatId}" is not the open conversation.`,
+              `"${request.chatId}" is not the open conversation`,
             ),
           ),
         );
@@ -753,10 +747,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       if (openChatId === undefined || openChatId !== chatId) {
         return Promise.resolve(
           err(
-            createAgentServiceError(
-              'INVALID_ARGUMENT',
-              `"${chatId}" is not the open conversation.`,
-            ),
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
           ),
         );
       }
@@ -772,10 +763,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       if (openChatId === undefined || openChatId !== chatId) {
         return Promise.resolve(
           err(
-            createAgentServiceError(
-              'INVALID_ARGUMENT',
-              `"${chatId}" is not the open conversation.`,
-            ),
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
           ),
         );
       }

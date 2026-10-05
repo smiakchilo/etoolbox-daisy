@@ -128,16 +128,14 @@ describe('computeReservedRegionBounds', () => {
 describe('describeBlockedCertificate', () => {
   it('uses the fixed copy, mirroring the unknown-origin prompt (the address bar already shows the host)', () => {
     expect(describeBlockedCertificate()).toBe(
-      `This host has an untrusted certificate. Press ${BANNER_ACTION_MARKER} to allow it`,
+      `Untrusted certificate. Press ${BANNER_ACTION_MARKER} to allow`,
     );
   });
 });
 
 describe('describeUnknownOrigin', () => {
   it('uses fixed copy that never cites the origin - the address bar already shows it', () => {
-    expect(describeUnknownOrigin()).toBe(
-      `This host is unknown. Press ${BANNER_ACTION_MARKER} to add it to the managed hosts`,
-    );
+    expect(describeUnknownOrigin()).toBe(`Unknown host. Press ${BANNER_ACTION_MARKER} to add it`);
   });
 });
 

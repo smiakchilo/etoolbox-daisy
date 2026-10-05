@@ -142,12 +142,12 @@ test('a configured server that is down is reported to the user, not swallowed', 
   // Explicit means the user can act on it - but the copy must be humanised,
   // not the raw Chromium "ERR_CONNECTION_REFUSED (-102) loading '...'"
   // string that main receives from headless loadURL. The message names the
-  // origin and says what to check; the raw `ERR_`/`(-102)` vocabulary stays
-  // on `errorCode` for diagnostics and never reaches the renderer.
+  // origin; the raw `ERR_`/`(-102)` vocabulary stays on `errorCode` for
+  // diagnostics and never reaches the renderer.
   await expect(message).not.toContainText('ERR_');
   await expect(message).not.toContainText('(-10');
   await expect(message).toContainText(deadOrigin, { timeout: 60_000 });
-  await expect(message).toContainText('Check that the server is running');
+  await expect(message).toContainText("Can't connect to");
   const text = (await message.textContent()) ?? '';
   expect(text).not.toContain('Switching servers');
   expect(text).not.toContain('Sp switching');
@@ -222,7 +222,7 @@ test('dismissing the error banner then Reload re-shows it for the same still-dow
   // Opens under the still-covered page region; the `open` attribute is set
   // regardless, so wait for the copy before dismissing the panel.
   await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
-  await expect(banner).toContainText('Check that the server is running');
+  await expect(banner).toContainText("Can't connect to");
 
   // The failed navigation pushed state, so the panel is now closeable.
   const panelClose = page.locator('.hosts-panel__close');
@@ -244,7 +244,7 @@ test('dismissing the error banner then Reload re-shows it for the same still-dow
   // The error banner must reappear with the same humanised copy - not stay
   // silently gone once the (transient) Loading presentation clears.
   await expect(banner).toBeVisible({ timeout: 60_000 });
-  await expect(banner).toContainText('Check that the server is running');
+  await expect(banner).toContainText("Can't connect to");
   await expect(banner).toContainText(deadOrigin);
   await expect(banner).not.toContainText('ERR_');
 
@@ -337,7 +337,7 @@ test('a failed navigation restores the previous page and keeps the error readabl
     // loading presentation never replaces the copy the user is reading.
     await expect.poll(() => addressInput.inputValue(), { timeout: 60_000 }).toBe(upUrl);
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText('Check that the server is running');
+    await expect(banner).toContainText("Can't connect to");
     await expect(banner).toContainText(deadOrigin);
     expect(await banner.getAttribute('class')).not.toContain('banner-row--loading');
 
@@ -353,7 +353,7 @@ test('a failed navigation restores the previous page and keeps the error readabl
     });
     await expect.poll(() => addressInput.inputValue(), { timeout: 60_000 }).toContain('again=1');
     await expect(banner).toContainText(deadOrigin);
-    await expect(banner).toContainText('Check that the server is running');
+    await expect(banner).toContainText("Can't connect to");
     expect(await banner.getAttribute('class')).not.toContain('banner-row--loading');
   } finally {
     await app.close();
@@ -435,7 +435,7 @@ test('a wrapped error message keeps its Reload action on the last text line', as
     await addressInput.press('Enter');
 
     const banner = page.locator('sp-alert-banner.browser-toolbar-message');
-    await expect(banner).toContainText('Check that the server is running', { timeout: 60_000 });
+    await expect(banner).toContainText("Can't connect to", { timeout: 60_000 });
 
     // Dismiss the startup hosts picker so the banner is visible and laid out.
     const panelClose = page.locator('.hosts-panel__close');

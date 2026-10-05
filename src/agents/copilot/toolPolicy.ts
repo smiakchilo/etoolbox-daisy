@@ -154,7 +154,7 @@ export function denyAllPermissions(): PermissionHandler {
   return () => ({
     kind: 'reject',
     feedback:
-      "Denied by EToolbox Daisy's hardened tool policy (no interactive reviewer configured).",
+      "Denied by EToolbox Daisy's hardened tool policy (no interactive reviewer configured)",
   });
 }
 
@@ -216,7 +216,7 @@ function assertExplicitAllowlist(policy: HardenedToolPolicy): void {
       'createHardenedSession()/resumeHardenedSession() require an explicit ' +
         'HardenedToolPolicy.availableTools allowlist (an array - possibly empty ' +
         "to deny every tool). Refusing to create a session with the SDK's " +
-        'implicit default tool access.',
+        'implicit default tool access',
     );
   }
 }
@@ -281,7 +281,7 @@ function buildBundledSkillConfig(
     if (typeof directory !== 'string' || directory.length === 0 || !path.isAbsolute(directory)) {
       throw new Error(
         `HardenedToolPolicy.bundledSkillDirectories entries must be absolute paths to ` +
-          `directories inside the application bundle; received ${JSON.stringify(directory)}.`,
+          `directories inside the application bundle; received ${JSON.stringify(directory)}`,
       );
     }
   }
@@ -346,7 +346,7 @@ async function applyPostCreateHardening(session: CopilotSession): Promise<void> 
   const result = await session.rpc.options.update({ ...POST_CREATE_OPTIONS_PATCH });
   if (!result.success) {
     throw new Error(
-      `Failed to apply hardened post-create session options for session "${session.sessionId}".`,
+      `Failed to apply hardened post-create session options for session "${session.sessionId}"`,
     );
   }
 }

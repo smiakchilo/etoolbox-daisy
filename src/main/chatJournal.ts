@@ -137,7 +137,7 @@ export function toChatFileName(chatId: string): string {
     chatId.includes('/') ||
     chatId.includes('\\')
   ) {
-    throw new Error(`Refusing to derive a chat journal file name from unsafe chatId "${chatId}".`);
+    throw new Error(`Refusing to derive a chat journal file name from unsafe chatId "${chatId}"`);
   }
   return `${chatId}.jsonl`;
 }

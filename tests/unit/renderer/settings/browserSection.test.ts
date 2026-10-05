@@ -119,7 +119,7 @@ describe('createBrowserSection', () => {
     const section = buildSection();
     expect(section.element.getAttribute('aria-label')).toBe('Browser');
     expect(checkboxOf(section).textContent).toBe('Suppress the Windows security-key prompt');
-    expect(section.element.textContent).toContain('Takes effect after restarting the app.');
+    expect(section.element.textContent).toContain('Takes effect after restarting the app');
   });
 
   it('reflects the stored value on update, in both directions', () => {

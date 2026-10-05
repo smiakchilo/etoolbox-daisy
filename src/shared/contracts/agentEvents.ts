@@ -531,7 +531,7 @@ export function foldTextDelta(
   if (event.messageId !== state.messageId) {
     throw new Error(
       `foldTextDelta: delta for message "${event.messageId}" does not belong to fold state ` +
-        `for message "${state.messageId}". Route deltas to the fold state matching their messageId.`,
+        `for message "${state.messageId}". Route deltas to the fold state matching their messageId`,
     );
   }
   const chunks = new Map(state.chunks);

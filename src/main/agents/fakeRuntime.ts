@@ -34,9 +34,9 @@ export function createFakeRuntime(host: AgentHost): AgentRuntime {
     whenReady: () => installed.catch(() => undefined),
     getAuthStatus: () => Promise.resolve(fake?.getAuthState() ?? { ...DEFAULT_FAKE_AUTH_STATE }),
     login: () =>
-      Promise.resolve({ status: 'failed', message: 'Sign-in is unavailable with the fake agent.' }),
+      Promise.resolve({ status: 'failed', message: 'Sign-in is unavailable with the fake agent' }),
     logout: () =>
-      Promise.resolve({ apiVersion: 1, warning: 'Sign-out is unavailable with the fake agent.' }),
+      Promise.resolve({ apiVersion: 1, warning: 'Sign-out is unavailable with the fake agent' }),
     loadModelCatalog: () => Promise.resolve(ok(fakeModelCatalog())),
   };
 }

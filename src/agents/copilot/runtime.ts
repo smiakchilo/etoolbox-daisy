@@ -89,7 +89,7 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
 
   const login = async (settings: AppSettings | undefined): Promise<LoginOutcome> => {
     if (inFlightLogin !== undefined) {
-      return { status: 'failed', message: 'A login is already in progress.' };
+      return { status: 'failed', message: 'A login is already in progress' };
     }
     const cliExePath = resolveCliExePath(resolveDefaultRuntimePathsEnv());
     const copilotHomeDir = getCopilotHomeDir();

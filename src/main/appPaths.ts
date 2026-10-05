@@ -72,13 +72,13 @@ export function resolveAppPaths(homeDir: string): AppPaths {
   if (homeDir.trim().length === 0) {
     throw new Error(
       'Cannot resolve application paths: the home directory is empty or blank. Refusing to ' +
-        'fall back to the current working directory or a temporary directory.',
+        'fall back to the current working directory or a temporary directory',
     );
   }
   if (!path.isAbsolute(homeDir)) {
     throw new Error(
       `Cannot resolve application paths: home directory "${homeDir}" is not an absolute path. ` +
-        'Refusing to fall back to the current working directory or a temporary directory.',
+        'Refusing to fall back to the current working directory or a temporary directory',
     );
   }
 

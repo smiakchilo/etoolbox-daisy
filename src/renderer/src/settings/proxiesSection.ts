@@ -308,7 +308,7 @@ function buildProxyItem(
     }
     removeArmed = true;
     ctx.status.showPrompt(
-      `Removing the proxy cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the proxy`,
       removeAction,
     );
   }

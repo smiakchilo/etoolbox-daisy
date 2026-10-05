@@ -97,7 +97,7 @@ export function createToolExecutor<
     if (context.signal?.aborted === true) {
       const requestId = newRequestId(spec.idGenerator);
       return err(
-        createToolError('CANCELLED', 'The request was cancelled before it started.', requestId),
+        createToolError('CANCELLED', 'The request was cancelled before it started', requestId),
       );
     }
 
@@ -107,7 +107,7 @@ export function createToolExecutor<
       return err(
         createToolError(
           'INVALID_ARGUMENT',
-          firstIssueMessage(parsedArgs.error.issues, `Invalid ${spec.operation} arguments.`),
+          firstIssueMessage(parsedArgs.error.issues, `Invalid ${spec.operation} arguments`),
           requestId,
         ),
       );
@@ -131,7 +131,7 @@ export function createToolExecutor<
       return err(
         createToolError(
           'UNEXPECTED_RESPONSE',
-          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an AEM request.'),
+          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an AEM request'),
           requestId,
         ),
       );
@@ -149,7 +149,7 @@ export function createToolExecutor<
         return err(
           createToolError(
             'UNEXPECTED_RESPONSE',
-            'Internal error: unexpected tool result shape.',
+            'Internal error: unexpected tool result shape',
             requestId,
           ),
         );

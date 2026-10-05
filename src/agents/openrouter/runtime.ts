@@ -132,7 +132,7 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
     loadModelCatalog: async (): Promise<ModelCatalogResult> => {
       await inFlight;
       if (client === undefined) {
-        return { ok: false, error: { message: 'OpenRouter is not available.' } };
+        return { ok: false, error: { message: 'OpenRouter is not available' } };
       }
       return loadOpenRouterModelCatalog(client);
     },

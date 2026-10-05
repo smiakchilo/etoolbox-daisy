@@ -423,7 +423,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     });
     if (!result.ok) {
       if (result.error.code === 'server_not_found') {
-        errorText = `The server for ${info.origin} no longer exists. Add it in Settings, then try again.`;
+        errorText = `The server for ${info.origin} no longer exists. Add it in Settings`;
       } else {
         errorText = result.error.message;
       }

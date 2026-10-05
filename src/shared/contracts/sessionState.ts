@@ -100,7 +100,7 @@ export function applyTransition(
     return err({
       from,
       to,
-      message: `Illegal session state transition from "${from}" to "${to}".`,
+      message: `Illegal session state transition from "${from}" to "${to}"`,
     });
   }
   return ok(to);

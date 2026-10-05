@@ -49,7 +49,7 @@ export function createCommitSaver(): CommitSaver {
       .then(run)
       .then(() => undefined)
       .catch(() => {
-        console.error('[daisy] Settings save failed.');
+        console.error('[daisy] Settings save failed');
       })
       .finally(() => {
         running = null;

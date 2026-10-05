@@ -279,11 +279,11 @@ export function renderQuerySuccess(result: AemQuerySuccess): string {
   const { pagination } = result;
   return [
     `AEM query against ${result.sourceOrigin} (revision ${String(result.serverRevision)}, ` +
-      `fetched at ${String(result.fetchedAt)}).`,
+      `fetched at ${String(result.fetchedAt)})`,
     `Returned ${String(pagination.returned)} row(s) at offset ${String(pagination.offset)} ` +
       `with limit ${String(pagination.limit)}; ${renderHasMore(pagination.hasMore)}; ` +
-      `${renderTotal(pagination.total)}.`,
-    `Selection: ${renderSelection(result.selection)}.`,
+      `${renderTotal(pagination.total)}`,
+    `Selection: ${renderSelection(result.selection)}`,
     `Rows: ${JSON.stringify(result.rows)}`,
   ].join('\n');
 }
@@ -558,39 +558,38 @@ export function projectQueryResult(input: ProjectQueryResultInput): AemQuerySucc
 // ---------------------------------------------------------------------------
 
 const ERROR_MESSAGES = {
-  invalid_origin: 'The current server address could not be used to build a request.',
-  reserved_parameter: 'A QueryBuilder output-control parameter was supplied as a search predicate.',
-  unencodable_predicate: 'A predicate contains characters that cannot be encoded in a URL.',
-  query_not_preserved: 'The query URL could not be built safely for those predicates.',
-  cross_origin: 'The request was refused because it would have left the current server.',
+  invalid_origin: 'The current server address could not be used to build a request',
+  reserved_parameter: 'A QueryBuilder output-control parameter was supplied as a search predicate',
+  unencodable_predicate: 'A predicate contains characters that cannot be encoded in a URL',
+  query_not_preserved: 'The query URL could not be built safely for those predicates',
+  cross_origin: 'The request was refused because it would have left the current server',
   redirect_blocked:
-    'AEM redirected the request away from the server, which usually means the session has expired.',
+    'AEM redirected the request away from the server, which usually means the session has expired',
   redirected:
-    'AEM redirected the request away from the server, which usually means the session has expired.',
-  no_view: 'The AEM browser pane is not available, so no request could be made.',
+    'AEM redirected the request away from the server, which usually means the session has expired',
+  no_view: 'The AEM browser pane is not available, so no request could be made',
   bridge_unavailable:
     'The AEM browser pane is present but its request bridge is not available, so no request ' +
-    'could be made. This is an application problem, not an AEM one.',
-  network_error: 'The request to AEM could not be completed.',
-  cancelled: 'The request was cancelled.',
-  timeout: 'AEM did not respond before the request deadline.',
-  stale_server_revision: 'The server configuration changed while the request was in flight.',
-  stale_navigation_epoch: 'The browser left the page this request was made for.',
-  unauthorized: 'AEM did not accept the current session. Sign in again in the browser pane.',
-  forbidden: 'The current AEM account is not permitted to run that query.',
-  not_found: 'AEM reports that the QueryBuilder endpoint does not exist on this instance.',
-  bad_request: 'AEM rejected the query as malformed.',
-  multiple_choices: 'AEM refused to return that result because it has too many nodes to traverse.',
+    'could be made. This is an application problem, not an AEM one',
+  network_error: 'The request to AEM could not be completed',
+  cancelled: 'The request was cancelled',
+  timeout: 'AEM did not respond before the request deadline',
+  stale_server_revision: 'The server configuration changed while the request was in flight',
+  stale_navigation_epoch: 'The browser left the page this request was made for',
+  unauthorized: 'AEM did not accept the current session. Sign in again in the browser pane',
+  forbidden: 'The current AEM account is not permitted to run that query',
+  not_found: 'AEM reports that the QueryBuilder endpoint does not exist on this instance',
+  bad_request: 'AEM rejected the query as malformed',
+  multiple_choices: 'AEM refused to return that result because it has too many nodes to traverse',
   url_too_long:
     'The query URL was too long for AEM to accept. Send fewer or shorter predicates; ' +
-    'the query cannot be retried by another method.',
-  server_error: 'AEM returned a server error.',
-  unexpected_status: 'AEM returned an unexpected status for that query.',
-  not_json_content_type: 'AEM returned a response that was not JSON.',
-  html_login_page:
-    'AEM returned a sign-in page instead of data. Sign in again in the browser pane.',
-  invalid_json: 'AEM returned a response that could not be parsed as JSON.',
-  unexpected_json_shape: 'AEM returned JSON that was not a QueryBuilder result object.',
+    'the query cannot be retried by another method',
+  server_error: 'AEM returned a server error',
+  unexpected_status: 'AEM returned an unexpected status for that query',
+  not_json_content_type: 'AEM returned a response that was not JSON',
+  html_login_page: 'AEM returned a sign-in page instead of data. Sign in again in the browser pane',
+  invalid_json: 'AEM returned a response that could not be parsed as JSON',
+  unexpected_json_shape: 'AEM returned JSON that was not a QueryBuilder result object',
   /**
    * The message this tool exists for. It says the query was *rejected*, never
    * that it matched nothing - an agent told "no results" stops looking, while
@@ -598,8 +597,8 @@ const ERROR_MESSAGES = {
    */
   query_rejected:
     'AEM rejected the query. One of the predicates was not accepted by this instance - ' +
-    'check the predicate names and values. This is not an empty result.',
-  malformed_envelope: 'AEM returned a QueryBuilder response without a usable result set.',
+    'check the predicate names and values. This is not an empty result',
+  malformed_envelope: 'AEM returned a QueryBuilder response without a usable result set',
 } as const;
 
 type ErrorMessageKey = keyof typeof ERROR_MESSAGES;
@@ -753,7 +752,7 @@ export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unkno
     argsSchema: aemQueryArgsSchema,
     requestSchema: aemQueryRequestSchema,
     render: renderQuerySuccess,
-    failureFallbackMessage: 'AEM query failed.',
+    failureFallbackMessage: 'AEM query failed',
     ...config,
   });
 }

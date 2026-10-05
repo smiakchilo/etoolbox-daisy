@@ -324,23 +324,17 @@ const TURN_IN_FLIGHT_STATES: ReadonlySet<SessionStreamState> = new Set([
 function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
   switch (reason) {
     case 'session_closed':
-      return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed.');
+      return createAgentServiceError('PRECONDITION_FAILED', 'This conversation has been closed');
     case 'not_authenticated':
       return createAgentServiceError(
         'AGENT_UNAVAILABLE',
-        'Not signed in to Copilot.',
+        'Not signed in to Copilot',
         'sign_in_to_agent',
       );
     case 'session_error':
-      return createAgentServiceError(
-        'PRECONDITION_FAILED',
-        'The previous turn ended in an error; it must be dismissed before sending another prompt.',
-      );
+      return createAgentServiceError('PRECONDITION_FAILED', 'The previous turn ended in an error');
     case 'turn_in_progress':
-      return createAgentServiceError(
-        'PRECONDITION_FAILED',
-        'A turn is already in progress on this conversation.',
-      );
+      return createAgentServiceError('PRECONDITION_FAILED', 'A turn is already in progress');
     default: {
       return reason;
     }
@@ -374,21 +368,21 @@ function permissionDenialReason(result: PermissionCompletedResult): string {
     case 'denied-interactively-by-user':
       return result.feedback !== undefined && result.feedback.length > 0
         ? result.feedback.slice(0, 500)
-        : 'Denied by the user.';
+        : 'Denied by the user';
     case 'denied-by-content-exclusion-policy':
       return result.message.slice(0, 500);
     case 'denied-by-permission-request-hook':
       return result.message !== undefined && result.message.length > 0
         ? result.message.slice(0, 500)
-        : 'Denied by a permission-request hook.';
+        : 'Denied by a permission-request hook';
     case 'denied-by-rules':
-      return "Denied by the application's configured approval rules.";
+      return "Denied by the application's configured approval rules";
     case 'denied-no-approval-rule-and-could-not-request-from-user':
-      return 'Denied: no approval rule matched and the user could not be asked.';
+      return 'Denied: no approval rule matched and the user could not be asked';
     case 'cancelled':
-      return 'The permission request was cancelled.';
+      return 'The permission request was cancelled';
     default:
-      return "Denied by the application's tool policy.";
+      return "Denied by the application's tool policy";
   }
 }
 
@@ -458,7 +452,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     if (!applied.ok) {
       throw new Error(
         `sdkAgentService produced an illegal event sequence (${applied.error.message}). ` +
-          'This is a bug in this adapter, not in the caller.',
+          'This is a bug in this adapter, not in the caller',
       );
     }
     streamState = applied.value.state;
@@ -551,7 +545,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           ok: false,
           error: createToolError(
             'UNEXPECTED_RESPONSE',
-            caught instanceof Error ? caught.message.slice(0, 500) : 'Tool execution failed.',
+            caught instanceof Error ? caught.message.slice(0, 500) : 'Tool execution failed',
             newRequestId(idGenerator),
           ),
         };
@@ -671,7 +665,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     const turn = currentTurn;
     if (turn === undefined) {
       throw new Error(
-        'sdkAgentService.performAbort called with no turn in flight - internal invariant violated.',
+        'sdkAgentService.performAbort called with no turn in flight - internal invariant violated',
       );
     }
     currentTurn = undefined;
@@ -737,7 +731,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         sequence: nextSequence(chatId),
         error: createToolError(
           'UNEXPECTED_RESPONSE',
-          'An internal error occurred while processing the agent event stream.',
+          'An internal error occurred while processing the agent event stream',
           newRequestId(idGenerator),
         ),
       });
@@ -816,7 +810,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
               // concatenated with it.
               console.error(
                 `sdkAgentService: final content for message "${messageId}" differs from its ` +
-                  "streamed deltas; using the SDK's final content (authoritative).",
+                  "streamed deltas; using the SDK's final content (authoritative)",
               );
             }
           }
@@ -942,7 +936,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           pendingPermissionsByRequestId.clear();
           const toolError = createToolError(
             'AGENT_UNAVAILABLE',
-            'The Copilot agent reported an error.',
+            'The Copilot agent reported an error',
             newRequestId(idGenerator),
           );
           applyAndEmit(
@@ -971,7 +965,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         return err(
           createAgentServiceError(
             'AGENT_UNAVAILABLE',
-            'Could not determine Copilot sign-in status.',
+            'Could not determine Copilot sign-in status',
             'sign_in_to_agent',
           ),
         );
@@ -1049,8 +1043,8 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           createAgentServiceError(
             request.resume ? 'RESUME_FAILED' : 'AGENT_UNAVAILABLE',
             request.resume
-              ? 'Could not resume the existing Copilot session.'
-              : 'Could not start a new Copilot session.',
+              ? 'Could not resume the existing Copilot session'
+              : 'Could not start a new Copilot session',
           ),
         );
       }
@@ -1061,7 +1055,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         return err(
           createAgentServiceError(
             'INVALID_ARGUMENT',
-            `"${request.chatId}" is not the open conversation.`,
+            `"${request.chatId}" is not the open conversation`,
           ),
         );
       }
@@ -1083,12 +1077,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         // Unreachable in practice (openChatId !== undefined implies a
         // session was stored alongside it), kept only so the compiler does
         // not need a non-null assertion below.
-        return err(
-          createAgentServiceError(
-            'PRECONDITION_FAILED',
-            'No active Copilot session for this conversation.',
-          ),
-        );
+        return err(createAgentServiceError('PRECONDITION_FAILED', 'No active Copilot session'));
       }
 
       // Step 09: "Changing the model while idle preserves history and takes
@@ -1122,7 +1111,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           return err(
             createAgentServiceError(
               'AGENT_UNAVAILABLE',
-              `Copilot could not switch to the model "${preference.model}". Choose a different model in Settings.`,
+              `Copilot could not switch to the model "${preference.model}". Choose a different model in Settings`,
             ),
           );
         }
@@ -1145,7 +1134,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         currentTurn = undefined;
         const toolError = createToolError(
           'AGENT_UNAVAILABLE',
-          'Could not send the prompt to Copilot.',
+          'Could not send the prompt to Copilot',
           newRequestId(idGenerator),
         );
         applyAndEmit({
@@ -1156,7 +1145,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           error: toolError,
         });
         return err(
-          createAgentServiceError('AGENT_UNAVAILABLE', 'Could not send the prompt to Copilot.'),
+          createAgentServiceError('AGENT_UNAVAILABLE', 'Could not send the prompt to Copilot'),
         );
       }
     },
@@ -1164,7 +1153,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     async abort(chatId: ChatId): Promise<Result<void, AgentServiceError>> {
       if (openChatId === undefined || openChatId !== chatId) {
         return err(
-          createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation.`),
+          createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
         );
       }
       if (!TURN_IN_FLIGHT_STATES.has(streamState)) {
@@ -1177,7 +1166,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     async closeConversation(chatId: ChatId): Promise<Result<void, AgentServiceError>> {
       if (openChatId === undefined || openChatId !== chatId) {
         return err(
-          createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation.`),
+          createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
         );
       }
       await teardown(chatId);

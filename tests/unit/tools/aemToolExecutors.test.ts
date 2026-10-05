@@ -68,7 +68,7 @@ function makeFailureResult(
     ok: false,
     error: createToolError(
       'NOT_FOUND',
-      'AEM reports that no resource exists at that path.',
+      'AEM reports that no resource exists at that path',
       requestId,
     ),
   };

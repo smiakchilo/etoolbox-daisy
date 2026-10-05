@@ -325,7 +325,7 @@ describe('createChatPane status push', () => {
       turnId: 'turn-1',
       error: {
         code: 'AGENT_UNAVAILABLE',
-        message: 'The OpenRouter request failed.',
+        message: 'The OpenRouter request failed',
         requestId: 'req-1',
         retryable: true,
         requiredAction: 'sign_in_to_agent',
@@ -335,7 +335,7 @@ describe('createChatPane status push', () => {
     // The error has no transcript item, so the pane's one row carries it, and
     // it is dismissible.
     const banner = agentBanner(pane);
-    expect(banner?.textContent).toBe('The OpenRouter request failed.');
+    expect(banner?.textContent).toBe('The OpenRouter request failed');
     expect(banner?.hasAttribute('dismissible')).toBe(true);
 
     // The adapter recovers the session to idle with a chat-scoped event, which

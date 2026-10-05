@@ -325,7 +325,7 @@ describe('createProxiesSection', () => {
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
     expect(lastPrompt?.copy).toBe(
-      `Removing the proxy cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the proxy`,
     );
     expect(removeProxy).not.toHaveBeenCalled();
 

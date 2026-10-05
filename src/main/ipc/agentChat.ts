@@ -86,7 +86,7 @@ function senderInfoFrom(
 
 const UNTRUSTED_SENDER_ERROR = {
   code: 'ACCESS_DENIED',
-  message: 'This request must come from the local app window.',
+  message: 'This request must come from the local app window',
 } as const;
 
 function untrustedVoidResult(): AgentChatVoidResult {
@@ -169,7 +169,7 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
 
   ipcMain.handle(AGENT_CHAT_GET_STATUS_CHANNEL, (event) => {
     if (!checkSender(event)) {
-      throw new Error('This request must come from the local app window.');
+      throw new Error('This request must come from the local app window');
     }
     return deps.controller.getStatus();
   });

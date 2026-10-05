@@ -82,7 +82,7 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
 
   const helper = el('p', {
     attrs: { class: 'browser-section__hint' },
-    text: 'Takes effect after restarting the app.',
+    text: 'Takes effect after restarting the app',
   });
 
   const checkboxGroup = el('div', {

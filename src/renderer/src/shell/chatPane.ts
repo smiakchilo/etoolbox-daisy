@@ -178,7 +178,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   // Shown when no agent exists at all (removed, disabled or failed to load).
   const unavailableContent: readonly Node[] = [
-    buildBannerCopy(['No agent available. Browsing AEM still works.']),
+    buildBannerCopy(['No agent available. Browsing AEM still works']),
   ];
 
   // Shown in place of the connecting row once a saved conversation's journal is
@@ -570,7 +570,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
     if (chatId === undefined) {
-      statusBanner.showError('Not connected to the agent yet.');
+      statusBanner.showError('Not connected to the agent');
       return { ok: false };
     }
     const result = await window.daisy.agentChat.sendMessage({ chatId, prompt });

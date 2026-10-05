@@ -91,7 +91,7 @@ function isNotFoundError(error: unknown): boolean {
 
 const ENCRYPTION_UNAVAILABLE_MESSAGE =
   'Secure storage (Electron safeStorage / Windows DPAPI) is unavailable on this machine. ' +
-  'Refusing to store or read the secret in plaintext.';
+  'Refusing to store or read the secret in plaintext';
 
 /**
  * Creates a {@link SecretStore} rooted at `storageDir` (an app-owned

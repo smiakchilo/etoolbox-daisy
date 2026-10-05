@@ -162,7 +162,7 @@ export function resolvePasswordSecretRef(
     if (secretRef === undefined) {
       return err({
         code: 'no_token_configured',
-        message: `Agent "${target.agentId}" has no token configured yet.`,
+        message: `Agent "${target.agentId}" has no token configured yet`,
       });
     }
     return ok(secretRef);
@@ -172,7 +172,7 @@ export function resolvePasswordSecretRef(
   if (!credentials) {
     return err({
       code: 'no_proxy_configured',
-      message: `Proxy "${target.proxyId}" has no username configured yet.`,
+      message: `Proxy "${target.proxyId}" has no username configured yet`,
     });
   }
   return ok(credentials.secretRef);
@@ -273,7 +273,7 @@ async function setAgentTokenSecret(
       ok: false,
       error: {
         code: 'agent_not_found',
-        message: `"${agentId}" is not an agent this build supports.`,
+        message: `"${agentId}" is not an agent this build supports`,
       },
     };
   }
@@ -355,7 +355,7 @@ async function clearAgentTokenSecret(
       ok: false,
       error: {
         code: 'agent_not_found',
-        message: `"${agentId}" is not an agent this build supports.`,
+        message: `"${agentId}" is not an agent this build supports`,
       },
     };
   }
@@ -366,7 +366,7 @@ async function clearAgentTokenSecret(
       ok: false,
       error: {
         code: 'no_token_configured',
-        message: `Agent "${agentId}" has no token configured yet.`,
+        message: `Agent "${agentId}" has no token configured yet`,
       },
     };
   }
@@ -971,7 +971,7 @@ export async function setModelPreferences(
       ok: false,
       error: {
         code: 'turn_in_flight',
-        message: 'Finish or stop the current response before changing the model.',
+        message: 'Finish or stop the current response before changing the model',
       },
     };
   }
@@ -990,7 +990,7 @@ export async function setModelPreferences(
         ok: false,
         error: {
           code: 'model_not_available',
-          message: `The agent does not currently offer the model "${request.model}".`,
+          message: `The agent does not currently offer the model "${request.model}"`,
         },
       };
     }
@@ -999,7 +999,7 @@ export async function setModelPreferences(
         ok: false,
         error: {
           code: 'unsupported_reasoning_effort',
-          message: `The model "${request.model}" does not support the reasoning effort "${request.reasoningEffort}".`,
+          message: `The model "${request.model}" does not support the reasoning effort "${request.reasoningEffort}"`,
         },
       };
     }
@@ -1012,7 +1012,7 @@ export async function setModelPreferences(
 
   const agentId = configuredAgentId(loaded.value, deps.definitions);
   if (agentId === undefined) {
-    return { ok: false, error: { code: 'agent_not_found', message: 'No agent is available.' } };
+    return { ok: false, error: { code: 'agent_not_found', message: 'No agent is available' } };
   }
   const updated = updateModelPreferencesEntry(loaded.value, agentId, {
     model: request.model,
@@ -1112,7 +1112,7 @@ export async function setAgentSettings(
       ok: false,
       error: {
         code: 'turn_in_flight',
-        message: 'Finish or stop the current response before changing agent settings.',
+        message: 'Finish or stop the current response before changing agent settings',
       },
     };
   }
@@ -1122,7 +1122,7 @@ export async function setAgentSettings(
       ok: false,
       error: {
         code: 'agent_not_found',
-        message: `"${request.agentId}" is not an agent this build supports.`,
+        message: `"${request.agentId}" is not an agent this build supports`,
       },
     };
   }
@@ -1140,7 +1140,7 @@ export async function setAgentSettings(
         ok: false,
         error: {
           code: 'proxy_not_found',
-          message: `No proxy with id "${changes.proxy}" is configured.`,
+          message: `No proxy with id "${changes.proxy}" is configured`,
         },
       };
     }
@@ -1183,7 +1183,7 @@ export async function setAgentSettings(
         ok: false,
         error: {
           code: 'model_not_available',
-          message: `The agent does not currently offer the model "${effectiveModel}".`,
+          message: `The agent does not currently offer the model "${effectiveModel}"`,
         },
       };
     }
@@ -1192,7 +1192,7 @@ export async function setAgentSettings(
         ok: false,
         error: {
           code: 'unsupported_reasoning_effort',
-          message: `The model "${effectiveModel}" does not support the reasoning effort "${String(effectiveEffort)}".`,
+          message: `The model "${effectiveModel}" does not support the reasoning effort "${String(effectiveEffort)}"`,
         },
       };
     }
@@ -1246,7 +1246,7 @@ export async function updateBrowserSettings(
         ok: false,
         error: {
           code: 'proxy_not_found',
-          message: `No proxy with id "${proxy}" is configured.`,
+          message: `No proxy with id "${proxy}" is configured`,
         },
       };
     }
@@ -1336,7 +1336,7 @@ function senderInfoFromInvokeEvent(event: IpcMainInvokeEvent): SettingsIpcSender
 
 const UNTRUSTED_SENDER_ERROR: SettingsIpcError = {
   code: 'untrusted_sender',
-  message: "This request must come from the local app's shell window.",
+  message: "This request must come from the local app's shell window",
 };
 
 function invalidPayloadError(message: string): SettingsIpcError {

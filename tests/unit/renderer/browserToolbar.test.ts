@@ -361,8 +361,7 @@ describe('createBrowserToolbar loading state machine', () => {
       ok: false,
       error: {
         code: 'network_error',
-        message:
-          "Can't connect to https://dead.example. Check that the server is running, then try again",
+        message: "Can't connect to https://dead.example",
         errorCode: 'ERR_CONNECTION_REFUSED',
       },
     });
@@ -558,8 +557,7 @@ describe('createBrowserToolbar loading state machine', () => {
       ok: false,
       error: {
         code: 'network_error',
-        message:
-          "Can't connect to https://dead.example. Check that the server is running, then try again",
+        message: "Can't connect to https://dead.example",
         errorCode: 'ERR_CONNECTION_REFUSED',
       },
     });
@@ -622,7 +620,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     ok: false as const,
     error: {
       code: 'network_error' as const,
-      message: 'Timed out while trying to reach https://dead.example. Check the address',
+      message: 'Timed out reaching https://dead.example',
       errorCode: 'ERR_TIMED_OUT',
     },
   };
@@ -668,7 +666,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     await vi.waitFor(() => {
       expect(message.hasAttribute('open')).toBe(true);
     });
-    expect(message.textContent).toContain('Timed out while trying to reach');
+    expect(message.textContent).toContain('Timed out reaching');
     expect(message.querySelector('sp-action-button')?.textContent).toBe('Reload');
   });
 
@@ -701,11 +699,11 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     });
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
-    expect(message.textContent).toContain('Timed out while trying to reach');
+    expect(message.textContent).toContain('Timed out reaching');
 
     resolveGoBack?.({ ok: true });
     await vi.waitFor(() => {
-      expect(message.textContent).toContain('Timed out while trying to reach');
+      expect(message.textContent).toContain('Timed out reaching');
     });
   });
 
@@ -717,7 +715,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
     typeAndSubmit(toolbar, 'https://author.example/content/other.html');
     await vi.waitFor(() => {
-      expect(message.textContent).toContain('Timed out while trying to reach');
+      expect(message.textContent).toContain('Timed out reaching');
     });
 
     // The restored page starts its own load (a redirect/SSO hop). The error
@@ -730,7 +728,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       isLoading: true,
     });
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
-    expect(message.textContent).toContain('Timed out while trying to reach');
+    expect(message.textContent).toContain('Timed out reaching');
 
     // A user-initiated navigation acknowledges the error; the row lets go
     // (it collapses, then is torn down).
@@ -745,7 +743,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     await vi.waitFor(() => {
       expect(message.hasAttribute('open')).toBe(false);
     });
-    expect(message.textContent).not.toContain('Timed out while trying to reach');
+    expect(message.textContent).not.toContain('Timed out reaching');
   });
 
   it('does not rebuild the error row (or detach its Reload) on repeated state pushes', async () => {
@@ -770,7 +768,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       });
     }
     expect(message.querySelector('sp-action-button')).toBe(reload);
-    expect(message.textContent).toContain('Timed out while trying to reach');
+    expect(message.textContent).toContain('Timed out reaching');
   });
 
   it('asks for the hosts picker when nothing was displayed before the failure', async () => {
@@ -859,9 +857,7 @@ describe('createBrowserToolbar certificate prompt', () => {
     blockedListeners[0]?.(BLOCKED_INFO);
 
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain(
-      'This host has an untrusted certificate. Press OK to allow it',
-    );
+    expect(message.textContent).toContain('Untrusted certificate. Press OK to allow');
     expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(false);
     expect(findPromptOk(toolbar).getAttribute('size')).toBe('s');
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
@@ -1021,9 +1017,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     });
 
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain(
-      'This host is unknown. Press OK to add it to the managed hosts',
-    );
+    expect(message.textContent).toContain('Unknown host. Press OK to add it');
     // The origin is visible in the address bar above the banner; the copy
     // must not repeat it (noise, and invites reading the banner instead of
     // the real navigated address).
@@ -1189,9 +1183,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     });
     expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain(
-      'This host is unknown. Press OK to add it to the managed hosts',
-    );
+    expect(message.textContent).toContain('Unknown host. Press OK to add it');
   });
 
   it('Refresh navigates the address bar URL when it differs from the loaded page', async () => {
@@ -1307,9 +1299,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
     expect(browser.reload).not.toHaveBeenCalled();
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain(
-      'This host is unknown. Press OK to add it to the managed hosts',
-    );
+    expect(message.textContent).toContain('Unknown host. Press OK to add it');
   });
 
   it('navigates on Enter exactly once and ignores a stray change (blur)', async () => {

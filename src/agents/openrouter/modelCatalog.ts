@@ -39,7 +39,7 @@ export interface ModelCatalogError {
   readonly message: string;
 }
 
-const UNEXPECTED_SHAPE = 'OpenRouter returned a model list of an unexpected shape.';
+const UNEXPECTED_SHAPE = 'OpenRouter returned a model list of an unexpected shape';
 
 /**
  * A default the model does not itself list is dropped rather than trusted -
@@ -119,7 +119,7 @@ export async function loadOpenRouterModelCatalog(
   try {
     raw = await source.listModels();
   } catch {
-    return err({ message: 'Could not read the list of OpenRouter models.' });
+    return err({ message: 'Could not read the list of OpenRouter models' });
   }
   return projectOpenRouterModelCatalog(raw);
 }

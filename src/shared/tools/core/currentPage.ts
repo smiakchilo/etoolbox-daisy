@@ -147,13 +147,13 @@ export function renderCurrentPageContextForModel(context: CurrentPageContext): s
     lines.push(
       'References such as "this page", "here", or "this content" mean the content path above; ' +
         '"this host", "this server", or "this instance" mean the host above. A request that ' +
-        'names no path or server targets this page and this host.',
+        'names no path or server targets this page and this host',
     );
   } else {
     lines.push(
       'No content path is available for the current page. "This host", "this server", and ' +
         '"this instance" mean the host above; for a page-specific request, find the path (for ' +
-        'example with aem_query) rather than guessing one.',
+        'example with aem_query) rather than guessing one',
     );
   }
   return lines.join('\n');

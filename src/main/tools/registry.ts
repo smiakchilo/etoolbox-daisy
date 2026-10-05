@@ -90,7 +90,7 @@ export async function buildToolRegistry(params: {
     }
     const tool = (mod as { tool?: unknown } | null)?.tool;
     if (!isToolModule(tool)) {
-      fail(source, 'Does not export a valid `tool` (ToolModule).');
+      fail(source, 'Does not export a valid `tool` (ToolModule)');
       continue;
     }
     if (tool.disabled === true) {
@@ -98,7 +98,7 @@ export async function buildToolRegistry(params: {
       continue;
     }
     if (handlers[tool.name] !== undefined) {
-      fail(source, `Duplicate tool name '${tool.name}'.`);
+      fail(source, `Duplicate tool name '${tool.name}'`);
       continue;
     }
     try {

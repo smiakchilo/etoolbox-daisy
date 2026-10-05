@@ -67,7 +67,7 @@ export function computeCertificateFingerprintHex(pemData: string): string {
   const match = PEM_CERTIFICATE_PATTERN.exec(pemData);
   const body = match?.[1];
   if (body === undefined) {
-    throw new Error('Certificate data is not a PEM-encoded certificate.');
+    throw new Error('Certificate data is not a PEM-encoded certificate');
   }
   const der = Buffer.from(body.replace(/\s+/g, ''), 'base64');
   return createHash('sha256').update(der).digest('hex');

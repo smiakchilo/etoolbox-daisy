@@ -77,15 +77,15 @@ export async function buildAgentRegistry(params: {
     }
     const agent = (mod as { agent?: unknown } | null)?.agent;
     if (!isAgentModule(agent)) {
-      fail(source, 'Does not export a valid `agent` (AgentModule).');
+      fail(source, 'Does not export a valid `agent` (AgentModule)');
       continue;
     }
     if (!knownIds.has(agent.id)) {
-      fail(source, `No enabled meta.ts declares agent id '${agent.id}'.`);
+      fail(source, `No enabled meta.ts declares agent id '${agent.id}'`);
       continue;
     }
     if (modules.some((existing) => existing.id === agent.id)) {
-      fail(source, `Duplicate agent id '${agent.id}'.`);
+      fail(source, `Duplicate agent id '${agent.id}'`);
       continue;
     }
     modules.push(agent);

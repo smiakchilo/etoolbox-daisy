@@ -65,7 +65,7 @@ export interface AgentHubDeps {
   readonly onRuntimeFailure?: (agentId: AgentId, error: unknown) => void;
 }
 
-const NO_SUCH_AGENT = 'No such agent.';
+const NO_SUCH_AGENT = 'No such agent';
 
 export function createAgentHub(deps: AgentHubDeps): AgentHub {
   const runtimes = new Map<AgentId, AgentRuntime>();
@@ -169,11 +169,11 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
 
     async loadModelCatalog() {
       const runtime = active();
-      if (runtime === undefined) return err({ message: 'No agent is available.' });
+      if (runtime === undefined) return err({ message: 'No agent is available' });
       try {
         return await runtime.loadModelCatalog();
       } catch {
-        return err({ message: 'The agent could not list its models.' });
+        return err({ message: 'The agent could not list its models' });
       }
     },
 
@@ -189,7 +189,7 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
         return {
           apiVersion: 1,
           isAuthenticated: false,
-          statusMessage: 'The agent is not responding.',
+          statusMessage: 'The agent is not responding',
         };
       }
     },
@@ -209,13 +209,13 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
       const runtime = runtimes.get(agentId);
       if (runtime === undefined) return { status: 'failed', message: NO_SUCH_AGENT };
       if (runtime.login === undefined) {
-        return { status: 'failed', message: 'This agent does not support signing in.' };
+        return { status: 'failed', message: 'This agent does not support signing in' };
       }
       try {
         return await runtime.login(settings ?? lastSettings);
       } catch (error) {
         report(agentId, error);
-        return { status: 'failed', message: 'Sign-in could not be started.' };
+        return { status: 'failed', message: 'Sign-in could not be started' };
       }
     },
 
@@ -236,7 +236,7 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
         return await runtime.logout();
       } catch (error) {
         report(agentId, error);
-        return { apiVersion: 1, warning: 'Sign-out could not be completed.' };
+        return { apiVersion: 1, warning: 'Sign-out could not be completed' };
       }
     },
   };

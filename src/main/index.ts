@@ -63,13 +63,13 @@ function describeJournalReadFailure(reason: ChatJournalReadFailureReason): {
 } {
   switch (reason) {
     case 'not_found':
-      return { code: 'NOT_FOUND', message: 'No stored transcript was found for this chat.' };
+      return { code: 'NOT_FOUND', message: 'No stored transcript was found for this chat' };
     case 'invalid_chat_id':
-      return { code: 'STORAGE_ERROR', message: 'The stored chat id is not usable.' };
+      return { code: 'STORAGE_ERROR', message: 'The stored chat id is not usable' };
     case 'too_large':
-      return { code: 'STORAGE_ERROR', message: 'The stored transcript is too large to reopen.' };
+      return { code: 'STORAGE_ERROR', message: 'The stored transcript is too large to reopen' };
     case 'unreadable':
-      return { code: 'STORAGE_ERROR', message: 'The stored transcript could not be read.' };
+      return { code: 'STORAGE_ERROR', message: 'The stored transcript could not be read' };
   }
 }
 
@@ -210,7 +210,7 @@ if (!gotSingleInstanceLock) {
     const STARTING: AuthStatus = {
       apiVersion: 1,
       isAuthenticated: false,
-      statusMessage: 'The agent is still starting.',
+      statusMessage: 'The agent is still starting',
     };
     registerAgentAuthHandlers({
       hub: {
@@ -220,13 +220,13 @@ if (!gotSingleInstanceLock) {
         login: async (agentId, settings) =>
           (await agentHub?.login(agentId, settings)) ?? {
             status: 'failed',
-            message: 'The agent is still starting.',
+            message: 'The agent is still starting',
           },
         cancelLogin: (agentId) => agentHub?.cancelLogin(agentId),
         logout: async (agentId) =>
           (await agentHub?.logout(agentId)) ?? {
             apiVersion: 1,
-            warning: 'The agent is still starting.',
+            warning: 'The agent is still starting',
           },
       },
       // Read fresh, not from the startup snapshot: the user may have changed
@@ -364,7 +364,7 @@ if (!gotSingleInstanceLock) {
     // and the agents channel: both read the one catalogue.
     const loadCatalog = async () => {
       if (agentHub === undefined) {
-        return err({ message: 'The agent is still starting. Reopen Settings in a moment.' });
+        return err({ message: 'The agent is still starting. Reopen Settings in a moment' });
       }
       await agentHub.whenReady();
       return agentHub.loadModelCatalog();
@@ -545,7 +545,7 @@ if (!gotSingleInstanceLock) {
         } catch {
           return {
             ok: false,
-            error: { code: 'STORAGE_ERROR', message: 'The skill catalogue could not be read.' },
+            error: { code: 'STORAGE_ERROR', message: 'The skill catalogue could not be read' },
           };
         }
       },

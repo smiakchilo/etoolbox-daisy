@@ -21,6 +21,6 @@ export const tool: ToolModule = {
     "The 'aem_create_page' tool creates one new page under an existing parent, and only when " +
     'the user explicitly asks for it.',
   createExecutor: () => {
-    throw new Error('aem_create_page is not wired: the AEM bridge has no write transport.');
+    throw new Error('aem_create_page is not wired: the AEM bridge has no write transport');
   },
 };

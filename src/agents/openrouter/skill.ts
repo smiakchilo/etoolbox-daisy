@@ -106,7 +106,7 @@ export function createSkillToolSpec(
         return err(
           createToolError(
             'INVALID_ARGUMENT',
-            `"${name}" is not a valid skill name.`,
+            `"${name}" is not a valid skill name`,
             newRequestId(idGenerator),
           ),
         );
@@ -124,7 +124,7 @@ export function createSkillToolSpec(
       return err(
         createToolError(
           'INVALID_ARGUMENT',
-          `No bundled skill named "${name}" exists.`,
+          `No bundled skill named "${name}" exists`,
           newRequestId(idGenerator),
         ),
       );

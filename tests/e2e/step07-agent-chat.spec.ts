@@ -593,7 +593,7 @@ test.describe('Milestone A #4: tool lifecycle visibility', () => {
       'AEM returned 401 Unauthorized.',
     );
     await expect(toolCall.locator('.chat-tool-call__action')).toHaveText(
-      'Sign in to AEM in the browser pane, then try again.',
+      'Sign in to AEM in the browser pane, then try again',
     );
 
     // A failed tool call still produces a `tool.result` event (`ok: false`)

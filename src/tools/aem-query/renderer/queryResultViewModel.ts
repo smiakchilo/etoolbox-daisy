@@ -99,10 +99,10 @@ function describeStatus(pagination: Readonly<Record<string, JsonValue>>, rowCoun
   const outOf = total === undefined ? '' : ` of ${total}`;
   const more =
     hasMore === true
-      ? ' More results exist.'
+      ? ' More results exist'
       : hasMore === false
-        ? ' This is the last page.'
-        : ' Whether more results exist is unknown.';
+        ? ' This is the last page'
+        : ' Whether more results exist is unknown';
   return `${shown}${outOf}.${more}`;
 }
 

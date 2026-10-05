@@ -95,7 +95,7 @@ export function computeAddressBarValue(): string {
  * banner's dismiss cross.
  */
 export function describeBlockedCertificate(): string {
-  return `This host has an untrusted certificate. Press ${BANNER_ACTION_MARKER} to allow it`;
+  return `Untrusted certificate. Press ${BANNER_ACTION_MARKER} to allow`;
 }
 
 /**
@@ -107,7 +107,7 @@ export function describeBlockedCertificate(): string {
  * `sp-action-button` that adds the host; cancel is the banner's dismiss cross.
  */
 export function describeUnknownOrigin(): string {
-  return `This host is unknown. Press ${BANNER_ACTION_MARKER} to add it to the managed hosts`;
+  return `Unknown host. Press ${BANNER_ACTION_MARKER} to add it`;
 }
 
 /** Integer-pixel bounds suitable for `WebContentsView.setBounds()`. */

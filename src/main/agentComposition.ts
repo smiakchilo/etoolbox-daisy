@@ -163,7 +163,7 @@ export function createLateBoundAemToolContext(): LateBoundAemToolContext {
   return {
     currentContext: () => {
       if (bound === undefined) {
-        throw new Error('Tool context requested before the chat controller was bound.');
+        throw new Error('Tool context requested before the chat controller was bound');
       }
       return bound.currentAemToolContext();
     },

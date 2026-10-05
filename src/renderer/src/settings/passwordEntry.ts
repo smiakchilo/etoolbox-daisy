@@ -74,7 +74,7 @@ export function createPasswordControl(
   setButton.addEventListener('click', () => {
     const target = options.target();
     if (target === undefined) {
-      status.showError(`Save the item before setting ${article} ${noun}`);
+      status.showError('Save the item first');
       return;
     }
     const password = passwordField.value;
@@ -102,7 +102,7 @@ export function createPasswordControl(
   clearButton.addEventListener('click', () => {
     const target = options.target();
     if (target === undefined) {
-      status.showError(`Save the item before clearing a ${noun}`);
+      status.showError('Save the item first');
       return;
     }
     setBusy(true);

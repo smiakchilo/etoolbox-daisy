@@ -139,12 +139,12 @@ export type AemGetJsonResult = ToolOutcome<AemGetJsonSuccess>;
 export function renderGetJsonSuccess(result: AemGetJsonSuccess): string {
   const childrenLine = result.children.requested
     ? `Children: ${String(result.children.returned)} returned; ` +
-      `${renderHasMore(result.children.hasMore)}.`
-    : 'Children: not requested.';
+      `${renderHasMore(result.children.hasMore)}`
+    : 'Children: not requested';
   return [
     `AEM node ${result.path} (origin ${result.sourceOrigin}, revision ` +
-      `${String(result.serverRevision)}, fetched at ${String(result.fetchedAt)}).`,
-    `Selection: ${renderSelection(result.selection)}.`,
+      `${String(result.serverRevision)}, fetched at ${String(result.fetchedAt)})`,
+    `Selection: ${renderSelection(result.selection)}`,
     childrenLine,
     `Data: ${JSON.stringify(result.data)}`,
   ].join('\n');
@@ -329,38 +329,37 @@ export function projectGetJsonResult(input: ProjectGetJsonResultInput): AemGetJs
  * and into logs, which requirements-decisions.md section 2 forbids.
  */
 const ERROR_MESSAGES = {
-  invalid_path: 'The requested path is not a valid JCR path.',
-  invalid_origin: 'The current server address could not be used to build a request.',
-  unencodable_path: 'The requested path contains characters that cannot be encoded in a URL.',
-  path_not_preserved: 'The request URL could not be built safely for that path.',
-  cross_origin: 'The request was refused because it would have left the current server.',
+  invalid_path: 'The requested path is not a valid JCR path',
+  invalid_origin: 'The current server address could not be used to build a request',
+  unencodable_path: 'The requested path contains characters that cannot be encoded in a URL',
+  path_not_preserved: 'The request URL could not be built safely for that path',
+  cross_origin: 'The request was refused because it would have left the current server',
   redirect_blocked:
-    'AEM redirected the request away from the server, which usually means the session has expired.',
+    'AEM redirected the request away from the server, which usually means the session has expired',
   redirected:
-    'AEM redirected the request away from the server, which usually means the session has expired.',
-  no_view: 'The AEM browser pane is not available, so no request could be made.',
+    'AEM redirected the request away from the server, which usually means the session has expired',
+  no_view: 'The AEM browser pane is not available, so no request could be made',
   bridge_unavailable:
     'The AEM browser pane is present but its request bridge is not available, so no request ' +
-    'could be made. This is an application problem, not an AEM one.',
-  network_error: 'The request to AEM could not be completed.',
-  cancelled: 'The request was cancelled.',
-  timeout: 'AEM did not respond before the request deadline.',
-  stale_server_revision: 'The server configuration changed while the request was in flight.',
-  stale_navigation_epoch: 'The browser left the page this request was made for.',
-  unauthorized: 'AEM did not accept the current session. Sign in again in the browser pane.',
-  forbidden: 'The current AEM account is not permitted to read that path.',
-  not_found: 'AEM reports that no resource exists at that path.',
-  bad_request: 'AEM rejected the request as malformed.',
-  url_too_long: 'The request URL was too long for AEM to accept. Send fewer or shorter predicates.',
+    'could be made. This is an application problem, not an AEM one',
+  network_error: 'The request to AEM could not be completed',
+  cancelled: 'The request was cancelled',
+  timeout: 'AEM did not respond before the request deadline',
+  stale_server_revision: 'The server configuration changed while the request was in flight',
+  stale_navigation_epoch: 'The browser left the page this request was made for',
+  unauthorized: 'AEM did not accept the current session. Sign in again in the browser pane',
+  forbidden: 'The current AEM account is not permitted to read that path',
+  not_found: 'AEM reports that no resource exists at that path',
+  bad_request: 'AEM rejected the request as malformed',
+  url_too_long: 'The request URL was too long for AEM to accept. Send fewer or shorter predicates',
   multiple_choices:
-    'AEM refused to return that resource because it has too many nodes to traverse at once.',
-  server_error: 'AEM returned a server error.',
-  unexpected_status: 'AEM returned an unexpected status for that request.',
-  not_json_content_type: 'AEM returned a response that was not JSON.',
-  html_login_page:
-    'AEM returned a sign-in page instead of data. Sign in again in the browser pane.',
-  invalid_json: 'AEM returned a response that could not be parsed as JSON.',
-  unexpected_json_shape: 'AEM returned JSON that was not a resource object.',
+    'AEM refused to return that resource because it has too many nodes to traverse at once',
+  server_error: 'AEM returned a server error',
+  unexpected_status: 'AEM returned an unexpected status for that request',
+  not_json_content_type: 'AEM returned a response that was not JSON',
+  html_login_page: 'AEM returned a sign-in page instead of data. Sign in again in the browser pane',
+  invalid_json: 'AEM returned a response that could not be parsed as JSON',
+  unexpected_json_shape: 'AEM returned JSON that was not a resource object',
 } as const;
 
 type ErrorMessageKey = keyof typeof ERROR_MESSAGES;
@@ -500,7 +499,7 @@ export function createAemGetJsonExecutor<TRuntimeDeps extends Record<string, unk
     argsSchema: aemGetJsonArgsSchema,
     requestSchema: aemGetJsonRequestSchema,
     render: renderGetJsonSuccess,
-    failureFallbackMessage: 'AEM request failed.',
+    failureFallbackMessage: 'AEM request failed',
     ...config,
   });
 }

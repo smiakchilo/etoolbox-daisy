@@ -236,8 +236,8 @@ export type AemCreatePageResult = ToolOutcome<AemCreatePageSuccess>;
 export function renderCreatePageSuccess(result: AemCreatePageSuccess): string {
   return [
     `Created AEM page ${result.path} (origin ${result.sourceOrigin}, revision ` +
-      `${String(result.serverRevision)}, created at ${String(result.createdAt)}).`,
-    `Title: ${result.title}; name: ${result.name}; template: ${result.template}.`,
+      `${String(result.serverRevision)}, created at ${String(result.createdAt)})`,
+    `Title: ${result.title}; name: ${result.name}; template: ${result.template}`,
     `Bare path: ${result.path}`,
   ].join('\n');
 }
@@ -370,32 +370,32 @@ export function readCreatedPath(bodyText: string): string | undefined {
 // ---------------------------------------------------------------------------
 
 const ERROR_MESSAGES = {
-  invalid_origin: 'The current server address could not be used to build a request.',
-  unencodable_body: 'The page-creation request could not be encoded.',
-  cross_origin: 'The request was refused because it would have left the current server.',
+  invalid_origin: 'The current server address could not be used to build a request',
+  unencodable_body: 'The page-creation request could not be encoded',
+  cross_origin: 'The request was refused because it would have left the current server',
   redirect_blocked:
-    'AEM redirected the request away from the server, which usually means the session has expired.',
+    'AEM redirected the request away from the server, which usually means the session has expired',
   create_redirected:
     'AEM redirected the page-creation request. The session may have expired; sign in again ' +
-    'and check the parent path for the page before retrying.',
-  no_view: 'The AEM browser pane is not available, so no request could be made.',
+    'and check the parent path for the page before retrying',
+  no_view: 'The AEM browser pane is not available, so no request could be made',
   bridge_unavailable:
     'The AEM browser pane is present but its request bridge is not available, so no request ' +
-    'could be made. This is an application problem, not an AEM one.',
-  network_error: 'The request to AEM could not be completed.',
-  cancelled: 'The request was cancelled.',
-  timeout: 'AEM did not respond before the request deadline.',
-  stale_server_revision: 'The server configuration changed while the request was in flight.',
-  stale_navigation_epoch: 'The browser left the page this request was made for.',
-  unauthorized: 'AEM did not accept the current session. Sign in again in the browser pane.',
+    'could be made. This is an application problem, not an AEM one',
+  network_error: 'The request to AEM could not be completed',
+  cancelled: 'The request was cancelled',
+  timeout: 'AEM did not respond before the request deadline',
+  stale_server_revision: 'The server configuration changed while the request was in flight',
+  stale_navigation_epoch: 'The browser left the page this request was made for',
+  unauthorized: 'AEM did not accept the current session. Sign in again in the browser pane',
   forbidden:
     'AEM refused to create the page. The account may not be allowed to create pages under ' +
-    'that parent, or the request\u2019s CSRF token was rejected.',
+    'that parent, or the request\u2019s CSRF token was rejected',
   not_found:
-    'AEM does not offer the page-creation command at that path, or the parent page does not exist.',
-  bad_request: 'AEM rejected the page-creation request as malformed.',
-  server_error: 'AEM returned a server error while creating the page.',
-  unexpected_status: 'AEM returned an unexpected status for the page-creation request.',
+    'AEM does not offer the page-creation command at that path, or the parent page does not exist',
+  bad_request: 'AEM rejected the page-creation request as malformed',
+  server_error: 'AEM returned a server error while creating the page',
+  unexpected_status: 'AEM returned an unexpected status for the page-creation request',
 } as const;
 
 type ErrorMessageKey = keyof typeof ERROR_MESSAGES;
@@ -610,7 +610,7 @@ export function createAemCreatePageExecutor<TRuntimeDeps extends Record<string, 
     requestSchema: aemCreatePageRequestSchema,
     render: renderCreatePageSuccess,
     toPayload: toSuccessPayload,
-    failureFallbackMessage: 'AEM page creation failed.',
+    failureFallbackMessage: 'AEM page creation failed',
     ...config,
   });
 }
