@@ -182,7 +182,7 @@ export default tseslint.config(
     ignores: [
       'electron.vite.config.ts',
       'electron.vite.aem-preload.config.ts',
-      'build/**',
+      'scripts/**',
       'vitest.config.ts',
       'playwright.config.ts',
       'tests/fixtures/**',
@@ -205,7 +205,7 @@ export default tseslint.config(
     files: [
       'electron.vite.config.ts',
       'electron.vite.aem-preload.config.ts',
-      'build/**/*.ts',
+      'scripts/**/*.ts',
       'vitest.config.ts',
       'playwright.config.ts',
       'tests/fixtures/**/*.ts',
