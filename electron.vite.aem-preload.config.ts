@@ -1,6 +1,6 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import path from 'node:path';
-import { assertSelfContainedPreloads } from './build/assertSelfContainedPreloads';
+import { assertSelfContainedPreloads } from './scripts/assertSelfContainedPreloads';
 
 /**
  * The second preload build pass.
