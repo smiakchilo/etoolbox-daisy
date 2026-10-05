@@ -50,16 +50,17 @@ import { el } from './dom';
 export const BANNER_ROW_CLASS = 'banner-row';
 /** The shared loading-presentation class: a light-gray fill and a progress line. */
 export const BANNER_ROW_LOADING_CLASS = 'banner-row--loading';
-/**
- * The shared prompt-layout wrapper class: the flex row that holds a prompt
- * row's copy and its trailing action group, so a wrapped message keeps the
- * actions on its last line instead of pushing them onto a new indented one.
- */
-export const BANNER_ROW_PROMPT_CLASS = 'banner-row__prompt';
 /** The shared message-copy wrapper class. */
 export const BANNER_ROW_COPY_CLASS = 'banner-row__copy';
-/** The shared action-button group class. */
-export const BANNER_ROW_ACTIONS_CLASS = 'banner-row__actions';
+/**
+ * The token a prompt's copy string uses to say where its action button(s) sit
+ * *inside* the sentence, e.g. `'Press {action} to allow it'`. Only ever used
+ * with app-authored copy: {@link buildBannerPrompt} replaces it with the button
+ * inline, so the control flows right beside the text instead of being pushed
+ * onto its own line or into a separate column. Copy with no token gets its
+ * buttons appended inline after the sentence.
+ */
+export const BANNER_ACTION_MARKER = '{action}';
 
 /** How long the shared reveal/collapse animation runs, in milliseconds. */
 export const BANNER_TRANSITION_DURATION_MS = 150;
@@ -132,9 +133,9 @@ export function collapseBannerRow(row: HTMLElement): boolean {
 /**
  * Builds the `sp-alert-banner` row for a given surface. `surfaceClass` names
  * the owning surface (`browser-toolbar-message` or `settings-banner`); the
- * element always carries `variant="neutral"` and starts `dismissible`, which
- * each surface toggles as its presentations change (the browser removes it
- * for the loading row, Settings re-derives it per slot).
+ * element always carries `variant="neutral"` and starts `dismissible` - the
+ * default for every row, so the close control is present unless a presentation
+ * says otherwise (see {@link applyBannerPresentation}).
  */
 export function createBannerRow(surfaceClass: string): HTMLElement {
   const row = el('sp-alert-banner', {
@@ -154,6 +155,33 @@ export function createBannerRow(surfaceClass: string): HTMLElement {
     }
   });
   return row;
+}
+
+/**
+ * How a banner row is presenting right now. This is the single input the close
+ * control is derived from - the rule lives here, not at the call sites.
+ *
+ * - `default`   - a message or prompt the user may wave away. Dismissible.
+ * - `loading`   - work in flight (the shared light fill + progress line).
+ *                 There is nothing to dismiss, so no close control.
+ * - `transient` - an auto-hiding acknowledgement such as "Settings saved". It
+ *                 clears itself, so no close control.
+ * - `hidden`    - the row is torn down or not showing. No close control, so a
+ *                 closed row never leaves one behind.
+ */
+export type BannerPresentation = 'default' | 'loading' | 'transient' | 'hidden';
+
+/**
+ * Applies a presentation's close-control rule to a row, centrally:
+ * {@link BannerPresentation} `default` carries the dismiss cross; `loading`,
+ * `transient` and `hidden` do not. Also toggles the shared loading class, which
+ * is part of the same presentation. `createBannerRow` already starts a row
+ * dismissible, so a surface calls this at each presentation change instead of
+ * adding or removing `dismissible` itself.
+ */
+export function applyBannerPresentation(row: HTMLElement, presentation: BannerPresentation): void {
+  row.classList.toggle(BANNER_ROW_LOADING_CLASS, presentation === 'loading');
+  row.toggleAttribute('dismissible', presentation === 'default');
 }
 
 /**
@@ -185,12 +213,12 @@ export function createBannerActionButton(label: string): HTMLElement {
 }
 
 /**
- * Builds the `_copy` span for a row whose sentence embeds a control inline
- * (the chat pane's "Activate an agent in <Settings> to send messages" row),
- * where the control must sit *inside* the sentence rather than in the
- * trailing action group. `parts` are appended in order; strings become text
- * nodes. Use {@link buildBannerPrompt} instead when the controls belong in the
- * trailing `_actions` group.
+ * Builds the `_copy` span for a row whose sentence embeds controls inline (the
+ * chat pane's "Activate an agent in <Settings> to send messages" row, and every
+ * prompt row via {@link buildBannerPrompt}). `parts` are appended in order;
+ * strings become text nodes. The controls are ordinary inline parts of the
+ * sentence, so they flow beside the text and wrap with it rather than landing
+ * on their own line.
  */
 export function buildBannerCopy(parts: readonly (string | Node)[]): HTMLElement {
   const span = el('span', { attrs: { class: BANNER_ROW_COPY_CLASS } });
@@ -201,32 +229,35 @@ export function buildBannerCopy(parts: readonly (string | Node)[]): HTMLElement 
 }
 
 /**
- * Builds the `_copy` span + `_actions` span pair for a prompt/confirm row
- * (the certificate and unknown-origin prompts, the Settings confirmations).
- * `actionButtons` is usually a single `sp-action-button`.
+ * Builds the `_copy` span for a prompt/confirm row (the certificate and
+ * unknown-origin prompts, the Settings confirmations) with its action
+ * button(s) placed *inline in the sentence*, exactly like {@link buildBannerCopy}.
  *
- * The pair is wrapped in one `banner-row__prompt` flex row rather than left as
- * two inline siblings. Inline flow cannot express what these rows want: the
- * copy's clamp blockifies it to full width, so a message that wraps pushes the
- * actions onto a new, indented line. As flex columns - copy `flex: 0 1 auto`,
- * actions `flex: 0 0 auto`, bottom-aligned - a short copy keeps the actions on
- * its only line, and a wrapped copy keeps them on its last line, while the copy
- * still clamps to three lines (see `styles/banner.css`).
+ * `copy` marks the button's place with {@link BANNER_ACTION_MARKER} - e.g.
+ * `'This host has an untrusted certificate. Press {action} to allow it'` - and
+ * the first button replaces that token, so text follows the control and the
+ * control can never be orphaned on a line of its own. Any further buttons
+ * replace further tokens; buttons left over when there are no more tokens are
+ * appended inline after the sentence. Only app-authored copy is passed here
+ * (dynamic text such as an error message must use `buildBannerCopy` directly),
+ * so the marker can never collide with user content.
  */
 export function buildBannerPrompt(
   copy: string,
   actionButtons: readonly HTMLElement[],
 ): readonly HTMLElement[] {
-  return [
-    el('span', {
-      attrs: { class: BANNER_ROW_PROMPT_CLASS },
-      children: [
-        el('span', { attrs: { class: BANNER_ROW_COPY_CLASS }, text: copy }),
-        el('span', {
-          attrs: { class: BANNER_ROW_ACTIONS_CLASS },
-          children: [...actionButtons],
-        }),
-      ],
-    }),
-  ];
+  const parts: (string | Node)[] = [];
+  const segments = copy.split(BANNER_ACTION_MARKER);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment !== undefined && segment !== '') parts.push(segment);
+    const button = actionButtons[index];
+    if (button !== undefined) parts.push(button);
+  }
+  // Buttons with no marker left to sit in are appended inline after the copy.
+  for (let index = segments.length; index < actionButtons.length; index += 1) {
+    const button = actionButtons[index];
+    if (button !== undefined) parts.push(button);
+  }
+  return [buildBannerCopy(parts)];
 }

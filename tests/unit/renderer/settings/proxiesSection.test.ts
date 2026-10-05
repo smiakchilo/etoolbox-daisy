@@ -1,5 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BANNER_ACTION_MARKER } from '../../../../src/renderer/src/lib/alertBanner';
 import { createProxiesSection } from '../../../../src/renderer/src/settings/proxiesSection';
 import type {
   SaveOutcome,
@@ -291,7 +292,9 @@ describe('createProxiesSection', () => {
       .querySelector('.multifield__action--remove')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    expect(lastPrompt?.copy).toBe('Confirm removing the proxy. This action cannot be undone');
+    expect(lastPrompt?.copy).toBe(
+      `Removing the proxy cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+    );
     expect(removeProxy).not.toHaveBeenCalled();
 
     lastPrompt?.action.onActivate();

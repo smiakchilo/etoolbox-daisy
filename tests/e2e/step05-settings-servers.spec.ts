@@ -170,7 +170,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     // warning, and only the banner's OK button performs it.
     await expect(items).toHaveCount(1);
     await items.first().locator('.multifield__action--remove').click();
-    await expect(banner).toContainText('Confirm removing the host. This action cannot be undone');
+    await expect(banner).toContainText('Removing the host cannot be undone');
     await expect(items).toHaveCount(1);
 
     await second.page

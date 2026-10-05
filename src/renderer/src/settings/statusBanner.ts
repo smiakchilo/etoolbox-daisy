@@ -24,7 +24,10 @@
  *   `sp-alert-banner`, so one pane can never stack two banners: the "no usable
  *   agent" prompt (a plain row), the composer's "Connecting to agent..." row
  *   (the shared `"loading"` presentation - light-gray fill + progress line)
- *   and its send-blocked reason (a plain row).
+ *   and its send-blocked reason (a plain row). A plain floor row carries the
+ *   shared close control like any other message; dismissing it hides the floor
+ *   until its condition changes. A `"loading"` floor row does not (the shared
+ *   presentation rule - see `lib/alertBanner.ts`).
  * Equal kinds replace equal kinds (the latest message wins). A later
  * presentation therefore always suppresses the former one: it takes the single
  * row, and the standing floor returns when it lets go.
@@ -42,7 +45,7 @@
  */
 
 import {
-  BANNER_ROW_LOADING_CLASS,
+  applyBannerPresentation,
   BANNER_TRANSITION_DURATION_MS,
   buildBannerCopy,
   buildBannerPrompt,
@@ -91,6 +94,11 @@ export interface StatusBanner extends StatusBannerSink {
    * content returns. Passing the same content reference and presentation again
    * is a no-op, so a caller can re-assert its standing state on every refresh
    * without churning the DOM.
+   *
+   * A plain floor row is dismissible like any other message; dismissing it
+   * hides the floor until its content changes (the next `setStanding` with a
+   * different reference clears the dismissal). A `"loading"` floor row carries
+   * no close control.
    *
    * `presentation` is `"plain"` (the default) for an ordinary row, or
    * `"loading"` for the shared loading presentation - a light-gray fill plus
@@ -151,6 +159,11 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   let renderedSignature: string | null = null;
   let standing: readonly Node[] | null = null;
   let standingPresentation: StatusBannerStandingPresentation = 'plain';
+  // Set when the user dismisses the standing floor. The floor stays hidden
+  // until its condition changes (`setStanding` with different content clears
+  // this), so a persistent prompt the user has acknowledged does not spring
+  // back on the next status refresh.
+  let standingDismissed = false;
   let autoClearTimer: ReturnType<typeof setTimeout> | null = null;
   let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -171,17 +184,13 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
       collapseTimer = null;
     }
     restoreBannerRow(banner);
-    // The loading presentation is a property of the row's content, so it goes
-    // with the content - a later plain row must not inherit the light fill or
-    // the progress line.
-    banner.classList.remove(BANNER_ROW_LOADING_CLASS);
+    // A hidden row carries no close control (the shared presentation rule),
+    // and the loading fill/progress line go with the content - a later plain
+    // row must not inherit them.
+    applyBannerPresentation(banner, 'hidden');
     // The row is empty now, so it renders nothing.
     renderedSlot = null;
     renderedSignature = null;
-    // Same contract as the browser banner (browserToolbar.ts's
-    // `finalizeBannerHide`): dismissing also drops `dismissible`, so the
-    // closed row carries no leftover close control.
-    banner.removeAttribute('dismissible');
     banner.removeAttribute('open');
     banner.replaceChildren();
   }
@@ -217,12 +226,14 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   }
 
   // Paints the standing content (the persistent floor) into the single row, or
-  // tears the row down when there is none. Never dismissible: it describes a
-  // standing condition, not an error to wave away. A `"loading"` presentation
-  // adds the shared light fill and the indeterminate progress line at the
-  // row's top edge (the same rendering as the browser pane's "Loading\u2026").
+  // tears the row down when there is none or the user has dismissed it. A
+  // plain floor row is an ordinary message - it carries the shared close
+  // control (the presentation rule); a `"loading"` floor ("Connecting to
+  // agent...") does not. A `"loading"` presentation also adds the shared light
+  // fill and the indeterminate progress line at the row's top edge (the same
+  // rendering as the browser pane's "Loading\u2026").
   function showStanding(): void {
-    if (standing === null) {
+    if (standing === null || standingDismissed) {
       hideRow();
       return;
     }
@@ -234,8 +245,7 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     const loading = standingPresentation === 'loading';
     const children = loading ? [...standing, createBannerProgressLine()] : standing;
     banner.replaceChildren(...children);
-    banner.classList.toggle(BANNER_ROW_LOADING_CLASS, loading);
-    banner.removeAttribute('dismissible');
+    applyBannerPresentation(banner, loading ? 'loading' : 'default');
     banner.setAttribute('open', '');
     renderedSlot = null;
     renderedSignature = null;
@@ -268,14 +278,11 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     if (collapseTimer !== null) finalizeHide();
     slot = next;
     banner.replaceChildren(...content);
-    // A later presentation never inherits the standing floor's loading fill:
-    // only `showStanding` applies it, and it is dropped the moment the floor
-    // gives way.
-    banner.classList.remove(BANNER_ROW_LOADING_CLASS);
-    // Transient statuses carry no close control (auto-clearing, nothing to
-    // wave away); error/prompt rows are dismissible, like the browser row.
-    if (next === 'status') banner.removeAttribute('dismissible');
-    else banner.setAttribute('dismissible', '');
+    // The shared close-control rule: a transient status (auto-clearing, nothing
+    // to wave away) has no close control; error/prompt rows do, like the
+    // browser row. This also drops the standing floor's loading fill - only
+    // `showStanding` applies it.
+    applyBannerPresentation(banner, next === 'status' ? 'transient' : 'default');
     banner.setAttribute('open', '');
     renderedSlot = next;
     renderedSignature = signature;
@@ -299,7 +306,14 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   // default so this module keeps full control of `open`, then reclaim the row.
   banner.addEventListener('close', (event) => {
     event.preventDefault();
-    dismissSlot();
+    if (slot !== null) {
+      // A live status/error/prompt: drop it and fall back to the floor (if any).
+      dismissSlot();
+      return;
+    }
+    // The standing floor itself: hide it until its condition changes.
+    standingDismissed = true;
+    hideRow();
   });
 
   return {
@@ -328,6 +342,8 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
       if (standing === content && standingPresentation === presentation) return;
       standing = content;
       standingPresentation = presentation;
+      // A new condition clears a previous dismissal - the floor may show again.
+      standingDismissed = false;
       // A live presentation owns the row; the floor is repainted when it
       // clears (dismissSlot). Otherwise the floor is what shows.
       if (slot === null) showStanding();
@@ -335,6 +351,7 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     clear(): void {
       standing = null;
       standingPresentation = 'plain';
+      standingDismissed = false;
       slot = null;
       hideRow();
     },

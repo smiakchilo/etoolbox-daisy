@@ -1,3 +1,4 @@
+import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
 import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import {
@@ -291,7 +292,10 @@ function buildHostItem(
 
   function showOriginPrompt(origin: string): void {
     pendingOrigin = origin;
-    ctx.status.showPrompt('Confirm changing the address', applyOriginAction);
+    ctx.status.showPrompt(
+      `Confirm changing the address. Press ${BANNER_ACTION_MARKER} to apply`,
+      applyOriginAction,
+    );
   }
 
   const removeAction: StatusBannerAction = {
@@ -547,7 +551,10 @@ function buildHostItem(
     // the settings document.
     pendingOrigin = undefined;
     removeArmed = true;
-    ctx.status.showPrompt('Confirm removing the host. This action cannot be undone', removeAction);
+    ctx.status.showPrompt(
+      `Removing the host cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+      removeAction,
+    );
   }
 
   return {

@@ -154,9 +154,9 @@
    add-server prompt, and the loading presentation: "Loading\u2026" with a
    progress line when any navigation is in flight) - the browser surface of the
    shared banner-row base (banner.css, lib/alertBanner.ts). The shared
-   `max-inline-size:none`, the pinned row height, the `__copy`/`__actions`
-   prompt rules, the loading presentation (`.banner-row--loading` + its
-   progress line) and the reveal/collapse height animation are all in
+   `max-inline-size:none`, the pinned row height, the `__copy` prompt rules
+   (with its inline action), the loading presentation (`.banner-row--loading` +
+   its progress line) and the reveal/collapse height animation are all in
    banner.css; the `browser-toolbar-message` surface class here carries no
    rules of its own and exists only to disambiguate the row for a Playwright
    locator. */

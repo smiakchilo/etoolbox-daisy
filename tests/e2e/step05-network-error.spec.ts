@@ -362,21 +362,20 @@ test('a failed navigation restores the previous page and keeps the error readabl
 });
 
 /**
- * A wrapped error message keeps its Reload action on the message's last line
- * instead of pushing it onto a new, indented line - and keeps the banner's
- * close control on screen. This is pure layout, so only the built app can
- * prove it (AGENTS.md §9).
+ * A wrapped error message keeps its Reload action inline in the message text -
+ * right beside the last line of copy, never on a line of its own or in a
+ * separate column - and keeps the banner's close control on screen. This is
+ * pure layout, so only the built app can prove it (AGENTS.md §9).
  *
- * Two defects are pinned here. (1) The prompt's copy is clamped to three lines,
- * and its `line-clamp` blockifies the copy to full width, which used to make
- * the inline sibling action group wrap below it; the fix groups copy + actions
- * in a `.banner-row__prompt` flex row (banner.css) with the actions
- * bottom-aligned. (2) The navigated URL is deliberately a long unbreakable
- * token: without `overflow-wrap: anywhere` on the copy, its min-content width
- * propagated up the flex chain and pushed the component's shadow `.end` close
- * control past the host's right edge, where the row's `overflow: hidden`
- * clipped it - the "close button disappeared" report. The geometry assertions
- * cover both.
+ * Two defects are pinned here. (1) The action is an inline part of the copy
+ * span (`buildBannerCopy`), so it flows with the sentence; a sibling action
+ * group used to wrap onto a new, indented line once the clamped copy
+ * blockified to full width. (2) The navigated URL is deliberately a long
+ * unbreakable token: without `overflow-wrap: anywhere` on the copy, its
+ * min-content width propagated up the flex chain and pushed the component's
+ * shadow `.end` close control past the host's right edge, where the row's
+ * `overflow: hidden` clipped it - the "close button disappeared" report. The
+ * geometry assertions cover both.
  */
 test('a wrapped error message keeps its Reload action on the last text line', async () => {
   test.setTimeout(120_000);
@@ -447,15 +446,16 @@ test('a wrapped error message keeps its Reload action on the last text line', as
 
     const geometry = await banner.evaluate((node) => {
       const copy = node.querySelector('.banner-row__copy');
-      const actions = node.querySelector('.banner-row__actions');
-      if (copy === null || actions === null) return null;
+      if (copy === null) return null;
       const copyRect = copy.getBoundingClientRect();
-      const actionRect = actions.getBoundingClientRect();
+      // The action is an inline part of the copy span now, not a sibling.
+      const action = copy.lastElementChild;
+      const actionRect = action?.getBoundingClientRect() ?? null;
       const hostRect = node.getBoundingClientRect();
       // The close control lives in the component's shadow `.end`, after the
-      // `.body` that holds the slotted copy/actions. A copy whose min-content
-      // is a long unbreakable token once forced `.body`/`.content` wider than
-      // the host, pushing `.end` past the host's right edge where the row's
+      // `.body` that holds the slotted copy. A copy whose min-content is a long
+      // unbreakable token once forced `.body`/`.content` wider than the host,
+      // pushing `.end` past the host's right edge where the row's
       // `overflow: hidden` clipped it. `.end` wraps the close control, so its
       // box is the control's (zero-wide when the row is not dismissible).
       const end = node.shadowRoot?.querySelector('.end') ?? null;
@@ -464,8 +464,9 @@ test('a wrapped error message keeps its Reload action on the last text line', as
         copyHeight: copyRect.height,
         copyBottom: copyRect.bottom,
         lineHeight: Number.parseFloat(getComputedStyle(copy).lineHeight),
-        actionTop: actionRect.top,
-        actionBottom: actionRect.bottom,
+        actionParentIsCopy: action?.parentElement === copy,
+        actionTop: actionRect?.top ?? -1,
+        actionBottom: actionRect?.bottom ?? -1,
         hostLeft: hostRect.left,
         hostRight: hostRect.right,
         closeLeft: closeRect?.left ?? -1,
@@ -477,6 +478,8 @@ test('a wrapped error message keeps its Reload action on the last text line', as
     // The copy genuinely wrapped (more than one line), so the case under test
     // is actually exercised rather than fitting on one line.
     expect(geometry?.copyHeight ?? 0).toBeGreaterThan(1.5 * (geometry?.lineHeight ?? 0));
+    // The action is an inline part of the copy sentence, not a separate column.
+    expect(geometry?.actionParentIsCopy).toBe(true);
     // The action group ends no lower than the copy's last line ...
     expect(geometry?.actionBottom ?? 0).toBeLessThanOrEqual((geometry?.copyBottom ?? 0) + 1);
     // ... and sits *within* that last line, not a line above or below it.

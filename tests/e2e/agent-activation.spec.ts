@@ -104,7 +104,9 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
     // - the embedded action is always size "s" (24px tall);
     // - the message's line box matches the button's height, so it aligns;
     // - the row carries 8px vertical padding;
-    // - the message clamps to three lines whatever it holds.
+    // - a copy that carries an inline action is deliberately NOT clamped (a
+    //   clamp would cut the trailing action off once the message wrapped past
+    //   it); plain text rows still clamp to three lines.
     const geometry = await banner.evaluate((node) => {
       const button = node.querySelector('sp-action-button');
       const copy = node.querySelector('.banner-row__copy');
@@ -128,19 +130,22 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
     const clamp = await banner.evaluate((node) => {
       const copy = node.querySelector('.banner-row__copy');
       if (copy === null) return null;
-      copy.append(` ${'clamped '.repeat(400)}`);
-      return {
-        height: copy.getBoundingClientRect().height,
-        lineHeight: Number.parseFloat(getComputedStyle(copy).lineHeight),
-        overflow: getComputedStyle(copy).overflow,
-      };
+      const overflow = getComputedStyle(copy).overflow;
+      // Append well past three lines, measure, then restore the DOM so the
+      // later Settings click sees the real banner.
+      const appended = document.createTextNode(` ${'more '.repeat(80)}`);
+      copy.append(appended);
+      const height = copy.getBoundingClientRect().height;
+      const lineHeight = Number.parseFloat(getComputedStyle(copy).lineHeight);
+      appended.remove();
+      return { overflow, height, lineHeight };
     });
     expect(clamp).not.toBeNull();
     expect(clamp?.overflow).toBe('hidden');
-    // Three lines exactly: no more, and demonstrably more than one (so the
-    // clamp genuinely engaged rather than the text simply fitting).
-    expect(clamp?.height).toBeLessThanOrEqual(3 * (clamp?.lineHeight ?? 0) + 1);
-    expect(clamp?.height).toBeGreaterThan(1.5 * (clamp?.lineHeight ?? 0));
+    // Not clamped: a button-carrying copy grows with its message so the inline
+    // action can never be cut off (proven against a long URL in
+    // `step05-network-error.spec.ts`). A three-line clamp would cap this.
+    expect(clamp?.height ?? 0).toBeGreaterThan(3 * (clamp?.lineHeight ?? 0));
 
     // Send is disabled and visibly grey - not the "still looks enabled" accent
     // blue the light-DOM class rule used to force: the class is gone, so the

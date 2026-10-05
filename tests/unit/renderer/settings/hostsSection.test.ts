@@ -1,5 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BANNER_ACTION_MARKER } from '../../../../src/renderer/src/lib/alertBanner';
 import { createHostsSection } from '../../../../src/renderer/src/settings/hostsSection';
 import type {
   SaveOutcome,
@@ -259,7 +260,9 @@ describe('createHostsSection', () => {
     await settle();
 
     expect(updateServerTargeting).not.toHaveBeenCalled();
-    expect(lastPrompt?.copy).toBe('Confirm changing the address');
+    expect(lastPrompt?.copy).toBe(
+      `Confirm changing the address. Press ${BANNER_ACTION_MARKER} to apply`,
+    );
 
     lastPrompt?.action.onActivate();
     await settle();
@@ -297,7 +300,9 @@ describe('createHostsSection', () => {
       .querySelector('.multifield__action--remove')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    expect(lastPrompt?.copy).toBe('Confirm removing the host. This action cannot be undone');
+    expect(lastPrompt?.copy).toBe(
+      `Removing the host cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+    );
     expect(removeServer).not.toHaveBeenCalled();
 
     lastPrompt?.action.onActivate();

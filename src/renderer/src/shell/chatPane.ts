@@ -159,10 +159,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   // The standing "no usable agent" prompt, built once and reused: it is the
   // banner row's lowest-priority presentation (see `refreshSessionPresentation`
-  // below). The Settings control sits *inside* the sentence, so the copy is a
-  // `buildBannerCopy` span rather than `buildBannerPrompt`'s trailing action
-  // group. Its click handler survives being swapped out and back in, because
-  // the same button node is reused.
+  // below). The Settings control sits *inside* the sentence, exactly like the
+  // prompt rows' inline actions (`buildBannerPrompt`), so the copy is a
+  // `buildBannerCopy` span. Its click handler survives being swapped out and
+  // back in, because the same button node is reused.
   const agentSettingsButton = createBannerActionButton('Settings');
   agentSettingsButton.addEventListener('click', () => options.onOpenSettings('agents'));
   const agentPromptContent: readonly Node[] = [

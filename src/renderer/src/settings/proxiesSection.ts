@@ -1,3 +1,4 @@
+import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
 import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProxyId, type ProxySnapshot } from '../../../shared';
@@ -287,7 +288,10 @@ function buildProxyItem(
       return;
     }
     removeArmed = true;
-    ctx.status.showPrompt('Confirm removing the proxy. This action cannot be undone', removeAction);
+    ctx.status.showPrompt(
+      `Removing the proxy cannot be undone. Press ${BANNER_ACTION_MARKER} to remove it`,
+      removeAction,
+    );
   }
 
   return {

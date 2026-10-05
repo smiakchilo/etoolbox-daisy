@@ -1,5 +1,6 @@
 import { el } from '../lib/dom';
 import {
+  applyBannerPresentation,
   BANNER_ROW_LOADING_CLASS,
   BANNER_TRANSITION_DURATION_MS,
   buildBannerCopy,
@@ -65,8 +66,8 @@ import {
  * `browser:certificate-blocked` (with the *decision*, not the page URL),
  * and this module turns it into the banner's most prominent non-loading
  * presentation - a single "OK" `sp-action-button` prompt, structured exactly
- * like the unknown-origin prompt below (a `_copy` span plus a
- * `_actions` span; cancel is the banner's dismiss cross). The flow guarantees
+ * like the unknown-origin prompt below (a `_copy` span with the button inline
+ * in the sentence; cancel is the banner's dismiss cross). The flow guarantees
  * the host is already a managed server by the time this banner can appear:
  * an unknown origin is refused *before* any certificate check and only becomes
  * navigable once the unknown-origin prompt's OK has created the server (see
@@ -170,11 +171,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   forwardButton.setAttribute('disabled', '');
 
   // The shared banner-row base (lib/alertBanner.ts, styles/banner.css) with
-  // the browser surface class. The factory starts the row `dismissible`;
-  // error/prompt presentations keep it, the loading branch removes it (the
-  // `applyPresentation` loading path). The component shows its `sp-close-button`
-  // when `dismissible` is set and dispatches a cancelable `close` on click;
-  // this module prevents the default so it keeps full control of `open`.
+  // the browser surface class. Every row is dismissible by default; the close
+  // control is derived centrally by `applyBannerPresentation` (the loading
+  // branch drops it, error/prompt rows keep it). The component shows its
+  // `sp-close-button` when `dismissible` is set and dispatches a cancelable
+  // `close` on click; this module prevents the default so it keeps full
+  // control of `open`.
   const messageElement = createBannerRow('browser-toolbar-message');
   configureBannerTransition(messageElement, BANNER_TRANSITION_DURATION_MS);
 
@@ -305,9 +307,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   function finalizeBannerHide(): void {
     cancelBannerHide();
     renderedErrorSignature = null;
-    messageElement.classList.remove(BANNER_ROW_LOADING_CLASS);
+    applyBannerPresentation(messageElement, 'hidden');
     restoreBannerRow(messageElement);
-    messageElement.removeAttribute('dismissible');
     messageElement.removeAttribute('open');
     messageElement.replaceChildren();
   }
@@ -333,9 +334,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     cancelBannerHide();
     const wasClosing = isBannerClosing(messageElement);
     const wasVisible = messageElement.hasAttribute('open') && !wasClosing;
-    messageElement.classList.toggle(BANNER_ROW_LOADING_CLASS, loading);
-    if (loading) messageElement.removeAttribute('dismissible');
-    else messageElement.setAttribute('dismissible', '');
+    // The close control is the shared presentation rule: loading rows have
+    // none, every other row does (see `applyBannerPresentation`).
+    applyBannerPresentation(messageElement, loading ? 'loading' : 'default');
     messageElement.replaceChildren(...children);
     messageElement.setAttribute('open', '');
     if (wasClosing) restoreBannerRow(messageElement);
@@ -366,10 +367,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     renderedErrorSignature = signature;
     // A failed navigation row carries a "Reload" that re-issues the failed
     // target; errors that are not a navigation (no retry to offer) stay a
-    // plain copy row.
+    // plain copy row. The error text is dynamic (it repeats the URL the user
+    // typed), so it must not go through `buildBannerPrompt`'s `{action}`
+    // marker; the Reload button is appended inline after it instead.
     const content: readonly Node[] =
       errorRetry !== null
-        ? buildBannerPrompt(errorText ?? '', [reloadButton])
+        ? [buildBannerCopy([`${errorText ?? ''} `, reloadButton])]
         : [buildBannerCopy([errorText ?? ''])];
     showBanner(content, false);
   }

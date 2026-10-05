@@ -35,8 +35,8 @@
    `margin: 0` and the animation come from the shared base; the panel's
    `overflow: hidden` clips the collapsing row. */
 
-/* The panel's prompt rows' `_copy` span and `_actions` span are the shared
-   `.banner-row__copy` / `.banner-row__actions` rules in banner.css. */
+/* The panel's prompt rows' copy span (with its inline action button) is the
+   shared `.banner-row__copy` rule in banner.css. */
 
 /* `sp-tabs` is a grid (`auto 1fr` rows) whose second row hosts the panels;
    allowing it to shrink within the flex column bounds that second row, so the

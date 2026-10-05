@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BANNER_ACTION_MARKER } from '../../../src/renderer/src/lib/alertBanner';
 import {
   buildHostOptions,
   canOpenInExternalBrowser,
@@ -127,7 +128,7 @@ describe('computeReservedRegionBounds', () => {
 describe('describeBlockedCertificate', () => {
   it('uses the fixed copy, mirroring the unknown-origin prompt (the address bar already shows the host)', () => {
     expect(describeBlockedCertificate()).toBe(
-      'This host has an untrusted certificate. Press OK to allow it',
+      `This host has an untrusted certificate. Press ${BANNER_ACTION_MARKER} to allow it`,
     );
   });
 });
@@ -135,7 +136,7 @@ describe('describeBlockedCertificate', () => {
 describe('describeUnknownOrigin', () => {
   it('uses fixed copy that never cites the origin - the address bar already shows it', () => {
     expect(describeUnknownOrigin()).toBe(
-      'This host is unknown. Press OK to add it to the managed hosts',
+      `This host is unknown. Press ${BANNER_ACTION_MARKER} to add it to the managed hosts`,
     );
   });
 });

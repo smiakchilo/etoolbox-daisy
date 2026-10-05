@@ -171,7 +171,11 @@ describe('createStatusBanner single slot', () => {
     banner.showPrompt('Second', { label: 'Apply', onActivate: secondAction });
 
     expect(banner.isPromptShowing()).toBe(true);
-    expect(banner.element.querySelector('.banner-row__copy')?.textContent).toBe('Second');
+    // The copy span now also carries the inline action button, so its text is
+    // the sentence followed by the button's label.
+    const copy = banner.element.querySelector('.banner-row__copy')?.textContent ?? '';
+    expect(copy).toContain('Second');
+    expect(copy).not.toContain('First');
     banner.element
       .querySelector('sp-action-button')
       ?.dispatchEvent(new dom.window.MouseEvent('click'));
@@ -290,8 +294,9 @@ describe('createStatusBanner standing floor', () => {
     banner.setStanding([document.createTextNode('Standing')]);
     expect(banner.element.hasAttribute('open')).toBe(true);
     expect(banner.element.textContent).toBe('Standing');
-    // A standing condition is not an error to wave away.
-    expect(banner.element.hasAttribute('dismissible')).toBe(false);
+    // A plain floor row is an ordinary message: it carries the close control
+    // like every non-loading, non-transient row (the shared presentation rule).
+    expect(banner.element.hasAttribute('dismissible')).toBe(true);
 
     // The later error takes the single row and suppresses the floor.
     banner.showError('Later');
@@ -302,7 +307,36 @@ describe('createStatusBanner standing floor', () => {
     // banner stacked beneath it.
     dismiss(banner);
     expect(banner.element.textContent).toBe('Standing');
-    expect(banner.element.hasAttribute('dismissible')).toBe(false);
+    expect(banner.element.hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('dismissing the standing floor hides it until its condition changes', () => {
+    vi.useFakeTimers();
+    try {
+      const banner = createStatusBanner();
+      // Memoised exactly as the chat pane does, so re-asserting is a no-op.
+      const standing: readonly Node[] = [document.createTextNode('Standing')];
+      banner.setStanding(standing);
+      expect(banner.element.hasAttribute('open')).toBe(true);
+
+      // The user waves the floor away: it collapses and is torn down.
+      dismiss(banner);
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+
+      // Re-asserting the *same* condition (every status refresh does) does not
+      // spring it back - the acknowledgement sticks.
+      banner.setStanding(standing);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+
+      // A genuinely new condition clears the dismissal and shows again.
+      banner.setStanding([document.createTextNode('A new condition')]);
+      expect(banner.element.hasAttribute('open')).toBe(true);
+      expect(banner.element.textContent).toBe('A new condition');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a standing prompt never displaces a live error, and clearing it leaves the error alone', () => {
