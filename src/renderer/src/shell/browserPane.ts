@@ -40,7 +40,7 @@ export interface BrowserPane {
    */
   navigate(url: string): void;
   /**
-   * Appends a panel's element to the pane's page-view region (hidden until
+   * Appends a panel's element to the pane's shared view slot (hidden until
    * `panelHost.open` reveals it). Used for panels the pane does not itself
    * own (settings, history).
    */
@@ -55,31 +55,29 @@ export interface BrowserPane {
 }
 
 /**
- * The left-hand browser pane: toolbar, the page panel - the browser's
- * status/message row (toolbar errors, the "unknown
- * origin" prompt, external-loading "Loading…" presentation) grouped below
- * the reserved page-view region it describes (statusbar-style: the row sits
- * under the page, not over it) - and, covered while a whole-size panel is
- * open, the panel (hosts panel or Settings).
- *
- * Message and native-view region are grouped inside `browserPagePanel` so one
- * `hidden` toggle governs both:
+ * The left-hand browser pane: toolbar, then a page panel stacking the
+ * reserved page-view region and the browser's status/message row (toolbar
+ * errors, the "unknown origin"/certificate prompts, and the "Loading…"
+ * presentation). The row is statusbar-style - *below* the region it
+ * describes - so it is never covered by a page and never overlaps the native
+ * view.
  *
  *  - a whole-size panel (`panelHost.open`) is the only thing the renderer may
  *    draw over the native view's region: instead of an overlay trying to
  *    float above an Electron-native WebContentsView (which always composites
  *    *above* this document), opening the panel suspends/collapses the native
- *    view and lets the DOM panel take the whole page-view area. The hosts
+ *    view and lets the DOM panel take its exact slot (`viewSlot`). The hosts
  *    panel ("combobox glyph" button in the toolbar) and the chat pane's
  *    Settings/History buttons all go through this one host.
- *  - a splitter drag does NOT touch the native view or the panel at all: the
- *    page stays fully visible and live-following for the drag's whole
- *    duration. The view only ever collapses for a panel.
- *  - whenever the native view is hidden/collapsed by a panel, the message
- *    row is hidden along with it - its text describes the page that just
- *    vanished, so showing it against the panel would be misleading. The
- *    panel swaps instantly (`pagePanel.hidden` + an instant native-view
- *    collapse - the panel needs the layout space immediately).
+ *  - the panel replaces the native view *inside the view slot only*. The
+ *    message row lives outside that slot and stays visible, so an error row
+ *    (with Reload) is never hidden by whichever panel happens to be open.
+ *  - a splitter drag does NOT touch the native view or any panel: the page
+ *    stays fully visible and live-following for the drag's whole duration.
+ *    The view only ever collapses for a panel.
+ *  - when a failed load has no page to restore, the pane asks the hosts
+ *    picker on - but only when no panel is already on screen
+ *    (`onHostsPickerRequest`); the error row appears below whatever is shown.
  *
  * The row's *content* lifecycle stays in the toolbar (`browserToolbar.ts`):
  * it is cleared when a new navigation starts loading, and re-shown only when
@@ -131,8 +129,13 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     // A failed load with no page to restore: replace the blank page-view
     // region with the hosts list so the user can pick where to go. Not a
     // toggle - opening an already-open picker is a no-op (`openPanel`).
+    //
+    // Only when nothing else is on screen: if a panel (Settings, History, …)
+    // is already open, leave it. A failed navigation must not yank the user
+    // out of the surface they chose; the error row still appears below it
+    // (the row lives outside the panel's slot and is never covered).
     onHostsPickerRequest(): void {
-      openPanel(picker);
+      if (activePanel === undefined) openPanel(picker);
     },
   });
   const viewHost = createBrowserViewHost();
@@ -149,14 +152,23 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     activePanel?.setCloseable(true);
   });
 
-  // Groups the toolbar's status/prompt row with the native view region so the
-  // panel suspension hides both at once (see the file doc comment). The
-  // message row comes AFTER the view host in DOM order - the flex column lays
-  // it out below the reserved page-view region (statusbar-style), where it
-  // physically can't overlap the native view during the load it describes.
+  // The slot the native view and every whole-size panel share, directly above
+  // the status/prompt row. A panel *replaces the native view* inside this one
+  // slot - the exact region the `WebContentsView` occupies - so the message
+  // row below it is never covered (see the file doc comment). The picker's
+  // element lives here too; no panel is ever a sibling of the row.
+  const viewSlot = el('div', {
+    attrs: { class: 'browser-view-slot', 'data-testid': 'browser-view-slot' },
+    children: [viewHost.element, picker.element],
+  });
+
+  // The status/prompt row sits BELOW the view slot (statusbar-style), so it is
+  // physically outside every panel's region: a panel can never cover the error
+  // or loading copy. Opening a panel no longer hides the row - the row
+  // describes the browser, not the page a panel replaced.
   const pagePanel = el('div', {
     attrs: { class: 'browser-page-panel', 'data-testid': 'browser-page-panel' },
-    children: [viewHost.element, toolbar.messageElement],
+    children: [viewSlot, toolbar.messageElement],
   });
 
   function openPanel(panel: Panel): void {
@@ -164,10 +176,10 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     activePanel?.close();
     activePanel = panel;
     // Order matters (see file doc comment): the native view paints above the
-    // document, so it must be collapsed first and never restored below an
-    // already-hidden panel.
+    // document, so it must be collapsed first and hidden before the panel
+    // takes the slot; the message row below stays visible either way.
     viewHost.setSuspended(true);
-    pagePanel.hidden = true;
+    viewHost.element.hidden = true;
     toolbar.setHostsPickerOpen(panel === picker);
     panel.setCloseable(pageLoaded);
     panel.open();
@@ -181,13 +193,13 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     // region, so the returning view never paints over a still-visible panel.
     panel.close();
     toolbar.setHostsPickerOpen(false);
+    viewHost.element.hidden = false;
     viewHost.setSuspended(false);
-    pagePanel.hidden = false;
   }
 
   const element = el('section', {
     attrs: { class: 'pane browser-pane', 'aria-label': 'Browser' },
-    children: [toolbar.element, pagePanel, picker.element],
+    children: [toolbar.element, pagePanel],
   });
 
   return {
@@ -204,7 +216,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       toolbar.navigateTo(url);
     },
     appendPanel(panel: Panel): void {
-      element.append(panel.element);
+      viewSlot.append(panel.element);
     },
     setAgentPaneOpen(open: boolean): void {
       toolbar.setAgentPaneOpen(open);

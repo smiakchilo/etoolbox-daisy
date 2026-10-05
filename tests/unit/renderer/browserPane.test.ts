@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
+import { createPanel } from '../../../src/renderer/src/shell/panel';
 import { BANNER_TRANSITION_DURATION_MS } from '../../../src/renderer/src/lib/alertBanner';
 import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/shared';
 import { newServerId } from '../../../src/shared';
@@ -105,21 +106,23 @@ function emitNavigationState(): void {
 }
 
 describe('createBrowserPane page panel', () => {
-  it('groups, and initially hides, the message row together with the native view region', () => {
+  it('stacks the message row below the view slot, outside the region a panel replaces', () => {
     const pane = build();
     const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewSlot = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-slot"]');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
 
     expect(pagePanel).not.toBeNull();
     expect(pagePanel?.hidden).toBe(false);
-    // The message row lives inside the page panel, next to the view region.
+    // The view slot holds the native view (and, hidden, the hosts panel); the
+    // message row is a sibling below it - outside the slot a panel replaces,
+    // so a panel can never cover it.
+    expect(viewSlot).not.toBeNull();
     expect(pagePanel?.contains(message)).toBe(true);
-    expect(pagePanel?.contains(viewHost)).toBe(true);
-    // ...but BELOW it in DOM order (statusbar-style): the flex column lays
-    // the row out under the page, so it physically can't overlap the native
-    // view during the load it describes.
-    expect(pagePanel?.firstElementChild).toBe(viewHost);
+    expect(viewSlot?.contains(viewHost)).toBe(true);
+    expect(viewSlot?.contains(message)).toBe(false);
+    expect(pagePanel?.firstElementChild).toBe(viewSlot);
     expect(pagePanel?.lastElementChild).toBe(message);
     // Apart from a loading state, there is nothing to say yet. The row is an
     // `sp-alert-banner` whose show/hide mechanism is its own `open` attribute
@@ -135,15 +138,19 @@ describe('createBrowserPane page panel', () => {
     expect(pane.element.querySelectorAll('.banner-row').length).toBe(1);
   });
 
-  it('hides the whole page panel while the hosts panel is open, and restores it on close', () => {
+  it('hides only the native view while the hosts panel is open, keeping the message row', () => {
     const pane = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
 
-    expect(pagePanel?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
     pickerButton?.click();
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
+    // The row is outside the panel's slot: the panel replaces the view, not
+    // the row.
+    expect(message?.hidden).toBe(false);
 
     // The panel must only be closeable after a page sits under it (the pane
     // latches on navigation-state pushes), so unlock it before dismissing.
@@ -151,21 +158,21 @@ describe('createBrowserPane page panel', () => {
     expect(close?.hasAttribute('disabled')).toBe(false);
 
     close?.click();
-    expect(pagePanel?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
   });
 
   it('swaps the hosts panel instantly via `hidden`', () => {
     const pane = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
 
     pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
-    // The list needs the layout space immediately, so the panel must be
+    // The list needs the layout space immediately, so the view must be
     // `display:none` (hidden).
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
 
     emitNavigationState();
     pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
-    expect(pagePanel?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
   });
 });
 
@@ -261,32 +268,32 @@ describe('createBrowserPane message lifecycle', () => {
 describe('createBrowserPane closeability', () => {
   it('keeps cross, Escape and the picker toggle inert until a page has loaded', () => {
     const pane = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
     pickerButton?.click();
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
     // Nothing has loaded into the native view yet, so the panel must not be
     // dismissible: the cross is disabled and Escape / the hosts-button toggle
     // are no-ops. Dismissing it would reveal the bare page-view region.
     expect(close?.hasAttribute('disabled')).toBe(true);
 
     close?.click();
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
 
     document.dispatchEvent(
       new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
     );
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
 
     pickerButton?.click();
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
   });
 
   it('unlocks the open panel when the first navigation state push arrives', () => {
     const pane = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
@@ -299,12 +306,12 @@ describe('createBrowserPane closeability', () => {
     expect(close?.hasAttribute('disabled')).toBe(false);
 
     close?.click();
-    expect(pagePanel?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
   });
 
   it('lets a host selection close the panel and navigate even while locked', () => {
     const pane = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
     pane.update({
@@ -327,7 +334,7 @@ describe('createBrowserPane closeability', () => {
       ?.click();
 
     expect(browser.navigate).toHaveBeenCalledWith('https://author.example');
-    expect(pagePanel?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
   });
 });
 
@@ -342,7 +349,8 @@ describe('createBrowserPane navigation failure recovery', () => {
 
   it('opens the hosts picker when a failed load has no page to restore', async () => {
     const pane = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
     browser.navigate.mockResolvedValueOnce({
       ok: false,
       error: { code: 'network_error', message: 'Timed out', errorCode: 'ERR_TIMED_OUT' },
@@ -351,8 +359,43 @@ describe('createBrowserPane navigation failure recovery', () => {
     pane.navigate('https://dead.example/');
 
     await vi.waitFor(() => {
-      expect(pagePanel?.hidden).toBe(true);
+      expect(viewHost?.hidden).toBe(true);
     });
+    // The error row is visible below the picker, not covered by it.
+    expect(message?.hasAttribute('open')).toBe(true);
+    expect(message?.textContent).toContain('Timed out');
+  });
+
+  it('leaves an open panel in place and shows the error row when a failed load has no page to restore', async () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
+    const picker = pane.element.querySelector<HTMLElement>('.hosts-panel');
+    const other = createPanel({
+      title: 'Other',
+      closeAriaLabel: 'Close other',
+      content: document.createElement('div'),
+      onDismiss: () => pane.panelHost.close(),
+    });
+    pane.appendPanel(other);
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'network_error', message: 'Timed out', errorCode: 'ERR_TIMED_OUT' },
+    });
+
+    pane.panelHost.open(other);
+    pane.navigate('https://dead.example/');
+
+    await vi.waitFor(() => {
+      expect(message?.hasAttribute('open')).toBe(true);
+    });
+    // The failed load did not yank the user out of the panel they chose.
+    expect(other.isOpen).toBe(true);
+    expect(pane.panelHost.isActive(other)).toBe(true);
+    expect(picker?.hidden).toBe(true);
+    // ...and the error row is visible below the panel.
+    expect(message?.textContent).toContain('Timed out');
+    expect(viewHost?.hidden).toBe(true);
   });
 });
 

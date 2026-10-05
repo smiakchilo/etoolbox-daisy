@@ -50,6 +50,12 @@ import { el } from './dom';
 export const BANNER_ROW_CLASS = 'banner-row';
 /** The shared loading-presentation class: a light-gray fill and a progress line. */
 export const BANNER_ROW_LOADING_CLASS = 'banner-row--loading';
+/**
+ * The shared prompt-layout wrapper class: the flex row that holds a prompt
+ * row's copy and its trailing action group, so a wrapped message keeps the
+ * actions on its last line instead of pushing them onto a new indented one.
+ */
+export const BANNER_ROW_PROMPT_CLASS = 'banner-row__prompt';
 /** The shared message-copy wrapper class. */
 export const BANNER_ROW_COPY_CLASS = 'banner-row__copy';
 /** The shared action-button group class. */
@@ -197,19 +203,30 @@ export function buildBannerCopy(parts: readonly (string | Node)[]): HTMLElement 
 /**
  * Builds the `_copy` span + `_actions` span pair for a prompt/confirm row
  * (the certificate and unknown-origin prompts, the Settings confirmations).
- * `actionButtons` is usually a single `sp-action-button`; the actions host
- * keeps the buttons side by side and the 12px `margin-inline-start` seam
- * (banner.css) keeps them on one line after the copy.
+ * `actionButtons` is usually a single `sp-action-button`.
+ *
+ * The pair is wrapped in one `banner-row__prompt` flex row rather than left as
+ * two inline siblings. Inline flow cannot express what these rows want: the
+ * copy's clamp blockifies it to full width, so a message that wraps pushes the
+ * actions onto a new, indented line. As flex columns - copy `flex: 0 1 auto`,
+ * actions `flex: 0 0 auto`, bottom-aligned - a short copy keeps the actions on
+ * its only line, and a wrapped copy keeps them on its last line, while the copy
+ * still clamps to three lines (see `styles/banner.css`).
  */
 export function buildBannerPrompt(
   copy: string,
   actionButtons: readonly HTMLElement[],
 ): readonly HTMLElement[] {
   return [
-    el('span', { attrs: { class: BANNER_ROW_COPY_CLASS }, text: copy }),
     el('span', {
-      attrs: { class: BANNER_ROW_ACTIONS_CLASS },
-      children: [...actionButtons],
+      attrs: { class: BANNER_ROW_PROMPT_CLASS },
+      children: [
+        el('span', { attrs: { class: BANNER_ROW_COPY_CLASS }, text: copy }),
+        el('span', {
+          attrs: { class: BANNER_ROW_ACTIONS_CLASS },
+          children: [...actionButtons],
+        }),
+      ],
     }),
   ];
 }

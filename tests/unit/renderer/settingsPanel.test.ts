@@ -115,26 +115,26 @@ function emitNavigationState(): void {
 describe('createSettingsPanel dismissal', () => {
   it('forwards the close button to the pane host, restoring the view so Settings can open again', () => {
     const { pane, settings } = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
     const panelSurface = pane.element.querySelector<HTMLElement>('.settings-panel');
 
     pane.panelHost.open(settings);
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
     expect(panelSurface?.hidden).toBe(false);
 
     // The panel is only user-dismissible once a page sits under it (the pane
     // gates closeability on navigation-state pushes), so unlock it first.
     emitNavigationState();
     pane.element.querySelector<HTMLElement>('.settings-panel__close')?.click();
-    // The host heard the dismissal: the page view (native view region plus
-    // message row) is restored and the panel is hidden.
-    expect(pagePanel?.hidden).toBe(false);
+    // The host heard the dismissal: the page view is restored and the panel is
+    // hidden.
+    expect(viewHost?.hidden).toBe(false);
     expect(panelSurface?.hidden).toBe(true);
 
     // Re-opening works: the pane no longer believes the closed panel is its
     // active one, so the open call proceeds instead of short-circuiting.
     pane.panelHost.open(settings);
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
     expect(panelSurface?.hidden).toBe(false);
   });
 
@@ -156,20 +156,20 @@ describe('createSettingsPanel dismissal', () => {
 
   it('keeps Settings locked until a page has loaded', () => {
     const { pane, settings } = build();
-    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
     const close = pane.element.querySelector<HTMLElement>('.settings-panel__close');
 
     pane.panelHost.open(settings);
     expect(close?.hasAttribute('disabled')).toBe(true);
 
     close?.click();
-    expect(pagePanel?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(true);
 
     emitNavigationState();
     expect(close?.hasAttribute('disabled')).toBe(false);
 
     close?.click();
-    expect(pagePanel?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
   });
 
   it('selects a requested tab, so the agent banner can land on Agents', () => {

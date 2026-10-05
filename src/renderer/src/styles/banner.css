@@ -129,19 +129,51 @@
   }
 }
 
+/* The prompt row's two-column layout: the single slotted child of the
+   component's `.text` block holds the copy (left) and the trailing action
+   group (right) as flex items. Without it, the two are inline siblings and the
+   copy's `line-clamp` blockifies it to full width, pushing the actions onto a
+   new, indented line whenever the message wraps. `align-items: flex-end`
+   bottom-aligns the actions with the copy's *last* line (identical to the only
+   line when the copy does not wrap). */
+.banner-row__prompt {
+  display: flex;
+  align-items: flex-end;
+}
+
+/* The copy as a flex item. `flex: 0 1 auto` keeps a short copy at its natural
+   width (so the actions follow it immediately) and lets a long copy shrink to
+   take the rest of the line (so the actions sit at the line's end). The zero
+   minimum inline size is what lets that shrink go below the copy's min-content
+   width, which is what makes the clamp engage rather than overflow. */
+.banner-row__prompt .banner-row__copy {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+}
+
 /* Message text block in prompt rows (the copy sits in this span). Inline-level
-   so a trailing action group stays on the same line, and clamped to three
-   lines whatever the text by the standard `line-clamp` (Chromium 138+;
-   Electron 44 ships Chromium 152, which computes the legacy
-   `display: -webkit-inline-box` + `-webkit-line-clamp` trio to exactly this
-   `inline-block` block anyway). The prefixed trio is deliberately not used -
-   it needs `display: -webkit-inline-box`, which IntelliJ's CSS parser rejects
-   as an invalid `display` value although Chromium accepts it. */
+   for a copy that embeds its control inline (`buildBannerCopy`), so the
+   control stays in the sentence; as a `.banner-row__prompt` flex item it is
+   blockified and sized by the flex row above. Clamped to three lines whatever
+   the text by the standard `line-clamp` (Chromium 138+; Electron 44 ships
+   Chromium 152, which computes the legacy `display: -webkit-inline-box` +
+   `-webkit-line-clamp` trio to exactly this `inline-block` block anyway). The
+   prefixed trio is deliberately not used - it needs
+   `display: -webkit-inline-box`, which IntelliJ's CSS parser rejects as an
+   invalid `display` value although Chromium accepts it. */
 .banner-row__copy {
   display: inline-block;
   line-clamp: 3;
   overflow: hidden;
   vertical-align: middle;
+  /* A long unbreakable token (a URL in a network error) otherwise inflates
+     the copy's min-content width. That propagates up the flex chain
+     (`.text` -> `.content` -> the component's `.body`) and stops it shrinking,
+     which pushes the shadow `.end` close control out past the host's right
+     edge where `overflow: hidden` clips it. `anywhere` (unlike `break-word`)
+     also lowers the min-content size, so the copy can shrink and the close
+     control stays on screen; ordinary words only break when they must. */
+  overflow-wrap: anywhere;
 }
 
 /* A copy that embeds its control inline (the chat pane's agent banner) cannot
@@ -157,18 +189,16 @@
   max-height: calc(3 * var(--banner-row-action-height));
 }
 
-/* The prompt action buttons, grouped after the copy so they stay on one row
-   with text before actions. `margin-inline-start: 12px` is the seam between
-   copy and actions, and `flex: 0 0 auto` keeps the buttons from shrinking
-   when the copy wraps. `vertical-align: middle` centers them against a
-   multi-line (clamped) copy. */
+/* The prompt action buttons: the fixed right column of the
+   `.banner-row__prompt` flex row (copy before actions). `margin-inline-start:
+   12px` is the seam between copy and actions, and `flex: 0 0 auto` keeps the
+   buttons at their natural width when the copy takes the rest of the line. */
 .banner-row__actions {
   align-items: center;
   display: inline-flex;
   gap: 8px;
   flex: 0 0 auto;
   margin-inline-start: 12px;
-  vertical-align: middle;
 }
 
 /*

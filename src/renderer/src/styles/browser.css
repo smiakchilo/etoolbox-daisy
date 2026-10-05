@@ -168,26 +168,33 @@
   gap: 8px;
 }
 
-/* Groups the toolbar's status/message row with the reserved page-view region
-   it describes (browserPane.ts), so the picker suspension hiding the
-   native view hides the message with it - the message text describes a page
-   that is no longer on screen.
-
-   A splitter drag never hides this panel: the native view stays fully
-   visible and live-following for the drag's whole duration (splitter-layout
-   .spec.ts proves a leftward drag over the composited view cannot stall), so
-   no fade transition is needed here - the only swap is the picker's
-   `[hidden]`, which is `display:none` (not transitionable) and therefore
-   instant by design, giving the picker list the layout space immediately. */
-.browser-page-panel {
+/* The slot the native view and every whole-size panel share, directly above
+   the status/prompt row. A panel replaces the view here (`.browser-view-host`
+   is hidden while it is open), never the row - so no panel can cover the
+   banner. */
+.browser-view-slot {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.browser-page-panel[hidden] {
-  display: none;
+/* Stacks the view slot and the status/prompt row it describes. The row is
+   BELOW the slot (statusbar-style: the row sits under the page, not over it),
+   and it stays in flow while a panel replaces the view, so the row remains
+   visible.
+
+   A splitter drag never hides either: the native view stays fully visible and
+   live-following for the drag's whole duration (splitter-layout.spec.ts
+   proves a leftward drag over the composited view cannot stall), so no fade
+   transition is needed here - the view host's `[hidden]` swaps instantly
+   (`display:none`, not transitionable), giving the panel list the layout
+   space immediately. */
+.browser-page-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Reserved for the native WebContentsView the main process positions on

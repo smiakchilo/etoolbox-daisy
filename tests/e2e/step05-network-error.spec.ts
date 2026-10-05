@@ -360,3 +360,135 @@ test('a failed navigation restores the previous page and keeps the error readabl
     await new Promise<void>((resolve) => upServer.close(() => resolve()));
   }
 });
+
+/**
+ * A wrapped error message keeps its Reload action on the message's last line
+ * instead of pushing it onto a new, indented line - and keeps the banner's
+ * close control on screen. This is pure layout, so only the built app can
+ * prove it (AGENTS.md §9).
+ *
+ * Two defects are pinned here. (1) The prompt's copy is clamped to three lines,
+ * and its `line-clamp` blockifies the copy to full width, which used to make
+ * the inline sibling action group wrap below it; the fix groups copy + actions
+ * in a `.banner-row__prompt` flex row (banner.css) with the actions
+ * bottom-aligned. (2) The navigated URL is deliberately a long unbreakable
+ * token: without `overflow-wrap: anywhere` on the copy, its min-content width
+ * propagated up the flex chain and pushed the component's shadow `.end` close
+ * control past the host's right edge, where the row's `overflow: hidden`
+ * clipped it - the "close button disappeared" report. The geometry assertions
+ * cover both.
+ */
+test('a wrapped error message keeps its Reload action on the last text line', async () => {
+  test.setTimeout(120_000);
+
+  mkdirSync(scratchBase, { recursive: true });
+  const root = mkdtempSync(path.join(scratchBase, 'profile-wrap-'));
+  const home = path.join(root, 'home');
+  const appData = path.join(home, 'AppData', 'Roaming');
+  const localAppData = path.join(home, 'AppData', 'Local');
+  mkdirSync(appData, { recursive: true });
+  mkdirSync(localAppData, { recursive: true });
+
+  const env = {
+    ...definedEnv(process.env),
+    USERPROFILE: home,
+    HOME: home,
+    APPDATA: appData,
+    LOCALAPPDATA: localAppData,
+  };
+
+  const deadPort = await reserveClosedPort();
+  const deadOrigin = `http://127.0.0.1:${String(deadPort)}`;
+
+  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label: 'Unreachable fixture',
+        origin: deadOrigin,
+        color: { kind: 'swatch', swatch: 'red' },
+        revision: 0,
+      },
+    ],
+  });
+  mkdirSync(path.dirname(settingsPath), { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(seeded, null, 2), 'utf8');
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    // Narrow the window so the error copy must wrap across more than one line;
+    // the browser pane is roughly half of it.
+    await app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(620, 720);
+    });
+
+    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+    const addressInput = page.locator('#browser-address-bar input');
+    // A long, unbreakable path: the failure copy repeats this URL verbatim, so
+    // the copy's min-content is huge. That is the condition that used to push
+    // the close control off-screen (see the test's doc comment).
+    await addressInput.fill(`${deadOrigin}/${'x'.repeat(300)}`);
+    await addressInput.press('Enter');
+
+    const banner = page.locator('sp-alert-banner.browser-toolbar-message');
+    await expect(banner).toContainText('Check that the server is running', { timeout: 60_000 });
+
+    // Dismiss the startup hosts picker so the banner is visible and laid out.
+    const panelClose = page.locator('.hosts-panel__close');
+    await expect(panelClose).not.toHaveAttribute('disabled');
+    await panelClose.click();
+    await expect(page.locator('.hosts-panel')).toBeHidden();
+    await expect(banner).toBeVisible();
+
+    const geometry = await banner.evaluate((node) => {
+      const copy = node.querySelector('.banner-row__copy');
+      const actions = node.querySelector('.banner-row__actions');
+      if (copy === null || actions === null) return null;
+      const copyRect = copy.getBoundingClientRect();
+      const actionRect = actions.getBoundingClientRect();
+      const hostRect = node.getBoundingClientRect();
+      // The close control lives in the component's shadow `.end`, after the
+      // `.body` that holds the slotted copy/actions. A copy whose min-content
+      // is a long unbreakable token once forced `.body`/`.content` wider than
+      // the host, pushing `.end` past the host's right edge where the row's
+      // `overflow: hidden` clipped it. `.end` wraps the close control, so its
+      // box is the control's (zero-wide when the row is not dismissible).
+      const end = node.shadowRoot?.querySelector('.end') ?? null;
+      const closeRect = end?.getBoundingClientRect() ?? null;
+      return {
+        copyHeight: copyRect.height,
+        copyBottom: copyRect.bottom,
+        lineHeight: Number.parseFloat(getComputedStyle(copy).lineHeight),
+        actionTop: actionRect.top,
+        actionBottom: actionRect.bottom,
+        hostLeft: hostRect.left,
+        hostRight: hostRect.right,
+        closeLeft: closeRect?.left ?? -1,
+        closeRight: closeRect?.right ?? -1,
+        closeWidth: closeRect?.width ?? -1,
+      };
+    });
+    expect(geometry).not.toBeNull();
+    // The copy genuinely wrapped (more than one line), so the case under test
+    // is actually exercised rather than fitting on one line.
+    expect(geometry?.copyHeight ?? 0).toBeGreaterThan(1.5 * (geometry?.lineHeight ?? 0));
+    // The action group ends no lower than the copy's last line ...
+    expect(geometry?.actionBottom ?? 0).toBeLessThanOrEqual((geometry?.copyBottom ?? 0) + 1);
+    // ... and sits *within* that last line, not a line above or below it.
+    expect(geometry?.actionTop ?? 0).toBeGreaterThanOrEqual(
+      (geometry?.copyBottom ?? 0) - (geometry?.lineHeight ?? 0) - 1,
+    );
+    // The dismiss control is present and, crucially, inside the host's bounds
+    // rather than pushed out to the right and clipped.
+    expect(geometry?.closeWidth ?? 0).toBeGreaterThan(0);
+    expect(geometry?.closeLeft ?? 0).toBeGreaterThanOrEqual((geometry?.hostLeft ?? 0) - 1);
+    expect(geometry?.closeRight ?? 0).toBeLessThanOrEqual((geometry?.hostRight ?? 0) + 1);
+  } finally {
+    await app.close();
+  }
+});
