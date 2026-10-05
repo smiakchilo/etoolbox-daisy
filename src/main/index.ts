@@ -24,6 +24,7 @@ import {
 import { discoverAgentCatalog } from './agents/catalog';
 import { resolveConnection } from './agents/connection';
 import { createAgentHub, type AgentHub } from './agents/hub';
+import { buildProxyFetch } from './agents/proxyFetch';
 import { buildAgentRegistry, discoverAgentLoaders } from './agents/registry';
 import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
@@ -582,6 +583,10 @@ if (!gotSingleInstanceLock) {
         isPackaged: app.isPackaged,
         resolveConnection: (agentId, settings) =>
           resolveConnection(agentId, settings ?? storedSettings, secretStore),
+        // The one proxy-to-transport translation in the app: an in-process
+        // agent calls this through `AgentHost.createProxyFetch` instead of
+        // importing a proxy library into its own folder.
+        createProxyFetch: (connection) => buildProxyFetch(connection.proxy),
         toolkit: () => ({
           allowlistEntries: toolRegistry.allowlistEntries,
           instructions: toolRegistry.instructions,

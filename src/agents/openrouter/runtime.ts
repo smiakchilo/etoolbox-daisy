@@ -19,9 +19,9 @@ import type { OpenRouterClient, ToolSpec } from './types';
 
 /**
  * OpenRouter's {@link AgentRuntime}: turns the host's neutral services
- * (connection, toolkit, model preferences, service install) into an
- * SDK-backed `AgentService`. Everything OpenRouter-specific - the API key, the
- * proxy fetcher, the model catalogue, the skill tool - stays behind this file.
+ * (connection, proxy fetcher, toolkit, model preferences, service install) into
+ * an SDK-backed `AgentService`. Everything OpenRouter-specific - the API key,
+ * the model catalogue, the skill tool - stays behind this file.
  *
  * Unlike Copilot there is no child process to start or stop; the client is a
  * stateless HTTP wrapper, so "recycling" just rebuilds it with a fresh key /
@@ -80,10 +80,9 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
     const run = inFlight.then(async () => {
       const connection = await host.resolveConnection(meta.id, settings);
       const nextToken = connection.accessToken;
-      const proxy = connection.proxy;
       const nextClient = createOpenRouterClient({
         apiKey: nextToken,
-        ...(proxy !== undefined ? { proxy } : {}),
+        fetch: host.createProxyFetch(connection),
       });
       const specs = await buildSpecs();
       await host.installService(

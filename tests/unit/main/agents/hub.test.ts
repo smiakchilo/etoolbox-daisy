@@ -96,6 +96,9 @@ function build(
     host: {
       isPackaged: false,
       resolveConnection: () => Promise.resolve({}),
+      createProxyFetch: () => {
+        throw new Error('not used');
+      },
       toolkit: () => {
         throw new Error('not used');
       },
@@ -281,6 +284,9 @@ describe('createAgentHub', () => {
       host: {
         isPackaged: false,
         resolveConnection: () => Promise.resolve({}),
+        createProxyFetch: () => {
+          throw new Error('not used');
+        },
         toolkit: () => {
           throw new Error('not used');
         },

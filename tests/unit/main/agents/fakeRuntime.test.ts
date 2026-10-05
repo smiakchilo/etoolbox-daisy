@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  type AgentHost,
-  type AgentService,
-} from '../../../../src/shared';
+import { type AgentHost, type AgentService } from '../../../../src/shared';
 import { TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY } from '../../../../src/main/agentComposition';
 import { createFakeRuntime } from '../../../../src/main/agents/fakeRuntime';
 
@@ -15,6 +12,9 @@ function host(installService: (service: AgentService) => Promise<void>): AgentHo
   return {
     isPackaged: false,
     resolveConnection: () => Promise.resolve({}),
+    createProxyFetch: () => {
+      throw new Error('not used');
+    },
     installService,
     toolkit: () => {
       throw new Error('not used');

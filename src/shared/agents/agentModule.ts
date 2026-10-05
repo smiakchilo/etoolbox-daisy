@@ -49,6 +49,16 @@ export interface AgentConnection {
   readonly accessToken?: string;
 }
 
+/**
+ * The WHATWG `fetch` an agent uses when it makes its own HTTP calls
+ * in-process (rather than spawning a child process that reads
+ * `HTTPS_PROXY`). The input is spelled `string | URL | Request` rather than
+ * `RequestInfo | URL` on purpose: `RequestInfo` is a DOM-only alias that does
+ * not resolve in the Node-typed programs that also compile this file (agents
+ * and main), so naming it would make this type `any` there.
+ */
+export type AgentFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
 /** The tool surface every agent session is given; an agent maps it to its SDK. */
 export interface AgentToolkit {
   /** Source-qualified allowlist entries of the enabled tools (`custom:<name>`). */
@@ -68,11 +78,25 @@ export interface AgentToolkit {
  */
 export interface AgentHost {
   readonly isPackaged: boolean;
-  /** Resolves the proxy and token for `agentId` from `settings` (`undefined` before settings load). */
+  /**
+   * Resolves the proxy and token for `agentId` from `settings` (`undefined` before settings load).
+   */
   readonly resolveConnection: (
     agentId: AgentId,
     settings: AppSettings | undefined,
   ) => Promise<AgentConnection>;
+  /**
+   * Wraps an already-resolved {@link AgentConnection} in a `fetch` that routes
+   * through its proxy - or the direct connection when no proxy is selected.
+   * The host owns the proxy transport (`undici`'s `ProxyAgent` in main), so an
+   * in-process agent makes its HTTP calls through this instead of importing a
+   * proxy library itself. A child-process agent cannot use it and instead
+   * reads the proxy URL from {@link AgentConnection.proxy} for its environment.
+   *
+   * Synchronous and side-effect-free: no proxy means the global `fetch`
+   * unchanged, and the same connection always yields an equivalent fetcher.
+   */
+  readonly createProxyFetch: (connection: AgentConnection) => AgentFetch;
   /**
    * Initializes `service`, wraps it in the chat controller and installs it as
    * the live chat surface, replacing (and disposing) the previous one.

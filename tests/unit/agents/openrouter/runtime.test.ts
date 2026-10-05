@@ -23,6 +23,7 @@ function buildHost(connection: AgentConnection): {
   const host: AgentHost = {
     isPackaged: false,
     resolveConnection,
+    createProxyFetch: () => globalThis.fetch,
     installService: (service) => {
       installed.push(service);
       return Promise.resolve();

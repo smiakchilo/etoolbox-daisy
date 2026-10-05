@@ -235,7 +235,11 @@ src/agents/<name>/
    sign-in presence so the Settings "Set active" control can be honest without
    starting an inactive provider's runtime). Get proxy/token from
    `host.resolveConnection(meta.id, settings)` — an agent never touches the
-   secret store or settings store.
+   secret store or settings store. An **in-process** agent applies its proxy by
+   wrapping the resolved connection with `host.createProxyFetch(connection)`
+   (a WHATWG `fetch`, the global one when no proxy is set) and must **not**
+   import a proxy library itself; a child-process agent keeps
+   `connection.proxy` and passes it to its runtime as environment variables.
 5. Build an `AgentService` (`src/shared/agents/agentService.ts`) around the SDK
    and hand it to `host.installService(service)`. It must emit normalized
    `AgentEvent`s only — no SDK type may cross the boundary. Map the tools from
@@ -442,8 +446,10 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2449 passed / 14 skipped** (the +34 since the
-previous 2410 baseline is the OpenRouter agent suite:
+Current baseline: **`npm run test` → 2451 passed / 14 skipped** (a +2 since the
+2449 baseline is the proxy-unification `tests/unit/main/agents/proxyFetch.test.ts`
+— see `docs/verification.md` "Dependency review and proxy unification
+(2026-10-05)"; the +34 before that is the OpenRouter agent suite:
 `tests/unit/agents/openrouter/**`, the Copilot `authPresence` test, and the
 updated settings tests — see
 `docs/verification.md` "Agent plugins: OpenRouter as a second provider
@@ -453,7 +459,9 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 86 tests, all green** (includes `message-links.spec.ts`, the assistant
+**Playwright → 88 tests; 87 passed / 1 failed in the full run** (the failure the
+documented load-correlated `step05-loading-indicator` flake - green 4/4 in
+isolation; includes `message-links.spec.ts`, the assistant
 message-link case, now 6 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
 on the exact resource - percent-encoding of the path in content-view URLs, the

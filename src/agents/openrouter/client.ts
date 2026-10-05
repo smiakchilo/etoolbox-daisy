@@ -7,8 +7,8 @@ import { stepCountIs } from '@openrouter/agent/stop-conditions';
 import type { Tool } from '@openrouter/agent/tool-types';
 import { HTTPClient, OpenRouter as PlatformClient } from '@openrouter/sdk';
 import type { ReasoningEffort } from '@openrouter/sdk/models';
-import { ProxyAgent } from 'undici';
 
+import type { AgentFetch } from '../../shared';
 import type { OpenRouterCall, OpenRouterCallRequest, OpenRouterClient } from './types';
 
 /**
@@ -22,9 +22,11 @@ import type { OpenRouterCall, OpenRouterCallRequest, OpenRouterClient } from './
  * endpoint a constant of this build, independent of any ambient
  * `OPENROUTER_*` environment variable a developer or CI machine might carry.
  *
- * A selected proxy is applied by handing the SDK an `HTTPClient` whose
- * `fetcher` routes through `undici`'s `ProxyAgent`. Without one the SDK's
- * default global `fetch` is used, so a direct connection is unaffected.
+ * A selected proxy is applied by the `fetch` the host supplies
+ * (`AgentHost.createProxyFetch`), not by anything in this folder: an
+ * `HTTPClient` constructed with that fetcher routes every request through the
+ * agent's proxy, and the host returns the global `fetch` unchanged when no
+ * proxy is set.
  */
 
 /** OpenRouter's production Responses/Models base, pinned (see the module doc). */
@@ -42,23 +44,18 @@ const REQUEST_TIMEOUT_MS = 120_000;
 
 export interface OpenRouterClientOptions {
   readonly apiKey: string | undefined;
-  readonly proxy?: { readonly httpsProxy: string; readonly httpProxy: string };
-}
-
-/** A fetcher that tunnels every request through `proxy`. */
-function createProxyFetcher(proxy: {
-  readonly httpsProxy: string;
-}): (input: string | URL, init?: RequestInit) => Promise<Response> {
-  const agent = new ProxyAgent(proxy.httpsProxy);
-  return (input, init) => fetch(input, { ...init, dispatcher: agent } as unknown as RequestInit);
+  /**
+   * The proxy-aware `fetch` the host built from this agent's resolved
+   * connection (`AgentHost.createProxyFetch`). Omitted only in tests, where
+   * the SDK's own default fetcher is used instead.
+   */
+  readonly fetch?: AgentFetch;
 }
 
 export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRouterClient {
   const apiKey = options.apiKey;
   const httpClient =
-    options.proxy === undefined
-      ? undefined
-      : new HTTPClient({ fetcher: createProxyFetcher(options.proxy) });
+    options.fetch === undefined ? undefined : new HTTPClient({ fetcher: options.fetch });
 
   const common = {
     ...(apiKey !== undefined ? { apiKey } : {}),
