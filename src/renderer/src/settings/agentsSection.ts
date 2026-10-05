@@ -13,7 +13,7 @@ import {
   type ProxySnapshot,
   resolveEffectiveActiveAgentId,
 } from '../../../shared';
-import { createAutoSave } from './autoSave';
+import { createCommitSaver } from './commitSaver';
 import {
   buildAgentsViewModel,
   catalogueFailureMessage,
@@ -46,17 +46,19 @@ import type { SaveOutcome, StatusBannerSink } from './statusBanner';
  * column at the item's right edge (see `styles/settings.css`).
  *
  * The Set-active and Proxy mutations persist immediately (they change which
- * runtime exists / which proxy it is driven through). Model and effort
- * auto-save ~1s after the last pick, exactly as the superseded Models section
- * did. Only the active item's Model/Effort are live, and only while its
- * provider is signed in with a readable catalogue; everything the user needs to
- * be *told* - a failed sign-in, a catalogue that could not be read - is said in
- * the panel's one banner at the bottom, never inside the item.
+ * runtime exists / which proxy it is driven through). Model and effort persist
+ * when the picker changes (no Save button), consistent with every other
+ * Settings field: a picker's `change` is already the deliberate commit, so
+ * there is no debounce. Only the active item's Model/Effort are live, and only
+ * while its provider is signed in with a readable catalogue; everything the
+ * user needs to be *told* - a failed sign-in, a catalogue that could not be
+ * read - is said in the panel's one banner at the bottom, never inside the
+ * item.
  */
 export interface AgentsSectionOptions {
   /** The panel's single status slot (never used for plain informational text). */
   status: StatusBannerSink;
-  /** Registers a debounced save with the panel's save reporter. */
+  /** Registers commit saves with the panel's save reporter. */
   reportSave(outcome: Promise<SaveOutcome>): void;
   /** Fired after any mutation that changes the snapshot (active agent, proxy). */
   onSettingsChanged(): void;
@@ -104,7 +106,7 @@ function agentProxyId(selection: ProxySelection): ProxyId | undefined {
 
 export function createAgentsSection(options: AgentsSectionOptions): AgentsSection {
   const group = el('div', { attrs: { class: 'agents-section__group' } });
-  const autoSave = createAutoSave();
+  const commitSaver = createCommitSaver();
   const definitions = options.definitions ?? AGENT_DEFINITIONS;
 
   let snapshot: AppSettingsSnapshot | undefined;
@@ -200,7 +202,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   }
 
   function armModelSave(): void {
-    autoSave.arm(() => {
+    commitSaver.arm(() => {
       const outcome = runModelSave();
       if (outcome === undefined) return;
       // The reporter's settle attaches first, so a drain that empties the
@@ -308,7 +310,8 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
 
     // The personal-access-token control, exactly the Proxies tab's password
     // control with `noun: 'token'`: an explicit Set/Clear pair backed by the
-    // OS secret store, never a debounced field a later save could sweep up.
+    // OS secret store, never an auto-committing field a later save could sweep
+    // up.
     const tokenControl = createPasswordControl(
       {
         target: () => ({ kind: 'agent', agentId: id }),
@@ -611,8 +614,8 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   return {
     element,
     refresh: (next) => refresh(next),
-    flushNow: () => autoSave.flushNow(),
-    hasPendingEdits: () => autoSave.hasPending() || hasUnsavedSelection(),
-    dispose: () => autoSave.dispose(),
+    flushNow: () => commitSaver.flushNow(),
+    hasPendingEdits: () => commitSaver.hasPending() || hasUnsavedSelection(),
+    dispose: () => commitSaver.dispose(),
   };
 }

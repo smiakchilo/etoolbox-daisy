@@ -30,7 +30,7 @@ import { createPanel, type Panel } from './panel';
  * Escape dismiss it.
  *
  * Status is a single slot: the panel owns one banner (`statusBanner.ts`) the
- * sections share, and one save reporter that collapses the many debounced
+ * sections share, and one save reporter that collapses the many concurrent
  * saves into a single "Saving..." -> "Settings saved"/first-error sequence.
  * `reload` is guarded: a section with unpersisted edits is left untouched
  * (its in-progress input is not clobbered by a re-read), while the rest of

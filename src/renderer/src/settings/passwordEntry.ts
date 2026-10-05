@@ -4,8 +4,8 @@ import type { StatusBannerSink } from './statusBanner';
 
 /**
  * A per-item "Set" / "Clear" secret control rendered on the same line as its
- * secret field. Unlike the debounced label/address/username fields around it,
- * this is one deliberate two-action control: the secret's raw text is never
+ * secret field. Unlike the commit-on-blur label/address/username fields around
+ * it, this is one deliberate two-action control: the secret's raw text is never
  * supposed to sit in a field a later automatic save could sweep up, so
  * set/clear stay explicit.
  *

@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createColorPicker } from '../../../../src/renderer/src/settings/colorPicker';
 
 const previousDocument = Reflect.get(globalThis, 'document') as unknown;
@@ -57,6 +57,38 @@ describe('createColorPicker', () => {
     input.value = 'not-a-colour';
     input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
     expect(preview(picker)?.style.backgroundColor).toBe('transparent');
+  });
+
+  it('reports typed input separately from a commit, and commits a menu pick', () => {
+    const onInput = vi.fn();
+    const onCommit = vi.fn();
+    const picker = createColorPicker({
+      fieldId: 'c',
+      initial: { kind: 'swatch', swatch: 'blue' },
+      onInput,
+      onCommit,
+    });
+    const input = field(picker);
+    if (!input) throw new Error('missing colour field');
+
+    // Typing validates but does not commit.
+    input.value = '#9256d9';
+    input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    expect(onInput).toHaveBeenCalledTimes(1);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    // Leaving the field commits.
+    input.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect(onCommit).toHaveBeenCalledTimes(1);
+
+    // Picking a swatch from the menu is a deliberate commit too.
+    const menu = picker.element.querySelector<HTMLElement & { value: string }>(
+      '.color-picker-button',
+    );
+    if (!menu) throw new Error('missing colour menu');
+    menu.value = 'purple';
+    menu.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    expect(onCommit).toHaveBeenCalledTimes(2);
   });
 
   it('renders the inline invalid state via setError', () => {

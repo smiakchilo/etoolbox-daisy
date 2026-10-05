@@ -58,6 +58,16 @@ function type(node: HTMLElement & { value: string }, value: string): void {
   node.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 }
 
+/** Leaves the field (`change`: blur or Enter), which is when a value commits. */
+function commit(node: HTMLElement): void {
+  node.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+}
+
+function typeAndCommit(node: HTMLElement & { value: string }, value: string): void {
+  type(node, value);
+  commit(node);
+}
+
 async function settle(ms = 1000): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
   await vi.advanceTimersByTimeAsync(0);
@@ -162,7 +172,7 @@ describe('createProxiesSection', () => {
 
     const address = field(section.element, 'Address');
     if (!address) throw new Error('missing address field');
-    type(address, 'https://draft.example');
+    typeAndCommit(address, 'https://draft.example');
     await settle();
 
     expect(addProxy).toHaveBeenCalledExactlyOnceWith({
@@ -173,13 +183,35 @@ describe('createProxiesSection', () => {
     expect(reportSave).toHaveBeenCalledTimes(1);
   });
 
+  it('does not save while typing, and only commits when the field is left', async () => {
+    const section = buildSection();
+    section.update([]);
+    section.element
+      .querySelector('.multifield__add')
+      ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+    const address = field(section.element, 'Address');
+    if (!address) throw new Error('missing address field');
+    type(address, 'https://loc');
+    await settle();
+    expect(addProxy).not.toHaveBeenCalled();
+    expect(reportSave).not.toHaveBeenCalled();
+
+    commit(address);
+    await settle();
+    expect(addProxy).toHaveBeenCalledExactlyOnceWith({
+      label: 'https://loc',
+      url: 'https://loc',
+    });
+  });
+
   it('saves a label change on an existing proxy via updateProxy', async () => {
     const section = buildSection();
     section.update([snapshot('a', 'https://a.example', 'A')]);
 
     const label = field(section.element, 'Label');
     if (!label) throw new Error('missing label field');
-    type(label, 'Renamed');
+    typeAndCommit(label, 'Renamed');
     await settle();
 
     expect(updateProxy).toHaveBeenCalledExactlyOnceWith({
@@ -197,7 +229,7 @@ describe('createProxiesSection', () => {
 
     const username = field(section.element, 'User name');
     if (!username) throw new Error('missing username field');
-    type(username, 'bob');
+    typeAndCommit(username, 'bob');
     await settle();
 
     expect(updateProxy).toHaveBeenCalledExactlyOnceWith({
@@ -217,7 +249,7 @@ describe('createProxiesSection', () => {
 
     const address = field(section.element, 'Address');
     if (!address) throw new Error('missing address field');
-    type(address, 'not a url');
+    typeAndCommit(address, 'not a url');
     await settle();
 
     expect(address.hasAttribute('invalid')).toBe(true);

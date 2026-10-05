@@ -160,10 +160,13 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
     await expect(colorField).toHaveValue('#9256d9');
     await expect(colorPreview).toHaveCSS('background-color', 'rgb(146, 86, 217)');
 
-    await item.locator('sp-textfield[aria-label="Label"] input').fill('Purple Server');
-    await item
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://purple-server.example');
+    const purpleLabel = item.locator('sp-textfield[aria-label="Label"] input');
+    await purpleLabel.fill('Purple Server');
+    const purpleAddress = item.locator('sp-textfield[aria-label="Address"] input');
+    await purpleAddress.fill('https://purple-server.example');
+    // Committing the address creates the draft with the label and the picked
+    // purple colour.
+    await purpleAddress.press('Enter');
 
     // The draft is created once its address is valid; the colour survives the
     // snapshot round trip (the re-rendered field shows the stored swatch hex).
@@ -190,9 +193,10 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
       'rgb(18, 58, 188)',
     );
     await customItem.locator('sp-textfield[aria-label="Label"] input').fill('Custom Colour Server');
-    await customItem
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://custom-color-server.example');
+    const customAddress = customItem.locator('sp-textfield[aria-label="Address"] input');
+    await customAddress.fill('https://custom-color-server.example');
+    // Enter commits the custom hex, the label and the address together.
+    await customAddress.press('Enter');
 
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('"hex": "#123abc"');
     await expect(items.nth(1).locator('.color-picker input').first()).toHaveValue('#123abc', {

@@ -12,7 +12,7 @@ import {
 } from '../../../shared';
 import { colorKey, createColorPicker } from './colorPicker';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
-import { createAutoSave } from './autoSave';
+import { createCommitSaver } from './commitSaver';
 import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
 import { resolveHostLabelInput, validateHostColorInput, validateOriginInput } from './viewModel';
 
@@ -92,20 +92,24 @@ interface ColorValidation {
 }
 
 /**
- * One host row - a draft (no `serverId`) or an existing server. Its three
- * fields are always editable in place and auto-save (~1s after the last edit)
- * with no Save button.
+ * One host row - a draft (no `serverId`) or an existing server. Its fields are
+ * always editable in place and save with no Save button, but a typed value is
+ * committed only when the field is left (`change`: blur or Enter) - never on a
+ * pause in typing.
  *
- * The address is the exception, exactly as the plan requires: changing a
- * server's origin needs a *separate* warning and confirmation
- * (requirements-decisions.md section 7), so an address edit never applies by
- * the debounce alone. The confirmation is staged in the panel's banner and a
- * single OK click persists it; the staged prompt is reconciled against the
- * field's *value*, so typing a different address (or reverting) re-raises or
- * cancels it on the next debounce, while the blur "change" that clicking OK
- * itself causes re-commits the same value and must not wipe the confirmation.
+ * That commit-on-blur rule is what keeps a half-typed address from becoming a
+ * real host: the draft is created only once the user deliberately leaves the
+ * address, so further typing cannot be mistaken for an origin change. The
+ * address is otherwise the plan's exception: changing an existing server's
+ * origin still needs a *separate* warning and confirmation
+ * (requirements-decisions.md section 7), raised on that same commit. The
+ * confirmation is staged in the panel's banner and a single OK click persists
+ * it; the staged prompt is reconciled against the field's *value*, so leaving
+ * a different address (or reverting) re-raises or cancels it, while the blur
+ * "change" that clicking OK itself causes re-commits the same value and must
+ * not wipe the confirmation.
  *
- * A draft has no server to target yet: its first *valid* save calls
+ * A draft has no server to target yet: its first *valid* commit calls
  * `settings:add-server`, and the host is created at the end of the list (the
  * multifield only reorders already-persisted hosts).
  */
@@ -147,7 +151,8 @@ function buildHostItem(
   const colorPicker = createColorPicker({
     fieldId: colorFieldId,
     initial: server?.color ?? DEFAULT_COLOR,
-    onInput: armItemSave,
+    onInput: onFieldInput,
+    onCommit: onFieldCommit,
   });
 
   const proxyPicker = createProxyPicker({
@@ -194,7 +199,7 @@ function buildHostItem(
     ],
   });
 
-  const autoSave = createAutoSave();
+  const commitSaver = createCommitSaver();
 
   let serverId: ServerId | undefined = server?.id;
   let savedOrigin = server?.origin ?? '';
@@ -405,14 +410,19 @@ function buildHostItem(
     return outcome;
   }
 
-  function armItemSave(): void {
+  /**
+   * Voids a staged confirmation that a *different* value has superseded. Run
+   * on every field event, because an edit - not the occurrence of an event -
+   * is what cancels a pending action.
+   */
+  function reconcilePendingActions(): void {
     // A staged confirmation is cancelled by a *different* value, not by the
     // act of an event: clicking the banner's own OK button blurs the address
     // field and the resulting native `change` reaches here with the identical
     // value. Disarming on that event would wipe the single-click confirmation
     // as soon as it had armed it, making the confirm flow impossible to
     // complete. So an origin prompt survives a re-commit of the same origin
-    // (the debounced run re-affirms it), and only a genuine change disarms.
+    // (the commit re-affirms it), and only a genuine change disarms.
     const addressResult = validateOriginInput(addressField.value);
     const currentOrigin = addressResult.ok ? addressResult.origin : undefined;
     if (pendingOrigin !== undefined && currentOrigin !== pendingOrigin) {
@@ -443,13 +453,18 @@ function buildHostItem(
         ctx.status.clear();
       }
     }
+  }
 
-    // Immediate inline feedback, before the debounced save.
-    refreshAddress();
+  /** Immediate inline feedback for every field, before any save. */
+  function validateFieldsNow(): void {
+    const addressResult = refreshAddress();
     refreshLabel(addressResult.ok ? addressResult.origin : '');
     refreshColor();
+  }
 
-    autoSave.arm(() => {
+  /** Arms the serialized commit (see `createCommitSaver`). */
+  function armCommit(): void {
+    commitSaver.arm(() => {
       const outcome = runSave();
       if (outcome === undefined) return;
       ctx.reportSave(outcome);
@@ -459,9 +474,25 @@ function buildHostItem(
     });
   }
 
+  // `input` gives immediate inline feedback but never saves: a typed value is
+  // committed only when the field is left (`change`: blur or Enter). This is
+  // what stops a typing pause from creating a host out of a half-typed address
+  // - and from turning further typing into an origin change that demands
+  // confirmation.
+  function onFieldInput(): void {
+    reconcilePendingActions();
+    validateFieldsNow();
+  }
+
+  function onFieldCommit(): void {
+    reconcilePendingActions();
+    validateFieldsNow();
+    armCommit();
+  }
+
   for (const field of [addressField, labelField]) {
-    field.addEventListener('input', armItemSave);
-    field.addEventListener('change', armItemSave);
+    field.addEventListener('input', onFieldInput);
+    field.addEventListener('change', onFieldCommit);
   }
 
   function reportMutation(
@@ -489,9 +520,9 @@ function buildHostItem(
     const id = serverId;
     busy = true;
     // The confirmation clicks themselves blurred the fields and re-armed a
-    // debounced save; drop it - `origin` is already being persisted here, and
-    // letting that run fire would re-raise the change warning we just acted on.
-    autoSave.cancel();
+    // commit; drop it - `origin` is already being persisted here, and letting
+    // that run fire would re-raise the change warning we just acted on.
+    commitSaver.cancel();
     reportMutation(
       window.daisy.settings
         .updateServerTargeting({
@@ -523,7 +554,7 @@ function buildHostItem(
       return;
     }
     busy = true;
-    autoSave.cancel();
+    commitSaver.cancel();
     reportMutation(
       window.daisy.settings.removeServer({ serverId: id }).then(
         (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
@@ -569,13 +600,18 @@ function buildHostItem(
       // A draft is unsaved work by definition - it must not be clobbered by a
       // snapshot re-read triggered from anywhere else in the panel.
       if (serverId === undefined) return true;
-      return autoSave.hasPending() || pendingOrigin !== undefined || removeArmed;
+      return commitSaver.hasPending() || pendingOrigin !== undefined || removeArmed;
     },
     flushNow(): Promise<void> {
-      return autoSave.flushNow();
+      // Closing the panel is a commit point too: a field can hold input that
+      // never blurred (the panel was dismissed with Escape). Force the same
+      // commit a blur would, so nothing typed is silently dropped.
+      reconcilePendingActions();
+      armCommit();
+      return commitSaver.flushNow();
     },
     dispose(): void {
-      autoSave.dispose();
+      commitSaver.dispose();
     },
   };
 }
@@ -583,7 +619,7 @@ function buildHostItem(
 export interface HostsSectionOptions {
   /** The panel's single status slot. */
   status: StatusBannerSink;
-  /** Registers debounced/confirming saves with the panel's save reporter. */
+  /** Registers commit/confirming saves with the panel's save reporter. */
   reportSave(outcome: Promise<SaveOutcome>): void;
   /** Fired after any successful mutation so the panel re-reads the snapshot. */
   onSettingsChanged(): void;
@@ -607,7 +643,7 @@ export interface HostsSection {
  *
  * Reordering is persisted too: moving a row up/down sends the complete new
  * order of the *persisted* hosts to `settings:reorder-servers` (a draft has no
- * id yet, and the first valid save creates it at the end of the list).
+ * id yet, and the first valid commit creates it at the end of the list).
  *
  * The item's fifth field, "Proxy", is a combobox with three kinds of choice:
  * "(Default)" (stored by omitting `proxyId`, so the host inherits
@@ -738,16 +774,17 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
       // A confirmation is anchored to a row (its action closure reads that
       // row's `removeArmed`/`pendingOrigin`). Rebuilding the rows while it is
       // on screen would replace that closure and orphan the prompt - so a
-      // later auto-save could raise the *origin* prompt and clobber the
+      // later commit could raise the *origin* prompt and clobber the
       // *removal* confirmation the user is clicking. Wait for the prompt to
       // clear; the next snapshot update rebuilds then.
       if (options.status.isPromptShowing?.() === true) return;
       // A rebuild detaches the focused field and drops the caret. The reload
-      // that follows this very auto-save would therefore interrupt the user
-      // mid-typing, making the "Settings saved" row look like it stole focus.
-      // The live rows already show the user's committed edit (and the Proxy
-      // options were refreshed above), so nothing is lost by waiting for focus
-      // to leave the section before rebuilding from the snapshot.
+      // that follows this row's own commit could therefore interrupt the user
+      // mid-typing in a *different* field of the row, making the "Settings
+      // saved" row look like it stole focus. The live rows already show the
+      // user's committed edit (and the Proxy options were refreshed above), so
+      // nothing is lost by waiting for focus to leave the section before
+      // rebuilding from the snapshot.
       if (containsFocus(element)) return;
       replaceItems(servers);
     },

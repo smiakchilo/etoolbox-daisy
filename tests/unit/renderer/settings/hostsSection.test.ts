@@ -89,6 +89,16 @@ function type(node: HTMLElement & { value: string }, value: string): void {
   node.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 }
 
+/** Leaves the field (`change`: blur or Enter), which is when a value commits. */
+function commit(node: HTMLElement): void {
+  node.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+}
+
+function typeAndCommit(node: HTMLElement & { value: string }, value: string): void {
+  type(node, value);
+  commit(node);
+}
+
 async function settle(ms = 1000): Promise<void> {
   await vi.advanceTimersByTimeAsync(ms);
   await vi.advanceTimersByTimeAsync(0);
@@ -187,7 +197,7 @@ describe('createHostsSection', () => {
 
     const address = field(section.element, 'Address');
     if (!address) throw new Error('missing address field');
-    type(address, 'https://draft.example');
+    typeAndCommit(address, 'https://draft.example');
     await settle();
 
     expect(addServer).toHaveBeenCalledExactlyOnceWith({
@@ -199,13 +209,45 @@ describe('createHostsSection', () => {
     expect(reportSave).toHaveBeenCalledTimes(1);
   });
 
+  it('does not save while typing, and only commits when the field is left', async () => {
+    const section = buildSection();
+    section.update([]);
+    section.element
+      .querySelector('.multifield__add')
+      ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+    const address = field(section.element, 'Address');
+    if (!address) throw new Error('missing address field');
+    // A typing pause (no `change`) must not create the host: this is the
+    // reported defect - a pause used to fire the save and turn further typing
+    // into an origin change.
+    type(address, 'https://loc');
+    await settle();
+    expect(addServer).not.toHaveBeenCalled();
+    expect(reportSave).not.toHaveBeenCalled();
+
+    // Continuing to type still saves nothing...
+    type(address, 'https://localhost');
+    await settle();
+    expect(addServer).not.toHaveBeenCalled();
+
+    // ...and only leaving the field commits the full value.
+    commit(address);
+    await settle();
+    expect(addServer).toHaveBeenCalledExactlyOnceWith({
+      label: 'https://localhost',
+      origin: 'https://localhost',
+      color: { kind: 'swatch', swatch: 'blue' },
+    });
+  });
+
   it('saves a label change on an existing host via updateServerPresentation', async () => {
     const section = buildSection();
     section.update([snapshot('a', 'https://a.example', 'A')]);
 
     const label = field(section.element, 'Label');
     if (!label) throw new Error('missing label field');
-    type(label, 'Renamed');
+    typeAndCommit(label, 'Renamed');
     await settle();
 
     expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
@@ -221,7 +263,7 @@ describe('createHostsSection', () => {
 
     const color = field(section.element, 'Color tag');
     if (!color) throw new Error('missing colour field');
-    type(color, '#9256d9');
+    typeAndCommit(color, '#9256d9');
     await settle();
 
     expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
@@ -239,7 +281,7 @@ describe('createHostsSection', () => {
 
     const address = field(section.element, 'Address');
     if (!address) throw new Error('missing address field');
-    type(address, 'not a url');
+    typeAndCommit(address, 'not a url');
     await settle();
 
     expect(address.hasAttribute('invalid')).toBe(true);
@@ -256,7 +298,14 @@ describe('createHostsSection', () => {
 
     const address = field(section.element, 'Address');
     if (!address) throw new Error('missing address field');
+    // Typing a new address does not raise the warning on a pause...
     type(address, 'https://moved.example');
+    await settle();
+    expect(showPrompt).not.toHaveBeenCalled();
+    expect(updateServerTargeting).not.toHaveBeenCalled();
+
+    // ...only leaving the field does.
+    commit(address);
     await settle();
 
     expect(updateServerTargeting).not.toHaveBeenCalled();
@@ -499,7 +548,7 @@ describe('createHostsSection', () => {
 
       const address = field(section.element, 'Address');
       if (!address) throw new Error('missing address field');
-      type(address, 'https://draft.example');
+      typeAndCommit(address, 'https://draft.example');
       await settle();
 
       expect(addServer).toHaveBeenCalledTimes(1);
@@ -522,7 +571,7 @@ describe('createHostsSection', () => {
 
       const address = field(section.element, 'Address');
       if (!address) throw new Error('missing address field');
-      type(address, 'https://draft.example');
+      typeAndCommit(address, 'https://draft.example');
       await settle();
 
       expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({

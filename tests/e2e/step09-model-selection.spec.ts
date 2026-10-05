@@ -147,7 +147,7 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       node.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    // The selection auto-saves ~1s after the last pick (no Save button); the
+    // The selection commits when the picker changes (no Save button); the
     // settings document on disk is the sync point, and a freshly-read file
     // on a restart is covered by Launch 2.
     await expect
@@ -187,7 +187,7 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
     await expect(reasoningPicker).toHaveAttribute('disabled', '');
     await expect(reasoningPicker.locator('sp-menu-item')).toHaveCount(1);
 
-    // The same auto-save path persists the plain model (and clears the
+    // The same commit path persists the plain model (and clears the
     // reasoning level); the on-disk document is the sync point.
     await expect.poll(() => readAgentNode().model, { timeout: 60_000 }).toBe('fake-model-plain');
   } finally {

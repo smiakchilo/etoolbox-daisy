@@ -77,7 +77,10 @@ test('a host uses a library proxy, and removing it clears the reference', async 
     await proxyItem
       .locator('sp-textfield[aria-label="Address"] input')
       .fill('https://proxy.example:8080');
-    await proxyItem.locator('sp-textfield[aria-label="Label"] input').fill('Corporate');
+    const proxyLabel = proxyItem.locator('sp-textfield[aria-label="Label"] input');
+    await proxyLabel.fill('Corporate');
+    // Leaving the address (label focus) commits it; Enter commits the label.
+    await proxyLabel.press('Enter');
     await expect.poll(() => proxyIdOnDisk(), { timeout: 60_000 }).toBeDefined();
 
     // --- Add a host and give it that proxy --------------------------------
@@ -85,7 +88,12 @@ test('a host uses a library proxy, and removing it clears the reference', async 
     const hosts = page.locator('section[aria-label="Hosts"]');
     await hosts.locator('.multifield__add').first().click();
     const hostItem = hosts.locator('.multifield__item').last();
-    await hostItem.locator('sp-textfield[aria-label="Address"] input').fill('https://host.example');
+    const hostAddress = hostItem.locator('sp-textfield[aria-label="Address"] input');
+    await hostAddress.fill('https://host.example');
+    // The host is created on leaving the address; Enter commits it while
+    // keeping focus, so the proxy selection below has a persisted host to
+    // attach to.
+    await hostAddress.press('Enter');
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBeUndefined();
 
     const picker = hostItem.locator('sp-picker[aria-label="Proxy"]');
@@ -174,7 +182,10 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
     await proxyItem
       .locator('sp-textfield[aria-label="Address"] input')
       .fill('https://proxy.example:8080');
-    await proxyItem.locator('sp-textfield[aria-label="Label"] input').fill('Corporate');
+    const proxyLabel = proxyItem.locator('sp-textfield[aria-label="Label"] input');
+    await proxyLabel.fill('Corporate');
+    // Leaving the address (label focus) commits it; Enter commits the label.
+    await proxyLabel.press('Enter');
     await expect.poll(() => proxyIdOnDisk(), { timeout: 60_000 }).toBeDefined();
     const corporateId = proxyIdOnDisk();
     if (corporateId === undefined) throw new Error('proxy id missing on disk');
@@ -195,7 +206,12 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
     const hosts = page.locator('section[aria-label="Hosts"]');
     await hosts.locator('.multifield__add').first().click();
     const hostItem = hosts.locator('.multifield__item').last();
-    await hostItem.locator('sp-textfield[aria-label="Address"] input').fill('https://host.example');
+    const hostAddress = hostItem.locator('sp-textfield[aria-label="Address"] input');
+    await hostAddress.fill('https://host.example');
+    // The host is created on leaving the address; Enter commits it while
+    // keeping focus, so the proxy selection below has a persisted host to
+    // attach to.
+    await hostAddress.press('Enter');
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBeUndefined();
 
     await hostItem.locator('sp-picker[aria-label="Proxy"]').evaluate((node) => {

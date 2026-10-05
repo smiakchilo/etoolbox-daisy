@@ -130,6 +130,9 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     await addressField.fill('https://proxy.example:8080');
     const usernameField = proxies.locator('[aria-label="User name"] input');
     await usernameField.fill('canary-user');
+    // Leaving the address (username focus) commits it; Enter commits the
+    // username, so both are on disk before the password below attaches to it.
+    await usernameField.press('Enter');
     await expect
       .poll(
         () => {

@@ -46,7 +46,18 @@ export interface CreateColorPickerOptions {
   /** Id for the hex field, so an external `<sp-field-label for="...">` can label it. */
   readonly fieldId: string;
   readonly initial: ServerColor;
+  /**
+   * Fired on every `input` in the hex field, for immediate inline feedback
+   * (the caller validates and may show `setError`). It must NOT persist: a
+   * typed value is only committed when the field is left.
+   */
   readonly onInput?: () => void;
+  /**
+   * Fired when the value is deliberately committed: leaving the field
+   * (`change`, i.e. blur or Enter) or picking a swatch from the menu. This is
+   * the caller's save trigger.
+   */
+  readonly onCommit?: () => void;
 }
 
 /**
@@ -122,7 +133,8 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
     if (!isSwatch(swatch)) return;
     colorField.value = resolveServerColorCss({ kind: 'swatch', swatch });
     updatePreview();
-    options.onInput?.();
+    // A menu pick is a deliberate commit, unlike typing into the field.
+    options.onCommit?.();
   });
 
   /**
@@ -158,10 +170,8 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
   colorField.addEventListener('input', updatePreview);
   colorField.addEventListener('change', updatePreview);
 
-  if (options.onInput) {
-    colorField.addEventListener('input', options.onInput);
-    colorField.addEventListener('change', options.onInput);
-  }
+  if (options.onInput) colorField.addEventListener('input', options.onInput);
+  if (options.onCommit) colorField.addEventListener('change', options.onCommit);
 
   function setValue(color: ServerColor): void {
     colorField.value =

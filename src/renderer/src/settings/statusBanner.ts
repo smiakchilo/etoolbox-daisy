@@ -38,8 +38,8 @@
  * behaviour as the browser pane's row, which shrinks the native view's
  * reserved rectangle.
  *
- * `createSaveReporter` turns the concurrent auto-saves (each debounced IPC
- * call, wrapped by `reportSave`) into one "Saving\u2026" -> "Settings saved"
+ * `createSaveReporter` turns the concurrent auto-saves (each IPC call,
+ * wrapped by `reportSave`) into one "Saving\u2026" -> "Settings saved"
  * / first-error sequence, so a label save and a proxy save happening in the
  * same instant don't fight over the single slot.
  */
@@ -150,8 +150,8 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   let slot: BannerSlot | null = null;
   // What is painted into the row right now, and a signature of that content.
   // `present` short-circuits when it is asked for the *same* thing, so a
-  // repeated presentation (e.g. the address-confirm prompt re-affirmed by the
-  // debounced auto-save, or "Saving\u2026" re-asserted) does not tear the row
+  // repeated presentation (e.g. the address-confirm prompt re-affirmed by a
+  // commit, or "Saving\u2026" re-asserted) does not tear the row
   // down and rebuild it - which would detach an action button the user (or a
   // test) is clicking. `slot` deliberately still clears immediately on
   // `clear()`; this is only about avoiding a needless rebuild.
@@ -380,7 +380,7 @@ export interface SaveReporterHandlers {
 }
 
 /**
- * Collapses the many concurrent debounced saves (one per section/row) into
+ * Collapses the many concurrent saves (one per section/row) into
  * one "Saving\u2026" while any is in flight and exactly one outcome once they
  * all settle - the first failure wins, so a batch that half-succeeded is
  * announced honestly instead of as a blanket success.

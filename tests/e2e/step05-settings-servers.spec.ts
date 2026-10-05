@@ -15,11 +15,12 @@ import path from 'node:path';
  * single-window path works.
  *
  * The Hosts tab is now a multifield (reusable `lib/multifield.ts`): "Add item"
- * inserts an empty draft, its first valid address creates the host, and the
- * label/colour auto-save (debounced ~1s, no Save button). An address change
- * and a removal still need the confirmation flows in the panel's one banner
- * (`.settings-banner`). Persistence is asserted by polling `settings.json` on
- * disk, never by trusting the renderer's own re-fetch.
+ * inserts an empty draft, its first valid address (committed when the field is
+ * left) creates the host, and the label/colour commit on the same leave with
+ * no Save button. An address change and a removal still need the confirmation
+ * flows in the panel's one banner (`.settings-banner`). Persistence is asserted
+ * by polling `settings.json` on disk, never by trusting the renderer's own
+ * re-fetch.
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -85,7 +86,11 @@ test('servers added in the Settings panel persist, and removal persists too', as
     expect(valueColor).not.toBe(placeholderColor);
 
     await draftAddress.fill('https://canary-author.example');
-    await draft.locator('sp-textfield[aria-label="Label"] input').fill('Canary Author');
+    const draftLabel = draft.locator('sp-textfield[aria-label="Label"] input');
+    await draftLabel.fill('Canary Author');
+    // A value commits when its field is left, never on a typing pause: taking
+    // focus for the label commits the address, and Enter commits the label.
+    await draftLabel.press('Enter');
 
     // The draft's first valid address creates the host. The disk read is the
     // real proof (a draft already counts as one row before it is saved), and it
@@ -138,21 +143,24 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await expect(items).toHaveCount(1, { timeout: 60_000 });
 
     // A host row has its three icon actions (up/down/remove) and no Save
-    // button: the fields auto-save ~1s after the last edit.
+    // button: the fields commit when they are left.
     await expect(items.first().locator('.multifield__action')).toHaveCount(3);
 
-    // Renaming auto-saves on its own: the row re-renders from the fresh
-    // snapshot and the rename reaches disk without any button click.
+    // Renaming commits when the field is left; Enter is that commit without
+    // moving focus. The row then re-renders from the fresh snapshot and the
+    // rename reaches disk without any button click.
     const labelField = items.first().locator('sp-textfield[aria-label="Label"] input');
     await labelField.fill('Canary Renamed');
+    await labelField.press('Enter');
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('Canary Renamed');
     await expect(labelField).toHaveValue('Canary Renamed', { timeout: 60_000 });
 
-    // An address change is never applied by the auto-save: the debounce only
+    // An address change is never applied by the commit: leaving the field only
     // raises a one-button confirmation in the banner, and a single OK click
     // persists it.
     const addressField = items.first().locator('sp-textfield[aria-label="Address"] input');
     await addressField.fill('https://canary-moved.example');
+    await addressField.press('Enter');
     await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
     await expect(addressField).toHaveValue('https://canary-moved.example');
 
@@ -231,20 +239,33 @@ test('the Settings banner keeps one height with and without an action button', a
     await item.locator('sp-textfield[aria-label="Label"] input').fill('Height Check');
     await expect(page.locator('.multifield__item')).toHaveCount(1, { timeout: 60_000 });
 
-    // A plain text row: the label auto-save settles on "Settings saved",
+    // A plain text row: committing the label settles on "Settings saved",
     // which carries no close control and no action button.
-    await item.locator('sp-textfield[aria-label="Label"] input').fill('Height Check 2');
+    const heightLabel = item.locator('sp-textfield[aria-label="Label"] input');
+    await heightLabel.fill('Height Check 2');
+    await heightLabel.press('Enter');
     await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
     await expect(banner.locator('sp-action-button')).toHaveCount(0);
+    // The row reveals by animating its block-size; measure once it has settled.
+    await expect
+      .poll(async () =>
+        Math.round(await banner.evaluate((node) => node.getBoundingClientRect().height)),
+      )
+      .toBe(48);
     const textRowHeight = await banner.evaluate((node) => node.getBoundingClientRect().height);
 
-    // A with-button row: the address change raises the sticky confirmation
-    // with its single OK `sp-action-button`.
-    await item
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://height-moved.example');
+    // A with-button row: committing the address change raises the sticky
+    // confirmation with its single OK `sp-action-button`.
+    const heightAddress = item.locator('sp-textfield[aria-label="Address"] input');
+    await heightAddress.fill('https://height-moved.example');
+    await heightAddress.press('Enter');
     await expect(banner).toContainText('Confirm changing the address', { timeout: 60_000 });
     await expect(banner.locator('sp-action-button')).toHaveCount(1);
+    await expect
+      .poll(async () =>
+        Math.round(await banner.evaluate((node) => node.getBoundingClientRect().height)),
+      )
+      .toBe(48);
     const buttonRowHeight = await banner.evaluate((node) => node.getBoundingClientRect().height);
 
     // The whole point: the banner does not grow when an action appears. Both
@@ -258,15 +279,15 @@ test('the Settings banner keeps one height with and without an action button', a
 });
 
 /**
- * The "Settings saved" feedback follows an auto-save, and that auto-save also
- * triggers a snapshot re-read. That re-read must not rebuild the rows while the
- * user is still typing in one: `replaceItems` detaches the focused field, so
- * the banner would look like it had stolen focus and the caret would be lost
- * mid-edit. Only the real app proves the fix, because it hinges on Spectrum's
- * textfield retargeting `document.activeElement` to its shadow host (jsdom's
- * un-upgraded field has no shadow root).
+ * A field commit (leaving the field) triggers a snapshot re-read. That re-read
+ * must not rebuild the rows while the user is still working in one:
+ * `replaceItems` detaches the focused field, so the caret would be lost
+ * mid-edit. Enter commits without moving focus, which is exactly the case the
+ * `containsFocus` guard defends. Only the real app proves the fix, because it
+ * hinges on Spectrum's textfield retargeting `document.activeElement` to its
+ * shadow host (jsdom's un-upgraded field has no shadow root).
  */
-test('an auto-save does not steal focus from the field being typed in', async () => {
+test('a commit does not steal focus from the field being typed in', async () => {
   test.setTimeout(180_000);
 
   mkdirSync(scratchBase, { recursive: true });
@@ -304,20 +325,23 @@ test('an auto-save does not steal focus from the field being typed in', async ()
     // proves the address save landed and the row is no longer a draft).
     await page.locator('.multifield__add').first().click();
     const item = page.locator('.multifield__item').last();
-    await item
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://focus-check.example');
+    const focusAddress = item.locator('sp-textfield[aria-label="Address"] input');
+    await focusAddress.fill('https://focus-check.example');
+    // Enter commits while the field keeps focus: the commit's own reload must
+    // not rebuild the row out from under the caret.
+    await focusAddress.press('Enter');
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('https://focus-check.example');
 
     // Let the host-creation feedback auto-clear, so the next "Settings saved"
-    // unambiguously belongs to the label save below.
+    // unambiguously belongs to the label commit below.
     const banner = page.locator('.settings-banner').first();
     await expect(banner).toHaveText('', { timeout: 60_000 });
 
-    // Type into the label; the debounced save settles on "Settings saved" and
-    // fires the snapshot re-read that used to tear the row down.
+    // Commit the label without leaving it: the reload that follows the commit
+    // used to tear the row down.
     const labelHost = item.locator('sp-textfield[aria-label="Label"]');
     await labelHost.locator('input').fill('Focus Check');
+    await labelHost.locator('input').press('Enter');
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('Focus Check');
     await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
     // The banner is announced before the reload continuation runs, so give the
@@ -392,7 +416,10 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
       await page.locator('.multifield__add').first().click();
       const item = page.locator('.multifield__item').last();
       await item.locator('sp-textfield[aria-label="Address"] input').fill(origin);
-      await item.locator('sp-textfield[aria-label="Label"] input').fill(label);
+      const labelInput = item.locator('sp-textfield[aria-label="Label"] input');
+      await labelInput.fill(label);
+      // Leaving the address (label focus) commits it; Enter commits the label.
+      await labelInput.press('Enter');
       await expect.poll(readOrigins, { timeout: 60_000 }).toContain(origin);
     };
     await add('Order A', 'https://order-a.example');

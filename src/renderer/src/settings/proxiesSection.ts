@@ -2,7 +2,7 @@ import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
 import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProxyId, type ProxySnapshot } from '../../../shared';
-import { createAutoSave } from './autoSave';
+import { createCommitSaver } from './commitSaver';
 import { createPasswordControl } from './passwordEntry';
 import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
 import { resolveHostLabelInput, validateOriginInput } from './viewModel';
@@ -51,16 +51,17 @@ function labelledField(fieldId: string, label: string, control: HTMLElement): HT
 
 /**
  * One proxy row - a draft (no `proxyId`) or an existing library entry. Its
- * label/address/username auto-save (~1s after the last edit) with no Save
- * button, exactly like a host; the password is the deliberate exception,
- * kept behind explicit Set/Clear buttons (see `passwordEntry.ts`).
+ * label/address/username are editable in place and save with no Save button,
+ * but a typed value is committed only when the field is left (`change`: blur
+ * or Enter) - never on a pause in typing; the password stays the deliberate
+ * exception, behind explicit Set/Clear buttons (see `passwordEntry.ts`).
  *
  * Unlike a host's address, changing a proxy's address needs no confirmation:
  * no live connection is bound to a library entry yet (which entry the Copilot
- * runtime uses is a selection concern deferred to a later step), so the
- * debounced save applies immediately.
+ * runtime uses is a selection concern deferred to a later step), so the commit
+ * applies immediately.
  *
- * A draft has no entry to target yet: its first *valid* save calls
+ * A draft has no entry to target yet: its first *valid* commit calls
  * `settings:add-proxy`, and the entry is created at the end of the list (the
  * multifield only reorders already-persisted entries).
  */
@@ -128,7 +129,7 @@ function buildProxyItem(
     ],
   });
 
-  const autoSave = createAutoSave();
+  const commitSaver = createCommitSaver();
 
   let savedLabel = proxy?.label ?? '';
   let savedUrl = proxy?.url ?? '';
@@ -222,22 +223,25 @@ function buildProxyItem(
     return outcome;
   }
 
-  function armItemSave(): void {
+  /** Voids the removal warning on any *edit* (a spurious `change` does not). */
+  function reconcilePendingActions(): void {
     if (removeArmed) {
-      // A removal warning has no value to reconcile against - any edit voids
-      // it. (The Remove click itself does not reach here: the field blur it
-      // causes fires this listener *before* the button's own handler arms.)
       removeArmed = false;
       ctx.status.clear();
     }
+  }
 
-    // Immediate inline feedback, before the debounced save.
+  /** Immediate inline feedback for every field, before any save. */
+  function validateFieldsNow(): void {
     const address = validateOriginInput(addressField.value);
     setInvalid(addressField, addressHelp, address.ok ? undefined : address.error);
     const label = resolveHostLabelInput(labelField.value, address.ok ? address.origin : '');
     setInvalid(labelField, labelHelp, label.ok ? undefined : label.error);
+  }
 
-    autoSave.arm(() => {
+  /** Arms the serialized commit (see `createCommitSaver`). */
+  function armCommit(): void {
+    commitSaver.arm(() => {
       const outcome = runSave();
       if (outcome === undefined) return;
       ctx.reportSave(outcome);
@@ -247,9 +251,24 @@ function buildProxyItem(
     });
   }
 
+  // `input` gives immediate inline feedback but never saves: a typed value is
+  // committed only when the field is left (`change`: blur or Enter). This is
+  // what stops a typing pause from creating a proxy out of a half-typed
+  // address.
+  function onFieldInput(): void {
+    reconcilePendingActions();
+    validateFieldsNow();
+  }
+
+  function onFieldCommit(): void {
+    reconcilePendingActions();
+    validateFieldsNow();
+    armCommit();
+  }
+
   for (const field of [addressField, labelField, usernameField]) {
-    field.addEventListener('input', armItemSave);
-    field.addEventListener('change', armItemSave);
+    field.addEventListener('input', onFieldInput);
+    field.addEventListener('change', onFieldCommit);
   }
 
   function persistRemoval(): void {
@@ -260,7 +279,7 @@ function buildProxyItem(
       return;
     }
     busy = true;
-    autoSave.cancel();
+    commitSaver.cancel();
     const outcome: Promise<SaveOutcome> = window.daisy.settings.removeProxy({ proxyId: id }).then(
       (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
       (error: unknown) => ({
@@ -303,13 +322,18 @@ function buildProxyItem(
       // A draft is unsaved work by definition - it must not be clobbered by a
       // snapshot re-read triggered from anywhere else in the panel.
       if (proxyId === undefined) return true;
-      return autoSave.hasPending() || removeArmed;
+      return commitSaver.hasPending() || removeArmed;
     },
     flushNow(): Promise<void> {
-      return autoSave.flushNow();
+      // Closing the panel is a commit point too: a field can hold input that
+      // never blurred (the panel was dismissed with Escape). Force the same
+      // commit a blur would, so nothing typed is silently dropped.
+      reconcilePendingActions();
+      armCommit();
+      return commitSaver.flushNow();
     },
     dispose(): void {
-      autoSave.dispose();
+      commitSaver.dispose();
     },
   };
 }
@@ -317,7 +341,7 @@ function buildProxyItem(
 export interface ProxiesSectionOptions {
   /** The panel's single status slot. */
   status: StatusBannerSink;
-  /** Registers debounced/confirming saves with the panel's save reporter. */
+  /** Registers commit/confirming saves with the panel's save reporter. */
   reportSave(outcome: Promise<SaveOutcome>): void;
   /** Fired after any successful mutation so the panel re-reads the snapshot. */
   onSettingsChanged(): void;
@@ -340,7 +364,7 @@ export interface ProxiesSection {
  *
  * Reordering is persisted: moving a row up/down sends the complete new order
  * of the *persisted* entries to `settings:reorder-proxies` (a draft has no id
- * yet, and the first valid save creates it at the end of the list).
+ * yet, and the first valid commit creates it at the end of the list).
  */
 export function createProxiesSection(options: ProxiesSectionOptions): ProxiesSection {
   let items = new Map<string, ProxyItemHandle>();
@@ -450,10 +474,11 @@ export function createProxiesSection(options: ProxiesSectionOptions): ProxiesSec
       lastPersistedOrder = proxies.map((proxy) => proxy.id);
       if (hasPendingEdits()) return;
       // A rebuild detaches the focused field and drops the caret. The reload
-      // that follows this very auto-save would therefore interrupt the user
-      // mid-typing, making the "Settings saved" row look like it stole focus.
-      // The live rows already show the user's committed edit, so nothing is
-      // lost by waiting for focus to leave the section before rebuilding.
+      // that follows this row's own commit could therefore interrupt the user
+      // mid-typing in a *different* field of the row, making the "Settings
+      // saved" row look like it stole focus. The live rows already show the
+      // user's committed edit, so nothing is lost by waiting for focus to
+      // leave the section before rebuilding.
       if (containsFocus(element)) return;
       replaceItems(proxies);
     },

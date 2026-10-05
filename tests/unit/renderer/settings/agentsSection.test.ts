@@ -38,6 +38,7 @@ const getAuthStatus = vi.fn();
 const getAuthPresence = vi.fn();
 const getModelSelection = vi.fn();
 const setAgentSettings = vi.fn();
+const setModelPreferences = vi.fn();
 const setPassword = vi.fn();
 const clearPassword = vi.fn();
 
@@ -62,6 +63,16 @@ async function flush(): Promise<void> {
   for (let tick = 0; tick < 4; tick += 1) await Promise.resolve();
 }
 
+/**
+ * Lets a commit saver's zero-delay serialization hop fire, then drains its
+ * promise chain. Deliberately one macrotask, not a 1 s debounce: a picker
+ * change must persist on `change`.
+ */
+async function settleCommit(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flush();
+}
+
 function buildSection(definitions?: readonly AgentDefinition[]) {
   return createAgentsSection({
     status,
@@ -76,6 +87,7 @@ beforeEach(() => {
   getAuthPresence.mockReset();
   getModelSelection.mockReset();
   setAgentSettings.mockReset();
+  setModelPreferences.mockReset();
   setPassword.mockReset();
   clearPassword.mockReset();
 
@@ -94,6 +106,7 @@ beforeEach(() => {
     },
   });
   setAgentSettings.mockResolvedValue({ ok: true });
+  setModelPreferences.mockResolvedValue({ ok: true });
   setPassword.mockResolvedValue({ ok: true });
   clearPassword.mockResolvedValue({ ok: true });
 
@@ -111,7 +124,13 @@ beforeEach(() => {
   Reflect.set(globalThis, 'window', dom.window);
   Reflect.set(dom.window, 'daisy', {
     agent: { getAuthStatus, getAuthPresence },
-    settings: { getModelSelection, setAgentSettings, setPassword, clearPassword },
+    settings: {
+      getModelSelection,
+      setModelPreferences,
+      setAgentSettings,
+      setPassword,
+      clearPassword,
+    },
   });
 });
 
@@ -381,5 +400,37 @@ describe('createAgentsSection', () => {
     );
     expect((modelPicker as HTMLElement & { value: string }).value).toBe('model-b');
     expect((reasoningPicker as HTMLElement & { value: string }).value).toBe(NO_PREFERENCE_VALUE);
+  });
+
+  it('persists a picker change on change, with no debounce', async () => {
+    getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: true, login: 'octocat' });
+    getModelSelection.mockResolvedValue({
+      ok: true,
+      state: {
+        models: [
+          { id: 'model-a', name: 'Model A', supportedReasoningEfforts: ['low', 'high'] },
+          { id: 'model-b', name: 'Model B', supportedReasoningEfforts: [] },
+        ],
+        selectedModel: 'model-a',
+        selectedReasoningEffort: 'high',
+        changesLocked: false,
+        catalogUnavailable: false,
+      },
+    });
+
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const modelPicker = section.element.querySelector(
+      'sp-picker[aria-label="Model"]',
+    ) as HTMLElement & { value: string };
+    modelPicker.value = 'model-b';
+    modelPicker.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+
+    // One macrotask settles the serialization hop; a 1 s debounce would leave
+    // this un-called here.
+    await settleCommit();
+
+    expect(setModelPreferences).toHaveBeenCalledWith({ model: 'model-b', reasoningEffort: null });
   });
 });
