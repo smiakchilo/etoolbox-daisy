@@ -153,8 +153,8 @@ test('a password typed into Settings is never written anywhere in plaintext', as
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    // It appears in the panel's one banner (`settings-banner`).
-    await expect(shell.locator('.settings-banner')).toHaveText('Password saved', {
+    // It appears in the pane-owned surface-status banner.
+    await expect(shell.locator('.surface-status-banner')).toHaveText('Password saved', {
       timeout: 60_000,
     });
 

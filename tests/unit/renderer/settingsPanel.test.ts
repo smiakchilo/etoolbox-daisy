@@ -94,6 +94,7 @@ afterEach(() => {
 function build() {
   const pane = createBrowserPane();
   const settings = createSettingsPanel({
+    status: pane.surfaceStatus,
     onSnapshotApplied: vi.fn(),
     onDismiss: () => pane.panelHost.close(),
   });
@@ -142,6 +143,7 @@ describe('createSettingsPanel dismissal', () => {
     const pane = createBrowserPane();
     const onDismiss = vi.fn();
     const settings = createSettingsPanel({
+      status: pane.surfaceStatus,
       onSnapshotApplied: vi.fn(),
       onDismiss,
     });
@@ -181,8 +183,12 @@ describe('createSettingsPanel dismissal', () => {
     expect(tabs?.getAttribute('selected')).toBe('agents');
   });
 
-  it('owns exactly one banner row, so a later message suppresses the former', () => {
-    const { settings } = build();
-    expect(settings.element.querySelectorAll('.banner-row').length).toBe(1);
+  it('shares the pane-owned surface-status row and owns no banner of its own', () => {
+    const { pane, settings } = build();
+    // The pane owns exactly one surface-status row (the panel is handed it),
+    // and the panel surface carries no banner - so a message is never hidden
+    // with the panel when it is dismissed.
+    expect(pane.element.querySelectorAll('.surface-status-banner').length).toBe(1);
+    expect(settings.element.querySelectorAll('.banner-row').length).toBe(0);
   });
 });

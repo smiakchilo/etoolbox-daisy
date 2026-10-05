@@ -1,17 +1,19 @@
 /*
  * Shared styling for the shell's status/prompt rows: the browser pane's
- * toolbar message (`shell/browserToolbar.ts`), the Settings panel's single
- * status slot (`settings/statusBanner.ts`) and the chat pane's single status
- * slot (also `settings/statusBanner.ts`, mounted by `shell/chatPane.ts`).
- * Imported by the renderer entry BEFORE `browser.css`/`settings.css`, so the
- * surface-specific rules there can override at equal specificity where they
- * genuinely differ.
+ * toolbar message (`shell/browserToolbar.ts`), the browser pane's
+ * pane-owned surface-status row for the panels it hosts - Settings today
+ * (`shell/browserPane.ts`, `settings/statusBanner.ts`) - and the chat pane's
+ * single status slot (also `settings/statusBanner.ts`, mounted by
+ * `shell/chatPane.ts`). Imported by the renderer entry BEFORE
+ * `browser.css`/`settings.css`, so the surface-specific rules there can
+ * override at equal specificity where they genuinely differ.
  *
  * Every row is an `sp-alert-banner` (neutral variant) carrying the shared
  * `.banner-row` class plus its own surface class
- * (`.browser-toolbar-message` / `.settings-banner` / `.chat-status-banner`) -
- * see `lib/alertBanner.ts`. One row per surface is the invariant: a later
- * message suppresses the former by taking that single row. Everything they can
+ * (`.browser-toolbar-message` / `.surface-status-banner` /
+ * `.chat-status-banner`) - see `lib/alertBanner.ts`. One row per surface is
+ * the invariant: a later message suppresses the former by taking that single
+ * row. Everything they can
  * honestly share lives here:
  * `.banner-row` never sets anything a surface needs to contradict. That
  * includes the four cross-surface rules - an action button is always size

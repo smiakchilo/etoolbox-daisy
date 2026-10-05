@@ -18,9 +18,9 @@ import path from 'node:path';
  * inserts an empty draft, its first valid address (committed when the field is
  * left) creates the host, and the label/colour commit on the same leave with
  * no Save button. An address change and a removal still need the confirmation
- * flows in the panel's one banner (`.settings-banner`). Persistence is asserted
- * by polling `settings.json` on disk, never by trusting the renderer's own
- * re-fetch.
+ * flows in the pane-owned surface-status banner (`.surface-status-banner`,
+ * which outlives the panel). Persistence is asserted by polling `settings.json`
+ * on disk, never by trusting the renderer's own re-fetch.
  */
 
 const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
@@ -127,7 +127,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
   // --- Launch 2: the server is still there, rename it, move it, remove it --
   const second = await openSettings();
   try {
-    const banner = second.page.locator('.settings-banner').first();
+    const banner = second.page.locator('.surface-status-banner').first();
     // Reads the settings document on disk; the poll retries until a save lands.
     // It must not throw while the file is briefly absent, since expect.poll
     // fails immediately on a thrown callback rather than retrying it.
@@ -165,7 +165,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await expect(addressField).toHaveValue('https://canary-moved.example');
 
     await second.page
-      .locator('.settings-banner sp-action-button', { hasText: 'OK' })
+      .locator('.surface-status-banner sp-action-button', { hasText: 'OK' })
       .first()
       .click();
     // The move reaches disk, and the row re-renders from the freshly-fetched
@@ -182,7 +182,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await expect(items).toHaveCount(1);
 
     await second.page
-      .locator('.settings-banner sp-action-button', { hasText: 'OK' })
+      .locator('.surface-status-banner sp-action-button', { hasText: 'OK' })
       .first()
       .click();
     await expect(items).toHaveCount(0, { timeout: 60_000 });
@@ -228,7 +228,7 @@ test('the Settings banner keeps one height with and without an action button', a
     await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
     await page.locator('sp-action-button[title="Settings"]').first().click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
-    const banner = page.locator('.settings-banner').first();
+    const banner = page.locator('.surface-status-banner').first();
 
     // One host to edit.
     await page.locator('.multifield__add').first().click();
@@ -334,7 +334,7 @@ test('a commit does not steal focus from the field being typed in', async () => 
 
     // Let the host-creation feedback auto-clear, so the next "Settings saved"
     // unambiguously belongs to the label commit below.
-    const banner = page.locator('.settings-banner').first();
+    const banner = page.locator('.surface-status-banner').first();
     await expect(banner).toHaveText('', { timeout: 60_000 });
 
     // Commit the label without leaving it: the reload that follows the commit

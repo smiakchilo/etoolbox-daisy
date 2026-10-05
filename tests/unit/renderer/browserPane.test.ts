@@ -133,9 +133,18 @@ describe('createBrowserPane page panel', () => {
     // panel opened through the chat toolbar, and an error row must not
     // double as a navigation aid (see browserToolbar.ts).
     expect(pane.element.querySelector('.browser-toolbar-message__settings')).toBeNull();
-    // One row per surface: a later message suppresses the former by taking
-    // this single row, so two banners can never stack.
-    expect(pane.element.querySelectorAll('.banner-row').length).toBe(1);
+    // One row per surface: the browser's navigation row and the pane-owned
+    // surface-status row (for the panels the pane hosts) are separate rows, so
+    // a message on one never stacks with a message on the other. The surface
+    // row sits directly under the slot it describes; the browser row stays
+    // last, so the existing geometry is unchanged when the surface row is
+    // idle (it collapses to zero height).
+    expect(pane.element.querySelectorAll('.banner-row').length).toBe(2);
+    const surface = pane.element.querySelector<HTMLElement>('.surface-status-banner');
+    expect(surface).not.toBeNull();
+    expect(pagePanel?.contains(surface)).toBe(true);
+    expect(pagePanel?.children[1]).toBe(surface);
+    expect(pagePanel?.lastElementChild).toBe(message);
   });
 
   it('hides only the native view while the hosts panel is open, keeping the message row', () => {
@@ -159,6 +168,33 @@ describe('createBrowserPane page panel', () => {
 
     close?.click();
     expect(viewHost?.hidden).toBe(false);
+  });
+
+  it('keeps the pane-owned surface-status row out of the panel, so it survives dismissal', () => {
+    vi.useFakeTimers();
+    try {
+      const pane = build();
+      const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+      const surface = pane.element.querySelector<HTMLElement>('.surface-status-banner');
+
+      pane.surfaceStatus.showStatus('Settings saved');
+      expect(surface?.hasAttribute('open')).toBe(true);
+
+      pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+      expect(viewHost?.hidden).toBe(true);
+      expect(surface?.hasAttribute('open')).toBe(true);
+
+      emitNavigationState();
+      pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
+      expect(viewHost?.hidden).toBe(false);
+      // The row is a child of the page panel, never of the dismissed panel, so
+      // its message is still on screen after the panel closes.
+      expect(pane.element.contains(surface)).toBe(true);
+      expect(surface?.hasAttribute('open')).toBe(true);
+      expect(surface?.textContent).toBe('Settings saved');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('swaps the hosts panel instantly via `hidden`', () => {

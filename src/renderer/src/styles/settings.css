@@ -18,25 +18,11 @@
   gap: 12px;
 }
 
-/* The panel's own status/prompt row - auto-save feedback, validation errors,
-   and the two-click address/removal confirmations - the Settings surface of
-   the shared banner-row base (banner.css, lib/alertBanner.ts): the row
-   carries `.banner-row` plus this `.settings-banner` surface class, so
-   Playwright's strict-mode locators targeting the *browser* banner
-   (`.browser-toolbar-message`) never match two elements while Settings is
-   open. Only the surface-specific wiring lives here.
-
-   It sits in normal flow as the panel's last flex child, directly below the
-   tab content - the same place the browser row occupies in the browser pane.
-   It is deliberately NOT absolutely positioned: the shared height
-   reveal/collapse (banner.css) then shrinks/grows the tab content above it
-   gradually, exactly like the browser pane's native-view region, instead of
-   floating over the content. `max-inline-size: none`, the pinned height,
-   `margin: 0` and the animation come from the shared base; the panel's
-   `overflow: hidden` clips the collapsing row. */
-
-/* The panel's prompt rows' copy span (with its inline action button) is the
-   shared `.banner-row__copy` rule in banner.css. */
+/* The Settings surface's status/prompt row is no longer a child of this
+   panel: it is the browser pane's pane-owned `surface-status-banner` row
+   (`shell/browserPane.ts`), which lives in the page panel below the view slot
+   so save feedback survives the panel being dismissed. Its shared base styles
+   live in banner.css; there is deliberately no `.settings-banner` rule here. */
 
 /* `sp-tabs` is a grid (`auto 1fr` rows) whose second row hosts the panels;
    allowing it to shrink within the flex column bounds that second row, so the

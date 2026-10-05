@@ -7,9 +7,9 @@ import { createHostsSection } from '../settings/hostsSection';
 import { createBrowserSection } from '../settings/browserSection';
 import {
   createSaveReporter,
-  createStatusBanner,
   reportSave,
   type SaveOutcome,
+  type StatusBannerSink,
 } from '../settings/statusBanner';
 import { createPanel, type Panel } from './panel';
 
@@ -29,9 +29,11 @@ import { createPanel, type Panel } from './panel';
  * it behaves like the hosts panel: one panel at a time, close button and
  * Escape dismiss it.
  *
- * Status is a single slot: the panel owns one banner (`statusBanner.ts`) the
- * sections share, and one save reporter that collapses the many concurrent
- * saves into a single "Saving..." -> "Settings saved"/first-error sequence.
+ * Status is a single slot the *pane* owns (`browserPane.surfaceStatus`,
+ * `statusBanner.ts`): the sections share it, and one save reporter collapses
+ * the many concurrent saves into a single "Saving..." -> "Settings
+ * saved"/first-error sequence. The panel is handed that sink rather than
+ * creating a banner, so the feedback outlives the panel's dismissal.
  * `reload` is guarded: a section with unpersisted edits is left untouched
  * (its in-progress input is not clobbered by a re-read), while the rest of
  * the snapshot - including the shell-facing callback - still refreshes.
@@ -52,6 +54,12 @@ export type SettingsTab = 'hosts' | 'agents' | 'proxies' | 'browser';
 
 export interface CreateSettingsPanelOptions {
   /**
+   * The pane-owned status slot (the browser pane's `surfaceStatus`). It lives
+   * in the pane, below the view slot, so save feedback survives the panel
+   * being dismissed; the panel must not own a banner of its own.
+   */
+  readonly status: StatusBannerSink;
+  /**
    * Fired after every successful settings reload with the freshly-read
    * snapshot, so the shell can re-apply it to the browser pane (address bar,
    * server options) without a second IPC round trip.
@@ -68,7 +76,7 @@ export interface CreateSettingsPanelOptions {
 }
 
 export function createSettingsPanel(options: CreateSettingsPanelOptions): SettingsPanel {
-  const banner = createStatusBanner();
+  const status = options.status;
 
   // One reporter for every section's saves. The handlers never disturb a
   // showing prompt: the banner's priority already stops a prompt being
@@ -76,14 +84,14 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   // interrupt an actionable prompt either.
   const saveReporter = createSaveReporter({
     onPendingStart(): void {
-      if (banner.isPromptShowing()) return;
-      banner.clear();
-      banner.showStatus('Saving\u2026');
+      if (status.isPromptShowing?.() === true) return;
+      status.clear();
+      status.showStatus('Saving\u2026');
     },
     onDrained(firstError: string | undefined): void {
-      if (banner.isPromptShowing()) return;
-      if (firstError !== undefined) banner.showError(firstError);
-      else banner.showStatus('Settings saved');
+      if (status.isPromptShowing?.() === true) return;
+      if (firstError !== undefined) status.showError(firstError);
+      else status.showStatus('Settings saved');
     },
   });
 
@@ -92,22 +100,22 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   }
 
   const agentsSection = createAgentsSection({
-    status: banner,
+    status,
     reportSave: reportWith,
     onSettingsChanged: () => void reload(),
   });
   const hostsSection = createHostsSection({
-    status: banner,
+    status,
     reportSave: reportWith,
     onSettingsChanged: () => void reload(),
   });
   const proxiesSection = createProxiesSection({
     onSettingsChanged: () => void reload(),
-    status: banner,
+    status,
     reportSave: reportWith,
   });
   const browserSection = createBrowserSection({
-    status: banner,
+    status,
     reportSave: reportWith,
     onSettingsChanged: () => void reload(),
   });
@@ -115,7 +123,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
     if (!result.ok) {
-      banner.showError(`Failed to load settings: ${result.error.message}`);
+      status.showError(`Failed to load settings: ${result.error.message}`);
       return;
     }
     // A section with unpersisted edits keeps what it has on screen rather
@@ -193,12 +201,6 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     },
   });
 
-  // Single status slot, appended to the panel surface and pinned to its
-  // bottom edge (settings.css keeps it out of the layout flow): like the
-  // browser pane's status row, a prompt or an error raised from any section
-  // is visible regardless of the active tab, and never reflows the tabs.
-  panel.element.append(banner.element);
-
   // No eager reload at construction: the panel is created at shell startup,
   // and its refresh chain reads live IPCs (including `agent:get-auth-status`,
   // whose first call starts the real Copilot runtime). Opening the panel
@@ -234,7 +236,6 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       proxiesSection.dispose();
       agentsSection.dispose();
       browserSection.dispose();
-      banner.dispose();
       panel.dispose();
     },
   };

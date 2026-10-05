@@ -151,7 +151,7 @@ test('a token typed into Settings is never written in plaintext, and activates t
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    await expect(shell.locator('.settings-banner')).toHaveText('Token saved', {
+    await expect(shell.locator('.surface-status-banner')).toHaveText('Token saved', {
       timeout: 60_000,
     });
 

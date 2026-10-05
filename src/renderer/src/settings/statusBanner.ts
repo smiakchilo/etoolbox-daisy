@@ -1,14 +1,16 @@
 /**
  * The Settings panel's one status slot, and the aggregation that feeds it.
  *
- * The panel shows exactly one message at a time - a second `sp-alert-banner`
- * appended to the panel surface and pinned to its bottom edge. The row shares
- * the `banner-row` base class, styles and height with the browser pane's
- * status row (`lib/alertBanner.ts`, `styles/banner.css`), plus its own
- * `settings-banner` surface class - the class split keeps Playwright
+ * The Settings surface shows exactly one message at a time. The row is owned
+ * by the browser pane (`browserPane.ts`), not by the Settings panel: it lives
+ * in the pane's page panel directly below the view slot, so save feedback
+ * survives the panel being dismissed (a panel-owned row was hidden with the
+ * panel, losing the "Settings saved" acknowledgement and any save error). It
+ * shares the `banner-row` base class, styles and height with the browser
+ * pane's navigation row (`lib/alertBanner.ts`, `styles/banner.css`), plus its
+ * own `surface-status-banner` surface class - the class split keeps Playwright
  * strict-mode locators targeting the *browser* banner
- * (`.browser-toolbar-message`) from matching two elements while Settings is
- * open. Every mutation
+ * (`.browser-toolbar-message`) from matching two elements. Every mutation
  * status the sections used to render as per-field paragraphs now arrives here
  * (see the step-09/10 handoff): auto-save feedback, validation errors,
  * two-click confirmations, and password set/clear results.
@@ -135,16 +137,16 @@ export interface StatusBannerOptions {
   readonly autoClearMs?: number;
   /**
    * The row's surface class (the second class after the shared `banner-row`).
-   * Defaults to `settings-banner`; the chat pane passes `chat-status-banner`
-   * so the two slots never collide in a Playwright strict-mode locator when
-   * Settings is open over the chat pane.
+   * Defaults to `surface-status-banner` (the browser pane's panel-status row);
+   * the chat pane passes `chat-status-banner` so the two slots never collide
+   * in a Playwright strict-mode locator.
    */
   readonly surfaceClassName?: string;
 }
 
 export function createStatusBanner(options: StatusBannerOptions = {}): StatusBanner {
   const autoClearMs = options.autoClearMs ?? STATUS_AUTO_CLEAR_MS;
-  const banner = createBannerRow(options.surfaceClassName ?? 'settings-banner');
+  const banner = createBannerRow(options.surfaceClassName ?? 'surface-status-banner');
   configureBannerTransition(banner, BANNER_TRANSITION_DURATION_MS);
 
   let slot: BannerSlot | null = null;

@@ -50,6 +50,8 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // `loadSettingsSnapshot` immediately, so opening the panel for the first
   // time never waits on a cold IPC.
   const settingsPanel: SettingsPanel = createSettingsPanel({
+    // The pane owns the status row so save feedback survives the panel closing.
+    status: browserPane.surfaceStatus,
     onSnapshotApplied(snapshot: AppSettingsSnapshot): void {
       applySnapshot(snapshot);
     },

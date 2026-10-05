@@ -60,13 +60,13 @@ function dismiss(banner: StatusBanner): void {
 }
 
 describe('createStatusBanner single slot', () => {
-  it('carries a caller-supplied surface class (the chat status row) and defaults to the Settings one', () => {
-    const settings = createStatusBanner();
-    expect(settings.element.classList.contains('settings-banner')).toBe(true);
+  it('carries a caller-supplied surface class and defaults to the pane surface row', () => {
+    const surface = createStatusBanner();
+    expect(surface.element.classList.contains('surface-status-banner')).toBe(true);
 
     const chat = createStatusBanner({ surfaceClassName: 'chat-status-banner' });
     expect(chat.element.classList.contains('chat-status-banner')).toBe(true);
-    expect(chat.element.classList.contains('settings-banner')).toBe(false);
+    expect(chat.element.classList.contains('surface-status-banner')).toBe(false);
     // The shared base class is what actually styles it; the surface class only
     // disambiguates the row (e.g. for a Playwright locator while both are open).
     expect(chat.element.classList.contains('banner-row')).toBe(true);

@@ -71,9 +71,9 @@ const READY_POLL_INTERVAL_MS = 15_000;
 
 /**
  * The chat pane's single banner row's surface class. Deliberately distinct from
- * the Settings slot's `settings-banner` and the browser pane's
- * `browser-toolbar-message`, so the rows never collide in a Playwright
- * strict-mode locator when Settings is open over the chat pane, and the shared
+ * the browser pane's `surface-status-banner` (the panel-status row) and its
+ * `browser-toolbar-message` navigation row, so the rows never collide in a
+ * Playwright strict-mode locator, and the shared
  * `banner.css` rules can tell them apart.
  *
  * The chat pane owns exactly one `sp-alert-banner`. Its standing

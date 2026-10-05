@@ -118,7 +118,10 @@ test('a host uses a library proxy, and removing it clears the reference', async 
       .first()
       .locator('.multifield__action--remove')
       .click();
-    await page.locator('.settings-banner sp-action-button', { hasText: 'OK' }).first().click();
+    await page
+      .locator('.surface-status-banner sp-action-button', { hasText: 'OK' })
+      .first()
+      .click();
     await expect.poll(() => readDoc().proxies ?? [], { timeout: 60_000 }).toEqual([]);
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBeUndefined();
 

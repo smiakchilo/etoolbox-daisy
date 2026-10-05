@@ -1,4 +1,5 @@
 import { el } from '../lib/dom';
+import { createStatusBanner, type StatusBannerSink } from '../settings/statusBanner';
 import { createBrowserToolbar } from './browserToolbar';
 import { createBrowserViewHost } from './browserViewHost';
 import type { Panel } from './panel';
@@ -25,6 +26,14 @@ export interface BrowserPane {
   readonly element: HTMLElement;
   /** The single-open host for whole-size panels over the page-view region. */
   readonly panelHost: BrowserPanelHost;
+  /**
+   * The pane-owned status slot for the whole-size panels it hosts (Settings
+   * today, History later). It lives in the page panel directly below the view
+   * slot - outside every panel - so a panel's save feedback survives the panel
+   * being dismissed. Handed to a panel through its options rather than created
+   * by it (a panel-owned row was hidden with the panel).
+   */
+  readonly surfaceStatus: StatusBannerSink;
   /**
    * Opens the pane's own hosts panel as the active panel (covering the whole
    * page-view region, exactly like a click on the toolbar's hosts button).
@@ -102,6 +111,12 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   // it stays unlocked.
   let pageLoaded = false;
 
+  // The pane-owned status slot for the panels it hosts (Settings today). It is
+  // created here, not by the panel, and lives in `pagePanel` below the view
+  // slot so its feedback outlives a dismissed panel. `createStatusBanner`
+  // defaults to the `surface-status-banner` surface class.
+  const surfaceStatus = createStatusBanner();
+
   const picker = createHostsPanel({
     onSelect(origin: string): void {
       closeActivePanel();
@@ -166,9 +181,15 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   // physically outside every panel's region: a panel can never cover the error
   // or loading copy. Opening a panel no longer hides the row - the row
   // describes the browser, not the page a panel replaced.
+  //
+  // The pane-owned surface-status row (Settings saves, and later other panels'
+  // feedback) is the first row under the slot, so it reads as the status of
+  // whatever occupies the slot; the browser's own navigation row stays last.
+  // Both collapse to zero height when idle, so the browser row sits flush under
+  // the page whenever the surface row is empty.
   const pagePanel = el('div', {
     attrs: { class: 'browser-page-panel', 'data-testid': 'browser-page-panel' },
-    children: [viewSlot, toolbar.messageElement],
+    children: [viewSlot, surfaceStatus.element, toolbar.messageElement],
   });
 
   function openPanel(panel: Panel): void {
@@ -209,6 +230,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       close: closeActivePanel,
       isActive: (panel) => activePanel === panel,
     },
+    surfaceStatus,
     openHostsPicker(): void {
       openPanel(picker);
     },
@@ -229,6 +251,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
     dispose(): void {
       unsubscribeState();
+      surfaceStatus.dispose();
       toolbar.dispose();
       picker.dispose();
       viewHost.dispose();

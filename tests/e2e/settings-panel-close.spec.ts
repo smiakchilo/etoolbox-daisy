@@ -176,3 +176,78 @@ test('closing Settings with its close button restores the AEM view and Settings 
     server.close();
   }
 });
+
+/**
+ * A Settings save's acknowledgement must outlive the panel. The status row is
+ * owned by the browser pane (`browserPane.surfaceStatus`), not by the panel,
+ * so committing a field and immediately closing the panel still leaves
+ * "Settings saved" on screen - and a save *error* would be visible rather than
+ * hidden with the panel. Only the real built app proves the row is a sibling
+ * of the panel rather than a child that vanishes with it.
+ */
+test('save feedback survives closing the Settings panel', async () => {
+  test.setTimeout(120_000);
+
+  const state = { hits: 0 };
+  const server: Server = createServer((_req, res) => {
+    state.hits += 1;
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><title>echo</title><p>ok</p>');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  const origin = `http://127.0.0.1:${String(address.port)}`;
+
+  const { home, env } = launchProfile();
+  const base = defaultAppSettings();
+  writeSettings(
+    home,
+    appSettingsSchema.parse({
+      ...base,
+      hosts: [
+        ...base.hosts,
+        {
+          id: randomUUID(),
+          label: 'Echo',
+          origin,
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+      ],
+    }),
+  );
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const pickerItem = page.locator(`.hosts-item[data-origin="${origin}"]`);
+    await pickerItem.waitFor({ state: 'visible', timeout: 10_000 });
+    await pickerItem.click();
+    await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
+
+    await page.locator('sp-action-button[title="Settings"]').first().click();
+    const settingsPanel = page.locator('.settings-panel');
+    await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
+
+    // Commit a label edit (leaving the field), then close the panel straight
+    // away - the save is still settling.
+    const label = page.locator(
+      'section[aria-label="Hosts"] sp-textfield[aria-label="Label"] input',
+    );
+    await label.fill('Echo renamed');
+    await label.press('Enter');
+    await page.locator('.settings-panel__close').click();
+    await expect(settingsPanel).toBeHidden();
+
+    // The acknowledgement is still on screen, in the pane's row - never inside
+    // the dismissed panel.
+    const banner = page.locator('.surface-status-banner');
+    await expect(banner).toHaveText('Settings saved', { timeout: 30_000 });
+    await expect(banner).toBeVisible();
+    expect(await banner.evaluate((el) => el.closest('.settings-panel') === null)).toBe(true);
+  } finally {
+    await app.close();
+    server.close();
+  }
+});
