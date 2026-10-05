@@ -114,10 +114,11 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       .evaluate((node) => node.shadowRoot !== null);
     expect(hasShadowRoot).toBe(true);
 
-    const modelPicker = section.locator('sp-picker[aria-label="Model"]');
-    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]');
-    await expect(modelPicker).toHaveCount(1);
-    await expect(reasoningPicker).toHaveCount(1);
+    const modelPicker = section.locator('sp-picker[aria-label="Model"]').first();
+    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]').first();
+    // One picker pair per provider (Copilot and OpenRouter).
+    await expect(section.locator('sp-picker[aria-label="Model"]')).toHaveCount(2);
+    await expect(section.locator('sp-picker[aria-label="Reasoning effort"]')).toHaveCount(2);
 
     // The catalogue arrived over the new IPC channel: "no preference" plus the
     // two fake models.
@@ -164,8 +165,8 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
   const second = await openSettings();
   try {
     const section = second.settings.locator('section[aria-label="Agents"]');
-    const modelPicker = section.locator('sp-picker[aria-label="Model"]');
-    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]');
+    const modelPicker = section.locator('sp-picker[aria-label="Model"]').first();
+    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]').first();
 
     await expect
       .poll(

@@ -8,6 +8,7 @@ export const APP_INFO_CHANNEL = 'app:get-app-info' as const;
 // Copilot sign-in/out surface, presented in the Settings panel's Agents tab
 // (src/renderer/src/settings/agentsSection.ts).
 export const AGENT_GET_AUTH_STATUS_CHANNEL = 'agent:get-auth-status' as const;
+export const AGENT_GET_AUTH_PRESENCE_CHANNEL = 'agent:get-auth-presence' as const;
 export const AGENT_LOGIN_CHANNEL = 'agent:login' as const;
 export const AGENT_CANCEL_LOGIN_CHANNEL = 'agent:cancel-login' as const;
 export const AGENT_LOGOUT_CHANNEL = 'agent:logout' as const;

@@ -6,6 +6,7 @@ import {
   type AgentRuntime,
   type AgentService,
   type AppSettings,
+  type AuthPresence,
   type AuthStatus,
   type LoginOutcome,
   type LogoutResult,
@@ -37,6 +38,12 @@ export interface AgentHub {
   /** The configured agent's model catalogue; an error result when none is available. */
   loadModelCatalog(): Promise<ModelCatalogResult>;
   getAuthStatus(agentId: AgentId): Promise<AuthStatus>;
+  /**
+   * Cheap, non-starting sign-in presence for `agentId`, used to gate the
+   * Settings "Set active" control without starting a runtime. An unknown
+   * agent, or one that cannot probe cheaply, answers `{ present: false }`.
+   */
+  getAuthPresence(agentId: AgentId): Promise<AuthPresence>;
   login(agentId: AgentId, settings: AppSettings | undefined): Promise<LoginOutcome>;
   cancelLogin(agentId: AgentId): void;
   logout(agentId: AgentId): Promise<LogoutResult>;
@@ -184,6 +191,17 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
           isAuthenticated: false,
           statusMessage: 'The agent is not responding.',
         };
+      }
+    },
+
+    async getAuthPresence(agentId) {
+      const runtime = runtimes.get(agentId);
+      if (runtime?.getAuthPresence === undefined) return { present: false };
+      try {
+        return await runtime.getAuthPresence();
+      } catch (error) {
+        report(agentId, error);
+        return { present: false };
       }
     },
 

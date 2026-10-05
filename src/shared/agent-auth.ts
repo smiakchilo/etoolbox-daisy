@@ -24,6 +24,31 @@ export function parseAuthStatus(candidate: unknown): AuthStatus {
 }
 
 /**
+ * A cheap, *non-starting* sign-in presence probe, distinct from
+ * {@link AuthStatus}.
+ *
+ * {@link AuthStatus} is the full, live status and, for Copilot, is obtained
+ * by starting its runtime child process. That is too heavy to answer "could
+ * this provider serve if I switched to it?" for a provider that is not active
+ * - the Settings Agents tab needs that answer to gate its "Set active"
+ * control without spawning a runtime the user may never use.
+ *
+ * `present` therefore means only "a sign-in artifact is known to exist":
+ * for Copilot, the app-owned `COPILOT_HOME` records a logged-in account; for a
+ * token provider, a token is stored. It is deliberately coarse - a stale
+ * pointer is possible - and is never shown as a signed-in status; it only
+ * decides whether activation is offered. The active provider's precise state
+ * still comes from {@link AuthStatus}.
+ */
+export const authPresenceSchema = z.object({ present: z.boolean() }).strict();
+
+export type AuthPresence = z.infer<typeof authPresenceSchema>;
+
+export function parseAuthPresence(candidate: unknown): AuthPresence {
+  return authPresenceSchema.parse(candidate);
+}
+
+/**
  * Outcome of a `copilot login --web-flow` attempt. `failed.message` is a
  * process exit message (stderr/stdout tail or spawn error) - never a token,
  * since the token is exchanged directly between the CLI and GitHub and is

@@ -18,6 +18,7 @@ const OPENCODE: AgentDefinition = {
   id: 'opencode' as AgentId,
   label: 'OpenCode',
   requiresAuth: false,
+  supportsInteractiveLogin: false,
 };
 
 describe('agent definitions', () => {
@@ -75,8 +76,14 @@ describe('isAgentEligible', () => {
     id: 'copilot' as AgentId,
     label: 'GitHub Copilot',
     requiresAuth: true,
+    supportsInteractiveLogin: true,
   };
-  const noAuth: AgentDefinition = { id: 'local' as AgentId, label: 'Local', requiresAuth: false };
+  const noAuth: AgentDefinition = {
+    id: 'local' as AgentId,
+    label: 'Local',
+    requiresAuth: false,
+    supportsInteractiveLogin: false,
+  };
 
   it('is false while a provider that needs auth is signed out, or its status is unknown', () => {
     expect(isAgentEligible(needsAuth, { isAuthenticated: false })).toBe(false);
@@ -106,8 +113,14 @@ describe('resolveEffectiveActiveAgentId', () => {
     id: 'copilot' as AgentId,
     label: 'GitHub Copilot',
     requiresAuth: true,
+    supportsInteractiveLogin: true,
   };
-  const local: AgentDefinition = { id: 'local' as AgentId, label: 'Local', requiresAuth: false };
+  const local: AgentDefinition = {
+    id: 'local' as AgentId,
+    label: 'Local',
+    requiresAuth: false,
+    supportsInteractiveLogin: false,
+  };
   const signedOut = (): { isAuthenticated: boolean } | undefined => ({ isAuthenticated: false });
   const signedIn = (): { isAuthenticated: boolean } | undefined => ({ isAuthenticated: true });
 

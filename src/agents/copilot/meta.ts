@@ -9,4 +9,7 @@ export const meta: AgentMeta = {
   id: 'copilot' as AgentMeta['id'],
   label: 'GitHub Copilot',
   requiresAuth: true,
+  // Copilot signs in through the CLI's web OAuth flow (`copilot login
+  // --web-flow`), so its item offers Sign in / Sign out.
+  supportsInteractiveLogin: true,
 };

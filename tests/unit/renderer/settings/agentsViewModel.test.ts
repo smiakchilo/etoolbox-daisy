@@ -27,9 +27,15 @@ const SECOND_AGENT: AgentDefinition = {
   id: 'opencode' as AgentId,
   label: 'OpenCode',
   requiresAuth: false,
+  supportsInteractiveLogin: false,
 };
 const DEFINITIONS: readonly AgentDefinition[] = [
-  { id: TEST_AGENT_ID, label: 'GitHub Copilot', requiresAuth: true },
+  {
+    id: TEST_AGENT_ID,
+    label: 'GitHub Copilot',
+    requiresAuth: true,
+    supportsInteractiveLogin: true,
+  },
   SECOND_AGENT,
 ];
 
@@ -55,7 +61,9 @@ function inputWith(overrides: Partial<AgentsViewModelInput> = {}): AgentsViewMod
   return {
     agents: { [TEST_AGENT_ID]: { active: true, hasToken: false } },
     activeAgentId: TEST_AGENT_ID,
+    configuredAgentId: TEST_AGENT_ID,
     auth: undefined,
+    presence: {},
     modelSelection: undefined,
     ...overrides,
   };
@@ -325,7 +333,8 @@ describe('buildAgentsViewModel', () => {
     );
     const item = vm.items[1];
     expect(item?.isActive).toBe(false);
-    expect(item?.authText).toBe('Not the active agent');
+    expect(item?.showAuth).toBe(false);
+    expect(item?.authText).toBe('');
     // No auth session to manage, so no button - but the provider needs no
     // sign-in, so it *could* be activated.
     expect(item?.authAction).toBeUndefined();

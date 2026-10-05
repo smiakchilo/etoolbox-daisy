@@ -313,12 +313,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
    * subscribed listener.
    */
   function applyAndEmit(event: AgentEvent): void {
-    const before: SessionStatus = {
-      state: streamState,
-      authenticated: authState.isAuthenticated,
-      browserReady: true,
-    };
-    const applied = applyAgentEvent(before, event);
+    const applied = applyAgentEvent(sessionStatus(), event);
     if (!applied.ok) {
       throw new Error(
         `FakeAgentService produced an illegal event sequence (${applied.error.message}). ` +
@@ -327,6 +322,33 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     }
     streamState = applied.value.state;
     for (const listener of eventListeners) listener(event);
+    // `error`'s only defined recovery is a clean `idle` (see
+    // `sessionState.ts`'s transition table); perform it here so the fake stays
+    // behaviourally interchangeable with the real adapters. The recovery event
+    // is chat-scoped (no `turnId`) so the controller's ownership guard still
+    // forwards it after it has dropped the errored turn.
+    if (event.type === 'error') recoverToIdle(event.chatId);
+  }
+
+  /** This fake's current `SessionStatus` - the state plus the two orthogonal flags. */
+  function sessionStatus(): SessionStatus {
+    return {
+      state: streamState,
+      authenticated: authState.isAuthenticated,
+      browserReady: true,
+    };
+  }
+
+  /**
+   * Returns the session to `idle` after a terminal `error`, if the state
+   * machine permits it (always from `error`; a no-op otherwise).
+   */
+  function recoverToIdle(chatId: ChatId): void {
+    const idle = makeSessionStateEvent(chatId, 'idle');
+    const applied = applyAgentEvent(sessionStatus(), idle);
+    if (!applied.ok) return;
+    streamState = applied.value.state;
+    for (const listener of eventListeners) listener(idle);
   }
 
   function makeSessionStateEvent(

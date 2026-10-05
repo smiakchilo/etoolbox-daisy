@@ -13,7 +13,7 @@ const appTsconfigs = [
 ];
 
 // Rule 1 (all app code except agent folders, `src/agents/<name>/`): the
-// Copilot SDK/CLI packages may only be imported from an agent folder, per
+// provider SDKs may only be imported from an agent folder, per
 // docs/implementation-plan.md ("Import the SDK only through the agent adapter").
 const sdkOutsideAgentRestriction = [
   'error',
@@ -26,6 +26,15 @@ const sdkOutsideAgentRestriction = [
       {
         name: '@github/copilot',
         message: 'Import the Copilot CLI package only inside an agent folder (src/agents/<name>/).',
+      },
+      {
+        name: '@openrouter/agent',
+        message:
+          'Import the OpenRouter agent SDK only inside an agent folder (src/agents/<name>/).',
+      },
+      {
+        name: '@openrouter/sdk',
+        message: 'Import the OpenRouter SDK only inside an agent folder (src/agents/<name>/).',
       },
     ],
   },
@@ -47,6 +56,16 @@ const sharedPurityRestriction = [
         name: '@github/copilot',
         message:
           'src/shared must not import the Copilot CLI package; it belongs only in an agent folder.',
+      },
+      {
+        name: '@openrouter/agent',
+        message:
+          'src/shared must not import the OpenRouter SDK; it belongs only in an agent folder.',
+      },
+      {
+        name: '@openrouter/sdk',
+        message:
+          'src/shared must not import the OpenRouter SDK; it belongs only in an agent folder.',
       },
     ],
     patterns: [

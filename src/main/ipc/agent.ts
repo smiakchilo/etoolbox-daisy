@@ -1,11 +1,13 @@
 import { ipcMain } from 'electron';
 import {
   AGENT_CANCEL_LOGIN_CHANNEL,
+  AGENT_GET_AUTH_PRESENCE_CHANNEL,
   AGENT_GET_AUTH_STATUS_CHANNEL,
   AGENT_LOGIN_CHANNEL,
   AGENT_LOGOUT_CHANNEL,
   parseAgentAuthRequest,
   type AppSettings,
+  type AuthPresence,
   type AuthStatus,
   type LoginOutcome,
   type LogoutResult,
@@ -23,7 +25,10 @@ import type { AgentHub } from '../agents/hub';
  * credential checks all live in the agent's own folder.
  */
 export interface AgentAuthDependencies {
-  readonly hub: Pick<AgentHub, 'getAuthStatus' | 'login' | 'cancelLogin' | 'logout'>;
+  readonly hub: Pick<
+    AgentHub,
+    'getAuthStatus' | 'getAuthPresence' | 'login' | 'cancelLogin' | 'logout'
+  >;
   /**
    * Read fresh, not from the startup snapshot: the user may have changed the
    * agent's proxy since launch, and sign-in must use the proxy the runtime is
@@ -35,6 +40,12 @@ export interface AgentAuthDependencies {
 export function registerAgentAuthHandlers(deps: AgentAuthDependencies): void {
   ipcMain.handle(AGENT_GET_AUTH_STATUS_CHANNEL, (_event, request: unknown): Promise<AuthStatus> =>
     deps.hub.getAuthStatus(parseAgentAuthRequest(request).agentId),
+  );
+
+  ipcMain.handle(
+    AGENT_GET_AUTH_PRESENCE_CHANNEL,
+    (_event, request: unknown): Promise<AuthPresence> =>
+      deps.hub.getAuthPresence(parseAgentAuthRequest(request).agentId),
   );
 
   ipcMain.handle(AGENT_LOGIN_CHANNEL, async (_event, request: unknown): Promise<LoginOutcome> => {

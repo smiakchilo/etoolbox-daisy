@@ -13,6 +13,7 @@ export const TEST_AGENT_DEFINITION: AgentDefinition = {
   id: TEST_AGENT_ID,
   label: 'GitHub Copilot',
   requiresAuth: true,
+  supportsInteractiveLogin: true,
 };
 
 export const TEST_AGENT_DEFINITIONS: readonly AgentDefinition[] = [TEST_AGENT_DEFINITION];

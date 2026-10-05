@@ -10,12 +10,18 @@ const moduleFor = (value: string): AgentModule => ({
   },
 });
 const metaFor = (value: string, extra: object = {}) => ({
-  meta: { id: id(value), label: value, requiresAuth: false, ...extra },
+  meta: {
+    id: id(value),
+    label: value,
+    requiresAuth: false,
+    supportsInteractiveLogin: false,
+    ...extra,
+  },
 });
 
 const definitions = [
-  { id: id('alpha'), label: 'alpha', requiresAuth: false },
-  { id: id('beta'), label: 'beta', requiresAuth: false },
+  { id: id('alpha'), label: 'alpha', requiresAuth: false, supportsInteractiveLogin: false },
+  { id: id('beta'), label: 'beta', requiresAuth: false, supportsInteractiveLogin: false },
 ];
 
 describe('buildAgentCatalog', () => {

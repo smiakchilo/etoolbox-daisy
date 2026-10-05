@@ -130,16 +130,24 @@ test('a token typed into Settings is never written in plaintext, and activates t
     // exact signed-out wording comes from the runtime, so only the variant is
     // asserted here.
     await expect(agents.locator('.agent-item__active')).toHaveCount(0);
-    const statusLight = agents.locator('.agent-item__auth sp-status-light');
+    const statusLight = agents.locator('.agent-item__auth sp-status-light').first();
     await expect
       .poll(async () => statusLight.getAttribute('variant'), { timeout: 60_000 })
       .toBe('negative');
 
-    // Type the canary into the real Token field and Set it.
-    const tokenField = agents.locator('.password-control [aria-label="Token"] input');
+    // Type the canary into the real Token field and Set it (the first provider's
+    // field - GitHub Copilot's).
+    const tokenField = agents
+      .locator('.password-control')
+      .first()
+      .locator('[aria-label="Token"] input');
     await tokenField.waitFor({ state: 'visible', timeout: 60_000 });
     await tokenField.fill(CANARY);
-    await agents.locator('.password-control sp-action-button', { hasText: 'Set' }).click();
+    await agents
+      .locator('.password-control')
+      .first()
+      .locator('sp-action-button', { hasText: 'Set' })
+      .click();
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
@@ -149,8 +157,8 @@ test('a token typed into Settings is never written in plaintext, and activates t
 
     // Behaviour: a stored token counts as authentication, so the provider is
     // active (badge) and its status light reads authenticated, green.
-    await expect(agents.locator('.agent-item__active')).toHaveCount(1);
-    await expect(statusLight).toHaveText('Authenticated with token');
+    await expect(agents.locator('.agent-item__active')).toHaveCount(1, { timeout: 60_000 });
+    await expect(statusLight).toHaveText('Authenticated with token', { timeout: 60_000 });
     expect(await statusLight.getAttribute('variant')).toBe('positive');
 
     // Anti-vacuity: the pointer must genuinely be on disk, otherwise "not found

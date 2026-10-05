@@ -109,6 +109,8 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
 
   let snapshot: AppSettingsSnapshot | undefined;
   let auth: AuthStatus | undefined;
+  /** Cheap, non-starting sign-in presence per provider (see AgentsViewModelInput.presence). */
+  let presence: Readonly<Record<string, boolean>> = {};
   let modelSelection: ModelSelectionState | undefined;
   let pending: PendingModelSelection | undefined;
   /** The provider rows, kept alive across re-reads (see `ItemHandle`). */
@@ -143,7 +145,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
 
   function persistActive(agentId: AgentId): void {
     const definition = definitions.find((candidate) => candidate.id === agentId);
-    if (definition === undefined || !isAgentEligible(definition, auth)) {
+    if (definition === undefined || snapshot === undefined) {
+      return;
+    }
+    if (!isAgentEligible(definition, authInputFor(snapshot, agentId))) {
       // The control is disabled while its provider cannot be active; a stray
       // activation request must not write a flag the provider cannot honour.
       return;
@@ -333,7 +338,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     }) as PickerElement;
 
     modelPicker.addEventListener('change', () => {
-      if (rendering) return;
+      // A disabled picker belongs to a non-active (or unreadable-catalogue) row;
+      // its programmatic option sync must not contaminate the one shared
+      // unsaved-selection state with another provider's value.
+      if (rendering || modelPicker.disabled) return;
       pending = { model: fromPickerValue(modelPicker.value), reasoningEffort: null };
       pickersDirty = true;
       // A model change invalidates any effort chosen for the previous model.
@@ -344,7 +352,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     });
 
     effortPicker.addEventListener('change', () => {
-      if (rendering) return;
+      if (rendering || effortPicker.disabled) return;
       const base = pending ?? storedSelection();
       pending = { model: base.model, reasoningEffort: fromPickerValue(effortPicker.value) };
       pickersDirty = true;
@@ -394,6 +402,9 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       if (statusLight.textContent !== view.authText) statusLight.textContent = view.authText;
 
       authAction = view.authAction;
+      // Only the active provider shows a status: an inactive one's runtime is
+      // not started, so there is no honest status to display there.
+      authControl.hidden = !view.showAuth;
       if (view.authAction === undefined) {
         actionButton.remove();
         actionAttached = false;
@@ -428,7 +439,9 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       {
         agents: snapshot.agents,
         activeAgentId: activeAgentIdFrom(snapshot),
+        configuredAgentId: resolveConfiguredAgentId(snapshot.agents, definitions),
         auth,
+        presence,
         modelSelection,
         definitions,
       },
@@ -468,17 +481,34 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   }
 
   /**
-   * The provider that is actually active, as the snapshot plus the live auth
-   * status decide it: the configured provider when it is eligible, else the
-   * first eligible provider, else `undefined`. The badge and the "Set active"
-   * control both read this, so the row can never claim a provider is active
-   * while the composer and banner treat it as unusable.
+   * The cheapest honest auth facts about `id`: the configured provider's live
+   * status when it is the one running, a detected local session otherwise
+   * (whose runtime is deliberately not started), plus any stored token. Shared
+   * by the active-provider decision and the "Set active" gate so the two can
+   * never disagree.
+   */
+  function authInputFor(
+    document: AppSettingsSnapshot,
+    id: AgentId,
+  ): { isAuthenticated: boolean; hasToken: boolean } {
+    const configuredId = resolveConfiguredAgentId(document.agents, definitions);
+    return {
+      isAuthenticated:
+        (id === configuredId && auth?.isAuthenticated === true) || presence[id] === true,
+      hasToken: document.agents[id]?.hasToken === true,
+    };
+  }
+
+  /**
+   * The provider that is actually active, as the snapshot, the configured
+   * provider's live status and each provider's cheap presence decide it: the
+   * configured provider when it is eligible, else the first eligible provider,
+   * else `undefined`.
    */
   function activeAgentIdFrom(document: AppSettingsSnapshot): AgentId | undefined {
-    return resolveEffectiveActiveAgentId(definitions, document.agents, (id) => ({
-      isAuthenticated: auth?.isAuthenticated === true,
-      hasToken: document.agents[id]?.hasToken === true,
-    }));
+    return resolveEffectiveActiveAgentId(definitions, document.agents, (id) =>
+      authInputFor(document, id),
+    );
   }
 
   /**
@@ -498,10 +528,36 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     };
   }
 
+  /**
+   * Reads every provider's cheap presence first, then the one live status that
+   * matters - the effective-active provider's - and the model catalogue. Only
+   * the active provider's runtime is started by this (and only the live
+   * `getAuthStatus` call can). A presence read that fails is treated as "not
+   * present", the safe default for a control that must not over-claim.
+   */
+  async function readPresence(): Promise<void> {
+    const entries = await Promise.all(
+      definitions.map(async (definition): Promise<readonly [AgentId, boolean]> => {
+        try {
+          const result = await window.daisy.agent.getAuthPresence(definition.id);
+          return [definition.id, result.present] as const;
+        } catch {
+          return [definition.id, false] as const;
+        }
+      }),
+    );
+    presence = Object.fromEntries(entries);
+  }
+
   async function readLiveState(): Promise<void> {
-    const activeId = snapshot === undefined ? undefined : activeAgentIdFrom(snapshot);
-    const authAgentId =
-      activeId ?? (snapshot === undefined ? undefined : resolveConfiguredAgentId(snapshot.agents, definitions));
+    if (snapshot === undefined) return;
+    await readPresence();
+    const configuredId = resolveConfiguredAgentId(snapshot.agents, definitions);
+    const activeId = activeAgentIdFrom(snapshot);
+    // Read the live status of the provider the hub is actually running (the
+    // configured one); fall back to the effective-active id when none is
+    // configured, and skip entirely when the build contains no agent.
+    const authAgentId = configuredId ?? activeId;
     const [authResult, modelResult] = await Promise.allSettled([
       authAgentId === undefined
         ? Promise.reject(new Error('No agent is available.'))

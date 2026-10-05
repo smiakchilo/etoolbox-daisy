@@ -130,24 +130,33 @@ test('Settings sections are real tab panels, switching their content', async () 
     await expect(settings.locator('section[aria-label="Agents"]')).toBeVisible();
     await expect(settings.locator('section[aria-label="Hosts"]')).toBeHidden();
     const agentsSection = settings.locator('section[aria-label="Agents"]');
-    await expect(agentsSection.locator('sp-picker[aria-label="Model"]')).toHaveCount(1);
+    // Two providers ship: GitHub Copilot and OpenRouter, each with a Model and a
+    // Reasoning-effort picker.
+    await expect(agentsSection.locator('sp-picker[aria-label="Model"]')).toHaveCount(2);
 
     // The personal-access-token field is the Proxies tab's password control,
-    // labelled Token, with its Set/Clear actions.
-    const tokenControl = agentsSection.locator('.password-control');
-    await expect(tokenControl).toHaveCount(1);
+    // labelled Token, with its Set/Clear actions - one per provider.
+    await expect(agentsSection.locator('.password-control')).toHaveCount(2);
+    const tokenControl = agentsSection.locator('.password-control').first();
     await expect(tokenControl.locator('sp-textfield')).toHaveAttribute('aria-label', 'Token');
     await expect(tokenControl.locator('sp-action-button')).toHaveCount(2);
 
     // Which provider is active is derived from eligibility, not merely stored:
     // a fresh profile seeds GitHub Copilot as the configured provider, but with
-    // no Copilot session it cannot be active - so there is no badge, and the
-    // "Set active" control is present but inert until a sign-in.
+    // no Copilot session it cannot be active - so there is no badge, and each
+    // provider's "Set active" control is present but inert until it can serve.
     await expect(agentsSection.locator('.agent-item__active')).toHaveCount(0);
+    // Both providers render, Copilot first then OpenRouter. OpenRouter is
+    // token-only, so its item offers no Sign in/out action - the single
+    // `.agent-item__action` asserted below belongs to Copilot.
+    await expect(agentsSection.locator('.agent-item__title')).toHaveText([
+      'GitHub Copilot',
+      'OpenRouter',
+    ]);
     const setActive = agentsSection.locator('.agent-item__set-active');
-    await expect(setActive).toHaveCount(1);
-    await expect(setActive).toHaveText('Set active');
-    await expect(setActive).toHaveAttribute('disabled', '');
+    await expect(setActive).toHaveCount(2);
+    await expect(setActive.first()).toHaveText('Set active');
+    await expect(setActive.first()).toHaveAttribute('disabled', '');
     await expect(agentsSection.locator('sp-radio')).toHaveCount(0);
 
     // The auth row carries no visible label - its own status light says what it
@@ -161,7 +170,7 @@ test('Settings sections are real tab panels, switching their content', async () 
     expect(await authAction.evaluate((node) => node.tagName.toLowerCase())).toBe(
       'sp-action-button',
     );
-    const authRow = agentsSection.locator('.agent-item__auth');
+    const authRow = agentsSection.locator('.agent-item__auth').first();
     expect(
       await authRow.evaluate((node) => {
         const light = node.querySelector('sp-status-light');
@@ -173,6 +182,16 @@ test('Settings sections are real tab panels, switching their content', async () 
         return Math.abs(a.top + a.height / 2 - (b.top + b.height / 2)) < 2 && a.right <= b.left + 1;
       }),
     ).toBe(true);
+
+    // A provider that is not the configured one hides its auth row wholesale,
+    // not merely its label: its runtime is never started, so there is no honest
+    // status to display there. This guards the CSS regression where
+    // `.agent-item__auth`'s `display: flex` outranked the UA `[hidden]` rule and
+    // leaked the row's empty status light as a lone gray dot with no text (the
+    // second row here is OpenRouter, which is not the configured provider).
+    const authRows = agentsSection.locator('.agent-item__auth');
+    await expect(authRows).toHaveCount(2);
+    await expect(authRows.nth(1)).toBeHidden();
 
     // The action is right-aligned, and it is the shared `.agent-item__button`
     // that gives it (and "Set active" when it appears) one width - so the two
@@ -194,8 +213,8 @@ test('Settings sections are real tab panels, switching their content', async () 
 
     // Signed out means no model list exists, so neither picker is offered -
     // the defect this asserts against left the model picker looking usable.
-    const modelPicker = agentsSection.locator('sp-picker[aria-label="Model"]');
-    const effortPicker = agentsSection.locator('sp-picker[aria-label="Reasoning effort"]');
+    const modelPicker = agentsSection.locator('sp-picker[aria-label="Model"]').first();
+    const effortPicker = agentsSection.locator('sp-picker[aria-label="Reasoning effort"]').first();
     expect(
       await modelPicker.evaluate((node) => (node as HTMLElement & { disabled: boolean }).disabled),
     ).toBe(true);

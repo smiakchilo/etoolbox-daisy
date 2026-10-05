@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   AGENT_CANCEL_LOGIN_CHANNEL,
+  AGENT_GET_AUTH_PRESENCE_CHANNEL,
   AGENT_GET_AUTH_STATUS_CHANNEL,
   AGENT_LOGIN_CHANNEL,
   AGENT_LOGOUT_CHANNEL,
@@ -63,6 +64,7 @@ import {
   parseAgentChatVoidResult,
   parseAppInfo,
   agentAuthRequestSchema,
+  parseAuthPresence,
   parseAuthStatus,
   parseBrowserIpcVoidResult,
   parseBrowserNavigationState,
@@ -107,6 +109,7 @@ import {
   type AgentId,
   type ApproveCertificateExceptionRequest,
   type AppInfo,
+  type AuthPresence,
   type AuthStatus,
   type BrowserIpcVoidResult,
   type BrowserNavigationState,
@@ -153,6 +156,11 @@ const daisyApi: DaisyAppApi = {
       const request = agentAuthRequestSchema.parse({ agentId });
       const raw: unknown = await ipcRenderer.invoke(AGENT_GET_AUTH_STATUS_CHANNEL, request);
       return parseAuthStatus(raw);
+    },
+    async getAuthPresence(agentId: AgentId): Promise<AuthPresence> {
+      const request = agentAuthRequestSchema.parse({ agentId });
+      const raw: unknown = await ipcRenderer.invoke(AGENT_GET_AUTH_PRESENCE_CHANNEL, request);
+      return parseAuthPresence(raw);
     },
     async login(agentId: AgentId): Promise<LoginOutcome> {
       const request = agentAuthRequestSchema.parse({ agentId });

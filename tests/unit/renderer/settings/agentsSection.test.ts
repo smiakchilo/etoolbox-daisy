@@ -35,6 +35,7 @@ const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
 
 const getAuthStatus = vi.fn();
+const getAuthPresence = vi.fn();
 const getModelSelection = vi.fn();
 const setAgentSettings = vi.fn();
 const setPassword = vi.fn();
@@ -72,6 +73,7 @@ function buildSection(definitions?: readonly AgentDefinition[]) {
 
 beforeEach(() => {
   getAuthStatus.mockReset();
+  getAuthPresence.mockReset();
   getModelSelection.mockReset();
   setAgentSettings.mockReset();
   setPassword.mockReset();
@@ -79,6 +81,8 @@ beforeEach(() => {
 
   // Signed out: the pickers are inert, and the auth action is "Sign in".
   getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: false });
+  // No cheap presence by default: a provider is then eligible only via a token.
+  getAuthPresence.mockResolvedValue({ present: false });
   getModelSelection.mockResolvedValue({
     ok: true,
     state: {
@@ -102,11 +106,11 @@ beforeEach(() => {
   reportSave = vi.fn<(outcome: Promise<SaveOutcome>) => void>();
   onSettingsChanged = vi.fn<() => void>();
 
-  dom = new JSDOM();
+  dom = new JSDOM('', { url: 'https://daisy.test/' });
   Reflect.set(globalThis, 'document', dom.window.document);
   Reflect.set(globalThis, 'window', dom.window);
   Reflect.set(dom.window, 'daisy', {
-    agent: { getAuthStatus },
+    agent: { getAuthStatus, getAuthPresence },
     settings: { getModelSelection, setAgentSettings, setPassword, clearPassword },
   });
 });
@@ -125,7 +129,9 @@ describe('createAgentsSection', () => {
 
     const badge = section.element.querySelector('.agent-item__active');
     expect(badge?.textContent).toBe('(active)');
-    expect(section.element.querySelector('.agent-item__set-active')).toBeNull();
+    expect(
+      section.element.querySelector('.agent-item')?.querySelector('.agent-item__set-active'),
+    ).toBeNull();
     // The badge sits on the header line, right after the provider's name.
     expect(section.element.querySelector('.agent-item__header')?.textContent).toBe(
       'GitHub Copilot(active)',
@@ -168,11 +174,13 @@ describe('createAgentsSection', () => {
       id: 'local-a' as AgentId,
       label: 'Local A',
       requiresAuth: false,
+      supportsInteractiveLogin: false,
     };
     const localB: AgentDefinition = {
       id: 'local-b' as AgentId,
       label: 'Local B',
       requiresAuth: false,
+      supportsInteractiveLogin: false,
     };
     const section = buildSection([localA, localB]);
     await section.refresh(snapshotWith({ 'local-a': { active: true } }));
@@ -217,9 +225,11 @@ describe('createAgentsSection', () => {
     expect(actions).toHaveLength(1);
     expect(actions[0]?.textContent).toBe('Sign in');
 
-    // The remaining fields keep their visible labels.
+    // The remaining fields keep their visible labels (the first row only; a
+    // second provider's row repeats them).
+    const firstItem = section.element.querySelector('.agent-item');
     expect(
-      [...section.element.querySelectorAll('.host-field sp-field-label')].map(
+      [...(firstItem?.querySelectorAll('.host-field sp-field-label') ?? [])].map(
         (label) => label.textContent,
       ),
     ).toEqual(['Token', 'Proxy', 'Model', 'Reasoning effort']);
@@ -309,7 +319,7 @@ describe('createAgentsSection', () => {
     await section.refresh(snapshotWith({ copilot: { active: true } }));
 
     const item = section.element.querySelector('.agent-item');
-    const pickers = [...section.element.querySelectorAll('sp-picker')];
+    const pickers = [...(item?.querySelectorAll('sp-picker') ?? [])];
     expect(pickers).toHaveLength(3);
 
     // The panel reloads after every save, so a refresh is the common path. It
@@ -318,7 +328,7 @@ describe('createAgentsSection', () => {
     await section.refresh(snapshotWith({ copilot: { active: true } }));
 
     expect(section.element.querySelector('.agent-item')).toBe(item);
-    const again = [...section.element.querySelectorAll('sp-picker')];
+    const again = [...(item?.querySelectorAll('sp-picker') ?? [])];
     expect(again).toHaveLength(pickers.length);
     for (const [index, node] of again.entries()) {
       expect(node).toBe(pickers[index]);

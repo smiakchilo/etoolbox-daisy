@@ -211,6 +211,37 @@ describe('setAgentSettings', () => {
     expect(saved?.agents[TEST_AGENT_ID]?.proxy).toBe(proxyId);
   });
 
+  it('does not report the write as done until the runtime reconcile settles', async () => {
+    // An active-provider switch used to fire the reconcile and forget it, so the
+    // renderer's follow-up reload read a runtime that was still starting (auth
+    // "not signed in", catalogue "unavailable") and left the Model/Reasoning
+    // pickers disabled until the user touched another control.
+    const dir = createScratchRoot();
+    await seedProxyAndModel(dir);
+    let release!: () => void;
+    const reconciling = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const onAgentSettingsSaved = vi.fn(() => reconciling);
+
+    let settled = false;
+    const pending = setAgentSettings(dir, deps({ onAgentSettingsSaved }), {
+      agentId: TEST_AGENT_ID,
+      changes: { active: true },
+    }).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.waitFor(() => expect(onAgentSettingsSaved).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+
+    release();
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(settled).toBe(true);
+  });
+
   it('checks the turn lock BEFORE the catalogue', async () => {
     const dir = createScratchRoot();
     await seedProxyAndModel(dir);

@@ -454,12 +454,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   /** See this module's doc comment, "SELF-CHECKING COHERENCE". */
   function applyAndEmit(event: AgentEvent): void {
     const validated = agentEventSchema.parse(event);
-    const before: SessionStatus = {
-      state: streamState,
-      authenticated: authState.isAuthenticated,
-      browserReady: true,
-    };
-    const applied = applyAgentEvent(before, validated);
+    const applied = applyAgentEvent(sessionStatus(), validated);
     if (!applied.ok) {
       throw new Error(
         `sdkAgentService produced an illegal event sequence (${applied.error.message}). ` +
@@ -468,6 +463,36 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     }
     streamState = applied.value.state;
     for (const listener of eventListeners) listener(validated);
+    // `error`'s only defined recovery is a clean `idle` (see
+    // `sessionState.ts`'s transition table). Perform that recovery here, on
+    // the user's behalf, so a failed turn can never leave the composer
+    // permanently disabled: the `error` event is still delivered (and shown in
+    // the pane's banner) for display, and the follow-up `idle` is chat-scoped
+    // (no `turnId`) so the controller's ownership guard still forwards it once
+    // it has dropped the errored turn.
+    if (validated.type === 'error') recoverToIdle(validated.chatId);
+  }
+
+  /** This adapter's current `SessionStatus` - the state plus the two orthogonal flags. */
+  function sessionStatus(): SessionStatus {
+    return {
+      state: streamState,
+      authenticated: authState.isAuthenticated,
+      browserReady: true,
+    };
+  }
+
+  /**
+   * Returns the session to `idle` after a terminal `error`, if the state
+   * machine permits it (it always does from `error`; a no-op otherwise). The
+   * recovery event carries no `turnId` deliberately - see {@link applyAndEmit}.
+   */
+  function recoverToIdle(chatId: ChatId): void {
+    const idle = makeSessionStateEvent(chatId, 'idle');
+    const applied = applyAgentEvent(sessionStatus(), idle);
+    if (!applied.ok) return;
+    streamState = applied.value.state;
+    for (const listener of eventListeners) listener(idle);
   }
 
   function makeSessionStateEvent(

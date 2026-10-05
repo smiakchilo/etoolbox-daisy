@@ -1,5 +1,5 @@
 import type { AppInfo } from './app-info';
-import type { AuthStatus, LoginOutcome, LogoutResult } from './agent-auth';
+import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from './agent-auth';
 import type {
   AddProxyRequest,
   AddProxyResult,
@@ -181,6 +181,11 @@ export interface DaisySettingsApi {
 /** Sign-in surface, one call per agent - see gentAuthRequestSchema. */
 export interface DaisyAgentAuthApi {
   getAuthStatus(agentId: AgentId): Promise<AuthStatus>;
+  /**
+   * A cheap, non-starting presence probe used to gate the Settings "Set
+   * active" control for an inactive provider. Never starts a runtime.
+   */
+  getAuthPresence(agentId: AgentId): Promise<AuthPresence>;
   login(agentId: AgentId): Promise<LoginOutcome>;
   cancelLogin(agentId: AgentId): Promise<void>;
   logout(agentId: AgentId): Promise<LogoutResult>;

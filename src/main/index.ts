@@ -204,6 +204,8 @@ if (!gotSingleInstanceLock) {
     registerAgentAuthHandlers({
       hub: {
         getAuthStatus: async (agentId) => (await agentHub?.getAuthStatus(agentId)) ?? STARTING,
+        getAuthPresence: async (agentId) =>
+          (await agentHub?.getAuthPresence(agentId)) ?? { present: false },
         login: async (agentId, settings) =>
           (await agentHub?.login(agentId, settings)) ?? {
             status: 'failed',
@@ -384,8 +386,27 @@ if (!gotSingleInstanceLock) {
         // Recycles the runtime only when the change actually shapes it (the
         // active provider or its proxy) - a model/effort change is told to
         // the runtime at prompt time instead. See the agent's `runtimeManager`.
-        onAgentSettingsSaved: (settings) => {
-          void agentHub?.reconcile(settings).catch(() => logger.error('AGENT_UNAVAILABLE'));
+        onAgentSettingsSaved: async (settings) => {
+          // An active-provider switch changes which provider's stored model is
+          // "the" preference; re-seed the synchronous cache so the next prompt
+          // uses the newly active provider's model rather than the previous
+          // one's. Model/effort-only changes re-seed to the same value.
+          const nextActiveId = configuredAgentId(settings, agentDefinitions);
+          const nextNode = nextActiveId === undefined ? undefined : settings.agents[nextActiveId];
+          modelPreferenceCache.set({
+            model: nextNode?.model ?? null,
+            reasoningEffort: nextNode?.reasoningEffort ?? null,
+          });
+          // Awaited by the handler: the switch/recycle must finish before the
+          // write is reported done, so the renderer's reload does not read the
+          // half-started runtime (which left the Model/Reasoning pickers
+          // disabled). A broken runtime is logged and swallowed - the settings
+          // write itself already succeeded and must not be reported as failed.
+          try {
+            await agentHub?.reconcile(settings);
+          } catch {
+            logger.error('AGENT_UNAVAILABLE');
+          }
         },
       },
       // A stored token is a runtime credential, so setting or clearing one has

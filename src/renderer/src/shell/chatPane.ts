@@ -26,6 +26,7 @@ import {
   type ChatId,
   type ChatJournalRecord,
   newChatId,
+  resolveConfiguredAgentId,
   resolveEffectiveActiveAgentId,
   type SdkSessionId,
   type SessionStatus,
@@ -267,7 +268,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // criterion (an interactive sign-in or a stored token, for Copilot), so
     // this tracks both auth changes and token presence for free.
     const activeAgentId = resolveEffectiveActiveAgentId(AGENT_DEFINITIONS, agents, (id) => ({
-      isAuthenticated: sessionStatus.authenticated,
+      // Only the running (configured) provider has a live auth answer; for any
+      // other id a stored token is the only honest signal. Feeding the active
+      // service's status to every id would mark an inactive provider as
+      // authenticated purely because the active one is.
+      isAuthenticated:
+        id === resolveConfiguredAgentId(agents, AGENT_DEFINITIONS) && sessionStatus.authenticated,
       hasToken: agents[id]?.hasToken === true,
     }));
     const agentActive = activeAgentId !== undefined;
@@ -361,6 +367,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         // rather than surfaced to the user, who cannot act on it.
         console.error('[daisy]', applied.error.message);
       }
+      // A turn-level `error` has no transcript item of its own, so the pane's
+      // one dismissible banner is where the user learns what happened. The
+      // adapter has already recovered the session to `idle`, so this row can be
+      // closed without leaving the composer disabled.
+      if (event.type === 'error') statusBanner.showError(event.error.message);
       refreshSessionPresentation();
     });
   }

@@ -1,4 +1,4 @@
-import type { AuthStatus, LoginOutcome, LogoutResult } from '../agent-auth';
+import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from '../agent-auth';
 import type { AgentDefinition, AgentId, AppSettings, ModelCatalogEntry } from '../contracts';
 import type { Result } from '../result';
 import type { AemToolExecutor, ToolDescriptor } from '../tools';
@@ -103,6 +103,15 @@ export interface AgentRuntime {
   /** Resolves once the current install has settled; never rejects. */
   whenReady(): Promise<void>;
   getAuthStatus(): Promise<AuthStatus>;
+  /**
+   * A cheap, non-starting presence probe (`{ present }`) used to gate the
+   * Settings "Set active" control for a provider that is not active, without
+   * starting its runtime. Optional: an agent that cannot answer cheaply omits
+   * it, and the host falls back to `{ present: false }` - the defended state
+   * for a control that must not claim a provider can serve when it cannot.
+   * Must never start the runtime and never reject.
+   */
+  readonly getAuthPresence?: () => Promise<AuthPresence>;
   /** Absent for an agent that needs no sign-in (`requiresAuth: false`). */
   readonly login?: (settings: AppSettings | undefined) => Promise<LoginOutcome>;
   readonly cancelLogin?: () => void;

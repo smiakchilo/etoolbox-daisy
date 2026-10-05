@@ -17,8 +17,8 @@ const ALPHA = agentIdSchema.parse('alpha');
 const BETA = agentIdSchema.parse('beta');
 
 const DEFINITIONS: readonly AgentDefinition[] = [
-  { id: ALPHA, label: 'Alpha', requiresAuth: true },
-  { id: BETA, label: 'Beta', requiresAuth: false },
+  { id: ALPHA, label: 'Alpha', requiresAuth: true, supportsInteractiveLogin: true },
+  { id: BETA, label: 'Beta', requiresAuth: false, supportsInteractiveLogin: false },
 ];
 
 function settingsWithActive(id: AgentId | undefined): AppSettings {

@@ -1,4 +1,5 @@
 import { buildAemToolPolicy } from './aemToolPolicy';
+import { getCopilotAuthPresence } from './authPresence';
 import {
   assertNoPlaintextCredentials,
   localSignOut,
@@ -136,6 +137,9 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
       await client.start();
       return toAuthStatus(await getSdkAuthStatus(client));
     },
+    // Cheap and non-starting: reads our own COPILOT_HOME config pointer, never
+    // the runtime. Used to gate "Set active" for an inactive Copilot.
+    getAuthPresence: () => getCopilotAuthPresence(),
     login,
     cancelLogin: () => {
       inFlightLogin?.cancel();

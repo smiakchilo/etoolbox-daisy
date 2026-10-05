@@ -206,7 +206,15 @@ src/agents/<name>/
 - Copilot's files: `copilotClient.ts` (`createHardenedCopilotClient`),
   `runtimePaths.ts` (+ `findProjectRoot`), `copilotHome.ts`, `toolPolicy.ts`
   (**the hardening core**), `aemToolPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
+  `authPresence.ts` (cheap non-starting `getAuthPresence` from `config.json`),
   `modelCatalog.ts`, `runtimeManager.ts`, `runtime.ts`.
+- OpenRouter's files: `client.ts` (the only place the SDK is constructed; pins
+  `serverURL` and injects a proxy `fetcher`), `toolMapping.ts` (toolkit JSON
+  Schema → SDK tools), `agentService.ts` (event mapping, SDK-free),
+  `skill.ts` (the app-owned `skill` tool), `modelCatalog.ts`, `auth.ts`,
+  `runtime.ts`, `types.ts`. It is token-only: `meta.supportsInteractiveLogin`
+  is `false`, it has no `login`/`logout`, and `getAuthPresence` is its stored
+  key.
 
 #### Recipe: add a new agent / SDK (e.g. OpenCode, Claude)
 
@@ -214,16 +222,20 @@ src/agents/<name>/
    lacks (extra per-agent settings, a non-token credential, non-stdio transport):
    those mean changing `src/shared/**`, which must be reported loudly (§12).
 2. `src/agents/<name>/meta.ts` — `export const meta: AgentMeta = { id, label,
-   requiresAuth }` (id cast `as AgentMeta['id']`). Import only `../../shared`;
-   **never** the SDK (the renderer globs this file).
+   requiresAuth, supportsInteractiveLogin }` (id cast `as AgentMeta['id']`; set
+   `supportsInteractiveLogin: false` for a token-only provider). Import only
+   `../../shared`; **never** the SDK (the renderer globs this file).
 3. `src/agents/<name>/agent.ts` — `export const agent: AgentModule = { id:
    meta.id, createRuntime }`. Model it on `src/agents/copilot/agent.ts` /
    `runtime.ts`.
 4. Implement `createRuntime(host: AgentHost): AgentRuntime` (`start`,
    `reconcile`, `refresh`, `stop`, `whenReady`, `getAuthStatus`,
    `loadModelCatalog`; `login`/`cancelLogin`/`logout` only if the SDK signs in
-   interactively). Get proxy/token from `host.resolveConnection(meta.id,
-   settings)` — an agent never touches the secret store or settings store.
+   interactively; optional `getAuthPresence` to report a cheap, **non-starting**
+   sign-in presence so the Settings "Set active" control can be honest without
+   starting an inactive provider's runtime). Get proxy/token from
+   `host.resolveConnection(meta.id, settings)` — an agent never touches the
+   secret store or settings store.
 5. Build an `AgentService` (`src/shared/agents/agentService.ts`) around the SDK
    and hand it to `host.installService(service)`. It must emit normalized
    `AgentEvent`s only — no SDK type may cross the boundary. Map the tools from
@@ -430,7 +442,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2407 passed / 14 skipped** (`proxy-login.test.ts`
+Current baseline: **`npm run test` → 2449 passed / 14 skipped** (the +34 since the
+previous 2410 baseline is the OpenRouter agent suite:
+`tests/unit/agents/openrouter/**`, the Copilot `authPresence` test, and the
+updated settings tests — see
+`docs/verification.md` "Agent plugins: OpenRouter as a second provider
+(2026-10-05)"; a further +3 is the OpenRouter `state`-accessor fix — see
+`docs/verification.md` "OpenRouter turn failure: `state` accessor misuse, error
+recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
@@ -478,7 +497,7 @@ build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/age
 ## 7. Rules that are enforced, not merely preferred
 
 1. **Adobe Spectrum Web Components for all UI.** Pin `1.12.2`.
-2. **An agent SDK (e.g. the Copilot SDK) is importable only from its own `src/agents/<name>/` folder.** ESLint-enforced.
+2. **An agent SDK (the Copilot SDK/CLI, or `@openrouter/agent`/`@openrouter/sdk`) is importable only from its own `src/agents/<name>/` folder.** ESLint-enforced.
 3. **Everything under `src/shared` imports no Electron, no Node built-ins and
    no browser globals.** ESLint-enforced, with deliberately-failing fixtures in
    `tests/fixtures/eslint-violations/` to prove the rule is switched on.

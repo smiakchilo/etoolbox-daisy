@@ -27,6 +27,22 @@ export interface AgentDefinition {
    * selected, with no sign-in step at all.
    */
   readonly requiresAuth: boolean;
+  /**
+   * Whether this provider authenticates through an interactive sign-in flow
+   * (GitHub Copilot's web OAuth flow) as opposed to a credential the user
+   * pastes into the Token field (an API key, as OpenRouter uses).
+   *
+   * Required rather than optional so an agent author must state it: a
+   * token-only provider that silently defaulted to interactive would render a
+   * "Sign in" control whose click can only fail, because the agent has no
+   * `login` runtime method. It is orthogonal to {@link requiresAuth} - a
+   * provider can need authentication (`requiresAuth: true`) yet offer no
+   * interactive flow (`supportsInteractiveLogin: false`).
+   *
+   * Only meaningful when `requiresAuth` is true; a provider that needs no
+   * authentication has no sign-in row at all.
+   */
+  readonly supportsInteractiveLogin: boolean;
 }
 
 /**

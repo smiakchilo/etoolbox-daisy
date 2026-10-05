@@ -61,6 +61,14 @@ export interface AgentItemViewModel {
   readonly hasToken: boolean;
   /** The agent's stored proxy-library reference, if any. */
   readonly proxyId: ProxyId | undefined;
+  /**
+   * Whether this item renders the auth row at all. Only the effective-active
+   * provider shows a sign-in status; an inactive row's runtime is never
+   * started to read it, so displaying a stale or borrowed status there would
+   * be misleading. The "Set active" control (not the status) is what tells an
+   * inactive row whether it can be activated.
+   */
+  readonly showAuth: boolean;
   readonly authVariant: 'neutral' | 'positive' | 'negative';
   readonly authText: string;
   /**
@@ -94,8 +102,26 @@ export interface AgentsViewModelInput {
   readonly agents: Readonly<Record<string, AgentSettingsSnapshot>>;
   /** The effectively active provider, or `undefined` when none is eligible. */
   readonly activeAgentId: AgentId | undefined;
-  /** The live runtime's sign-in status; consumed by every auth-needing item. */
+  /**
+   * The provider the app is *configured* to drive (the persisted `active`
+   * flag, else the first). It is the one the hub runs and therefore the only
+   * row whose live auth row is shown - including while it is signed out, which
+   * is exactly when its Sign in control is needed. Every other row hides the
+   * auth row (its runtime is not started).
+   */
+  readonly configuredAgentId: AgentId | undefined;
+  /**
+   * The *active* provider's live sign-in status; every other item ignores it.
+   * `undefined` until the first read resolves.
+   */
   readonly auth: AuthStatus | undefined;
+  /**
+   * Cheap, non-starting sign-in presence per provider, keyed by id. For an
+   * inactive provider this is the only auth fact available (its runtime is not
+   * started), so it gates "Set active": a provider with neither a stored token
+   * nor a detected session cannot serve and must not be activatable.
+   */
+  readonly presence: Readonly<Record<string, boolean>>;
   /** The active agent's catalogue/selection; `undefined` until it has loaded. */
   readonly modelSelection: ModelSelectionState | undefined;
   /**
@@ -131,12 +157,17 @@ function buildItem(
 ): AgentItemViewModel {
   const node = input.agents[definition.id];
   const isActive = definition.id === input.activeAgentId;
+  const showAuth = definition.id === input.configuredAgentId;
   const hasToken = node?.hasToken === true;
+  const sessionPresent = input.presence[definition.id] === true;
   const eligibility = isAgentEligible(definition, {
-    isAuthenticated: input.auth?.isAuthenticated === true,
-    hasToken,
+    isAuthenticated: isActive && input.auth?.isAuthenticated === true,
+    // A stored token or a detected local session satisfies the activation
+    // criterion. `sessionPresent` is the cheap signal for a provider whose
+    // live status is deliberately not read.
+    hasToken: hasToken || sessionPresent,
   });
-  const auth = authView(definition, isActive, hasToken, input.auth);
+  const auth = authView(definition, showAuth, hasToken, input.auth);
 
   const base = {
     id: definition.id,
@@ -144,6 +175,7 @@ function buildItem(
     isActive,
     activationDisabled: !eligibility,
     hasToken,
+    showAuth,
     proxyId: node?.proxy,
     ...auth,
   };
@@ -247,23 +279,50 @@ interface AuthView {
  */
 function authView(
   definition: AgentDefinition,
-  isActive: boolean,
+  showAuth: boolean,
   hasToken: boolean,
   auth: AuthStatus | undefined,
 ): AuthView {
-  if (definition.requiresAuth) {
-    const session = sessionAuth(auth);
-    if (hasToken) {
-      return { ...session, authVariant: 'positive', authText: 'Authenticated with token' };
-    }
-    return session;
+  // Only the configured provider renders the auth row (showAuth); this is an
+  // inert placeholder the section never displays for any other row.
+  if (!showAuth) {
+    return {
+      authVariant: 'neutral',
+      authText: '',
+      authAction: undefined,
+      authActionDisabled: true,
+    };
   }
-  return {
-    authVariant: 'neutral',
-    authText: isActive ? 'No sign-in required' : 'Not the active agent',
-    authAction: undefined,
-    authActionDisabled: true,
-  };
+  if (!definition.requiresAuth) {
+    return {
+      authVariant: 'neutral',
+      authText: 'No sign-in required',
+      authAction: undefined,
+      authActionDisabled: true,
+    };
+  }
+  if (!definition.supportsInteractiveLogin) {
+    // A token-only provider has no interactive flow; the Token field is the
+    // whole control, so there is no action button to offer.
+    return hasToken
+      ? {
+          authVariant: 'positive',
+          authText: 'Authenticated with token',
+          authAction: undefined,
+          authActionDisabled: true,
+        }
+      : {
+          authVariant: 'negative',
+          authText: 'No API key',
+          authAction: undefined,
+          authActionDisabled: true,
+        };
+  }
+  const session = sessionAuth(auth);
+  if (hasToken) {
+    return { ...session, authVariant: 'positive', authText: 'Authenticated with token' };
+  }
+  return session;
 }
 
 /**

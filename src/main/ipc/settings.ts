@@ -1017,8 +1017,14 @@ export interface AgentSettingsDependencies {
    * or active-provider change does; a model/effort change does not) - see
    * `agents/copilot/runtimeManager.ts`. Never called on a failed save, so the runtime
    * is never recycled for a change the file does not record.
+   *
+   * The handler awaits the returned promise before reporting the write as done.
+   * An active-provider switch therefore does not resolve until the hub has
+   * switched runtimes, so the renderer's follow-up snapshot reload reads a
+   * runtime that is actually ready (otherwise its auth/model reads race the
+   * still-starting new runtime and the Model/Reasoning pickers stay disabled).
    */
-  readonly onAgentSettingsSaved: (settings: AppSettings) => void;
+  readonly onAgentSettingsSaved: (settings: AppSettings) => void | Promise<void>;
 }
 
 /**
@@ -1159,7 +1165,11 @@ export async function setAgentSettings(
   if (!saved.ok) {
     return { ok: false, error: saved.error };
   }
-  deps.onAgentSettingsSaved(updated.value);
+  // Awaited, not fired and forgotten: switching the active provider (or
+  // recycling it for a proxy) must have completed before this write is reported
+  // as done, so the renderer's follow-up reload reads a runtime that is ready
+  // rather than one still starting. See `onAgentSettingsSaved`.
+  await deps.onAgentSettingsSaved(updated.value);
   return { ok: true };
 }
 

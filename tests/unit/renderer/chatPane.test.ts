@@ -304,6 +304,48 @@ describe('createChatPane status push', () => {
     pane.dispose();
   });
 
+  it('shows a turn error in the dismissible banner and recovers the composer', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const chatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+    pushEvent({
+      type: 'session.state.changed',
+      chatId,
+      sequence: 0,
+      turnId: 'turn-1',
+      state: 'sending',
+    } as AgentEvent);
+    pushEvent({
+      type: 'error',
+      chatId,
+      sequence: 1,
+      turnId: 'turn-1',
+      error: {
+        code: 'AGENT_UNAVAILABLE',
+        message: 'The OpenRouter request failed.',
+        requestId: 'req-1',
+        retryable: true,
+        requiredAction: 'sign_in_to_agent',
+      },
+    } as AgentEvent);
+
+    // The error has no transcript item, so the pane's one row carries it, and
+    // it is dismissible.
+    const banner = agentBanner(pane);
+    expect(banner?.textContent).toBe('The OpenRouter request failed.');
+    expect(banner?.hasAttribute('dismissible')).toBe(true);
+
+    // The adapter recovers the session to idle with a chat-scoped event, which
+    // re-enables Send instead of wedging it.
+    pushEvent({ type: 'session.state.changed', chatId, sequence: 2, state: 'idle' });
+    expect(sendButton(pane)?.hasAttribute('disabled')).toBe(false);
+
+    pane.dispose();
+  });
+
   it("routes the composer's connecting state to the banner as a loading row", () => {
     const pane = createChatPane({ onOpenSettings: vi.fn() });
 

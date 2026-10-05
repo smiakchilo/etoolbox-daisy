@@ -25,6 +25,7 @@ export function isAgentMeta(value: unknown): value is AgentMeta {
     v['id'].length > 0 &&
     typeof v['label'] === 'string' &&
     typeof v['requiresAuth'] === 'boolean' &&
+    typeof v['supportsInteractiveLogin'] === 'boolean' &&
     (v['disabled'] === undefined || typeof v['disabled'] === 'boolean')
   );
 }

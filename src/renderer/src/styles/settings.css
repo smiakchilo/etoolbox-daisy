@@ -397,6 +397,14 @@
   gap: 8px;
 }
 
+/* An inactive provider's auth row is hidden wholesale (the section sets
+   `hidden`; its runtime is not started, so there is no honest status to show).
+   The `display: flex` above would otherwise outrank the UA `[hidden]` rule,
+   painting the row's empty status light as a lone gray dot with no label. */
+.agent-item__auth[hidden] {
+  display: none;
+}
+
 /* Both of an item's action buttons - "Set active" in the header, "Sign in" /
    "Sign out" in the auth row - are pushed to the item's right edge and given
    one width, so the two line up in a single column whatever their labels say.
