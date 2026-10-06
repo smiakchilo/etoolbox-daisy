@@ -1,5 +1,5 @@
 ---
-name: aem-query-results
+name: query-results
 user-invocable: false
 description: Read an aem_query result correctly - pagination, totals, projection, and errors. Use whenever an aem_query call has returned and you are about to describe the results to the user, or when a query returned zero rows, an error, or more results than one page.
 ---

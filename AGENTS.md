@@ -428,13 +428,20 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 
 ### `resources/skills/`
 
-Four bundled skills, each a `SKILL.md`: `aem-query` and `aem-semantic-search`
+Four bundled skills, each a `SKILL.md`: `search` and `semantic-search`
 (both user-invocable — they appear in the composer's `/` autocomplete), plus
-`aem-daisy-conventions` and `aem-query-results` (auxiliary —
+`daisy-conventions` and `query-results` (auxiliary —
 `user-invocable: false`, so the runtime still loads them for the model but the
 `/` menu does not list them; see `src/main/skills/skillCatalog.ts`).
 Application-owned only — never loaded from the user's home, a project
 directory, or an AEM response.
+
+`/search <terms>` and `/semantic-search <text>` accept their argument as one
+plain string — no separate "comment" is required. The `/skillname` rewrite in
+`src/shared/skillInvocation.ts` frames the trailing text as the skill's input
+and forbids asking the user to restate it; the skill bodies then say that input
+is the search string. Both halves are load-bearing: without the framing the
+model loads the skill and asks what to search for (observed live).
 
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**

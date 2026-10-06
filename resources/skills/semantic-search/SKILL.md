@@ -1,6 +1,6 @@
 ---
-name: aem-semantic-search
-description: How to answer a "semantic search" request against a conventional AEM Author instance - recall everything the full-text index can find for a subject, judge each candidate by meaning, and report the matches with a path-to-citation table. Use whenever the user says "semantic search" and supplies a subject plus a meaning to match, rather than a path, a property value, or a structured predicate.
+name: semantic-search
+description: How to answer a `/semantic-search <text>` request against a conventional AEM Author instance - recall everything the full-text index can find for the subject in the text, judge each candidate by the meaning the text carries, and report the matches with a path-to-citation table. Use whenever the user invokes `/semantic-search`, rather than supplying a path, a property value, or a structured predicate.
 ---
 
 # Semantic search
@@ -18,11 +18,13 @@ from condemnation; you can.
 
 ## 1. Split the request into a subject and a meaning
 
-A semantic search gives you a subject and a meaning to look for:
+You are invoked as `/semantic-search <text>`, and the `<text>` is handed to you
+as **your input for the turn**. The whole input is the request: from it you take
+a subject to search and a meaning to judge against.
 
-- "semantic search **good Waldo**" -> subject `Waldo`; meaning "Waldo is good,
-  benevolent, upstanding".
-- "semantic search **pages about our sustainability commitments**" -> subject
+- input `good Waldo` -> subject `Waldo`; meaning "Waldo is good, benevolent,
+  upstanding".
+- input `pages about our sustainability commitments` -> subject
   `sustainability`; meaning "the company's environmental commitments".
 
 The subject is what goes in the query. The meaning is what you judge against.
@@ -66,8 +68,8 @@ lets AEM return up to 50 rows, which is more than you should probe:
 }
 ```
 
-- Use `limit: 10`. If the user states a maximum ("semantic search max 5"), use
-  that instead. Do not silently raise it.
+- Use `limit: 10`. If the user states a maximum ("/semantic-search ... max 5"),
+  use that instead. Do not silently raise it.
 - Read `pagination` in the result. If `hasMore` is `true` or `"unknown"`, this
   is one page, not the whole answer.
 

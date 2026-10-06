@@ -107,13 +107,13 @@ test.describe('composer skill autocomplete', () => {
     await field.fill('/');
 
     // The real catalogue, read from resources/skills on disk. Only
-    // user-invocable skills appear - `aem-query-results` is auxiliary
+    // user-invocable skills appear - `query-results` is auxiliary
     // (`user-invocable: false`) and must not be offered.
     await expect.poll(() => skillOverlayOpen(shell)).toBe(true);
     await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
-    await expect(shell.locator(SKILL_NAME, { hasText: 'aem-query' })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: 'aem-semantic-search' })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: 'aem-query-results' })).toHaveCount(0);
+    await expect(shell.locator(SKILL_NAME, { hasText: /^search$/ })).toHaveCount(1);
+    await expect(shell.locator(SKILL_NAME, { hasText: 'semantic-search' })).toHaveCount(1);
+    await expect(shell.locator(SKILL_NAME, { hasText: 'query-results' })).toHaveCount(0);
 
     // The empty composer fills the pane, so there is no room above it: the list
     // must be flipped to open *below* the first line of typed text (never over
@@ -144,30 +144,30 @@ test.describe('composer skill autocomplete', () => {
     );
     expect(hoverColor).not.toBe(restingColor);
 
-    // `/aem` matches both; the first (sorted) is highlighted.
-    await field.fill('/aem');
+    // `/s` matches both; the first (sorted) is highlighted.
+    await field.fill('/s');
     await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
-    await expect(shell.locator(SELECTED_NAME)).toHaveText('aem-query');
+    await expect(shell.locator(SELECTED_NAME)).toHaveText('search');
 
     // Down moves the highlight; Tab accepts it, inserting the name and a space.
     await field.press('ArrowDown');
-    await expect(shell.locator(SELECTED_NAME)).toHaveText('aem-semantic-search');
+    await expect(shell.locator(SELECTED_NAME)).toHaveText('semantic-search');
     await field.press('Tab');
-    await expect(field).toHaveValue('/aem-semantic-search ');
+    await expect(field).toHaveValue('/semantic-search ');
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Escape dismisses without editing the text.
-    await field.fill('/aem-query');
+    await field.fill('/search');
     await expect(shell.locator(SKILL_NAME)).toHaveCount(1);
     await field.press('Escape');
-    await expect(field).toHaveValue('/aem-query');
+    await expect(field).toHaveValue('/search');
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Clicking a suggestion inserts it and closes the popup.
-    await field.fill('/aem-query');
+    await field.fill('/search');
     await expect(shell.locator(SKILL_NAME)).toHaveCount(1);
     await shell.locator(SKILL_ROW).first().click();
-    await expect(field).toHaveValue('/aem-query ');
+    await expect(field).toHaveValue('/search ');
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
   });
 });

@@ -31,7 +31,7 @@ describe.skipIf(!existsSync(packagedResources))('packaged bundled skills', () =>
     });
 
     expect(dir).toBe(path.join(packagedResources, 'resources', 'skills'));
-    expect(existsSync(path.join(dir, 'aem-daisy-conventions', 'SKILL.md'))).toBe(true);
+    expect(existsSync(path.join(dir, 'daisy-conventions', 'SKILL.md'))).toBe(true);
   });
 });
 

@@ -88,7 +88,7 @@ export function createSkillToolSpec(
     properties: {
       skill: {
         type: 'string',
-        description: 'The skill name, without a leading slash (e.g. "aem-query").',
+        description: 'The skill name, without a leading slash (e.g. "search").',
       },
     },
     required: ['skill'],

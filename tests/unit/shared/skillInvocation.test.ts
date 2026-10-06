@@ -15,8 +15,8 @@ describe('readLeadingSkillToken', () => {
   });
 
   it('reads a bare name with no remainder', () => {
-    expect(readLeadingSkillToken('/aem-query-results')).toEqual({
-      name: 'aem-query-results',
+    expect(readLeadingSkillToken('/query-results')).toEqual({
+      name: 'query-results',
       rest: '',
     });
   });
@@ -39,24 +39,20 @@ describe('readLeadingSkillToken', () => {
   });
 
   it('treats a tab after the name as the end of the token', () => {
-    expect(readLeadingSkillToken('/aem-query-results\trest')).toEqual({
-      name: 'aem-query-results',
+    expect(readLeadingSkillToken('/query-results\trest')).toEqual({
+      name: 'query-results',
       rest: 'rest',
     });
   });
 });
 
 describe('filterSkillsByName', () => {
-  const skills = [
-    { name: 'aem-tool-selection' },
-    { name: 'aem-query-results' },
-    { name: 'z-other' },
-  ];
+  const skills = [{ name: 'search' }, { name: 'semantic-search' }, { name: 'z-other' }];
 
   it('matches a case-insensitive prefix, preserving order', () => {
-    expect(filterSkillsByName(skills, 'AEM')).toEqual([
-      { name: 'aem-tool-selection' },
-      { name: 'aem-query-results' },
+    expect(filterSkillsByName(skills, 'S')).toEqual([
+      { name: 'search' },
+      { name: 'semantic-search' },
     ]);
   });
 
@@ -78,15 +74,17 @@ describe('renderSkillInvocationDirective', () => {
     expect(directive).not.toContain('\n\n');
   });
 
-  it('appends the user request after a blank line', () => {
-    expect(renderSkillInvocationDirective('aem-query-results', 'why zero rows?')).toBe(
-      `${renderSkillInvocationDirective('aem-query-results', '')}\n\nwhy zero rows?`,
-    );
+  it('frames the trailing text as this skill input, then appends it', () => {
+    const directive = renderSkillInvocationDirective('query-results', 'why zero rows?');
+    expect(directive.startsWith(renderSkillInvocationDirective('query-results', ''))).toBe(true);
+    expect(directive).toContain("The text below is the user's input for this skill");
+    expect(directive).toContain('do not ask the user to restate it');
+    expect(directive.endsWith('why zero rows?')).toBe(true);
   });
 });
 
 describe('resolveSkillPrompt', () => {
-  const known = ['aem-tool-selection', 'aem-query-results'];
+  const known = ['aem-tool-selection', 'query-results'];
 
   it('rewrites a known leading reference into the directive plus the request', () => {
     expect(resolveSkillPrompt('/aem-tool-selection what tool?', known)).toBe(
@@ -96,6 +94,16 @@ describe('resolveSkillPrompt', () => {
 
   it('leaves an unknown leading reference untouched', () => {
     expect(resolveSkillPrompt('/content/wknd/us/en', known)).toBe('/content/wknd/us/en');
+  });
+
+  it('carries a bare search term through as this skill input (the /search Waldo case)', () => {
+    const prompt = resolveSkillPrompt('/search Waldo', ['search', 'semantic-search']);
+    expect(prompt).toContain('{"skill":"search"}');
+    expect(prompt).toContain("The text below is the user's input for this skill");
+    expect(prompt).toContain('do not ask the user to restate it');
+    expect(prompt.trimEnd().endsWith('Waldo')).toBe(true);
+    // The literal token is consumed, never shown to the model as a path to read.
+    expect(prompt).not.toContain('/search');
   });
 
   it('leaves ordinary text untouched', () => {

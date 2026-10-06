@@ -60,12 +60,24 @@ export function filterSkillsByName<T extends { readonly name: string }>(
  * The one line the model reads when a known skill was explicitly invoked. It
  * names the exact tool and argument so activation cannot be mistaken for the
  * user merely mentioning a skill by name.
+ *
+ * When the user supplied trailing text, that text is framed explicitly as this
+ * skill's input and the model is told not to ask the user to restate it. This
+ * directive is the only place the two are joined: the model never sees the
+ * literal `/skillname` token, and a bare appended word is otherwise read as an
+ * unrelated remark. Observed live (2026-10-06): `/search Waldo` loaded the
+ * `search` skill, then the model answered "What would you like to search for?".
  */
 export function renderSkillInvocationDirective(name: string, rest: string): string {
   const directive =
     `The user has explicitly invoked the "${name}" skill. Load it first by calling the ` +
     `\`skill\` tool with {"skill":"${name}"}, then follow its guidance.`;
-  return rest === '' ? directive : `${directive}\n\n${rest}`;
+  if (rest === '') return directive;
+  return (
+    `${directive}\n\n` +
+    `The text below is the user's input for this skill. Act on it directly; do not ` +
+    `ask the user to restate it.\n\n${rest}`
+  );
 }
 
 /**

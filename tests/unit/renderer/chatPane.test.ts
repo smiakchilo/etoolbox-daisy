@@ -752,7 +752,7 @@ describe('createChatPane skill catalogue', () => {
     expect(agentBanner(pane)?.hasAttribute('open')).toBe(true);
     expect(agentBanner(pane)?.textContent).toContain('Loading skills');
 
-    resolveSkills?.({ ok: true, skills: [{ name: 'aem-query', description: 'query' }] });
+    resolveSkills?.({ ok: true, skills: [{ name: 'search', description: 'query' }] });
     await flush();
     await waitForBannerClosed(pane);
 

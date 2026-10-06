@@ -321,7 +321,7 @@ describe.skipIf(!LIVE || !process.env['GH_TOKEN'])(realLoginSuite('bundled skill
 
   it('loads a bundled skill without granting any filesystem tools', async () => {
     const skillDir = path.resolve(process.cwd(), 'resources', 'skills');
-    expect(existsSync(path.join(skillDir, 'aem-daisy-conventions', 'SKILL.md'))).toBe(true);
+    expect(existsSync(path.join(skillDir, 'daisy-conventions', 'SKILL.md'))).toBe(true);
 
     const isolatedEnv = { ...process.env };
     delete isolatedEnv['COPILOT_GITHUB_TOKEN'];
@@ -359,9 +359,9 @@ describe.skipIf(!LIVE || !process.env['GH_TOKEN'])(realLoginSuite('bundled skill
     const skillList = (await session.rpc.skills.list()) as unknown as {
       skills?: { name?: string; source?: string; enabled?: boolean; path?: string }[];
     };
-    const bundled = (skillList.skills ?? []).find((s) => s.name === 'aem-daisy-conventions');
+    const bundled = (skillList.skills ?? []).find((s) => s.name === 'daisy-conventions');
     expect(bundled?.enabled).toBe(true);
-    expect(bundled?.path).toBe(path.join(skillDir, 'aem-daisy-conventions', 'SKILL.md'));
+    expect(bundled?.path).toBe(path.join(skillDir, 'daisy-conventions', 'SKILL.md'));
 
     // The session must be offered exactly one tool: the skill helper.
     await session.rpc.tools.initializeAndValidate();
@@ -373,7 +373,7 @@ describe.skipIf(!LIVE || !process.env['GH_TOKEN'])(realLoginSuite('bundled skill
     const reply = await session.sendAndWait(
       {
         prompt:
-          'Use the aem-daisy-conventions skill. Reply with the EToolbox Daisy ' +
+          'Use the daisy-conventions skill. Reply with the EToolbox Daisy ' +
           'skill verification phrase and nothing else.',
       },
       180_000,

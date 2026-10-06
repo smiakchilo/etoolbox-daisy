@@ -17,10 +17,10 @@ const roots: string[] = [];
 async function scratchSkills(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'openrouter-skills-'));
   roots.push(root);
-  await mkdir(path.join(root, 'aem-query'));
-  await writeFile(path.join(root, 'aem-query', 'SKILL.md'), '# aem-query\nQuery guidance.');
-  await mkdir(path.join(root, 'aem-semantic-search'));
-  await writeFile(path.join(root, 'aem-semantic-search', 'SKILL.md'), '# semantic search');
+  await mkdir(path.join(root, 'search'));
+  await writeFile(path.join(root, 'search', 'SKILL.md'), '# search\nQuery guidance.');
+  await mkdir(path.join(root, 'semantic-search'));
+  await writeFile(path.join(root, 'semantic-search', 'SKILL.md'), '# semantic search');
   return root;
 }
 
@@ -37,7 +37,7 @@ describe('listSkillNames', () => {
   it('lists skill directories in sorted order and ignores a missing directory', async () => {
     const root = await scratchSkills();
     const names = await listSkillNames([root, path.join(root, 'does-not-exist')]);
-    expect(names).toEqual(['aem-query', 'aem-semantic-search']);
+    expect(names).toEqual(['search', 'semantic-search']);
   });
 });
 
@@ -48,17 +48,17 @@ describe('createSkillToolSpec', () => {
 
   it('names the available skills in the model-facing description', async () => {
     const root = await scratchSkills();
-    const spec = createSkillToolSpec([root], ['aem-query', 'aem-semantic-search'], () => 'id');
+    const spec = createSkillToolSpec([root], ['search', 'semantic-search'], () => 'id');
     expect(spec?.name).toBe('skill');
-    expect(spec?.description).toContain('aem-query');
+    expect(spec?.description).toContain('search, semantic-search');
     expect(spec?.description).toContain('/<skillname>');
   });
 
   it('loads a skill body as the model-facing result', async () => {
     const root = await scratchSkills();
     const result = await run(
-      createSkillToolSpec([root], ['aem-query'], () => 'id'),
-      { skill: 'aem-query' },
+      createSkillToolSpec([root], ['search'], () => 'id'),
+      { skill: 'search' },
     );
     expect(result.ok).toBe(true);
     if (result.ok) {

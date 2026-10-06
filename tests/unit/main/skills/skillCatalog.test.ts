@@ -34,10 +34,8 @@ describe('parseSkillFrontMatter', () => {
   });
 
   it('reads user-invocable: false', () => {
-    expect(
-      parseSkillFrontMatter(frontMatter('aem-query-results', 'Reading results.', false)),
-    ).toEqual({
-      name: 'aem-query-results',
+    expect(parseSkillFrontMatter(frontMatter('query-results', 'Reading results.', false))).toEqual({
+      name: 'query-results',
       description: 'Reading results.',
       userInvocable: false,
     });
@@ -112,11 +110,11 @@ describe('readSkillCatalog', () => {
 
   it('omits a skill marked user-invocable: false', async () => {
     const dir = makeSkillsDir({
-      'aem-query': frontMatter('aem-query', 'Interactive.'),
+      search: frontMatter('search', 'Interactive.'),
       'aem-tool-selection': frontMatter('aem-tool-selection', 'Auxiliary.', false),
     });
 
-    expect((await readSkillCatalog(dir)).map((skill) => skill.name)).toEqual(['aem-query']);
+    expect((await readSkillCatalog(dir)).map((skill) => skill.name)).toEqual(['search']);
   });
 
   it('skips a directory without a SKILL.md, a file, and malformed front matter', async () => {

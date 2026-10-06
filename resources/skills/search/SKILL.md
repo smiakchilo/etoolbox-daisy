@@ -1,9 +1,9 @@
 ---
-name: aem-query
-description: How to construct AEM QueryBuilder predicate maps for the aem_query tool, including path/type/property predicates, nested AND/OR groups, date and range predicates, full-text search, ordering, and choosing which properties to return. Use whenever building, correcting, or explaining an aem_query call against a conventional AEM Author instance.
+name: search
+description: How to run an AEM search with the aem_query tool - invoke `/search <terms>` for an immediate full-text search, or construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return. Use whenever searching, correcting, or explaining an aem_query call against a conventional AEM Author instance.
 ---
 
-# Building a QueryBuilder query
+# Running an AEM search
 
 `aem_query` takes `predicates`: a flat map of QueryBuilder predicate keys to
 string values. The application always targets the QueryBuilder endpoint on the
@@ -12,6 +12,26 @@ supply a query language. QueryBuilder predicates are the only query syntax
 available here; do not write SQL2, JCR-SQL, XPath, or GraphQL.
 
 All predicate values are strings, including numbers and booleans.
+
+## Invoked as `/search <terms>`
+
+You are invoked as `/search <terms>`, and the user's term(s) are handed to you
+as **your input for the turn** - the directive that invokes this skill says so,
+and the term(s) follow it. **That input is the search string.** Run the search
+for it immediately; do not ask the user what to search for, and do not answer by
+explaining this skill:
+
+- Search the input with a `fulltext` predicate, scoped to the host's content
+  roots via `roots` (the same recall the semantic-search skill performs).
+- Set `limit` explicitly (20 is a sensible default), and say which scope you
+  used.
+- `fulltext` matches the words, not the meaning: report what the index returned,
+  then read a hit's text with `aem_get_json` when the answer depends on it.
+- If the input is empty, then - and only then - ask what to search for.
+
+`/search` is only the shortcut for a plain term. For anything more specific - a
+concrete path, a property value, a date or numeric range - build the predicate
+map yourself as the rest of this skill describes.
 
 ## Always scope
 

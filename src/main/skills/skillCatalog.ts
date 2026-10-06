@@ -109,8 +109,8 @@ export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter 
  * stable order, keeping only the skills the user may invoke (`user-invocable`
  * not `false`).
  *
- * Auxiliary skills the model loads on its own - `aem-query-results`,
- * `aem-daisy-conventions` - set `user-invocable: false`,
+ * Auxiliary skills the model loads on its own - `query-results`,
+ * `daisy-conventions` - set `user-invocable: false`,
  * so they are deliberately absent from the `/` autocomplete even though the
  * runtime still loads their bodies. Never rejects: a missing directory, an
  * unreadable file, or a file without usable front matter is simply omitted.
