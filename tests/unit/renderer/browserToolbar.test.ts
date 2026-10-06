@@ -1340,11 +1340,11 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
   });
 });
 
-function addressSwatch(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement | null {
-  return toolbar.element.querySelector<HTMLElement>('.address-bar__swatch');
+function addressHostLabel(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement | null {
+  return toolbar.element.querySelector<HTMLElement>('.address-bar__host-label');
 }
 
-describe('createBrowserToolbar address swatch', () => {
+describe('createBrowserToolbar address host label', () => {
   const authorHost: HostOption = {
     id: AUTHOR_SERVER_ID,
     label: 'Author',
@@ -1356,55 +1356,173 @@ describe('createBrowserToolbar address swatch', () => {
     return { url, canGoBack: false, canGoForward: false, isLoading: false };
   }
 
-  it('shows the matching host colour once a URL on that origin is loaded', () => {
+  it('shows the matching host label on its colour once a URL on that origin is loaded', () => {
     const toolbar = build();
     toolbar.setHostOptions([authorHost]);
 
     stateListeners[0]?.(navigationState('https://author.example/content/page.html'));
 
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('rgb(38, 128, 235)');
-    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(true);
+    const label = addressHostLabel(toolbar);
+    expect(label?.hidden).toBe(false);
+    expect(label?.textContent).toBe('Author');
+    expect(label?.style.backgroundColor).toBe('rgb(38, 128, 235)');
+    // Blue is dark enough that white text keeps its contrast.
+    expect(label?.style.color).toBe('rgb(255, 255, 255)');
   });
 
-  it('leaves the inline colour unset (CSS default gray) when the address matches no host', () => {
+  it('hides the label when the address matches no host', () => {
     const toolbar = build();
     toolbar.setHostOptions([authorHost]);
 
     stateListeners[0]?.(navigationState('https://unknown.example/content/page.html'));
 
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
-    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
+    const label = addressHostLabel(toolbar);
+    expect(label?.hidden).toBe(true);
+    expect(label?.textContent).toBe('');
+    expect(label?.style.backgroundColor).toBe('');
   });
 
-  it('leaves the inline colour unset before any address is loaded', () => {
+  it('hides the label before any address is loaded', () => {
     const toolbar = build();
     toolbar.setHostOptions([authorHost]);
 
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
-    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
+    expect(addressHostLabel(toolbar)?.hidden).toBe(true);
   });
 
-  it('re-derives the swatch when the host list arrives after the address (snapshot reload)', () => {
+  it('re-derives the label when the host list arrives after the address (snapshot reload)', () => {
     const toolbar = build();
     stateListeners[0]?.(navigationState('https://author.example/'));
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
+    expect(addressHostLabel(toolbar)?.hidden).toBe(true);
 
     toolbar.setHostOptions([authorHost]);
 
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('rgb(38, 128, 235)');
-    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(true);
+    const label = addressHostLabel(toolbar);
+    expect(label?.hidden).toBe(false);
+    expect(label?.textContent).toBe('Author');
+    expect(label?.style.backgroundColor).toBe('rgb(38, 128, 235)');
   });
 
-  it('clears a previously matched colour when a later address matches nothing', () => {
+  it('switches to dark text on a light host colour', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([{ ...authorHost, label: 'Staging', colorCss: '#dfbf00' }]);
+
+    stateListeners[0]?.(navigationState('https://author.example/'));
+
+    const label = addressHostLabel(toolbar);
+    expect(label?.textContent).toBe('Staging');
+    expect(label?.style.color).toBe('rgb(46, 46, 46)');
+  });
+
+  it('clears a previously matched label when a later address matches nothing', () => {
     const toolbar = build();
     toolbar.setHostOptions([authorHost]);
     stateListeners[0]?.(navigationState('https://author.example/'));
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('rgb(38, 128, 235)');
+    expect(addressHostLabel(toolbar)?.hidden).toBe(false);
 
     stateListeners[0]?.(navigationState('https://unknown.example/'));
 
-    expect(addressSwatch(toolbar)?.style.backgroundColor).toBe('');
-    expect(addressSwatch(toolbar)?.classList.contains('address-bar__swatch--known')).toBe(false);
+    expect(addressHostLabel(toolbar)?.hidden).toBe(true);
+    expect(addressHostLabel(toolbar)?.textContent).toBe('');
+  });
+
+  it('clamps the label to the field width, reserving room for the address', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement;
+    address.getBoundingClientRect = () => ({ width: 200 }) as DOMRect;
+    toolbar.setHostOptions([authorHost]);
+
+    stateListeners[0]?.(navigationState('https://author.example/'));
+
+    // 200 - left inset - gap - field padding - reserved address slice = 136.
+    expect(addressHostLabel(toolbar)?.style.maxInlineSize).toBe('136px');
+  });
+
+  it('shrinks the label further on a narrower field, down to zero', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement;
+    toolbar.setHostOptions([authorHost]);
+
+    address.getBoundingClientRect = () => ({ width: 120 }) as DOMRect;
+    stateListeners[0]?.(navigationState('https://author.example/'));
+    expect(addressHostLabel(toolbar)?.style.maxInlineSize).toBe('56px');
+
+    address.getBoundingClientRect = () => ({ width: 60 }) as DOMRect;
+    stateListeners[0]?.(navigationState('https://author.example/'));
+    expect(addressHostLabel(toolbar)?.style.maxInlineSize).toBe('0px');
+  });
+
+  it('keeps the CSS upper bound before the field has a measurable width', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    stateListeners[0]?.(navigationState('https://author.example/'));
+
+    expect(addressHostLabel(toolbar)?.style.maxInlineSize).toBe('');
+  });
+});
+
+describe('createBrowserToolbar address type-ahead', () => {
+  const authorHost: HostOption = {
+    id: AUTHOR_SERVER_ID,
+    label: 'Author',
+    origin: 'https://author.example',
+    colorCss: '#2680eb',
+  };
+
+  function address(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement & {
+    value: string;
+  } {
+    return toolbar.element.querySelector('.address-bar') as HTMLElement & { value: string };
+  }
+
+  function typeInto(
+    toolbar: ReturnType<typeof createBrowserToolbar>,
+    value: string,
+  ): HTMLElement & { value: string } {
+    const field = address(toolbar);
+    field.value = value;
+    field.dispatchEvent(new dom.window.Event('input', { bubbles: true, composed: true }));
+    return field;
+  }
+
+  it('completes a typed address prefix with the matching host origin', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    const field = typeInto(toolbar, 'https://auth');
+
+    expect(field.value).toBe('https://author.example');
+  });
+
+  it('completes a typed label prefix to the host origin', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    expect(typeInto(toolbar, 'Auth').value).toBe('https://author.example');
+  });
+
+  it('leaves a non-matching or already-complete value untouched', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    expect(typeInto(toolbar, 'nope').value).toBe('nope');
+    expect(typeInto(toolbar, 'https://author.example').value).toBe('https://author.example');
+  });
+
+  it('does not complete when no hosts are configured', () => {
+    const toolbar = build();
+
+    expect(typeInto(toolbar, 'https://auth').value).toBe('https://auth');
+  });
+
+  it('completes with a label block shown for the matched host', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    typeInto(toolbar, 'Auth');
+
+    expect(addressHostLabel(toolbar)?.hidden).toBe(false);
+    expect(addressHostLabel(toolbar)?.textContent).toBe('Author');
   });
 });
 

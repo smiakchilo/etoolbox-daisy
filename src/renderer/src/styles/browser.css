@@ -13,8 +13,8 @@
  * browserToolbar.ts / requirements-decisions.md section 8.
  *
  * `position: relative` makes the group the containing block for the paired
- * colour swatch, which is absolutely positioned inside the field's left edge
- * (see `.address-bar__swatch`) so it never disturbs the field/button seam.
+ * host label, which is absolutely positioned inside the field's left edge
+ * (see `.address-bar__host-label`) so it never disturbs the field/button seam.
  */
 .browser-toolbar__address-group {
   position: relative;
@@ -28,10 +28,13 @@
   flex: 1 1 auto;
   min-width: 0;
 
-  /* Room for the paired swatch rendered inside the field's left edge. The far
-     side is padded too, harmlessly: the textfield exposes only a single
-     inline-spacing token. */
-  --mod-textfield-spacing-inline: 28px;
+  /* The field's resting inline padding. The paired host label is painted
+     inside the field's left edge and the address text is pushed past it by a
+     left padding set directly on the shadow `<input>` (see
+     `refreshAddressLabel`). Padding - not `text-indent` - is deliberate: it
+     sits outside the input's scrollable content, so the text can never scroll
+     under the chip. */
+  --mod-textfield-spacing-inline: 8px;
 
   /* The field's shadow `.input` accepts only a single radius token
      (`--mod-textfield-corner-radius`), so its four corners are squared and
@@ -77,13 +80,15 @@
   border-end-start-radius: var(--spectrum-corner-radius-100, 4px);
 }
 
-/* The colour swatch paired with the address: inside the field's left padding
-   (see `--mod-textfield-spacing-inline` above), above the field's 1px frame
-   overlay (`::before`, z-index 1), and never absorbing a click meant for the
-   input. Its colour is set inline by `refreshAddressSwatch` when the address
-   matches a configured host; with no match the inline colour is cleared and
-   this default - a stroke-free, lighter Spectrum gray-200 - shows through. */
-.address-bar__swatch {
+/* The coloured host label paired with the address: inside the field's left
+   padding, above the field's 1px frame overlay (`::before`, z-index 1), and
+   never absorbing a click meant for the input. Its background, foreground and
+   text are set inline by `refreshAddressLabel` when the address matches a
+   configured host; with no match it is hidden (the `[hidden]` rule below beats
+   this block's `display`). The label is clamped to a maximum width and
+   ellipsized, and the address text is pushed past the measured block by the
+   input's left padding (so the text can never scroll under the chip). */
+.address-bar__host-label {
   position: absolute;
   inset-inline-start: 8px;
   /* Optically centred on the field's text, not the raw box: the textfield's
@@ -91,17 +96,30 @@
   top: calc(50% - 1px);
   transform: translateY(-50%);
   z-index: 2;
-  width: 12px;
-  height: 12px;
+  display: block;
+  /* `border-box` so the JS-driven `max-inline-size` (the field's available
+     width minus a reserved slice of address text - see `refreshAddressLabel`)
+     clamps the whole chip, padding included, and it can shrink all the way. */
+  box-sizing: border-box;
+  /* Upper bound; the live clamp from `refreshAddressLabel` overrides it. */
+  max-inline-size: 160px;
+  padding: 1px 8px;
+  border-radius: var(--spectrum-corner-radius-100, 4px);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
-  background-color: var(--spectrum-gray-200, rgb(230, 230, 230));
-  border: none;
+  background-color: var(--spectrum-gray-200, #e6e6e6);
+  color: #ffffff;
 }
 
-/* A known host's colour restores the shared swatch stroke (which defines pale
-   colours like yellow); only the default "no host" state is stroke-free. */
-.address-bar__swatch--known {
-  border: 1px solid rgb(0 0 0 / 20%);
+/* The author-origin `display: block` above would beat the UA `[hidden]` rule,
+   so the hidden state needs an explicit override. */
+.address-bar__host-label[hidden] {
+  display: none;
 }
 
 .browser-toolbar__address-group #hosts-button {

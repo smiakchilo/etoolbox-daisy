@@ -27,7 +27,10 @@ import {
   describeBlockedCertificate,
   describeUnknownOrigin,
   deriveServerLabelFromOrigin,
-  resolveAddressSwatchColor,
+  findHostAutocomplete,
+  resolveAddressHost,
+  resolveAddressSubmission,
+  resolveHostLabelForeground,
 } from './viewModel';
 
 /**
@@ -156,6 +159,39 @@ function buildNavButton(
 }
 
 const LOADING_LABEL = 'Loading\u2026';
+
+/**
+ * The `sp-textfield` host, plus the few members the address bar drives on it:
+ * `value`, the delegated `focused` flag and shadow `focusElement`, and its
+ * `select()` helper. Kept as an intersection rather than `any` so the toolbar
+ * stays type-checked while still reaching the Spectrum control's real API.
+ */
+type AddressField = HTMLElement & {
+  value: string;
+  focused?: boolean;
+  focusElement?: HTMLInputElement | HTMLTextAreaElement | null;
+  select?: () => void;
+  /** Lit's update barrier; absent in jsdom (the custom element never upgrades). */
+  updateComplete?: Promise<unknown>;
+};
+
+/**
+ * Left inset of the coloured host label inside the address field, the gap
+ * between it and the address text, and the field's own resting inline padding.
+ * The label's measured width plus the inset and gap is the input left padding
+ * that pushes the address text past it.
+ */
+const ADDRESS_LABEL_LEFT_INSET_PX = 8;
+const ADDRESS_LABEL_GAP_PX = 8;
+const ADDRESS_FIELD_BASE_INLINE_PADDING_PX = 8;
+/**
+ * The chip's absolute upper bound, and the slice of the field it must always
+ * leave for the address itself (about a handful of characters plus the caret).
+ * The live clamp is `field width - insets - this reserve`, so the chip can
+ * never reach the field's right border - let alone spill into the picker.
+ */
+const ADDRESS_LABEL_MAX_PX = 160;
+const ADDRESS_LABEL_MIN_ADDRESS_PX = 40;
 
 export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): BrowserToolbar {
   const toolbar = el('div', { attrs: { class: 'toolbar browser-toolbar', role: 'toolbar' } });
@@ -638,7 +674,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         // the only non-empty address then differs from "nothing", so Refresh
         // re-requests it and re-triggers the prompt. `reload()` alone would
         // reload the blank view and do nothing.
-        const value = (addressField.value ?? '').trim();
+        const value = resolveAddressSubmission((addressField.value ?? '').trim(), hostOptions);
         const currentUrl = lastNavigationState?.url;
         if (value !== '' && value !== currentUrl) {
           performNavigate(value);
@@ -861,7 +897,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       placeholder: 'Select a host or type an address',
       'aria-label': 'Address',
     },
-  }) as HTMLElement & { value: string };
+  }) as AddressField;
 
   // The field's built-in truncation tooltip (`TruncatedValueTooltipController`)
   // draws a "bottom"-placed tooltip under the field whenever the address
@@ -888,18 +924,120 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // must re-request the refused URL).
   addressField.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
-    const value = addressField.value.trim();
+    // A scheme-less address names a configured host's domain; the protocol is
+    // inferred from that host before navigating (see `resolveAddressSubmission`).
+    const value = resolveAddressSubmission(addressField.value, hostOptions);
     if (value === '') return;
     event.preventDefault();
+    addressField.value = value;
+    refreshAddressLabel();
+    refreshExternalButton();
     performNavigate(value);
   });
 
-  // Keep the paired swatch and the external-browser control tracking whatever
-  // the field shows, whether typed here or written programmatically (the state
-  // pushes below call the two refreshers explicitly, since assigning `.value`
-  // fires no `input` event).
+  // The field's real shadow `<input>` - the node that owns the text selection.
+  // Undefined before the Spectrum control's first render and in jsdom (where
+  // the custom element never upgrades), so every use tolerates `null`.
+  function addressInputElement(): HTMLInputElement | HTMLTextAreaElement | null {
+    return addressField.focusElement ?? null;
+  }
+
+  /**
+   * Whether the address field currently holds focus. `sp-textfield` reflects
+   * this as a boolean property; jsdom has no such property, so the document's
+   * active element is the fallback.
+   */
+  function isAddressFocused(): boolean {
+    if (typeof addressField.focused === 'boolean') return addressField.focused;
+    return addressField.ownerDocument.activeElement === addressField;
+  }
+
+  /**
+   * Selects the whole address, through the shadow input when it exists. The
+   * selection is made *backwards* (focus/caret at index 0) and the scroll is
+   * pinned to the start, so selecting a long address keeps its beginning in
+   * view instead of scrolling the end into view and pushing the start out of
+   * the field - a plain `select()` puts the caret at the end and does exactly
+   * that.
+   */
+  function selectAllAddressText(): void {
+    const input = addressInputElement();
+    if (input !== null) {
+      input.setSelectionRange(0, input.value.length, 'backward');
+      input.scrollLeft = 0;
+      return;
+    }
+    addressField.select?.();
+  }
+
+  // One click into an unfocused address bar selects its whole value; the next
+  // click clears that selection and places the caret - Chrome's behaviour.
+  // Preventing the default on the first mousedown is what keeps the browser
+  // from collapsing our select-all to a caret at the click point; when the
+  // field is already focused the default runs, placing the caret (and so
+  // clearing any selection).
+  addressField.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    if (isAddressFocused()) return;
+    event.preventDefault();
+    addressField.focus();
+    selectAllAddressText();
+  });
+
+  /**
+   * Inline type-ahead over the configured hosts: completes a partially typed
+   * address and selects the appended text, so the next keystroke replaces the
+   * completion (Chrome's address bar). Only runs while the caret sits at the
+   * end of the text; an unavailable selection (jsdom) is treated as "at end".
+   * Programmatic writes (the live-navigation state push) fire no `input` event,
+   * so they never trigger a completion.
+   */
+  // Guards an async selection application against a newer completion: only the
+  // most recent one may move the caret.
+  let autocompleteToken = 0;
+
+  function applyHostAutocomplete(): void {
+    // Bump first: any completion already awaiting its render is now stale and
+    // must not move the caret, even if this input produced no new completion.
+    const token = ++autocompleteToken;
+    const input = addressInputElement();
+    const typed = addressField.value;
+    if (input !== null) {
+      const { selectionStart, selectionEnd } = input;
+      if (
+        selectionStart !== null &&
+        selectionEnd !== null &&
+        (selectionStart !== typed.length || selectionEnd !== typed.length)
+      ) {
+        return;
+      }
+    }
+    const completion = findHostAutocomplete(typed, hostOptions);
+    if (completion === undefined) return;
+    addressField.value = completion.value;
+    if (input === null) return;
+    // `sp-textfield` re-renders its shadow `<input>` from the host `value` on a
+    // microtask, and that re-assignment resets the selection to the end - so
+    // the completion's selection is applied only after that update settles.
+    const applySelection = (): void => {
+      if (token !== autocompleteToken) return;
+      input.setSelectionRange(completion.selectionStart, completion.selectionEnd);
+    };
+    const updateComplete = addressField.updateComplete;
+    if (updateComplete !== undefined) {
+      void updateComplete.then(applySelection);
+    } else {
+      applySelection();
+    }
+  }
+
+  // Keep the paired host label and the external-browser control tracking
+  // whatever the field shows, whether typed here or written programmatically
+  // (the state pushes below call the two refreshers explicitly, since assigning
+  // `.value` fires no `input` event).
   addressField.addEventListener('input', () => {
-    refreshAddressSwatch();
+    applyHostAutocomplete();
+    refreshAddressLabel();
     refreshExternalButton();
   });
 
@@ -921,19 +1059,21 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   });
   hostsButton.addEventListener('click', () => callbacks.onHostsPickerClick());
 
-  // The colour swatch paired with the address: it shows the configured host's
-  // colour when the address in the field belongs to that host, and the CSS
-  // default (light gray) when the address is empty or matches no host. It is
-  // positioned absolutely inside the field's left edge by CSS, so it never
-  // affects the field/button seam geometry. Colour is never the only signal -
-  // the address text itself names the host.
-  const addressSwatch = el('span', {
-    attrs: { class: 'server-swatch address-bar__swatch', role: 'presentation' },
+  // The coloured host label paired with the address: a block showing the
+  // configured host's *label* on that host's colour when the address in the
+  // field belongs to it, hidden when the address is empty or matches no host.
+  // It is positioned absolutely inside the field's left edge by CSS, and the
+  // field's address text is pushed past it by the input's left padding - see
+  // `refreshAddressLabel`. Colour is never the only signal: the block's text
+  // names the host.
+  const addressLabel = el('span', {
+    attrs: { class: 'address-bar__host-label' },
   });
+  addressLabel.hidden = true;
 
   const addressGroup = el('div', {
     attrs: { class: 'browser-toolbar__address-group' },
-    children: [addressField, addressSwatch, hostsButton],
+    children: [addressField, addressLabel, hostsButton],
   });
 
   // "Open in external browser": hands the address bar's current URL to the OS
@@ -1033,7 +1173,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       blockedCertificate = null;
       unknownOriginPrompt = null;
     }
-    refreshAddressSwatch();
+    refreshAddressLabel();
     refreshExternalButton();
     applyPresentation();
   });
@@ -1044,26 +1184,69 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   let hasHosts = false;
   // The full host option list, kept for the certificate prompt's
   // matching-host check (Allow is enabled only when a configured host's
-  // origin equals the blocked origin) and for the address bar's paired
-  // swatch. Mirrors `hasHosts` (which only feeds the picker's disabled state)
-  // but cannot be merged into it: `hasHosts` is a boolean, and matching needs
-  // the actual origins.
+  // origin equals the blocked origin) and for the address bar's paired host
+  // label and type-ahead. Mirrors `hasHosts` (which only feeds the picker's
+  // disabled state) but cannot be merged into it: `hasHosts` is a boolean, and
+  // matching needs the actual origins and labels.
   let hostOptions: readonly HostOption[] = [];
 
   /**
-   * Re-derives the address bar's paired swatch from the field's current value
-   * and the configured hosts. A host match sets its colour inline and restores
-   * the shared swatch stroke; no match (empty, unparseable, or unknown origin)
-   * clears both, so the CSS default - a stroke-free, lighter gray - shows.
+   * Re-derives the address bar's paired label block from the field's current
+   * value and the configured hosts. A host match paints the block with that
+   * host's label and colour (foreground chosen for readability) and pushes
+   * the address text past the measured block with the input's left padding; no
+   * match (empty, unparseable, or unknown origin) hides it and resets both.
    */
-  function refreshAddressSwatch(): void {
-    const colorCss = resolveAddressSwatchColor(addressField.value, hostOptions);
-    if (colorCss === undefined) {
-      addressSwatch.style.removeProperty('background-color');
-      addressSwatch.classList.remove('address-bar__swatch--known');
+  function refreshAddressLabel(): void {
+    const host = resolveAddressHost(addressField.value, hostOptions);
+    const input = addressInputElement();
+    if (host === undefined) {
+      addressLabel.hidden = true;
+      addressLabel.textContent = '';
+      addressLabel.style.removeProperty('background-color');
+      addressLabel.style.removeProperty('color');
+      addressLabel.style.removeProperty('max-inline-size');
+      if (input !== null) input.style.removeProperty('padding-inline-start');
+      return;
+    }
+    addressLabel.textContent = host.label;
+    addressLabel.style.backgroundColor = host.colorCss;
+    addressLabel.style.color = resolveHostLabelForeground(host.colorCss);
+    addressLabel.hidden = false;
+    // Clamp the chip to the field's real width, always leaving room for a few
+    // address characters, so a long label can never spill over the field's
+    // right border (or into the picker button). Skipped before layout (a
+    // zero-width field, and jsdom), where the CSS upper bound stands in.
+    const fieldWidth = addressField.getBoundingClientRect().width;
+    if (fieldWidth > 0) {
+      const available = Math.max(
+        0,
+        Math.min(
+          ADDRESS_LABEL_MAX_PX,
+          fieldWidth -
+            ADDRESS_LABEL_LEFT_INSET_PX -
+            ADDRESS_LABEL_GAP_PX -
+            ADDRESS_FIELD_BASE_INLINE_PADDING_PX -
+            ADDRESS_LABEL_MIN_ADDRESS_PX,
+        ),
+      );
+      addressLabel.style.maxInlineSize = `${String(available)}px`;
     } else {
-      addressSwatch.style.backgroundColor = colorCss;
-      addressSwatch.classList.add('address-bar__swatch--known');
+      addressLabel.style.removeProperty('max-inline-size');
+    }
+    // Push the address text past the clamped block with the shadow input's
+    // *left padding* (not `text-indent`): padding sits outside the input's
+    // scrollable content, so a long address that scrolls to reveal its end can
+    // never drag its beginning under the chip. Measured against the real
+    // geometry so the gap is exact regardless of borders/offsets.
+    if (input !== null) {
+      const inputRect = input.getBoundingClientRect();
+      const chipRect = addressLabel.getBoundingClientRect();
+      const paddingLeft = Math.max(
+        0,
+        Math.round(chipRect.right + ADDRESS_LABEL_GAP_PX - inputRect.left - input.clientLeft),
+      );
+      input.style.paddingInlineStart = paddingLeft === 0 ? '' : `${String(paddingLeft)}px`;
     }
   }
 
@@ -1079,6 +1262,18 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       externalButton.setAttribute('disabled', '');
     }
   }
+
+  // The chip's width clamp depends on the field's live width, which changes
+  // with the window and the pane splitter, so recompute it whenever the field
+  // resizes. Guarded because jsdom has no `ResizeObserver`; the clamp itself
+  // changes nothing the field's own size depends on, so this cannot loop.
+  const addressFieldResizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          refreshAddressLabel();
+        })
+      : null;
+  addressFieldResizeObserver?.observe(addressField);
 
   const unsubscribeSwitch = window.daisy.browser.onSwitchStateChanged((state) => {
     switching = state.switching;
@@ -1101,7 +1296,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     setAddressValue(value: string): void {
       if (hasLiveNavigationState) return;
       addressField.value = value;
-      refreshAddressSwatch();
+      refreshAddressLabel();
       refreshExternalButton();
     },
     setHostOptions(options: readonly HostOption[]): void {
@@ -1110,11 +1305,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // navigation-state event above, and must not be reset just because
       // the configured host list reloaded (e.g. the window regaining
       // focus). The picker's disabled state, the certificate prompt's
-      // matching-host state and the address swatch all depend on the
-      // snapshot, so all are re-derived here.
+      // matching-host state and the address's paired host label all depend on
+      // the snapshot, so all are re-derived here.
       hasHosts = options.length > 0;
       hostOptions = options;
-      refreshAddressSwatch();
+      refreshAddressLabel();
       applyPresentation();
     },
     setHostsPickerOpen(open: boolean): void {
@@ -1131,13 +1326,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
     navigateTo(url: string): void {
       addressField.value = url;
-      refreshAddressSwatch();
+      refreshAddressLabel();
       refreshExternalButton();
       performNavigate(url);
     },
     dispose(): void {
       cancelLoadingBanner();
       cancelBannerHide();
+      addressFieldResizeObserver?.disconnect();
       unsubscribeState();
       unsubscribeSwitch();
       unsubscribeBlocked();

@@ -8,7 +8,10 @@ import {
   deriveServerLabelFromOrigin,
   describeBlockedCertificate,
   describeUnknownOrigin,
-  resolveAddressSwatchColor,
+  findHostAutocomplete,
+  resolveAddressHost,
+  resolveAddressSubmission,
+  resolveHostLabelForeground,
 } from '../../../src/renderer/src/shell/viewModel';
 import { newServerId, type ServerSnapshot } from '../../../src/shared';
 
@@ -63,27 +66,182 @@ describe('computeAddressBarValue', () => {
   });
 });
 
-describe('resolveAddressSwatchColor', () => {
+describe('resolveAddressHost', () => {
   const options = buildHostOptions(hosts);
 
-  it('returns the matching host colour for a URL on a configured origin, ignoring path and query', () => {
-    expect(resolveAddressSwatchColor('https://author.example/content/page.html?a=1', options)).toBe(
-      '#2680eb',
+  it('returns the matching host for a URL on a configured origin, ignoring path and query', () => {
+    expect(resolveAddressHost('https://author.example/content/page.html?a=1', options)).toEqual(
+      options[0],
     );
   });
 
   it('matches over the origin alone, so a different port or scheme does not match', () => {
-    expect(resolveAddressSwatchColor('https://author.example:8443/', options)).toBeUndefined();
-    expect(resolveAddressSwatchColor('http://author.example/', options)).toBeUndefined();
+    expect(resolveAddressHost('https://author.example:8443/', options)).toBeUndefined();
+    expect(resolveAddressHost('http://author.example/', options)).toBeUndefined();
   });
 
-  it('returns undefined for an empty or unparseable address so the CSS default shows', () => {
-    expect(resolveAddressSwatchColor('', options)).toBeUndefined();
-    expect(resolveAddressSwatchColor('not a url', options)).toBeUndefined();
+  it('returns undefined for an empty or unparseable address', () => {
+    expect(resolveAddressHost('', options)).toBeUndefined();
+    expect(resolveAddressHost('not a url', options)).toBeUndefined();
   });
 
   it('returns undefined when no hosts are configured', () => {
-    expect(resolveAddressSwatchColor('https://author.example/', [])).toBeUndefined();
+    expect(resolveAddressHost('https://author.example/', [])).toBeUndefined();
+  });
+});
+
+describe('resolveHostLabelForeground', () => {
+  it('keeps white text on the dark and mid-tone swatches', () => {
+    // Spectrum 600-scale chromatic values: blue, green, red.
+    expect(resolveHostLabelForeground('#2680eb')).toBe('#ffffff');
+    expect(resolveHostLabelForeground('#2d9d78')).toBe('#ffffff');
+    expect(resolveHostLabelForeground('#e34850')).toBe('#ffffff');
+  });
+
+  it('switches to dark gray once white would lose too much contrast', () => {
+    // The bright yellow and orange swatches, and a near-white custom colour.
+    expect(resolveHostLabelForeground('#dfbf00')).toBe('#2e2e2e');
+    expect(resolveHostLabelForeground('#e68619')).toBe('#2e2e2e');
+    expect(resolveHostLabelForeground('#fefefe')).toBe('#2e2e2e');
+  });
+
+  it('is case-insensitive and tolerant of surrounding whitespace', () => {
+    expect(resolveHostLabelForeground('  #DFBF00 ')).toBe('#2e2e2e');
+  });
+
+  it('falls back to white for an unparseable colour', () => {
+    expect(resolveHostLabelForeground('not a colour')).toBe('#ffffff');
+    expect(resolveHostLabelForeground('#abc')).toBe('#ffffff');
+  });
+});
+
+describe('findHostAutocomplete', () => {
+  const options = buildHostOptions(hosts);
+
+  it('completes a typed origin prefix and selects only the appended remainder', () => {
+    expect(findHostAutocomplete('https://auth', options)).toEqual({
+      value: 'https://author.example',
+      selectionStart: 'https://auth'.length,
+      selectionEnd: 'https://author.example'.length,
+    });
+  });
+
+  it('completes a typed label prefix to "label + URL", selecting only the text after the typed prefix', () => {
+    const value = 'Production https://author.example';
+    expect(findHostAutocomplete('Prod', options)).toEqual({
+      value,
+      selectionStart: 'Prod'.length,
+      selectionEnd: value.length,
+    });
+  });
+
+  it('never selects the whole value for a label, even when the whole label is typed', () => {
+    const value = 'Production https://author.example';
+    const completion = findHostAutocomplete('Production', options);
+    expect(completion).toEqual({
+      value,
+      selectionStart: 'Production'.length,
+      selectionEnd: value.length,
+    });
+    expect(completion?.selectionStart).toBeGreaterThan(0);
+  });
+
+  it('completes a typed domain prefix, inserting the protocol before it', () => {
+    // "auth" -> "https://auth[or.example]": the protocol is prepended and the
+    // rest of the host after the typed part is selected.
+    expect(findHostAutocomplete('auth', options)).toEqual({
+      value: 'https://author.example',
+      selectionStart: 'https://'.length + 'auth'.length,
+      selectionEnd: 'https://author.example'.length,
+    });
+    // A second, http host keeps its own protocol.
+    expect(findHostAutocomplete('staging', options)).toEqual({
+      value: 'http://staging.internal',
+      selectionStart: 'http://'.length + 'staging'.length,
+      selectionEnd: 'http://staging.internal'.length,
+    });
+  });
+
+  it('prefers a full-origin match over a domain match', () => {
+    // "https://auth" is a prefix of the origin, so it keeps its typed prefix
+    // rather than being treated as a domain.
+    expect(findHostAutocomplete('https://auth', options)).toEqual({
+      value: 'https://author.example',
+      selectionStart: 'https://auth'.length,
+      selectionEnd: 'https://author.example'.length,
+    });
+  });
+
+  it('prefers an origin match over a label match', () => {
+    // "Internal staging" is the second host's label; "http://staging.internal"
+    // its origin. Typing "http" matches the origin first.
+    expect(findHostAutocomplete('http', options)?.value).toBe('https://author.example');
+  });
+
+  it('offers nothing for an exact origin, a non-prefix, blank input, or no hosts', () => {
+    expect(findHostAutocomplete('https://author.example', options)).toBeUndefined();
+    expect(findHostAutocomplete('nope', options)).toBeUndefined();
+    expect(findHostAutocomplete('   ', options)).toBeUndefined();
+    expect(findHostAutocomplete('https://auth', [])).toBeUndefined();
+  });
+
+  it('is case-insensitive over both the address and the label', () => {
+    expect(findHostAutocomplete('HTTPS://AUTH', options)?.value).toBe('https://author.example');
+    expect(findHostAutocomplete('prod', options)?.value).toBe('Production https://author.example');
+  });
+});
+
+describe('resolveAddressSubmission', () => {
+  const options = buildHostOptions(hosts);
+
+  it('leaves an absolute http(s) URL as typed, path/query included', () => {
+    expect(resolveAddressSubmission('https://author.example/editor.html?a=1', options)).toBe(
+      'https://author.example/editor.html?a=1',
+    );
+  });
+
+  it('adds the configured host protocol to a scheme-less domain', () => {
+    expect(resolveAddressSubmission('author.example', options)).toBe('https://author.example');
+    expect(resolveAddressSubmission('author.example/editor.html', options)).toBe(
+      'https://author.example/editor.html',
+    );
+    expect(resolveAddressSubmission('staging.internal/x?y=1#z', options)).toBe(
+      'http://staging.internal/x?y=1#z',
+    );
+  });
+
+  it('is case-insensitive and trims surrounding whitespace', () => {
+    expect(resolveAddressSubmission('  AUTHOR.EXAMPLE/p  ', options)).toBe(
+      'https://author.example/p',
+    );
+  });
+
+  it('strips a configured label prefix from a combined "label + URL" value', () => {
+    expect(resolveAddressSubmission('Production https://author.example/editor.html', options)).toBe(
+      'https://author.example/editor.html',
+    );
+    // The remainder may itself be scheme-less.
+    expect(resolveAddressSubmission('Production author.example/x', options)).toBe(
+      'https://author.example/x',
+    );
+    // Case-insensitive label, and a label containing spaces.
+    expect(resolveAddressSubmission('internal staging http://staging.internal/y', options)).toBe(
+      'http://staging.internal/y',
+    );
+  });
+
+  it('does not strip a label when what follows is not navigable', () => {
+    expect(resolveAddressSubmission('Production nonsense', options)).toBe('Production nonsense');
+    // A label with nothing after it is not a combined value.
+    expect(resolveAddressSubmission('Production', options)).toBe('Production');
+    expect(resolveAddressSubmission('Production ', options)).toBe('Production');
+  });
+
+  it('leaves an unknown host or non-http scheme unchanged, so main still refuses it', () => {
+    expect(resolveAddressSubmission('unknown.example/x', options)).toBe('unknown.example/x');
+    expect(resolveAddressSubmission('ftp://author.example', options)).toBe('ftp://author.example');
+    expect(resolveAddressSubmission('', options)).toBe('');
+    expect(resolveAddressSubmission('   ', options)).toBe('');
   });
 });
 

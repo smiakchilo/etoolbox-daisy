@@ -172,14 +172,19 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     const pickerButton = page.locator('#hosts-button');
     const panel = page.locator('.hosts-panel');
     const viewHost = page.locator('[data-testid="browser-view-host"]');
-    const addressSwatch = page.locator('.address-bar__swatch');
+    const addressLabel = page.locator('.address-bar__host-label');
     await expect(pickerButton).toBeVisible({ timeout: 10_000 });
 
-    // Nothing is loaded yet, so the paired swatch shows its CSS default - a
-    // stroke-free, lighter gray - rather than any host's colour.
-    await expect(addressSwatch).toBeVisible();
-    await expect(addressSwatch).toHaveCSS('background-color', 'rgb(230, 230, 230)');
-    await expect(addressSwatch).toHaveCSS('border-top-width', '0px');
+    // Nothing is loaded yet, so the paired host label is hidden rather than
+    // showing any host's colour/name, and the address text uses only the
+    // field's resting padding.
+    await expect(addressLabel).toBeHidden();
+    await expect
+      .poll(
+        async () =>
+          await addressInput.evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingLeft)),
+      )
+      .toBeLessThan(20);
 
     // A seeded profile means the hosts panel is already open at startup.
     // Because no page sits under it yet, the panel is not closeable: its
@@ -204,10 +209,20 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     await expect(panel).toBeHidden();
     await expect(viewHost).toBeVisible();
     await expect(pickerButton).not.toHaveAttribute('open', '');
-    // Server A's page is loaded, so the paired swatch now shows its blue and
-    // carries the shared swatch stroke again.
-    await expect(addressSwatch).toHaveCSS('background-color', 'rgb(38, 128, 235)');
-    await expect(addressSwatch).toHaveCSS('border-top-width', '1px');
+    // Server A's page is loaded, so the paired host label now names it on its
+    // blue, with white text.
+    await expect(addressLabel).toBeVisible();
+    await expect(addressLabel).toHaveText('Server A');
+    await expect(addressLabel).toHaveCSS('background-color', 'rgb(38, 128, 235)');
+    await expect(addressLabel).toHaveCSS('color', 'rgb(255, 255, 255)');
+    // The address text is pushed past the measured label block by the input's
+    // left padding (outside its scroll area).
+    await expect
+      .poll(
+        async () =>
+          await addressInput.evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingLeft)),
+      )
+      .toBeGreaterThan(20);
     // A real custom element registry entry is the only proof the
     // register-imports step ran - see AGENTS.md's "jsdom cannot prove a custom
     // element is registered" rule.
@@ -264,8 +279,9 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     await page.waitForTimeout(300);
     expect(await pickerPressedBackground(page)).toBe(restingBackground);
 
-    // The swatch follows the loaded host: Server B's green now.
-    await expect(addressSwatch).toHaveCSS('background-color', 'rgb(45, 157, 120)');
+    // The host label follows the loaded host: Server B's green now.
+    await expect(addressLabel).toHaveText('Server B');
+    await expect(addressLabel).toHaveCSS('background-color', 'rgb(45, 157, 120)');
 
     const message = page.locator('.browser-toolbar-message');
     await expect(message).toBeHidden();
@@ -399,5 +415,338 @@ test('the hosts picker stays enabled while a page loads, and picking another hos
     await app.close();
     slow.close();
     fast.close();
+  }
+});
+
+test('the address bar selects all on the first click and inline-completes host addresses as you type', async () => {
+  test.setTimeout(120_000);
+
+  const server = await startEchoOrigin();
+  const { home, env } = launchProfile();
+
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label: 'Author',
+        origin: server.origin,
+        color: { kind: 'swatch', swatch: 'blue' },
+        revision: 0,
+      },
+    ],
+  });
+  writeSettings(home, seeded);
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const addressBar = page.locator('#browser-address-bar');
+    await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
+    const addressInput = addressBar.locator('input').first();
+    const addressLabel = page.locator('.address-bar__host-label');
+
+    // Load the host so the field holds a real navigated URL to select.
+    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await expect
+      .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
+      .toMatch(new RegExp(`^${server.origin}/?$`));
+
+    // Click once into an unfocused address bar: the whole value is selected
+    // (Chrome behaviour). The field is blurred first so the click starts from
+    // the unfocused state.
+    await addressInput.blur();
+    await addressInput.click();
+    const selected = await addressInput.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      return { start: input.selectionStart, end: input.selectionEnd, length: input.value.length };
+    });
+    expect(selected.length).toBeGreaterThan(0);
+    expect(selected.start).toBe(0);
+    expect(selected.end).toBe(selected.length);
+
+    // A second click clears the selection and places the caret.
+    await addressInput.click();
+    const collapsed = await addressInput.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      return { start: input.selectionStart, end: input.selectionEnd };
+    });
+    expect(collapsed.start).toBe(collapsed.end);
+
+    // Typing an address prefix inline-completes to the host's origin, with the
+    // appended text selected. Typed key by key so the real per-keystroke flow
+    // (each character replacing the previous completion's selection) runs.
+    await addressInput.fill('');
+    await addressInput.pressSequentially('http');
+    await expect.poll(async () => await addressInput.inputValue()).toBe(server.origin);
+    const completion = await addressInput.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      return { start: input.selectionStart, end: input.selectionEnd };
+    });
+    expect(completion.start).toBe('http'.length);
+    expect(completion.end).toBe(server.origin.length);
+
+    // The next typed symbol discards the completion instead of appending to it.
+    await addressInput.press('x');
+    await expect.poll(async () => await addressInput.inputValue()).toBe('httpx');
+    await expect(addressLabel).toBeHidden();
+
+    // Typing from the domain name (no protocol) also completes: the protocol is
+    // inferred from the host and the typed prefix is kept, with the rest of the
+    // host selected ("127" -> "http://127[.0.0.1:port]").
+    await addressInput.fill('');
+    await addressInput.pressSequentially('127');
+    await expect.poll(async () => await addressInput.inputValue()).toBe(server.origin);
+    const domainCompletion = await addressInput.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      return { start: input.selectionStart, end: input.selectionEnd };
+    });
+    expect(domainCompletion.start).toBe('http://'.length + '127'.length);
+    expect(domainCompletion.end).toBe(server.origin.length);
+
+    // A scheme-less full host submitted with Enter gets the host's protocol and
+    // navigates. The live URL then comes from the real navigation, which adds a
+    // trailing slash.
+    const hitsBefore = server.hits;
+    await addressInput.fill(server.origin.replace(/^https?:\/\//, ''));
+    await addressInput.press('Enter');
+    await expect
+      .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
+      .toMatch(new RegExp(`^${server.origin}/?$`));
+    await expect.poll(() => server.hits > hitsBefore, { timeout: 30_000 }).toBe(true);
+  } finally {
+    await app.close();
+    server.close();
+  }
+});
+
+test('a long host label shrinks inside the address field instead of overflowing it', async () => {
+  test.setTimeout(120_000);
+
+  const server = await startEchoOrigin();
+  const { home, env } = launchProfile();
+
+  const base = defaultAppSettings();
+  const longLabel = 'HPE DEV Author With A Very Long Environment Name';
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label: longLabel,
+        origin: server.origin,
+        color: { kind: 'swatch', swatch: 'green' },
+        revision: 0,
+      },
+    ],
+  });
+  writeSettings(home, seeded);
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const addressBar = page.locator('#browser-address-bar');
+    await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
+    const addressLabel = page.locator('.address-bar__host-label');
+
+    // Load the host so the long label is shown.
+    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await expect(addressLabel).toBeVisible();
+    await expect(addressLabel).toHaveText(longLabel);
+
+    // Force the field narrow enough that the label's natural width cannot fit,
+    // so the clamp has to shrink it. The field is a flex item, so pin its size.
+    await page.evaluate(() => {
+      const field = document.getElementById('browser-address-bar');
+      if (field) {
+        field.style.flex = '0 0 auto';
+        field.style.width = '150px';
+      }
+    });
+
+    // Wait for the resize-driven clamp, then read the geometry.
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(() => {
+            const field = document.getElementById('browser-address-bar');
+            const label = document.querySelector('.address-bar__host-label');
+            if (!field || !label) return false;
+            return label.getBoundingClientRect().right <= field.getBoundingClientRect().right - 40;
+          }),
+      )
+      .toBe(true);
+
+    const geometry = await page.evaluate(() => {
+      const field = document.getElementById('browser-address-bar');
+      const label = document.querySelector('.address-bar__host-label');
+      if (!field || !label) throw new Error('address field or label missing');
+      const fieldRect = field.getBoundingClientRect();
+      const labelRect = label.getBoundingClientRect();
+      return {
+        fieldWidth: fieldRect.width,
+        labelWidth: labelRect.width,
+        labelRight: labelRect.right,
+        fieldRight: fieldRect.right,
+        clipped: (label as HTMLElement).scrollWidth > (label as HTMLElement).clientWidth,
+      };
+    });
+
+    // The chip is clamped below its 160px upper bound, ellipsized, and stops
+    // short of the field's right border by the reserved slice of address text.
+    expect(geometry.labelWidth).toBeLessThan(160);
+    expect(geometry.clipped).toBe(true);
+    expect(geometry.fieldRight - geometry.labelRight).toBeGreaterThanOrEqual(40);
+  } finally {
+    await app.close();
+    server.close();
+  }
+});
+
+test('selecting a long address keeps its start visible and never under the chip', async () => {
+  test.setTimeout(120_000);
+
+  const server = await startEchoOrigin();
+  const { home, env } = launchProfile();
+
+  const base = defaultAppSettings();
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label: 'Author',
+        origin: server.origin,
+        color: { kind: 'swatch', swatch: 'blue' },
+        revision: 0,
+      },
+    ],
+  });
+  writeSettings(home, seeded);
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const addressBar = page.locator('#browser-address-bar');
+    await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
+    const addressInput = addressBar.locator('input').first();
+
+    // A loaded address far wider than the field, so it must scroll.
+    const longUrl = `${server.origin}/${'a'.repeat(200)}`;
+    await addressInput.fill(longUrl);
+    await addressInput.press('Enter');
+    await expect
+      .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
+      .toBe(longUrl);
+
+    // Wait for the chip and its padding to settle.
+    await expect
+      .poll(
+        async () =>
+          await addressInput.evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingLeft)),
+      )
+      .toBeGreaterThan(20);
+
+    // Click once into the unfocused field: select-all must keep the start in
+    // view (no leftward shift) and the text must sit right of the chip.
+    await addressInput.blur();
+    await addressInput.click();
+
+    const selection = await addressInput.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      return {
+        start: input.selectionStart,
+        end: input.selectionEnd,
+        scrollLeft: input.scrollLeft,
+        length: input.value.length,
+      };
+    });
+    expect(selection.length).toBeGreaterThan(100);
+    expect(selection.start).toBe(0);
+    expect(selection.end).toBe(selection.length);
+    expect(selection.scrollLeft).toBe(0);
+
+    const geometry = await page.evaluate(() => {
+      const field = document.getElementById('browser-address-bar');
+      const input = field?.shadowRoot?.querySelector('input.input:not(#sizer)');
+      const label = document.querySelector('.address-bar__host-label');
+      if (!input || !label) throw new Error('address input or label missing');
+      const inputRect = input.getBoundingClientRect();
+      const labelRect = label.getBoundingClientRect();
+      return {
+        contentLeft:
+          inputRect.left +
+          input.clientLeft +
+          Number.parseFloat(getComputedStyle(input).paddingLeft),
+        chipRight: labelRect.right,
+      };
+    });
+    // The text's content edge is never left of the chip's right edge.
+    expect(geometry.contentLeft).toBeGreaterThanOrEqual(geometry.chipRight);
+  } finally {
+    await app.close();
+    server.close();
+  }
+});
+
+test('typing a host label completes to "label + URL" without selecting the whole field', async () => {
+  test.setTimeout(120_000);
+
+  const server = await startEchoOrigin();
+  const { home, env } = launchProfile();
+
+  const base = defaultAppSettings();
+  const label = 'HPE DEV Author';
+  const seeded = appSettingsSchema.parse({
+    ...base,
+    hosts: [
+      ...base.hosts,
+      {
+        id: randomUUID(),
+        label,
+        origin: server.origin,
+        color: { kind: 'swatch', swatch: 'green' },
+        revision: 0,
+      },
+    ],
+  });
+  writeSettings(home, seeded);
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const addressBar = page.locator('#browser-address-bar');
+    await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
+    const addressInput = addressBar.locator('input').first();
+
+    // Type the label prefix: the value becomes "label + URL" and only the text
+    // after the typed prefix is selected, so continuing to type keeps the
+    // prefix instead of erasing the field.
+    await addressInput.click();
+    await addressInput.pressSequentially('hpe');
+    const combined = `${label} ${server.origin}`;
+    await expect.poll(async () => await addressInput.inputValue()).toBe(combined);
+    const selection = await addressInput.evaluate((el) => {
+      const input = el as HTMLInputElement;
+      return { start: input.selectionStart, end: input.selectionEnd, length: input.value.length };
+    });
+    expect(selection.start).toBe('hpe'.length);
+    expect(selection.end).toBe(selection.length);
+    expect(selection.start).toBeGreaterThan(0);
+
+    // Enter strips the label and navigates to the URL.
+    const hitsBefore = server.hits;
+    await addressInput.press('Enter');
+    await expect
+      .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
+      .toMatch(new RegExp(`^${server.origin}/?$`));
+    await expect.poll(() => server.hits > hitsBefore, { timeout: 30_000 }).toBe(true);
+  } finally {
+    await app.close();
+    server.close();
   }
 });
