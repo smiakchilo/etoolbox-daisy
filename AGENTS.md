@@ -338,6 +338,19 @@ src/tools/<name>/
   `tsc`. Only deleting the folder (or fixing it) avoids that.
 - `aem_create_page` is present but `disabled`: the bridge is GET-only (rule 4
   stands) and it has no renderer yet.
+- `aem_environment_facts` reports the current host's origin and its
+  content/component roots. It takes no arguments: the application resolves the
+  facts from the live pane URL matched against the settings hosts, through
+  `ToolHost.environmentFacts` — never from model input. Its success payload is
+  structured (a `toPayload`), so its renderer can read it: `describeCall` now
+  receives the succeeded result as a second argument, letting this zero-argument
+  tool summarise the call with the host URL and show the facts as the collapsible
+  rows. A host's
+  roots live on `ServerConfig` as optional free text (`contentRoots`/
+  `componentRoots`); `src/shared/tools/core/environment.ts` owns the one
+  interpretation of that text (comma-or-semicolon split, comma wins, trimming, the
+  `/content`/`/apps` defaults) and the nesting-aware `effectiveRoots`, shared
+  by the tool, the per-turn context block and `aem_query`'s `roots` fan-out.
 - Tests live in `tests/unit/tools/` (manifests, executors),
   `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
   snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
@@ -389,6 +402,16 @@ that expands to show a standard **`getDetails()`** representation — a one-line
 summary plus label/value rows — composed by the tool's `renderer/index.ts` and
 dispatched by `describeToolCall()` in `src/renderer/src/chat/toolCallDetails.ts`.
 
+**A tool's details are ALWAYS rendered in one exact shape** — the pattern
+`aem_query`'s renderer established and the only permitted one: a `summary`
+string plus an ordered list of **Title-cased `label`/`value` rows**
+(`ToolCallDetails`, `src/shared/tools/core/toolRenderer.ts`). The identifying
+value comes first, and an optional row whose value is absent is **omitted**, not
+left blank. Build the rows with the shared **`parameterRows([[label, value], …])`**
+helper (`undefined` value ⇒ row dropped) so every renderer agrees; never a raw
+argument dump, never another shape. `describeCall(args, data?)` may read either
+the arguments or the succeeded result — a zero-argument tool reads `data`.
+
 - **Creating a tool includes designing its `getDetails()`.** Do not lean on the
   generic fallback (`describeGenericArgs`), which dumps the raw argument object.
   It exists so an unrecognised tool can never be *invisible*, not as an
@@ -405,13 +428,22 @@ dispatched by `describeToolCall()` in `src/renderer/src/chat/toolCallDetails.ts`
 
 ### `resources/skills/`
 
-Five bundled skills, each a `SKILL.md`: `aem-query` and `aem-semantic-search`
+Four bundled skills, each a `SKILL.md`: `aem-query` and `aem-semantic-search`
 (both user-invocable — they appear in the composer's `/` autocomplete), plus
-`aem-daisy-conventions`, `aem-tool-selection` and `aem-query-results`
-(auxiliary — `user-invocable: false`, so the runtime still loads them for the
-model but the `/` menu does not list them; see
-`src/main/skills/skillCatalog.ts`). Application-owned only — never loaded from
-the user's home, a project directory, or an AEM response.
+`aem-daisy-conventions` and `aem-query-results` (auxiliary —
+`user-invocable: false`, so the runtime still loads them for the model but the
+`/` menu does not list them; see `src/main/skills/skillCatalog.ts`).
+Application-owned only — never loaded from the user's home, a project
+directory, or an AEM response.
+
+The read-only / no-side-channel policy that used to live in the on-demand
+`aem-tool-selection` skill (deleted) now lives in the **always-injected**
+session instructions (`AEM_ASSISTANT_INSTRUCTIONS_POLICY`, composed by
+`composeAssistantInstructions` in `src/shared/tools/core/toolModule.ts`): a
+skill is only read when the model chooses to load it, so it can never
+*guarantee* an invariant. Per-tool "when to use me" guidance stays in each
+tool's own `instructions` and descriptor — never a central, tool-enumerating
+skill — which is what scales as the public-AEM-REST-API tool count grows.
 
 ### `tests/`
 
@@ -446,7 +478,15 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2451 passed / 14 skipped** (a +2 since the
+Current baseline: **`npm run test` → 2549 passed / 14 skipped** (the +7 since
+2542 is the aborted-traversal HTML classification fix — see
+`docs/verification.md` "AEM's aborted-traversal HTML is not a sign-in page
+(2026-10-06)"; 2542 is the single tool-details rendering shape; the +85 since
+2451 is the environment-facts work — the host content/component roots fields,
+the `aem_environment_facts` tool, `aem_query`'s `roots` fan-out, and the
+read-only policy moving out of the deleted `aem-tool-selection` skill into the
+always-injected instructions; see `docs/verification.md` "Environment facts,
+host roots and aem_query root fan-out (2026-10-06)"; before that, a +2 since the
 2449 baseline is the proxy-unification `tests/unit/main/agents/proxyFetch.test.ts`
 — see `docs/verification.md` "Dependency review and proxy unification
 (2026-10-05)"; the +34 before that is the OpenRouter agent suite:
@@ -459,9 +499,14 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 88 tests; 87 passed / 1 failed in the full run** (the failure the
-documented load-correlated `step05-loading-indicator` flake - green 4/4 in
-isolation; includes `message-links.spec.ts`, the assistant
+**Playwright → 93 tests; typically 92 passed / 1 failed in the full run** (the
+one deterministic failure is the pre-existing `settings-tabs.spec.ts:121`,
+which fails identically on HEAD — the settings "Takes effect after restarting
+the app" helper carries no trailing period while the assertion expects one; the
+load-correlated flakes — `settings-color-picker` (its 1–2 px geometry), the
+hosts-typing case in `step05-settings-servers.spec.ts`, and the documented
+`step05-loading-indicator` — are green in isolation, so a full run can show 2;
+includes `message-links.spec.ts`, the assistant
 message-link case, now 6 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
 on the exact resource - percent-encoding of the path in content-view URLs, the
@@ -679,6 +724,7 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory. |
 | Host `proxyId` | Persisted, integrity-checked and projected, but **not applied** to the live AEM session/bridge fetch. (The *active agent's* proxy is applied to the Copilot runtime and sign-in.) |
 | `step05-address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
+| `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 
 ---

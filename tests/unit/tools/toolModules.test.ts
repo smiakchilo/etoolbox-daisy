@@ -10,6 +10,7 @@ import {
   type ToolHost,
   type ToolModule,
 } from '../../../src/shared';
+import { tool as environmentFactsTool } from '../../../src/tools/aem-environment-facts/tool';
 import { tool as getJsonTool } from '../../../src/tools/aem-get-json/tool';
 import { tool as queryTool } from '../../../src/tools/aem-query/tool';
 import { tool as createPageTool } from '../../../src/tools/aem-create-page/tool';
@@ -39,6 +40,7 @@ function makeHost(outcome: BrokerOutcome): {
         },
       },
       currentContext: () => context,
+      environmentFacts: () => undefined,
       clock: () => 1_700_000_000_000,
       idGenerator: ids,
     },
@@ -51,6 +53,7 @@ describe('tool manifests', () => {
   it.each([
     ['aem_get_json', getJsonTool],
     ['aem_query', queryTool],
+    ['aem_environment_facts', environmentFactsTool],
     ['aem_create_page', createPageTool],
   ])('%s is internally consistent', (name, tool: ToolModule) => {
     expect(tool.name).toBe(name);
@@ -63,6 +66,7 @@ describe('tool manifests', () => {
     expect(createPageTool.disabled).toBe(true);
     expect(getJsonTool.disabled).not.toBe(true);
     expect(queryTool.disabled).not.toBe(true);
+    expect(environmentFactsTool.disabled).not.toBe(true);
   });
 });
 
@@ -118,8 +122,10 @@ describe('aem_create_page module', () => {
 describe('composed session instructions', () => {
   const composed = composeAssistantInstructions([getJsonTool.instructions, queryTool.instructions]);
 
-  it('states that the session is read-only', () => {
-    expect(composed).toMatch(/cannot write, delete, or otherwise modify/i);
+  it('states that the session is read-only and forbids side-channel routes', () => {
+    expect(composed).toMatch(/strictly read-only against AEM/i);
+    expect(composed).toMatch(/Sling POST servlet/);
+    expect(composed).toMatch(/never put a host, scheme, port, or full URL into a tool argument/i);
   });
 
   it('tells the model to page through query results and never present one page as complete', () => {

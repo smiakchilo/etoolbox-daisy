@@ -13,12 +13,17 @@ import {
   type AgentService,
   type CurrentAemContext,
   type CurrentAemToolContext,
+  type EnvironmentFacts,
   type IdGenerator,
   type ModelCatalogEntry,
   type ModelPreference,
+  type ServerConfig,
   type SessionStreamState,
   deriveCurrentPageContext,
+  originsMatch,
+  parseNavigationTarget,
   renderCurrentPageContextForModel,
+  resolveEnvironmentRoots,
 } from '../shared';
 
 /**
@@ -75,15 +80,56 @@ export function createCurrentAemServerContext(
 export function createCurrentPageContext(
   getActiveServer: () => ActiveAemServer | undefined,
   getDocumentUrl: () => string | undefined,
+  getEnvironmentFacts: () => EnvironmentFacts | undefined,
 ): () => string | undefined {
   return () => {
     const server = getActiveServer();
     if (server === undefined) return undefined;
+    const facts = getEnvironmentFacts();
     const context = deriveCurrentPageContext({
       documentUrl: getDocumentUrl(),
       activeOrigin: server.origin,
+      ...(facts !== undefined
+        ? { contentRoots: facts.contentRoots, componentRoots: facts.componentRoots }
+        : {}),
     });
     return context === undefined ? undefined : renderCurrentPageContextForModel(context);
+  };
+}
+
+/**
+ * Builds the "environment facts" provider the tool host and the page-context
+ * block both read: the origin of the host the browser pane is on right now,
+ * and that host's effective content/component roots.
+ *
+ * Matches the live document URL against the configured hosts by origin
+ * (`parseNavigationTarget` + `originsMatch`, the same idiom the address bar and
+ * the browser controller use), never against the model's arguments. Returns
+ * `undefined` when there is no document, the URL is unusable, or its origin is
+ * not a configured host - so an SSO/IdP page or an unconfigured origin yields
+ * no facts rather than a guessed host.
+ *
+ * `getHosts` is read fresh on every call (a roots edit in Settings must be
+ * visible on the very next prompt/tool call), which is why it is a closure
+ * rather than a snapshot.
+ */
+export function createEnvironmentFacts(
+  getDocumentUrl: () => string | undefined,
+  getHosts: () => readonly ServerConfig[],
+): () => EnvironmentFacts | undefined {
+  return () => {
+    const documentUrl = getDocumentUrl();
+    if (documentUrl === undefined) return undefined;
+    const target = parseNavigationTarget(documentUrl);
+    if (!target.ok) return undefined;
+    const host = getHosts().find((candidate) => originsMatch(candidate.origin, target.origin));
+    if (host === undefined) return undefined;
+    const roots = resolveEnvironmentRoots(host.contentRoots, host.componentRoots);
+    return {
+      origin: target.origin,
+      contentRoots: roots.contentRoots,
+      componentRoots: roots.componentRoots,
+    };
   };
 }
 

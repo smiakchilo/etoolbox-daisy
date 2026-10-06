@@ -12,6 +12,7 @@ import {
   createBridgeCurrentContext,
   createCurrentAemServerContext,
   createCurrentPageContext,
+  createEnvironmentFacts,
   createLateBoundAemToolContext,
   createModelPreferenceCache,
   installAgentService,
@@ -489,6 +490,13 @@ if (!gotSingleInstanceLock) {
     });
 
     const lateBoundAemToolContext = createLateBoundAemToolContext();
+    // The host's content/component roots, resolved from the live pane URL and
+    // the current settings document. Read fresh so a roots edit in Settings is
+    // visible immediately; `loadSettingsSync` is a small synchronous read.
+    const environmentFacts = createEnvironmentFacts(
+      () => browserController.currentDocumentUrl(),
+      () => loadSettingsSync(appPaths.settings).hosts,
+    );
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
@@ -496,8 +504,15 @@ if (!gotSingleInstanceLock) {
       host: {
         bridge: aemBridgeBroker,
         currentContext: lateBoundAemToolContext.currentContext,
+        environmentFacts,
         clock: Date.now,
         idGenerator: randomUUID,
+        // Diagnostics only: a tool reports how it classified the response body
+        // so `tools.log` records whether the read produced usable data, not just
+        // that the HTTP status was a 200.
+        recordResponseClassification: (requestId, kind) => {
+          toolLogger.classification({ requestId, kind });
+        },
       },
       onFailure: (failure) => {
         // The logger has no free-text field by design, so the reason goes to stderr.
@@ -643,6 +658,7 @@ if (!gotSingleInstanceLock) {
             currentPageContext: createCurrentPageContext(
               () => browserController.activeServer(),
               () => browserController.currentDocumentUrl(),
+              environmentFacts,
             ),
             chatJournal,
             // Stop / chat switch / close / context change all cancel the bridge's

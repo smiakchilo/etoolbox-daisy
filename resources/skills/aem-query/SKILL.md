@@ -13,17 +13,33 @@ available here; do not write SQL2, JCR-SQL, XPath, or GraphQL.
 
 All predicate values are strings, including numbers and booleans.
 
-## Always scope by path
+## Always scope
 
 An unscoped query scans the whole repository and is slow enough to time out.
-Start every query with a `path` predicate unless the user has explicitly asked
-for a repository-wide search.
+Start every query from a scope unless the user has explicitly asked for a
+repository-wide search.
 
-When the user names no path, use the **content path from the current page
-context** as the `path` predicate — they are asking about the page they are
-looking at, not the whole `/content` tree. Widen to a parent or to `/content`
-only when the request clearly reaches beyond that page, and say what scope you
-used.
+The current page context block names the host's **content roots** (default
+`/content`). Pass them to `aem_query` as `roots`. The tool runs one query per
+root and merges the rows, so a host with several content roots is covered in a
+single call:
+
+```json
+{
+  "predicates": { "type": "cq:Page" },
+  "roots": ["/content/wknd", "/content/shared"],
+  "limit": 20
+}
+```
+
+- `limit` and `offset` apply to each root, and the effective roots are reported
+  back. Never combine `roots` with a `path` predicate — that is rejected.
+- Use `roots` whenever the user names no path, or asks about the environment as
+  a whole. Widen the roots only when the request clearly reaches beyond them,
+  and say what scope you used.
+
+When the user names a concrete path (or you want the single page from the
+current page context), a `path` predicate is still correct and is one request:
 
 ```json
 {
@@ -52,6 +68,26 @@ Use `path.exact=true` to match one node rather than a subtree, and
 
 Property paths are relative to the matched node, so page properties usually
 live under `jcr:content/`.
+
+## Prefer predicates an index can serve
+
+`fulltext` and `type` are answered from an index. `property`, `nodename`,
+`range` and `daterange` are served by a *property index* an instance may not
+have, and a bare `path` scope is not indexed either. When no index can serve the
+query, AEM walks the repository - or the whole `path` subtree - instead. Past the
+instance's node read limit it stops and returns no data; the tool reports that as
+an **empty response, not as zero matches**.
+
+- Search text with `fulltext`, not with `property` on a text field.
+- Add `type` when you know the node type (`cq:Page`, `dam:Asset`, ...).
+- Keep `path`/`roots` as narrow as the question allows.
+- If an unindexed `property`/`nodename` search returns nothing, do not blind-
+  retry it: add a `type`, narrow the scope further, or tell the user their
+  instance needs an index for that property (an AEM admin task).
+
+A `property` query narrowed to a small subtree can still succeed without an
+index - it is the breadth of the traversal that aborts the query, so scoping
+helps.
 
 ## Customer and third-party predicates are allowed
 

@@ -111,12 +111,45 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
         kind: 'response',
         status: 200,
         contentType: 'text/html; charset=utf-8',
-        bodyText: '<html lang="en"><body>Sign in</body></html>',
+        bodyText:
+          '<html lang="en"><head><title>AEM Sign In</title></head>' +
+          '<body><form action="/j_security_check"></form></body></html>',
       }),
     ).error;
 
     expect(error.code).toBe('AUTH_REQUIRED');
     expect(error.requiredAction).toBe('sign_in_to_aem');
+  });
+
+  it('does not treat a non-login HTML page as a request to sign in again', async () => {
+    // AEM answers an error page with 200 + text/html too, so HTML alone is not
+    // evidence that the session ended.
+    const error = expectError(
+      await run({
+        kind: 'response',
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        bodyText: '<html lang="en"><body><h1>Error</h1></body></html>',
+      }),
+    ).error;
+
+    expect(error.code).toBe('UNEXPECTED_RESPONSE');
+    expect(error.requiredAction).toBe('none');
+  });
+
+  it('reports an empty 200 body as an unexpected response, never as a sign-in', async () => {
+    const error = expectError(
+      await run({
+        kind: 'response',
+        status: 200,
+        contentType: 'text/html;charset=utf-8',
+        bodyText: '\n',
+      }),
+    ).error;
+
+    expect(error.code).toBe('UNEXPECTED_RESPONSE');
+    expect(error.requiredAction).toBe('none');
+    expect(error.message).toMatch(/empty/i);
   });
 
   it('treats 404 as a missing resource the agent must correct, not a transient failure', async () => {

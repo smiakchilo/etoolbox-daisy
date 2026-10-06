@@ -40,7 +40,29 @@ export type AemResponseOutcome =
   | { readonly kind: 'server_error'; readonly status: number } // 5xx
   | { readonly kind: 'unexpected_status'; readonly status: number } // any other status
   | { readonly kind: 'not_json_content_type'; readonly contentType: string | null }
-  | { readonly kind: 'html_login_page' } // 200 + text/html - an SSO login page
+  /**
+   * 200 with a `text/html` body carrying the markers of an AEM/Granite sign-in
+   * form. Only a body that actually looks like a login page - see
+   * `html_error_page` for HTML that does not.
+   */
+  | { readonly kind: 'html_login_page' }
+  /**
+   * 200 with a `text/html` body that is NOT a recognisable login form: an
+   * AEM/Granite error page, a gateway interstitial, or an aborted render.
+   * Deliberately not a sign-in signal. AEM answers an unauthenticated request
+   * with 401 or a redirect, so a signed-in session can still receive HTML here
+   * - treating every HTML page as "signed out" sends a working user to sign in
+   * again. (implementation-plan.md step 06: "a 200 HTML login/error page is not
+   * JSON".)
+   */
+  | { readonly kind: 'html_error_page' }
+  /**
+   * 200 with no body at all. The signature of a request AEM began and then
+   * aborted server-side - observed as Oak's node-read/traversal limit throwing
+   * `RuntimeNodeTraversalException`, which Sling answers with `200
+   * text/html;charset=utf-8` and an empty body. Never a sign-in signal.
+   */
+  | { readonly kind: 'empty_response' }
   | { readonly kind: 'invalid_json'; readonly message: string }
   | { readonly kind: 'unexpected_json_shape'; readonly actualType: JsonShapeKind };
 
@@ -83,18 +105,43 @@ function isJsonMediaType(mediaType: string | null): boolean {
 }
 
 /**
+ * The markers AEM's Granite sign-in form actually carries: the form posts to
+ * `j_security_check` with `j_username`/`j_password` fields, and the page title
+ * is "AEM Sign In". Verified against a live 6.5 instance. Matched
+ * case-insensitively and deliberately conservatively: a customised login page
+ * that lacks all three is reported as `html_error_page` (a merely unhelpful
+ * answer) rather than risking the opposite mistake - telling an already
+ * signed-in user to sign in.
+ */
+const LOGIN_PAGE_MARKERS = ['j_security_check', 'j_username', 'aem sign in'] as const;
+
+/** True for an HTML body that carries real sign-in-form markers. */
+function looksLikeLoginPage(bodyText: string): boolean {
+  const lowercased = bodyText.toLowerCase();
+  return LOGIN_PAGE_MARKERS.some((marker) => lowercased.includes(marker));
+}
+
+/**
  * Judges a 200 response body: the one status where the payload might actually
  * be the requested resource. Every other status is classified by status code
  * alone and never reaches here.
  */
 function classifyOkBody(contentType: string | null, bodyText: string): AemResponseOutcome {
+  // An empty body is never a usable resource, whatever the server claimed the
+  // content type was. Checked before the content type so an empty JSON body
+  // reports the real problem (nothing arrived) instead of a parse failure.
+  if (bodyText.trim().length === 0) return { kind: 'empty_response' };
+
   const mediaType = parseMediaType(contentType);
 
   // text/html is checked by name, ahead of the generic non-JSON case: an
   // SSO/gateway login page IS a syntactically ordinary webpage - never valid
-  // JSON - so naming it lets a caller say "you are signed out" instead of a
-  // generic parse failure.
-  if (mediaType === 'text/html') return { kind: 'html_login_page' };
+  // JSON - so naming the two kinds lets a caller distinguish "you are signed
+  // out" from "the server returned an error page". Both arrive with the same
+  // status and content type, so the body decides, not the mere fact of HTML.
+  if (mediaType === 'text/html') {
+    return looksLikeLoginPage(bodyText) ? { kind: 'html_login_page' } : { kind: 'html_error_page' };
+  }
   if (!isJsonMediaType(mediaType)) {
     return { kind: 'not_json_content_type', contentType };
   }

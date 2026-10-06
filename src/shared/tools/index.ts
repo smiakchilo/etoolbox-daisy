@@ -17,6 +17,7 @@ export * from './core/envelope';
 export * from './core/brokerOutcome';
 export * from './core/resultCommon';
 export * from './core/responseValidation';
+export * from './core/environment';
 export * from './core/currentPage';
 export * from './core/types';
 export * from './core/jcrPath';

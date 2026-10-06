@@ -1,11 +1,13 @@
+import type { AemResponseOutcome } from '../../shared';
 import type { AemBridgeHeader } from '../../shared/contracts/aemBridge';
 import { LogWriter, type LoggerHealth, type LogOutcome } from '../logger';
 
 /**
  * A dedicated, diagnostics-only log of the HTTP traffic the AEM bridge
  * actually generates: one line for the request main asked the AEM view to
- * issue, one for the response it got back. Written to `<logsDir>/tools.log`
- * as JSON Lines, separate from `logger.ts`'s `app.log`.
+ * issue, one for the response it got back, and one for the tool's own
+ * classification of that response once it held the body. Written to
+ * `<logsDir>/tools.log` as JSON Lines, separate from `logger.ts`'s `app.log`.
  *
  * **Why a second sink, and why it may hold free text.** `logger.ts` is built
  * on the rule that no field can carry free-form content - that is what makes
@@ -68,11 +70,26 @@ export interface ToolHttpResponseRecord {
   readonly headers: readonly AemBridgeHeader[];
 }
 
+/**
+ * How a tool classified the finished response, recorded once the tool held the
+ * whole body. `outcome` on the response record describes the *transport*
+ * (`200` is a success there); this record describes whether the tool actually
+ * got usable data. For a tool read, `kind !== "ok"` is the authoritative
+ * failure - it is how an aborted-traversal `200 text/html` stops appearing as
+ * an outright success.
+ */
+export interface ToolHttpClassificationRecord {
+  readonly requestId: string;
+  readonly kind: AemResponseOutcome['kind'];
+}
+
 export interface ToolHttpLogger {
   /** Records that a request reached the AEM view. */
   request(record: ToolHttpRequestRecord): void;
   /** Records how that request settled, with the response headers when there were any. */
   response(record: ToolHttpResponseRecord): void;
+  /** Records the tool's own classification of the response body. */
+  classification(record: ToolHttpClassificationRecord): void;
   getHealth(): LoggerHealth;
 }
 
@@ -146,6 +163,14 @@ export function createToolHttpLogger(
         outcome: record.outcome,
         durationMs: Math.max(0, record.durationMs),
         headers: sanitizeHeaders(record.headers),
+      });
+    },
+    classification(record) {
+      writeRecord({
+        ts: new Date(now()).toISOString(),
+        recordType: 'tool.http.classified',
+        requestId: record.requestId,
+        kind: record.kind,
       });
     },
     getHealth: () => writer.getHealth(),

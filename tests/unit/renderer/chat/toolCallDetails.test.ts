@@ -85,6 +85,42 @@ describe('describeToolCall - aem_query', () => {
     expect(details.summary).toBeUndefined();
     expect(details.parameters).toContainEqual({ label: 'Query', value: '(no predicates)' });
   });
+
+  it('shows the roots being fanned out across when present', () => {
+    const details = describeToolCall('aem_query', {
+      predicates: { type: 'cq:Page' },
+      roots: ['/content/a', '/content/b'],
+    });
+
+    expect(details.parameters).toContainEqual({
+      label: 'Roots',
+      value: '/content/a, /content/b',
+    });
+  });
+});
+
+describe('describeToolCall - aem_environment_facts', () => {
+  const data = {
+    operation: 'aem_environment_facts',
+    sourceOrigin: 'https://author.example',
+    contentRoots: ['/content/a'],
+    componentRoots: ['/apps'],
+  };
+
+  it('summarises with the host URL and lists the facts as rows, read from the result', () => {
+    const details = describeToolCall('aem_environment_facts', {}, data);
+
+    expect(details.summary).toBe('https://author.example');
+    expect(details.parameters).toContainEqual({ label: 'Host', value: 'https://author.example' });
+    expect(details.parameters).toContainEqual({ label: 'Content roots', value: '/content/a' });
+    expect(details.parameters).toContainEqual({ label: 'Component roots', value: '/apps' });
+  });
+
+  it('falls back to the generic argument view before the result arrives', () => {
+    const details = describeToolCall('aem_environment_facts', {});
+
+    expect(details.parameters).toEqual([{ label: 'Arguments', value: '(none)' }]);
+  });
 });
 
 describe('describeToolCall - unknown tools', () => {

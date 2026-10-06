@@ -26,6 +26,7 @@ export type { ToolCallDetails, ToolCallParameter } from './toolRegistry';
 export function describeToolCall(
   toolName: string,
   args: Readonly<Record<string, JsonValue>>,
+  data?: JsonValue,
 ): ToolCallDetails {
-  return toolRendererRegistry.describeCall(toolName, args);
+  return toolRendererRegistry.describeCall(toolName, args, data);
 }

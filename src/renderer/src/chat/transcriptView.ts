@@ -1,4 +1,4 @@
-import type { ToolResultTable } from '../../../shared';
+import type { JsonValue, ToolResultTable } from '../../../shared';
 import { el } from '../lib/dom';
 import {
   EMPTY_LINK_CONTEXT,
@@ -113,12 +113,22 @@ function renderResultTable(table: ToolResultTable): readonly HTMLElement[] {
  * entries of other harnesses: a compact line that opens on click to show what
  * was sent. See `toggleToolCallExpansion` for the state transition.
  */
+/**
+ * The succeeded call's payload, handed to `describeCall` so a tool whose detail
+ * lives in its result (rather than its arguments) can compose the collapsed
+ * summary and the expansion rows. `undefined` while pending, and on failure -
+ * a failure's message/action are rendered outside the disclosure regardless.
+ */
+function succeededData(view: ToolCallView): JsonValue | undefined {
+  return view.status.kind === 'succeeded' ? view.status.data : undefined;
+}
+
 function renderToolCallToggle(
   view: ToolCallView,
   toolCallId: string,
   expanded: boolean,
 ): HTMLButtonElement {
-  const { summary } = describeToolCall(view.toolName, view.args);
+  const { summary } = describeToolCall(view.toolName, view.args, succeededData(view));
   const toggle = el('button', {
     attrs: {
       type: 'button',
@@ -151,7 +161,7 @@ function renderToolCallToggle(
  * markup.
  */
 function renderToolCallParameters(view: ToolCallView, expanded: boolean): HTMLElement {
-  const { parameters } = describeToolCall(view.toolName, view.args);
+  const { parameters } = describeToolCall(view.toolName, view.args, succeededData(view));
   const container = el('div', {
     attrs: { class: 'chat-tool-call__params' },
     children: parameters.map((parameter) =>

@@ -1,9 +1,9 @@
 import {
   type JsonValue,
   type ToolCallDetails,
-  type ToolCallParameter,
   type ToolRendererModule,
   asStringArray,
+  parameterRows,
 } from '../../../shared';
 import { readQueryResultTable } from './queryResultViewModel';
 
@@ -34,23 +34,29 @@ function describeCall(args: Readonly<Record<string, JsonValue>>): ToolCallDetail
   const predicates = asPredicates(args['predicates']);
   const query = predicates === undefined ? undefined : formatQuery(predicates);
   const properties = asStringArray(args['properties']);
+  const roots = asStringArray(args['roots']);
 
-  const parameters: ToolCallParameter[] = [];
-  parameters.push({ label: 'Query', value: query ?? '(no predicates)' });
-  if (typeof args['offset'] === 'number') {
-    parameters.push({ label: 'Offset', value: String(args['offset']) });
+  let rootsValue: string | undefined;
+  if (roots !== undefined) {
+    rootsValue = roots.length > 0 ? roots.join(', ') : '(none)';
   }
-  if (typeof args['limit'] === 'number') {
-    parameters.push({ label: 'Limit', value: String(args['limit']) });
-  }
+  let propertiesValue: string | undefined;
   if (properties !== undefined) {
-    parameters.push({
-      label: 'Properties',
-      value: properties.length > 0 ? properties.join(' ') : '(none)',
-    });
+    propertiesValue = properties.length > 0 ? properties.join(' ') : '(none)';
   }
 
-  return { summary: query, parameters };
+  return {
+    summary: query,
+    // `parameterRows` (the one rendering pattern): the query first, then the
+    // options in a stable order, each absent option omitted.
+    parameters: parameterRows([
+      ['Query', query ?? '(no predicates)'],
+      ['Roots', rootsValue],
+      ['Offset', typeof args['offset'] === 'number' ? String(args['offset']) : undefined],
+      ['Limit', typeof args['limit'] === 'number' ? String(args['limit']) : undefined],
+      ['Properties', propertiesValue],
+    ]),
+  };
 }
 
 export const renderer: ToolRendererModule = {

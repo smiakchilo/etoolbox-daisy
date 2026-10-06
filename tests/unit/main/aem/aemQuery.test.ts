@@ -345,9 +345,38 @@ describe('executeAemQuery - transport and HTTP failures', () => {
       kind: 'response',
       status: 200,
       contentType: 'text/html',
-      bodyText: "<html lang='en'><form id='login'></form></html>",
+      bodyText:
+        "<html lang='en'><head><title>AEM Sign In</title></head>" +
+        "<body><form action='/j_security_check'></form></body></html>",
     });
     expect(expectError(result).error.requiredAction).toBe('sign_in_to_aem');
+  });
+
+  it('does not treat a non-login HTML page as a request to sign in again', async () => {
+    const result = await run({
+      kind: 'response',
+      status: 200,
+      contentType: 'text/html',
+      bodyText: "<html lang='en'><body><form id='login'></form></body></html>",
+    });
+    const error = expectError(result).error;
+    expect(error.code).toBe('UNEXPECTED_RESPONSE');
+    expect(error.requiredAction).toBe('none');
+  });
+
+  it('reports an aborted empty 200 as an unexpected response with indexable-predicate advice', async () => {
+    // The Oak traversal abort: AEM stops an unindexed query and answers 200 with
+    // an empty HTML body. It must never be reported as a signed-out session.
+    const result = await run({
+      kind: 'response',
+      status: 200,
+      contentType: 'text/html;charset=utf-8',
+      bodyText: '\n',
+    });
+    const error = expectError(result).error;
+    expect(error.code).toBe('UNEXPECTED_RESPONSE');
+    expect(error.requiredAction).toBe('none');
+    expect(error.message).toMatch(/fulltext/i);
   });
 
   it('reports a reserved predicate before any request is made', async () => {

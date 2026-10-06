@@ -80,7 +80,10 @@ function buildSection() {
   return createHostsSection({ status, reportSave, onSettingsChanged });
 }
 
-function field(root: ParentNode, ariaLabel: 'Address' | 'Label' | 'Color tag' | 'Proxy') {
+function field(
+  root: ParentNode,
+  ariaLabel: 'Address' | 'Label' | 'Content roots' | 'Component roots' | 'Color tag' | 'Proxy',
+) {
   return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
 }
 
@@ -167,8 +170,8 @@ describe('createHostsSection', () => {
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(2);
     expect(field(section.element, 'Address')?.value).toBe('https://a.example');
     expect(field(section.element, 'Label')?.value).toBe('A');
-    // Address, Label, Color tag, Proxy per item.
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(8);
+    // Address, Color tag, Label, Proxy, Component roots, Content roots per item.
+    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(12);
     expect(section.element.querySelectorAll('.multifield__action--remove')).toHaveLength(2);
   });
 
@@ -269,6 +272,50 @@ describe('createHostsSection', () => {
     expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
       serverId: newServerId(() => 'a'),
       changes: { label: 'A', color: { kind: 'swatch', swatch: 'purple' } },
+    });
+  });
+
+  it('saves a content-roots change via updateServerPresentation', async () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'https://a.example', 'A')]);
+
+    const roots = field(section.element, 'Content roots');
+    if (!roots) throw new Error('missing content roots field');
+    typeAndCommit(roots, '  /content/a; /content/b  ');
+    await settle();
+
+    expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
+      serverId: newServerId(() => 'a'),
+      changes: {
+        label: 'A',
+        color: { kind: 'swatch', swatch: 'blue' },
+        contentRoots: '/content/a; /content/b',
+      },
+    });
+  });
+
+  it('carries typed roots into addServer when a draft is created', async () => {
+    const section = buildSection();
+    section.update([]);
+    section.element
+      .querySelector('.multifield__add')
+      ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+    const address = field(section.element, 'Address');
+    const contentRoots = field(section.element, 'Content roots');
+    const componentRoots = field(section.element, 'Component roots');
+    if (!address || !contentRoots || !componentRoots) throw new Error('missing fields');
+    typeAndCommit(contentRoots, '/content/a');
+    typeAndCommit(componentRoots, '/apps/a');
+    typeAndCommit(address, 'https://new.example');
+    await settle();
+
+    expect(addServer).toHaveBeenCalledExactlyOnceWith({
+      label: 'https://new.example',
+      origin: 'https://new.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      contentRoots: '/content/a',
+      componentRoots: '/apps/a',
     });
   });
 

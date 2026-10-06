@@ -540,7 +540,13 @@ export async function addServer(
   }
 
   const newId = newServerId(() => randomUUID());
-  const created = createServerEntry(loaded.value, newId, request);
+  const created = createServerEntry(loaded.value, newId, {
+    label: request.label,
+    origin: request.origin,
+    color: request.color,
+    ...(request.contentRoots !== undefined ? { contentRoots: request.contentRoots } : {}),
+    ...(request.componentRoots !== undefined ? { componentRoots: request.componentRoots } : {}),
+  });
   if (!created.ok) {
     return { ok: false, error: { code: created.error.kind, message: created.error.message } };
   }
@@ -633,6 +639,8 @@ function presentationChangesFrom(
   return {
     ...(changes.label !== undefined ? { label: changes.label } : {}),
     ...(changes.color !== undefined ? { color: changes.color } : {}),
+    ...(changes.contentRoots !== undefined ? { contentRoots: changes.contentRoots } : {}),
+    ...(changes.componentRoots !== undefined ? { componentRoots: changes.componentRoots } : {}),
   };
 }
 

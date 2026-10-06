@@ -10,6 +10,7 @@ import {
 import { agentIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 import {
+  environmentRootTextSchema,
   hostProxyIdSchema,
   serverColorSchema,
   serverLabelSchema,
@@ -81,6 +82,10 @@ export const serverSnapshotSchema = z
      */
     proxyId: hostProxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
+    /** Free-text content roots; seeds the Settings "Content roots" field. */
+    contentRoots: environmentRootTextSchema.optional(),
+    /** Free-text component roots; seeds the Settings "Component roots" field. */
+    componentRoots: environmentRootTextSchema.optional(),
     revision: serverRevisionSchema,
   })
   .strict();
@@ -200,6 +205,8 @@ export function toAppSettingsSnapshot(
     };
     if (server.proxyId !== undefined) snapshot.proxyId = server.proxyId;
     if (server.tlsException) snapshot.tlsException = server.tlsException;
+    if (server.contentRoots !== undefined) snapshot.contentRoots = server.contentRoots;
+    if (server.componentRoots !== undefined) snapshot.componentRoots = server.componentRoots;
     return serverSnapshotSchema.parse(snapshot);
   });
 

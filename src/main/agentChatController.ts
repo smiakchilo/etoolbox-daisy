@@ -126,8 +126,8 @@ export interface AgentChatControllerDeps {
   readonly cancelAemRequests?: () => void;
   /**
    * Rewrites a user prompt that begins with a bundled-skill reference (e.g.
-   * `/aem-tool-selection ...`) into the model-facing text that makes the agent
-   * load that skill, returning the prompt unchanged for anything else. Optional
+   * `/aem-query ...`) into the model-facing text that makes the agent load that
+   * skill, returning the prompt unchanged for anything else. Optional
    * so a unit test can construct a controller with no skill catalogue.
    *
    * Only the text the model reads is rewritten - the display prompt and the

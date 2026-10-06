@@ -107,13 +107,13 @@ test.describe('composer skill autocomplete', () => {
     await field.fill('/');
 
     // The real catalogue, read from resources/skills on disk. Only
-    // user-invocable skills appear - `aem-tool-selection` is auxiliary
+    // user-invocable skills appear - `aem-query-results` is auxiliary
     // (`user-invocable: false`) and must not be offered.
     await expect.poll(() => skillOverlayOpen(shell)).toBe(true);
     await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
     await expect(shell.locator(SKILL_NAME, { hasText: 'aem-query' })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: 'aem-semantic-search' })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: 'aem-tool-selection' })).toHaveCount(0);
+    await expect(shell.locator(SKILL_NAME, { hasText: 'aem-query-results' })).toHaveCount(0);
 
     // The empty composer fills the pane, so there is no room above it: the list
     // must be flipped to open *below* the first line of typed text (never over

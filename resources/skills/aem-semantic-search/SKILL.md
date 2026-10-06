@@ -40,14 +40,16 @@ If the request has no separable subject, ask the user which word to search.
 
 ## 2. Recall with a full-text query
 
-Use `aem_query` with a `fulltext` predicate set to the subject, scoped by
-`path`. `fulltext` searches the full-text index (the indexed text properties of
-the nodes under the scope), not one named property.
+Use `aem_query` with a `fulltext` predicate set to the subject, scoped to the
+host's **content roots** via `roots`. `fulltext` searches the full-text index
+(the indexed text properties of the nodes under the scope), not one named
+property.
 
-Scope defaults to the **current page's content path** from the current page
-context block. Widen it only when the user clearly asks for it - an unscoped
-query scans the repository and can time out. If there is no current content
-path and the user named no path, ask which scope to search.
+Scope defaults to the content roots named in the current page context block
+(`/content` when the host configures none). Pass them as `roots`: the tool runs
+one query per root and merges the candidates, so several roots are still a
+single call. Widen the roots only when the user clearly asks for it - an
+unscoped query scans the repository and can time out.
 
 Do **not** add a `type` predicate by default. Text can live on component and
 asset nodes as well as pages; narrowing to `cq:Page` would hide the text you
@@ -58,7 +60,8 @@ lets AEM return up to 50 rows, which is more than you should probe:
 
 ```json
 {
-  "predicates": { "path": "/content/wknd", "fulltext": "Waldo" },
+  "predicates": { "fulltext": "Waldo" },
+  "roots": ["/content/wknd"],
   "limit": 10
 }
 ```

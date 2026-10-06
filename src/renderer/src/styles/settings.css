@@ -158,6 +158,23 @@
   width: 100%;
 }
 
+/* Colour tag + Label share one line: the colour tag is a fixed width (its hex
+   is a known shape) and the label spans the space that is left. */
+.host-field-row {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.host-field--color {
+  flex: 0 0 150px;
+}
+
+.host-field--label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* The colour control is the field/button combobox at full width; the live
    preview dot is absolutely positioned *inside* the field's left edge (see
    `.color-picker__preview` below), so the field's box aligns with every other
@@ -266,6 +283,12 @@
 }
 
 .color-picker .color-picker-button {
+  /* Never let the flex row squeeze the picker button: the hex field takes the
+     slack (it has `min-width: 0`), the button keeps its own width, exactly as
+     the address bar's picker button does. Without this the 150px colour
+     column shrank the button to a sliver. */
+  flex: 0 0 auto;
+
   /* Fold the button onto the field: this 1px negative margin lays the button's
      left border exactly over the field's right border (both square at the
      seam), merging them into one 1px line. */
@@ -284,17 +307,19 @@
   --mod-actionbutton-height: 30px;
   --mod-actionbutton-border-radius: 0;
 
-  /* Pin every background variant (including the `-selected` ones painted
-     while the menu is open) to white, so the frame's one fill never develops
-     an accent tint or hover patch inside the border. */
+  /* The frame's fill: white at rest (matching the field it is coupled to),
+     with the same light-gray hover/press the address bar's picker button has.
+     The `-selected` variants are painted only while the menu is open; they stay
+     light too, so opening never shows the dark accent fill - and the content
+     colours are pinned below so the chevron stays visible on the light face. */
   --mod-actionbutton-background-color-default: #ffffff;
-  --mod-actionbutton-background-color-hover: #ffffff;
+  --mod-actionbutton-background-color-hover: var(--spectrum-gray-200, #eaeaea);
   --mod-actionbutton-background-color-focus: #ffffff;
-  --mod-actionbutton-background-color-down: #ffffff;
+  --mod-actionbutton-background-color-down: var(--spectrum-gray-200, #eaeaea);
   --mod-actionbutton-background-color-default-selected: #ffffff;
-  --mod-actionbutton-background-color-hover-selected: #ffffff;
+  --mod-actionbutton-background-color-hover-selected: var(--spectrum-gray-200, #eaeaea);
   --mod-actionbutton-background-color-focus-selected: #ffffff;
-  --mod-actionbutton-background-color-down-selected: #ffffff;
+  --mod-actionbutton-background-color-down-selected: var(--spectrum-gray-200, #eaeaea);
 
   /* The open menu's `selected` state defaults its content (the chevron) to
      accent white, which is invisible on the white frame. Pin the selected

@@ -20,6 +20,7 @@ const host: ToolHost = {
     chatId: newChatId(ids),
     turnId: newTurnId(ids),
   }),
+  environmentFacts: () => undefined,
   clock: () => 1,
   idGenerator: ids,
 };
@@ -156,9 +157,14 @@ describe('discovered tools (the real src/tools folders)', () => {
     const registry = await buildToolRegistry({ host, loaders: discoverToolLoaders() });
 
     expect(registry.failures).toEqual([]);
-    expect([...registry.enabledNames].sort()).toEqual(['aem_get_json', 'aem_query']);
+    expect([...registry.enabledNames].sort()).toEqual([
+      'aem_environment_facts',
+      'aem_get_json',
+      'aem_query',
+    ]);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
     expect([...registry.allowlistEntries].sort()).toEqual([
+      'custom:aem_environment_facts',
       'custom:aem_get_json',
       'custom:aem_query',
     ]);

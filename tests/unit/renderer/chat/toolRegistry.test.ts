@@ -77,7 +77,11 @@ describe('createToolRendererRegistry', () => {
 });
 
 describe('discovered renderers (the real src/tools folders)', () => {
-  it('finds the two shipped tools', () => {
-    expect([...toolRendererRegistry.toolNames].sort()).toEqual(['aem_get_json', 'aem_query']);
+  it('finds the shipped tools', () => {
+    expect([...toolRendererRegistry.toolNames].sort()).toEqual([
+      'aem_environment_facts',
+      'aem_get_json',
+      'aem_query',
+    ]);
   });
 });

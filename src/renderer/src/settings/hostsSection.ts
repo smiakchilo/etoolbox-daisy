@@ -121,6 +121,8 @@ function buildHostItem(
 ): HostItemHandle {
   const addressFieldId = `${fieldIdBase}-address`;
   const labelFieldId = `${fieldIdBase}-label`;
+  const contentRootsFieldId = `${fieldIdBase}-content-roots`;
+  const componentRootsFieldId = `${fieldIdBase}-component-roots`;
   const colorFieldId = `${fieldIdBase}-color`;
   const proxyFieldId = `${fieldIdBase}-proxy`;
 
@@ -148,6 +150,28 @@ function buildHostItem(
   const labelHelp = el('span', { attrs: { slot: 'negative-help-text' } });
   labelField.append(labelHelp);
 
+  // Free-text root lists. Presentation, not targeting: they describe the host's
+  // content/component layout for the agent and never bump the host revision.
+  const contentRootsField = el('sp-textfield', {
+    attrs: {
+      id: contentRootsFieldId,
+      class: 'host-field__input',
+      placeholder: 'E.g. /content/a, /content/b (comma-separated)',
+      'aria-label': 'Content roots',
+    },
+  }) as TextField;
+  contentRootsField.value = server?.contentRoots ?? '';
+
+  const componentRootsField = el('sp-textfield', {
+    attrs: {
+      id: componentRootsFieldId,
+      class: 'host-field__input',
+      placeholder: 'E.g. /apps/a, /apps/b (comma-separated)',
+      'aria-label': 'Component roots',
+    },
+  }) as TextField;
+  componentRootsField.value = server?.componentRoots ?? '';
+
   const colorPicker = createColorPicker({
     fieldId: colorFieldId,
     initial: server?.color ?? DEFAULT_COLOR,
@@ -166,6 +190,7 @@ function buildHostItem(
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
+      // 1. Address - full width, alone on its line.
       el('div', {
         attrs: { class: 'host-field' },
         children: [
@@ -175,25 +200,52 @@ function buildHostItem(
           addressField,
         ],
       }),
+      // 2. Colour tag + Label share one line: the colour tag is a fixed width
+      // (its hex is a known shape); the label spans the remaining space.
       el('div', {
-        attrs: { class: 'host-field' },
+        attrs: { class: 'host-field-row' },
         children: [
-          el('sp-field-label', { attrs: { for: labelFieldId }, text: 'Label' }),
-          labelField,
+          el('div', {
+            attrs: { class: 'host-field host-field--color' },
+            children: [
+              el('sp-field-label', { attrs: { for: colorFieldId }, text: 'Color tag' }),
+              colorPicker.element,
+            ],
+          }),
+          el('div', {
+            attrs: { class: 'host-field host-field--label' },
+            children: [
+              el('sp-field-label', { attrs: { for: labelFieldId }, text: 'Label' }),
+              labelField,
+            ],
+          }),
         ],
       }),
-      el('div', {
-        attrs: { class: 'host-field' },
-        children: [
-          el('sp-field-label', { attrs: { for: colorFieldId }, text: 'Color tag' }),
-          colorPicker.element,
-        ],
-      }),
+      // 3. Proxy.
       el('div', {
         attrs: { class: 'host-field' },
         children: [
           el('sp-field-label', { attrs: { for: proxyFieldId }, text: 'Proxy' }),
           proxyPicker.element,
+        ],
+      }),
+      // 4. Component roots.
+      el('div', {
+        attrs: { class: 'host-field' },
+        children: [
+          el('sp-field-label', {
+            attrs: { for: componentRootsFieldId },
+            text: 'Component roots',
+          }),
+          componentRootsField,
+        ],
+      }),
+      // 5. Content roots.
+      el('div', {
+        attrs: { class: 'host-field' },
+        children: [
+          el('sp-field-label', { attrs: { for: contentRootsFieldId }, text: 'Content roots' }),
+          contentRootsField,
         ],
       }),
     ],
@@ -204,6 +256,8 @@ function buildHostItem(
   let serverId: ServerId | undefined = server?.id;
   let savedOrigin = server?.origin ?? '';
   let savedLabel = server?.label ?? '';
+  let savedContentRoots = server?.contentRoots ?? '';
+  let savedComponentRoots = server?.componentRoots ?? '';
   let savedColorKey = colorKey(server?.color ?? DEFAULT_COLOR);
   let savedProxyId: HostProxyId | undefined = server?.proxyId;
   /** A draft's explicit proxy choice, applied once the host exists (see `runSave`). */
@@ -326,9 +380,18 @@ function buildHostItem(
     const color = refreshColor();
     if (!label.ok || !color.ok || color.color === undefined) return undefined;
 
+    const nextContentRoots = contentRootsField.value.trim();
+    const nextComponentRoots = componentRootsField.value.trim();
+
     if (serverId === undefined) {
       return window.daisy.settings
-        .addServer({ label: label.label, origin: address.origin, color: color.color })
+        .addServer({
+          label: label.label,
+          origin: address.origin,
+          color: color.color,
+          ...(nextContentRoots.length > 0 ? { contentRoots: nextContentRoots } : {}),
+          ...(nextComponentRoots.length > 0 ? { componentRoots: nextComponentRoots } : {}),
+        })
         .then(
           (result) => {
             if (!result.ok) return { ok: false, error: result.error.message };
@@ -336,6 +399,8 @@ function buildHostItem(
             serverId = createdId;
             savedOrigin = result.server.origin;
             savedLabel = result.server.label;
+            savedContentRoots = result.server.contentRoots ?? '';
+            savedComponentRoots = result.server.componentRoots ?? '';
             savedColorKey = colorKey(result.server.color);
             savedProxyId = result.server.proxyId;
             // Apply a proxy chosen while this row was still a draft.
@@ -386,9 +451,23 @@ function buildHostItem(
 
     const nextLabel = label.label;
     const nextColor = color.color;
-    if (nextLabel === savedLabel && colorKey(nextColor) === savedColorKey) return undefined;
+    if (
+      nextLabel === savedLabel &&
+      colorKey(nextColor) === savedColorKey &&
+      nextContentRoots === savedContentRoots &&
+      nextComponentRoots === savedComponentRoots
+    ) {
+      return undefined;
+    }
 
-    const changes: { label: string; color: ServerColor } = { label: nextLabel, color: nextColor };
+    const changes = {
+      label: nextLabel,
+      color: nextColor,
+      // Roots are sent only when they differ, so a rename or recolour stays a
+      // label/colour request. Sending an empty string clears the root.
+      ...(nextContentRoots !== savedContentRoots ? { contentRoots: nextContentRoots } : {}),
+      ...(nextComponentRoots !== savedComponentRoots ? { componentRoots: nextComponentRoots } : {}),
+    };
     const outcome: Promise<SaveOutcome> = window.daisy.settings
       .updateServerPresentation({ serverId: id, changes })
       .then(
@@ -402,6 +481,8 @@ function buildHostItem(
       if (result.ok) {
         savedLabel = nextLabel;
         savedColorKey = colorKey(nextColor);
+        savedContentRoots = nextContentRoots;
+        savedComponentRoots = nextComponentRoots;
       }
     });
     return outcome;
@@ -442,6 +523,8 @@ function buildHostItem(
         addressResult.origin !== savedOrigin ||
         !labelNow.ok ||
         labelNow.label !== savedLabel ||
+        contentRootsField.value.trim() !== savedContentRoots ||
+        componentRootsField.value.trim() !== savedComponentRoots ||
         !colorNow.ok ||
         colorNow.color === undefined ||
         colorKey(colorNow.color) !== savedColorKey;
@@ -487,7 +570,7 @@ function buildHostItem(
     armCommit();
   }
 
-  for (const field of [addressField, labelField]) {
+  for (const field of [addressField, labelField, contentRootsField, componentRootsField]) {
     field.addEventListener('input', onFieldInput);
     field.addEventListener('change', onFieldCommit);
   }

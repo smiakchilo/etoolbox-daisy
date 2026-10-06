@@ -8,6 +8,7 @@ import {
   createBridgeCurrentContext,
   createCurrentAemServerContext,
   createCurrentPageContext,
+  createEnvironmentFacts,
   createLateBoundAemToolContext,
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
@@ -23,9 +24,11 @@ import type { Logger } from '../../../src/main/logger';
 import {
   type AgentService,
   type CurrentAemToolContext,
+  type ServerConfig,
   newChatId,
   newServerId,
   newTurnId,
+  serverConfigSchema,
 } from '../../../src/shared';
 
 function counterIds(prefix: string): () => string {
@@ -95,6 +98,7 @@ describe('createCurrentPageContext', () => {
     const provider = createCurrentPageContext(
       () => undefined,
       () => 'https://a.example/content/wknd.html',
+      () => undefined,
     );
     expect(provider()).toBeUndefined();
   });
@@ -103,18 +107,37 @@ describe('createCurrentPageContext', () => {
     const provider = createCurrentPageContext(
       () => activeServer('https://author.example'),
       () => 'https://idp.example/authorize?client_id=x',
+      () => undefined,
     );
     expect(provider()).toBeUndefined();
   });
 
-  it('renders the host and content path for the active server page', () => {
+  it('renders the host, content path and default roots for the active server page', () => {
     const provider = createCurrentPageContext(
       () => activeServer('https://author.example'),
       () => 'https://author.example/editor.html/content/wknd/us/en.html',
+      () => undefined,
     );
     const context = provider();
     expect(context).toContain('Host: https://author.example');
     expect(context).toContain('Content path: /content/wknd/us/en');
+    expect(context).toContain('Content roots: /content');
+    expect(context).toContain('Component roots: /apps');
+  });
+
+  it("renders the host's configured roots from the environment facts", () => {
+    const provider = createCurrentPageContext(
+      () => activeServer('https://author.example'),
+      () => 'https://author.example/editor.html/content/wknd/us/en.html',
+      () => ({
+        origin: 'https://author.example',
+        contentRoots: ['/content/a', '/content/b'],
+        componentRoots: ['/apps/a'],
+      }),
+    );
+    const context = provider();
+    expect(context).toContain('Content roots: /content/a, /content/b');
+    expect(context).toContain('Component roots: /apps/a');
   });
 
   it('reads the live URL fresh on every call, so navigation between turns is reflected', () => {
@@ -122,10 +145,68 @@ describe('createCurrentPageContext', () => {
     const provider = createCurrentPageContext(
       () => activeServer('https://author.example'),
       () => url,
+      () => undefined,
     );
     expect(provider()).toContain('Content path: /content/wknd/a');
     url = 'https://author.example/content/wknd/b.html';
     expect(provider()).toContain('Content path: /content/wknd/b');
+  });
+});
+
+describe('createEnvironmentFacts', () => {
+  function host(
+    origin: string,
+    roots: { contentRoots?: string; componentRoots?: string } = {},
+  ): ServerConfig {
+    return serverConfigSchema.parse({
+      id: newServerId(counterIds('server')),
+      label: 'Host',
+      origin,
+      color: { kind: 'swatch', swatch: 'blue' },
+      ...roots,
+      revision: 0,
+    });
+  }
+
+  it('matches the live URL to a configured host and resolves its roots', () => {
+    const facts = createEnvironmentFacts(
+      () => 'https://author.example/editor.html/content/wknd/us/en.html',
+      () => [
+        host('https://author.example', {
+          contentRoots: '/content/a; /content/b',
+          componentRoots: '/apps/a, /apps/b',
+        }),
+      ],
+    )();
+    expect(facts).toEqual({
+      origin: 'https://author.example',
+      contentRoots: ['/content/a', '/content/b'],
+      componentRoots: ['/apps/a', '/apps/b'],
+    });
+  });
+
+  it('defaults the roots when the matched host configures none', () => {
+    const facts = createEnvironmentFacts(
+      () => 'https://author.example/content/x.html',
+      () => [host('https://author.example')],
+    )();
+    expect(facts?.contentRoots).toEqual(['/content']);
+    expect(facts?.componentRoots).toEqual(['/apps']);
+  });
+
+  it('returns undefined for an unconfigured origin and when there is no document', () => {
+    expect(
+      createEnvironmentFacts(
+        () => 'https://unconfigured.example/x.html',
+        () => [host('https://author.example')],
+      )(),
+    ).toBeUndefined();
+    expect(
+      createEnvironmentFacts(
+        () => undefined,
+        () => [host('https://author.example')],
+      )(),
+    ).toBeUndefined();
   });
 });
 

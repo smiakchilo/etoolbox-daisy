@@ -26,6 +26,24 @@ export const serverLabelSchema = z
   .max(SERVER_LABEL_MAX_LENGTH, `must be at most ${String(SERVER_LABEL_MAX_LENGTH)} characters`)
   .refine((value) => value.trim() === value, 'must not have leading or trailing whitespace');
 
+const ENVIRONMENT_ROOT_TEXT_MAX_LENGTH = 2000;
+
+/**
+ * Free text naming one or more JCR roots for a host, e.g.
+ * `/content/a, /content/b`. The interpretation - comma-or-semicolon
+ * separation (a comma wins over a semicolon), trimming, dropping unusable
+ * tokens, and the `/content`/`/apps`
+ * defaults - lives in `src/shared/tools/core/environment.ts`; this schema only
+ * bounds the string. An empty string is accepted and means "no roots written",
+ * identical to omitting the field; the forgiving reader drops it on load.
+ */
+export const environmentRootTextSchema = z
+  .string()
+  .max(
+    ENVIRONMENT_ROOT_TEXT_MAX_LENGTH,
+    `must be at most ${String(ENVIRONMENT_ROOT_TEXT_MAX_LENGTH)} characters`,
+  );
+
 /**
  * A closed set of named accents, aligned with Adobe Spectrum's semantic
  * colour tokens (the UI is built with Spectrum Web Components). Closed so the
@@ -220,6 +238,19 @@ export const serverConfigSchema = z
      */
     proxyId: hostProxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
+    /**
+     * Where content lives on this instance, in free text (one or more JCR roots
+     * separated by `,`, or by `;` when no comma is present). Optional: absent
+     * means "use the `/content`
+     * default". Edited in Settings beside the label, so it is presentation -
+     * changing it never bumps `revision`.
+     */
+    contentRoots: environmentRootTextSchema.optional(),
+    /**
+     * Where components live on this instance, in the same free-text form.
+     * Optional: absent means "use the `/apps` default".
+     */
+    componentRoots: environmentRootTextSchema.optional(),
     revision: serverRevisionSchema,
   })
   .strict();
@@ -234,9 +265,17 @@ export type ServerConfig = Readonly<z.infer<typeof serverConfigSchema>>;
  * merged with an `if (isPresentationOnly(...))` check inside one function:
  * the type checker, not a runtime branch, is what stops a future caller from
  * passing a rename through the revision-bumping path by mistake - `label`/
- * `color` simply are not assignable to {@link ServerTargetingChanges}.
+ * `color`/`contentRoots`/`componentRoots` simply are not assignable to
+ * {@link ServerTargetingChanges}.
+ *
+ * The roots are presentation rather than targeting: they steer what the agent
+ * is told about the host's content and component layout, not how a request
+ * reaches AEM, and the per-turn context block re-reads them, so changing them
+ * must not invalidate an in-flight bridge request.
  */
-export type ServerPresentationChanges = Partial<Pick<ServerConfig, 'label' | 'color'>>;
+export type ServerPresentationChanges = Partial<
+  Pick<ServerConfig, 'label' | 'color' | 'contentRoots' | 'componentRoots'>
+>;
 
 /**
  * Updates label/colour only. `revision` is left untouched on purpose: it

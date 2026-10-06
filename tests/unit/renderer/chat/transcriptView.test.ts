@@ -803,6 +803,51 @@ describe('createTranscriptView - tool-call billet disclosure', () => {
     expect(params?.textContent).toContain('10');
   });
 
+  it('summarises aem_environment_facts with the host URL and hides its facts when collapsed', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'aem_environment_facts', {}));
+    store.applyEvent(
+      agentEventSchema.parse({
+        type: 'tool.result',
+        chatId,
+        sequence: 1,
+        toolCallId,
+        outcome: {
+          ok: true,
+          data: {
+            operation: 'aem_environment_facts',
+            sourceOrigin: 'https://author.example',
+            contentRoots: ['/content'],
+            componentRoots: ['/apps'],
+          },
+        },
+      }),
+    );
+    view.repaint(store);
+
+    // Collapsed: the host URL is the caption, the facts rows are hidden, and
+    // there is no always-visible result table outside the disclosure.
+    const toggle = view.element.querySelector('.chat-tool-call__toggle')!;
+    expect(toggle.querySelector('.chat-tool-call__summary')?.textContent).toBe(
+      'https://author.example',
+    );
+    let params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.hidden).toBe(true);
+    expect(view.element.querySelector('.chat-tool-call sp-table')).toBeNull();
+
+    // Expanded: the facts read out as label/value rows.
+    click(toggle);
+    params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
+    expect(params?.hidden).toBe(false);
+    expect(params?.textContent).toContain('Host');
+    expect(params?.textContent).toContain('https://author.example');
+    expect(params?.textContent).toContain('Content roots');
+    expect(params?.textContent).toContain('/content');
+    expect(params?.textContent).toContain('Component roots');
+    expect(params?.textContent).toContain('/apps');
+  });
+
   it('keeps a billet expanded across a repaint triggered by a later event', () => {
     const { view, store } = renderGetJson();
     click(view.element.querySelector('.chat-tool-call__toggle')!);

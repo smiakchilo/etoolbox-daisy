@@ -19,7 +19,11 @@ export type { ToolCallDetails, ToolCallParameter } from '../../../shared';
  * generic view below, so one broken tool never takes the transcript down.
  */
 export interface ToolRendererRegistry {
-  describeCall(toolName: string, args: Readonly<Record<string, JsonValue>>): ToolCallDetails;
+  describeCall(
+    toolName: string,
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ): ToolCallDetails;
   readResultTable(toolName: string, data: JsonValue | undefined): ToolResultTable | undefined;
   readonly toolNames: readonly string[];
 }
@@ -42,11 +46,11 @@ export function createToolRendererRegistry(
   }
   return {
     toolNames: [...byName.keys()],
-    describeCall(toolName, args) {
+    describeCall(toolName, args, data) {
       const module = byName.get(toolName);
       if (module === undefined) return describeGenericArgs(args);
       try {
-        return module.describeCall(args);
+        return module.describeCall(args, data);
       } catch {
         return describeGenericArgs(args);
       }

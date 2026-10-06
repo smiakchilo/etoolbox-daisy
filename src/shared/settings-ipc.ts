@@ -13,6 +13,7 @@ import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
 import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
 import {
+  environmentRootTextSchema,
   hostProxyIdSchema,
   serverColorSchema,
   serverLabelSchema,
@@ -185,6 +186,10 @@ export const addServerRequestSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
+    /** Optional free-text content roots captured on a draft row. */
+    contentRoots: environmentRootTextSchema.optional(),
+    /** Optional free-text component roots captured on a draft row. */
+    componentRoots: environmentRootTextSchema.optional(),
   })
   .strict();
 
@@ -207,7 +212,11 @@ export function parseAddServerResult(candidate: unknown): AddServerResult {
 export const removeServerRequestSchema = z.object({ serverId: serverIdSchema }).strict();
 export type RemoveServerRequest = Readonly<z.infer<typeof removeServerRequestSchema>>;
 
-/** `settings:update-server-presentation` - label/colour only, never bumps `revision`. */
+/**
+ * `settings:update-server-presentation` - label/colour and the content/component
+ * roots, never bumps `revision`. A roots field sent as `""` clears it (the
+ * reader drops an empty value on the next load).
+ */
 export const updateServerPresentationRequestSchema = z
   .object({
     serverId: serverIdSchema,
@@ -215,6 +224,8 @@ export const updateServerPresentationRequestSchema = z
       .object({
         label: serverLabelSchema.optional(),
         color: serverColorSchema.optional(),
+        contentRoots: environmentRootTextSchema.optional(),
+        componentRoots: environmentRootTextSchema.optional(),
       })
       .strict(),
   })

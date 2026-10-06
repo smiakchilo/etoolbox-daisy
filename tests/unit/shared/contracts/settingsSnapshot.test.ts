@@ -89,6 +89,38 @@ describe('toAppSettingsSnapshot', () => {
     expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
   });
 
+  it('projects a host’s content and component roots through unchanged', () => {
+    const serverA = server('server-a', 'https://a.example', {
+      contentRoots: '/content/a; /content/b',
+      componentRoots: '/apps/a',
+    });
+    const settings = appSettingsSchema.parse({
+      hosts: [serverA],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => false);
+
+    expect(snapshot.hosts[0]?.contentRoots).toBe('/content/a; /content/b');
+    expect(snapshot.hosts[0]?.componentRoots).toBe('/apps/a');
+    expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
+  });
+
+  it('omits the roots keys entirely when the host configures none', () => {
+    const serverA = server('server-a', 'https://a.example');
+    const settings = appSettingsSchema.parse({
+      hosts: [serverA],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => false);
+
+    expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('contentRoots');
+    expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('componentRoots');
+  });
+
   it('calls the predicate with the exact secretRef recorded for that proxy', () => {
     const settings = settingsWithProxyCredentials(CANARY_SECRET_REF);
     const seenRefs: string[] = [];

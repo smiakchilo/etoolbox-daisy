@@ -22,6 +22,7 @@ export const tool: ToolModule = {
           origin: deps.origin,
           now: deps.now,
           fetchThroughBridge: (url) => host.bridge.request(envelope, url),
+          onClassified: (requestId, kind) => host.recordResponseClassification?.(requestId, kind),
         }),
       runtimeDeps: { now: host.clock },
       currentContext: host.currentContext,

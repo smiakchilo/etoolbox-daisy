@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  type AemResponseOutcome,
   type AemToolExecutor,
   type BrokerOutcome,
   type CurrentAemToolContext,
@@ -17,9 +18,11 @@ import {
   brokerErrorKey,
   classifyAemResponse,
   createToolExecutor,
+  effectiveRoots,
   envelopeCommonShape,
   err,
   hasMoreSchema,
+  jcrPathSchema,
   ok,
   originSchema,
   parseOrigin,
@@ -51,6 +54,14 @@ import {
 export const DEFAULT_QUERY_LIMIT = 50;
 export const MAX_QUERY_LIMIT = 200;
 export const MIN_QUERY_LIMIT = 1;
+
+/**
+ * The most roots one fan-out call may expand to. Each root is a separate AEM
+ * request through the concurrency-1 bridge, so this bounds a single tool call's
+ * cost; a host with more roots is simply scoped by the first ones, and the
+ * effective roots are reported back.
+ */
+export const MAX_QUERY_ROOTS = 8;
 
 /**
  * `p.limit=-1` (unbounded) must be impossible to express - `min(1)` alone
@@ -166,6 +177,14 @@ export const aemQueryArgsSchema = z
     offset: queryOffsetSchema,
     limit: queryLimitSchema,
     properties: propertiesSelectionSchema.optional(),
+    /**
+     * Optional explicit roots to fan a single query out across, one query per
+     * root, with the results merged. The model reads the current host's roots
+     * from the current-page context block and passes them here; nested or
+     * duplicate roots are collapsed, and a `path` predicate may not be combined
+     * with `roots` (they would disagree about the scope).
+     */
+    roots: z.array(jcrPathSchema).min(1).max(MAX_QUERY_ROOTS).optional(),
   })
   .strict();
 
@@ -186,7 +205,10 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     '`offset`/`properties` fields instead. Every value in `predicates` must be a ' +
     'string: `limit` and `offset` are top-level siblings of `predicates`, never ' +
     'keys inside it. `properties` optionally restricts which ' +
-    'result fields are returned.',
+    'result fields are returned. Alternatively, pass `roots` (a list of JCR paths - ' +
+    "typically this host's content roots from the current-page context block) to run the same " +
+    'query once per root and merge the rows; `limit` and `offset` then apply to each root, and ' +
+    'the effective roots are reported back. Do not combine `roots` with a `path` predicate.',
   parameters: z.toJSONSchema(aemQueryArgsSchema, { io: 'input' }),
 };
 
@@ -246,6 +268,12 @@ export const aemQuerySuccessSchema = z
     sourceOrigin: originSchema,
     serverRevision: z.number().int().nonnegative(),
     predicates: z.record(z.string(), z.string()),
+    /**
+     * Present only for a root fan-out: the effective roots actually queried,
+     * in order, with nested/duplicate roots collapsed. Omitted for a single
+     * query, which is always bracketed by its own `path` predicate.
+     */
+    roots: z.array(z.string()).optional(),
     fetchedAt: z.number().int().nonnegative(),
     rows: z.array(z.unknown()),
     selection: propertySelectionSchema,
@@ -277,15 +305,21 @@ function renderTotal(total: TotalMatches): string {
 
 export function renderQuerySuccess(result: AemQuerySuccess): string {
   const { pagination } = result;
-  return [
+  const lines = [
     `AEM query against ${result.sourceOrigin} (revision ${String(result.serverRevision)}, ` +
       `fetched at ${String(result.fetchedAt)})`,
     `Returned ${String(pagination.returned)} row(s) at offset ${String(pagination.offset)} ` +
-      `with limit ${String(pagination.limit)}; ${renderHasMore(pagination.hasMore)}; ` +
-      `${renderTotal(pagination.total)}`,
+      `with limit ${String(pagination.limit)}${result.roots !== undefined ? ' per root' : ''}; ` +
+      `${renderHasMore(pagination.hasMore)}; ${renderTotal(pagination.total)}`,
+  ];
+  if (result.roots !== undefined && result.roots.length > 0) {
+    lines.push(`Scoped to roots: ${result.roots.join(', ')} (one query per root, merged)`);
+  }
+  lines.push(
     `Selection: ${renderSelection(result.selection)}`,
     `Rows: ${JSON.stringify(result.rows)}`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +547,8 @@ export interface ProjectQueryResultInput {
   readonly sourceOrigin: string;
   readonly serverRevision: number;
   readonly fetchedAt: number;
+  /** The effective roots actually queried, for a root fan-out; omitted otherwise. */
+  readonly roots?: readonly string[] | undefined;
 }
 
 /**
@@ -546,6 +582,7 @@ export function projectQueryResult(input: ProjectQueryResultInput): AemQuerySucc
     sourceOrigin: input.sourceOrigin,
     serverRevision: input.serverRevision,
     predicates: { ...input.args.predicates },
+    ...(input.roots !== undefined ? { roots: [...input.roots] } : {}),
     fetchedAt: input.fetchedAt,
     rows,
     selection,
@@ -588,6 +625,13 @@ const ERROR_MESSAGES = {
   unexpected_status: 'AEM returned an unexpected status for that query',
   not_json_content_type: 'AEM returned a response that was not JSON',
   html_login_page: 'AEM returned a sign-in page instead of data. Sign in again in the browser pane',
+  html_error_page:
+    'AEM returned an HTML page instead of query results. Check that the browser pane is still ' +
+    'signed in, then narrow the query',
+  empty_response:
+    'AEM returned an empty response instead of query results - it most likely stopped the query ' +
+    'because it would traverse too many nodes. Add an indexable predicate such as "type" or ' +
+    '"fulltext", or narrow the path/roots',
   invalid_json: 'AEM returned a response that could not be parsed as JSON',
   unexpected_json_shape: 'AEM returned JSON that was not a QueryBuilder result object',
   /**
@@ -599,6 +643,9 @@ const ERROR_MESSAGES = {
     'AEM rejected the query. One of the predicates was not accepted by this instance - ' +
     'check the predicate names and values. This is not an empty result',
   malformed_envelope: 'AEM returned a QueryBuilder response without a usable result set',
+  roots_and_path_conflict:
+    "A query cannot combine 'roots' with a 'path' predicate - use one or the other",
+  roots_not_usable: "'roots' named no usable JCR path",
 } as const;
 
 type ErrorMessageKey = keyof typeof ERROR_MESSAGES;
@@ -645,12 +692,20 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   unexpected_status: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   not_json_content_type: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   html_login_page: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  html_error_page: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
+  empty_response: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   invalid_json: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   unexpected_json_shape: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   // A server-side rejection, per step 08. Not retryable: the identical query
   // will be rejected identically until the agent changes a predicate.
   query_rejected: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   malformed_envelope: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
+  roots_and_path_conflict: {
+    code: 'INVALID_ARGUMENT',
+    retryable: false,
+    requiredAction: 'none',
+  },
+  roots_not_usable: { code: 'INVALID_ARGUMENT', retryable: false, requiredAction: 'none' },
 };
 
 function toolError(key: ErrorMessageKey, requestId: RequestId): AemQueryResult {
@@ -671,27 +726,44 @@ export interface AemQueryDeps {
   readonly origin: string;
   readonly fetchThroughBridge: (url: string) => Promise<BrokerOutcome>;
   readonly now: () => number;
+  /**
+   * Optional diagnostics sink, called once per HTTP response with the
+   * classification this tool reached (see `ToolHost.recordResponseClassification`).
+   * Never affects the result.
+   */
+  readonly onClassified?: (requestId: RequestId, kind: AemResponseOutcome['kind']) => void;
 }
 
-export async function executeAemQuery(
-  envelope: AemQueryRequest,
+interface SingleQueryOutcome {
+  readonly envelope: QueryEnvelope;
+  readonly projectedProperties: readonly string[];
+}
+
+type SingleQueryResult =
+  | { readonly ok: true; readonly value: SingleQueryOutcome }
+  | { readonly ok: false; readonly key: ErrorMessageKey };
+
+/**
+ * One QueryBuilder round trip for one set of predicates. Shared by the plain
+ * query and each root of a fan-out, so the two paths cannot interpret a
+ * response differently. A rejected query, a malformed envelope, a bad HTTP
+ * status and every bridge outcome all collapse to an `ErrorMessageKey`, mapped
+ * to a `ToolError` by the caller.
+ */
+async function runSingleQuery(
   deps: AemQueryDeps,
-): Promise<AemQueryResult> {
-  const args = envelope.args;
-  const built = buildQueryUrl({
-    origin: deps.origin,
-    predicates: args.predicates,
-    offset: args.offset,
-    limit: args.limit,
-    properties: args.properties,
-  });
-  if (!built.ok) {
-    return toolError(built.error.kind, envelope.requestId);
-  }
+  requestId: RequestId,
+  predicates: Readonly<Record<string, string>>,
+  offset: number,
+  limit: number,
+  properties: readonly string[] | undefined,
+): Promise<SingleQueryResult> {
+  const built = buildQueryUrl({ origin: deps.origin, predicates, offset, limit, properties });
+  if (!built.ok) return { ok: false, key: built.error.kind };
 
   const brokerOutcome = await deps.fetchThroughBridge(built.value.url);
   if (brokerOutcome.kind !== 'response') {
-    return toolError(brokerErrorKey(brokerOutcome), envelope.requestId);
+    return { ok: false, key: brokerErrorKey(brokerOutcome) };
   }
 
   const classified = classifyAemResponse({
@@ -699,26 +771,146 @@ export async function executeAemQuery(
     contentType: brokerOutcome.contentType,
     bodyText: brokerOutcome.bodyText,
   });
-  if (classified.kind !== 'ok') {
-    return toolError(classified.kind, envelope.requestId);
+  deps.onClassified?.(requestId, classified.kind);
+  if (classified.kind !== 'ok') return { ok: false, key: classified.kind };
+
+  // The stage `aem_get_json` has no equivalent of: only this call can tell a
+  // rejected query from an empty one (QueryBuilder reports rejection as 200).
+  const envelopeOutcome = readQueryEnvelope({ body: classified.value, offset });
+  if (envelopeOutcome.kind !== 'ok') return { ok: false, key: envelopeOutcome.kind };
+
+  return {
+    ok: true,
+    value: {
+      envelope: envelopeOutcome.value,
+      projectedProperties: built.value.projectedProperties,
+    },
+  };
+}
+
+function readHitPath(hit: JsonValue): string | undefined {
+  if (typeof hit !== 'object' || hit === null || Array.isArray(hit)) return undefined;
+  const path = (hit as Readonly<Record<string, JsonValue>>)[PATH_PROPERTY];
+  return typeof path === 'string' ? path : undefined;
+}
+
+/** `true` when any root has more; `unknown` only when none says `true` but one says `unknown`. */
+function mergeHasMore(values: readonly HasMore[]): HasMore {
+  if (values.some((value) => value === true)) return true;
+  if (values.some((value) => value === 'unknown')) return 'unknown';
+  return false;
+}
+
+/**
+ * Sums per-root totals. Only exact when every root enumerated its results, so a
+ * fan-out never upgrades an estimate to a fact. Safe to sum because the roots
+ * handed here are already non-interleaving (see `effectiveRoots`), so no node is
+ * counted twice.
+ */
+function mergeTotals(values: readonly TotalMatches[]): TotalMatches {
+  let sum = 0;
+  let anyKnown = false;
+  let allExact = true;
+  for (const total of values) {
+    if (total.accuracy === 'unknown') {
+      allExact = false;
+      continue;
+    }
+    sum += total.value;
+    anyKnown = true;
+    if (total.accuracy !== 'exact') allExact = false;
+  }
+  if (!anyKnown) return { accuracy: 'unknown' };
+  return allExact ? { accuracy: 'exact', value: sum } : { accuracy: 'estimated', value: sum };
+}
+
+/**
+ * Merges one envelope per root into a single envelope: rows are concatenated in
+ * root order, with a second copy of the same `jcr:path` dropped defensively
+ * (the roots are already non-interleaving, so in practice each path appears
+ * once). `limit`/`offset` remain per-root - they were applied to each query.
+ */
+function mergeQueryEnvelopes(envelopes: readonly QueryEnvelope[]): QueryEnvelope {
+  const hits: JsonValue[] = [];
+  const seenPaths = new Set<string>();
+  for (const envelope of envelopes) {
+    for (const hit of envelope.hits) {
+      const path = readHitPath(hit);
+      if (path !== undefined) {
+        if (seenPaths.has(path)) continue;
+        seenPaths.add(path);
+      }
+      hits.push(hit);
+    }
+  }
+  return {
+    hits,
+    hasMore: mergeHasMore(envelopes.map((envelope) => envelope.hasMore)),
+    total: mergeTotals(envelopes.map((envelope) => envelope.total)),
+  };
+}
+
+export async function executeAemQuery(
+  envelope: AemQueryRequest,
+  deps: AemQueryDeps,
+): Promise<AemQueryResult> {
+  const args = envelope.args;
+
+  if (args.roots === undefined) {
+    const single = await runSingleQuery(
+      deps,
+      envelope.requestId,
+      args.predicates,
+      args.offset,
+      args.limit,
+      args.properties,
+    );
+    if (!single.ok) return toolError(single.key, envelope.requestId);
+    return projectQueryResult({
+      envelope: single.value.envelope,
+      args,
+      projectedProperties: single.value.projectedProperties,
+      requestId: envelope.requestId,
+      sourceOrigin: deps.origin,
+      serverRevision: envelope.serverRevision,
+      fetchedAt: deps.now(),
+    });
   }
 
-  // The stage `aem_get_json` has no equivalent of. Everything above has already
-  // agreed the response is healthy; only this call can tell a rejected query
-  // from an empty one.
-  const envelopeOutcome = readQueryEnvelope({ body: classified.value, offset: args.offset });
-  if (envelopeOutcome.kind !== 'ok') {
-    return toolError(envelopeOutcome.kind, envelope.requestId);
+  if (Object.prototype.hasOwnProperty.call(args.predicates, 'path')) {
+    return toolError('roots_and_path_conflict', envelope.requestId);
+  }
+
+  const roots = effectiveRoots(args.roots);
+  if (roots.length === 0) {
+    return toolError('roots_not_usable', envelope.requestId);
+  }
+
+  const envelopes: QueryEnvelope[] = [];
+  let projectedProperties: readonly string[] = DEFAULT_PROJECTION;
+  for (const root of roots) {
+    const single = await runSingleQuery(
+      deps,
+      envelope.requestId,
+      { ...args.predicates, path: root },
+      args.offset,
+      args.limit,
+      args.properties,
+    );
+    if (!single.ok) return toolError(single.key, envelope.requestId);
+    envelopes.push(single.value.envelope);
+    projectedProperties = single.value.projectedProperties;
   }
 
   return projectQueryResult({
-    envelope: envelopeOutcome.value,
+    envelope: mergeQueryEnvelopes(envelopes),
     args,
-    projectedProperties: built.value.projectedProperties,
+    projectedProperties,
     requestId: envelope.requestId,
     sourceOrigin: deps.origin,
     serverRevision: envelope.serverRevision,
     fetchedAt: deps.now(),
+    roots,
   });
 }
 

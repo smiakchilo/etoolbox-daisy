@@ -1,8 +1,10 @@
 import type { z } from 'zod';
 import { createToolError, newRequestId } from '../../contracts';
-import type { IdGenerator, JsonValue, ToolError } from '../../contracts';
+import type { IdGenerator, JsonValue, RequestId, ToolError } from '../../contracts';
 import { err, ok } from '../../result';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
+import type { EnvironmentFacts } from './environment';
+import type { AemResponseOutcome } from './responseValidation';
 import type {
   AemToolExecutor,
   BrokerOutcome,
@@ -32,8 +34,25 @@ export interface ToolHost {
   };
   /** Read fresh on every call; the model can never influence it. */
   readonly currentContext: () => CurrentAemToolContext;
+  /**
+   * The facts of the host the browser pane is currently on - its origin and
+   * its effective content/component roots - or `undefined` when the live URL
+   * does not match a configured host. Read fresh on every call; like
+   * {@link currentContext}, the model can never influence it.
+   */
+  readonly environmentFacts: () => EnvironmentFacts | undefined;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
+  /**
+   * Optional diagnostics sink: records how a tool classified the finished HTTP
+   * response (`AemResponseOutcome['kind']`), so `logs/tools.log` stops reading
+   * a `200` that carried no usable JSON as an outright success. Diagnostics
+   * only - it never influences a tool's result.
+   */
+  readonly recordResponseClassification?: (
+    requestId: RequestId,
+    kind: AemResponseOutcome['kind'],
+  ) => void;
 }
 
 export interface ToolModule {
@@ -180,12 +199,30 @@ export function renderToolFailureForModel(error: ToolError): string {
 export const AEM_ASSISTANT_INSTRUCTIONS_PREFIX =
   'You are a read-only assistant for Adobe Experience Manager (AEM) content authors. ' +
   'Each user prompt begins with a current-page context block the application supplies: it ' +
-  'names the AEM host and, when available, the JCR content path of the page currently open ' +
-  "in the browser pane. Treat references such as 'this page', 'here', 'this host', and 'this " +
-  "instance' as that context, and a request that names no path or server as targeting it - do " +
-  'not ask the user to restate where they are. The only external capabilities available to ' +
-  'you are the tools described next, and they act on the AEM instance the user currently has ' +
-  'open. You cannot write, delete, or otherwise modify anything in AEM through this session.';
+  "names the AEM host, that host's content roots and component roots, and, when available, " +
+  'the JCR content path of the page currently open in the browser pane. Treat references ' +
+  "such as 'this page', 'here', 'this host', and 'this instance' as that context, and a " +
+  'request that names no path or server as targeting it - do not ask the user to restate ' +
+  'where they are. Scope content searches to the content roots and component searches to the ' +
+  'component roots named above. The only external capabilities available to you are the tools ' +
+  'described next, and they act on the AEM instance the user currently has open.';
+
+/**
+ * The read-only, no-side-channel policy every session carries, whether or not
+ * any skill is loaded. This used to live in the on-demand `aem-tool-selection`
+ * skill; it moved here because a skill is only read when the model chooses to
+ * load it, so it could never *guarantee* an invariant that must always hold.
+ */
+export const AEM_ASSISTANT_INSTRUCTIONS_POLICY =
+  'This session is strictly read-only against AEM: there is no tool to create, update, ' +
+  'delete, move, copy, reorder, version, replicate, activate, deactivate, publish, unpublish, ' +
+  'roll out, package, or change users or permissions. Never attempt to reach AEM by any other ' +
+  'route - not /crx or CRXDE, Package Manager, the Sling POST servlet, curl, shell commands, ' +
+  'files, or any external tool or server - and do not suggest them. If the user asks for a ' +
+  'change, say that the application is read-only against AEM and offer to gather the ' +
+  'information that would support the change. The application binds every request to the AEM ' +
+  'instance open in the browser pane: never put a host, scheme, port, or full URL into a tool ' +
+  'argument.';
 
 /** The shared closing on error handling. */
 export const AEM_ASSISTANT_INSTRUCTIONS_SUFFIX =
@@ -200,7 +237,10 @@ export const AEM_ASSISTANT_INSTRUCTIONS_SUFFIX =
  * text still states plainly that no capability exists.
  */
 export function composeAssistantInstructions(fragments: readonly string[]): string {
-  return [AEM_ASSISTANT_INSTRUCTIONS_PREFIX, ...fragments, AEM_ASSISTANT_INSTRUCTIONS_SUFFIX].join(
-    ' ',
-  );
+  return [
+    AEM_ASSISTANT_INSTRUCTIONS_PREFIX,
+    AEM_ASSISTANT_INSTRUCTIONS_POLICY,
+    ...fragments,
+    AEM_ASSISTANT_INSTRUCTIONS_SUFFIX,
+  ].join(' ');
 }

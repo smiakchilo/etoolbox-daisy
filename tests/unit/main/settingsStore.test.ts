@@ -440,6 +440,28 @@ describe('normalizeSettingsDocument', () => {
     });
   });
 
+  it('keeps and trims a host’s roots, and drops an empty one', () => {
+    const normalized = normalize({
+      hosts: [
+        {
+          id: 'server-a',
+          origin: 'https://a.example',
+          label: 'A',
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+          contentRoots: '  /content/a; /content/b  ',
+          componentRoots: '   ',
+        },
+      ],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const host = (normalized['hosts'] as Record<string, unknown>[])[0];
+    expect(host?.['contentRoots']).toBe('/content/a; /content/b');
+    expect(host).not.toHaveProperty('componentRoots');
+  });
+
   it('clears references that no longer resolve and an effort with no model', () => {
     const normalized = normalize({
       hosts: [

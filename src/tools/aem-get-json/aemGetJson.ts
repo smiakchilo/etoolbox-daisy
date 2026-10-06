@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  type AemResponseOutcome,
   type AemToolExecutor,
   type BrokerOutcome,
   type CurrentAemToolContext,
@@ -358,6 +359,12 @@ const ERROR_MESSAGES = {
   unexpected_status: 'AEM returned an unexpected status for that request',
   not_json_content_type: 'AEM returned a response that was not JSON',
   html_login_page: 'AEM returned a sign-in page instead of data. Sign in again in the browser pane',
+  html_error_page:
+    'AEM returned an HTML page instead of data. Check that the browser pane is still signed in, ' +
+    'then try a narrower request',
+  empty_response:
+    'AEM returned an empty response instead of data. The path may be too large to render - ' +
+    'request a narrower path or fewer properties',
   invalid_json: 'AEM returned a response that could not be parsed as JSON',
   unexpected_json_shape: 'AEM returned JSON that was not a resource object',
 } as const;
@@ -404,6 +411,8 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   unexpected_status: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   not_json_content_type: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   html_login_page: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  html_error_page: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
+  empty_response: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   invalid_json: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   unexpected_json_shape: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
 };
@@ -429,6 +438,12 @@ export interface AemGetJsonDeps {
   readonly fetchThroughBridge: (url: string) => Promise<BrokerOutcome>;
   /** Wall-clock time stamped onto a successful result. */
   readonly now: () => number;
+  /**
+   * Optional diagnostics sink, called once per HTTP response with the
+   * classification this tool reached (see `ToolHost.recordResponseClassification`).
+   * Never affects the result.
+   */
+  readonly onClassified?: (requestId: RequestId, kind: AemResponseOutcome['kind']) => void;
 }
 
 export async function executeAemGetJson(
@@ -455,6 +470,7 @@ export async function executeAemGetJson(
     contentType: brokerOutcome.contentType,
     bodyText: brokerOutcome.bodyText,
   });
+  deps.onClassified?.(envelope.requestId, classified.kind);
   if (classified.kind !== 'ok') {
     return toolError(classified.kind, envelope.requestId);
   }

@@ -41,6 +41,25 @@ describe('deriveCurrentPageContext', () => {
       origin: AUTHOR,
       url: `${AUTHOR}/editor.html/content/wknd/us/en.html`,
       jcrPath: '/content/wknd/us/en',
+      contentRoots: ['/content'],
+      componentRoots: ['/apps'],
+    });
+  });
+
+  it("carries a host's configured roots through, defaulting when none are given", () => {
+    expect(
+      deriveCurrentPageContext({
+        documentUrl: `${AUTHOR}/content/wknd.html`,
+        activeOrigin: AUTHOR,
+        contentRoots: ['/content/wknd', '/content/shared'],
+        componentRoots: ['/apps/wknd'],
+      }),
+    ).toEqual({
+      origin: AUTHOR,
+      url: `${AUTHOR}/content/wknd.html`,
+      jcrPath: '/content/wknd',
+      contentRoots: ['/content/wknd', '/content/shared'],
+      componentRoots: ['/apps/wknd'],
     });
   });
 
@@ -67,6 +86,8 @@ describe('deriveCurrentPageContext', () => {
       origin: AUTHOR,
       url: `${AUTHOR}/ui`,
       jcrPath: '/content/hpe/country/us/en/about',
+      contentRoots: ['/content'],
+      componentRoots: ['/apps'],
     });
     expect(derive(`${AUTHOR}/ui#/aem/sites.html/content/wknd/us/en`)?.jcrPath).toBe(
       '/content/wknd/us/en',
@@ -79,7 +100,13 @@ describe('deriveCurrentPageContext', () => {
   });
 
   it('reports the host but no content path for a server page that is not content', () => {
-    expect(derive(`${AUTHOR}/`)).toEqual({ origin: AUTHOR, url: `${AUTHOR}/`, jcrPath: undefined });
+    expect(derive(`${AUTHOR}/`)).toEqual({
+      origin: AUTHOR,
+      url: `${AUTHOR}/`,
+      jcrPath: undefined,
+      contentRoots: ['/content'],
+      componentRoots: ['/apps'],
+    });
     expect(derive(`${AUTHOR}/libs/granite/core/content/login.html`)?.jcrPath).toBeUndefined();
   });
 
@@ -94,9 +121,13 @@ describe('renderCurrentPageContextForModel', () => {
       origin: AUTHOR,
       url: `${AUTHOR}/content/wknd/us/en.html`,
       jcrPath: '/content/wknd/us/en',
+      contentRoots: ['/content'],
+      componentRoots: ['/apps'],
     });
     expect(rendered).toContain(`Host: ${AUTHOR}`);
     expect(rendered).toContain('Content path: /content/wknd/us/en');
+    expect(rendered).toContain('Content roots: /content');
+    expect(rendered).toContain('Component roots: /apps');
     expect(rendered).toContain('"this page"');
   });
 
@@ -105,9 +136,12 @@ describe('renderCurrentPageContextForModel', () => {
       origin: AUTHOR,
       url: `${AUTHOR}/`,
       jcrPath: undefined,
+      contentRoots: ['/content/a', '/content/b'],
+      componentRoots: ['/apps'],
     });
     expect(rendered).toContain(`Host: ${AUTHOR}`);
     expect(rendered).not.toContain('Content path:');
     expect(rendered).toContain('No content path is available');
+    expect(rendered).toContain('Content roots: /content/a, /content/b');
   });
 });

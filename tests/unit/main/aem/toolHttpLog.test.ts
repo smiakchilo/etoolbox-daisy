@@ -102,6 +102,24 @@ describe('createToolHttpLogger: writes the HTTP detail app.log must not carry', 
       headers: [],
     });
   });
+
+  it('records the tool classification once the body has been read', () => {
+    // The record that stops a 200 that carried no JSON from standing as an
+    // outright success: "empty_response" is the Oak-traversal abort.
+    const dir = createScratchRoot();
+    const logger = createToolHttpLogger(dir, { now: () => 1_700_000_000_000 });
+
+    logger.classification({ requestId: 'req-7', kind: 'empty_response' });
+
+    const records = readRecords(dir);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      recordType: 'tool.http.classified',
+      requestId: 'req-7',
+      kind: 'empty_response',
+    });
+    expect(records[0]?.['ts']).toBe(new Date(1_700_000_000_000).toISOString());
+  });
 });
 
 describe('createToolHttpLogger: header values are sanitized', () => {

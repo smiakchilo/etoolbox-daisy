@@ -92,13 +92,39 @@ describe('classifyAemResponse - 200 but the wrong JSON shape (the Sling 300 trap
 });
 
 describe('classifyAemResponse - 200 but not JSON at all', () => {
-  it('classifies text/html as html_login_page, not a generic content-type mismatch', () => {
+  it('classifies an HTML sign-in form as html_login_page', () => {
     const result = classifyAemResponse({
       status: 200,
       contentType: 'text/html; charset=UTF-8',
-      bodyText: "<html lang='en'><body><form id='login'>...</form></body></html>",
+      bodyText:
+        '<html lang="en"><head><title>AEM Sign In</title></head>' +
+        '<body><form action="/j_security_check"><input name="j_username"></form></body></html>',
     });
     expect(result).toEqual({ kind: 'html_login_page' });
+  });
+
+  it('classifies HTML without sign-in markers as html_error_page, not a signed-out session', () => {
+    // The exact regression this pair exists for: AEM answers an aborted query
+    // (and a 404, and a gateway interstitial) with 200 + text/html too, so the
+    // mere presence of HTML is not evidence that the session ended.
+    const result = classifyAemResponse({
+      status: 200,
+      contentType: 'text/html; charset=UTF-8',
+      bodyText: '<html lang="en"><body><h1>Error</h1>Something went wrong</body></html>',
+    });
+    expect(result).toEqual({ kind: 'html_error_page' });
+  });
+
+  it('classifies an empty 200 body as empty_response, whatever the content type claims', () => {
+    for (const contentType of ['text/html;charset=utf-8', 'application/json', null]) {
+      expect(classifyAemResponse({ status: 200, contentType, bodyText: '' })).toEqual({
+        kind: 'empty_response',
+      });
+      // Oak's aborted-traversal reply is a single newline, not a zero-length body.
+      expect(classifyAemResponse({ status: 200, contentType, bodyText: '\n' })).toEqual({
+        kind: 'empty_response',
+      });
+    }
   });
 
   it('classifies invalid JSON text as invalid_json, with a message, rather than throwing', () => {

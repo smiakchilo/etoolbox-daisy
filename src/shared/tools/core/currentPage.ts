@@ -1,4 +1,5 @@
 import { originsMatch } from '../../contracts';
+import { COMPONENT_ROOT_DEFAULT, CONTENT_ROOT_DEFAULT, effectiveRoots } from './environment';
 
 /**
  * The "where is the browser pane right now" context the application hands the
@@ -24,6 +25,16 @@ export interface CurrentPageContext {
   readonly url: string;
   /** The JCR path the page addresses, when one could be derived; otherwise `undefined`. */
   readonly jcrPath: string | undefined;
+  /**
+   * The host's effective content roots (never empty; `/content` when the host
+   * configures none). Tells the model where content lives on this instance.
+   */
+  readonly contentRoots: readonly string[];
+  /**
+   * The host's effective component roots (never empty; `/apps` when the host
+   * configures none). Tells the model where components live on this instance.
+   */
+  readonly componentRoots: readonly string[];
 }
 
 export interface CurrentPageContextInput {
@@ -31,6 +42,10 @@ export interface CurrentPageContextInput {
   readonly documentUrl: string | undefined;
   /** The canonical origin of the currently active AEM server. */
   readonly activeOrigin: string;
+  /** The matched host's content roots, when known; defaults to `/content`. */
+  readonly contentRoots?: readonly string[] | undefined;
+  /** The matched host's component roots, when known; defaults to `/apps`. */
+  readonly componentRoots?: readonly string[] | undefined;
 }
 
 const CONTENT_ROOT = '/content';
@@ -128,7 +143,16 @@ export function deriveCurrentPageContext(
   const fragment = parsed.hash.startsWith('#') ? decodeFragment(parsed.hash.slice(1)) : '';
   const jcrPath = extractJcrPath(parsed.pathname) ?? extractJcrPath(fragment);
 
-  return { origin: parsed.origin, url: `${parsed.origin}${parsed.pathname}`, jcrPath };
+  const contentRoots = effectiveRoots(input.contentRoots ?? []);
+  const componentRoots = effectiveRoots(input.componentRoots ?? []);
+
+  return {
+    origin: parsed.origin,
+    url: `${parsed.origin}${parsed.pathname}`,
+    jcrPath,
+    contentRoots: contentRoots.length > 0 ? contentRoots : [CONTENT_ROOT_DEFAULT],
+    componentRoots: componentRoots.length > 0 ? componentRoots : [COMPONENT_ROOT_DEFAULT],
+  };
 }
 
 /**
@@ -141,6 +165,8 @@ export function renderCurrentPageContextForModel(context: CurrentPageContext): s
     'Current AEM page (supplied by the application from the browser pane, not typed by the user):',
     `Host: ${context.origin}`,
     `URL: ${context.url}`,
+    `Content roots: ${context.contentRoots.join(', ')}`,
+    `Component roots: ${context.componentRoots.join(', ')}`,
   ];
   if (context.jcrPath !== undefined) {
     lines.push(`Content path: ${context.jcrPath}`);

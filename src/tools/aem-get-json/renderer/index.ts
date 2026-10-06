@@ -1,9 +1,9 @@
 import {
   type JsonValue,
   type ToolCallDetails,
-  type ToolCallParameter,
   type ToolRendererModule,
   asStringArray,
+  parameterRows,
 } from '../../../shared';
 
 function describeCall(args: Readonly<Record<string, JsonValue>>): ToolCallDetails {
@@ -11,27 +11,27 @@ function describeCall(args: Readonly<Record<string, JsonValue>>): ToolCallDetail
   const includeChildren = args['includeChildren'] === true;
   const properties = asStringArray(args['properties']);
 
-  const parameters: ToolCallParameter[] = [];
-  parameters.push({ label: 'Path', value: path ?? '(not provided)' });
-  if (path !== undefined) {
-    // The effective request: `.0.json` reads the node, `.1.json` reads its
-    // children too.
-    parameters.push({
-      label: 'Request',
-      value: `${path}.${includeChildren ? '1' : '0'}.json`,
-    });
-  }
+  let propertiesValue: string | undefined;
   if (properties !== undefined) {
-    parameters.push({
-      label: 'Properties',
-      value: properties.length > 0 ? properties.join(', ') : '(none)',
-    });
-  }
-  if (args['includeChildren'] !== undefined) {
-    parameters.push({ label: 'Include children', value: includeChildren ? 'Yes' : 'No' });
+    propertiesValue = properties.length > 0 ? properties.join(', ') : '(none)';
   }
 
-  return { summary: path, parameters };
+  return {
+    summary: path,
+    // `parameterRows` (the one rendering pattern): identifying row first, then
+    // the derived request, then the options - an absent option is omitted.
+    parameters: parameterRows([
+      ['Path', path ?? '(not provided)'],
+      // The effective request: `.0.json` reads the node, `.1.json` reads its
+      // children too.
+      ['Request', path !== undefined ? `${path}.${includeChildren ? '1' : '0'}.json` : undefined],
+      ['Properties', propertiesValue],
+      [
+        'Include children',
+        args['includeChildren'] !== undefined ? (includeChildren ? 'Yes' : 'No') : undefined,
+      ],
+    ]),
+  };
 }
 
 export const renderer: ToolRendererModule = { toolName: 'aem_get_json', describeCall };

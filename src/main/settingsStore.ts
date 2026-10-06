@@ -208,6 +208,8 @@ const SERVER_ENTRY_KEYS = [
   'color',
   'proxyId',
   'tlsException',
+  'contentRoots',
+  'componentRoots',
   'revision',
 ] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
@@ -243,6 +245,21 @@ function labelFromOrigin(origin: string): string {
   } catch {
     return origin.slice(0, LABEL_MAX_LENGTH);
   }
+}
+
+/** Matches `environmentRootTextSchema`'s bound in `serverConfig.ts`. */
+const ROOT_TEXT_MAX_LENGTH = 2000;
+
+/**
+ * Trims a usable roots line out of a hand-written value, or `undefined` when
+ * there is nothing usable. Empty/whitespace values are dropped - the same as
+ * omitting the field - so an explicit clear survives only in memory and is
+ * gone from the document on the next load.
+ */
+function normalizeRootText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim().slice(0, ROOT_TEXT_MAX_LENGTH);
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 /** Trims a usable label out of a hand-written value, falling back to the origin's host. */
@@ -309,6 +326,11 @@ function normalizeServerEntry(
 
   const tlsException = tlsExceptionSchema.safeParse(record['tlsException']);
   if (tlsException.success) next['tlsException'] = tlsException.data;
+
+  const contentRoots = normalizeRootText(record['contentRoots']);
+  if (contentRoots !== undefined) next['contentRoots'] = contentRoots;
+  const componentRoots = normalizeRootText(record['componentRoots']);
+  if (componentRoots !== undefined) next['componentRoots'] = componentRoots;
 
   return next;
 }
@@ -866,6 +888,10 @@ export interface NewServerInput {
   readonly label: string;
   readonly origin: string;
   readonly color: ServerColor;
+  /** Optional free-text content roots captured while the row was a draft. */
+  readonly contentRoots?: string;
+  /** Optional free-text component roots captured while the row was a draft. */
+  readonly componentRoots?: string;
 }
 
 export interface AddServerOutcome {
@@ -901,6 +927,8 @@ export function addServer(
       label: input.label,
       origin: input.origin,
       color: input.color,
+      ...(input.contentRoots !== undefined ? { contentRoots: input.contentRoots } : {}),
+      ...(input.componentRoots !== undefined ? { componentRoots: input.componentRoots } : {}),
       revision: 0,
     });
   } catch (error) {
