@@ -41,6 +41,8 @@ const sendMessage = vi.fn();
 const abort = vi.fn();
 const navigate = vi.fn();
 const listSkills = vi.fn();
+const revealJournal = vi.fn();
+const getModelSelection = vi.fn();
 let statusListener: ((status: AgentChatStatus) => void) | undefined;
 let eventListener: ((event: AgentEvent) => void) | undefined;
 
@@ -92,6 +94,14 @@ async function waitForAssistantMessage(pane: ChatPane): Promise<void> {
   throw new Error('the transcript never repainted the assistant message');
 }
 
+async function waitForInterruption(pane: ChatPane): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (pane.element.querySelector('.chat-message--interruption') !== null) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('the transcript never repainted the interruption notice');
+}
+
 function sendButton(pane: ChatPane): HTMLElement | null {
   return pane.element.querySelector('.chat-composer__send');
 }
@@ -121,6 +131,19 @@ beforeEach(() => {
   navigate.mockReset();
   listSkills.mockReset();
   listSkills.mockResolvedValue({ ok: true, skills: [] });
+  revealJournal.mockReset();
+  revealJournal.mockResolvedValue({ ok: true });
+  getModelSelection.mockReset();
+  getModelSelection.mockResolvedValue({
+    ok: true,
+    state: {
+      models: [],
+      selectedModel: null,
+      selectedReasoningEffort: null,
+      changesLocked: false,
+      catalogUnavailable: false,
+    },
+  });
   statusListener = undefined;
   eventListener = undefined;
 
@@ -143,6 +166,7 @@ beforeEach(() => {
       sendMessage,
       abort,
       listSkills,
+      revealJournal,
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
         eventListener = listener;
         return () => {
@@ -157,6 +181,7 @@ beforeEach(() => {
       }),
     },
     browser: { navigate },
+    settings: { getModelSelection },
   });
 });
 
@@ -787,6 +812,198 @@ describe('createChatPane skill catalogue', () => {
 
     expect(agentBanner(pane)?.hasAttribute('open')).toBe(false);
     expect(listSkills).toHaveBeenCalledTimes(1);
+
+    pane.dispose();
+  });
+});
+
+describe('createChatPane interruptions and session id', () => {
+  async function readyPane(promptText?: string): Promise<ChatPane> {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    if (promptText !== undefined) {
+      const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+        value: string;
+      };
+      field.value = promptText;
+      sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      await flush();
+      await waitForUserMessage(pane);
+    }
+    return pane;
+  }
+
+  function currentChatId(): ChatId {
+    return (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+  }
+
+  function sessionState(
+    chatId: ChatId,
+    sequence: number,
+    state: 'sending' | 'cancelling',
+  ): AgentEvent {
+    return {
+      type: 'session.state.changed',
+      chatId,
+      sequence,
+      turnId: 'turn-1',
+      state,
+    } as AgentEvent;
+  }
+
+  it("records a user Stop as 'Session stopped' when the cancellation event arrives", async () => {
+    const pane = await readyPane();
+    const chatId = currentChatId();
+
+    pushEvent(sessionState(chatId, 0, 'sending'));
+    const stop = pane.element.querySelector('.chat-composer__stop');
+    expect(stop).not.toBeNull();
+    stop?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    expect(abort).toHaveBeenCalledTimes(1);
+
+    pushEvent(sessionState(chatId, 1, 'cancelling'));
+    await waitForInterruption(pane);
+
+    expect(pane.element.querySelector('.chat-message--interruption')?.textContent).toBe(
+      'Session stopped',
+    );
+
+    pane.dispose();
+  });
+
+  it("records an application abort with no Stop as 'Session interrupted by navigation'", async () => {
+    const pane = await readyPane();
+    const chatId = currentChatId();
+
+    pushEvent(sessionState(chatId, 0, 'sending'));
+    pushEvent(sessionState(chatId, 1, 'cancelling'));
+    await waitForInterruption(pane);
+
+    expect(pane.element.querySelector('.chat-message--interruption')?.textContent).toBe(
+      'Session interrupted by navigation',
+    );
+
+    pane.dispose();
+  });
+
+  it('shows the reveal icon in the footer once the conversation has content, and reveals the log on click', async () => {
+    const pane = await readyPane('hello');
+    const chatId = currentChatId();
+
+    const anchor = pane.element.querySelector<HTMLAnchorElement>('.chat-session-id');
+    expect(anchor?.getAttribute('aria-label')).toBe('Reveal chat log in Explorer');
+    expect(anchor?.querySelector('sp-icon-file-txt')).not.toBeNull();
+    expect(pane.element.querySelector('.chat-pane__footer')?.hasAttribute('hidden')).toBe(false);
+
+    anchor?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(revealJournal).toHaveBeenCalledWith({ chatId });
+
+    pane.dispose();
+  });
+
+  it('summarises agent / model / reasoning and opens Settings on the Agents tab when clicked', async () => {
+    getModelSelection.mockResolvedValue({
+      ok: true,
+      state: {
+        models: [
+          {
+            id: 'gpt-5',
+            name: 'GPT-5 Turbo',
+            supportedReasoningEfforts: ['low', 'high'],
+            defaultReasoningEffort: 'high',
+          },
+        ],
+        selectedModel: 'gpt-5',
+        selectedReasoningEffort: 'high',
+        changesLocked: false,
+        catalogUnavailable: false,
+      },
+    });
+    const onOpenSettings = vi.fn();
+    const pane = createChatPane({ onOpenSettings });
+    pane.setAgents({
+      copilot: { active: true, hasToken: true, model: 'gpt-5', reasoningEffort: 'high' },
+    });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'hello';
+    sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    await waitForUserMessage(pane);
+    await flush();
+
+    const summary = pane.element.querySelector<HTMLAnchorElement>('.chat-agent-summary');
+    expect(summary?.textContent).toBe('GitHub Copilot / GPT-5 Turbo / High');
+
+    summary?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(onOpenSettings).toHaveBeenCalledWith('agents');
+
+    pane.dispose();
+  });
+
+  it('falls back to the raw model id when the catalogue has not loaded, and reads (Auto) for unset values', async () => {
+    getModelSelection.mockResolvedValue({
+      ok: false,
+      error: { code: 'STORAGE_ERROR', message: 'unavailable' },
+    });
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({
+      copilot: { active: true, hasToken: true, model: 'vendor/model-x' },
+    });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'hello';
+    sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    await waitForUserMessage(pane);
+    await flush();
+
+    expect(pane.element.querySelector('.chat-agent-summary')?.textContent).toBe(
+      'GitHub Copilot / vendor/model-x / (Auto)',
+    );
+
+    pane.dispose();
+  });
+
+  it('hides the summary line while no agent is active, keeping the reveal icon', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pushStatus(definedStatus());
+    await flush();
+    const chatId = currentChatId();
+
+    pushEvent({
+      type: 'assistant.message.completed',
+      chatId,
+      sequence: 0,
+      turnId: 'turn-1',
+      messageId: 'msg-1',
+      content: 'hello',
+    } as AgentEvent);
+    await waitForAssistantMessage(pane);
+
+    expect(pane.element.querySelector('.chat-agent-summary')?.hasAttribute('hidden')).toBe(true);
+    expect(pane.element.querySelector('.chat-session-id')?.hasAttribute('hidden')).toBe(false);
+
+    pane.dispose();
+  });
+
+  it('hides the footer while the conversation is empty', async () => {
+    const pane = await readyPane();
+
+    expect(pane.element.querySelector('.chat-pane__footer')?.hasAttribute('hidden')).toBe(true);
 
     pane.dispose();
   });

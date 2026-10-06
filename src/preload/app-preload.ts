@@ -12,6 +12,7 @@ import {
   AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
+  AGENT_CHAT_REVEAL_JOURNAL_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
   APP_INFO_CHANNEL,
@@ -321,6 +322,14 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = parseAgentChatReadJournalRequest(request);
       const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_READ_JOURNAL_CHANNEL, parsedRequest);
       return parseAgentChatReadJournalResult(raw);
+    },
+    async revealJournal(request: AgentChatByIdRequest): Promise<AgentChatVoidResult> {
+      const parsedRequest = parseAgentChatByIdRequest(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        AGENT_CHAT_REVEAL_JOURNAL_CHANNEL,
+        parsedRequest,
+      );
+      return parseAgentChatVoidResult(raw);
     },
     async listSkills(): Promise<AgentChatSkillsResult> {
       const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_LIST_SKILLS_CHANNEL);

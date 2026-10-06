@@ -523,4 +523,45 @@ describe('createTranscriptStore', () => {
       expect(store.takeDirty()).toBe(false);
     });
   });
+
+  describe('interruption notices', () => {
+    it('appends a durable notice carrying the reason, and marks the store dirty', () => {
+      const store = createTranscriptStore();
+      store.addInterruption('stopped');
+      expect(store.items()).toEqual([
+        { kind: 'interruption', interruptionId: 'interruption-1', reason: 'stopped' },
+      ]);
+      expect(store.takeDirty()).toBe(true);
+    });
+
+    it('gives each notice a distinct id, so two notices never share a cache key', () => {
+      const store = createTranscriptStore();
+      store.addInterruption('stopped');
+      store.addInterruption('navigation');
+      const ids = store
+        .items()
+        .filter((item) => item.kind === 'interruption')
+        .map((item) => item.interruptionId);
+      expect(new Set(ids).size).toBe(2);
+    });
+
+    it('keeps notices in first-seen order alongside the rest of the transcript', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.addInterruption('navigation');
+      store.applyEvent(delta(0, 'answer'));
+      expect(store.items().map((item) => item.kind)).toEqual([
+        'userPrompt',
+        'interruption',
+        'message',
+      ]);
+    });
+
+    it('drops notices on clear()', () => {
+      const store = createTranscriptStore();
+      store.addInterruption('stopped');
+      store.clear();
+      expect(store.items()).toEqual([]);
+    });
+  });
 });

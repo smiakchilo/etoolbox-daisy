@@ -1,5 +1,5 @@
-import type { RequiredAction } from '../../../shared';
-import type { ToolCallStatus } from './transcriptStore';
+import { type RequiredAction, readLeadingSkillToken } from '../../../shared';
+import type { InterruptionReason, ToolCallStatus } from './transcriptStore';
 
 /**
  * Short label for a tool call's current lifecycle status. `"FAILED"` is
@@ -72,4 +72,52 @@ export function describeRequiredAction(action: RequiredAction): string | undefin
       return action;
     }
   }
+}
+
+/**
+ * The one-line notice shown in the transcript when a turn is interrupted.
+ * `"stopped"` is the user's own Stop; `"navigation"` is the app aborting the
+ * turn because the AEM context changed (a server switch, a cross-origin
+ * navigation, a renderer/view loss). The wording is deliberately distinct so a
+ * reader can tell their own action from the application's.
+ */
+export function describeInterruption(reason: InterruptionReason): string {
+  switch (reason) {
+    case 'stopped':
+      return 'Session stopped';
+    case 'navigation':
+      return 'Session interrupted by navigation';
+    default: {
+      return reason;
+    }
+  }
+}
+
+/**
+ * The two parts of a user prompt split at a leading `/skillname` reference:
+ * the slash-prefixed skill name (rendered bold) and everything after it. When
+ * the prompt does not begin with a *known* skill name, `skill` is `false` and
+ * `trailing` is the whole prompt, so the caller can render it as plain text.
+ *
+ * "Known" is the caller's call - the composer's `/` invocation only actually
+ * rewrites a prompt whose leading token names a bundled skill (see
+ * `resolveSkillPrompt`), so only those should read as a skill in the
+ * transcript.
+ */
+export interface UserPromptSegments {
+  readonly leading: string;
+  readonly trailing: string;
+  readonly skill: boolean;
+}
+
+export function splitLeadingSkill(
+  prompt: string,
+  knownSkillNames: readonly string[],
+): UserPromptSegments {
+  const token = readLeadingSkillToken(prompt);
+  if (token === undefined || !knownSkillNames.includes(token.name)) {
+    return { leading: '', trailing: prompt, skill: false };
+  }
+  const leading = `/${token.name}`;
+  return { leading, trailing: prompt.slice(leading.length), skill: true };
 }

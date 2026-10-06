@@ -26,7 +26,25 @@ export type TranscriptItem =
   | { readonly kind: 'userPrompt'; readonly turnId: TurnId }
   | { readonly kind: 'message'; readonly messageId: MessageId }
   | { readonly kind: 'toolCall'; readonly toolCallId: ToolCallId }
-  | { readonly kind: 'thinking' };
+  | { readonly kind: 'thinking' }
+  | {
+      readonly kind: 'interruption';
+      /** Stable per-notice id, so the view can cache one DOM node per notice across repaints. */
+      readonly interruptionId: string;
+      readonly reason: InterruptionReason;
+    };
+
+/**
+ * Why a turn was interrupted. `"stopped"` is a Stop the user pressed;
+ * `"navigation"` is every other app-initiated abort (an AEM server switch, a
+ * cross-origin navigation, a render-process-gone, a destroyed view) - see
+ * `agentChatController.ts`'s `handleAemContextInvalidated`.
+ *
+ * Declared here (not in `transcriptViewModel.ts`) because it is part of a
+ * `TranscriptItem`; the view-model module imports it from this one, mirroring
+ * how `ToolCallStatus` is already declared here.
+ */
+export type InterruptionReason = 'stopped' | 'navigation';
 
 export type ToolCallStatus =
   | { readonly kind: 'requested' }
@@ -82,6 +100,15 @@ export interface TranscriptStore {
    * disagree.
    */
   setTurnInFlight(inFlight: boolean): void;
+  /**
+   * Appends a durable "the turn was interrupted" notice to the transcript.
+   * Called by the pane when it observes the session enter `cancelling` - the
+   * store never infers an interruption from the event stream itself, because
+   * only the pane knows whether the user pressed Stop or an AEM-context change
+   * aborted the turn (see `agentChatController.ts`). Marks the store dirty so a
+   * throttled renderer repaints the new notice.
+   */
+  addInterruption(reason: InterruptionReason): void;
   /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
   takeDirty(): boolean;
   /**
@@ -104,6 +131,9 @@ export function createTranscriptStore(
   const userPrompts = new Map<TurnId, string>();
   const toolCalls = new Map<ToolCallId, ToolCallView>();
   let dirty = false;
+  // Monotonic id source for interruption notices, so each notice gets its own
+  // cached DOM node in the view and two notices can never share a cache key.
+  let interruptionSequence = 0;
   // The turn currently being answered, set by `applyUserPrompt`; used to
   // ignore a late text event belonging to a previous turn when deciding
   // whether the current turn has produced text yet.
@@ -271,6 +301,15 @@ export function createTranscriptStore(
       turnInFlight = inFlight;
       dirty = true;
     },
+    addInterruption(reason) {
+      interruptionSequence += 1;
+      order.push({
+        kind: 'interruption',
+        interruptionId: `interruption-${interruptionSequence}`,
+        reason,
+      });
+      dirty = true;
+    },
     items() {
       if (!thinkingVisible()) return order;
       const thinkingItem: TranscriptItem = { kind: 'thinking' };
@@ -316,6 +355,7 @@ export function createTranscriptStore(
       turnInFlight = false;
       activeReasoningId = undefined;
       reasoningText = '';
+      interruptionSequence = 0;
       messageStream.clear();
       if (hadContent) dirty = true;
     },

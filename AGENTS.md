@@ -485,7 +485,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2549 passed / 14 skipped** (the +7 since
+Current baseline: **`npm run test` → 2574 passed / 14 skipped** (the +3 since
+2571 is the transcript-footer follow-on — the session id became a
+`sp-icon-file-txt` icon and an agent/model/reasoning summary that opens Settings
+— see `docs/verification.md` "Follow-on: the footer's session id became an icon,
+with an agent/model/reasoning summary (2026-10-06)"; the +22 since
+2549 is the transcript-cosmetics work — interruption notices, the session-id
+footer, and the bold skill name — see `docs/verification.md` "Chat transcript:
+interruption notices, a session-id footer, a bold skill name (2026-10-06)"; the +7 since
 2542 is the aborted-traversal HTML classification fix — see
 `docs/verification.md` "AEM's aborted-traversal HTML is not a sign-in page
 (2026-10-06)"; 2542 is the single tool-details rendering shape; the +85 since
@@ -506,7 +513,7 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 93 tests; typically 92 passed / 1 failed in the full run** (the
+**Playwright → 95 tests; typically 94 passed / 1 failed in the full run** (the
 one deterministic failure is the pre-existing `settings-tabs.spec.ts:121`,
 which fails identically on HEAD — the settings "Takes effect after restarting
 the app" helper carries no trailing period while the assertion expects one; the

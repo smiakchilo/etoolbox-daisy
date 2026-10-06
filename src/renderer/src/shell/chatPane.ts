@@ -20,11 +20,13 @@ import {
   type AgentChatOpenResult,
   type AgentChatSkill,
   type AgentChatStatus,
+  type AgentId,
   type AgentServiceLifecycleState,
   type AgentSettingsSnapshot,
   type CanSendBlockReason,
   type ChatId,
   type ChatJournalRecord,
+  type ModelSelectionState,
   newChatId,
   resolveConfiguredAgentId,
   resolveEffectiveActiveAgentId,
@@ -56,6 +58,12 @@ export interface ChatPane {
 
 /** How often the transcript checks for and applies pending changes (`transcriptStore.takeDirty`). */
 const TRANSCRIPT_REPAINT_INTERVAL_MS = 100;
+
+/** The sentinel shown in the footer summary for an unset model or effort - the same text the Settings picker uses. */
+const AUTO_LABEL = '(Auto)';
+
+/** Copilot's own "auto" model id (see `modelsViewModel.ts`'s `PROVIDER_AUTO_MODEL_ID`); stored as a literal so the summary reads it as `(Auto)` too. */
+const AUTO_MODEL_ID = 'auto';
 
 /** How often to re-check `getStatus()` while `serviceState` is still `"starting"` - there is no push event for it becoming `"ready"` (see `agent-chat-ipc.ts`). */
 const STARTING_POLL_INTERVAL_MS = 500;
@@ -151,8 +159,19 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // with nothing openable, which is also correct before the settings snapshot
   // and the browser pane's first navigation state arrive.
   let linkContext: LinkContext = EMPTY_LINK_CONTEXT;
+  // The bundled skill catalogue for the composer's `/` autocomplete, and where
+  // its one asynchronous read is: `idle` until the service is ready, `loading`
+  // while main reads the SKILL.md files, `loaded` once (success or failure).
+  // A failed read leaves an empty catalogue - the autocomplete simply stays
+  // silent, and a leading `/name` is still sent as ordinary text. Declared
+  // before the transcript view because that view reads the catalogue on every
+  // repaint (a prompt recorded before the read lands is re-rendered bold once
+  // it does).
+  let skills: readonly AgentChatSkill[] = [];
+  let skillsState: 'idle' | 'loading' | 'loaded' = 'idle';
   const transcriptView: TranscriptView = createTranscriptView(undefined, {
     getLinkContext: () => linkContext,
+    getKnownSkillNames: () => skills.map((skill) => skill.name),
     onOpenLink: (url) => openLink(url),
     onOpenExternal: (url) => openExternal(url),
   });
@@ -215,10 +234,24 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // and the banner stays hidden while `starting`; the derivation below turns
   // these flags plus the live auth status into the actually-active agent.
   let agents: Readonly<Record<string, AgentSettingsSnapshot>> = {};
+  // The effectively active provider, recomputed on every status derivation and
+  // read by the footer's agent/model/reasoning summary.
+  let activeAgentId: AgentId | undefined;
+  // The active provider's model catalogue and stored selection, read for the
+  // footer summary's model display name (the snapshot only carries the raw
+  // model id). `undefined` until read, or when the read failed/unavailable.
+  let modelSelection: ModelSelectionState | undefined;
+  // Bumped per read so a slow earlier response cannot overwrite a newer one.
+  let modelSelectionRequest = 0;
   let chatId: ChatId | undefined;
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
   let conversationEmpty = false;
+  // Set when the composer's Stop is pressed. The `cancelling` event that
+  // follows is then recorded as "Session stopped"; without it, a `cancelling`
+  // event is the application's own AEM-context abort ("Session interrupted by
+  // navigation"). See the event subscription below.
+  let stopRequested = false;
   // The most recent live SDK session id for `chatId`, learned from
   // `AgentChatStatus`. Persisted so a later launch resumes the *current*
   // session, not the one the journal recorded at chat creation (a runtime
@@ -227,13 +260,6 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // Whether the active conversation has at least one message. Only then is it
   // worth restoring - an opened-but-unused chat is never remembered.
   let conversationHasMessage = false;
-  // The bundled skill catalogue for the composer's `/` autocomplete, and where
-  // its one asynchronous read is: `idle` until the service is ready, `loading`
-  // while main reads the SKILL.md files, `loaded` once (success or failure).
-  // A failed read leaves an empty catalogue - the autocomplete simply stays
-  // silent, and a leading `/name` is still sent as ordinary text.
-  let skills: readonly AgentChatSkill[] = [];
-  let skillsState: 'idle' | 'loading' | 'loaded' = 'idle';
   // The startup conversation is resolved at most once, and both the early
   // journal preload and the ready-time resume await this same promise - so the
   // two can never race over which one claims the restore.
@@ -267,7 +293,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // Eligibility is the provider's own criterion (an interactive sign-in or a
     // stored token, for Copilot), so this tracks both auth changes and token
     // presence for free.
-    const activeAgentId = resolveEffectiveActiveAgentId(AGENT_DEFINITIONS, agents, (id) => ({
+    activeAgentId = resolveEffectiveActiveAgentId(AGENT_DEFINITIONS, agents, (id) => ({
       // Only the running (configured) provider has a live auth answer; for any
       // other id a stored token is the only honest signal. Feeding the active
       // service's status to every id would mark an inactive provider as
@@ -311,19 +337,26 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     } else {
       statusBanner.setStanding(null);
     }
+    // The chat id may have just been adopted (a status poll) or replaced (a
+    // fresh session); keep the footer's id and visibility current.
+    updateSessionFooter();
   }
 
   /**
    * Keeps the composer's empty/non-empty presentation in sync with the
    * transcript: an empty conversation gets the full-height prompt, and the
-   * first transcript item sends it to the bottom at its ordinary height.
+   * first transcript item sends it to the bottom at its ordinary height. The
+   * session-id footer is refreshed alongside, because its visibility depends on
+   * the same emptiness (and on the chat id).
    */
   function refreshEmptyState(): void {
     const empty = transcriptStore.items().length === 0;
-    if (empty === conversationEmpty) return;
-    conversationEmpty = empty;
-    element.classList.toggle('chat-pane--empty', empty);
-    composer.setConversationEmpty(empty);
+    if (empty !== conversationEmpty) {
+      conversationEmpty = empty;
+      element.classList.toggle('chat-pane--empty', empty);
+      composer.setConversationEmpty(empty);
+    }
+    updateSessionFooter();
   }
 
   /**
@@ -346,6 +379,59 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       composer.setSkills(skills);
     }
     refreshSessionPresentation();
+    // A prompt recorded before the catalogue landed (a restored conversation,
+    // or a message sent in the first moments after ready) is re-rendered now
+    // that a leading `/name` can be recognised as a skill.
+    repaintTranscript();
+  }
+
+  /**
+   * Reads the model catalogue + stored selection for the footer's summary. The
+   * brief settings snapshot only carries the raw model id; the human-readable
+   * name lives in the catalogue (see `ModelCatalogEntry.name`). Called once the
+   * service is ready and again whenever the agent settings change. A failed or
+   * unavailable read is silent - the summary falls back to the raw id - and a
+   * stale response is dropped so an earlier read cannot overwrite a newer one.
+   */
+  async function loadModelSelection(): Promise<void> {
+    const request = ++modelSelectionRequest;
+    let next: ModelSelectionState | undefined;
+    try {
+      const result = await window.daisy.settings.getModelSelection();
+      next = result.ok ? result.state : undefined;
+    } catch {
+      next = undefined;
+    }
+    if (request !== modelSelectionRequest) return;
+    modelSelection = next;
+    updateSessionFooter();
+  }
+
+  /** The footer summary line: agent label / model / reasoning, in that order. */
+  function buildAgentSummary(agentId: AgentId): string {
+    const definition = AGENT_DEFINITIONS.find((candidate) => candidate.id === agentId);
+    return [
+      definition?.label ?? agentId,
+      describeModel(agents[agentId]?.model),
+      describeReasoningEffort(agents[agentId]?.reasoningEffort),
+    ].join(' / ');
+  }
+
+  /**
+   * The model's display name from the catalogue, falling back to its raw id
+   * when the catalogue has not loaded (or omits it). Copilot's own `auto` model
+   * and an unset model both read as "(Auto)" - the same value the Settings
+   * picker shows.
+   */
+  function describeModel(modelId: string | undefined): string {
+    if (modelId === undefined || modelId.toLowerCase() === AUTO_MODEL_ID) return AUTO_LABEL;
+    return modelSelection?.models.find((model) => model.id === modelId)?.name ?? modelId;
+  }
+
+  /** The stored effort, capitalised for display ("high" -> "High"), or "(Auto)". */
+  function describeReasoningEffort(effort: string | undefined): string {
+    if (effort === undefined) return AUTO_LABEL;
+    return effort.charAt(0).toUpperCase() + effort.slice(1);
   }
 
   function subscribeToEvents(): void {
@@ -357,6 +443,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (chatId !== undefined && event.chatId !== chatId) return;
 
       transcriptStore.applyEvent(event);
+      // An interruption notice is the pane's own; the store never infers one.
+      // `cancelling` is only ever app-initiated (a Stop, or the controller's
+      // `handleAemContextInvalidated`), and only this pane knows which. Guard
+      // on the previous state so a repeated `cancelling` cannot double-record.
+      if (
+        event.type === 'session.state.changed' &&
+        event.state === 'cancelling' &&
+        sessionStatus.state !== 'cancelling'
+      ) {
+        transcriptStore.addInterruption(stopRequested ? 'stopped' : 'navigation');
+        stopRequested = false;
+      }
       refreshEmptyState();
       const applied = applyAgentEvent(sessionStatus, event);
       if (applied.ok) {
@@ -461,6 +559,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     const id = newChatId(() => crypto.randomUUID());
     chatId = id;
     conversationHasMessage = false;
+    stopRequested = false;
     transcriptStore.clear();
     refreshEmptyState();
     const result = await openConversation(id);
@@ -493,6 +592,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // The runtime is ready, so the composer may soon send: fetch the skill
     // catalogue for its `/` autocomplete now. Guarded to a single read.
     void loadSkills();
+    // The footer's model display name needs the catalogue; read it now that the
+    // runtime can answer, and again whenever the agent settings change.
+    void loadModelSelection();
 
     sessionStatus = { ...sessionStatus, authenticated: status.auth.isAuthenticated };
     if (status.sdkSessionId !== null) latestSdkSessionId = status.sdkSessionId;
@@ -586,12 +688,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // The chat now has at least one message, so it is worth restoring next
     // launch - and this also refreshes the stored live session id.
     conversationHasMessage = true;
+    stopRequested = false;
     persistActiveConversation();
     return { ok: true };
   }
 
   function onStop(): void {
     if (chatId === undefined) return;
+    // The `cancelling` event this abort produces is this pane's own Stop, not
+    // an AEM-context abort - record it as such (see the event subscription).
+    // Guarded on a turn actually being in flight, so a stray Stop with nothing
+    // to cancel cannot leave the flag set for a later navigation abort.
+    stopRequested = isTurnInFlight(sessionStatus.state);
     void window.daisy.agentChat.abort({ chatId }).then((result) => {
       if (!result.ok) statusBanner.showError(result.error.message);
     });
@@ -648,6 +756,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     const id = newChatId(() => crypto.randomUUID());
     chatId = id;
     conversationHasMessage = false;
+    stopRequested = false;
     transcriptStore.clear();
     sessionStatus = { ...sessionStatus, state: 'idle' };
     refreshEmptyState();
@@ -665,6 +774,55 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     surfaceClassName: CHAT_STATUS_BANNER_SURFACE_CLASS,
   });
   const composer = createComposer({ onSend, onStop });
+
+  // The pane footer, sitting directly beneath the composer: on the left, a
+  // short "agent / model / reasoning" summary that opens the Settings Agents
+  // tab; on the right, an icon that reveals this conversation's journal file in
+  // the OS file manager. Both hrefs are inert (`#`) because the actions go
+  // through callbacks/IPC; `preventDefault` stops the fragment navigation.
+  const agentSummaryAnchor = el('a', {
+    attrs: { class: 'chat-agent-summary', href: '#', title: 'Open agent settings' },
+  });
+  agentSummaryAnchor.addEventListener('click', (event) => {
+    event.preventDefault();
+    options.onOpenSettings('agents');
+  });
+  const sessionIdAnchor = el('a', {
+    attrs: {
+      class: 'chat-session-id',
+      href: '#',
+      'aria-label': 'Reveal chat log in Explorer',
+      title: 'Reveal chat log in Explorer',
+    },
+  });
+  sessionIdAnchor.append(el('sp-icon-file-txt', { attrs: { size: 's' } }));
+  sessionIdAnchor.addEventListener('click', (event) => {
+    event.preventDefault();
+    if (chatId === undefined) return;
+    void window.daisy.agentChat.revealJournal({ chatId }).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
+  });
+  const transcriptFooter = el('div', {
+    attrs: { class: 'chat-pane__footer' },
+    children: [agentSummaryAnchor, sessionIdAnchor],
+  });
+
+  /**
+   * Reflects the current conversation and active agent into the footer. The row
+   * is visible only once there is a conversation with content, so an empty or
+   * not-yet-open chat shows nothing; the summary line is hidden within it while
+   * no agent is active (the icon still shows). Called from both refresh paths
+   * (the status derivation and the transcript's empty-state check), since either
+   * can be the first to see a new `chatId`, the first transcript item, or a
+   * changed active agent.
+   */
+  function updateSessionFooter(): void {
+    transcriptFooter.hidden = !(chatId !== undefined && !conversationEmpty);
+    const summary = activeAgentId === undefined ? undefined : buildAgentSummary(activeAgentId);
+    agentSummaryAnchor.hidden = summary === undefined;
+    agentSummaryAnchor.textContent = summary ?? '';
+  }
 
   const transcript = el('div', {
     attrs: { class: 'chat-transcript' },
@@ -690,6 +848,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       }),
       transcript,
       composer.element,
+      transcriptFooter,
       statusBanner.element,
     ],
   });
@@ -721,8 +880,14 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   return {
     element,
     setAgents(next: Readonly<Record<string, AgentSettingsSnapshot>>): void {
+      // A model/effort/active change arrives here (the shell re-applies the
+      // snapshot after a Settings save). Re-read the catalogue only when the
+      // map actually changed, so an unrelated settings edit does not trigger a
+      // catalogue read.
+      const changed = JSON.stringify(next) !== JSON.stringify(agents);
       agents = next;
       refreshSessionPresentation();
+      if (changed) void loadModelSelection();
     },
     setLinkContext(next: LinkContext): void {
       if (linkContextsEqual(linkContext, next)) return;

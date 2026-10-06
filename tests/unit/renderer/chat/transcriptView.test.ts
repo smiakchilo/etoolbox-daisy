@@ -887,3 +887,75 @@ describe('createTranscriptView - tool-call billet disclosure', () => {
     expect(onOpenLink).not.toHaveBeenCalled();
   });
 });
+
+describe('createTranscriptView - interruption notices', () => {
+  it("renders a 'Session stopped' notice for a user Stop", () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.addInterruption('stopped');
+
+    view.repaint(store);
+
+    expect(view.element.querySelector('.chat-message--interruption')?.textContent).toBe(
+      'Session stopped',
+    );
+  });
+
+  it("renders a 'Session interrupted by navigation' notice for an application abort", () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.addInterruption('navigation');
+
+    view.repaint(store);
+
+    expect(view.element.querySelector('.chat-message--interruption')?.textContent).toBe(
+      'Session interrupted by navigation',
+    );
+  });
+
+  it('keeps each notice as its own DOM node across repaints', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.addInterruption('stopped');
+    view.repaint(store);
+    const first = view.element.querySelector('.chat-message--interruption');
+
+    store.applyEvent(delta(0, 'more'));
+    view.repaint(store);
+
+    expect(view.element.querySelector('.chat-message--interruption')).toBe(first);
+  });
+});
+
+describe('createTranscriptView - bold skill name in a user prompt', () => {
+  function renderPrompt(prompt: string, knownSkillNames: readonly string[]): HTMLElement {
+    const view = createTranscriptView(markdownRenderer, {
+      getKnownSkillNames: () => knownSkillNames,
+    });
+    const store = createTranscriptStore();
+    store.applyUserPrompt(turnId, prompt);
+    view.repaint(store);
+    return view.element;
+  }
+
+  it('renders a leading known skill name bold, preserving the full text', () => {
+    const element = renderPrompt('/search Waldo', ['search']);
+    const node = element.querySelector('.chat-message--user');
+    expect(node?.querySelector('strong')?.textContent).toBe('/search');
+    expect(node?.textContent).toBe('/search Waldo');
+  });
+
+  it('leaves a token that names no known skill as plain text', () => {
+    const element = renderPrompt('/unknown Waldo', ['search']);
+    const node = element.querySelector('.chat-message--user');
+    expect(node?.querySelector('strong')).toBeNull();
+    expect(node?.textContent).toBe('/unknown Waldo');
+  });
+
+  it('leaves an ordinary prompt as plain text', () => {
+    const element = renderPrompt('just a question', ['search']);
+    const node = element.querySelector('.chat-message--user');
+    expect(node?.querySelector('strong')).toBeNull();
+    expect(node?.textContent).toBe('just a question');
+  });
+});

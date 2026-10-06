@@ -11,9 +11,11 @@ import {
 import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import {
+  describeInterruption,
   describeRequiredAction,
   describeToolCallStatus,
   latestReasoningLine,
+  splitLeadingSkill,
 } from './transcriptViewModel';
 import { describeToolCall } from './toolCallDetails';
 import { toolRendererRegistry } from './toolRegistry';
@@ -46,6 +48,14 @@ export interface TranscriptViewOptions {
    * (blocked) default.
    */
   readonly onOpenExternal?: (url: string) => void;
+  /**
+   * The bundled skill names a prompt may invoke with a leading `/name`, read
+   * on every repaint so a prompt recorded before the catalogue loaded is
+   * re-rendered with a bold skill name once the catalogue is known - see
+   * `chatPane.ts`'s `loadSkills`. Absent (a unit test) means no token is
+   * treated as a skill.
+   */
+  readonly getKnownSkillNames?: () => readonly string[];
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -59,6 +69,8 @@ function keyFor(item: TranscriptItem): string {
       return `toolCall:${item.toolCallId}`;
     case 'thinking':
       return 'thinking';
+    case 'interruption':
+      return `interruption:${item.interruptionId}`;
     default: {
       return item;
     }
@@ -289,6 +301,7 @@ export function createTranscriptView(
   // again (the default the reader expects).
   let expandedThinking = false;
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
+  const getKnownSkillNames = options.getKnownSkillNames ?? (() => []);
 
   // The one travelling hover popover for pane links that offer actions. It is
   // undefined in a jsdom unit test (the Spectrum overlay is not registered
@@ -423,6 +436,10 @@ export function createTranscriptView(
         return el('div', { attrs: { class: 'chat-message chat-message--assistant' } });
       case 'toolCall':
         return el('div', { attrs: { class: 'chat-tool-call' } });
+      case 'interruption':
+        // A borderless one-line notice, like the thinking/tool billets, so it
+        // reads as transcript metadata rather than a message bubble.
+        return el('p', { attrs: { class: 'chat-message chat-message--interruption' } });
       case 'thinking':
         // The whole structure (spinner, label, rolling line, chevron,
         // expandable body) is built once here rather than in `updateShell`, so
@@ -468,8 +485,25 @@ export function createTranscriptView(
 
   function updateShell(store: TranscriptStore, item: TranscriptItem, shell: HTMLElement): void {
     switch (item.kind) {
-      case 'userPrompt':
-        shell.textContent = store.textForUserPrompt(item.turnId);
+      case 'userPrompt': {
+        const text = store.textForUserPrompt(item.turnId);
+        const segments = splitLeadingSkill(text, getKnownSkillNames());
+        // A leading `/skillname` that names a bundled skill reads bold, so the
+        // reader can tell a skill invocation from ordinary prose. Everything
+        // else is the user's plain text; `replaceChildren` (not innerHTML)
+        // keeps this a text boundary.
+        if (!segments.skill) {
+          shell.textContent = text;
+          return;
+        }
+        shell.replaceChildren(
+          el('strong', { attrs: { class: 'chat-message__skill' }, text: segments.leading }),
+          segments.trailing,
+        );
+        return;
+      }
+      case 'interruption':
+        shell.textContent = describeInterruption(item.reason);
         return;
       case 'message':
         // Must fully REPLACE the node's content on every call, never append

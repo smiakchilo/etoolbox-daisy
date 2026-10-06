@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, safeStorage } from 'electron';
+import { app, BrowserWindow, Menu, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type AppSettings, type AuthStatus, err, resolveSkillPrompt } from '../shared';
@@ -30,7 +31,7 @@ import { buildAgentRegistry, discoverAgentLoaders } from './agents/registry';
 import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
-import { createChatJournal } from './chatJournal';
+import { createChatJournal, toChatFileName } from './chatJournal';
 import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
 import { installContentSecurityPolicy } from './csp';
 import { mergeDisabledFeatures } from './disabledFeatures';
@@ -550,6 +551,23 @@ if (!gotSingleInstanceLock) {
           return { ok: false, error: describeJournalReadFailure(outcome.reason) };
         }
         return { ok: true, records: [...outcome.records] };
+      },
+      // Reveals the chat's journal file in Explorer, for the transcript
+      // footer's session-id anchor. The path is derived from the `chatId` here
+      // (never supplied by the renderer); a chat with no journal yet reveals
+      // the chats directory instead, so a click always lands somewhere useful.
+      revealJournal: (request) => {
+        let filePath: string;
+        try {
+          filePath = path.join(appPaths.chats, toChatFileName(request.chatId));
+        } catch {
+          return {
+            ok: false,
+            error: { code: 'INVALID_ARGUMENT', message: 'The chat id is not usable' },
+          };
+        }
+        shell.showItemInFolder(existsSync(filePath) ? filePath : appPaths.chats);
+        return { ok: true };
       },
       // The bundled skill catalogue, read on demand for the composer's `/`
       // autocomplete. `readSkillCatalog` never rejects; the `ok: false` branch

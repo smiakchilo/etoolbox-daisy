@@ -7,6 +7,7 @@ import {
   AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
+  AGENT_CHAT_REVEAL_JOURNAL_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
 } from '../../shared';
@@ -15,6 +16,7 @@ import {
   agentChatOpenConversationRequestSchema,
   agentChatReadJournalRequestSchema,
   agentChatSendMessageRequestSchema,
+  type AgentChatByIdRequest,
   type AgentChatOpenResult,
   type AgentChatReadJournalRequest,
   type AgentChatReadJournalResult,
@@ -140,6 +142,13 @@ export interface AgentChatIpcDependencies {
    */
   readonly readJournal: (request: AgentChatReadJournalRequest) => AgentChatReadJournalResult;
   /**
+   * Reveals one chat's journal file in the OS file manager, for the transcript
+   * footer's session-id anchor. Built in the composition root so this handler
+   * stays free of filesystem and path concerns. Returns `ok: true` once the
+   * reveal has been requested; the renderer has nothing further to do with it.
+   */
+  readonly revealJournal: (request: AgentChatByIdRequest) => AgentChatVoidResult;
+  /**
    * Reads the bundled skill catalogue for the composer's `/` autocomplete.
    * Built in the composition root so this handler stays free of filesystem and
    * path concerns; a missing catalogue is an `ok: false` result, never a throw.
@@ -221,6 +230,16 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
       const parsed = agentChatReadJournalRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadReadJournalResult(parsed.error.message);
       return deps.readJournal(parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    AGENT_CHAT_REVEAL_JOURNAL_CHANNEL,
+    (event, rawRequest: unknown): AgentChatVoidResult => {
+      if (!checkSender(event)) return untrustedVoidResult();
+      const parsed = agentChatByIdRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadVoidResult(parsed.error.message);
+      return deps.revealJournal(parsed.data);
     },
   );
 

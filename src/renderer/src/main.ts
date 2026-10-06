@@ -35,6 +35,7 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-send.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-stop.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-actions.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-open-in-light.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-file-txt.js';
 import '@spectrum-web-components/action-menu/sp-action-menu.js';
 import '@spectrum-web-components/menu/sp-menu-item.js';
 import '@spectrum-web-components/picker/sp-picker.js';

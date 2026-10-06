@@ -39,6 +39,61 @@
   color: var(--spectrum-accent-background-color-default, #0265dc);
 }
 
+/* The pane footer, directly beneath the composer: a thin line. Left is the
+   "agent / model / reasoning" summary (a jump to Settings), right is the
+   chat-log reveal icon. Hidden until a conversation with content exists. */
+.chat-pane__footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 4px 0;
+}
+
+/* A class rule would otherwise outrank the UA `[hidden]` rule. */
+.chat-pane__footer[hidden] {
+  display: none;
+}
+
+/* The agent / model / reasoning summary. A single non-wrapping line that
+   ellipsises rather than widening the pane or wrapping to two lines. */
+.chat-agent-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--spectrum-gray-600, #6e6e6e);
+  text-decoration: none;
+}
+
+.chat-agent-summary[hidden] {
+  display: none;
+}
+
+.chat-agent-summary:hover,
+.chat-agent-summary:focus-visible {
+  color: var(--spectrum-accent-background-color-default, #0265dc);
+  text-decoration: underline;
+}
+
+/* The chat-log reveal icon: pushed to the right, muted like the summary text,
+   turning accent on hover/focus. */
+.chat-session-id {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--spectrum-gray-600, #6e6e6e);
+  text-decoration: none;
+}
+
+.chat-session-id:hover,
+.chat-session-id:focus-visible {
+  color: var(--spectrum-accent-background-color-default, #0265dc);
+}
+
 .chat-message {
   padding: 8px 10px;
   border-radius: 4px;
@@ -57,6 +112,17 @@
 .chat-message--assistant {
   background: var(--spectrum-gray-100, #f8f8f8);
   border: 1px solid var(--spectrum-gray-200, #d3d3d3);
+}
+
+/* The interruption notice: a borderless one-line row, like the thinking/tool
+   billets, so it reads as transcript metadata rather than a message bubble.
+   Declared after the base `.chat-message` rules so its padding/background win. */
+.chat-message--interruption {
+  padding: 0 4px;
+  background: transparent;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--spectrum-gray-600, #6e6e6e);
 }
 
 /* The transient "Thinking" billet: a borderless disclosure row shown while a

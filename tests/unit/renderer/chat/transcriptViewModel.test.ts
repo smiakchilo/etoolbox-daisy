@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeInterruption,
   describeRequiredAction,
   describeToolCallStatus,
   latestReasoningLine,
+  splitLeadingSkill,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
 import type { ToolCallStatus } from '../../../../src/renderer/src/chat/transcriptStore';
 import { REQUIRED_ACTIONS, requestIdSchema, type ToolError } from '../../../../src/shared';
@@ -78,5 +80,57 @@ describe('latestReasoningLine', () => {
 
   it('trims each line before choosing the last one', () => {
     expect(latestReasoningLine('first\n   second   ')).toBe('second');
+  });
+});
+
+describe('describeInterruption', () => {
+  it("words a user Stop as 'Session stopped'", () => {
+    expect(describeInterruption('stopped')).toBe('Session stopped');
+  });
+
+  it("words an application-initiated abort as 'Session interrupted by navigation'", () => {
+    expect(describeInterruption('navigation')).toBe('Session interrupted by navigation');
+  });
+});
+
+describe('splitLeadingSkill', () => {
+  it('splits a leading known skill token from the rest of the prompt', () => {
+    expect(splitLeadingSkill('/search Waldo', ['search'])).toEqual({
+      leading: '/search',
+      trailing: ' Waldo',
+      skill: true,
+    });
+  });
+
+  it('treats a skill with no trailing text as a skill with an empty tail', () => {
+    expect(splitLeadingSkill('/search', ['search'])).toEqual({
+      leading: '/search',
+      trailing: '',
+      skill: true,
+    });
+  });
+
+  it('leaves a leading token that names no known skill as plain text', () => {
+    expect(splitLeadingSkill('/content/wknd', ['search'])).toEqual({
+      leading: '',
+      trailing: '/content/wknd',
+      skill: false,
+    });
+  });
+
+  it('leaves an ordinary prompt untouched', () => {
+    expect(splitLeadingSkill('search for Waldo', ['search'])).toEqual({
+      leading: '',
+      trailing: 'search for Waldo',
+      skill: false,
+    });
+  });
+
+  it('does not treat leading whitespace before the slash as a skill reference', () => {
+    expect(splitLeadingSkill(' /search Waldo', ['search'])).toEqual({
+      leading: '',
+      trailing: ' /search Waldo',
+      skill: false,
+    });
   });
 });

@@ -93,6 +93,13 @@ export interface DaisyAgentChatApi {
    */
   readJournal(request: AgentChatReadJournalRequest): Promise<AgentChatReadJournalResult>;
   /**
+   * Reveals one chat's journal file in the OS file manager, for the
+   * transcript footer's session-id anchor. Main derives the path from the
+   * `chatId`; a missing journal reveals the chats directory instead. Never
+   * throws - a failure comes back as an `ok: false` result.
+   */
+  revealJournal(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
+  /**
    * The bundled skill catalogue (name + description) for the composer's `/`
    * autocomplete. Read from the application's own `resources/skills` directory
    * in main; never throws - an unreadable catalogue comes back as `ok: false`,
