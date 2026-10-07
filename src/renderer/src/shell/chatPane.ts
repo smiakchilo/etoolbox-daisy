@@ -14,7 +14,7 @@ import {
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
-import { repaintAndFollow } from '../chat/transcriptScroll';
+import { createTranscriptFollower } from '../chat/transcriptFollower';
 import {
   applyAgentEvent,
   type AgentChatOpenResult,
@@ -782,6 +782,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     statusBanner.clearError();
     transcriptStore.applyUserPrompt(result.turnId, prompt);
     refreshEmptyState();
+    // Sending is deliberate: show the user's own message and the reply that
+    // follows, even if they had scrolled up to read history first.
+    transcriptFollower.pin();
     // The chat now has at least one message, so it is worth restoring next
     // launch - and this also refreshes the stored live session id.
     conversationHasMessage = true;
@@ -864,6 +867,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     transcriptStore.clear();
     sessionStatus = { ...sessionStatus, state: 'idle' };
     refreshEmptyState();
+    // A fresh conversation starts at the bottom, following by default, even if
+    // the previous one was left scrolled up.
+    transcriptFollower.pin();
     // Repaint at once rather than waiting up to a whole timer tick for the
     // cleared store's dirty flag to be noticed - the user just asked for a
     // clean slate and should see one immediately.
@@ -949,13 +955,20 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   });
 
   /**
-   * Repaints the transcript and keeps the viewport on the newest entry when the
-   * reader is already at the bottom - see `transcriptScroll.ts`. Every repaint
-   * path (the throttled timer and `startNewSession`'s immediate one) goes
-   * through here so the two can never disagree about following.
+   * Keeps the transcript on its newest entry while the reader is at the bottom,
+   * and re-pins it across layout changes (a banner appearing, the composer
+   * growing, a late-loading image) that used to look like scrolling away - see
+   * `transcriptFollower.ts`. Every repaint path (the throttled timer,
+   * `startNewSession`'s immediate one, a link-context change) goes through here
+   * so they can never disagree about following.
    */
+  const transcriptFollower = createTranscriptFollower({
+    scroller: transcript,
+    content: transcriptView.element,
+  });
+
   function repaintTranscript(): void {
-    repaintAndFollow(transcript, () => transcriptView.repaint(transcriptStore));
+    transcriptFollower.repaint(() => transcriptView.repaint(transcriptStore));
   }
 
   const element = el('section', {
@@ -1021,6 +1034,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       clearInterval(repaintTimer);
       if (startingPollHandle !== undefined) clearInterval(startingPollHandle);
       if (readyPollHandle !== undefined) clearInterval(readyPollHandle);
+      transcriptFollower.dispose();
       statusBanner.dispose();
       composer.dispose();
       transcriptView.dispose();

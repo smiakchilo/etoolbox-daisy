@@ -1,21 +1,11 @@
 /*
- * Keeping the transcript pinned to its newest entry.
+ * Keeping the transcript pinned to its newest entry: the geometry half.
  *
- * `transcriptView.ts` deliberately owns only the messages element, not the
- * scroller that clips it (`.chat-transcript`, see `chatPane.ts`): the view
- * re-renders its own children and has no business knowing how they are framed.
- * The policy for "when should the viewport follow the newest entry" therefore
- * lives here, as a pair of DOM-free functions over the scroller's geometry, so
- * it can be reasoned about and tested without a layout engine.
- *
- * The behaviour is sticky-to-bottom, not unconditional: the viewport follows
- * new entries (and the streaming growth of the current assistant message) only
- * while the reader is already at the bottom. The moment they scroll up to read
- * history, appended content must not yank them back down. The one subtlety
- * that makes this correct is that the check is taken BEFORE the repaint: after
- * a repaint appends content the scroller is momentarily "not at the bottom" for
- * a perfectly pinned reader, so measuring afterwards would misread every pinned
- * reader as having scrolled away.
+ * This module is deliberately DOM-free and state-free - just the one predicate
+ * over the scroller's geometry - so it can be reasoned about and tested without
+ * a layout engine. The stateful policy that decides *when* to apply it, and
+ * that survives layout changes the reader did not cause, lives next door in
+ * `transcriptFollower.ts`.
  */
 
 /**
@@ -43,15 +33,4 @@ export function isScrolledToBottom(
   thresholdPx: number = STICK_TO_BOTTOM_THRESHOLD_PX,
 ): boolean {
   return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= thresholdPx;
-}
-
-/**
- * Repaints the transcript and re-pins the scroller to the bottom afterwards,
- * but only if it was already pinned before the repaint. See this module's
- * header for why the "was pinned" check must precede `repaint`.
- */
-export function repaintAndFollow(scroller: Scrollable, repaint: () => void): void {
-  const pinned = isScrolledToBottom(scroller);
-  repaint();
-  if (pinned) scroller.scrollTop = scroller.scrollHeight;
 }

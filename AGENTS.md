@@ -508,7 +508,12 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2617 passed / 14 skipped** (the +8 since
+Current baseline: **`npm run test` → 2628 passed / 14 skipped** (the +3 since
+2625 is the transcript stick-to-bottom intent fix — a layout change (a banner,
+the composer growing, a late image) no longer counts as the reader scrolling
+away, and a sent prompt always re-pins: the new `transcriptFollower.ts` with its
+unit and built-app specs — see `docs/verification.md` "The chat transcript got
+stuck when a layout change looked like scrolling away (2026-10-08)"; the +8 since
 2609 is the address-bar host-chip stability fix — the chip now matches an
 *inferred* host prefix, not only an exact origin, so it stops blinking while a
 host address is edited: 7 `resolveAddressChipHost` cases and 1 toolbar case —
@@ -554,7 +559,11 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 100 tests; typically 99 passed / 1 failed in the full run** (the
+**Playwright → 102 tests; typically 101 passed / 1 failed in the full run** (the
++2 since 100 is `tests/e2e/chat-transcript-scroll.spec.ts`, the transcript
+stick-to-bottom cases against the built app — see `docs/verification.md` "The
+chat transcript got stuck when a layout change looked like scrolling away
+(2026-10-08)"; the
 +5 since 95 is `tests/e2e/ask-user.spec.ts`, the interactive-question UI — radio
 group, checkbox list, free-input swap, and both >5 dropdowns — all 5 green
 against the built app; the
