@@ -458,5 +458,45 @@ describe('createAgentsSection', () => {
     await settleCommit();
 
     expect(setModelPreferences).toHaveBeenCalledWith({ model: 'model-b', reasoningEffort: null });
+    // The committed change alters the snapshot, so the shell must be told:
+    // otherwise the chat pane's agent/model/reasoning footer keeps showing the
+    // previous model until some unrelated settings edit happens to reload it.
+    expect(onSettingsChanged).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads but does not signal a settings change when the model save is refused', async () => {
+    getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: true, login: 'octocat' });
+    getModelSelection.mockResolvedValue({
+      ok: true,
+      state: {
+        models: [
+          { id: 'model-a', name: 'Model A', supportedReasoningEfforts: ['low', 'high'] },
+          { id: 'model-b', name: 'Model B', supportedReasoningEfforts: [] },
+        ],
+        selectedModel: 'model-a',
+        selectedReasoningEffort: 'high',
+        changesLocked: false,
+        catalogUnavailable: false,
+      },
+    });
+    setModelPreferences.mockResolvedValue({
+      ok: false,
+      error: { code: 'turn_in_flight', message: 'Finish or stop the current response' },
+    });
+
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const modelPicker = section.element.querySelector(
+      'sp-picker[aria-label="Model"]',
+    ) as HTMLElement & { value: string };
+    modelPicker.value = 'model-b';
+    modelPicker.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    await settleCommit();
+
+    // Nothing was persisted, so the snapshot did not change and the shell must
+    // not be told; the section still re-reads to reset the picker.
+    expect(setModelPreferences).toHaveBeenCalledTimes(1);
+    expect(onSettingsChanged).not.toHaveBeenCalled();
   });
 });

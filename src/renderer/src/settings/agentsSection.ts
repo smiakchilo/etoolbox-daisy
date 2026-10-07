@@ -60,7 +60,7 @@ export interface AgentsSectionOptions {
   status: StatusBannerSink;
   /** Registers commit saves with the panel's save reporter. */
   reportSave(outcome: Promise<SaveOutcome>): void;
-  /** Fired after any mutation that changes the snapshot (active agent, proxy). */
+  /** Fired after any mutation that changes the snapshot (active agent, proxy, model/effort). */
   onSettingsChanged(): void;
   /**
    * The providers to render, one item each. Defaults to the compiled-in
@@ -208,12 +208,20 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       // The reporter's settle attaches first, so a drain that empties the
       // batch is announced before we re-read below.
       options.reportSave(outcome);
-      void outcome.then(() => {
+      void outcome.then((result) => {
         // Whether accepted or refused (e.g. `turn_in_flight`: a turn started
         // meanwhile and the lock state on screen is already stale), re-read -
         // the pickers and lock state must reflect what is actually persisted.
         pickersDirty = false;
-        void refresh();
+        if (result.ok) {
+          // A committed model/effort change alters the snapshot, and the chat
+          // pane's footer summarises that snapshot's model - so the shell must
+          // be told, exactly as for an active-agent or proxy change. `refresh`
+          // alone only repaints this section, leaving the footer stale.
+          options.onSettingsChanged();
+        } else {
+          void refresh();
+        }
       });
     });
   }

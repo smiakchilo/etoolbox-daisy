@@ -233,4 +233,28 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     await expect(shell.locator('.settings-panel')).toBeVisible();
     await expect(shell.locator('.settings-panel section[aria-label="Agents"]')).toBeVisible();
   });
+
+  test('the footer follows a model chosen in Settings instead of keeping the old one', async () => {
+    // The previous case left Settings open on the Agents tab; re-open it via
+    // the summary if that ever changes, then commit a model choice.
+    if (!(await shell.locator('.settings-panel').isVisible())) {
+      await shell.locator(AGENT_SUMMARY).click();
+    }
+    const section = shell.locator('.settings-panel section[aria-label="Agents"]');
+    await expect(section).toBeVisible();
+
+    const modelPicker = section.locator('sp-picker[aria-label="Model"]').first();
+    await expect(modelPicker).toBeEnabled();
+    await modelPicker.evaluate((node: HTMLElement & { value: string }) => {
+      node.value = 'fake-model-reasoning';
+      node.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    // The committed change must reach the footer at once. Before the fix a model
+    // save never told the shell, so the summary kept showing "(Auto)" (or the
+    // previously chosen model) until some unrelated settings edit reloaded it.
+    await expect(shell.locator(AGENT_SUMMARY)).toHaveText(
+      'GitHub Copilot / Fake Model (reasoning) / (Auto)',
+    );
+  });
 });

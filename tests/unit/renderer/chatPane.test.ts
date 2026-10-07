@@ -1064,6 +1064,56 @@ describe('createChatPane interruptions and session id', () => {
     pane.dispose();
   });
 
+  it('follows a model change re-pushed through setAgents, so the footer never shows a stale model', async () => {
+    getModelSelection.mockResolvedValue({
+      ok: true,
+      state: {
+        models: [
+          {
+            id: 'gpt-5',
+            name: 'GPT-5 Turbo',
+            supportedReasoningEfforts: ['low', 'high'],
+            defaultReasoningEffort: 'high',
+          },
+          { id: 'claude-sonnet', name: 'Claude Sonnet', supportedReasoningEfforts: [] },
+        ],
+        selectedModel: 'gpt-5',
+        selectedReasoningEffort: 'high',
+        changesLocked: false,
+        catalogUnavailable: false,
+      },
+    });
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({
+      copilot: { active: true, hasToken: true, model: 'gpt-5', reasoningEffort: 'high' },
+    });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'hello';
+    sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    await waitForUserMessage(pane);
+    await flush();
+
+    const summary = pane.element.querySelector<HTMLAnchorElement>('.chat-agent-summary');
+    expect(summary?.textContent).toBe('GitHub Copilot / GPT-5 Turbo / High');
+
+    // The shell re-applies the snapshot after a Settings model change; the
+    // footer must follow it rather than keep the model it showed before.
+    pane.setAgents({
+      copilot: { active: true, hasToken: true, model: 'claude-sonnet' },
+    });
+    await flush();
+
+    expect(summary?.textContent).toBe('GitHub Copilot / Claude Sonnet / (Auto)');
+
+    pane.dispose();
+  });
+
   it('falls back to the raw model id when the catalogue has not loaded, and reads (Auto) for unset values', async () => {
     getModelSelection.mockResolvedValue({
       ok: false,
