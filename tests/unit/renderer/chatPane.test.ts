@@ -707,6 +707,46 @@ describe('createChatPane startup restore', () => {
     pane.dispose();
   });
 
+  it('does not leave the restoring banner stuck when main adopts the chat before the journal paints', async () => {
+    // A renderer reload (right-click > Reload in the app surface, or an
+    // HMR-driven reload in dev) keeps the main process alive: main still owns
+    // the conversation the pane last opened. If that ready status resolves
+    // *before* the slower local journal read, the pane adopts the id while
+    // `pendingStartup` is still undefined; the later journal paint then sets
+    // `pendingStartup`, and nothing ever clears it (the ready path only clears
+    // it while the pane owns no chat) - so "Restoring conversation..." stays up
+    // forever.
+    let resolveStartup: ((value: StartupConversation | undefined) => void) | undefined;
+    const resolveStartupConversation = vi.fn(
+      () =>
+        new Promise<StartupConversation | undefined>((resolve) => {
+          resolveStartup = resolve;
+        }),
+    );
+    const pane = createChatPane({ onOpenSettings: vi.fn(), resolveStartupConversation });
+
+    // Ready status first: main reports it already owns the remembered chat.
+    pushStatus(
+      definedStatus({
+        auth: { apiVersion: 1, isAuthenticated: true },
+        activeChatId: rememberedConversation.chatId,
+      }),
+    );
+    await flush();
+
+    // Then the journal read lands and paints the remembered conversation.
+    resolveStartup?.(rememberedConversation);
+    await flush();
+    await waitForUserMessage(pane);
+
+    // The adopted conversation already satisfies the restore: the restoring
+    // row must not remain on screen.
+    await waitForBannerClosed(pane);
+    expect(agentBanner(pane)?.textContent).not.toBe('Restoring conversation...');
+
+    pane.dispose();
+  });
+
   it('falls back silently to an empty fresh chat when the remembered session cannot be resumed', async () => {
     const onConversationUnavailable = vi.fn();
     openConversation.mockResolvedValueOnce({

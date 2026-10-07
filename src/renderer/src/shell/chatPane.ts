@@ -564,7 +564,17 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   function paintStartupJournal(startup: StartupConversation): void {
     if (startupJournalPainted) return;
     startupJournalPainted = true;
-    pendingStartup = startup;
+    // If the pane already owns a conversation, main adopted it before this
+    // local journal read resolved - a renderer reload (the app surface's
+    // right-click "Reload") leaves main owning the chat the pane last opened,
+    // and the fast in-memory status read can beat this disk read. The adopted
+    // id wins: a *different* conversation means this journal is stale and must
+    // not be shown; the *same* one still has history worth painting, but no
+    // resume is pending - main already owns it - so `pendingStartup` must stay
+    // clear or the "Restoring conversation..." row would be stranded, since the
+    // only code that clears it runs while the pane still owns no chat.
+    if (chatId !== undefined && chatId !== startup.chatId) return;
+    if (chatId === undefined) pendingStartup = startup;
     replayJournalIntoTranscript(startup.records, transcriptStore);
     conversationHasMessage = true;
     refreshEmptyState();

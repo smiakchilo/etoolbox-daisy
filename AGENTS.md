@@ -508,7 +508,10 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2597 passed / 14 skipped** (the +23 since
+Current baseline: **`npm run test` → 2598 passed / 14 skipped** (the +1 since
+2597 is the renderer-reload "Restoring conversation…" banner regression test —
+see `docs/verification.md` "A renderer reload could strand the 'Restoring
+conversation…' banner (2026-10-07)"; the +23 since
 2574 is the ask-user work — the `ask_user` tool, the
 composer-view-model answer helpers, the transcript conversation presentation,
 and the fake/controller interactive-question tests; the `!!ask` dev preview
