@@ -508,7 +508,16 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2598 passed / 14 skipped** (the +1 since
+Current baseline: **`npm run test` → 2617 passed / 14 skipped** (the +8 since
+2609 is the address-bar host-chip stability fix — the chip now matches an
+*inferred* host prefix, not only an exact origin, so it stops blinking while a
+host address is edited: 7 `resolveAddressChipHost` cases and 1 toolbar case —
+see `docs/verification.md` "The address-bar host chip flickered while a host
+address was edited (2026-10-08)"; the +11 since
+2598 is the address-bar type-ahead fix — the completion no longer re-runs after
+Backspace/Delete/cut/drag/undo or during IME composition: 5 predicate cases and
+6 listener cases — see `docs/verification.md` "The address bar re-applied its
+completion after Backspace/Delete (2026-10-07)"; the +1 since
 2597 is the renderer-reload "Restoring conversation…" banner regression test —
 see `docs/verification.md` "A renderer reload could strand the 'Restoring
 conversation…' banner (2026-10-07)"; the +23 since

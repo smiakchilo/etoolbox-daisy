@@ -28,9 +28,10 @@ import {
   describeUnknownOrigin,
   deriveServerLabelFromOrigin,
   findHostAutocomplete,
-  resolveAddressHost,
+  resolveAddressChipHost,
   resolveAddressSubmission,
   resolveHostLabelForeground,
+  shouldInferAddressCompletion,
 } from './viewModel';
 
 /**
@@ -991,6 +992,10 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
    * end of the text; an unavailable selection (jsdom) is treated as "at end".
    * Programmatic writes (the live-navigation state push) fire no `input` event,
    * so they never trigger a completion.
+   *
+   * Called only for completion-worthy edits (see `shouldInferAddressCompletion`):
+   * a deletion, cut, undo or IME composition must never re-append the inferred
+   * tail, or the edit would appear to have no effect.
    */
   // Guards an async selection application against a newer completion: only the
   // most recent one may move the caret.
@@ -1034,9 +1039,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // Keep the paired host label and the external-browser control tracking
   // whatever the field shows, whether typed here or written programmatically
   // (the state pushes below call the two refreshers explicitly, since assigning
-  // `.value` fires no `input` event).
-  addressField.addEventListener('input', () => {
-    applyHostAutocomplete();
+  // `.value` fires no `input` event). The label/external refreshers always run,
+  // but the completion only runs for a completion-worthy edit: the `input`
+  // event carries the native `inputType`, and re-appending the inferred tail
+  // after a Backspace/Delete/Cut/Undo (or during IME composition) would make
+  // that edit appear to do nothing.
+  addressField.addEventListener('input', (event) => {
+    if (shouldInferAddressCompletion(event.inputType, event.isComposing)) {
+      applyHostAutocomplete();
+    }
     refreshAddressLabel();
     refreshExternalButton();
   });
@@ -1196,9 +1207,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
    * host's label and colour (foreground chosen for readability) and pushes
    * the address text past the measured block with the input's left padding; no
    * match (empty, unparseable, or unknown origin) hides it and resets both.
+   * The match is *inferred*-or-exact (`resolveAddressChipHost`), so editing a
+   * host's address does not blink the chip off on every Backspace.
    */
   function refreshAddressLabel(): void {
-    const host = resolveAddressHost(addressField.value, hostOptions);
+    const host = resolveAddressChipHost(addressField.value ?? '', hostOptions);
     const input = addressInputElement();
     if (host === undefined) {
       addressLabel.hidden = true;

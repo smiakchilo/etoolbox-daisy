@@ -493,6 +493,38 @@ test('the address bar selects all on the first click and inline-completes host a
     await expect.poll(async () => await addressInput.inputValue()).toBe('httpx');
     await expect(addressLabel).toBeHidden();
 
+    // Backspace with the inferred tail selected removes it and must NOT be
+    // immediately re-appended: that is the bug this guards. Inference resumes
+    // only on the next real insertion, and the chip stays put through the
+    // partial prefix instead of blinking off on every keystroke.
+    await addressInput.fill('');
+    await addressInput.pressSequentially('http');
+    await expect.poll(async () => await addressInput.inputValue()).toBe(server.origin);
+    await expect(addressLabel).toBeVisible();
+    await addressInput.press('Backspace');
+    await expect.poll(async () => await addressInput.inputValue()).toBe('http');
+    await expect(addressLabel).toBeVisible();
+    await expect(addressLabel).toHaveText('Author');
+    // Still a prefix of the origin after two more Backspaces: the chip remains.
+    await addressInput.press('Backspace');
+    await expect.poll(async () => await addressInput.inputValue()).toBe('htt');
+    await expect(addressLabel).toBeVisible();
+    await addressInput.press('Backspace');
+    await expect.poll(async () => await addressInput.inputValue()).toBe('ht');
+    await expect(addressLabel).toBeVisible();
+
+    // Delete with the caret at the typed/inferred boundary behaves the same:
+    // ArrowLeft collapses the selection onto the boundary without an input
+    // event, then Delete removes the next character and inference stays quiet.
+    await addressInput.fill('');
+    await addressInput.pressSequentially('http');
+    await expect.poll(async () => await addressInput.inputValue()).toBe(server.origin);
+    await addressInput.press('ArrowLeft');
+    await addressInput.press('Delete');
+    await expect
+      .poll(async () => await addressInput.inputValue())
+      .toBe(`http${server.origin.slice('http'.length + 1)}`);
+
     // Typing from the domain name (no protocol) also completes: the protocol is
     // inferred from the host and the typed prefix is kept, with the rest of the
     // host selected ("127" -> "http://127[.0.0.1:port]").

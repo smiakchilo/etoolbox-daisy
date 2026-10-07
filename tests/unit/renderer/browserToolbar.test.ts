@@ -1524,6 +1524,117 @@ describe('createBrowserToolbar address type-ahead', () => {
     expect(addressHostLabel(toolbar)?.hidden).toBe(false);
     expect(addressHostLabel(toolbar)?.textContent).toBe('Author');
   });
+
+  /**
+   * Drives one edit the way a real browser does: the field already holds the
+   * post-edit text, and the native `input` event carries its `inputType` (and
+   * `isComposing`). A bare `typeInto` cannot express a deletion.
+   */
+  function editInto(
+    toolbar: ReturnType<typeof createBrowserToolbar>,
+    value: string,
+    init: { inputType: string; isComposing?: boolean },
+  ): HTMLElement & { value: string } {
+    const field = address(toolbar);
+    field.value = value;
+    const event = new dom.window.Event('input', { bubbles: true, composed: true });
+    Object.defineProperty(event, 'inputType', { value: init.inputType });
+    Object.defineProperty(event, 'isComposing', { value: init.isComposing ?? false });
+    field.dispatchEvent(event);
+    return field;
+  }
+
+  it('does not re-append the completion when the user presses Backspace', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    // Completion shown, then Backspace removes the inferred tail; the shorter
+    // value is still a host prefix, so naively re-inferring would restore it.
+    expect(typeInto(toolbar, 'https://auth').value).toBe('https://author.example');
+    const field = editInto(toolbar, 'https://autho', { inputType: 'deleteContentBackward' });
+
+    expect(field.value).toBe('https://autho');
+  });
+
+  it('does not re-append the completion when the user presses Delete', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    const field = editInto(toolbar, 'https://author.', { inputType: 'deleteContentForward' });
+
+    expect(field.value).toBe('https://author.');
+  });
+
+  it('does not re-append on a word-delete, cut, drag or undo/redo either', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    for (const inputType of [
+      'deleteWordBackward',
+      'deleteWordForward',
+      'deleteByCut',
+      'deleteByDrag',
+      'historyUndo',
+      'historyRedo',
+    ]) {
+      expect(editInto(toolbar, 'https://autho', { inputType }).value).toBe('https://autho');
+    }
+  });
+
+  it('still completes for a textual insertion', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    expect(editInto(toolbar, 'https://auth', { inputType: 'insertText' }).value).toBe(
+      'https://author.example',
+    );
+    expect(editInto(toolbar, 'Auth', { inputType: 'insertFromPaste' }).value).toBe(
+      'https://author.example',
+    );
+  });
+
+  it('does not complete while an IME composition is in progress', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    const field = editInto(toolbar, 'https://auth', {
+      inputType: 'insertCompositionText',
+      isComposing: true,
+    });
+
+    expect(field.value).toBe('https://auth');
+  });
+
+  it('still refreshes the paired host label on a deletion', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    editInto(toolbar, 'https://author.example', { inputType: 'deleteContentBackward' });
+    expect(addressHostLabel(toolbar)?.hidden).toBe(false);
+
+    editInto(toolbar, 'https://other.example', { inputType: 'deleteContentBackward' });
+    expect(addressHostLabel(toolbar)?.hidden).toBe(true);
+  });
+
+  it('keeps the host chip while backspacing through the host prefix, without blinking', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([authorHost]);
+
+    editInto(toolbar, 'https://author.example', { inputType: 'insertText' });
+    expect(addressHostLabel(toolbar)?.hidden).toBe(false);
+
+    // Each partial is still a prefix of the host's origin, so the chip stays
+    // put instead of flickering off on every Backspace.
+    for (const partial of ['https://author.exampl', 'https://auth', 'https://', 'https:']) {
+      editInto(toolbar, partial, { inputType: 'deleteContentBackward' });
+      expect(addressHostLabel(toolbar)?.hidden).toBe(false);
+      expect(addressHostLabel(toolbar)?.textContent).toBe('Author');
+    }
+
+    // It hides only once the value can no longer be that host.
+    editInto(toolbar, 'https://other.example', { inputType: 'deleteContentBackward' });
+    expect(addressHostLabel(toolbar)?.hidden).toBe(true);
+  });
 });
 
 describe('createBrowserToolbar agent-pane toggle', () => {

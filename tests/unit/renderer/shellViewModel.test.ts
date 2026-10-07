@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BANNER_ACTION_MARKER } from '../../../src/renderer/src/lib/alertBanner';
 import {
+  type HostOption,
   buildHostOptions,
   canOpenInExternalBrowser,
   computeAddressBarValue,
@@ -9,9 +10,11 @@ import {
   describeBlockedCertificate,
   describeUnknownOrigin,
   findHostAutocomplete,
+  resolveAddressChipHost,
   resolveAddressHost,
   resolveAddressSubmission,
   resolveHostLabelForeground,
+  shouldInferAddressCompletion,
 } from '../../../src/renderer/src/shell/viewModel';
 import { newServerId, type ServerSnapshot } from '../../../src/shared';
 
@@ -87,6 +90,61 @@ describe('resolveAddressHost', () => {
 
   it('returns undefined when no hosts are configured', () => {
     expect(resolveAddressHost('https://author.example/', [])).toBeUndefined();
+  });
+});
+
+describe('resolveAddressChipHost', () => {
+  const options = buildHostOptions(hosts);
+
+  it('matches an exact origin like resolveAddressHost, including paths', () => {
+    expect(resolveAddressChipHost('https://author.example/content/page.html', options)).toEqual(
+      options[0],
+    );
+    expect(resolveAddressChipHost('https://author.example', options)).toEqual(options[0]);
+  });
+
+  it('keeps a host matched while its origin is only partially typed', () => {
+    // The Backspace walk out of the loaded URL: each of these is a prefix of
+    // the origin, so the chip stays rather than blinking off and on.
+    for (const partial of ['h', 'http', 'https://auth', 'HTTPS://AUTH']) {
+      expect(resolveAddressChipHost(partial, options)).toEqual(options[0]);
+    }
+    // A deeper prefix still matches the same (first-in-list) origin.
+    expect(resolveAddressChipHost('https://author.exampl', options)).toEqual(options[0]);
+  });
+
+  it('keeps a host matched while its host[:port] is only partially typed', () => {
+    expect(resolveAddressChipHost('stagin', options)).toEqual(options[1]);
+    expect(resolveAddressChipHost('staging.internal', options)).toEqual(options[1]);
+  });
+
+  it('drops the match as soon as the value can no longer be that host', () => {
+    // A different port is not a prefix of the origin and matches nothing.
+    expect(resolveAddressChipHost('https://author.example:8443', options)).toBeUndefined();
+    expect(resolveAddressChipHost('https://other.example', options)).toBeUndefined();
+    // A middle edit that breaks the prefix.
+    expect(resolveAddressChipHost('https://auhor.example', options)).toBeUndefined();
+  });
+
+  it('does not match a value that only starts with a host label', () => {
+    // The label completion shows "label + URL" and the chip stays hidden then.
+    expect(resolveAddressChipHost('Production', options)).toBeUndefined();
+    expect(resolveAddressChipHost('prod', options)).toBeUndefined();
+    expect(resolveAddressChipHost('Production https://author.example', options)).toBeUndefined();
+  });
+
+  it('returns undefined for an empty value or no hosts', () => {
+    expect(resolveAddressChipHost('', options)).toBeUndefined();
+    expect(resolveAddressChipHost('   ', options)).toBeUndefined();
+    expect(resolveAddressChipHost('https://auth', [])).toBeUndefined();
+  });
+
+  it('resolves an origin-prefix match in host-list order, like the type-ahead', () => {
+    const twoOrigins: readonly HostOption[] = [
+      { id: httpsServerId, label: 'One', origin: 'https://author.example', colorCss: '#2680eb' },
+      { id: httpServerId, label: 'Two', origin: 'https://author.other', colorCss: '#abcdef' },
+    ];
+    expect(resolveAddressChipHost('https://author', twoOrigins)).toEqual(twoOrigins[0]);
   });
 });
 
@@ -188,6 +246,40 @@ describe('findHostAutocomplete', () => {
   it('is case-insensitive over both the address and the label', () => {
     expect(findHostAutocomplete('HTTPS://AUTH', options)?.value).toBe('https://author.example');
     expect(findHostAutocomplete('prod', options)?.value).toBe('Production https://author.example');
+  });
+});
+
+describe('shouldInferAddressCompletion', () => {
+  it('infers for textual insertions', () => {
+    expect(shouldInferAddressCompletion('insertText')).toBe(true);
+    expect(shouldInferAddressCompletion('insertFromPaste')).toBe(true);
+    expect(shouldInferAddressCompletion('insertFromDrop')).toBe(true);
+    expect(shouldInferAddressCompletion('insertReplacementText')).toBe(true);
+  });
+
+  it('never infers for a deletion, so Backspace/Delete are not immediately undone', () => {
+    expect(shouldInferAddressCompletion('deleteContentBackward')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteContentForward')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteWordBackward')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteWordForward')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteSoftLineBackward')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteHardLineForward')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteByCut')).toBe(false);
+    expect(shouldInferAddressCompletion('deleteByDrag')).toBe(false);
+  });
+
+  it('never infers for undo/redo, which the completion would immediately undo', () => {
+    expect(shouldInferAddressCompletion('historyUndo')).toBe(false);
+    expect(shouldInferAddressCompletion('historyRedo')).toBe(false);
+  });
+
+  it('never infers during IME composition', () => {
+    expect(shouldInferAddressCompletion('insertCompositionText', true)).toBe(false);
+    expect(shouldInferAddressCompletion('insertText', true)).toBe(false);
+  });
+
+  it('treats an absent inputType (a bare synthetic Event) as an insertion', () => {
+    expect(shouldInferAddressCompletion(undefined)).toBe(true);
   });
 });
 

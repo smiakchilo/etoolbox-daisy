@@ -58,6 +58,47 @@ export function resolveAddressHost(
 }
 
 /**
+ * The configured host whose coloured chip the address bar should show for
+ * `address`, or `undefined` when none applies.
+ *
+ * {@link resolveAddressHost} answers "is this address *on* that host?" - an
+ * exact origin - which is right for a settled address but flickers while one is
+ * being edited: backspacing the loaded `http://localhost:4502` to
+ * `http://localhost:450` stops matching exactly, and the next keystroke's
+ * completion re-expands the field, so the chip blinks on and off. This widens
+ * the match to the same *prefixes* the type-ahead treats as "heading for that
+ * host", in the same origin-then-domain priority order as
+ * {@link findHostAutocomplete}:
+ *
+ * 1. an exact origin (delegated to {@link resolveAddressHost}, so a full URL
+ *    with a path still matches);
+ * 2. a prefix of a host's canonical origin, e.g. `http://localhost:450`;
+ * 3. a prefix of a host's `host[:port]` form, e.g. `localhos` typed from the
+ *    domain.
+ *
+ * A value that only starts with a host's *label* is deliberately **not** a
+ * match: the label completion shows the label as `"label + URL"` and the chip
+ * stays hidden then (see the label branch of {@link findHostAutocomplete}).
+ */
+export function resolveAddressChipHost(
+  address: string,
+  hosts: readonly HostOption[],
+): HostOption | undefined {
+  const exact = resolveAddressHost(address, hosts);
+  if (exact !== undefined) return exact;
+
+  const typed = address.trim().toLowerCase();
+  if (typed === '') return undefined;
+
+  const byOrigin = hosts.find((host) => host.origin.toLowerCase().startsWith(typed));
+  if (byOrigin !== undefined) return byOrigin;
+
+  return hosts.find(
+    (host) => originHostPart(host.origin)?.toLowerCase().startsWith(typed) === true,
+  );
+}
+
+/**
  * Foreground colour for a host's coloured label block: white on the chromatic
  * swatches, dark gray once the background is light enough that white text
  * would all but vanish (e.g. the `yellow` swatch, or a near-white custom hex).
@@ -202,6 +243,36 @@ export function findHostAutocomplete(
   }
 
   return undefined;
+}
+
+/**
+ * Whether a native `input` event should trigger the address bar's inline
+ * type-ahead. Only a *textual insertion* qualifies, because the completion
+ * rewrites the field: running it after any other edit re-appends the tail the
+ * user just removed and the edit appears to do nothing. Specifically:
+ *
+ * - **Backspace/Delete** (and their word/line variants) would re-add the
+ *   inferred text immediately, so deletion is impossible once a completion is
+ *   shown - the bug this predicate exists to prevent;
+ * - **Cut / drag-out** delete the selected inferred tail the same way;
+ * - **Undo/Redo** would be undone by the completion re-writing the value;
+ * - **IME composition** must be left alone: moving the caret and rewriting the
+ *   value mid-composition fights the input method. The completion then runs on
+ *   the final `insertText` once composition has committed.
+ *
+ * Insertions (typing, paste, drop, autofill) re-trigger inference, which is
+ * both useful and what a normal browser's address bar does.
+ *
+ * `inputType` is `undefined` on a bare `Event` (a synthetic event, or an old
+ * engine); that is treated as an insertion so a genuine edit is never silently
+ * denied inference.
+ */
+export function shouldInferAddressCompletion(
+  inputType: string | undefined,
+  isComposing = false,
+): boolean {
+  if (isComposing) return false;
+  return inputType === undefined || inputType.startsWith('insert');
 }
 
 /**
