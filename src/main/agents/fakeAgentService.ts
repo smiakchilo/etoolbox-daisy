@@ -18,8 +18,11 @@ import {
   type SessionStreamState,
   type ToolCallId,
   type ToolErrorCode,
+  type ToolResultEvent,
   type TurnId,
   type Unsubscribe,
+  type UserInputAnswer,
+  type UserInputRequestId,
   applyAgentEvent,
   canSendMessage,
   createToolError,
@@ -28,6 +31,7 @@ import {
   newReasoningId,
   newRequestId,
   newToolCallId,
+  newUserInputRequestId,
   ok,
   sdkSessionIdSchema,
   createAgentServiceError,
@@ -123,10 +127,26 @@ export interface ScriptedToolCall {
   readonly decision: ScriptedToolDecision;
 }
 
+/**
+ * A scripted interactive question: emits the `ask_user` tool call, its
+ * `user.input.requested`, and then pauses the turn until the test answers via
+ * `respondToInput` (see `advance`/`flush`). This is what lets the deterministic
+ * E2E exercise the real composer → IPC → turn loop rather than a pre-baked
+ * answer.
+ */
+export interface ScriptedInputRequestStep {
+  readonly kind: 'inputRequest';
+  readonly question: string;
+  readonly options?: readonly string[];
+  readonly multiple?: boolean;
+  readonly freeInput?: boolean;
+}
+
 /** One step of a scripted turn, emitted in the order the script lists them. */
 export type ScriptedStep =
   | ScriptedDeltaStep
   | ScriptedReasoningStep
+  | ScriptedInputRequestStep
   | { readonly kind: 'toolCall'; readonly call: ScriptedToolCall };
 
 /**
@@ -196,14 +216,38 @@ export interface FakeAgentService extends AgentService {
 
 /**
  * Everything the fake accumulates about the one turn currently in flight.
- * `queue` holds every event still to be delivered, in delivery order,
- * already sequence-numbered - `advance()` only ever shifts off the front.
+ * `queue` holds every event still to be delivered, in delivery order, already
+ * sequence-numbered - `advance()` only ever shifts off the front.
  */
 interface PendingTurn {
   readonly chatId: ChatId;
   readonly turnId: TurnId;
   readonly queue: AgentEvent[];
+  /**
+   * The scripted ask-user questions this turn will pause on, keyed by the
+   * `ask_user` tool call id. `advance()` refuses to move past a
+   * `tool.result` whose question has not been answered yet; `respondToInput`
+   * fills in the answer and marks it answered.
+   */
+  readonly inputs: Map<ToolCallId, PendingInput>;
 }
+
+/** One scripted question the turn is waiting on. `result` is the queue's own placeholder, mutated in place when answered. */
+interface PendingInput {
+  readonly requestId: UserInputRequestId;
+  readonly toolCallId: ToolCallId;
+  readonly question: string;
+  readonly result: ToolResultEvent;
+  answered: boolean;
+}
+
+/**
+ * The tool name a scripted `inputRequest` step emits. Duplicated rather than
+ * imported from `src/tools/ask-user`: nothing outside a tool folder may import
+ * from it, and the E2E asserts the transcript rendering, so any drift from the
+ * tool's real result shape would be caught there.
+ */
+const FAKE_ASK_USER_TOOL_NAME = 'ask_user';
 
 /**
  * The states in which some turn is in flight and therefore has a
@@ -505,18 +549,42 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   interface TurnPlan {
     readonly sendingEvent: AgentEvent;
     readonly rest: AgentEvent[];
+    readonly inputs: Map<ToolCallId, PendingInput>;
+  }
+
+  /** The `ask_user` success payload the fake emits, matching the real tool's own result shape. */
+  function askUserPayload(question: string, answer: UserInputAnswer): JsonValue {
+    return {
+      ok: true,
+      operation: FAKE_ASK_USER_TOOL_NAME,
+      requestId: newRequestId(idGenerator),
+      question,
+      selections: [...answer.selections],
+      freeform: answer.freeform,
+      textResultForLlm:
+        answer.freeform !== null && answer.freeform.length > 0
+          ? `The user answered: ${answer.freeform}`
+          : `The user chose: ${answer.selections.join(', ')}`,
+      resultType: 'success',
+    };
   }
 
   /**
    * Builds the event plan for a scripted turn, in one pass, so sequence
    * numbers are assigned in true eventual delivery order regardless of when
    * each event actually gets delivered.
+   *
+   * A scripted `inputRequest` step emits its `ask_user` call, its
+   * `user.input.requested`, and a placeholder `tool.result`; the placeholder's
+   * `outcome` is filled in by `respondToInput` and the turn pauses on it until
+   * then (see `advanceOnce`).
    */
   function buildTurnPlan(chatId: ChatId, turnId: TurnId, turn: ScriptedTurn): TurnPlan {
     const messageId = newMessageId(idGenerator);
     const steps = turn.steps ?? [];
     const sendingEvent = makeSessionStateEvent(chatId, 'sending', turnId);
     const queue: AgentEvent[] = [];
+    const inputs = new Map<ToolCallId, PendingInput>();
     queue.push(makeMessageStartedEvent(chatId, turnId, messageId));
 
     const deltaTexts: string[] = [];
@@ -559,6 +627,57 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
         queue.push(makeDeltaEvent(chatId, turnId, messageId, step.text));
         continue;
       }
+      if (step.kind === 'inputRequest') {
+        const toolCallId = newToolCallId(idGenerator);
+        const requestId = newUserInputRequestId(idGenerator);
+        const multiple = step.multiple ?? false;
+        const freeInput = step.freeInput ?? false;
+        const options = step.options === undefined ? undefined : [...step.options];
+        queue.push({
+          type: 'tool.call.requested',
+          chatId,
+          sequence: nextSequence(chatId),
+          toolCallId,
+          toolName: FAKE_ASK_USER_TOOL_NAME,
+          arguments: {
+            question: step.question,
+            ...(options !== undefined ? { options } : {}),
+            multiple,
+            freeInput,
+          },
+        });
+        queue.push(makeToolApprovedEvent(chatId, toolCallId));
+        queue.push({
+          type: 'user.input.requested',
+          chatId,
+          sequence: nextSequence(chatId),
+          turnId,
+          requestId,
+          question: step.question,
+          ...(options !== undefined ? { options } : {}),
+          multiple,
+          freeInput,
+        });
+        const result: ToolResultEvent = {
+          type: 'tool.result',
+          chatId,
+          sequence: nextSequence(chatId),
+          toolCallId,
+          outcome: {
+            ok: true,
+            data: askUserPayload(step.question, { selections: [], freeform: null }),
+          },
+        };
+        queue.push(result);
+        inputs.set(toolCallId, {
+          requestId,
+          toolCallId,
+          question: step.question,
+          result,
+          answered: false,
+        });
+        continue;
+      }
       const toolCallId = newToolCallId(idGenerator);
       queue.push(makeToolRequestedEvent(chatId, toolCallId, step.call));
       if (step.call.decision.kind === 'approved') {
@@ -573,7 +692,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     const finalContent = turn.finalContentOverride ?? deltaTexts.join('');
     queue.push(makeMessageCompletedEvent(chatId, turnId, messageId, finalContent));
     queue.push(makeSessionStateEvent(chatId, 'idle', turnId));
-    return { sendingEvent, rest: queue };
+    return { sendingEvent, rest: queue, inputs };
   }
 
   /**
@@ -645,12 +764,20 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   function advanceOnce(): boolean {
     const turn = pendingTurn;
     if (turn === undefined) return false;
-    const next = turn.queue.shift();
-    if (next === undefined) {
+    const next = turn.queue[0];
+    // Pause on an unanswered scripted question: the `tool.result` at the front
+    // of the queue is the placeholder `respondToInput` fills in. Returning
+    // false leaves `pendingTurn` intact so a later `advance()` resumes here.
+    if (next !== undefined && next.type === 'tool.result') {
+      const pending = turn.inputs.get(next.toolCallId);
+      if (pending !== undefined && !pending.answered) return false;
+    }
+    const shifted = turn.queue.shift();
+    if (shifted === undefined) {
       pendingTurn = undefined;
       return false;
     }
-    applyAndEmit(next);
+    applyAndEmit(shifted);
     if (turn.queue.length === 0) pendingTurn = undefined;
     return true;
   }
@@ -732,7 +859,12 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
 
       const turn = scriptedTurns.shift() ?? {};
       const plan = buildTurnPlan(request.chatId, request.turnId, turn);
-      pendingTurn = { chatId: request.chatId, turnId: request.turnId, queue: plan.rest };
+      pendingTurn = {
+        chatId: request.chatId,
+        turnId: request.turnId,
+        queue: plan.rest,
+        inputs: plan.inputs,
+      };
 
       // Delivered synchronously, unlike every later event in this turn: a
       // second sendPrompt() called before the caller ever calls advance()
@@ -740,6 +872,56 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       // sendPrompt doc and the module doc above.
       applyAndEmit(plan.sendingEvent);
 
+      return Promise.resolve(ok(undefined));
+    },
+
+    requestUserInput(): Promise<Result<UserInputAnswer, AgentServiceError>> {
+      // The fake scripts events rather than running tool executors, so the real
+      // `ask_user` executor - the only caller of this method - never runs under
+      // it. Refusing keeps the surface honest instead of pretending to answer a
+      // question no UI is showing. A scripted `inputRequest` step is how the
+      // fake models a question; see `respondToInput`.
+      return Promise.resolve(
+        err(
+          createAgentServiceError(
+            'PRECONDITION_FAILED',
+            'The deterministic fake does not run tool executors',
+          ),
+        ),
+      );
+    },
+
+    respondToInput(
+      chatId: ChatId,
+      requestId: UserInputRequestId,
+      answer: UserInputAnswer,
+    ): Promise<Result<void, AgentServiceError>> {
+      if (openChatId === undefined || openChatId !== chatId) {
+        return Promise.resolve(
+          err(
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
+          ),
+        );
+      }
+      const turn = pendingTurn;
+      const pending =
+        turn === undefined
+          ? undefined
+          : [...turn.inputs.values()].find((entry) => entry.requestId === requestId);
+      if (pending === undefined) {
+        return Promise.resolve(
+          err(
+            createAgentServiceError(
+              'PRECONDITION_FAILED',
+              'There is no outstanding question with that id',
+            ),
+          ),
+        );
+      }
+      // Fill in the queued placeholder's outcome in place, then release the
+      // pause so `advance()` delivers it.
+      pending.result.outcome = { ok: true, data: askUserPayload(pending.question, answer) };
+      pending.answered = true;
       return Promise.resolve(ok(undefined));
     },
 

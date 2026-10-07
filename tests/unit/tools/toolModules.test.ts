@@ -41,6 +41,7 @@ function makeHost(outcome: BrokerOutcome): {
       },
       currentContext: () => context,
       environmentFacts: () => undefined,
+      requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
       clock: () => 1_700_000_000_000,
       idGenerator: ids,
     },

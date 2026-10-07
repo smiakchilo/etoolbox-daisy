@@ -10,6 +10,8 @@ import {
   sessionStreamStateSchema,
   toolErrorCodeSchema,
   turnIdSchema,
+  userInputAnswerSchema,
+  userInputRequestIdSchema,
 } from './contracts';
 
 /**
@@ -208,6 +210,34 @@ export type AgentChatByIdRequest = Readonly<z.infer<typeof agentChatByIdRequestS
 
 export function parseAgentChatByIdRequest(candidate: unknown): AgentChatByIdRequest {
   return agentChatByIdRequestSchema.parse(candidate);
+}
+
+// ---------------------------------------------------------------------------
+// Respond to an interactive question (`agent-chat:respond-to-input`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Delivers the user's answer to the outstanding ask-user question
+ * (`user.input.requested`) identified by `requestId`, so the blocked turn can
+ * continue. Main refuses an answer whose `requestId` names no pending question
+ * on `chatId` - a stale answer must never resolve a different question.
+ */
+export const agentChatRespondToInputRequestSchema = z
+  .object({
+    chatId: chatIdSchema,
+    requestId: userInputRequestIdSchema,
+    answer: userInputAnswerSchema,
+  })
+  .strict();
+
+export type AgentChatRespondToInputRequest = Readonly<
+  z.infer<typeof agentChatRespondToInputRequestSchema>
+>;
+
+export function parseAgentChatRespondToInputRequest(
+  candidate: unknown,
+): AgentChatRespondToInputRequest {
+  return agentChatRespondToInputRequestSchema.parse(candidate);
 }
 
 // ---------------------------------------------------------------------------

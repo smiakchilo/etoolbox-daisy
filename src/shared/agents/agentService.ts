@@ -7,6 +7,9 @@ import type {
   SdkSessionId,
   ToolErrorCode,
   TurnId,
+  UserInputAnswer,
+  UserInputRequest,
+  UserInputRequestId,
 } from '../contracts';
 
 /**
@@ -192,6 +195,38 @@ export interface AgentService {
    * left to the caller to remember.
    */
   sendPrompt(request: SendPromptRequest): Promise<Result<void, AgentServiceError>>;
+
+  /**
+   * Puts `request` to the user on the currently open conversation and resolves
+   * with their answer.
+   *
+   * This is how an interactive tool (`ask_user`) blocks: the adapter emits a
+   * `user.input.requested` `AgentEvent` - the composer notices it, swaps its
+   * text field for the selection UI, and the answer comes back through
+   * {@link respondToInput}. The turn stays in flight (`runningTool`) for the
+   * whole exchange.
+   *
+   * Refused when `chatId` is not the open conversation, or when no turn is in
+   * flight (there is nothing for a question to belong to). Never resolves on
+   * its own: it settles only with the matching {@link respondToInput}, or with
+   * an error when the turn is aborted/torn down first.
+   */
+  requestUserInput(
+    chatId: ChatId,
+    request: UserInputRequest,
+  ): Promise<Result<UserInputAnswer, AgentServiceError>>;
+
+  /**
+   * Delivers the user's `answer` for the outstanding `requestId` on `chatId`.
+   * Refused if `chatId` is not the open conversation or `requestId` names no
+   * pending question (already answered, aborted, or from a previous turn) -
+   * a stale answer must never resolve a different question.
+   */
+  respondToInput(
+    chatId: ChatId,
+    requestId: UserInputRequestId,
+    answer: UserInputAnswer,
+  ): Promise<Result<void, AgentServiceError>>;
 
   /**
    * Cancels the in-flight turn on `chatId`, if any, and returns it to

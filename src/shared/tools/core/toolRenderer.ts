@@ -46,9 +46,35 @@ export interface ToolResultTable {
   readonly mayHaveMore: boolean;
 }
 
+/**
+ * How the transcript presents a tool's calls. `'billet'` - the default - is the
+ * standard icon-led, expandable line every read tool uses. `'conversation'` is
+ * for a tool whose call is really a message exchange with the user
+ * (`ask_user`): the transcript renders the question and answer as ordinary
+ * messages, with no billet at all.
+ */
+export type ToolPresentation = 'billet' | 'conversation';
+
+/**
+ * The question/answer pair a `presentation: 'conversation'` tool paints into
+ * the transcript in place of a billet. Pure strings, like everything else here.
+ */
+export interface ToolConversationItem {
+  /** The text shown as the agent's own message. */
+  readonly question: string;
+  /** The user's answer, or `undefined` while the question is still unanswered. */
+  readonly answer: string | undefined;
+}
+
 export interface ToolRendererModule {
   /** Must equal the tool's `name`. */
   readonly toolName: string;
+  /**
+   * How this tool's calls appear in the transcript. Omitted means `'billet'`.
+   * A `'conversation'` tool must also supply {@link readConversation}; the view
+   * falls back to a billet if it does not.
+   */
+  readonly presentation?: ToolPresentation;
   /**
    * The deliberate `getDetails()` composition for this tool's calls - what the
    * user sees collapsed and expanded. Designed by hand with the user (AGENTS.md
@@ -60,11 +86,25 @@ export interface ToolRendererModule {
    * rather than its arguments can still fill the collapsed summary and the
    * expansion rows. It is `undefined` while the call is pending or when it
    * failed; on failure the error is rendered outside the disclosure anyway.
+   *
+   * A `presentation: 'conversation'` tool is never rendered as a billet, so its
+   * `describeCall` is only a safety net; {@link readConversation} is the one
+   * the transcript actually uses.
    */
   readonly describeCall: (
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ) => ToolCallDetails;
+  /**
+   * Required for a `presentation: 'conversation'` tool: composes the question
+   * and answer pair from the call's arguments and (once it succeeded) result.
+   * Returns `undefined` when this build does not recognise the call, in which
+   * case the view shows nothing rather than guessing.
+   */
+  readonly readConversation?: (
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ) => ToolConversationItem | undefined;
   /** Optional: turns a succeeded call's payload into a table; `undefined` means "no table". */
   readonly readResultTable?: (data: JsonValue | undefined) => ToolResultTable | undefined;
 }

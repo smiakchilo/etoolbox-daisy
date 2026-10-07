@@ -254,11 +254,15 @@ function nextStreamStateForEvent(
       return 'error';
     case 'session.state.changed':
       return event.state;
+    // An ask-user question is emitted mid-`runningTool` and does not itself
+    // move the turn: the tool call that requested it already did, and the
+    // answer arrives as that call's `tool.result`.
     case 'assistant.text.delta':
     case 'assistant.message.completed':
     case 'assistant.reasoning.delta':
     case 'assistant.reasoning.completed':
     case 'tool.call.approved':
+    case 'user.input.requested':
       return current;
     default: {
       return event;

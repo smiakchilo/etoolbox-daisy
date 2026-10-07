@@ -2,6 +2,8 @@ import type { JsonValue } from '../../../shared';
 import {
   describeGenericArgs,
   type ToolCallDetails,
+  type ToolConversationItem,
+  type ToolPresentation,
   type ToolRendererModule,
   type ToolResultTable,
 } from '../../../shared';
@@ -25,6 +27,14 @@ export interface ToolRendererRegistry {
     data?: JsonValue,
   ): ToolCallDetails;
   readResultTable(toolName: string, data: JsonValue | undefined): ToolResultTable | undefined;
+  /** How the transcript presents this tool's calls; `'billet'` for an unknown tool. */
+  presentationOf(toolName: string): ToolPresentation;
+  /** The question/answer pair a `'conversation'` tool paints; `undefined` otherwise. */
+  readConversation(
+    toolName: string,
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ): ToolConversationItem | undefined;
   readonly toolNames: readonly string[];
 }
 
@@ -60,6 +70,18 @@ export function createToolRendererRegistry(
       if (read === undefined) return undefined;
       try {
         return read(data);
+      } catch {
+        return undefined;
+      }
+    },
+    presentationOf(toolName) {
+      return byName.get(toolName)?.presentation ?? 'billet';
+    },
+    readConversation(toolName, args, data) {
+      const read = byName.get(toolName)?.readConversation;
+      if (read === undefined) return undefined;
+      try {
+        return read(args, data);
       } catch {
         return undefined;
       }

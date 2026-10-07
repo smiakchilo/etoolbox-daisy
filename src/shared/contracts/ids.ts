@@ -60,6 +60,14 @@ export type ReasoningId = Branded<'ReasoningId'>;
 /** One application-issued AEM request, used end to end for correlation. */
 export type RequestId = Branded<'RequestId'>;
 /**
+ * One interactive question the agent asked the user, correlated with its
+ * answer within a turn. Deliberately distinct from {@link RequestId}: that one
+ * is documented as "one application-issued AEM request", and an ask-user
+ * question is not an AEM request at all - reusing it would make two unrelated
+ * correlation domains indistinguishable in a log line.
+ */
+export type UserInputRequestId = Branded<'UserInputRequestId'>;
+/**
  * Stable identifier of a coding-agent provider (`copilot`, …). Unlike the
  * other identifiers this one is *not* minted at runtime: it is a fixed key in
  * the agent registry, so it is validated as an identifier but never generated.
@@ -79,6 +87,7 @@ export const messageIdSchema = brandedSchema<MessageId>('messageId');
 export const toolCallIdSchema = brandedSchema<ToolCallId>('toolCallId');
 export const reasoningIdSchema = brandedSchema<ReasoningId>('reasoningId');
 export const requestIdSchema = brandedSchema<RequestId>('requestId');
+export const userInputRequestIdSchema = brandedSchema<UserInputRequestId>('userInputRequestId');
 export const agentIdSchema = brandedSchema<AgentId>('agentId');
 
 /**
@@ -115,3 +124,5 @@ export const newReasoningId = (generate: IdGenerator): ReasoningId =>
   mint(reasoningIdSchema, generate, 'reasoningId');
 export const newRequestId = (generate: IdGenerator): RequestId =>
   mint(requestIdSchema, generate, 'requestId');
+export const newUserInputRequestId = (generate: IdGenerator): UserInputRequestId =>
+  mint(userInputRequestIdSchema, generate, 'userInputRequestId');

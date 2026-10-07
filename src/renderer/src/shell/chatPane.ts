@@ -32,7 +32,10 @@ import {
   resolveEffectiveActiveAgentId,
   type SdkSessionId,
   type SessionStatus,
+  type UserInputAnswer,
+  type UserInputRequestId,
 } from '../../../shared';
+import { createAskUserPreviewTrigger } from '../dev/askUserPreviewTrigger';
 
 export interface ChatPane {
   readonly element: HTMLElement;
@@ -277,6 +280,14 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // and skips, instead of resolving the startup conversation again and opening a
   // second conversation over the first.
   let startupResumeInFlight = false;
+  // The outstanding interactive question, so a submitted answer can name it.
+  let pendingInputRequestId: UserInputRequestId | undefined;
+  // Dev-only previews (Tier 1). All of their logic lives in
+  // `src/renderer/src/dev/`; this factory plus the three small references below
+  // (`onDevCommand`, `onAnswer`, `resetInputMode`/`onStop`) are the pane's only
+  // coupling to it, so retiring the previews is deleting that directory and
+  // those references.
+  const askUserPreview = createAskUserPreviewTrigger();
 
   let unsubscribeEvents: (() => void) | undefined;
   let startingPollHandle: ReturnType<typeof setInterval> | undefined;
@@ -443,6 +454,26 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (chatId !== undefined && event.chatId !== chatId) return;
 
       transcriptStore.applyEvent(event);
+      // An interactive question swaps the composer into its selection UI; the
+      // matching answer is delivered by `onAnswer`. Any terminal turn state
+      // clears it, so an aborted question cannot leave the composer stuck.
+      if (event.type === 'user.input.requested') {
+        pendingInputRequestId = event.requestId;
+        composer.setInputRequest({
+          question: event.question,
+          ...(event.options !== undefined ? { options: [...event.options] } : {}),
+          multiple: event.multiple,
+          freeInput: event.freeInput,
+        });
+      } else if (
+        event.type === 'session.state.changed' &&
+        (event.state === 'idle' ||
+          event.state === 'cancelling' ||
+          event.state === 'closed' ||
+          event.state === 'error')
+      ) {
+        clearPendingInput();
+      }
       // An interruption notice is the pane's own; the store never infers one.
       // `cancelling` is only ever app-initiated (a Stop, or the controller's
       // `handleAemContextInvalidated`), and only this pane knows which. Guard
@@ -560,6 +591,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     chatId = id;
     conversationHasMessage = false;
     stopRequested = false;
+    resetInputMode();
     transcriptStore.clear();
     refreshEmptyState();
     const result = await openConversation(id);
@@ -670,6 +702,57 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     await applyStatus(await window.daisy.agentChat.getStatus());
   }
 
+  /** Leaves the interactive-question UI and forgets the outstanding request. */
+  function clearPendingInput(): void {
+    if (pendingInputRequestId === undefined) return;
+    pendingInputRequestId = undefined;
+    composer.setInputRequest(undefined);
+  }
+
+  /** Drops any interactive/preview input state, e.g. on a new conversation. */
+  function resetInputMode(): void {
+    pendingInputRequestId = undefined;
+    askUserPreview.reset();
+    composer.setInputRequest(undefined);
+  }
+
+  /**
+   * Delivers the user's answer to main - or, for a dev-only preview, paints the
+   * synthesized result locally so the transcript's question/answer rendering is
+   * exercised without any round trip.
+   */
+  function onAnswer(answer: UserInputAnswer): void {
+    const previewResult = askUserPreview.answer(answer);
+    if (previewResult !== undefined) {
+      transcriptStore.applyEvent(previewResult);
+      repaintTranscript();
+      return;
+    }
+    if (chatId === undefined || pendingInputRequestId === undefined) return;
+    const requestId = pendingInputRequestId;
+    pendingInputRequestId = undefined;
+    void window.daisy.agentChat.respondToInput({ chatId, requestId, answer }).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
+  }
+
+  /**
+   * Consumes a `!!ask ...` cheat code when dev tools are enabled, painting the
+   * preview locally; returns whether it did. The whole preview lives in
+   * `src/renderer/src/dev/` - this is the pane's only reference to it beyond
+   * `onAnswer`/`resetInputMode`/`onStop`.
+   */
+  function onDevCommand(input: string): boolean {
+    if (!window.daisy.devTools) return false;
+    const started = askUserPreview.start(input);
+    if (started === undefined) return false;
+    transcriptStore.applyEvent(started.toolCall);
+    composer.setInputRequest(started.request);
+    refreshEmptyState();
+    repaintTranscript();
+    return true;
+  }
+
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
     if (chatId === undefined) {
       statusBanner.showError('Not connected to the agent');
@@ -694,6 +777,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   function onStop(): void {
+    // A dev-only preview has no real turn to abort: Stop just leaves it.
+    if (askUserPreview.active()) {
+      askUserPreview.reset();
+      composer.setInputRequest(undefined);
+      return;
+    }
     if (chatId === undefined) return;
     // The `cancelling` event this abort produces is this pane's own Stop, not
     // an AEM-context abort - record it as such (see the event subscription).
@@ -757,6 +846,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     chatId = id;
     conversationHasMessage = false;
     stopRequested = false;
+    resetInputMode();
     transcriptStore.clear();
     sessionStatus = { ...sessionStatus, state: 'idle' };
     refreshEmptyState();
@@ -773,7 +863,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const statusBanner: StatusBanner = createStatusBanner({
     surfaceClassName: CHAT_STATUS_BANNER_SURFACE_CLASS,
   });
-  const composer = createComposer({ onSend, onStop });
+  const composer = createComposer({ onSend, onStop, onAnswer, onDevCommand });
 
   // The pane footer, sitting directly beneath the composer: on the left, a
   // short "agent / model / reasoning" summary that opens the Settings Agents

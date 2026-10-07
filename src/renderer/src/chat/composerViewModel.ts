@@ -4,6 +4,8 @@ import {
   canSendMessage,
   type SessionStatus,
   type SessionStreamState,
+  type UserInputAnswer,
+  type UserInputRequest,
 } from '../../../shared';
 
 /**
@@ -117,6 +119,55 @@ export function describeCanSendBlockReason(reason: CanSendBlockReason): string {
       return reason;
     }
   }
+}
+
+/**
+ * Above this many options, a single-select question switches from a radio
+ * group to a dropdown, and a multiple-select question from a checkbox list to
+ * a dropdown menu.
+ */
+export const ASK_USER_DROPDOWN_THRESHOLD = 5;
+
+/**
+ * The user's in-progress answer to an ask-user question: the option labels they
+ * have selected and/or the text they typed. Pure view state - the composer owns
+ * one of these while a question is on screen.
+ */
+export interface AskUserDraft {
+  readonly selections: readonly string[];
+  readonly freeform: string;
+  /**
+   * Whether the free-input field is the active answer. True from the start for
+   * a free-input-only question (no options); toggled by the "type your own
+   * answer" link when both options and free input are offered.
+   */
+  readonly freeInputActive: boolean;
+}
+
+/**
+ * Whether the draft is a complete answer the user may submit. Free input
+ * requires non-whitespace text; a multiple-choice question requires at least
+ * one selection; a single-choice question requires exactly one.
+ */
+export function isAskUserAnswerComplete(request: UserInputRequest, draft: AskUserDraft): boolean {
+  if (draft.freeInputActive || request.options === undefined) {
+    return draft.freeform.trim().length > 0;
+  }
+  return request.multiple ? draft.selections.length > 0 : draft.selections.length === 1;
+}
+
+/**
+ * The answer to deliver for a complete draft. Free input wins: activating it
+ * replaces the option controls, so the typed text is the whole answer.
+ */
+export function buildAskUserAnswer(
+  request: UserInputRequest,
+  draft: AskUserDraft,
+): UserInputAnswer {
+  if (draft.freeInputActive || request.options === undefined) {
+    return { selections: [], freeform: draft.freeform.trim() };
+  }
+  return { selections: [...draft.selections], freeform: null };
 }
 
 export interface SubmitOnEnterInput {

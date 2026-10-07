@@ -428,6 +428,51 @@ export function createTranscriptView(
     }
   });
 
+  /**
+   * One message node for a `'conversation'` tool's question/answer pair. The
+   * question is model-authored and goes through the markdown renderer (which
+   * sanitises); the answer is user-authored and is set as plain text.
+   */
+  function conversationMessage(kind: 'assistant' | 'user', text: string): HTMLElement {
+    if (kind === 'assistant') {
+      const node = el('div', { attrs: { class: 'chat-message chat-message--assistant' } });
+      node.innerHTML = markdownRenderer.render(text, getLinkContext());
+      return node;
+    }
+    return el('p', { attrs: { class: 'chat-message chat-message--user' }, text });
+  }
+
+  /**
+   * Paints a `'conversation'` tool (`ask_user`) as messages instead of a
+   * billet: the question as the agent's own message, then the user's answer as
+   * a user message. Deliberately nothing is shown until the answer exists - a
+   * pending question lives in the composer, not the transcript. A failed or
+   * rejected call still shows the question, followed by the reason, so an
+   * error is not hidden by the no-billet presentation.
+   */
+  function renderConversationShell(shell: HTMLElement, view: ToolCallView): void {
+    shell.className = 'chat-ask-user';
+    const conversation = toolRendererRegistry.readConversation(
+      view.toolName,
+      view.args,
+      succeededData(view),
+    );
+    if (conversation === undefined) {
+      shell.replaceChildren();
+      return;
+    }
+    const children: HTMLElement[] = [];
+    if (conversation.answer !== undefined) {
+      children.push(conversationMessage('assistant', conversation.question));
+      children.push(conversationMessage('user', conversation.answer));
+    } else if (view.status.kind === 'failed' || view.status.kind === 'rejected') {
+      children.push(conversationMessage('assistant', conversation.question));
+      const reason = view.status.kind === 'failed' ? view.status.error.message : view.status.reason;
+      children.push(el('p', { attrs: { class: 'chat-tool-call__detail' }, text: reason }));
+    }
+    shell.replaceChildren(...children);
+  }
+
   function createShell(item: TranscriptItem): HTMLElement {
     switch (item.kind) {
       case 'userPrompt':
@@ -516,6 +561,13 @@ export function createTranscriptView(
         return;
       case 'toolCall': {
         const view = store.toolCallFor(item.toolCallId);
+        if (
+          view !== undefined &&
+          toolRendererRegistry.presentationOf(view.toolName) === 'conversation'
+        ) {
+          renderConversationShell(shell, view);
+          return;
+        }
         const expanded = expandedToolCalls.has(item.toolCallId);
         shell.className =
           view === undefined

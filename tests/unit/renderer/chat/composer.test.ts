@@ -90,7 +90,7 @@ describe('createComposer', () => {
     expect(stopButton.tagName.toLowerCase()).toBe('sp-action-button');
     expect(stopButton.hasAttribute('icon-only')).toBe(false);
     expect(stopButton.getAttribute('aria-label')).toBe('Stop');
-    expect(stopButton.querySelector('sp-icon-stop')).not.toBeNull();
+    expect(stopButton.querySelector('[slot="icon"]')?.tagName.toLowerCase()).toBe('sp-icon-cancel');
   });
 
   it('shrinks the field from the empty height to the ordinary height once the conversation has content', () => {

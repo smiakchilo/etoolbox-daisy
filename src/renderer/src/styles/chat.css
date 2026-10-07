@@ -47,7 +47,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px 4px 0;
+  padding: 0 8px 8px 0;
 }
 
 /* A class rule would otherwise outrank the UA `[hidden]` rule. */
@@ -507,6 +507,9 @@
 .chat-composer__actions {
   display: flex;
   justify-content: flex-end;
+  /* A gap so Send/Stop do not touch when both are shown at once (the ask-user
+     question mode shows Submit and Stop together). */
+  gap: var(--spectrum-spacing-100, 8px);
   /* Extra breathing room between the Send/Stop control and the frame edge,
      on top of the frame's own padding. */
   padding: 0 4px 4px 0;
@@ -541,4 +544,88 @@
   display: flex;
   gap: var(--spectrum-spacing-100, 8px);
   padding: var(--spectrum-spacing-100, 8px);
+}
+
+/* ---------------------------------------------------------------------------
+   Ask-user (interactive question): the composer's selection UI and the
+   transcript's question/answer messages (the `ask_user` tool's
+   `presentation: 'conversation'`).
+   --------------------------------------------------------------------------- */
+
+.chat-ask {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spectrum-spacing-100, 8px);
+  padding: var(--spectrum-spacing-100, 8px) 4px 0;
+}
+
+.chat-ask[hidden] {
+  display: none;
+}
+
+.chat-ask__question {
+  margin: 0;
+  font-weight: 600;
+}
+
+.chat-ask__group,
+.chat-ask__checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-ask__picker {
+  width: 100%;
+  max-width: none;
+}
+
+/* The free-input escape hatch reads as a link, not a button: it swaps the
+   controls for the ordinary text field rather than submitting anything. */
+.chat-ask__free {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--spectrum-blue-900, #1473e6);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chat-ask__multi {
+  display: flex;
+  width: 100%;
+}
+
+/* The multi-select dropdown's trigger spans the panel's width (minus the
+   panel's own side padding), matching the radio/checkbox lists. `flex-start`
+   overrides `sp-action-button`'s centred content so the label reads left. */
+.chat-ask__multi-button {
+  flex: 1 1 auto;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.chat-ask__multi-label {
+  margin-inline-start: 4px;
+  text-align: left;
+}
+
+.chat-ask__menu {
+  max-height: 260px;
+  overflow: auto;
+}
+
+.chat-ask__popover {
+  padding: 4px;
+}
+
+/* The conversation presentation: the question as an assistant bubble and the
+   answer as a user bubble, stacked. */
+.chat-ask-user {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spectrum-spacing-100, 8px);
+  width: 100%;
 }

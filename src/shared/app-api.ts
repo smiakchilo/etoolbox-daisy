@@ -37,6 +37,7 @@ import type {
   AgentChatOpenResult,
   AgentChatReadJournalRequest,
   AgentChatReadJournalResult,
+  AgentChatRespondToInputRequest,
   AgentChatSendMessageRequest,
   AgentChatSendResult,
   AgentChatSkillsResult,
@@ -44,6 +45,14 @@ import type {
   AgentChatVoidResult,
 } from './agent-chat-ipc';
 import type { AgentEvent, AgentId } from './contracts';
+
+/**
+ * The command-line argument main passes to the renderer's `webPreferences` in
+ * an unpackaged build. The preload turns its presence into `window.daisy.devTools`,
+ * which gates the dev-only composer triggers (the `!!ask` preview). A packaged
+ * build never passes it, so the flag is absent and the triggers are unreachable.
+ */
+export const DEV_TOOLS_ARGUMENT = '--daisy-dev-tools';
 
 /**
  * Contract for the API the app-preload bridge exposes on
@@ -54,6 +63,11 @@ import type { AgentEvent, AgentId } from './contracts';
  */
 export interface DaisyAppApi {
   readonly apiVersion: 1;
+  /**
+   * Dev-only: whether this build exposes the local development triggers (the
+   * `!!ask` ask-user preview). Always `false` in a packaged build.
+   */
+  readonly devTools: boolean;
   getAppInfo(): Promise<AppInfo>;
   /**
    * The Copilot sign-in/out API: auth status, login, cancel-login, and
@@ -86,6 +100,12 @@ export interface DaisyAgentChatApi {
   sendMessage(request: AgentChatSendMessageRequest): Promise<AgentChatSendResult>;
   abort(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   closeConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
+  /**
+   * Delivers the user's answer to an outstanding ask-user question
+   * (`user.input.requested`), releasing the turn that is waiting on it. Main
+   * refuses an answer whose `requestId` names no pending question on `chatId`.
+   */
+  respondToInput(request: AgentChatRespondToInputRequest): Promise<AgentChatVoidResult>;
   /**
    * Reads one chat's append-only journal so a resumed conversation's transcript
    * can be repainted. Main owns the file and bounds the read; a missing or

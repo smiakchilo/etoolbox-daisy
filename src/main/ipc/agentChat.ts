@@ -7,6 +7,7 @@ import {
   AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
+  AGENT_CHAT_RESPOND_TO_INPUT_CHANNEL,
   AGENT_CHAT_REVEAL_JOURNAL_CHANNEL,
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
@@ -15,6 +16,7 @@ import {
   agentChatByIdRequestSchema,
   agentChatOpenConversationRequestSchema,
   agentChatReadJournalRequestSchema,
+  agentChatRespondToInputRequestSchema,
   agentChatSendMessageRequestSchema,
   type AgentChatByIdRequest,
   type AgentChatOpenResult,
@@ -220,6 +222,16 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
       const parsed = agentChatByIdRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadVoidResult(parsed.error.message);
       return deps.controller.closeConversation(parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    AGENT_CHAT_RESPOND_TO_INPUT_CHANNEL,
+    async (event, rawRequest: unknown): Promise<AgentChatVoidResult> => {
+      if (!checkSender(event)) return untrustedVoidResult();
+      const parsed = agentChatRespondToInputRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadVoidResult(parsed.error.message);
+      return deps.controller.respondToInput(parsed.data);
     },
   );
 

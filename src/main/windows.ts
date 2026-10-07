@@ -6,6 +6,7 @@ import { resolveAppIconPath } from './appIcon';
 import { buildAppUrl } from './browser/appProtocol';
 import { attachClipboardContextMenu } from './contextMenu';
 import { attachDevToolsShortcut } from './devTools';
+import { DEV_TOOLS_ARGUMENT } from '../shared';
 import {
   attachWindowStatePersistence,
   fitWindowStateToWorkArea,
@@ -134,6 +135,10 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // Exposes `window.daisy.devTools` in an unpackaged build only. A packaged
+      // install never passes the argument, so the dev-only composer triggers
+      // (`!!ask`) are unreachable there.
+      additionalArguments: app.isPackaged ? [] : [DEV_TOOLS_ARGUMENT],
     },
   });
 

@@ -23,6 +23,9 @@ import {
   type ToolError,
   type TurnId,
   type Unsubscribe,
+  type UserInputAnswer,
+  type UserInputRequest,
+  type UserInputRequestId,
   agentEventSchema,
   applyAgentEvent,
   canSendMessage,
@@ -32,6 +35,7 @@ import {
   jsonValueSchema,
   messageIdSchema,
   newRequestId,
+  newUserInputRequestId,
   ok,
   parseAuthStatus,
   reasoningIdSchema,
@@ -174,6 +178,18 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
   /** Bumped to invalidate a completion path superseded by abort/teardown. */
   let generation = 0;
   let currentAbort: AbortController | undefined;
+  /** Outstanding ask-user questions, resolved by `respondToInput` and rejected on abort/teardown. */
+  const pendingUserInputByRequestId = new Map<
+    UserInputRequestId,
+    { readonly resolve: (answer: UserInputAnswer) => void; readonly reject: (error: Error) => void }
+  >();
+
+  function rejectPendingUserInputs(): void {
+    if (pendingUserInputByRequestId.size === 0) return;
+    const pending = [...pendingUserInputByRequestId.values()];
+    pendingUserInputByRequestId.clear();
+    for (const entry of pending) entry.reject(new Error('The question was cancelled'));
+  }
 
   const runTool: RunTool = (spec, rawArgs, context) => executeTool(spec, rawArgs, context);
 
@@ -424,6 +440,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
 
   function performAbort(chatId: ChatId, turnId: TurnId): void {
     currentTurn = undefined;
+    rejectPendingUserInputs();
     const controller = currentAbort;
     currentAbort = undefined;
     try {
@@ -472,10 +489,14 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
 
     // Superseded by abort/teardown/open of another chat: that path already
     // emitted the terminal state, so emit nothing here.
-    if (myGeneration !== generation) return;
+    if (myGeneration !== generation) {
+      rejectPendingUserInputs();
+      return;
+    }
 
     currentTurn = undefined;
     currentAbort = undefined;
+    rejectPendingUserInputs();
 
     if (settled[0]?.status === 'rejected') {
       // The raw rejection is the only place the real cause is visible; the
@@ -657,6 +678,86 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       return Promise.resolve(ok(undefined));
     },
 
+    async requestUserInput(
+      chatId: ChatId,
+      request: UserInputRequest,
+    ): Promise<Result<UserInputAnswer, AgentServiceError>> {
+      if (openChatId === undefined || openChatId !== chatId) {
+        return err(
+          createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
+        );
+      }
+      const turn = currentTurn;
+      if (turn === undefined) {
+        return err(
+          createAgentServiceError(
+            'PRECONDITION_FAILED',
+            'There is no turn in flight to ask a question in',
+          ),
+        );
+      }
+
+      const requestId = newUserInputRequestId(idGenerator);
+      const pending = new Promise<UserInputAnswer>((resolve, reject) => {
+        pendingUserInputByRequestId.set(requestId, { resolve, reject });
+      });
+      try {
+        applyAndEmit({
+          type: 'user.input.requested',
+          chatId,
+          sequence: nextSequence(chatId),
+          turnId: turn.turnId,
+          requestId,
+          question: request.question,
+          ...(request.options !== undefined ? { options: [...request.options] } : {}),
+          multiple: request.multiple,
+          freeInput: request.freeInput,
+        });
+      } catch (caught) {
+        pendingUserInputByRequestId.delete(requestId);
+        throw caught;
+      }
+
+      return pending.then(
+        (value) => ok(value),
+        () =>
+          err(
+            createAgentServiceError(
+              'CANCELLED',
+              'The question was cancelled before it was answered',
+            ),
+          ),
+      );
+    },
+
+    respondToInput(
+      chatId: ChatId,
+      requestId: UserInputRequestId,
+      answer: UserInputAnswer,
+    ): Promise<Result<void, AgentServiceError>> {
+      if (openChatId === undefined || openChatId !== chatId) {
+        return Promise.resolve(
+          err(
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
+          ),
+        );
+      }
+      const pending = pendingUserInputByRequestId.get(requestId);
+      if (pending === undefined) {
+        return Promise.resolve(
+          err(
+            createAgentServiceError(
+              'PRECONDITION_FAILED',
+              'There is no outstanding question with that id',
+            ),
+          ),
+        );
+      }
+      pendingUserInputByRequestId.delete(requestId);
+      pending.resolve(answer);
+      return Promise.resolve(ok(undefined));
+    },
+
     abort: (chatId: ChatId): Promise<Result<void, AgentServiceError>> => {
       if (openChatId === undefined || openChatId !== chatId) {
         return Promise.resolve(
@@ -690,6 +791,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       eventListeners.clear();
       authListeners.clear();
       currentTurn = undefined;
+      rejectPendingUserInputs();
       currentAbort?.abort();
       currentAbort = undefined;
       openChatId = undefined;

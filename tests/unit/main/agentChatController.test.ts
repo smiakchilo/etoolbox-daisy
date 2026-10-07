@@ -23,6 +23,7 @@ import {
   type SendPromptRequest,
   type ServerId,
   type Unsubscribe,
+  type UserInputAnswer,
   ok,
 } from '../../../src/shared';
 
@@ -173,6 +174,12 @@ function createLeakyAgentService(): LeakyAgentService {
       return Promise.resolve(ok(undefined));
     },
     closeConversation(): Promise<Result<void, AgentServiceError>> {
+      return Promise.resolve(ok(undefined));
+    },
+    requestUserInput(): Promise<Result<UserInputAnswer, AgentServiceError>> {
+      return Promise.resolve(ok({ selections: [], freeform: null }));
+    },
+    respondToInput(): Promise<Result<void, AgentServiceError>> {
       return Promise.resolve(ok(undefined));
     },
     dispose(): Promise<void> {
@@ -988,5 +995,54 @@ describe('agentChatController skill prompt rewrite', () => {
       prompt: '/aem-tool-selection hi',
       displayPrompt: '/aem-tool-selection hi',
     });
+  });
+});
+
+describe('interactive questions', () => {
+  it('forwards the question and routes the answer back to the service', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    const chatId = newChatId('chat-q');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({
+      steps: [{ kind: 'inputRequest', question: 'Pick a colour', options: ['Red', 'Green'] }],
+    });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+    // Delivers up to and including the question, then pauses on the answer.
+    agentService.flush();
+
+    const requested = received.find((event) => event.type === 'user.input.requested');
+    expect(requested).toMatchObject({
+      type: 'user.input.requested',
+      question: 'Pick a colour',
+      options: ['Red', 'Green'],
+    });
+    if (requested?.type !== 'user.input.requested') throw new Error('no question forwarded');
+
+    const answered = await controller.respondToInput({
+      chatId,
+      requestId: requested.requestId,
+      answer: { selections: ['Red'], freeform: null },
+    });
+    expect(answered.ok).toBe(true);
+
+    agentService.flush();
+    const result = received.find((event) => event.type === 'tool.result');
+    expect(result).toMatchObject({ type: 'tool.result', outcome: { ok: true } });
+    expect(received.at(-1)).toMatchObject({ type: 'session.state.changed', state: 'idle' });
+  });
+
+  it('refuses an answer for a conversation that is not open', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const result = await controller.respondToInput({
+      chatId: newChatId('not-open'),
+      requestId: 'missing' as never,
+      answer: { selections: [], freeform: null },
+    });
+    expect(result.ok).toBe(false);
   });
 });

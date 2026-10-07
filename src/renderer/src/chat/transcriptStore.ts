@@ -274,11 +274,18 @@ export function createTranscriptStore(
           return;
         case 'error':
         case 'session.state.changed':
+        case 'user.input.requested':
           // Chat/turn-level signals with no transcript item of their own:
           // `error` surfaces via the composer's disabled-reason notice
           // (`composerViewModel.ts`, driven by `SessionStatus.state`), and
           // `session.state.changed` only ever drives that same
-          // `SessionStatus`, which `chatPane.ts` derives independently.
+          // `SessionStatus`, which `chatPane.ts` derives independently. An
+          // ask-user question is likewise not a transcript item of its own:
+          // the question and its answer are rendered as messages by the
+          // `ask_user` tool's own `presentation: 'conversation'` (see
+          // `transcriptView.ts`), derived from that tool call's arguments and
+          // result - so the composer, not this store, is what reacts to this
+          // event.
           return;
         default: {
           return event;

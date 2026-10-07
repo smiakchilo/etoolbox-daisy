@@ -297,7 +297,7 @@ features, left as real windows for SSO - vs tabs, loaded in the same view),
 ### `src/renderer/`
 
 **Adobe Spectrum Web Components for all UI** —
-<https://opensource.adobe.com/spectrum-web-components/>. Nineteen packages, all
+<https://opensource.adobe.com/spectrum-web-components/>. Twenty packages, all
 pinned to `1.12.2` (including `alert-banner`, which renders the browser pane's
 status/message row); add new ones at that same version. Elements are registered
 by side-effect import in `src/renderer/src/main.ts`.
@@ -308,6 +308,19 @@ by side-effect import in `src/renderer/src/main.ts`.
 goes through `marked` + `DOMPurify`. **Never set a cell or message with
 `innerHTML`** — the transcript uses `textContent`, and there are mutation tests
 guarding that.
+
+`dev/` holds **dev-only modules** — manual previews/mocks that are never
+business logic and are unreachable in a packaged build (gated by
+`window.daisy.devTools`; see §9). The first is the ask-user preview: the pure
+parser `dev/askUserPreview.ts` (`!!ask ...`) plus `dev/askUserPreviewTrigger.ts`,
+a factory that owns all of the preview's state and turns a parsed request / a
+submitted answer into the synthetic `AgentEvent`s the pane paints. The pane
+(`shell/chatPane.ts`) wires the factory and paints what it returns, so a preview
+is retired by deleting its files under `dev/` and the single marked wiring block
+in the pane. Keep new dev-only modules here rather than mixing them into
+`chat/`/`shell/`. These modules are intentionally **untested** — they exist to
+exercise other code, and testing the test tooling is redundant (their behaviour
+is covered end-to-end by the real features' specs).
 
 ### Tools are plugins: one folder under `src/tools/<name>/`
 
@@ -338,6 +351,16 @@ src/tools/<name>/
   `tsc`. Only deleting the folder (or fixing it) avoids that.
 - `aem_create_page` is present but `disabled`: the bridge is GET-only (rule 4
   stands) and it has no renderer yet.
+- `ask_user` is not an AEM read: it puts a choice to the user and blocks the turn
+  until they answer, through `ToolHost.requestUserInput` (resolved from the live
+  turn, never from model input). It deliberately does **not** use
+  `createToolExecutor` (that builder requires a live AEM server), and it renders
+  as a conversation rather than a billet: its renderer sets
+  `presentation: 'conversation'` and supplies `readConversation`, so the
+  transcript paints the question as an assistant message and the answer as a
+  user message. The SDK has a built-in `ask_user`; this app leaves it
+  un-allowlisted and ships its own (see docs/compatibility.md 4.3). A dev-only
+  `!!ask ...` composer trigger previews the UI locally (see section 9).
 - `aem_environment_facts` reports the current host's origin and its
   content/component roots. It takes no arguments: the application resolves the
   facts from the live pane URL matched against the settings hosts, through
@@ -485,7 +508,13 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2574 passed / 14 skipped** (the +3 since
+Current baseline: **`npm run test` → 2597 passed / 14 skipped** (the +23 since
+2574 is the ask-user work — the `ask_user` tool, the
+composer-view-model answer helpers, the transcript conversation presentation,
+and the fake/controller interactive-question tests; the `!!ask` dev preview
+itself is intentionally **untested** — see §5 — so no test was added or kept for
+it — see `docs/verification.md`
+"Ask-user: a choose-from-options tool for the chat composer (2026-10-07)"; the +3 since
 2571 is the transcript-footer follow-on — the session id became a
 `sp-icon-file-txt` icon and an agent/model/reasoning summary that opens Settings
 — see `docs/verification.md` "Follow-on: the footer's session id became an icon,
@@ -513,7 +542,10 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 95 tests; typically 94 passed / 1 failed in the full run** (the
+**Playwright → 100 tests; typically 99 passed / 1 failed in the full run** (the
++5 since 95 is `tests/e2e/ask-user.spec.ts`, the interactive-question UI — radio
+group, checkbox list, free-input swap, and both >5 dropdowns — all 5 green
+against the built app; the
 one deterministic failure is the pre-existing `settings-tabs.spec.ts:121`,
 which fails identically on HEAD — the settings "Takes effect after restarting
 the app" helper carries no trailing period while the assertion expects one; the
@@ -694,6 +726,16 @@ passes against a missing import. Assert `customElements.get(...)` and a real
 
 **A live RPC read is the proof for anything the model could fake.** Ask the
 model about a skill and it will invent the contents. `skills.list()` cannot.
+
+**A local dev trigger can preview UI, but never replaces the round-trip test.**
+Typing `!!ask ...` into the composer paints the ask-user UI locally - no model,
+no AEM, no IPC - gated by `window.daisy.devTools` (set only in an unpackaged
+build; see `src/main/windows.ts`). All of its logic lives in
+`src/renderer/src/dev/` (see §5); the pane only wires its factory. It is for fast
+look-and-feel iteration. It deliberately does **not** exercise the answer round
+trip, so the fake-backed `tests/e2e/ask-user.spec.ts` is what proves the plumbing.
+A preview that looks perfect while the answer goes nowhere is exactly the false
+confidence this section exists to prevent.
 
 Record every step's evidence in `docs/verification.md`: what was executed, the
 actual numbers, and what would have been missed without it.

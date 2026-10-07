@@ -563,3 +563,71 @@ describe('FakeAgentService - open session id', () => {
     expect(fake.getOpenSessionId()).toBe('fake-session-test-id-0');
   });
 });
+
+describe('scripted input requests', () => {
+  it('pauses on the question, then emits the answer as the tool result', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    const ids = counterIdGenerator();
+    const chatId = newChatId(ids);
+    const turnId = newTurnId(ids);
+    const events: AgentEvent[] = [];
+    service.onEvent((event) => events.push(event));
+
+    await service.openConversation({ chatId });
+    service.scriptNextResponse({
+      steps: [{ kind: 'inputRequest', question: 'Pick a colour', options: ['Red', 'Green'] }],
+    });
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+
+    // message.started, tool.call.requested, tool.call.approved, user.input.requested.
+    expect(service.advance()).toBe(true);
+    expect(service.advance()).toBe(true);
+    expect(service.advance()).toBe(true);
+    expect(service.advance()).toBe(true);
+    // The placeholder tool.result is next; the turn pauses there until answered.
+    expect(service.advance()).toBe(false);
+
+    const requested = events.find((event) => event.type === 'user.input.requested');
+    expect(requested).toMatchObject({
+      type: 'user.input.requested',
+      question: 'Pick a colour',
+      options: ['Red', 'Green'],
+      multiple: false,
+      freeInput: false,
+    });
+    if (requested?.type !== 'user.input.requested') throw new Error('no question emitted');
+
+    // A stale id is refused; the right one is accepted.
+    expect(
+      (await service.respondToInput(chatId, 'missing' as never, { selections: [], freeform: null }))
+        .ok,
+    ).toBe(false);
+    expect(
+      (
+        await service.respondToInput(chatId, requested.requestId, {
+          selections: ['Red'],
+          freeform: null,
+        })
+      ).ok,
+    ).toBe(true);
+
+    // The turn resumes and finishes.
+    expect(service.flush()).toBe(3);
+    const result = events.find((event) => event.type === 'tool.result');
+    expect(result).toMatchObject({ type: 'tool.result', outcome: { ok: true } });
+    if (result?.type === 'tool.result' && result.outcome.ok) {
+      expect(result.outcome.data).toMatchObject({ operation: 'ask_user', selections: ['Red'] });
+    }
+    expect(events.at(-1)).toMatchObject({ type: 'session.state.changed', state: 'idle' });
+  });
+
+  it('refuses requestUserInput - the fake scripts questions instead of running executors', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    const result = await service.requestUserInput(newChatId(counterIdGenerator()), {
+      question: 'Q',
+      multiple: false,
+      freeInput: false,
+    });
+    expect(result.ok).toBe(false);
+  });
+});

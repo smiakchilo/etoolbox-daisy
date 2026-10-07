@@ -21,6 +21,7 @@ const host: ToolHost = {
     turnId: newTurnId(ids),
   }),
   environmentFacts: () => undefined,
+  requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
   clock: () => 1,
   idGenerator: ids,
 };
@@ -161,12 +162,14 @@ describe('discovered tools (the real src/tools folders)', () => {
       'aem_environment_facts',
       'aem_get_json',
       'aem_query',
+      'ask_user',
     ]);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
     expect([...registry.allowlistEntries].sort()).toEqual([
       'custom:aem_environment_facts',
       'custom:aem_get_json',
       'custom:aem_query',
+      'custom:ask_user',
     ]);
   });
 });

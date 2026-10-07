@@ -959,3 +959,82 @@ describe('createTranscriptView - bold skill name in a user prompt', () => {
     expect(node?.textContent).toBe('just a question');
   });
 });
+
+describe('ask_user conversation presentation', () => {
+  const askArgs = {
+    question: 'Pick a colour',
+    options: ['Red', 'Green'],
+    multiple: false,
+    freeInput: false,
+  };
+
+  it('shows nothing while the question is still pending', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'ask_user', askArgs));
+    view.repaint(store);
+
+    expect(view.element.querySelector('.chat-tool-call')).toBeNull();
+    const shell = view.element.querySelector('.chat-ask-user');
+    expect(shell?.childElementCount).toBe(0);
+  });
+
+  it('renders the question as an assistant message and the answer as a user message', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'ask_user', askArgs));
+    store.applyEvent(
+      agentEventSchema.parse({
+        type: 'tool.result',
+        chatId,
+        sequence: 1,
+        toolCallId,
+        outcome: {
+          ok: true,
+          data: { operation: 'ask_user', selections: ['Red'], freeform: null },
+        },
+      }),
+    );
+    view.repaint(store);
+
+    expect(view.element.querySelector('.chat-tool-call')).toBeNull();
+    expect(
+      view.element.querySelector('.chat-ask-user .chat-message--assistant')?.textContent?.trim(),
+    ).toBe('Pick a colour');
+    expect(view.element.querySelector('.chat-ask-user .chat-message--user')?.textContent).toBe(
+      'Red',
+    );
+  });
+
+  it('shows the question and the reason when the question could not be asked', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'ask_user', askArgs));
+    store.applyEvent(
+      agentEventSchema.parse({
+        type: 'tool.result',
+        chatId,
+        sequence: 1,
+        toolCallId,
+        outcome: {
+          ok: false,
+          error: {
+            code: 'CANCELLED',
+            message: 'The question was cancelled',
+            requestId,
+            retryable: false,
+            requiredAction: 'none',
+          },
+        },
+      }),
+    );
+    view.repaint(store);
+
+    expect(
+      view.element.querySelector('.chat-ask-user .chat-message--assistant')?.textContent?.trim(),
+    ).toBe('Pick a colour');
+    expect(view.element.querySelector('.chat-ask-user .chat-tool-call__detail')?.textContent).toBe(
+      'The question was cancelled',
+    );
+  });
+});

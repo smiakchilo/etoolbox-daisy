@@ -19,6 +19,8 @@ import {
   type ModelPreference,
   type ServerConfig,
   type SessionStreamState,
+  type UserInputAnswer,
+  type UserInputRequest,
   deriveCurrentPageContext,
   originsMatch,
   parseNavigationTarget,
@@ -212,6 +214,37 @@ export function createLateBoundAemToolContext(): LateBoundAemToolContext {
         throw new Error('Tool context requested before the chat controller was bound');
       }
       return bound.currentAemToolContext();
+    },
+    bind: (controller) => {
+      bound = controller;
+    },
+  };
+}
+
+/**
+ * The tool host's interactive-question capability, late-bound for the same
+ * reason as {@link LateBoundAemToolContext}: the tool registry (and its host)
+ * is built before the chat controller exists, and the controller is the only
+ * thing that knows which conversation is active. Throws if called before
+ * `bind` - which would mean an `ask_user` tool call reached its executor before
+ * the composition root finished wiring, a construction-order bug worth failing
+ * loudly on rather than silently never answering.
+ */
+export interface LateBoundUserInput {
+  readonly requestUserInput: (request: UserInputRequest) => Promise<UserInputAnswer>;
+  readonly bind: (controller: Pick<AgentChatController, 'requestUserInput'>) => void;
+}
+
+export function createLateBoundUserInput(): LateBoundUserInput {
+  let bound: Pick<AgentChatController, 'requestUserInput'> | undefined;
+  return {
+    requestUserInput: async (request) => {
+      if (bound === undefined) {
+        throw new Error('User input requested before the chat controller was bound');
+      }
+      const result = await bound.requestUserInput(request);
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
     },
     bind: (controller) => {
       bound = controller;

@@ -1,6 +1,13 @@
 import type { z } from 'zod';
 import { createToolError, newRequestId } from '../../contracts';
-import type { IdGenerator, JsonValue, RequestId, ToolError } from '../../contracts';
+import type {
+  IdGenerator,
+  JsonValue,
+  RequestId,
+  ToolError,
+  UserInputAnswer,
+  UserInputRequest,
+} from '../../contracts';
 import { err, ok } from '../../result';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
@@ -41,6 +48,16 @@ export interface ToolHost {
    * {@link currentContext}, the model can never influence it.
    */
   readonly environmentFacts: () => EnvironmentFacts | undefined;
+  /**
+   * Puts an interactive question to the user and resolves with their answer.
+   *
+   * This is the one capability a tool needs that is neither an AEM read nor a
+   * value the model supplies: an `ask_user` tool blocks on it while the user
+   * chooses. The application resolves it from the live chat turn (never from
+   * the model's arguments) and rejects it - the returned promise rejects - if
+   * the turn is aborted or torn down before the user answers.
+   */
+  readonly requestUserInput: (request: UserInputRequest) => Promise<UserInputAnswer>;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
   /**

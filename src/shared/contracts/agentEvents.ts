@@ -5,10 +5,12 @@ import {
   reasoningIdSchema,
   toolCallIdSchema,
   turnIdSchema,
+  userInputRequestIdSchema,
   type ChatId,
   type MessageId,
 } from './ids';
 import { toolErrorSchema, type ToolError } from './errors';
+import { userInputOptionsSchema, userInputQuestionSchema } from './userInput';
 
 /**
  * The normalized Copilot agent event stream (implementation-plan.md step 03,
@@ -22,7 +24,7 @@ import { toolErrorSchema, type ToolError } from './errors';
  * requirements-decisions.md section 2 forbids for anything beyond content
  * the user already has access to, and (b) couple every consumer to an SDK
  * version instead of to this module. So every event below is a deliberately
- * narrow, hand-picked projection: eleven variants, each a `.strict()` object of
+ * narrow, hand-picked projection: twelve variants, each a `.strict()` object of
  * named fields, with no `unknown`/`Record<string, unknown>` escape hatch
  * anywhere in the tree. If a caller wants something this module does not
  * expose, that is a decision to revisit here, not a reason to reach past it.
@@ -267,6 +269,34 @@ const errorEventSchema = z
   .strict();
 
 /**
+ * The agent asked the user to choose. Emitted by the agent adapter when the
+ * `ask_user` tool is invoked, once its arguments are normalized; the turn stays
+ * in `runningTool` until the matching `tool.result` carries the answer back to
+ * the model.
+ *
+ * This is a first-class event rather than a side channel because both the
+ * composer (which swaps its text field for the selection UI) and the transcript
+ * (which shows the question and answer as messages) need it, and because the
+ * deterministic fake must be able to emit it the same way a real adapter does.
+ * `requestId` is what `respondToInput` correlates the answer with; `turnId`
+ * lets the ownership guard drop a late question from a turn the user has since
+ * abandoned. `multiple`/`freeInput` are required (already defaulted) so no
+ * consumer re-decides what an omitted field meant.
+ */
+const userInputRequestedEventSchema = z
+  .object({
+    type: z.literal('user.input.requested'),
+    ...baseEventFields,
+    turnId: turnIdSchema,
+    requestId: userInputRequestIdSchema,
+    question: userInputQuestionSchema,
+    options: userInputOptionsSchema.optional(),
+    multiple: z.boolean(),
+    freeInput: z.boolean(),
+  })
+  .strict();
+
+/**
  * Normalizes `session.start`/`session.idle`/`session.resume`/
  * `session.shutdown`/`assistant.turn_start`/`assistant.turn_end`
  * (docs/compatibility.md). `turnId` is optional because `session.start` and
@@ -293,6 +323,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolResultEventSchema,
   errorEventSchema,
   sessionStateChangedEventSchema,
+  userInputRequestedEventSchema,
 ]);
 
 export type AgentEvent = z.infer<typeof agentEventSchema>;
@@ -309,6 +340,7 @@ export type ToolCallRejectedEvent = z.infer<typeof toolCallRejectedEventSchema>;
 export type ToolResultEvent = z.infer<typeof toolResultEventSchema>;
 export type ErrorEvent = z.infer<typeof errorEventSchema>;
 export type SessionStateChangedEvent = z.infer<typeof sessionStateChangedEventSchema>;
+export type UserInputRequestedEvent = z.infer<typeof userInputRequestedEventSchema>;
 
 /** Re-exported so a caller building a failure event does not need a second import. */
 export type { ToolError };

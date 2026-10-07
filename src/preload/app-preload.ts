@@ -10,6 +10,7 @@ import {
   AGENT_CHAT_EVENT_CHANNEL,
   AGENT_CHAT_GET_STATUS_CHANNEL,
   AGENT_CHAT_LIST_SKILLS_CHANNEL,
+  AGENT_CHAT_RESPOND_TO_INPUT_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
   AGENT_CHAT_REVEAL_JOURNAL_CHANNEL,
@@ -21,6 +22,7 @@ import {
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
+  DEV_TOOLS_ARGUMENT,
   BROWSER_OPEN_EXTERNAL_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
@@ -58,6 +60,7 @@ import {
   parseAgentChatOpenResult,
   parseAgentChatReadJournalRequest,
   parseAgentChatReadJournalResult,
+  parseAgentChatRespondToInputRequest,
   parseAgentChatSendMessageRequest,
   parseAgentChatSendResult,
   parseAgentChatSkillsResult,
@@ -101,6 +104,7 @@ import {
   type AgentChatOpenResult,
   type AgentChatReadJournalRequest,
   type AgentChatReadJournalResult,
+  type AgentChatRespondToInputRequest,
   type AgentChatSendMessageRequest,
   type AgentChatSendResult,
   type AgentChatSkillsResult,
@@ -148,6 +152,9 @@ import {
  */
 const daisyApi: DaisyAppApi = {
   apiVersion: 1,
+  // Set only when main passed `--daisy-dev-tools` (an unpackaged build); gates
+  // the dev-only composer triggers in the renderer.
+  devTools: process.argv.includes(DEV_TOOLS_ARGUMENT),
   async getAppInfo(): Promise<AppInfo> {
     const raw: unknown = await ipcRenderer.invoke(APP_INFO_CHANNEL);
     return parseAppInfo(raw);
@@ -314,6 +321,14 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = parseAgentChatByIdRequest(request);
       const raw: unknown = await ipcRenderer.invoke(
         AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL,
+        parsedRequest,
+      );
+      return parseAgentChatVoidResult(raw);
+    },
+    async respondToInput(request: AgentChatRespondToInputRequest): Promise<AgentChatVoidResult> {
+      const parsedRequest = parseAgentChatRespondToInputRequest(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        AGENT_CHAT_RESPOND_TO_INPUT_CHANNEL,
         parsedRequest,
       );
       return parseAgentChatVoidResult(raw);

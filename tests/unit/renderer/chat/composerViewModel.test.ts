@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildAskUserAnswer,
   computeComposerButtonState,
   describeCanSendBlockReason,
+  isAskUserAnswerComplete,
   isTurnInFlight,
   shouldSubmitOnEnter,
+  type AskUserDraft,
   type ComposerStatus,
 } from '../../../../src/renderer/src/chat/composerViewModel';
-import type { SessionStatus } from '../../../../src/shared';
+import type { SessionStatus, UserInputRequest } from '../../../../src/shared';
 
 function session(overrides: Partial<SessionStatus> = {}): SessionStatus {
   return { state: 'idle', authenticated: true, browserReady: true, ...overrides };
@@ -161,5 +164,71 @@ describe('shouldSubmitOnEnter', () => {
 
   it('does not submit on a non-Enter key', () => {
     expect(shouldSubmitOnEnter(enter({ key: 'a' }))).toBe(false);
+  });
+});
+
+describe('ask-user answer completeness', () => {
+  const request = (overrides: Partial<UserInputRequest> = {}): UserInputRequest => ({
+    question: 'Q',
+    options: ['A', 'B', 'C'],
+    multiple: false,
+    freeInput: false,
+    ...overrides,
+  });
+  const draft = (overrides: Partial<AskUserDraft> = {}): AskUserDraft => ({
+    selections: [],
+    freeform: '',
+    freeInputActive: false,
+    ...overrides,
+  });
+
+  it('requires exactly one selection for a single-choice question', () => {
+    expect(isAskUserAnswerComplete(request(), draft({ selections: [] }))).toBe(false);
+    expect(isAskUserAnswerComplete(request(), draft({ selections: ['A'] }))).toBe(true);
+    expect(isAskUserAnswerComplete(request(), draft({ selections: ['A', 'B'] }))).toBe(false);
+  });
+
+  it('requires at least one selection for a multiple-choice question', () => {
+    expect(isAskUserAnswerComplete(request({ multiple: true }), draft())).toBe(false);
+    expect(
+      isAskUserAnswerComplete(request({ multiple: true }), draft({ selections: ['A', 'B'] })),
+    ).toBe(true);
+  });
+
+  it('requires non-whitespace text when free input is active or the question is free-input-only', () => {
+    expect(
+      isAskUserAnswerComplete(request({ freeInput: true }), draft({ freeInputActive: true })),
+    ).toBe(false);
+    expect(
+      isAskUserAnswerComplete(
+        request({ freeInput: true }),
+        draft({ freeInputActive: true, freeform: '  x ' }),
+      ),
+    ).toBe(true);
+    expect(isAskUserAnswerComplete(request({ options: undefined }), draft())).toBe(false);
+    expect(isAskUserAnswerComplete(request({ options: undefined }), draft({ freeform: 'y' }))).toBe(
+      true,
+    );
+  });
+
+  it('builds a selection answer, or the trimmed free text when free input wins', () => {
+    expect(
+      buildAskUserAnswer(request({ multiple: true }), draft({ selections: ['A', 'B'] })),
+    ).toEqual({
+      selections: ['A', 'B'],
+      freeform: null,
+    });
+    expect(
+      buildAskUserAnswer(
+        request({ freeInput: true }),
+        draft({ freeInputActive: true, freeform: ' hi ' }),
+      ),
+    ).toEqual({ selections: [], freeform: 'hi' });
+    expect(
+      buildAskUserAnswer(request({ options: undefined }), draft({ freeform: 'typed' })),
+    ).toEqual({
+      selections: [],
+      freeform: 'typed',
+    });
   });
 });

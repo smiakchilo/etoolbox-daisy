@@ -48,6 +48,7 @@
     "@spectrum-web-components/picker-button": "1.12.2",
     "@spectrum-web-components/popover": "1.12.2",
     "@spectrum-web-components/progress-circle": "1.12.2",
+    "@spectrum-web-components/radio": "1.12.2",
     "@spectrum-web-components/split-view": "1.12.2",
     "@spectrum-web-components/status-light": "1.12.2",
     "@spectrum-web-components/table": "1.12.2",

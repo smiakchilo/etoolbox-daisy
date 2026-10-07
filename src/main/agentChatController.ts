@@ -5,6 +5,7 @@ import {
   type AgentChatError,
   type AgentChatOpenConversationRequest,
   type AgentChatOpenResult,
+  type AgentChatRespondToInputRequest,
   type AgentChatSendMessageRequest,
   type AgentChatSendResult,
   type AgentChatStatus,
@@ -18,14 +19,19 @@ import {
   type IdGenerator,
   type MessageId,
   type RequiredAction,
+  type Result,
   type ServerId,
   type SessionStatus,
   type ToolCallId,
   type ToolErrorCode,
   type TurnId,
+  type UserInputAnswer,
+  type UserInputRequest,
   applyAgentEvent,
   canSendMessage,
+  err,
   newTurnId,
+  ok,
 } from '../shared';
 
 /**
@@ -142,6 +148,18 @@ export interface AgentChatController {
   sendMessage(request: AgentChatSendMessageRequest): Promise<AgentChatSendResult>;
   abort(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   closeConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
+  /**
+   * Puts an interactive question to the user on the active conversation and
+   * resolves with their answer. This is the tool host's `requestUserInput`
+   * capability; it is called from inside a tool executor, not over IPC.
+   * Refused when no conversation is open.
+   */
+  requestUserInput(request: UserInputRequest): Promise<Result<UserInputAnswer, AgentChatError>>;
+  /**
+   * Delivers the renderer's answer to an outstanding question over IPC
+   * (`agent-chat:respond-to-input`), releasing the turn waiting on it.
+   */
+  respondToInput(request: AgentChatRespondToInputRequest): Promise<AgentChatVoidResult>;
   /** Notifies `listener` of every `AgentEvent` that survives the ownership guard, in order. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**
@@ -285,6 +303,11 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       case 'tool.call.rejected':
       case 'tool.result':
         return activeTurn !== undefined && activeTurn.toolCallIds.has(event.toolCallId);
+      case 'user.input.requested':
+        // Turn-scoped: a question is only meaningful for the turn that is
+        // actually in flight, so a late one from an abandoned turn is dropped
+        // exactly like a late assistant delta.
+        return activeTurn !== undefined && event.turnId === activeTurn.turnId;
       case 'error':
       case 'session.state.changed':
         // Both variants carry `turnId` optionally (e.g. the terminal
@@ -494,6 +517,31 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     return { ok: true };
   }
 
+  async function requestUserInput(
+    request: UserInputRequest,
+  ): Promise<Result<UserInputAnswer, AgentChatError>> {
+    if (activeChatId === undefined) {
+      return err(createAgentChatError('PRECONDITION_FAILED', 'No conversation is open'));
+    }
+    const result = await agentService.requestUserInput(activeChatId, request);
+    return result.ok ? ok(result.value) : err(toAgentChatError(result.error));
+  }
+
+  async function respondToInput(
+    request: AgentChatRespondToInputRequest,
+  ): Promise<AgentChatVoidResult> {
+    if (activeChatId === undefined || request.chatId !== activeChatId) {
+      return { ok: false, error: notOpenConversationError(request.chatId) };
+    }
+    const result = await agentService.respondToInput(
+      request.chatId,
+      request.requestId,
+      request.answer,
+    );
+    if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
+    return { ok: true };
+  }
+
   function onEvent(listener: (event: AgentEvent) => void): () => void {
     forwardListeners.add(listener);
     return () => {
@@ -555,6 +603,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     sendMessage,
     abort,
     closeConversation,
+    requestUserInput,
+    respondToInput,
     onEvent,
     onStatusChanged,
     currentAemToolContext,
@@ -704,6 +754,23 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     return real.closeConversation(request);
   }
 
+  async function requestUserInput(
+    request: UserInputRequest,
+  ): Promise<Result<UserInputAnswer, AgentChatError>> {
+    if (!real) return err(notReadyError());
+    return real.requestUserInput(request);
+  }
+
+  async function respondToInput(
+    request: AgentChatRespondToInputRequest,
+  ): Promise<AgentChatVoidResult> {
+    // No delegate: there is by construction no conversation, so no question can
+    // be outstanding - "already in the state you asked for" is the honest
+    // answer, exactly as `abort`/`closeConversation` treat it.
+    if (!real) return { ok: true };
+    return real.respondToInput(request);
+  }
+
   function onEvent(listener: (event: AgentEvent) => void): () => void {
     forwardListeners.add(listener);
     return () => {
@@ -780,6 +847,8 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
     sendMessage,
     abort,
     closeConversation,
+    requestUserInput,
+    respondToInput,
     onEvent,
     onStatusChanged,
     currentAemToolContext,

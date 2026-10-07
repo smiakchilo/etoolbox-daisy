@@ -27,6 +27,9 @@ import {
   type ToolDescriptor,
   type ToolError,
   type TurnId,
+  type UserInputAnswer,
+  type UserInputRequest,
+  type UserInputRequestId,
   agentEventSchema,
   applyAgentEvent,
   canSendMessage,
@@ -37,6 +40,7 @@ import {
   jsonValueSchema,
   messageIdSchema,
   newRequestId,
+  newUserInputRequestId,
   ok,
   parseAuthStatus,
   renderFoldedText,
@@ -408,6 +412,19 @@ interface PendingPermission {
   readonly arguments: Record<string, JsonValue>;
 }
 
+/**
+ * What this adapter remembers about an outstanding `user.input.requested`.
+ *
+ * A `respondToInput` resolves it; an abort/teardown/error rejects it, so the
+ * `ask_user` executor awaiting `requestUserInput` settles instead of leaking.
+ */
+interface PendingUserInput {
+  readonly chatId: ChatId;
+  readonly turnId: TurnId;
+  readonly resolve: (answer: UserInputAnswer) => void;
+  readonly reject: (error: Error) => void;
+}
+
 export function createSdkAgentService(options: SdkAgentServiceOptions): AgentService {
   const { client, policy, authSource } = options;
   const idGenerator = options.idGenerator ?? defaultIdGenerator();
@@ -437,6 +454,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
    */
   let appliedModelPreference: ModelPreference | undefined;
   const pendingPermissionsByRequestId = new Map<string, PendingPermission>();
+  const pendingUserInputByRequestId = new Map<UserInputRequestId, PendingUserInput>();
   const deltaFoldByMessageId = new Map<MessageId, DeltaFoldState>();
 
   function nextSequence(chatId: ChatId): number {
@@ -498,6 +516,20 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     return turnId === undefined
       ? { type: 'session.state.changed', chatId, sequence, state }
       : { type: 'session.state.changed', chatId, sequence, turnId, state };
+  }
+
+  /**
+   * Rejects and forgets every outstanding ask-user question. Called wherever a
+   * turn ends for a reason other than the user answering - abort, teardown,
+   * an SDK error, or an internal mapping failure - so the `ask_user` executor
+   * waiting on `requestUserInput` settles rather than leaking a pending
+   * promise for a turn that no longer exists.
+   */
+  function rejectPendingUserInputs(): void {
+    if (pendingUserInputByRequestId.size === 0) return;
+    const pending = [...pendingUserInputByRequestId.values()];
+    pendingUserInputByRequestId.clear();
+    for (const entry of pending) entry.reject(new Error('The question was cancelled'));
   }
 
   /**
@@ -670,6 +702,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     }
     currentTurn = undefined;
     pendingPermissionsByRequestId.clear();
+    rejectPendingUserInputs();
     try {
       await openSession?.abort();
     } catch (error) {
@@ -701,6 +734,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     if (openChatId === chatId) openChatId = undefined;
     appliedModelPreference = undefined;
     pendingPermissionsByRequestId.clear();
+    rejectPendingUserInputs();
     deltaFoldByMessageId.clear();
     unsubscribe?.();
     if (session !== undefined) {
@@ -723,6 +757,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     console.error('sdkAgentService: failed to process SDK session event', eventType, caught);
     currentTurn = undefined;
     pendingPermissionsByRequestId.clear();
+    rejectPendingUserInputs();
     if (streamState === 'closed') return;
     try {
       applyAndEmit({
@@ -934,6 +969,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           const turnId = currentTurn?.turnId;
           currentTurn = undefined;
           pendingPermissionsByRequestId.clear();
+          rejectPendingUserInputs();
           const toolError = createToolError(
             'AGENT_UNAVAILABLE',
             'The Copilot agent reported an error',
@@ -1150,6 +1186,95 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       }
     },
 
+    async requestUserInput(
+      chatId: ChatId,
+      request: UserInputRequest,
+    ): Promise<Result<UserInputAnswer, AgentServiceError>> {
+      if (openChatId === undefined || openChatId !== chatId) {
+        return err(
+          createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
+        );
+      }
+      const turn = currentTurn;
+      if (turn === undefined) {
+        return err(
+          createAgentServiceError(
+            'PRECONDITION_FAILED',
+            'There is no turn in flight to ask a question in',
+          ),
+        );
+      }
+
+      const requestId = newUserInputRequestId(idGenerator);
+      const pending = new Promise<UserInputAnswer>((resolve, reject) => {
+        pendingUserInputByRequestId.set(requestId, {
+          chatId,
+          turnId: turn.turnId,
+          resolve,
+          reject,
+        });
+      });
+      const event: AgentEvent = {
+        type: 'user.input.requested',
+        chatId,
+        sequence: nextSequence(chatId),
+        turnId: turn.turnId,
+        requestId,
+        question: request.question,
+        ...(request.options !== undefined ? { options: [...request.options] } : {}),
+        multiple: request.multiple,
+        freeInput: request.freeInput,
+      };
+      try {
+        applyAndEmit(event);
+      } catch (caught) {
+        // A self-check failure is an internal bug; drop the registration and
+        // let it propagate rather than leaving a promise that never settles.
+        pendingUserInputByRequestId.delete(requestId);
+        throw caught;
+      }
+
+      const settled = await pending.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      pendingUserInputByRequestId.delete(requestId);
+      if (!settled.ok) {
+        return err(
+          createAgentServiceError('CANCELLED', 'The question was cancelled before it was answered'),
+        );
+      }
+      return ok(settled.value);
+    },
+
+    respondToInput(
+      chatId: ChatId,
+      requestId: UserInputRequestId,
+      answer: UserInputAnswer,
+    ): Promise<Result<void, AgentServiceError>> {
+      if (openChatId === undefined || openChatId !== chatId) {
+        return Promise.resolve(
+          err(
+            createAgentServiceError('INVALID_ARGUMENT', `"${chatId}" is not the open conversation`),
+          ),
+        );
+      }
+      const pending = pendingUserInputByRequestId.get(requestId);
+      if (pending === undefined) {
+        return Promise.resolve(
+          err(
+            createAgentServiceError(
+              'PRECONDITION_FAILED',
+              'There is no outstanding question with that id',
+            ),
+          ),
+        );
+      }
+      pendingUserInputByRequestId.delete(requestId);
+      pending.resolve(answer);
+      return Promise.resolve(ok(undefined));
+    },
+
     async abort(chatId: ChatId): Promise<Result<void, AgentServiceError>> {
       if (openChatId === undefined || openChatId !== chatId) {
         return err(
@@ -1162,7 +1287,6 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       await performAbort(chatId);
       return ok(undefined);
     },
-
     async closeConversation(chatId: ChatId): Promise<Result<void, AgentServiceError>> {
       if (openChatId === undefined || openChatId !== chatId) {
         return err(
@@ -1179,6 +1303,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       currentTurn = undefined;
       appliedModelPreference = undefined;
       pendingPermissionsByRequestId.clear();
+      rejectPendingUserInputs();
       deltaFoldByMessageId.clear();
       const session = openSession;
       const unsubscribe = openUnsubscribe;

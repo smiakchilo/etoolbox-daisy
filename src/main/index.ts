@@ -15,6 +15,7 @@ import {
   createCurrentPageContext,
   createEnvironmentFacts,
   createLateBoundAemToolContext,
+  createLateBoundUserInput,
   createModelPreferenceCache,
   installAgentService,
   isModelSelectionLocked,
@@ -491,6 +492,9 @@ if (!gotSingleInstanceLock) {
     });
 
     const lateBoundAemToolContext = createLateBoundAemToolContext();
+    // The `ask_user` tool's interactive-question capability, late-bound to the
+    // chat controller for the same reason (see `createLateBoundUserInput`).
+    const lateBoundUserInput = createLateBoundUserInput();
     // The host's content/component roots, resolved from the live pane URL and
     // the current settings document. Read fresh so a roots edit in Settings is
     // visible immediately; `loadSettingsSync` is a small synchronous read.
@@ -506,6 +510,7 @@ if (!gotSingleInstanceLock) {
         bridge: aemBridgeBroker,
         currentContext: lateBoundAemToolContext.currentContext,
         environmentFacts,
+        requestUserInput: lateBoundUserInput.requestUserInput,
         clock: Date.now,
         idGenerator: randomUUID,
         // Diagnostics only: a tool reports how it classified the response body
@@ -535,6 +540,7 @@ if (!gotSingleInstanceLock) {
     const skillCatalog = createSkillCatalog(bundledSkillsDirectory);
 
     lateBoundAemToolContext.bind(agentChatController);
+    lateBoundUserInput.bind(agentChatController);
 
     const unregisterAgentChatIpc = registerAgentChatIpcHandlers({
       controller: agentChatController,

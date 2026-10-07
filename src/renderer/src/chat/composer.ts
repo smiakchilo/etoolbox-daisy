@@ -1,7 +1,14 @@
 import { el } from '../lib/dom';
 import { loadComposerHistory, saveComposerHistory } from '../lib/composerHistoryStore';
 import { createComposerHistoryNavigator, resolveCaretBounds } from './composerHistory';
-import { type ComposerButtonState, shouldSubmitOnEnter } from './composerViewModel';
+import {
+  ASK_USER_DROPDOWN_THRESHOLD,
+  buildAskUserAnswer,
+  isAskUserAnswerComplete,
+  type AskUserDraft,
+  type ComposerButtonState,
+  shouldSubmitOnEnter,
+} from './composerViewModel';
 import {
   EMPTY_SKILL_MENU,
   isSkillMenuOpen,
@@ -12,7 +19,7 @@ import {
   type SkillMenuState,
 } from './composerSkillsViewModel';
 import { createSkillPopover } from './skillPopover';
-import type { AgentChatSkill } from '../../../shared';
+import type { AgentChatSkill, UserInputAnswer, UserInputRequest } from '../../../shared';
 
 type TextFieldElement = HTMLElement & { value: string };
 
@@ -42,6 +49,26 @@ const TEXTAREA_MAX_LINES = 20;
  */
 const SEND_ACCENT_CLASS = 'chat-composer__send--enabled';
 
+/**
+ * The composer's mutable working copy of an in-progress ask-user answer. Kept
+ * mutable so the option controls (which the DOM owns) can update it in place
+ * without rebuilding themselves on every keystroke/selection.
+ */
+interface MutableAskDraft {
+  selections: string[];
+  freeform: string;
+  freeInputActive: boolean;
+}
+
+/** Widens the mutable draft to the read-only shape the pure view-model helpers take. */
+function askDraftView(draft: MutableAskDraft): AskUserDraft {
+  return {
+    selections: draft.selections,
+    freeform: draft.freeform,
+    freeInputActive: draft.freeInputActive,
+  };
+}
+
 export type ComposerSendOutcome = { readonly ok: true } | { readonly ok: false };
 
 export interface ComposerCallbacks {
@@ -49,6 +76,15 @@ export interface ComposerCallbacks {
   onSend(prompt: string): Promise<ComposerSendOutcome>;
   /** Requests the current in-flight turn be cancelled. */
   onStop(): void;
+  /** Delivers the user's answer to an interactive (`ask_user`) question. */
+  onAnswer?(answer: UserInputAnswer): void;
+  /**
+   * Dev-only: intercepts an input before it is sent, so the local ask-user
+   * preview (`!!ask ...`) can drive the composer without a model or an AEM
+   * instance. Returns whether the input was consumed. Absent in a packaged
+   * build, where the composer never treats any input as a command.
+   */
+  onDevCommand?(input: string): boolean;
 }
 
 export interface Composer {
@@ -68,6 +104,13 @@ export interface Composer {
    * "no suggestions", never an error.
    */
   setSkills(skills: readonly AgentChatSkill[]): void;
+  /**
+   * Enters the interactive-question UI for `request`, or leaves it when
+   * `undefined`. While a question is shown the text field is replaced by the
+   * selection controls (or restored for the free-input variant) and Send
+   * submits the answer; Stop stays available to cancel the turn.
+   */
+  setInputRequest(request: UserInputRequest | undefined): void;
   /** Releases the resize observer that keeps the empty-state field stretched. */
   dispose(): void;
 }
@@ -104,7 +147,13 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   const stopButton = el('sp-action-button', {
     attrs: { class: 'chat-composer__stop', 'aria-label': 'Stop' },
   });
-  stopButton.append(el('sp-icon-stop', { attrs: { slot: 'icon' } }));
+  stopButton.append(el('sp-icon-cancel', { attrs: { slot: 'icon' } }));
+
+  // The interactive-question panel, hidden until `setInputRequest` shows a
+  // question. Declared here (not with the frame) because `applyPresentation`
+  // runs at construction and reads it. Sits above the field so a free-input
+  // question reads "question, then field".
+  const askPanel = el('div', { attrs: { class: 'chat-ask', hidden: '' } });
 
   // Every message the composer would once have shown inline (the connecting
   // state, a send-blocked reason, a send failure) is routed to the chat pane's
@@ -139,6 +188,18 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   // `skillPopover.ts` - and is absent under jsdom, where this state is still
   // maintained but never rendered.
   let skillMenu: SkillMenuState = EMPTY_SKILL_MENU;
+
+  // The interactive-question state. `inputRequest` is the question currently on
+  // screen (`undefined` in the composer's ordinary text mode); `draft` is the
+  // mutable answer being built. See `setInputRequest` and `applyPresentation`.
+  let inputRequest: UserInputRequest | undefined;
+  const draft: MutableAskDraft = { selections: [], freeform: '', freeInputActive: false };
+  // The portal overlay the >5 multiple-choice dropdown attaches to the theme,
+  // tracked so it can be removed when the question goes away. An `sp-overlay`
+  // is NOT a child of `askPanel` (it portals out to `sp-theme`), so clearing the
+  // panel leaves it in the DOM - visible in the top-left - unless it is removed
+  // explicitly.
+  let multiOverlay: (HTMLElement & { open?: boolean }) | undefined;
 
   /**
    * The field's current text. `sp-textfield.value` is always a string once the
@@ -274,7 +335,213 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     }
   }
 
+  /** Builds the option controls for the current question, per its shape and the >5 threshold. */
+  function buildOptionControls(options: readonly string[]): HTMLElement {
+    const request = inputRequest;
+    if (request === undefined) return el('div');
+    if (request.multiple) {
+      return options.length > ASK_USER_DROPDOWN_THRESHOLD
+        ? buildMultiDropdown(options)
+        : buildCheckboxList(options);
+    }
+    return options.length > ASK_USER_DROPDOWN_THRESHOLD
+      ? buildSinglePicker(options)
+      : buildRadioGroup(options);
+  }
+
+  function buildRadioGroup(options: readonly string[]): HTMLElement {
+    const group = el('sp-radio-group', { attrs: { class: 'chat-ask__group' } });
+    for (const option of options) {
+      group.append(el('sp-radio', { attrs: { value: option }, text: option }));
+    }
+    group.addEventListener('change', (event) => {
+      const selected = (event.target as { selected?: unknown }).selected;
+      draft.selections = typeof selected === 'string' && selected.length > 0 ? [selected] : [];
+      applyPresentation();
+    });
+    return group;
+  }
+
+  function buildCheckboxList(options: readonly string[]): HTMLElement {
+    const list = el('div', { attrs: { class: 'chat-ask__checkboxes' } });
+    for (const option of options) {
+      const checkbox = el('sp-checkbox', { attrs: { class: 'chat-ask__checkbox' }, text: option });
+      checkbox.addEventListener('change', () => {
+        const checked = (checkbox as { checked?: unknown }).checked === true;
+        const next = new Set(draft.selections);
+        if (checked) next.add(option);
+        else next.delete(option);
+        draft.selections = [...next];
+        applyPresentation();
+      });
+      list.append(checkbox);
+    }
+    return list;
+  }
+
+  function buildSinglePicker(options: readonly string[]): HTMLElement {
+    const picker = el('sp-picker', {
+      // No visible `label` attribute: it renders as a field label, and the
+      // question is already shown above. `aria-label` keeps it accessible.
+      attrs: { class: 'chat-ask__picker', 'aria-label': 'Choose an option' },
+    });
+    for (const option of options) {
+      picker.append(el('sp-menu-item', { attrs: { value: option }, text: option }));
+    }
+    // Default to the current selection (the first option), so the picker shows a
+    // value rather than its placeholder. An attribute, not a property: a
+    // property set before the element upgrades would be lost, while the
+    // attribute is read on upgrade.
+    const initial = draft.selections[0] ?? options[0];
+    if (initial !== undefined) picker.setAttribute('value', initial);
+    picker.addEventListener('change', () => {
+      const value = (picker as { value?: unknown }).value;
+      draft.selections = typeof value === 'string' && value.length > 0 ? [value] : [];
+      applyPresentation();
+    });
+    return picker;
+  }
+
+  /**
+   * The >5 multiple-choice dropdown. `sp-picker` is single-select in this
+   * Spectrum version, so this composes an action button that opens an
+   * `sp-menu selects="multiple"` in an overlay - the standard Spectrum
+   * multi-select pattern - and shows the selected labels on the button.
+   */
+  function buildMultiDropdown(options: readonly string[]): HTMLElement {
+    const label = el('span', { attrs: { class: 'chat-ask__multi-label' } });
+    const menu = el('sp-menu', { attrs: { class: 'chat-ask__menu', selects: 'multiple' } });
+    for (const option of options) {
+      menu.append(el('sp-menu-item', { attrs: { value: option }, text: option }));
+    }
+    const updateLabel = (): void => {
+      label.textContent =
+        draft.selections.length === 0 ? 'Choose options' : draft.selections.join(', ');
+    };
+    menu.addEventListener('change', () => {
+      const selected = (menu as { selected?: unknown }).selected;
+      draft.selections = Array.isArray(selected)
+        ? selected.filter((value): value is string => typeof value === 'string')
+        : [];
+      updateLabel();
+      applyPresentation();
+    });
+    // Default to the current selection (the first option). `selected` is an
+    // array with no attribute, so it is applied once `renderAskPanel` has
+    // connected the menu (the element must be upgraded for the setter to work).
+    const initial = [...draft.selections];
+    queueMicrotask(() => {
+      (menu as { selected?: string[] }).selected = initial;
+    });
+
+    const popover = el('sp-popover', { attrs: { class: 'chat-ask__popover' } });
+    popover.append(menu);
+    const overlay = el('sp-overlay', {
+      attrs: { type: 'manual', placement: 'bottom-start' },
+    }) as HTMLElement & { triggerElement?: HTMLElement; open?: boolean };
+    overlay.append(popover);
+
+    const button = el('sp-action-button', {
+      attrs: { class: 'chat-ask__multi-button' },
+      children: [el('sp-icon-chevron-down', { attrs: { slot: 'icon', size: 's' } }), label],
+    });
+    let anchored = false;
+    button.addEventListener('click', () => {
+      if (typeof customElements === 'undefined' || customElements.get('sp-overlay') === undefined) {
+        return;
+      }
+      if (!anchored) {
+        (element.closest('sp-theme') ?? document.body).append(overlay);
+        overlay.triggerElement = button;
+        anchored = true;
+      }
+      updateLabel();
+      overlay.open = overlay.open !== true;
+    });
+    updateLabel();
+    multiOverlay = overlay;
+    return el('div', { attrs: { class: 'chat-ask__multi' }, children: [button] });
+  }
+
+  /** Removes the multi-select dropdown's portal overlay, if one is attached. */
+  function disposeMultiOverlay(): void {
+    const overlay = multiOverlay;
+    multiOverlay = undefined;
+    if (overlay === undefined) return;
+    overlay.open = false;
+    overlay.remove();
+  }
+
+  /** Paints the current question and its controls into `askPanel`. */
+  function renderAskPanel(): void {
+    // A rebuild replaces the option controls; drop any portal overlay the
+    // previous multi-select dropdown attached to the theme.
+    disposeMultiOverlay();
+    const request = inputRequest;
+    if (request === undefined) {
+      askPanel.replaceChildren();
+      askPanel.hidden = true;
+      return;
+    }
+    const freeActive = draft.freeInputActive || request.options === undefined;
+    const children: HTMLElement[] = [
+      el('p', { attrs: { class: 'chat-ask__question' }, text: request.question }),
+    ];
+    if (!freeActive && request.options !== undefined) {
+      children.push(buildOptionControls(request.options));
+    }
+    if (request.freeInput && !freeActive) {
+      const link = el('button', {
+        attrs: { type: 'button', class: 'chat-ask__free' },
+        text: 'Type your own answer',
+      });
+      link.addEventListener('click', () => {
+        draft.freeInputActive = true;
+        renderAskPanel();
+        applyPresentation();
+        field.focus();
+      });
+      children.push(link);
+    }
+    askPanel.replaceChildren(...children);
+    askPanel.hidden = false;
+  }
+
+  /** Leaves the interactive-question UI, restoring the ordinary composer. */
+  function exitInputMode(): void {
+    disposeMultiOverlay();
+    inputRequest = undefined;
+    draft.selections = [];
+    draft.freeform = '';
+    draft.freeInputActive = false;
+    askPanel.replaceChildren();
+    askPanel.hidden = true;
+    field.value = '';
+    field.style.display = '';
+    applyPresentation();
+  }
+
   function applyPresentation(): void {
+    // Interactive-question mode overrides the Send/Stop derivation entirely:
+    // the turn is in flight (so the session state says "stop"), but Send must
+    // become "submit this answer" and Stop must stay available to cancel.
+    if (inputRequest !== undefined) {
+      const freeActive = draft.freeInputActive || inputRequest.options === undefined;
+      field.style.display = freeActive ? '' : 'none';
+      askPanel.style.display = '';
+      sendButton.style.display = '';
+      stopButton.style.display = '';
+      sendButton.setAttribute('aria-label', 'Submit answer');
+      const complete = isAskUserAnswerComplete(inputRequest, askDraftView(draft));
+      if (complete) sendButton.removeAttribute('disabled');
+      else sendButton.setAttribute('disabled', '');
+      sendButton.classList.toggle(SEND_ACCENT_CLASS, complete);
+      return;
+    }
+    field.style.display = '';
+    askPanel.style.display = 'none';
+    sendButton.setAttribute('aria-label', 'Send');
+
     const inFlight = current.kind === 'stop';
     sendButton.style.display = inFlight ? 'none' : '';
     stopButton.style.display = inFlight ? '' : 'none';
@@ -357,8 +624,27 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
   function trySubmit(): void {
     if (submitting) return;
-    if (current.kind !== 'send-enabled') return;
     const prompt = readValue().trim();
+
+    // Dev-only local commands are consumed before anything is sent. The pane
+    // supplies `onDevCommand` only in an unpackaged build, so a packaged
+    // composer never treats any input as a command.
+    if (callbacks.onDevCommand?.(prompt) === true) {
+      field.value = '';
+      autosize();
+      return;
+    }
+
+    // Interactive-question mode: Send submits the answer instead of a prompt.
+    if (inputRequest !== undefined) {
+      if (!isAskUserAnswerComplete(inputRequest, askDraftView(draft))) return;
+      const answer = buildAskUserAnswer(inputRequest, askDraftView(draft));
+      exitInputMode();
+      callbacks.onAnswer?.(answer);
+      return;
+    }
+
+    if (current.kind !== 'send-enabled') return;
     if (prompt === '') return;
 
     closeSkillMenu();
@@ -390,6 +676,14 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   }
 
   field.addEventListener('input', () => {
+    // While a question is on screen the field is the free-input answer (only
+    // shown for the free-input variant); history and the `/` autocomplete do
+    // not apply.
+    if (inputRequest !== undefined) {
+      draft.freeform = readValue();
+      applyPresentation();
+      return;
+    }
     // A user edit (programmatic recall does not fire `input`) abandons any walk
     // through history: the text on screen is the new draft, and the next Up
     // starts again from the newest prompt.
@@ -409,14 +703,17 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     const isComposing = composing || keyEvent.isComposing;
     // The open skill popup claims the arrow keys (to move its highlight) and
     // Escape/Tab before history recall or submission see them. Enter is left
-    // alone, so it always submits - see `handleSkillMenuKey`.
-    if (!isComposing && handleSkillMenuKey(keyEvent)) {
-      keyEvent.preventDefault();
-      return;
-    }
-    if (!isComposing && recallHistory(keyEvent)) {
-      keyEvent.preventDefault();
-      return;
+    // alone, so it always submits - see `handleSkillMenuKey`. Neither the popup
+    // nor history recall exists while a question is on screen.
+    if (inputRequest === undefined) {
+      if (!isComposing && handleSkillMenuKey(keyEvent)) {
+        keyEvent.preventDefault();
+        return;
+      }
+      if (!isComposing && recallHistory(keyEvent)) {
+        keyEvent.preventDefault();
+        return;
+      }
     }
     if (
       !shouldSubmitOnEnter({
@@ -452,9 +749,12 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   const skillAnchor = el('span', {
     attrs: { class: 'chat-composer__skill-anchor', 'aria-hidden': 'true' },
   });
+  // The interactive-question panel, hidden until `setInputRequest` shows a
+  // question. Sits above the field so a free-input question reads
+  // "question, then field".
   const frame = el('div', {
     attrs: { class: 'chat-composer__frame' },
-    children: [skillAnchor, field, actions],
+    children: [skillAnchor, askPanel, field, actions],
   });
   const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame] });
 
@@ -495,7 +795,34 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       skills = next;
       refreshSkillSuggestions();
     },
+    setInputRequest(request) {
+      if (request === undefined) {
+        if (inputRequest === undefined) return;
+        exitInputMode();
+        return;
+      }
+      closeSkillMenu();
+      inputRequest = request;
+      draft.freeform = '';
+      draft.freeInputActive = request.options === undefined;
+      // The dropdown variants (>5 options) default to the first option, so the
+      // control shows a value instead of a placeholder and Submit is enabled
+      // from the start. The radio/checkbox lists stay unselected (they have no
+      // placeholder to avoid).
+      const dropdownDefault =
+        !draft.freeInputActive &&
+        request.options !== undefined &&
+        request.options.length > ASK_USER_DROPDOWN_THRESHOLD
+          ? request.options[0]
+          : undefined;
+      draft.selections = dropdownDefault === undefined ? [] : [dropdownDefault];
+      field.value = '';
+      renderAskPanel();
+      applyPresentation();
+      if (draft.freeInputActive) field.focus();
+    },
     dispose() {
+      disposeMultiOverlay();
       resizeObserver?.disconnect();
       popover?.dispose();
     },
