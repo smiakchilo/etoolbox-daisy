@@ -124,19 +124,17 @@ function describeOpenRouterFailure(error: unknown): string {
   switch (status) {
     case 401:
     case 403:
-      return 'Request rejected';
+      return 'Try another model';
     case 402:
       return 'Request refused for lack of credits or quota';
     case 404:
-      return 'Model is not available';
+      return 'Model not available';
     case 408:
       return 'Request timed out';
     case 429:
       return 'Too many requests for this session';
     default:
-      return typeof status === 'number' && status >= 500
-        ? 'Server error'
-        : 'Request failed';
+      return typeof status === 'number' && status >= 500 ? 'Server error' : 'Request failed';
   }
 }
 

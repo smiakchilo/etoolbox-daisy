@@ -598,7 +598,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   /** Starts a genuinely empty conversation under a fresh id. */
   async function startFreshConversation(): Promise<void> {
     const id = newChatId(() => crypto.randomUUID());
-    chatId = id;
+    adoptChatId(id);
     conversationHasMessage = false;
     stopRequested = false;
     resetInputMode();
@@ -658,7 +658,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           repaintTranscript();
         }
         pendingStartup = undefined;
-        chatId = status.activeChatId;
+        adoptChatId(status.activeChatId);
       } else if (startupResumeInFlight) {
         // A concurrent status poll (or push) is already resolving and resuming
         // the startup conversation. Do not re-enter: it would open a second
@@ -675,7 +675,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           // session is resumed now, and only now does the pane own the chat.
           paintStartupJournal(startup);
           pendingStartup = undefined;
-          chatId = startup.chatId;
+          adoptChatId(startup.chatId);
           latestSdkSessionId = startup.sdkSessionId;
           const opened = await openConversation(startup.chatId, startup.sdkSessionId);
           if (opened.ok) {
@@ -776,6 +776,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       statusBanner.showError(result.error.message);
       return { ok: false };
     }
+    // A new prompt supersedes any error the previous turn left behind - it
+    // described an attempt the user has moved on from. If this turn also fails,
+    // its own error event takes the row straight back.
+    statusBanner.clearError();
     transcriptStore.applyUserPrompt(result.turnId, prompt);
     refreshEmptyState();
     // The chat now has at least one message, so it is worth restoring next
@@ -853,7 +857,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // is no transcript or context for this to clean up.
     if (chatId === undefined) return;
     const id = newChatId(() => crypto.randomUUID());
-    chatId = id;
+    adoptChatId(id);
     conversationHasMessage = false;
     stopRequested = false;
     resetInputMode();
@@ -873,6 +877,21 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const statusBanner: StatusBanner = createStatusBanner({
     surfaceClassName: CHAT_STATUS_BANNER_SURFACE_CLASS,
   });
+
+  /**
+   * Points the pane at a conversation. A *changed* id makes any error row that
+   * belonged to the previous conversation stale, so it is discarded here - the
+   * one choke point every open path goes through (a fresh chat, a startup
+   * resume, adopting a chat main already owns, a new session). A same-id
+   * re-open - the runtime-recycle recovery in `applyStatus`, and a model or
+   * effort change that recycles the runtime - deliberately leaves the error
+   * alone: the conversation the user was reading has not changed.
+   */
+  function adoptChatId(id: ChatId): void {
+    if (chatId !== id) statusBanner.clearError();
+    chatId = id;
+  }
+
   const composer = createComposer({ onSend, onStop, onAnswer, onDevCommand });
 
   // The pane footer, sitting directly beneath the composer: on the left, a

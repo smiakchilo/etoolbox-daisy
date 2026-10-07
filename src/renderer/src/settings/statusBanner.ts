@@ -19,6 +19,10 @@
  * - `showStatus` is transient (auto-clears) and never displaces an error or
  *   a prompt - the actionable thing stays on screen.
  * - `showError` is sticky and dismissible; it never displaces a prompt.
+ *   `clearError` drops only the error row (restoring the floor beneath it),
+ *   which is how the chat pane discards an error the user has moved on from -
+ *   a new prompt, a new session, or a different conversation - without
+ *   touching a prompt or the floor.
  * - `showPrompt` is sticky, dismissible, and replaces anything.
  * - `setStanding` is the persistent floor: shown only while no `show*`
  *   presentation is active, and restored when one clears. The chat pane
@@ -88,6 +92,15 @@ export interface StatusBanner extends StatusBannerSink {
   readonly element: HTMLElement;
   /** True while a sticky two-click/action prompt row is showing. */
   isPromptShowing(): boolean;
+  /**
+   * Drops a showing error row and falls back to whatever is beneath it (the
+   * standing floor, or nothing). A no-op when the active presentation is not an
+   * error, so a caller can assert "no stale error" without disturbing a prompt
+   * or the floor. Unlike {@link clear}, it leaves the standing content and its
+   * dismissal state intact - the chat pane uses it to discard an error the user
+   * has moved on from (a new prompt, a new session, a different conversation).
+   */
+  clearError(): void;
   /**
    * Sets the banner's persistent, lowest-priority content - the row shown
    * whenever no `showStatus`/`showError`/`showPrompt` presentation is active.
@@ -324,6 +337,13 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     },
     isPromptShowing(): boolean {
       return slot === 'prompt';
+    },
+    clearError(): void {
+      // Only an error row is dropped; a prompt outranks an error, so `slot`
+      // being `'error'` already rules out a live prompt, and the standing floor
+      // is untouched (dismissSlot falls back to it, respecting `standingDismissed`).
+      if (slot !== 'error') return;
+      dismissSlot();
     },
     showStatus(message: string): void {
       if (!present('status', [buildBannerCopy([message])], `status:${message}`)) return;

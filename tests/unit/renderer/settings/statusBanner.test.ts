@@ -22,7 +22,9 @@ import {
  *   kinds replace equal kinds.
  * - `showStatus` is transient (auto-clears after `STATUS_AUTO_CLEAR_MS`),
  *   carries no close control, and never displaces an error or a prompt.
- * - `showError` is sticky and dismissible; it never displaces a prompt.
+ * - `showError` is sticky and dismissible; it never displaces a prompt, and
+ *   `clearError` drops only a showing error (restoring the floor beneath it)
+ *   while leaving a prompt, a status, or the floor's dismissal state alone.
  * - `showPrompt` is sticky, dismissible, replaces anything, and renders its
  *   one `sp-action-button` (the browser banner's action-button idiom, not an
  *   accent `sp-button`) which invokes `onActivate`.
@@ -419,6 +421,71 @@ describe('createStatusBanner standing floor', () => {
     expect(banner.element.textContent).toBe('Connecting to agent...');
     expect(banner.element.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
     expect(banner.element.querySelector('.banner-row__progress')).not.toBeNull();
+  });
+});
+
+describe('createStatusBanner clearError', () => {
+  it('drops a showing error and restores the standing floor', () => {
+    const banner = createStatusBanner();
+    banner.setStanding([document.createTextNode('Standing')]);
+    banner.showError('Stale failure');
+    expect(banner.element.textContent).toBe('Stale failure');
+
+    // The error is dropped and the floor returns - never a second row, and the
+    // floor keeps its close control.
+    banner.clearError();
+    expect(banner.element.textContent).toBe('Standing');
+    expect(banner.element.hasAttribute('dismissible')).toBe(true);
+  });
+
+  it('closes the row when there is no floor beneath the error', () => {
+    vi.useFakeTimers();
+    try {
+      const banner = createStatusBanner();
+      banner.showError('Stale failure');
+      banner.clearError();
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+      expect(banner.element.textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never displaces a prompt or a status', () => {
+    const banner = createStatusBanner();
+    const action: StatusBannerAction = { label: 'Apply', onActivate: () => undefined };
+    banner.showPrompt('Confirm?', action);
+    banner.clearError();
+    expect(banner.element.textContent).toContain('Confirm?');
+    expect(banner.isPromptShowing()).toBe(true);
+
+    banner.clear();
+    banner.showStatus('Saving\u2026');
+    banner.clearError();
+    expect(banner.element.textContent).toBe('Saving\u2026');
+  });
+
+  it('does not resurrect a floor the user dismissed', () => {
+    vi.useFakeTimers();
+    try {
+      const banner = createStatusBanner();
+      banner.setStanding([document.createTextNode('Standing')]);
+      dismiss(banner);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+
+      // A transient error arrives on top and is then cleared: the acknowledged
+      // floor stays waved away rather than springing back.
+      banner.showError('Stale failure');
+      banner.clearError();
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+      expect(banner.element.textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

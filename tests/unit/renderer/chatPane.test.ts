@@ -371,6 +371,80 @@ describe('createChatPane status push', () => {
     pane.dispose();
   });
 
+  it("a new prompt discards the previous turn's error banner", async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const chatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+    pushEvent({
+      type: 'error',
+      chatId,
+      sequence: 0,
+      turnId: 'turn-1',
+      error: {
+        code: 'AGENT_UNAVAILABLE',
+        message: 'Request rejected. Try another model',
+        requestId: 'req-1',
+        retryable: true,
+        requiredAction: 'sign_in_to_agent',
+      },
+    } as AgentEvent);
+    // The adapter's own recovery: the turn ended, the session is idle again.
+    pushEvent({ type: 'session.state.changed', chatId, sequence: 1, state: 'idle' });
+    expect(agentBanner(pane)?.textContent).toBe('Request rejected. Try another model');
+    expect(sendButton(pane)?.hasAttribute('disabled')).toBe(false);
+
+    // The user retries - another model chosen - and the send is accepted.
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'try again';
+    sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    await waitForUserMessage(pane);
+
+    // The error described the superseded attempt, so it is gone.
+    await waitForBannerClosed(pane);
+    expect(agentBanner(pane)?.hasAttribute('open')).toBe(false);
+
+    pane.dispose();
+  });
+
+  it('New session discards a previous error banner', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const chatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+    pushEvent({
+      type: 'error',
+      chatId,
+      sequence: 0,
+      turnId: 'turn-1',
+      error: {
+        code: 'AGENT_UNAVAILABLE',
+        message: 'Request rejected. Try another model',
+        requestId: 'req-1',
+        retryable: true,
+        requiredAction: 'sign_in_to_agent',
+      },
+    } as AgentEvent);
+    expect(agentBanner(pane)?.textContent).toBe('Request rejected. Try another model');
+
+    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    // A brand-new conversation cannot be carrying the old one's error.
+    await waitForBannerClosed(pane);
+    expect(agentBanner(pane)?.hasAttribute('open')).toBe(false);
+
+    pane.dispose();
+  });
+
   it("routes the composer's connecting state to the banner as a loading row", () => {
     const pane = createChatPane({ onOpenSettings: vi.fn() });
 
