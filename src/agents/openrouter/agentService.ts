@@ -124,19 +124,19 @@ function describeOpenRouterFailure(error: unknown): string {
   switch (status) {
     case 401:
     case 403:
-      return 'OpenRouter rejected the API key. Check the token in Settings';
+      return 'Request rejected';
     case 402:
-      return 'OpenRouter refused the request for lack of credits or quota';
+      return 'Request refused for lack of credits or quota';
     case 404:
-      return 'The selected OpenRouter model is not available to this key. Choose another model in Settings';
+      return 'Model is not available';
     case 408:
-      return 'OpenRouter timed out the request. Try again';
+      return 'Request timed out';
     case 429:
-      return 'OpenRouter is rate-limiting this key. Wait a moment and try again';
+      return 'Too many requests for this session';
     default:
       return typeof status === 'number' && status >= 500
-        ? 'OpenRouter reported a server error. Try again in a moment'
-        : 'The OpenRouter request failed';
+        ? 'Server error'
+        : 'Request failed';
   }
 }
 
