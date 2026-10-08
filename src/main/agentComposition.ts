@@ -428,6 +428,58 @@ export function startAppRuntime(deps: {
 }
 
 // ---------------------------------------------------------------------------
+// Keeping an agent SDK's import cost off the window's startup path
+// ---------------------------------------------------------------------------
+
+/**
+ * The two `WebContents` facts {@link runAfterFrameLoad} needs, kept as plain
+ * callbacks so the decision it encodes stays Electron-free and unit-testable -
+ * the same injected-facts style as `RuntimePathsEnv` (in the Copilot agent
+ * folder) rather than importing Electron here.
+ */
+export interface FrameLoadSignal {
+  /** `WebContents.isLoadingMainFrame()`. */
+  readonly isLoadingMainFrame: () => boolean;
+  /** `WebContents.once('did-finish-load', run)`. */
+  readonly onceLoaded: (run: () => void) => void;
+}
+
+/**
+ * Runs `start` once the frame has finished loading its initial document, or on
+ * the next tick when it already has. `start` is invoked at most once.
+ *
+ * This exists because building the agent registry imports each agent's
+ * `agent.ts`, which evaluates its SDK's whole module graph *synchronously on
+ * the main thread*. That is not cheap for a large generated SDK (measured at
+ * ~740 ms for `@openrouter/agent` - see docs/verification.md): run while the
+ * renderer is still fetching its first resources, it starves the `app://`
+ * protocol handler and the window stays blank for the block's whole duration.
+ * Deferring to `did-finish-load` lets the shell paint first. Nothing visible
+ * before then depends on an agent, because the chat surface answers
+ * `serviceState: "starting"` until the service installs (see
+ * `createStartupGatedAgentChatController`).
+ *
+ * The caller is responsible for a backstop when the load event never arrives
+ * (a renderer failure); this helper only encodes *when*, never *whether*.
+ */
+export function runAfterFrameLoad(signal: FrameLoadSignal, start: () => void): void {
+  let started = false;
+  const run = (): void => {
+    if (started) return;
+    started = true;
+    start();
+  };
+  if (signal.isLoadingMainFrame()) {
+    signal.onceLoaded(run);
+  } else {
+    // Already loaded: still defer past the current tick so anything already
+    // queued on the event loop (an in-flight IPC reply the shell is awaiting)
+    // is serviced before the agent import blocks the thread.
+    setImmediate(run);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Model / reasoning-effort preference cache (step 09)
 // ---------------------------------------------------------------------------
 

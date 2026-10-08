@@ -20,6 +20,7 @@ import {
   installAgentService,
   isModelSelectionLocked,
   resolveBundledSkillsDirectory,
+  runAfterFrameLoad,
   shouldUseFakeAgentService,
   startAppRuntime,
   wireNavigationEpochCancellation,
@@ -622,122 +623,160 @@ if (!gotSingleInstanceLock) {
     // Agents are discovered from `src/agents/*/agent.ts`; one that fails to load
     // or construct is logged and left out, never fatal. The fake path builds no
     // real module at all (and so never imports an SDK).
-    const agentRegistry = useFakeAgentService
-      ? { modules: [], failures: [] }
-      : await buildAgentRegistry({
-          loaders: discoverAgentLoaders(),
-          definitions: agentDefinitions,
-          disabledSources: agentCatalog.disabledSources,
-          onFailure: (failure) => {
-            // The logger has no free-text field by design, so the reason goes to stderr.
-            console.error(`Agent ${failure.source} was not registered: ${failure.reason}`);
-            logger.warn('AGENT_REGISTRATION_FAILED', { count: 1 });
-          },
-        });
-    for (const failure of agentCatalog.failures) {
-      console.error(`Agent ${failure.source} was not registered: ${failure.reason}`);
-      logger.warn('AGENT_REGISTRATION_FAILED', { count: 1 });
-    }
-    if (useFakeAgentService) {
-      logger.warn('AGENT_SERVICE_FAKE_SELECTED');
-    }
+    //
+    // Building the registry is deliberately NOT awaited on the startup path:
+    // importing an agent's `agent.ts` evaluates its SDK's whole module graph
+    // synchronously on this (main) thread - measured at ~740 ms for
+    // `@openrouter/agent` (see docs/verification.md). Run here, that block
+    // starves the `app://` protocol handler and leaves the window blank for its
+    // whole duration. `startAgentRuntime` therefore runs only once the shell
+    // has painted (see `runAfterFrameLoad` below); everything visible before
+    // then is agent-independent - the chat surface answers `serviceState:
+    // "starting"` (see `createStartupGatedAgentChatController`) and the
+    // Settings agent list comes from the `meta.ts` glob, not the hub.
+    const startAgentRuntime = async (): Promise<void> => {
+      const agentRegistry = useFakeAgentService
+        ? { modules: [], failures: [] }
+        : await buildAgentRegistry({
+            loaders: discoverAgentLoaders(),
+            definitions: agentDefinitions,
+            disabledSources: agentCatalog.disabledSources,
+            onFailure: (failure) => {
+              // The logger has no free-text field by design, so the reason goes to stderr.
+              console.error(`Agent ${failure.source} was not registered: ${failure.reason}`);
+              logger.warn('AGENT_REGISTRATION_FAILED', { count: 1 });
+            },
+          });
+      for (const failure of agentCatalog.failures) {
+        console.error(`Agent ${failure.source} was not registered: ${failure.reason}`);
+        logger.warn('AGENT_REGISTRATION_FAILED', { count: 1 });
+      }
+      if (useFakeAgentService) {
+        logger.warn('AGENT_SERVICE_FAKE_SELECTED');
+      }
 
-    // The one owner of every agent's runtime: startup, recycle on a proxy or
-    // active-agent change, sign-in and the model catalogue. It knows agents only
-    // through the `AgentRuntime` contract; the SDK-specific code stays in
-    // `src/agents/<name>/`.
-    agentHub = createAgentHub({
-      definitions: agentDefinitions,
-      modules: agentRegistry.modules,
-      useFake: useFakeAgentService,
-      host: {
-        isPackaged: app.isPackaged,
-        resolveConnection: (agentId, settings) =>
-          resolveConnection(agentId, settings ?? storedSettings, secretStore),
-        // The one proxy-to-transport translation in the app: an in-process
-        // agent calls this through `AgentHost.createProxyFetch` instead of
-        // importing a proxy library into its own folder.
-        createProxyFetch: (connection) => buildProxyFetch(connection.proxy),
-        toolkit: () => ({
-          allowlistEntries: toolRegistry.allowlistEntries,
-          instructions: toolRegistry.instructions,
-          toolHandlers: toolRegistry.toolHandlers,
-          toolDescriptors: toolRegistry.descriptors,
-          bundledSkillDirectories: [bundledSkillsDirectory],
-        }),
-        // Step 09: read from the cache on every use, so a model chosen in
-        // Settings reaches the next prompt without a restart. Deliberately
-        // synchronous - `sendPrompt` must not wait on a disk read.
-        modelPreferences: () => modelPreferenceCache.current(),
-      },
-      installService: (service) =>
-        installAgentService(
-          {
-            logger,
-            idGenerator: randomUUID,
-            currentAemServerContext: createCurrentAemServerContext(() =>
-              browserController.activeServer(),
-            ),
-            navigationEpoch: () => browserController.navigationEpoch.current(),
-            currentPageContext: createCurrentPageContext(
-              () => browserController.activeServer(),
-              () => browserController.currentDocumentUrl(),
-              environmentFacts,
-            ),
-            chatJournal,
-            // Stop / chat switch / close / context change all cancel the bridge's
-            // in-flight and queued AEM requests, so a stopped tool call releases
-            // the concurrency-1 slot immediately instead of running to its 90 s
-            // deadline.
-            cancelAemRequests: () => aemBridgeBroker.cancelAll(),
-            // A prompt that begins with a known `/skillname` becomes an explicit
-            // directive to load that skill; the user's own text is kept for the
-            // transcript and the journal by the controller.
-            resolveSkillPrompt: (prompt) =>
-              resolveSkillPrompt(
-                prompt,
-                skillCatalog.current().map((skill) => skill.name),
+      // The one owner of every agent's runtime: startup, recycle on a proxy or
+      // active-agent change, sign-in and the model catalogue. It knows agents only
+      // through the `AgentRuntime` contract; the SDK-specific code stays in
+      // `src/agents/<name>/`.
+      agentHub = createAgentHub({
+        definitions: agentDefinitions,
+        modules: agentRegistry.modules,
+        useFake: useFakeAgentService,
+        host: {
+          isPackaged: app.isPackaged,
+          resolveConnection: (agentId, settings) =>
+            resolveConnection(agentId, settings ?? storedSettings, secretStore),
+          // The one proxy-to-transport translation in the app: an in-process
+          // agent calls this through `AgentHost.createProxyFetch` instead of
+          // importing a proxy library into its own folder.
+          createProxyFetch: (connection) => buildProxyFetch(connection.proxy),
+          toolkit: () => ({
+            allowlistEntries: toolRegistry.allowlistEntries,
+            instructions: toolRegistry.instructions,
+            toolHandlers: toolRegistry.toolHandlers,
+            toolDescriptors: toolRegistry.descriptors,
+            bundledSkillDirectories: [bundledSkillsDirectory],
+          }),
+          // Step 09: read from the cache on every use, so a model chosen in
+          // Settings reaches the next prompt without a restart. Deliberately
+          // synchronous - `sendPrompt` must not wait on a disk read.
+          modelPreferences: () => modelPreferenceCache.current(),
+        },
+        installService: (service) =>
+          installAgentService(
+            {
+              logger,
+              idGenerator: randomUUID,
+              currentAemServerContext: createCurrentAemServerContext(() =>
+                browserController.activeServer(),
               ),
-            gatedController: agentChatController,
-          },
-          service,
-        ),
-      markUnavailable: () => agentChatController.markUnavailable(),
-      onRuntimeFailure: (agentId, error) => {
-        console.error(
-          `Agent ${agentId} runtime failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        logger.error('AGENT_UNAVAILABLE');
-      },
-    });
-    const hub = agentHub;
+              navigationEpoch: () => browserController.navigationEpoch.current(),
+              currentPageContext: createCurrentPageContext(
+                () => browserController.activeServer(),
+                () => browserController.currentDocumentUrl(),
+                environmentFacts,
+              ),
+              chatJournal,
+              // Stop / chat switch / close / context change all cancel the bridge's
+              // in-flight and queued AEM requests, so a stopped tool call releases
+              // the concurrency-1 slot immediately instead of running to its 90 s
+              // deadline.
+              cancelAemRequests: () => aemBridgeBroker.cancelAll(),
+              // A prompt that begins with a known `/skillname` becomes an explicit
+              // directive to load that skill; the user's own text is kept for the
+              // transcript and the journal by the controller.
+              resolveSkillPrompt: (prompt) =>
+                resolveSkillPrompt(
+                  prompt,
+                  skillCatalog.current().map((skill) => skill.name),
+                ),
+              gatedController: agentChatController,
+            },
+            service,
+          ),
+        markUnavailable: () => agentChatController.markUnavailable(),
+        onRuntimeFailure: (agentId, error) => {
+          console.error(
+            `Agent ${agentId} runtime failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          logger.error('AGENT_UNAVAILABLE');
+        },
+      });
+      const hub = agentHub;
 
-    // Everything above is already fully wired and interactive - nothing the
-    // user can see or click depends on an agent. Only now does startup touch
-    // one, and never by blocking anything else on it: `hub.start` runs in the
-    // background - `startAppRuntime` never awaits it. A startup failure there
-    // (runtime missing, corrupt install, `initialize()` rejecting, ...) is
-    // logged loudly instead of leaving a silently half-wired app or an
-    // unhandled rejection; see `startAppRuntime`'s doc comment in
-    // `agentComposition.ts`.
-    startAppRuntime({
-      registerNonAgentHandlers: () => {
-        // No non-agent handler was removed with the Settings window's
-        // departure: every surface the separate window used (`settings:*`,
-        // `agent:*`) is still served from the shell, so nothing needs
-        // registering here beyond the always-present IPC sets above.
-        return;
+      // Only now does startup touch an agent, and never by blocking on it:
+      // `hub.start` runs in the background - `startAppRuntime` never awaits it.
+      // A startup failure there (runtime missing, corrupt install,
+      // `initialize()` rejecting, ...) is logged loudly instead of leaving a
+      // silently half-wired app or an unhandled rejection; see
+      // `startAppRuntime`'s doc comment in `agentComposition.ts`.
+      startAppRuntime({
+        registerNonAgentHandlers: () => {
+          // No non-agent handler was removed with the Settings window's
+          // departure: every surface the separate window used (`settings:*`,
+          // `agent:*`) is still served from the shell, so nothing needs
+          // registering here beyond the always-present IPC sets above.
+          return;
+        },
+        startAgentService: async () => hub.start(storedSettings),
+        // No free-text field exists on `Logger` by design (see its own module
+        // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary
+        // code for exactly this failure ("the agent runtime ... is
+        // unusable"), so the rejection reason itself is deliberately not
+        // forwarded anywhere near the log.
+        onAgentServiceStartupFailed: () => {
+          logger.error('AGENT_UNAVAILABLE');
+        },
+      });
+    };
+
+    // Runs `startAgentRuntime` at most once, and only once the shell has
+    // painted, so the agent import never delays the window itself (see
+    // `runAfterFrameLoad`'s own doc comment). Guarded on both
+    // `agentRuntimeStarted` and window destruction because two triggers can
+    // race it: the frame's load event and the backstop timer below.
+    let agentRuntimeStarted = false;
+    const startAgentRuntimeOnce = (): void => {
+      if (agentRuntimeStarted || mainWindow.isDestroyed()) return;
+      agentRuntimeStarted = true;
+      // `buildAgentRegistry`/`createAgentHub` do not throw by contract, but a
+      // failure here must still be visible rather than an unhandled rejection.
+      void startAgentRuntime().catch(() => logger.error('AGENT_UNAVAILABLE'));
+    };
+    runAfterFrameLoad(
+      {
+        isLoadingMainFrame: () => mainWindow.webContents.isLoadingMainFrame(),
+        onceLoaded: (run) => {
+          mainWindow.webContents.once('did-finish-load', run);
+        },
       },
-      startAgentService: async () => hub.start(storedSettings),
-      // No free-text field exists on `Logger` by design (see its own module
-      // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary
-      // code for exactly this failure ("the agent runtime ... is
-      // unusable"), so the rejection reason itself is deliberately not
-      // forwarded anywhere near the log.
-      onAgentServiceStartupFailed: () => {
-        logger.error('AGENT_UNAVAILABLE');
-      },
-    });
+      startAgentRuntimeOnce,
+    );
+    // Backstop: a load event that never arrives (an unusual renderer failure)
+    // must not strand the chat surface on "starting" forever. `unref` so the
+    // timer never keeps the process alive on its own.
+    setTimeout(startAgentRuntimeOnce, 10_000).unref();
   });
 
   app.on('window-all-closed', () => {

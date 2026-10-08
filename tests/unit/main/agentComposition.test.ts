@@ -13,6 +13,7 @@ import {
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
   resolveBundledSkillsDirectory,
+  runAfterFrameLoad,
   shouldUseFakeAgentService,
   startAppRuntime,
   wireNavigationEpochCancellation,
@@ -535,6 +536,70 @@ describe('startAppRuntime', () => {
     await Promise.resolve();
 
     expect(onAgentServiceStartupFailed).toHaveBeenCalledWith(failure);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runAfterFrameLoad - the deferral that keeps an agent SDK's synchronous
+// import cost off the window's startup path: the shell must paint (the frame
+// must finish loading) before the agent is built.
+// ---------------------------------------------------------------------------
+
+describe('runAfterFrameLoad', () => {
+  it('waits for the frame to finish loading when it is still loading', () => {
+    let loaded: (() => void) | undefined;
+    const start = vi.fn();
+    runAfterFrameLoad(
+      {
+        isLoadingMainFrame: () => true,
+        onceLoaded: (run) => {
+          loaded = run;
+        },
+      },
+      start,
+    );
+
+    // Not yet: the frame is still loading, so the agent must not be built.
+    expect(start).not.toHaveBeenCalled();
+    expect(loaded).toBeDefined();
+
+    loaded?.();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers to the next tick when the frame has already loaded', async () => {
+    const start = vi.fn();
+    runAfterFrameLoad({ isLoadingMainFrame: () => false, onceLoaded: vi.fn() }, start);
+
+    // Deferred, not synchronous: anything already queued on the event loop (an
+    // in-flight IPC reply the shell is awaiting) is serviced first.
+    expect(start).not.toHaveBeenCalled();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs start at most once even if the load event fires more than once', () => {
+    let loaded: (() => void) | undefined;
+    const start = vi.fn();
+    runAfterFrameLoad(
+      {
+        isLoadingMainFrame: () => true,
+        onceLoaded: (run) => {
+          loaded = run;
+        },
+      },
+      start,
+    );
+
+    loaded?.();
+    loaded?.();
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not register a load listener when the frame has already loaded', () => {
+    const onceLoaded = vi.fn();
+    runAfterFrameLoad({ isLoadingMainFrame: () => false, onceLoaded }, vi.fn());
+    expect(onceLoaded).not.toHaveBeenCalled();
   });
 });
 

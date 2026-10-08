@@ -182,6 +182,10 @@ src/agents/<name>/
   `catalog.ts` (eager `meta.ts`), `hub.ts` (one runtime per enabled agent,
   switching, auth routing), `connection.ts`, `fakeRuntime.ts` /
   `fakeAgentService.ts` (E2E fake). Renderer: `src/renderer/src/agents/agentCatalog.ts`.
+  The registry + hub are built **after the shell has painted** (`runAfterFrameLoad`,
+  `src/main/agentComposition.ts`), so an agent SDK's synchronous module-graph
+  evaluation never delays the window; the chat surface answers `starting` until
+  then.
 - A load failure, malformed module, id mismatch, duplicate id or a throwing
   runtime disables **only that agent** (`AGENT_UNAVAILABLE`); zero agents shows
   "No agent available" while AEM browsing keeps working.
@@ -508,7 +512,11 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2628 passed / 14 skipped** (the +3 since
+Current baseline: **`npm run test` → 2632 passed / 14 skipped** (the +4 since
+2628 is the agent-startup deferral — `runAfterFrameLoad` in
+`agentComposition.ts` keeps the agent SDK's ~740 ms synchronous import off the
+window's startup path; see `docs/verification.md` "The agent SDK is imported only
+after the shell has painted (2026-10-08)"; the +3 since
 2625 is the transcript stick-to-bottom intent fix — a layout change (a banner,
 the composer growing, a late image) no longer counts as the reader scrolling
 away, and a sent prompt always re-pins: the new `transcriptFollower.ts` with its
