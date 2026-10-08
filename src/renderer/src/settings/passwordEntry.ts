@@ -30,13 +30,21 @@ export interface PasswordControlOptions {
   /** Resolves the target at click time; `undefined` while a draft has no id yet. */
   readonly target: () => PasswordTarget | undefined;
   /** Called after a successful set/clear so the panel re-reads the snapshot. */
-  readonly onChanged: () => void;
+  readonly onChanged: (change: PasswordChange) => void;
   /**
    * What the stored secret is called in labels and messages. Defaults to
    * `"password"`; the Agents tab passes `"token"`.
    */
   readonly noun?: string;
 }
+
+/**
+ * Which of the control's two deliberate actions just completed. Callers that
+ * only want to re-read the snapshot can ignore it (a shorter callback is
+ * assignable); the Agents tab uses it to tell a gained credential - which may
+ * make the provider activatable - from a cleared one.
+ */
+export type PasswordChange = 'set' | 'clear';
 
 export interface PasswordControl {
   readonly element: HTMLElement;
@@ -88,7 +96,7 @@ export function createPasswordControl(
       .then((result) => {
         if (result.ok) {
           status.showStatus(`${nounLabel} saved`);
-          options.onChanged();
+          options.onChanged('set');
         } else {
           status.showError(result.error.message);
         }
@@ -111,7 +119,7 @@ export function createPasswordControl(
       .then((result) => {
         if (result.ok) {
           status.showStatus(`${nounLabel} cleared`);
-          options.onChanged();
+          options.onChanged('clear');
         } else {
           status.showError(result.error.message);
         }

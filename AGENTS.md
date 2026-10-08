@@ -521,7 +521,12 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2632 passed / 14 skipped** (the +4 since
+Current baseline: **`npm run test` → 2655 passed / 14 skipped** (the +5 since
+2650 is the bare-install auto-activation — a credential action activates the
+provider it just made eligible while no provider is active, so setting up the
+first agent no longer needs a separate "Set active" click; see
+`docs/verification.md` "The first provider a credential action makes eligible
+activates itself (2026-10-08)"; earlier, the +4 since
 2628 is the agent-startup deferral — `runAfterFrameLoad` in
 `agentComposition.ts` keeps the agent SDK's ~740 ms synchronous import off the
 window's startup path; see `docs/verification.md` "The agent SDK is imported only

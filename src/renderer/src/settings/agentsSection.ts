@@ -45,6 +45,13 @@ import type { SaveOutcome, StatusBannerSink } from './statusBanner';
  * control. Both action buttons share one class and width so they line up in a
  * column at the item's right edge (see `styles/settings.css`).
  *
+ * On a bare install nothing can serve, so after the user's first credential
+ * action - entering a token, or completing an interactive sign-in - the
+ * provider they just made eligible is activated without a second, separate
+ * "Set active" click. The rule is deliberately narrow: it fires only while no
+ * provider is active at all, and only for the provider the action was on, so
+ * it can never switch a working provider out from under the user.
+ *
  * The Set-active and Proxy mutations persist immediately (they change which
  * runtime exists / which proxy it is driven through). Model and effort persist
  * when the picker changes (no Save button), consistent with every other
@@ -115,6 +122,12 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   let presence: Readonly<Record<string, boolean>> = {};
   let modelSelection: ModelSelectionState | undefined;
   let pending: PendingModelSelection | undefined;
+  /**
+   * The provider a just-completed credential action was on, when the next
+   * refresh should consider activating it. See `armAutoActivation` /
+   * `maybeAutoActivate`.
+   */
+  let autoActivateAgentId: AgentId | undefined;
   /** The provider rows, kept alive across re-reads (see `ItemHandle`). */
   const itemHandles = new Map<AgentId, ItemHandle>();
   /** True once the user has touched a model/effort picker since the last read. */
@@ -145,6 +158,17 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     return current.model !== stored.model || current.reasoningEffort !== stored.reasoningEffort;
   }
 
+  /**
+   * Records that a credential action has just completed for `agentId`, so the
+   * next refresh can activate it when nothing is active. Called immediately
+   * before the panel reloads - the token save's `onChanged`, or just before a
+   * sign-in's own refresh - so the decision is made against the fresh snapshot
+   * the reload produces, not the pre-action one.
+   */
+  function armAutoActivation(agentId: AgentId): void {
+    autoActivateAgentId = agentId;
+  }
+
   function persistActive(agentId: AgentId): void {
     const definition = definitions.find((candidate) => candidate.id === agentId);
     if (definition === undefined || snapshot === undefined) {
@@ -170,6 +194,26 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       if (result.ok) options.onSettingsChanged();
       else void refresh();
     });
+  }
+
+  /**
+   * The activation half of the bare-install shortcut: once a credential action
+   * has completed and the panel has re-read the snapshot, activate the provider
+   * the action was on - but only while no provider is active, and only if the
+   * action actually left it able to serve. The write goes through
+   * `persistActive`, so its eligibility guard and its save reporting are the
+   * same as a manual "Set active"; a provider that was already effectively
+   * active is left alone (no redundant write).
+   */
+  function maybeAutoActivate(): void {
+    const agentId = autoActivateAgentId;
+    if (agentId === undefined || snapshot === undefined) return;
+    autoActivateAgentId = undefined;
+    if (activeAgentIdFrom(snapshot) !== undefined) return;
+    const definition = definitions.find((candidate) => candidate.id === agentId);
+    if (definition === undefined) return;
+    if (!isAgentEligible(definition, authInputFor(snapshot, agentId))) return;
+    persistActive(agentId);
   }
 
   function persistProxy(agentId: AgentId, proxyId: ProxyId | undefined): void {
@@ -232,10 +276,13 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
    */
   async function startSignIn(agentId: AgentId, button: HTMLElement): Promise<void> {
     button.setAttribute('disabled', '');
+    let succeeded = false;
     try {
       const outcome = await window.daisy.agent.login(agentId);
       if (outcome.status === 'failed') {
         options.status.showError(`Sign-in failed: ${outcome.message}`);
+      } else if (outcome.status === 'success') {
+        succeeded = true;
       }
     } catch (error) {
       options.status.showError(
@@ -243,6 +290,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       );
     } finally {
       button.removeAttribute('disabled');
+      // A successful sign-in is a credential action like a token save: when
+      // nothing is active, the provider the user just signed in should become
+      // active on the refresh below rather than needing a separate click.
+      if (succeeded) armAutoActivation(agentId);
       await refresh();
     }
   }
@@ -323,7 +374,12 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     const tokenControl = createPasswordControl(
       {
         target: () => ({ kind: 'agent', agentId: id }),
-        onChanged: () => options.onSettingsChanged(),
+        onChanged: (change) => {
+          // Only gaining a credential can make the provider eligible, so only a
+          // "set" arms the auto-activation. Either way the panel re-reads.
+          if (change === 'set') armAutoActivation(id);
+          options.onSettingsChanged();
+        },
         noun: 'API key (token)',
       },
       options.status,
@@ -617,6 +673,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     reportCatalogueFailure();
     pending = undefined;
     render();
+    maybeAutoActivate();
   }
 
   const element = el('section', {

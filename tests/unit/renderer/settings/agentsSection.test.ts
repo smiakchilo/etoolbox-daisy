@@ -82,6 +82,39 @@ function buildSection(definitions?: readonly AgentDefinition[]) {
   });
 }
 
+/**
+ * The token control for the provider row at `index` (in definitions order):
+ * its text field plus the two deliberate actions, so a test reads as the user's
+ * gesture rather than as a DOM query.
+ */
+function tokenControlAt(
+  section: ReturnType<typeof buildSection>,
+  index: number,
+): {
+  setToken(value: string): void;
+  clearToken(): void;
+} {
+  const control = section.element.querySelectorAll('.password-control')[index];
+  if (control === undefined) throw new Error(`no token control at index ${String(index)}`);
+  const field = control.querySelector<HTMLElement & { value: string }>('sp-textfield');
+  if (field === null) throw new Error('token control has no field');
+  const buttons = [...control.querySelectorAll('sp-action-button')];
+  const click = (label: string): void => {
+    buttons
+      .find((button) => button.textContent === label)
+      ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  };
+  return {
+    setToken(value: string): void {
+      field.value = value;
+      click('Set');
+    },
+    clearToken(): void {
+      click('Clear');
+    },
+  };
+}
+
 beforeEach(() => {
   getAuthStatus.mockReset();
   getAuthPresence.mockReset();
@@ -498,5 +531,100 @@ describe('createAgentsSection', () => {
     // not be told; the section still re-reads to reset the picker.
     expect(setModelPreferences).toHaveBeenCalledTimes(1);
     expect(onSettingsChanged).not.toHaveBeenCalled();
+  });
+
+  it('auto-activates the provider a token just made eligible when none is active', async () => {
+    // A bare install: no provider can serve. Entering a token for the second
+    // provider (OpenRouter) must not leave the user staring at "Set active".
+    const section = buildSection();
+    await section.refresh(snapshotWith({}));
+
+    tokenControlAt(section, 1).setToken('sk-or-secret');
+    await flush();
+
+    expect(setPassword).toHaveBeenCalledExactlyOnceWith(
+      { kind: 'agent', agentId: 'openrouter' },
+      'sk-or-secret',
+    );
+
+    // The panel reloads after the save; the fresh snapshot carries the token.
+    await section.refresh(snapshotWith({ openrouter: { active: false, hasToken: true } }));
+
+    expect(setAgentSettings).toHaveBeenCalledExactlyOnceWith({
+      agentId: 'openrouter',
+      changes: { active: true },
+    });
+  });
+
+  it('does not auto-activate a provider while another is already active', async () => {
+    getAuthStatus.mockResolvedValue({ apiVersion: 1, isAuthenticated: true, login: 'octocat' });
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    tokenControlAt(section, 1).setToken('sk-or-secret');
+    await flush();
+
+    await section.refresh(
+      snapshotWith({ copilot: { active: true }, openrouter: { active: false, hasToken: true } }),
+    );
+
+    expect(setAgentSettings).not.toHaveBeenCalled();
+  });
+
+  it('does not write the active flag when the configured provider resolves active anyway', async () => {
+    // The first provider is the configured one; once its token makes it
+    // eligible, effective-active resolution already selects it, so the shortcut
+    // must not add a second, redundant write (which would disturb the save
+    // banner for no reason).
+    const section = buildSection();
+    await section.refresh(snapshotWith({}));
+
+    tokenControlAt(section, 0).setToken('ghp_secret');
+    await flush();
+
+    await section.refresh(snapshotWith({ copilot: { active: false, hasToken: true } }));
+
+    expect(setAgentSettings).not.toHaveBeenCalled();
+  });
+
+  it('does not activate on a token clear', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ openrouter: { active: false, hasToken: true } }));
+
+    tokenControlAt(section, 1).clearToken();
+    await flush();
+
+    expect(clearPassword).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'openrouter' });
+
+    await section.refresh(snapshotWith({ openrouter: { active: false, hasToken: false } }));
+
+    expect(setAgentSettings).not.toHaveBeenCalled();
+  });
+
+  it('does not activate on a clear even when the provider stays eligible via a session', async () => {
+    // The guard that only a *set* arms the shortcut, proven where it matters:
+    // the configured provider is a token-only one (OpenRouter) that is signed
+    // out, while the interactive Copilot still has a detected local session and
+    // a token - eligible, but not active. Clearing Copilot's token must not
+    // activate it (a clear is not a credential action that makes a provider able
+    // to serve); without the `set`-only guard this case would activate Copilot.
+    getAuthPresence.mockImplementation((agentId: string) =>
+      Promise.resolve({ present: agentId === 'copilot' }),
+    );
+    const section = buildSection();
+    await section.refresh(
+      snapshotWith({ openrouter: { active: true }, copilot: { active: false, hasToken: true } }),
+    );
+
+    tokenControlAt(section, 0).clearToken();
+    await flush();
+
+    expect(clearPassword).toHaveBeenCalledExactlyOnceWith({ kind: 'agent', agentId: 'copilot' });
+
+    await section.refresh(
+      snapshotWith({ openrouter: { active: true }, copilot: { active: false, hasToken: false } }),
+    );
+
+    expect(setAgentSettings).not.toHaveBeenCalled();
   });
 });
