@@ -125,9 +125,24 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
 
     whenReady: () => inFlight,
 
-    getAuthStatus: (): Promise<AuthStatus> => Promise.resolve(authStatusFromToken(token)),
+    // Both auth projections read `token`, which is assigned only at the end of
+    // `install`. Awaiting the install chain first (exactly as
+    // `loadModelCatalog` does) keeps an auth read that races startup from
+    // answering a false "signed out": the Agents tab gates its Model/Effort
+    // pickers on the live status, so a false signed-out disabled them until
+    // the user touched another control and forced a second read. `inFlight`
+    // never rejects, and awaiting it starts nothing - unlike Copilot's
+    // `getAuthStatus`, which must start a child process, this only waits out an
+    // install the runtime is already performing.
+    getAuthStatus: async (): Promise<AuthStatus> => {
+      await inFlight;
+      return authStatusFromToken(token);
+    },
 
-    getAuthPresence: (): Promise<AuthPresence> => Promise.resolve(authPresenceFromToken(token)),
+    getAuthPresence: async (): Promise<AuthPresence> => {
+      await inFlight;
+      return authPresenceFromToken(token);
+    },
 
     loadModelCatalog: async (): Promise<ModelCatalogResult> => {
       await inFlight;

@@ -13,13 +13,19 @@ import {
  * them. No network, no SDK client construction beyond the stateless wrapper.
  */
 
-function buildHost(connection: AgentConnection): {
+function buildHost(
+  connection: AgentConnection,
+  options: {
+    /** Overrides the connection resolution so a test can hold `start` open. */
+    readonly resolveConnection?: () => Promise<AgentConnection>;
+  } = {},
+): {
   host: AgentHost;
   installed: AgentService[];
   resolveConnection: ReturnType<typeof vi.fn>;
 } {
   const installed: AgentService[] = [];
-  const resolveConnection = vi.fn(() => Promise.resolve(connection));
+  const resolveConnection = vi.fn(options.resolveConnection ?? (() => Promise.resolve(connection)));
   const host: AgentHost = {
     isPackaged: false,
     resolveConnection,
@@ -52,6 +58,53 @@ describe('createOpenRouterRuntime', () => {
     expect(installed).toHaveLength(1);
     await expect(runtime.getAuthStatus()).resolves.toMatchObject({ isAuthenticated: true });
     await expect(runtime.getAuthPresence?.()).resolves.toEqual({ present: true });
+  });
+
+  it('waits out an in-flight install before reporting auth, so a startup-racing read is not a false signed-out', async () => {
+    // Regression: the Agents tab disables its Model/Effort pickers on the live
+    // auth status. Reading it while the initial install was still running
+    // reported "signed out" (the token is assigned only at the end of
+    // `install`), leaving the pickers disabled until the user touched another
+    // control and forced a second read. Both projections must await the
+    // install chain first, exactly as `loadModelCatalog` does.
+    let release!: () => void;
+    const installGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host } = buildHost(
+      {},
+      {
+        resolveConnection: async () => {
+          await installGate;
+          return { accessToken: 'sk-or-v1-key' };
+        },
+      },
+    );
+    const runtime = createOpenRouterRuntime(host);
+
+    const starting = runtime.start(settings);
+    let statusSettled = false;
+    const status = runtime.getAuthStatus().then((value) => {
+      statusSettled = true;
+      return value;
+    });
+    let presenceSettled = false;
+    const presence = runtime.getAuthPresence?.().then((value) => {
+      presenceSettled = true;
+      return value;
+    });
+
+    // Flush microtasks; the install is deliberately still gated, so neither
+    // read may have answered yet.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusSettled).toBe(false);
+    expect(presenceSettled).toBe(false);
+
+    release();
+    await starting;
+    await expect(status).resolves.toMatchObject({ isAuthenticated: true });
+    await expect(presence).resolves.toEqual({ present: true });
   });
 
   it('reports signed out when no key is resolved', async () => {

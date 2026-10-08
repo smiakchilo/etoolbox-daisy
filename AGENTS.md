@@ -526,7 +526,11 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2669 passed / 14 skipped** (the +5 since
+Current baseline: **`npm run test` → 2670 passed / 14 skipped** (the +1 since
+2669 is the OpenRouter auth-read race fix — `getAuthStatus`/`getAuthPresence`
+now await the in-flight install, so a Settings open that races startup no longer
+leaves the Model picker disabled; see `docs/verification.md` "OpenRouter's auth
+read raced its own startup (2026-10-08)"; the +5 since
 2664 is the Home-as-a-veil work — Home over a loaded page now blanks the
 address bar, disables Back/Forward, and shows a close control on the welcome
 screen (2 toolbar cases, 2 pane cases, 1 home-screen case) — see
