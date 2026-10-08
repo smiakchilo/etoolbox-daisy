@@ -110,6 +110,17 @@ export interface BrowserToolbar {
   setHostOptions(options: readonly HostOption[]): void;
   /** Marks the picker button as open (panel visible) or closed. */
   setHostsPickerOpen(open: boolean): void;
+  /**
+   * Reflects the pane's forced home (welcome) screen onto the chrome. While it
+   * is up the address bar is blanked (the screen is not a page, so it has no
+   * address) and Back/Forward are disabled (they address the covered page's
+   * history, which is not what is on screen). Dismissing the veil restores the
+   * covered page's live URL and its history controls. The Home button itself,
+   * the host picker and the loading/error row are unaffected - a load the page
+   * started keeps reporting, and typing a fresh address is still a navigation
+   * that leaves the veil.
+   */
+  setHomeShown(shown: boolean): void;
   /** Swaps the agent-pane toggle's icon/title between "Close Agent" and "Open Agent". */
   setAgentPaneOpen(open: boolean): void;
   /**
@@ -254,6 +265,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // ── State ────────────────────────────────────────────────────────────────
   let lastNavigationState: BrowserNavigationState | null = null;
   let switching = false;
+  // Set while the pane's forced home (welcome) screen covers the page-view
+  // region. It is not a page: the address bar is blanked and Back/Forward are
+  // disabled while it is up (see `applyPresentation` and the state
+  // subscription), and dismissing it restores the covered page's URL.
+  let homeShown = false;
   // Set when a navigation IPC call reports a failure. That call settles only
   // once the load it awaited has ended (a rejected `loadURL`, or a
   // goBack/goForward/reload that settled), so a still-buffered
@@ -602,20 +618,23 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
     // ── Toolbar controls ────────────────────────────────────────────────
     // Switching disables back/forward until the transition completes
-    // (requirements-decisions.md section 4). The address field is always
-    // enabled so the user can type a new address - a normal browser's
-    // address bar never disables on load (and gating it on `switching`
-    // alone made refresh/in-page navigations inconsistent, which never set
-    // that flag).
+    // (requirements-decisions.md section 4), and the forced home screen
+    // disables them for as long as it covers the page: it is not a history
+    // position, so Back must not silently act on the hidden page's history.
+    // The address field is always enabled so the user can type a new address -
+    // a normal browser's address bar never disables on load (and gating it on
+    // `switching` alone made refresh/in-page navigations inconsistent, which
+    // never set that flag).
+    const navLocked = switching || homeShown;
     const controls = [backButton, forwardButton];
     for (const control of controls) {
-      if (switching) {
+      if (navLocked) {
         control.setAttribute('disabled', '');
       } else {
         control.removeAttribute('disabled');
       }
     }
-    if (!switching) {
+    if (!navLocked) {
       if (lastNavigationState?.canGoBack === true) {
         backButton.removeAttribute('disabled');
       } else {
@@ -636,6 +655,29 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     } else {
       hostsButton.removeAttribute('disabled');
     }
+  }
+
+  /**
+   * Reflects the pane's forced home (welcome) screen onto the chrome (see the
+   * interface doc). Blanking/restoring the address is done here rather than in
+   * the pane because the address field is this module's to own; the covered
+   * page's live URL is kept in `lastNavigationState`, which the state
+   * subscription keeps updating even while the veil is up.
+   */
+  function setHomeShown(shown: boolean): void {
+    if (homeShown === shown) return;
+    homeShown = shown;
+    if (shown) {
+      addressField.value = '';
+    } else if (addressField.value === '') {
+      // Restore the covered page's address - unless a navigation already wrote
+      // a fresh one (a typed address, or the Refresh that leaves the veil), in
+      // which case the state push follows it up.
+      addressField.value = lastNavigationState?.url ?? '';
+    }
+    refreshAddressLabel();
+    refreshExternalButton();
+    applyPresentation();
   }
 
   // ── Refresh / Stop swap ──────────────────────────────────────────────────
@@ -1172,13 +1214,17 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
     hasLiveNavigationState = true;
     lastNavigationState = state;
-    // The address field tracks the live navigation unconditionally. Main
-    // reports the destination of a main-frame navigation from
-    // `did-start-navigation` (see `aemBrowserView.ts`), so this shows an
-    // in-page link's target at the moment the click starts the load - exactly
-    // as it shows a toolbar-typed target - instead of waiting for the new
-    // document to commit.
-    addressField.value = state.url;
+    // The address field tracks the live navigation unconditionally, *except*
+    // while the forced home screen covers the page: the screen is not a page,
+    // so it has no address, and `lastNavigationState` keeps the covered page's
+    // live URL for when the veil is dismissed. Main reports the destination of
+    // a main-frame navigation from `did-start-navigation` (see
+    // `aemBrowserView.ts`), so this shows an in-page link's target at the
+    // moment the click starts the load - exactly as it shows a toolbar-typed
+    // target - instead of waiting for the new document to commit.
+    if (!homeShown) {
+      addressField.value = state.url;
+    }
     // A navigation to a new page has begun: pending prompts (and main's
     // matching auto-retry target) are superseded by it, and a failure flag
     // from the previous navigation no longer applies. Deliberately does NOT
@@ -1342,6 +1388,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         hostsButton.setAttribute('aria-expanded', 'false');
       }
     },
+    setHomeShown,
     setAgentPaneOpen(open: boolean): void {
       renderAgentToggle(open);
     },

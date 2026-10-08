@@ -526,7 +526,11 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2664 passed / 14 skipped** (the +3 since
+Current baseline: **`npm run test` → 2669 passed / 14 skipped** (the +5 since
+2664 is the Home-as-a-veil work — Home over a loaded page now blanks the
+address bar, disables Back/Forward, and shows a close control on the welcome
+screen (2 toolbar cases, 2 pane cases, 1 home-screen case) — see
+`docs/verification.md` "Home is a veil, not a page (2026-10-08)"; the +3 since
 2661 is the typographic-hyphen fix — a U+2011 non-breaking hyphen (and the other
 hyphen variants: U+2010, U+2012, U+FE63, U+FF0D) is now a path segment character
 and folds to ASCII `-` in the resolved URL, so `custom‑skeleton` links over its
@@ -606,7 +610,11 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 107 tests; typically 106 passed / 1 failed in the full run** (the
+**Playwright → 108 tests; typically 107 passed / 1 failed in the full run** (the
++1 since 107 is `home-screen.spec.ts`, proving the welcome screen's close control
+sits on the identical screen position a panel's close control does, so opening
+and closing Settings over the home screen does not move it — see
+`docs/verification.md` "Home is a veil, not a page (2026-10-08)"; the
 +1 since 106 is the `message-links.spec.ts` case proving a link popover does not
 retarget the link above when the pointer is carried up into it, plus an offset
 assertion in `skill-autocomplete.spec.ts` — see `docs/verification.md` "Every app

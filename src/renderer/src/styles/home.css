@@ -10,6 +10,24 @@
 .browser-home {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* NOT the scroll container: the scroll lives on `.browser-home__scroll` so
+     the absolutely positioned close control (a sibling of it) cannot shift by
+     the scrollbar width when the tools list overflows. */
+  overflow: hidden;
+  background: var(--spectrum-gray-75, #fbfbfb);
+  color: var(--spectrum-gray-800, #333);
+  /* Anchor for the close control, which is pinned to the top-right corner. */
+  position: relative;
+}
+
+/* The welcome body: the hero, actions and tools list, scrollable in the slot
+   the native view would occupy. Keeping this a separate (inner) scroll box is
+   what makes the close control's position stable - see `.browser-home`. */
+.browser-home__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -17,8 +35,34 @@
   gap: 20px;
   padding: 40px 32px;
   text-align: center;
-  background: var(--spectrum-gray-75, #fbfbfb);
-  color: var(--spectrum-gray-800, #333);
+}
+
+/* The close ("back to page") control, shown only when the home screen was
+   forced over a loaded document (see homeScreen.ts `setClosable`). It is
+   positioned to land exactly where a panel's close control does (panel.css
+   `.panel__header`): the header centres its 48px button in a 64px content box
+   under a 6px top padding, so that button's top is 14px below the surface top
+   and its right edge is at the header's 5px right padding. The home screen
+   fills the same slot a panel does, so matching those two offsets makes the
+   cross occupy the identical screen position whether the welcome screen or a
+   panel is showing - i.e. opening/closing a panel causes no visual shift. The
+   glyph is the same hairline `daisy-close-icon` (closeIcon.ts) at the same 32px
+   on a 48px-tall quiet button. */
+.browser-home__close {
+  position: absolute;
+  inset-block-start: 14px;
+  inset-inline-end: 5px;
+  --mod-actionbutton-height: 48px;
+}
+
+.browser-home__close daisy-close-icon {
+  width: 32px;
+  height: 32px;
+  display: block;
+}
+
+.browser-home__close[hidden] {
+  display: none;
 }
 
 /* The author `display:flex` above beats the UA `[hidden]` rule, so the

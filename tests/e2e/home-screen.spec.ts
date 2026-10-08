@@ -203,15 +203,105 @@ test('the toolbar Home button reveals the home screen over a loaded page, and na
     expect(await page.evaluate(() => Boolean(customElements.get('sp-icon-home')))).toBe(true);
 
     // Pressing Home reveals the home screen over the loaded page, without
-    // navigating away (the view is only collapsed).
+    // navigating away (the view is only collapsed). The veil is not a page:
+    // the address bar is blank, Back/Forward are disabled, and a close control
+    // gives an obvious way back.
     await homeButton.click();
     await expect(homeScreen).toBeVisible();
     await expect(viewHost).toBeHidden();
 
-    // The next user navigation leaves the home screen and returns the page.
+    const addressInput = page.locator('#browser-address-bar input');
+    await expect(addressInput).toHaveValue('');
+    await expect(page.locator('sp-action-button[aria-label="Back"]')).toBeDisabled();
+    await expect(page.locator('sp-action-button[aria-label="Forward"]')).toBeDisabled();
+
+    const close = page.locator('.browser-home__close');
+    await expect(close).toBeVisible();
+    // The close control reuses the panels' own hairline close glyph, which is
+    // really registered (jsdom cannot prove a custom element is registered -
+    // see AGENTS.md section 9).
+    expect(await page.evaluate(() => Boolean(customElements.get('daisy-close-icon')))).toBe(true);
+
+    // Closing returns to the page it covered - the same page, no navigation -
+    // with the address and Back control restored.
+    await close.click();
+    await expect(viewHost).toBeVisible();
+    await expect(homeScreen).toBeHidden();
+    await expect(addressInput).toHaveValue(`${server.origin}/`, { timeout: 10_000 });
+    await expect(close).toBeHidden();
+
+    // Home again, then a real navigation (Refresh) leaves the veil and
+    // returns the page - Refresh is a page control, not a veil control.
+    await homeButton.click();
+    await expect(homeScreen).toBeVisible();
     await page.locator('sp-action-button[aria-label="Refresh"]').click();
     await expect(viewHost).toBeVisible();
     await expect(homeScreen).toBeHidden();
+  } finally {
+    await app.close();
+    server.close();
+  }
+});
+
+test('the home close control sits exactly where a panel close control does, so opening/closing Settings does not move it', async () => {
+  test.setTimeout(120_000);
+
+  const server = await startEchoOrigin();
+  const { home, env } = launchProfile();
+  const base = defaultAppSettings();
+  writeSettings(
+    home,
+    appSettingsSchema.parse({
+      ...base,
+      hosts: [
+        ...base.hosts,
+        {
+          id: randomUUID(),
+          label: 'Echo',
+          origin: server.origin,
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+      ],
+    }),
+  );
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    await expect(page.locator('.hosts-panel')).toBeVisible({ timeout: 10_000 });
+    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await expect(page.locator('[data-testid="browser-view-host"]')).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await page.locator('sp-action-button[title="Home"]').click();
+    const close = page.locator('.browser-home__close');
+    await expect(close).toBeVisible();
+    const before = await close.boundingBox();
+
+    // Settings opens over the same slot the welcome screen fills; its own close
+    // control must land on the identical screen position, so the cross does not
+    // jump when the panel appears (or when it is dismissed and the welcome
+    // screen returns).
+    await page.locator('.browser-home__action', { hasText: 'Open settings' }).click();
+    await expect(page.locator('.settings-panel')).toBeVisible();
+    const panelClose = await page.locator('.settings-panel .panel__close').boundingBox();
+
+    await page.locator('.settings-panel .panel__close').click();
+    await expect(page.locator('.settings-panel')).toBeHidden();
+    await expect(close).toBeVisible();
+    const after = await close.boundingBox();
+
+    expect(before).not.toBeNull();
+    expect(panelClose).not.toBeNull();
+    expect(after).not.toBeNull();
+    // Same position as the panel's close (within a pixel, for sub-pixel layout).
+    expect(Math.abs((before?.x ?? 0) - (panelClose?.x ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((before?.y ?? 0) - (panelClose?.y ?? 0))).toBeLessThanOrEqual(1);
+    // And unchanged across the open/close cycle.
+    expect(Math.abs((after?.x ?? 0) - (before?.x ?? 0))).toBeLessThanOrEqual(1);
+    expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(1);
   } finally {
     await app.close();
     server.close();

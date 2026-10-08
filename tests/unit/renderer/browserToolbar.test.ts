@@ -1660,6 +1660,61 @@ describe('createBrowserToolbar home button', () => {
   });
 });
 
+describe('createBrowserToolbar forced home screen', () => {
+  const addressOf = (toolbar: ReturnType<typeof createBrowserToolbar>): { value: string } =>
+    toolbar.element.querySelector('#browser-address-bar') as unknown as { value: string };
+
+  function withDocument(): ReturnType<typeof createBrowserToolbar> {
+    const toolbar = build();
+    stateListeners[0]?.({
+      url: 'https://author.example/content/page.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument: true,
+    });
+    return toolbar;
+  }
+
+  it('blanks the address and disables Back/Forward while shown, restoring both on dismiss', () => {
+    const toolbar = withDocument();
+    const back = toolbar.element.querySelector('[aria-label="Back"]') as HTMLElement;
+    const forward = toolbar.element.querySelector('[aria-label="Forward"]') as HTMLElement;
+
+    expect(addressOf(toolbar).value).toBe('https://author.example/content/page.html');
+    expect(back.hasAttribute('disabled')).toBe(false);
+
+    toolbar.setHomeShown(true);
+    expect(addressOf(toolbar).value).toBe('');
+    expect(back.hasAttribute('disabled')).toBe(true);
+    expect(forward.hasAttribute('disabled')).toBe(true);
+
+    toolbar.setHomeShown(false);
+    expect(addressOf(toolbar).value).toBe('https://author.example/content/page.html');
+    expect(back.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('keeps the address blank while shown even as the hidden page navigates itself', () => {
+    const toolbar = withDocument();
+    toolbar.setHomeShown(true);
+
+    // The covered page keeps loading and navigating behind the veil; that must
+    // not repopulate the (blank) address bar, but its latest URL is remembered
+    // for the moment the veil is dismissed.
+    stateListeners[0]?.({
+      url: 'https://author.example/content/next.html',
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument: true,
+    });
+    expect(addressOf(toolbar).value).toBe('');
+
+    toolbar.setHomeShown(false);
+    expect(addressOf(toolbar).value).toBe('https://author.example/content/next.html');
+  });
+});
+
 describe('createBrowserToolbar agent-pane toggle', () => {
   function toggleButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
     const button = toolbar.element.querySelector<HTMLElement>(

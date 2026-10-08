@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 function build(): ReturnType<typeof createHomeScreen> {
-  return createHomeScreen({ onOpenHosts: vi.fn(), onOpenSettings: vi.fn() });
+  return createHomeScreen({ onOpenHosts: vi.fn(), onOpenSettings: vi.fn(), onClose: vi.fn() });
 }
 
 describe('createHomeScreen', () => {
@@ -83,5 +83,26 @@ describe('createHomeScreen', () => {
     expect(hostsAction?.hasAttribute('disabled')).toBe(true);
     home.setHostsAvailable(true);
     expect(hostsAction?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('offers the close control only while forced over a page, and fires onClose', () => {
+    const onClose = vi.fn();
+    const home = createHomeScreen({ onOpenHosts: vi.fn(), onOpenSettings: vi.fn(), onClose });
+    const close = home.element.querySelector<HTMLElement>('.browser-home__close');
+    if (!close) throw new Error('close control not found');
+
+    // The genuine empty state: nothing to close.
+    expect(close.hidden).toBe(true);
+    // Same hairline glyph as the panels' close control, not a Spectrum cross.
+    expect(close.querySelector('daisy-close-icon')).not.toBeNull();
+    expect(close.querySelector('sp-icon-cross600')).toBeNull();
+
+    home.setClosable(true);
+    expect(close.hidden).toBe(false);
+    close.click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    home.setClosable(false);
+    expect(close.hidden).toBe(true);
   });
 });

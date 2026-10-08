@@ -525,6 +525,48 @@ describe('createBrowserPane home screen', () => {
     expect(viewHost?.hidden).toBe(false);
   });
 
+  it('is a veil, not a page: Home blanks the address/Back, and the close control returns to the page', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    const close = pane.element.querySelector<HTMLElement>('.browser-home__close');
+    const back = pane.element.querySelector<HTMLElement>('[aria-label="Back"]');
+    const address = pane.element.querySelector('#browser-address-bar') as unknown as {
+      value: string;
+    };
+
+    emitNavigationState();
+    // The live page's URL is on the address bar, and the close control is not
+    // offered while the page is what is on screen.
+    expect(address.value).toBe('https://author.example/content/page.html');
+    expect(close?.hidden).toBe(true);
+
+    pane.element.querySelector<HTMLElement>('[title="Home"]')?.click();
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
+    // The welcome screen is not a page: no address to show, and Back must not
+    // silently act on the hidden page's history. The close control appears
+    // because there is a page to return to.
+    expect(address.value).toBe('');
+    expect(back?.hasAttribute('disabled')).toBe(true);
+    expect(close?.hidden).toBe(false);
+
+    close?.click();
+    // Dismissing the veil is not a navigation: the page it covered is revealed
+    // unchanged, its URL restored, and no history move was issued.
+    expect(home?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(false);
+    expect(address.value).toBe('https://author.example/content/page.html');
+    expect(close?.hidden).toBe(true);
+    expect(browser.goBack).not.toHaveBeenCalled();
+  });
+
+  it('hides the close control when the home screen is the genuine empty state', () => {
+    const pane = build();
+    const close = pane.element.querySelector<HTMLElement>('.browser-home__close');
+    expect(close?.hidden).toBe(true);
+  });
+
   it('closes an open panel when Home is pressed', () => {
     const pane = build();
     const home = pane.element.querySelector<HTMLElement>('.browser-home');

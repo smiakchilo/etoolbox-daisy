@@ -1,6 +1,5 @@
 import type { VirtualTrigger } from '@spectrum-web-components/overlay/src/VirtualTrigger.js';
 import { el } from '../lib/dom';
-import { OVERLAY_OFFSET } from '../lib/overlay';
 import type { LinkAction } from './linkTargets';
 
 /**
@@ -58,7 +57,7 @@ export function createLinkActionPopover(
   const popover = el('sp-popover', { attrs: { class: 'chat-link-popover' } });
   popover.append(buttons);
   const overlay = el('sp-overlay', {
-    attrs: { type: 'manual', placement: 'top', offset: String(OVERLAY_OFFSET) },
+    attrs: { type: 'manual', placement: 'top' },
   });
   overlay.append(popover);
 

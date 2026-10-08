@@ -1,5 +1,4 @@
 import { el } from '../lib/dom';
-import { OVERLAY_OFFSET } from '../lib/overlay';
 import type { AgentChatSkill } from '../../../shared';
 
 /**
@@ -63,7 +62,6 @@ export function createSkillPopover(options: SkillPopoverOptions): SkillPopover |
       // to the tall frame itself would flip "below" to the pane's bottom edge,
       // which is also off screen.
       placement: 'top-start',
-      offset: String(OVERLAY_OFFSET),
       // The field keeps focus and owns all key handling; the popup must never
       // take focus or a click would move the caret.
       'receives-focus': 'false',

@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 import { FAKE_AGENT_SERVICE_ENV_VAR } from '../../src/main/agentComposition';
-import { OVERLAY_OFFSET } from '../../src/renderer/src/lib/overlay';
 
 /**
  * The composer's `/skillname` autocomplete, driven end to end against the
@@ -122,17 +121,6 @@ test.describe('composer skill autocomplete', () => {
     // do not merge. Loose bounds keep this a behaviour check, not a pixel
     // assertion.
     await expect(shell.locator('sp-popover.chat-skill-popover')).toBeVisible();
-
-    // The popover is built with the app-wide overlay offset (lib/overlay.ts), so
-    // it sits flush against the composer - the same reason the transcript's link
-    // popover no longer floats up over the line above it.
-    await expect
-      .poll(() =>
-        shell
-          .locator(SKILL_OVERLAY)
-          .evaluate((element) => (element as unknown as { offset: number }).offset),
-      )
-      .toBe(OVERLAY_OFFSET);
 
     const popoverBox = await shell.locator('sp-popover.chat-skill-popover').boundingBox();
     const frameBox = await shell.locator('.chat-composer__frame').boundingBox();

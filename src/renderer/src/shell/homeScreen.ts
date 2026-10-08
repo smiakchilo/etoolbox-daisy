@@ -1,6 +1,7 @@
 import type { AgentChatSkill, AppInfo } from '../../../shared';
 import appIconUrl from '../../../../resources/icon.png';
 import { el } from '../lib/dom';
+import { CLOSE_ICON_TAG, registerCloseIcon } from './closeIcon';
 
 /**
  * The browser pane's home (welcome) screen: the base layer of the page-view
@@ -22,6 +23,12 @@ import { el } from '../lib/dom';
  * user-facing `metadata.user-description` front matter (falling back to the
  * technical `description`). A skill a user adds to that folder shows up here
  * automatically.
+ *
+ * The screen is shown for two reasons: as the genuine empty state (no document
+ * loaded - nothing to close) and as a *user-forced veil* over a loaded document
+ * (the toolbar's Home button - here a close control returns to the page, since
+ * the screen is not a history position and the address bar has nothing to
+ * show). `setClosable` distinguishes the two.
  */
 export interface HomeScreen {
   readonly element: HTMLElement;
@@ -31,11 +38,24 @@ export interface HomeScreen {
   setSkills(skills: readonly AgentChatSkill[]): void;
   /** Enables/disables the "Choose a host" affordance; there is nothing to pick with zero hosts. */
   setHostsAvailable(available: boolean): void;
+  /**
+   * Shows/hides the close ("back to page") control. It is offered only when the
+   * home screen was *forced over a loaded document* - there is a page to return
+   * to. When it is the genuine empty state (no document loaded), there is
+   * nothing to close, so the control stays hidden.
+   */
+  setClosable(closable: boolean): void;
 }
 
 export interface HomeScreenCallbacks {
   readonly onOpenHosts: () => void;
   readonly onOpenSettings: () => void;
+  /**
+   * Fired by the close control: the user is done with the forced home screen and
+   * wants the page back. The owning pane reveals the page the veil was covering
+   * (the home screen is not a history position, so this is not a navigation).
+   */
+  readonly onClose: () => void;
 }
 
 /** The product name shown before (and, defensively, if not replaced by) `getAppInfo`. */
@@ -45,6 +65,29 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
   const name = el('h1', { attrs: { class: 'browser-home__name' }, text: FALLBACK_APP_NAME });
   const version = el('p', { attrs: { class: 'browser-home__version' } });
   version.hidden = true;
+
+  // The close control: shown only when the home screen was forced over a
+  // loaded document (`setClosable`). It is not a browser Back - it dismisses
+  // the veil to reveal the page underneath - so it is worded as such. Hidden
+  // by default, so the genuine empty state (nothing to return to) offers no
+  // misleading affordance. It deliberately reuses the panels' close affordance
+  // (the app's own hairline `daisy-close-icon`, see `closeIcon.ts` and
+  // `panel.ts`) rather than a Spectrum cross, so the same "dismiss this
+  // surface" gesture looks identical everywhere.
+  registerCloseIcon();
+  const closeButton = el('sp-action-button', {
+    attrs: {
+      class: 'browser-home__close',
+      quiet: '',
+      title: 'Back to page',
+      'aria-label': 'Back to page',
+    },
+  });
+  const closeIcon = document.createElement(CLOSE_ICON_TAG);
+  closeIcon.setAttribute('slot', 'icon');
+  closeButton.append(closeIcon);
+  closeButton.hidden = true;
+  closeButton.addEventListener('click', () => callbacks.onClose());
 
   const icon = el('img', {
     attrs: { class: 'browser-home__icon', src: appIconUrl, alt: '' },
@@ -93,9 +136,18 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
     children: [toolsHeading, toolsStatus, toolsList],
   });
 
+  // The scrollable body. The scroll lives here, *not* on `.browser-home`, so
+  // the absolutely positioned close control (a sibling, outside this element)
+  // cannot shift by the scrollbar width when the tools list overflows - see
+  // home.css.
+  const content = el('div', {
+    attrs: { class: 'browser-home__scroll' },
+    children: [hero, actions, skills],
+  });
+
   const element = el('section', {
     attrs: { class: 'browser-home', 'aria-label': 'Welcome' },
-    children: [hero, actions, skills],
+    children: [closeButton, content],
   });
 
   return {
@@ -135,6 +187,9 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
         hostsButton.setAttribute('disabled', '');
         hostsButton.setAttribute('title', 'No hosts are configured yet \u2014 add one in Settings');
       }
+    },
+    setClosable(closable: boolean): void {
+      closeButton.hidden = !closable;
     },
   };
 }

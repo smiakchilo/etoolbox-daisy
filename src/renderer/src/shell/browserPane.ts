@@ -99,6 +99,15 @@ export interface BrowserPane {
  * cases. Because the home screen is always a valid thing to reveal, panels are
  * now always closeable: dismissing one shows the page if a document is loaded,
  * or the home screen if not - never a bare region.
+ *
+ * The two ways the home screen appears are treated differently. As the genuine
+ * empty state (no document) it is simply the base layer with nothing to close.
+ * As a *forced veil* over a loaded document (the Home button) it is not a page
+ * and must not pretend to be one: `syncHomeChrome` blanks the address bar and
+ * disables Back/Forward for as long as it is up, and the home screen gains a
+ * close control that returns to the page underneath. Back is deliberately not
+ * the way out - the veil is not a history position, so Back over it would
+ * silently skip the covered page.
  */
 export interface BrowserPaneCallbacks {
   /** Fired by the toolbar's agent-pane toggle; the shell hides/shows the chat pane. */
@@ -164,6 +173,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       homeForced = false;
       if (panelWasOpen) closeActivePanel();
       else updateViewVisibility();
+      syncHomeChrome();
     },
     onToggleAgentPane(): void {
       callbacks.onToggleAgentPane?.();
@@ -178,6 +188,16 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     onOpenSettings(): void {
       callbacks.onOpenSettings?.();
     },
+    onClose(): void {
+      // Dismiss the forced veil: reveal the page it was covering. Not a
+      // navigation - the page was never navigated away from - so no
+      // `onNavigationStarted` runs and the address/history chrome is restored
+      // from the still-live page state.
+      if (!homeForced) return;
+      homeForced = false;
+      updateViewVisibility();
+      syncHomeChrome();
+    },
   });
 
   // The pane tracks whether a document is loaded from the state feed: each
@@ -189,6 +209,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     if (state.hasDocument === hasDocument) return;
     hasDocument = state.hasDocument;
     updateViewVisibility();
+    syncHomeChrome();
   });
 
   // The slot the native view, the home screen and every whole-size panel share,
@@ -242,13 +263,31 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   /**
    * Reveals the home screen: closes any open panel and forces the home layer
    * even when a document is loaded, until the next user-initiated navigation
-   * (`onNavigationStarted`). The native view is only collapsed, so the loaded
-   * page stays alive and the AEM bridge keeps working.
+   * (`onNavigationStarted`) or an explicit close (`home.onClose`). The native
+   * view is only collapsed, so the loaded page stays alive and the AEM bridge
+   * keeps working.
    */
   function showHome(): void {
     homeForced = true;
     if (activePanel === undefined) updateViewVisibility();
     else closeActivePanel();
+    syncHomeChrome();
+  }
+
+  /**
+   * Reflects the forced-home state onto the two pieces of chrome that must not
+   * pretend the welcome screen is a page: the toolbar (`setHomeShown` blanks
+   * the address bar and disables Back/Forward) and the home screen's own close
+   * control - offered only when there is a page underneath to return to. Both
+   * derive from `homeForced && hasDocument`: with no document loaded the home
+   * screen is the genuine empty state, so nothing is blanked or locked (a
+   * failed load's address is left for the unknown-origin prompt that names it).
+   * Both are re-synced wherever `homeForced`/`hasDocument` changes.
+   */
+  function syncHomeChrome(): void {
+    const veil = homeForced && hasDocument;
+    toolbar.setHomeShown(veil);
+    home.setClosable(veil);
   }
 
   function openPanel(panel: Panel): void {
@@ -278,6 +317,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   // Start on the home screen: no document is loaded yet.
   updateViewVisibility();
+  syncHomeChrome();
 
   const element = el('section', {
     attrs: { class: 'pane browser-pane', 'aria-label': 'Browser' },

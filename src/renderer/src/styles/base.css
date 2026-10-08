@@ -39,14 +39,22 @@ sp-theme {
 }
 
 /*
- * Spectrum's popover lifts itself a further `--spectrum-popover-animation-distance`
- * (8px) away from its trigger when it opens, on top of the overlay's own
- * `offset` attribute. That hidden lift is what put the transcript's link-action
- * popover up over the link on the line above and let a pointer travelling into
- * it cross that link and retarget it (see `lib/overlay.ts`); the composer's
- * skills popover carried the same extra 8px. Neutralise it app-wide so an
- * overlay at offset 0 sits flush against its trigger - the popover still fades
- * in, it just no longer slides away from the trigger first.
+ * Every app-owned popover sits flush against its trigger - the single control
+ * for that gap, applied app-wide to every `sp-popover`.
+ *
+ * Spectrum lifts a popover a further `--spectrum-popover-animation-distance`
+ * (8px) away from its trigger when it opens. That hidden lift is what put the
+ * transcript's link-action popover up over the link on the line above and let a
+ * pointer travelling into it cross that link and re-target the popover at it
+ * (owner-reported); the composer's skills popover carried the same extra 8px.
+ * Neutralising it here makes the popover's near edge meet the trigger's, so
+ * there is no strip to cross. The popover still fades in; it just no longer
+ * slides away from the trigger first.
+ *
+ * This is the one place the gap is defined: no per-element `sp-overlay offset`
+ * is set (zero is the attribute's default), so a future change to the gap
+ * changes it for every popover at once. The transcript's link popover is
+ * additionally pinned by the pixel-flushness check in `message-links.spec.ts`.
  */
 sp-popover {
   --mod-popover-animation-distance: 0;
