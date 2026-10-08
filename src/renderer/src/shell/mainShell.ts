@@ -42,6 +42,12 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       splitView.setAgentPaneVisible(agentPaneVisible);
       browserPane.setAgentPaneOpen(agentPaneVisible);
     },
+    // The home screen's "Open settings" action. The shell owns the settings
+    // panel, which is created just below; the callback closes over it and only
+    // runs on a user click, long after both exist.
+    onOpenSettings(): void {
+      browserPane.panelHost.open(settingsPanel);
+    },
   });
 
   // Settings live in a whole-size panel on the browser pane (superseding the
@@ -63,6 +69,23 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     },
   });
   browserPane.appendPanel(settingsPanel);
+
+  // Fill the home screen's slower data off the first-paint path: the pane
+  // builds the screen synchronously with a static name and a "Loading skills…"
+  // row, and these populate it a beat later. Both are best-effort - a failure
+  // simply leaves the static fallback in place.
+  void window.daisy
+    .getAppInfo()
+    .then((info) => {
+      browserPane.home.setAppInfo(info);
+    })
+    .catch(() => undefined);
+  void window.daisy.agentChat
+    .listSkills()
+    .then((result) => {
+      if (result.ok) browserPane.home.setSkills(result.skills);
+    })
+    .catch(() => undefined);
 
   // Started before the panes are built so the first settings round trip is
   // already in flight while the DOM is constructed; awaited further below and
@@ -179,12 +202,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   /**
    * Re-opens the page remembered from the previous run, if there is one and it
    * still belongs to a configured host. Returns `true` when a restore was
-   * attempted - including when the load itself failed, because the browser
-   * pane now owns that failure (its error row with Reload, plus the
-   * restore-or-hosts-picker fallback) - so the startup affordance below does
-   * not also open the hosts picker over it. A remembered origin that is no
-   * longer configured is not attempted at all, so a deleted server falls back
-   * to the picker.
+   * attempted - including when the load itself failed, because the browser pane
+   * owns that failure (its error row with Reload, and the home screen as the
+   * no-document fallback). A remembered origin that is no longer configured is
+   * not attempted at all, so a deleted server leaves the pane on its home
+   * screen.
    *
    * Deliberately routed through `browserPane.navigate` rather than a bare
    * `browser:navigate`: a dead remembered page must not be the one silent
@@ -255,26 +277,23 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   const result = await snapshotPromise;
   if (result.ok) {
     applySnapshot(result.snapshot);
-    // Restoring the last opened page takes precedence over the hosts picker,
-    // so a returning user lands on the page they left. A page whose origin is
-    // no longer a configured host is not attempted at all, so a deleted server
-    // falls back to today's affordance.
+    // Restoring the last opened page takes precedence over the hosts picker, so
+    // a returning user lands on the page they left. When there is no page to
+    // restore, a configured-host profile keeps its long-standing startup
+    // affordance: the picker leads with the list ready to choose from. It no
+    // longer *covers a blank region* - the home screen sits beneath it, so
+    // dismissing the picker reveals the home screen, not a bare view. A profile
+    // with no hosts gets the home screen alone (its Settings action is the way
+    // to add the first host); nothing is auto-opened to cover a gap.
     const restored = restoreLastPage(result.snapshot);
-    if (!restored) {
-      // Startup affordance: with configured hosts the picker leads with the
-      // list ready to choose from (it replaces the otherwise blank page-view
-      // region); with none, Settings is where the first server gets added.
-      if (result.snapshot.hosts.length > 0) {
-        browserPane.openHostsPicker();
-      } else {
-        browserPane.panelHost.open(settingsPanel);
-      }
+    if (!restored && result.snapshot.hosts.length > 0) {
+      browserPane.openHostsPicker();
     }
   } else {
     console.warn('[daisy] failed to load settings snapshot:', result.error);
-    // No usable host list - Settings is the discoverable surface for fixing
-    // that, and its own reload will surface the load error in its status row.
-    browserPane.panelHost.open(settingsPanel);
+    // No usable host list: the home screen is the landing surface, and its
+    // "Open settings" action leads to the panel whose own reload surfaces the
+    // load error in its status row.
   }
 
   // Unsubscribes the toolbar's `onStateChanged`/`onSwitchStateChanged`

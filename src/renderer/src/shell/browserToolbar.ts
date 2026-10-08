@@ -126,13 +126,14 @@ export interface BrowserToolbar {
 export interface BrowserToolbarCallbacks {
   /** Fired when the picker button is activated; the owning pane opens/closes the panel. */
   onHostsPickerClick(): void;
+  /** Fired when the Home button is activated; the owning pane reveals the home screen. */
+  onHomeClick(): void;
   /**
-   * Fired when a failed load could not be recovered (no page to restore), so
-   * the owning pane must bring the hosts picker on over the blank page-view
-   * region. Unlike {@link onHostsPickerClick} this is not a user toggle: the
-   * pane opens the picker unconditionally.
+   * Fired when a user-initiated navigation begins (a typed/selected address,
+   * Back/Forward, or Refresh). The owning pane leaves the home screen when the
+   * user navigates away from it.
    */
-  onHostsPickerRequest?(): void;
+  onNavigationStarted?(): void;
   /** Fired when the agent-pane toggle is activated; the shell shows/hides the chat pane. */
   onToggleAgentPane?(): void;
 }
@@ -196,6 +197,12 @@ const ADDRESS_LABEL_MIN_ADDRESS_PX = 40;
 
 export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): BrowserToolbar {
   const toolbar = el('div', { attrs: { class: 'toolbar browser-toolbar', role: 'toolbar' } });
+
+  // Home reveals the pane's home (welcome) screen. Leftmost, like a browser's
+  // Home control; the pane owns what "home" means, including closing any open
+  // panel. The button is never disabled - the home screen is always available.
+  const homeButton = buildNavButton('Home', 'sp-icon-home');
+  homeButton.addEventListener('click', () => callbacks.onHomeClick());
 
   // "Back" reuses Forward's sp-icon-arrow400 glyph, rotated 180deg via CSS
   // (see .nav-icon--back in browser.css) rather than a separate icon asset.
@@ -725,6 +732,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   function performNavigate(target: string): void {
     const token = ++navigationToken;
+    callbacks.onNavigationStarted?.();
     // A user-initiated navigation is what clears a previous error row (see
     // `applyPresentation`): the user has moved on, so the loading presentation
     // may take the row again.
@@ -744,6 +752,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   function performReload(): void {
     const token = ++navigationToken;
+    callbacks.onNavigationStarted?.();
     errorText = null;
     errorRetry = null;
     const previous = currentDisplayedUrl();
@@ -760,6 +769,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
 
   function performHistory(direction: 'back' | 'forward'): void {
     const token = ++navigationToken;
+    callbacks.onNavigationStarted?.();
     errorText = null;
     errorRetry = null;
     const previous = currentDisplayedUrl();
@@ -812,13 +822,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
             attempt !== undefined &&
             attempt.restoreVia !== 'none'
           ) {
-            // A failed load would leave the blank page-view region behind the
-            // banner. Recover the page that was on screen before this attempt,
-            // or - when there was none - ask the pane for the hosts picker.
-            // This returns without applying the presentation: the restore runs
-            // silently and the error row (with its Reload) is re-asserted once
-            // it settles.
-            recoverOrPickHosts(attempt, result.error.message);
+            // A failed load would leave the page-view region showing whatever
+            // the view last had. Recover the page that was on screen before
+            // this attempt silently behind the error row; when there was none,
+            // the pane's home screen is already exposed (the native view is
+            // collapsed while `hasDocument` is false), so nothing else is
+            // needed. This returns without applying the presentation: the
+            // restore runs and the error row (with its Reload) is re-asserted
+            // once it settles.
+            recoverFailedLoad(attempt, result.error.message);
             return;
           }
         }
@@ -828,32 +840,25 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   }
 
   /**
-   * Recovers from a failed load that would otherwise leave the blank page-view
-   * region on screen: go back to the page remembered when the operation was
-   * issued, or - when there was no such page (or it is the very page that just
-   * failed) - ask the pane to bring the hosts picker on.
+   * Recovers from a failed load that would otherwise leave the page-view
+   * region showing the wrong page: go back to the page remembered when the
+   * operation was issued. When there was no such page (or it is the very page
+   * that just failed) there is nothing to restore - the pane's home screen is
+   * the fallback, shown automatically because the native view is collapsed
+   * while no document is loaded.
    *
    * The restore is **silent**: the error row is already on screen and, because
    * an unacknowledged error suppresses the loading presentation (see
    * `applyPresentation`), the restore's own load - and any redirects or SSO
    * hops the restored page starts - run behind it without evicting it.
    */
-  function recoverOrPickHosts(attempt: NavigationAttempt, message: string): void {
-    const { previous, target, token, restoreVia } = attempt;
+  function recoverFailedLoad(attempt: NavigationAttempt, message: string): void {
+    const { previous, target, restoreVia } = attempt;
     if (restoreVia !== 'none' && previous !== '' && previous !== target) {
-      void (async (): Promise<void> => {
-        let restored: boolean;
-        try {
-          restored = await restorePage(restoreVia, previous);
-        } catch {
-          restored = false;
-        }
-        // A newer navigation superseded this recovery: leave its result alone.
-        if (token !== navigationToken) return;
-        if (!restored) callbacks.onHostsPickerRequest?.();
-      })();
-    } else {
-      callbacks.onHostsPickerRequest?.();
+      // The restore runs detached and best-effort: the error row (with Reload)
+      // is the recovery the user sees, and the home screen covers the
+      // no-document case. A newer navigation simply supersedes it.
+      void restorePage(restoreVia, previous).catch(() => undefined);
     }
     // Paint the error row now; the restore (if any) proceeds behind it.
     errorText = message;
@@ -1124,6 +1129,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   renderAgentToggle(true);
 
   toolbar.append(
+    homeButton,
     backButton,
     forwardButton,
     refreshButton,

@@ -29,6 +29,7 @@ describe('parseSkillFrontMatter', () => {
     expect(parseSkillFrontMatter(frontMatter('aem-tool-selection', 'How to choose.'))).toEqual({
       name: 'aem-tool-selection',
       description: 'How to choose.',
+      userDescription: '',
       userInvocable: true,
     });
   });
@@ -37,6 +38,7 @@ describe('parseSkillFrontMatter', () => {
     expect(parseSkillFrontMatter(frontMatter('query-results', 'Reading results.', false))).toEqual({
       name: 'query-results',
       description: 'Reading results.',
+      userDescription: '',
       userInvocable: false,
     });
   });
@@ -61,6 +63,7 @@ describe('parseSkillFrontMatter', () => {
     expect(parseSkillFrontMatter('---\nname: "quoted"\ndescription: \'works\'\n---\n')).toEqual({
       name: 'quoted',
       description: 'works',
+      userDescription: '',
       userInvocable: true,
     });
   });
@@ -69,6 +72,7 @@ describe('parseSkillFrontMatter', () => {
     expect(parseSkillFrontMatter('---\nname: only-name\n---\n')).toEqual({
       name: 'only-name',
       description: '',
+      userDescription: '',
       userInvocable: true,
     });
   });
@@ -90,8 +94,31 @@ describe('parseSkillFrontMatter', () => {
     expect(parseSkillFrontMatter('---\r\nname: crlf\r\ndescription: fine\r\n---\r\n')).toEqual({
       name: 'crlf',
       description: 'fine',
+      userDescription: '',
       userInvocable: true,
     });
+  });
+
+  it('reads a user-friendly summary from a nested metadata.user-description', () => {
+    const parsed = parseSkillFrontMatter(
+      '---\nname: s\ndescription: Technical.\nmetadata:\n  user-description: Friendly.\n  version: 1\n---\n',
+    );
+    expect(parsed?.userDescription).toBe('Friendly.');
+    // The model-facing description is untouched.
+    expect(parsed?.description).toBe('Technical.');
+  });
+
+  it('also accepts a top-level user-description', () => {
+    const parsed = parseSkillFrontMatter('---\nname: s\nuser-description: Friendly.\n---\n');
+    expect(parsed?.userDescription).toBe('Friendly.');
+  });
+
+  it('closes the metadata block at the next top-level field', () => {
+    const parsed = parseSkillFrontMatter(
+      '---\nname: s\nmetadata:\n  user-description: Friendly.\nuser-invocable: false\n---\n',
+    );
+    expect(parsed?.userDescription).toBe('Friendly.');
+    expect(parsed?.userInvocable).toBe(false);
   });
 });
 
@@ -115,6 +142,17 @@ describe('readSkillCatalog', () => {
     });
 
     expect((await readSkillCatalog(dir)).map((skill) => skill.name)).toEqual(['search']);
+  });
+
+  it('reports the user-facing summary when metadata.user-description is present', async () => {
+    const dir = makeSkillsDir({
+      search:
+        '---\nname: search\ndescription: Technical details.\nmetadata:\n  user-description: Friendly phrase.\n---\n',
+    });
+
+    expect(await readSkillCatalog(dir)).toEqual([
+      { name: 'search', description: 'Friendly phrase.' },
+    ]);
   });
 
   it('skips a directory without a SKILL.md, a file, and malformed front matter', async () => {

@@ -158,6 +158,15 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   // the live URL.
   let pendingNavigationUrl: string | undefined;
 
+  // Whether a document has ever *committed* in this view - set from the two
+  // main-frame commit events (`did-navigate`/`did-navigate-in-page`), never
+  // from `did-stop-loading` (which also fires for a failed load). Monotonic:
+  // once a document is committed, a later failed navigation leaves the
+  // renderer with a page to fall back to, so there is no transition back to
+  // "no document" within a session. See `browserNavigationStateSchema`'s
+  // `hasDocument` doc comment.
+  let hasDocument = false;
+
   function getNavigationState(): BrowserNavigationState {
     const history = view.webContents.navigationHistory;
     return {
@@ -165,6 +174,7 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
       canGoBack: history.canGoBack(),
       canGoForward: history.canGoForward(),
       isLoading: view.webContents.isLoading(),
+      hasDocument,
     };
   }
 
@@ -192,9 +202,17 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     pushNavigationState();
   }
 
+  // A main-frame commit means there is now a document to show; record it before
+  // the state push below so `hasDocument` is true in the very push that reports
+  // the commit.
+  function onCommitted(): void {
+    hasDocument = true;
+    onNavigationSettled();
+  }
+
   view.webContents.on('did-start-navigation', onStartNavigation);
-  view.webContents.on('did-navigate', onNavigationSettled);
-  view.webContents.on('did-navigate-in-page', onNavigationSettled);
+  view.webContents.on('did-navigate', onCommitted);
+  view.webContents.on('did-navigate-in-page', onCommitted);
   view.webContents.on('did-start-loading', pushNavigationState);
   view.webContents.on('did-stop-loading', onNavigationSettled);
 

@@ -463,6 +463,15 @@ Four bundled skills, each a `SKILL.md`: `search` and `semantic-search`
 Application-owned only — never loaded from the user's home, a project
 directory, or an AEM response.
 
+Every **new** bundled skill must carry a user-facing summary in its front
+matter: a `metadata.user-description` (one friendly phrase, no technical
+detail) alongside the model-facing `description`. `readSkillCatalog`
+(`src/main/skills/skillCatalog.ts`) scans `metadata.user-description` and falls
+back to `description` when it is absent, so the home screen and the composer's
+`/` list render the friendly text (`search` and `semantic-search` already carry
+one). This is a contract, not a preference: a skill without it ships its
+technical `description` to the user.
+
 `/search <terms>` and `/semantic-search <text>` accept their argument as one
 plain string — no separate "comment" is required. The `/skillname` rewrite in
 `src/shared/skillInvocation.ts` frames the trailing text as the skill's input

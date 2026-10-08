@@ -14,6 +14,12 @@ body {
   height: 100%;
   margin: 0;
   /*
+   * A branded backdrop so even the first frame - before the shell's own DOM
+   * has painted - is never a stark white. It matches the browser pane's home
+   * screen surface (home.css) and the native view host's own resting grey.
+   */
+  background: var(--spectrum-gray-75, #fbfbfb);
+  /*
    * Hard guarantee that the *document* never scrolls - only
    * `.chat-transcript` (and the Settings panel's own content region) do.
    * The main process positions the native WebContentsView over

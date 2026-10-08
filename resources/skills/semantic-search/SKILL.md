@@ -1,6 +1,8 @@
 ---
 name: semantic-search
 description: How to answer a `/semantic-search <text>` request against a conventional AEM Author instance - recall everything the full-text index can find for the subject in the text, judge each candidate by the meaning the text carries, and report the matches with a path-to-citation table. Use whenever the user invokes `/semantic-search`, rather than supplying a path, a property value, or a structured predicate.
+metadata:
+  user-description: Find content by meaning, not just matching words.
 ---
 
 # Semantic search

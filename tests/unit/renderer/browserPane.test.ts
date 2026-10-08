@@ -101,6 +101,7 @@ function emitNavigationState(): void {
     canGoBack: false,
     canGoForward: false,
     isLoading: false,
+    hasDocument: true,
   };
   for (const listener of stateListeners) listener(minimal);
 }
@@ -147,6 +148,22 @@ describe('createBrowserPane page panel', () => {
     expect(pagePanel?.lastElementChild).toBe(message);
   });
 
+  it('shows the home screen until a document loads, and the native view after', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+
+    // Fresh pane: nothing is loaded, so the home screen occupies the region and
+    // the native view is collapsed (not merely hidden - it composites above the
+    // DOM, so it must be sized to zero).
+    expect(viewHost?.hidden).toBe(true);
+    expect(home?.hidden).toBe(false);
+
+    emitNavigationState();
+    expect(home?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(false);
+  });
+
   it('hides only the native view while the hosts panel is open, keeping the message row', () => {
     const pane = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
@@ -154,16 +171,18 @@ describe('createBrowserPane page panel', () => {
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
 
+    // A page is loaded, so the native view is the visible layer.
+    emitNavigationState();
     expect(viewHost?.hidden).toBe(false);
+
     pickerButton?.click();
     expect(viewHost?.hidden).toBe(true);
     // The row is outside the panel's slot: the panel replaces the view, not
     // the row.
     expect(message?.hidden).toBe(false);
 
-    // The panel must only be closeable after a page sits under it (the pane
-    // latches on navigation-state pushes), so unlock it before dismissing.
-    emitNavigationState();
+    // Panels are always dismissible now: the home screen covers the region when
+    // no page is under the panel.
     expect(close?.hasAttribute('disabled')).toBe(false);
 
     close?.click();
@@ -249,6 +268,7 @@ describe('createBrowserPane message lifecycle', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: true,
+      hasDocument: true,
     });
     expect(message?.hasAttribute('open')).toBe(true);
     expect(message?.textContent).toBe('Loading\u2026');
@@ -259,6 +279,7 @@ describe('createBrowserPane message lifecycle', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     });
     // Both conditions cleared: the banner collapses, then is torn down.
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
@@ -302,52 +323,56 @@ describe('createBrowserPane message lifecycle', () => {
 });
 
 describe('createBrowserPane closeability', () => {
-  it('keeps cross, Escape and the picker toggle inert until a page has loaded', () => {
+  it('lets the cross dismiss a panel before any page has loaded, revealing the home screen', () => {
     const pane = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    const picker = pane.element.querySelector<HTMLElement>('.hosts-panel');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
     pickerButton?.click();
     expect(viewHost?.hidden).toBe(true);
-    // Nothing has loaded into the native view yet, so the panel must not be
-    // dismissible: the cross is disabled and Escape / the hosts-button toggle
-    // are no-ops. Dismissing it would reveal the bare page-view region.
-    expect(close?.hasAttribute('disabled')).toBe(true);
+    // Nothing has loaded, yet the panel is dismissible: closing reveals the
+    // home screen, not a bare region.
+    expect(close?.hasAttribute('disabled')).toBe(false);
 
     close?.click();
+    expect(picker?.hidden).toBe(true);
+    expect(home?.hidden).toBe(false);
     expect(viewHost?.hidden).toBe(true);
+  });
+
+  it('lets Escape dismiss a panel, revealing the home screen when no page is loaded', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
 
     document.dispatchEvent(
       new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
     );
-    expect(viewHost?.hidden).toBe(true);
-
-    pickerButton?.click();
+    expect(home?.hidden).toBe(false);
     expect(viewHost?.hidden).toBe(true);
   });
 
-  it('unlocks the open panel when the first navigation state push arrives', () => {
+  it('lets the hosts-button toggle dismiss the panel', () => {
     const pane = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
-    const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
     pickerButton?.click();
-    expect(close?.hasAttribute('disabled')).toBe(true);
-
-    // A navigation push (even a failed load's start/stop) latches the pane as
-    // page-loaded and un-disables the active panel's close affordance.
-    emitNavigationState();
-    expect(close?.hasAttribute('disabled')).toBe(false);
-
-    close?.click();
-    expect(viewHost?.hidden).toBe(false);
+    pickerButton?.click();
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
   });
 
-  it('lets a host selection close the panel and navigate even while locked', () => {
+  it('lets a host selection close the panel and navigate', () => {
     const pane = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
     pane.update({
@@ -363,14 +388,15 @@ describe('createBrowserPane closeability', () => {
     });
 
     pickerButton?.click();
-    // Selecting a host is the sanctioned way out of a locked picker: it closes
-    // the panel AND navigates, so the page-view region is never left empty.
+    // Selecting a host closes the panel AND navigates; until the navigation
+    // commits there is still no document, so the home screen shows meanwhile.
     pane.element
       .querySelector<HTMLElement>('.hosts-item[data-origin="https://author.example"]')
       ?.click();
 
     expect(browser.navigate).toHaveBeenCalledWith('https://author.example');
-    expect(viewHost?.hidden).toBe(false);
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
   });
 });
 
@@ -383,9 +409,11 @@ describe('createBrowserPane navigation failure recovery', () => {
     expect(browser.navigate).toHaveBeenCalledWith('https://author.example/content/page.html');
   });
 
-  it('opens the hosts picker when a failed load has no page to restore', async () => {
+  it('reveals the home screen (not a bare region) when a failed load has no page to restore', async () => {
     const pane = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    const picker = pane.element.querySelector<HTMLElement>('.hosts-panel');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
     browser.navigate.mockResolvedValueOnce({
       ok: false,
@@ -395,11 +423,14 @@ describe('createBrowserPane navigation failure recovery', () => {
     pane.navigate('https://dead.example/');
 
     await vi.waitFor(() => {
-      expect(viewHost?.hidden).toBe(true);
+      expect(message?.hasAttribute('open')).toBe(true);
     });
-    // The error row is visible below the picker, not covered by it.
-    expect(message?.hasAttribute('open')).toBe(true);
+    // The error row is visible below the page-view region; that region shows the
+    // home screen rather than a blank native view, and no panel is forced open.
     expect(message?.textContent).toContain('Timed out');
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
+    expect(picker?.hidden).toBe(true);
   });
 
   it('leaves an open panel in place and shows the error row when a failed load has no page to restore', async () => {
@@ -432,6 +463,88 @@ describe('createBrowserPane navigation failure recovery', () => {
     // ...and the error row is visible below the panel.
     expect(message?.textContent).toContain('Timed out');
     expect(viewHost?.hidden).toBe(true);
+  });
+});
+
+describe('createBrowserPane home screen', () => {
+  it('routes the home actions to the hosts picker and the shell settings callback', () => {
+    const onOpenSettings = vi.fn();
+    const pane = createBrowserPane({ onOpenSettings });
+    const [hostsAction, settingsAction] = Array.from(
+      pane.element.querySelectorAll<HTMLElement>('.browser-home__action'),
+    );
+
+    hostsAction?.click();
+    expect(pane.element.querySelector<HTMLElement>('.hosts-panel')?.hidden).toBe(false);
+
+    settingsAction?.click();
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('reveals the home screen on Home even with a page loaded, and leaves it on navigation', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    const homeButton = pane.element.querySelector<HTMLElement>('[title="Home"]');
+
+    emitNavigationState();
+    expect(viewHost?.hidden).toBe(false);
+
+    homeButton?.click();
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
+
+    // A user-initiated navigation leaves the home screen again.
+    pane.navigate('https://author.example/content/other.html');
+    expect(home?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(false);
+  });
+
+  it('closes an open panel when Home is pressed', () => {
+    const pane = build();
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    const panel = pane.element.querySelector<HTMLElement>('.hosts-panel');
+
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+    expect(panel?.hidden).toBe(false);
+
+    pane.element.querySelector<HTMLElement>('[title="Home"]')?.click();
+    expect(panel?.hidden).toBe(true);
+    expect(home?.hidden).toBe(false);
+  });
+
+  it('disables "Choose a host" while no hosts are configured', () => {
+    const pane = build();
+    const hostsAction = pane.element.querySelector<HTMLElement>('.browser-home__action');
+
+    pane.update({ addressValue: '', hostOptions: [] });
+    expect(hostsAction?.hasAttribute('disabled')).toBe(true);
+
+    pane.update({
+      addressValue: '',
+      hostOptions: [
+        {
+          id: newServerId(() => 'srv-1'),
+          label: 'Author',
+          origin: 'https://author.example',
+          colorCss: '#0f0',
+        },
+      ],
+    });
+    expect(hostsAction?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('renders the user-invocable tool catalogue it is handed', () => {
+    const pane = build();
+    pane.home.setSkills([
+      { name: 'search', description: 'Find content' },
+      { name: 'semantic-search', description: 'Find by meaning' },
+    ]);
+    expect(
+      Array.from(pane.element.querySelectorAll('.browser-home__skill-name')).map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(['/search', '/semantic-search']);
   });
 });
 

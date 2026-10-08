@@ -49,6 +49,14 @@ export type ViewBounds = Readonly<z.infer<typeof viewBoundsSchema>>;
  * `computeAddressBarValue` doc comment (`viewModel.ts`) explicitly describes
  * waiting for exactly this event before it can show anything but an empty
  * address bar.
+ *
+ * `hasDocument` is whether the view currently holds a *committed* document
+ * (main-frame `did-navigate`/`did-navigate-in-page` observed), as opposed to a
+ * pending or failed navigation. It is the one honest signal for "there is a
+ * page to show" that a `url` cannot provide: a failed load leaves a non-empty
+ * `url` behind, so the home screen must key on this, never on `url`. False
+ * until the first commit, and monotonic-true within a session (a committed
+ * document is never discarded by a later failed navigation).
  */
 export const browserNavigationStateSchema = z
   .object({
@@ -56,6 +64,7 @@ export const browserNavigationStateSchema = z
     canGoBack: z.boolean(),
     canGoForward: z.boolean(),
     isLoading: z.boolean(),
+    hasDocument: z.boolean(),
   })
   .strict();
 

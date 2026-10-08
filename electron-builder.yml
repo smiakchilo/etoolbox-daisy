@@ -63,9 +63,11 @@ extraResources:
   - from: resources
     to: resources
 win:
-  # Single source of truth: the same file the app reads for its window/taskbar
-  # icon at runtime (`src/main/appIcon.ts`), shipped by the extraResources entry
-  # below as well as embedded into the exe/installer here.
+  # `resources/icon.png` is the single source of truth. `resources/icon.ico`
+  # (this field, and the file the app reads for its window/taskbar icon at
+  # runtime via `src/main/appIcon.ts`) and `resources/icon.icns` (below) are
+  # generated from it by `scripts/generate-icons.mjs` (`npm run icons`, run by
+  # `build`/`dev`/`package:*`) and are git-ignored.
   icon: resources/icon.ico
   target:
     - target: nsis
@@ -74,7 +76,7 @@ win:
 mac:
   # macOS needs .icns; without this electron-builder looks for
   # build/icon.icns, finds nothing and ships Electron's default icon.
-  # resources/icon.icns is generated from resources/icon.ico (256 px source).
+  # resources/icon.icns is generated from resources/icon.png at build time.
   icon: resources/icon.icns
 nsis:
   oneClick: false

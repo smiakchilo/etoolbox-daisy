@@ -211,6 +211,7 @@ function makeFakeAemView(): FakeAemViewControls {
     canGoBack: false,
     canGoForward: false,
     isLoading: false,
+    hasDocument: false,
   };
   const webContentsControls = makeFakeWebContents();
   const view: AemBrowserView = {
@@ -509,6 +510,7 @@ describe('browserController.reload / goBack / goForward', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     }));
     harness.aemViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
 
@@ -531,6 +533,7 @@ describe('browserController.reload / goBack / goForward', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     }));
     harness.aemViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
 

@@ -28,6 +28,14 @@ export interface ParsedSkillFrontMatter {
   readonly name: string;
   readonly description: string;
   /**
+   * The user-facing one-phrase summary, from the front matter's
+   * `metadata.user-description` (or a top-level `user-description`), or `''`
+   * when neither is present. A skill's `description` is written for the model
+   * and carries technical detail; `user-description` is what the app shows the
+   * user (the home screen, the composer's skill list).
+   */
+  readonly userDescription: string;
+  /**
    * Whether the skill belongs in the user's `/` menu. Follows the Agent Skills
    * convention: `user-invocable` defaults to `true`, and `false` marks a skill
    * the model may still load but the user is not offered by name (an
@@ -74,7 +82,9 @@ function stripQuotes(value: string): string {
  * Parses the leading `---`-delimited front-matter block of a `SKILL.md`.
  *
  * Deliberately minimal: the bundle's front matter is a flat list of
- * `key: value` lines and only `name`/`description` are read, so a full YAML
+ * `key: value` lines plus one optional nested block - a `metadata:` line (with
+ * no value) whose indented children are read too, so `metadata.user-description`
+ * is available. Only the handful of fields above are read, so a full YAML
  * parser would be an unearned dependency. Returns `undefined` when the block is
  * absent, unterminated, or carries no non-empty `name`.
  */
@@ -87,12 +97,23 @@ export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter 
   if (endIndex === -1) return undefined;
 
   const fields = new Map<string, string>();
+  const metadata = new Map<string, string>();
+  let inMetadata = false;
   for (const line of lines.slice(1, endIndex)) {
+    if (line.trim() === '') continue;
     const separator = line.indexOf(':');
     if (separator === -1) continue;
     const key = line.slice(0, separator).trim();
     if (key === '') continue;
-    fields.set(key, stripQuotes(line.slice(separator + 1).trim()));
+    const value = stripQuotes(line.slice(separator + 1).trim());
+    // Indented lines under a bare `metadata:` belong to that block; any other
+    // line (indented or not) is top-level, which also closes the block.
+    if (inMetadata && /^\s/.test(line)) {
+      metadata.set(key, value);
+      continue;
+    }
+    inMetadata = key === 'metadata' && value === '';
+    if (key !== 'metadata') fields.set(key, value);
   }
 
   const name = fields.get('name');
@@ -100,6 +121,7 @@ export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter 
   return {
     name,
     description: fields.get('description') ?? '',
+    userDescription: metadata.get('user-description') ?? fields.get('user-description') ?? '',
     userInvocable: parseFrontMatterBoolean(fields.get('user-invocable'), true),
   };
 }
@@ -108,6 +130,11 @@ export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter 
  * Reads and parses every `<directory>/<skill>/SKILL.md`, sorted by name for a
  * stable order, keeping only the skills the user may invoke (`user-invocable`
  * not `false`).
+ *
+ * The `description` a skill is reported with is its user-facing summary: the
+ * front matter's `metadata.user-description` when present, else the technical
+ * `description` (see `ParsedSkillFrontMatter.userDescription`). The model still
+ * reads the full `SKILL.md` body itself through its `skill` tool.
  *
  * Auxiliary skills the model loads on its own - `query-results`,
  * `daisy-conventions` - set `user-invocable: false`,
@@ -134,9 +161,10 @@ export async function readSkillCatalog(directory: string): Promise<AgentChatSkil
     }
     const parsed = parseSkillFrontMatter(markdown);
     if (parsed === undefined || !parsed.userInvocable) continue;
+    const userFacing = parsed.userDescription === '' ? parsed.description : parsed.userDescription;
     skills.push({
       name: parsed.name,
-      description: parsed.description.slice(0, DESCRIPTION_MAX_LENGTH),
+      description: userFacing.slice(0, DESCRIPTION_MAX_LENGTH),
     });
   }
   skills.sort((left, right) => left.name.localeCompare(right.name));

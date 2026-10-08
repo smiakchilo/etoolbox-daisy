@@ -41,3 +41,7 @@ desktop.ini
 docs/
 .extra/
 opencode.json
+
+# Generated from resources/icon.png by scripts/generate-icons.mjs
+resources/icon.ico
+resources/icon.icns

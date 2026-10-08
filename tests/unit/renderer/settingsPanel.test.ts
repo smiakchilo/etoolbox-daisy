@@ -102,13 +102,14 @@ function build() {
   return { pane, settings };
 }
 
-/** Emits a minimal navigation-state push (the pane latches its closeability on it). */
+/** Emits a minimal navigation-state push. */
 function emitNavigationState(): void {
   const minimal: BrowserNavigationState = {
     url: 'https://author.example/content/page.html',
     canGoBack: false,
     canGoForward: false,
     isLoading: false,
+    hasDocument: true,
   };
   for (const listener of stateListeners) listener(minimal);
 }
@@ -123,8 +124,8 @@ describe('createSettingsPanel dismissal', () => {
     expect(viewHost?.hidden).toBe(true);
     expect(panelSurface?.hidden).toBe(false);
 
-    // The panel is only user-dismissible once a page sits under it (the pane
-    // gates closeability on navigation-state pushes), so unlock it first.
+    // The panel is always user-dismissible now: closing it reveals the page if
+    // one is loaded, or the home screen if not - never a bare region.
     emitNavigationState();
     pane.element.querySelector<HTMLElement>('.settings-panel__close')?.click();
     // The host heard the dismissal: the page view is restored and the panel is
@@ -156,22 +157,20 @@ describe('createSettingsPanel dismissal', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps Settings locked until a page has loaded', () => {
+  it('lets Settings be dismissed before any page has loaded, revealing the home screen', () => {
     const { pane, settings } = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const close = pane.element.querySelector<HTMLElement>('.settings-panel__close');
 
     pane.panelHost.open(settings);
-    expect(close?.hasAttribute('disabled')).toBe(true);
-
-    close?.click();
-    expect(viewHost?.hidden).toBe(true);
-
-    emitNavigationState();
+    // No page is loaded, yet the cross is enabled: dismissing reveals the home
+    // screen.
     expect(close?.hasAttribute('disabled')).toBe(false);
 
     close?.click();
-    expect(viewHost?.hidden).toBe(false);
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
   });
 
   it('selects a requested tab, so the agent banner can land on Agents', () => {

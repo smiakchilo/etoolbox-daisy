@@ -114,7 +114,7 @@ afterEach(() => {
 });
 
 function build(): ReturnType<typeof createBrowserToolbar> {
-  return createBrowserToolbar({ onHostsPickerClick: () => {} });
+  return createBrowserToolbar({ onHostsPickerClick: () => {}, onHomeClick: () => {} });
 }
 
 function loadingState(isLoading: boolean): BrowserNavigationState {
@@ -123,6 +123,7 @@ function loadingState(isLoading: boolean): BrowserNavigationState {
     canGoBack: true,
     canGoForward: false,
     isLoading,
+    hasDocument: true,
   };
 }
 
@@ -475,6 +476,7 @@ describe('createBrowserToolbar loading state machine', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: true,
+      hasDocument: true,
     });
 
     expect(address.value).toBe('https://author.example/content/page.html#section');
@@ -497,6 +499,7 @@ describe('createBrowserToolbar loading state machine', () => {
       canGoBack: false,
       canGoForward: false,
       isLoading: true,
+      hasDocument: true,
     });
     expect(address.value).toBe('https://author.example/');
 
@@ -506,6 +509,7 @@ describe('createBrowserToolbar loading state machine', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: true,
+      hasDocument: true,
     });
     expect(address.value).toBe('https://author.example/content/page.html');
 
@@ -515,6 +519,7 @@ describe('createBrowserToolbar loading state machine', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     });
     expect(address.value).toBe('https://author.example/content/page.html');
   });
@@ -588,22 +593,19 @@ describe('createBrowserToolbar loading state machine', () => {
 });
 
 describe('createBrowserToolbar navigation failure recovery', () => {
-  function buildWith(
-    overrides: {
-      readonly onHostsPickerRequest?: () => void;
-    } = {},
-  ): ReturnType<typeof createBrowserToolbar> {
-    return createBrowserToolbar({
-      onHostsPickerClick: () => {},
-      ...(overrides.onHostsPickerRequest !== undefined
-        ? { onHostsPickerRequest: overrides.onHostsPickerRequest }
-        : {}),
-    });
+  function buildWith(): ReturnType<typeof createBrowserToolbar> {
+    return createBrowserToolbar({ onHostsPickerClick: () => {}, onHomeClick: () => {} });
   }
 
   /** Reports the page the view is showing, so it can be remembered as "previous". */
   function pushPage(url: string): void {
-    stateListeners[0]?.({ url, canGoBack: true, canGoForward: false, isLoading: false });
+    stateListeners[0]?.({
+      url,
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument: true,
+    });
   }
 
   function typeAndSubmit(toolbar: ReturnType<typeof createBrowserToolbar>, value: string): void {
@@ -696,6 +698,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       canGoBack: false,
       canGoForward: false,
       isLoading: true,
+      hasDocument: true,
     });
     expect(message.hasAttribute('open')).toBe(true);
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
@@ -726,6 +729,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       canGoBack: false,
       canGoForward: false,
       isLoading: true,
+      hasDocument: true,
     });
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(false);
     expect(message.textContent).toContain('Timed out reaching');
@@ -739,6 +743,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     });
     await vi.waitFor(() => {
       expect(message.hasAttribute('open')).toBe(false);
@@ -765,29 +770,32 @@ describe('createBrowserToolbar navigation failure recovery', () => {
         canGoBack: false,
         canGoForward: false,
         isLoading: true,
+        hasDocument: true,
       });
     }
     expect(message.querySelector('sp-action-button')).toBe(reload);
     expect(message.textContent).toContain('Timed out reaching');
   });
 
-  it('asks for the hosts picker when nothing was displayed before the failure', async () => {
-    const onHostsPickerRequest = vi.fn();
-    const toolbar = buildWith({ onHostsPickerRequest });
+  it('does not attempt a restore when nothing was displayed before the failure', async () => {
+    const toolbar = buildWith();
     browser.navigate.mockResolvedValueOnce(TIMEOUT_ERROR);
 
     typeAndSubmit(toolbar, 'https://dead.example/');
 
     await vi.waitFor(() => {
-      expect(onHostsPickerRequest).toHaveBeenCalledTimes(1);
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
     });
-    // No restore attempt: only the original navigation was issued.
+    // No previous page: only the original navigation was issued. The pane's
+    // home screen covers the empty page-view region (the native view stays
+    // collapsed while `hasDocument` is false), so the toolbar has nothing to
+    // recover here.
+    expect(browser.goBack).not.toHaveBeenCalled();
     expect(browser.navigate).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the error row (with Reload) on a failed reload, without the hosts picker', async () => {
-    const onHostsPickerRequest = vi.fn();
-    const toolbar = buildWith({ onHostsPickerRequest });
+  it('shows the error row (with Reload) on a failed reload', async () => {
+    const toolbar = buildWith();
     const message = findMessage(toolbar);
     pushPage('https://author.example/');
     browser.reload.mockResolvedValueOnce(TIMEOUT_ERROR);
@@ -800,8 +808,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     });
     expect(message.querySelector('sp-action-button')?.textContent).toBe('Reload');
     // A reload's "previous page" is the very page that just failed, so there
-    // is nothing to fall back to and the picker is not forced on the user.
-    expect(onHostsPickerRequest).not.toHaveBeenCalled();
+    // is nothing to fall back to.
     expect(browser.navigate).not.toHaveBeenCalled();
   });
 });
@@ -1216,6 +1223,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     });
 
     browser.navigate.mockResolvedValueOnce({
@@ -1245,6 +1253,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     });
 
     refreshButton.click();
@@ -1353,7 +1362,7 @@ describe('createBrowserToolbar address host label', () => {
   };
 
   function navigationState(url: string): BrowserNavigationState {
-    return { url, canGoBack: false, canGoForward: false, isLoading: false };
+    return { url, canGoBack: false, canGoForward: false, isLoading: false, hasDocument: true };
   }
 
   it('shows the matching host label on its colour once a URL on that origin is loaded', () => {
@@ -1637,6 +1646,20 @@ describe('createBrowserToolbar address type-ahead', () => {
   });
 });
 
+describe('createBrowserToolbar home button', () => {
+  it('is the leftmost control and fires onHomeClick', () => {
+    const onHomeClick = vi.fn();
+    const toolbar = createBrowserToolbar({ onHostsPickerClick: () => {}, onHomeClick });
+
+    const home = toolbar.element.querySelector<HTMLElement>('[title="Home"]');
+    expect(home).not.toBeNull();
+    expect(toolbar.element.firstElementChild).toBe(home);
+
+    home?.click();
+    expect(onHomeClick).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('createBrowserToolbar agent-pane toggle', () => {
   function toggleButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
     const button = toolbar.element.querySelector<HTMLElement>(
@@ -1652,7 +1675,11 @@ describe('createBrowserToolbar agent-pane toggle', () => {
   } {
     const onToggle = vi.fn();
     return {
-      toolbar: createBrowserToolbar({ onHostsPickerClick: () => {}, onToggleAgentPane: onToggle }),
+      toolbar: createBrowserToolbar({
+        onHostsPickerClick: () => {},
+        onHomeClick: () => {},
+        onToggleAgentPane: onToggle,
+      }),
       onToggle,
     };
   }
@@ -1759,6 +1786,7 @@ describe('createBrowserToolbar open-in-external-browser button', () => {
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
+      hasDocument: true,
     });
     expect(button.hasAttribute('disabled')).toBe(false);
   });

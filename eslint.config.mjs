@@ -206,11 +206,17 @@ export default tseslint.config(
       'electron.vite.config.ts',
       'electron.vite.aem-preload.config.ts',
       'scripts/**/*.ts',
+      'scripts/**/*.mjs',
       'vitest.config.ts',
       'playwright.config.ts',
       'tests/fixtures/**/*.ts',
     ],
     extends: [...tseslint.configs.recommended],
+    languageOptions: {
+      // These run under Node (the icon generator prints its result). The
+      // typed app configs get `console`/`process` from their Node types.
+      globals: { console: 'readonly', process: 'readonly' },
+    },
   },
   {
     files: ['src/shared/**/*.ts'],

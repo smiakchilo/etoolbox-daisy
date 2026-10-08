@@ -2,6 +2,7 @@ import { el } from '../lib/dom';
 import { createStatusBanner, type StatusBannerSink } from '../settings/statusBanner';
 import { createBrowserToolbar } from './browserToolbar';
 import { createBrowserViewHost } from './browserViewHost';
+import { createHomeScreen, type HomeScreen } from './homeScreen';
 import type { Panel } from './panel';
 import { createHostsPanel } from './hostsPanel';
 import type { HostOption } from './viewModel';
@@ -26,6 +27,14 @@ export interface BrowserPane {
   readonly element: HTMLElement;
   /** The single-open host for whole-size panels over the page-view region. */
   readonly panelHost: BrowserPanelHost;
+  /**
+   * The pane's home (welcome) screen - the base layer of the page-view region,
+   * shown whenever no document is loaded and no panel is open. Exposed so the
+   * shell can fill its app name/version and skill list from the sources it
+   * already owns (`getAppInfo`/`listSkills`); the pane never loads those
+   * itself.
+   */
+  readonly home: HomeScreen;
   /**
    * The pane-owned status slot for the whole-size panels it hosts (Settings
    * today, History later). It lives in the page panel directly below the view
@@ -71,45 +80,53 @@ export interface BrowserPane {
  * describes - so it is never covered by a page and never overlaps the native
  * view.
  *
- *  - a whole-size panel (`panelHost.open`) is the only thing the renderer may
- *    draw over the native view's region: instead of an overlay trying to
- *    float above an Electron-native WebContentsView (which always composites
- *    *above* this document), opening the panel suspends/collapses the native
- *    view and lets the DOM panel take its exact slot (`viewSlot`). The hosts
- *    panel ("combobox glyph" button in the toolbar) and the chat pane's
- *    Settings/History buttons all go through this one host.
- *  - the panel replaces the native view *inside the view slot only*. The
- *    message row lives outside that slot and stays visible, so an error row
- *    (with Reload) is never hidden by whichever panel happens to be open.
- *  - a splitter drag does NOT touch the native view or any panel: the page
- *    stays fully visible and live-following for the drag's whole duration.
- *    The view only ever collapses for a panel.
- *  - when a failed load has no page to restore, the pane asks the hosts
- *    picker on - but only when no panel is already on screen
- *    (`onHostsPickerRequest`); the error row appears below whatever is shown.
+ * The page-view region is a three-way stack, only one layer ever visible:
  *
- * The row's *content* lifecycle stays in the toolbar (`browserToolbar.ts`):
- * it is cleared when a new navigation starts loading, and re-shown only when
- * that navigation fails.
+ *  - the native AEM `WebContentsView`, shown while a document is loaded;
+ *  - the pane's **home (welcome) screen** (`homeScreen.ts`), shown while no
+ *    document is loaded - the default state on a fresh profile and after a
+ *    failed load with no page to restore, so the region is never blank;
+ *  - a whole-size panel (`panelHost.open`), the only thing the renderer draws
+ *    over the native view: a native view always composites *above* this
+ *    document, so opening a panel suspends/collapses the native view and lets
+ *    the DOM panel take its exact slot (`viewSlot`). The hosts panel
+ *    ("combobox glyph" button in the toolbar) and the chat pane's
+ *    Settings/History buttons all go through this one host.
+ *
+ * The native view is collapsed whenever it has no document to show
+ * (`hasDocument` false, pushed by main), the user pressed the toolbar's Home
+ * button, *or* a panel is open; the home screen fills the slot in the first two
+ * cases. Because the home screen is always a valid thing to reveal, panels are
+ * now always closeable: dismissing one shows the page if a document is loaded,
+ * or the home screen if not - never a bare region.
  */
 export interface BrowserPaneCallbacks {
   /** Fired by the toolbar's agent-pane toggle; the shell hides/shows the chat pane. */
   readonly onToggleAgentPane?: () => void;
+  /**
+   * Opens Settings as the active panel. The shell owns the settings panel, so
+   * it supplies this callback; the pane's home screen's "Open settings" action
+   * invokes it.
+   */
+  readonly onOpenSettings?: () => void;
 }
 
 export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): BrowserPane {
   let activePanel: Panel | undefined;
 
-  // The closeability latch. A whole-size panel replaces (suspends) the native
-  // view, so dismissing it reveals the bare page-view region. That region is
-  // only meaningful once a real page has loaded into the native view, which is
-  // exactly when the main process starts pushing navigation-state updates; a
-  // user must therefore never be able to dismiss a panel until at least one
-  // `onStateChanged` event has arrived (the startup hosts picker/Settings
-  // panel on a fresh profile are the prime case). The latch is one-way for the
-  // session - a view that has loaded a page keeps it, so once the pane unlocks
-  // it stays unlocked.
-  let pageLoaded = false;
+  // Whether the AEM view currently holds a committed document (pushed by main
+  // as `browser:state-changed`'s `hasDocument`). The native view is shown only
+  // when this is true and no panel is open; otherwise the home screen (no
+  // panel) or the panel takes the slot. False until the first commit, which is
+  // exactly the fresh-profile / failed-first-load state the home screen exists
+  // for.
+  let hasDocument = false;
+
+  // Set when the user presses the toolbar's Home button: the home screen is
+  // shown even while a document is loaded, until the user navigates away. The
+  // native view is only collapsed, never destroyed, so the loaded page and the
+  // AEM bridge stay alive underneath.
+  let homeForced = false;
 
   // The pane-owned status slot for the panels it hosts (Settings today). It is
   // created here, not by the panel, and lives in `pagePanel` below the view
@@ -129,52 +146,53 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   const toolbar = createBrowserToolbar({
     onHostsPickerClick(): void {
-      if (activePanel === picker) {
-        // Toggling the open picker off is a dismissal, so it obeys the same
-        // closeability rule: with nothing loaded under it yet, the only way
-        // out is to select a host (which navigates AND closes the panel).
-        if (pageLoaded) closeActivePanel();
-      } else {
-        openPanel(picker);
-      }
+      if (activePanel === picker) closeActivePanel();
+      else openPanel(picker);
+    },
+    onHomeClick(): void {
+      showHome();
+    },
+    onNavigationStarted(): void {
+      if (!homeForced) return;
+      homeForced = false;
+      updateViewVisibility();
     },
     onToggleAgentPane(): void {
       callbacks.onToggleAgentPane?.();
     },
-    // A failed load with no page to restore: replace the blank page-view
-    // region with the hosts list so the user can pick where to go. Not a
-    // toggle - opening an already-open picker is a no-op (`openPanel`).
-    //
-    // Only when nothing else is on screen: if a panel (Settings, History, …)
-    // is already open, leave it. A failed navigation must not yank the user
-    // out of the surface they chose; the error row still appears below it
-    // (the row lives outside the panel's slot and is never covered).
-    onHostsPickerRequest(): void {
-      if (activePanel === undefined) openPanel(picker);
-    },
   });
   const viewHost = createBrowserViewHost();
 
-  // The pane keeps its own latch on the navigation-state feed: the toolbar's
-  // copy is private, and each `onStateChanged` listener is an independent
-  // `ipcRenderer.on` subscription (app-preload.ts), so subscribing twice is
-  // safe. Like the toolbar's `lastNavigationState`, it latches on ANY push -
-  // including the start/stop of a failed load, so a down server still unlocks
-  // the panel once the user has navigated at it.
-  const unsubscribeState = window.daisy.browser.onStateChanged(() => {
-    if (pageLoaded) return;
-    pageLoaded = true;
-    activePanel?.setCloseable(true);
+  const home = createHomeScreen({
+    onOpenHosts(): void {
+      openPanel(picker);
+    },
+    onOpenSettings(): void {
+      callbacks.onOpenSettings?.();
+    },
   });
 
-  // The slot the native view and every whole-size panel share, directly above
-  // the status/prompt row. A panel *replaces the native view* inside this one
-  // slot - the exact region the `WebContentsView` occupies - so the message
-  // row below it is never covered (see the file doc comment). The picker's
-  // element lives here too; no panel is ever a sibling of the row.
+  // The pane tracks whether a document is loaded from the state feed: each
+  // `onStateChanged` listener is an independent `ipcRenderer.on` subscription
+  // (app-preload.ts), so subscribing here alongside the toolbar's own is safe.
+  // Only a `hasDocument` change moves the view/home/panel stack, so a push that
+  // merely updates the address does not re-run the visibility logic.
+  const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
+    if (state.hasDocument === hasDocument) return;
+    hasDocument = state.hasDocument;
+    updateViewVisibility();
+  });
+
+  // The slot the native view, the home screen and every whole-size panel share,
+  // directly above the status/prompt row. Exactly one of the three is visible
+  // at a time (see `updateViewVisibility`), and a panel *replaces* the region
+  // rather than overlaying it - the exact rectangle the `WebContentsView`
+  // occupies - so the message row below is never covered (see the file doc
+  // comment). The picker's element also lives here; no panel is ever a sibling
+  // of the row. The home screen is first so it sits at the bottom of the stack.
   const viewSlot = el('div', {
     attrs: { class: 'browser-view-slot', 'data-testid': 'browser-view-slot' },
-    children: [viewHost.element, picker.element],
+    children: [home.element, viewHost.element, picker.element],
   });
 
   // The status/prompt row sits BELOW the view slot (statusbar-style), so it is
@@ -192,17 +210,49 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     children: [viewSlot, surfaceStatus.element, toolbar.messageElement],
   });
 
+  /**
+   * The one decision that drives the whole page-view stack: show the native
+   * view when a document is loaded (and the user has not forced Home), the home
+   * screen when none is or Home was forced, or the panel when one is open. Both
+   * the native view and the home screen are `flex:1`, so exactly one may be
+   * unhidden at a time or they would split the slot; the panel is a third,
+   * equally exclusive state.
+   */
+  function updateViewVisibility(): void {
+    const panelOpen = activePanel !== undefined;
+    const showHomeLayer = !hasDocument || homeForced;
+    const nativeVisible = !showHomeLayer && !panelOpen;
+    const homeVisible = showHomeLayer && !panelOpen;
+    viewHost.element.hidden = !nativeVisible;
+    home.element.hidden = !homeVisible;
+    // Collapsing the native view (rather than merely hiding its host element)
+    // is what lets the DOM layer show: a native view composites above the
+    // document regardless of z-order, so it must be sized to zero.
+    viewHost.setSuspended(!nativeVisible);
+  }
+
+  /**
+   * Reveals the home screen: closes any open panel and forces the home layer
+   * even when a document is loaded, until the next user-initiated navigation
+   * (`onNavigationStarted`). The native view is only collapsed, so the loaded
+   * page stays alive and the AEM bridge keeps working.
+   */
+  function showHome(): void {
+    homeForced = true;
+    if (activePanel === undefined) updateViewVisibility();
+    else closeActivePanel();
+  }
+
   function openPanel(panel: Panel): void {
     if (activePanel === panel) return;
     activePanel?.close();
     activePanel = panel;
     // Order matters (see file doc comment): the native view paints above the
-    // document, so it must be collapsed first and hidden before the panel
-    // takes the slot; the message row below stays visible either way.
-    viewHost.setSuspended(true);
-    viewHost.element.hidden = true;
+    // document, so it must be collapsed first; the message row below stays
+    // visible either way.
+    updateViewVisibility();
     toolbar.setHostsPickerOpen(panel === picker);
-    panel.setCloseable(pageLoaded);
+    panel.setCloseable(true);
     panel.open();
   }
 
@@ -210,13 +260,16 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     if (activePanel === undefined) return;
     const panel = activePanel;
     activePanel = undefined;
-    // Hide the panel first (via its own close), then restore the native view
-    // region, so the returning view never paints over a still-visible panel.
+    // Hide the panel first (via its own close), then restore whichever of the
+    // native view / home screen belongs in the slot, so the returning layer
+    // never paints over a still-visible panel.
     panel.close();
     toolbar.setHostsPickerOpen(false);
-    viewHost.element.hidden = false;
-    viewHost.setSuspended(false);
+    updateViewVisibility();
   }
+
+  // Start on the home screen: no document is loaded yet.
+  updateViewVisibility();
 
   const element = el('section', {
     attrs: { class: 'pane browser-pane', 'aria-label': 'Browser' },
@@ -230,6 +283,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       close: closeActivePanel,
       isActive: (panel) => activePanel === panel,
     },
+    home,
     surfaceStatus,
     openHostsPicker(): void {
       openPanel(picker);
@@ -247,6 +301,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       toolbar.setAddressValue(state.addressValue);
       toolbar.setHostOptions(state.hostOptions);
       picker.setHostOptions(state.hostOptions);
+      home.setHostsAvailable(state.hostOptions.length > 0);
       viewHost.reportBoundsNow();
     },
     dispose(): void {
