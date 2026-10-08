@@ -152,6 +152,21 @@ describe('linkTargets - classifyAemPath', () => {
       ]),
     );
   });
+
+  it('folds a typographic hyphen in a path to the ASCII node the repository stores', () => {
+    // Regression: the model wrote `custom‑skeleton` with U+2011 NON-BREAKING
+    // HYPHEN. If the dash is not folded, the link names a node that does not
+    // exist (and the bare-path matcher stops at `custom` - see the linkification
+    // suite below).
+    expect(
+      classifyAemPath(AUTHOR, '/content/site/custom\u2011skeleton/column-container/1'),
+    ).toEqual(
+      pane(`${AUTHOR}/content/site/custom-skeleton/column-container/1.html`, [
+        editAction(`${AUTHOR}/editor.html/content/site/custom-skeleton/column-container/1.html`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/custom-skeleton/column-container/1`),
+      ]),
+    );
+  });
 });
 
 describe('linkTargets - resolving a relative path', () => {
@@ -331,6 +346,23 @@ describe('linkTargets - bare path linkification', () => {
         value: '/content/dam/x',
         resolved: pane(`${AUTHOR}/content/dam/x`, [
           crxAction(`${AUTHOR}/crx/de/index.jsp#/content/dam/x`),
+        ]),
+      },
+    ]);
+  });
+
+  it('keeps a typographic hyphen (U+2011) inside a bare path instead of stopping at it', () => {
+    // Regression for the real chat: `templates/custom‑skeleton/...` was matched
+    // only as far as `templates/custom`, so the anchor covered half the path and
+    // its href pointed at the wrong node. The displayed text keeps the original
+    // U+2011; the resolved link folds it to ASCII `-`.
+    expect(splitAemPathLinks('/content/site/custom\u2011skeleton/1', AUTHOR)).toEqual([
+      {
+        kind: 'link',
+        value: '/content/site/custom\u2011skeleton/1',
+        resolved: pane(`${AUTHOR}/content/site/custom-skeleton/1.html`, [
+          editAction(`${AUTHOR}/editor.html/content/site/custom-skeleton/1.html`),
+          crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/custom-skeleton/1`),
         ]),
       },
     ]);

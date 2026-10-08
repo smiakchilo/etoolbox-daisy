@@ -39,6 +39,16 @@
   color: var(--spectrum-accent-background-color-default, #0265dc);
 }
 
+/* A bare JCR path rendered as a link is one long token with no natural break
+   point. Allow it to break anywhere so it wraps to the pane width instead of
+   forcing a horizontal scrollbar. `anywhere` (not `break-word`) so it also
+   lowers the element's min-content width - which is what lets a table cell
+   containing a path shrink rather than widen its table. */
+.chat-transcript a[data-daisy-link],
+.chat-transcript a[data-daisy-external] {
+  overflow-wrap: anywhere;
+}
+
 /* The pane footer, directly beneath the composer: a thin line. Left is the
    "agent / model / reasoning" summary (a jump to Settings), right is the
    chat-log reveal icon. Hidden until a conversation with content exists. */
@@ -218,15 +228,21 @@
 }
 
 /* Rendered by transcriptView.ts from marked + DOMPurify output (see
-   renderMarkdown.ts) - a real <table> element, not literal Markdown source. */
+   renderMarkdown.ts) - a real <table> element, not literal Markdown source.
+   `width: 100%` keeps the table inside the message, and each cell's
+   `overflow-wrap: anywhere` gives a long JCR path or URL a break point (and,
+   unlike `break-word`, shrinks the cell's min-content width), so a table of
+   paths wraps within the transcript instead of widening it. */
 .chat-message--assistant table {
   border-collapse: collapse;
+  width: 100%;
 }
 
 .chat-message--assistant th,
 .chat-message--assistant td {
   border: 1px solid var(--spectrum-gray-300, #d3d3d3);
   padding: 4px 8px;
+  overflow-wrap: anywhere;
 }
 
 /* A tool call is a borderless "billet" - a disclosure row, not a card. It has

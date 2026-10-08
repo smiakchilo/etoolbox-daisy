@@ -1,5 +1,6 @@
 import type { VirtualTrigger } from '@spectrum-web-components/overlay/src/VirtualTrigger.js';
 import { el } from '../lib/dom';
+import { OVERLAY_OFFSET } from '../lib/overlay';
 import type { LinkAction } from './linkTargets';
 
 /**
@@ -57,7 +58,7 @@ export function createLinkActionPopover(
   const popover = el('sp-popover', { attrs: { class: 'chat-link-popover' } });
   popover.append(buttons);
   const overlay = el('sp-overlay', {
-    attrs: { type: 'manual', placement: 'top', offset: '10' },
+    attrs: { type: 'manual', placement: 'top', offset: String(OVERLAY_OFFSET) },
   });
   overlay.append(popover);
 
@@ -120,6 +121,12 @@ export function createLinkActionPopover(
 
   function show(anchor: HTMLElement, actions: readonly LinkAction[]): void {
     if (disposed) return;
+    // Showing for a new anchor must cancel any hide still pending from the link
+    // the pointer just left: moving swiftly from one link to another fires
+    // `pointerout` on the old link (which schedules a hide) *before*
+    // `pointerover` on the new one, so without this the old link's grace timer
+    // would still fire and close the popover the pointer just moved to.
+    cancelHide();
     if (trigger === undefined) {
       pending = { anchor, actions };
       return;

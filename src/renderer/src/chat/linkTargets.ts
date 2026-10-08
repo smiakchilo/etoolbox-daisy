@@ -230,7 +230,7 @@ function encodeAemPathname(pathname: string): string {
   } catch {
     decoded = pathname;
   }
-  return decoded
+  return normalizePathDashes(decoded)
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
@@ -242,7 +242,7 @@ function encodeAemPathname(pathname: string): string {
  * bare-path linkifier both route through here.
  */
 export function classifyAemPath(origin: string, rawPathname: string): ResolvedLink {
-  const path = withoutTrailingSlash(rawPathname);
+  const path = normalizePathDashes(withoutTrailingSlash(rawPathname));
   const pathNoHtml = withoutHtmlExtension(path);
 
   if (hasNonHtmlExtension(path)) {
@@ -373,15 +373,38 @@ export interface MessageLinkSegment {
 export type MessageSegment = MessageTextSegment | MessageLinkSegment;
 
 /**
+ * Hyphen characters that look like an ASCII `-` but are not one. A model
+ * writing prose routinely emits a non-breaking hyphen (U+2011) inside what it
+ * means as a path - `templates/custom‑skeleton` - while the AEM repository
+ * stores the plain ASCII `-`. Two things follow: the path matcher must treat
+ * these as segment characters (otherwise the match stops dead at `custom`, the
+ * bug this fixes), and the URL builder must fold them back to `-` so the link
+ * targets the node that actually exists.
+ *
+ * En dash / em dash (U+2013/U+2014) are deliberately excluded: in prose they
+ * separate clauses, and admitting one would pull the following words into the
+ * path. The accepted set is the hyphen family - U+2010 HYPHEN, U+2011
+ * NON-BREAKING HYPHEN, U+2012 FIGURE DASH, U+FE63 SMALL HYPHEN-MINUS, U+FF0D
+ * FULLWIDTH HYPHEN-MINUS.
+ */
+const PATH_DASH_PATTERN = /[\u2010-\u2012\uFE63\uFF0D]/g;
+
+/** Folds every {@link PATH_DASH_PATTERN} character to ASCII `-`. */
+function normalizePathDashes(value: string): string {
+  return value.replace(PATH_DASH_PATTERN, '-');
+}
+
+/**
  * Matches a bare AEM-native path inside prose. The leading boundary group is
  * kept so the character before the path (`<p>/content/x` starts the node, but
  * `(/content/x)` and `see /content/x` do not lose their space or bracket) is
  * re-emitted as text. The segment character class deliberately omits `()`, `,`,
  * `;` and `/`, so a parenthesised or comma-terminated path does not swallow its
- * own punctuation.
+ * own punctuation. It includes the dash variants in {@link PATH_DASH_PATTERN},
+ * so `custom‑skeleton` (U+2011) is one segment, not two.
  */
 const AEM_PATH_PATTERN =
-  /(^|[\s([{])(\/(?:content|apps|libs|conf|var|etc|home)(?:\/[A-Za-z0-9._~%:@!$&'*+=-]+)*\/?)/g;
+  /(^|[\s([{])(\/(?:content|apps|libs|conf|var|etc|home)(?:\/[A-Za-z0-9._~%:@!$&'*+=\u2010-\u2012\uFE63\uFF0D-]+)*\/?)/g;
 
 /** Punctuation a sentence may append directly to a path; trimmed from the end. */
 const TRAILING_SENTENCE_PUNCTUATION = new Set(['.', ':', ',', ';', '!', '?']);

@@ -39,6 +39,20 @@ sp-theme {
 }
 
 /*
+ * Spectrum's popover lifts itself a further `--spectrum-popover-animation-distance`
+ * (8px) away from its trigger when it opens, on top of the overlay's own
+ * `offset` attribute. That hidden lift is what put the transcript's link-action
+ * popover up over the link on the line above and let a pointer travelling into
+ * it cross that link and retarget it (see `lib/overlay.ts`); the composer's
+ * skills popover carried the same extra 8px. Neutralise it app-wide so an
+ * overlay at offset 0 sits flush against its trigger - the popover still fades
+ * in, it just no longer slides away from the trigger first.
+ */
+sp-popover {
+  --mod-popover-animation-distance: 0;
+}
+
+/*
  * Global focus-frame suppression for every text field in the app (address
  * bar, Settings hosts/proxy/color inputs, and anything else that mounts an
  * `sp-textfield`). The component paints a 2px blue focus indicator plus a

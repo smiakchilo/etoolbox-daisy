@@ -110,11 +110,73 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     );
   });
 
-  it('never linkifies inside inline code or a fenced code block', () => {
+  it('linkifies a bare AEM path inside inline code', () => {
+    const doc = parse(renderer.render('`/content/inline`', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/inline.html`);
+    expect(doc.querySelector('code')?.textContent).toBe('/content/inline');
+  });
+
+  it('linkifies a path with a U+2011 hyphen over its full length, folding it in the href', () => {
     const doc = parse(
-      renderer.render('`/content/inline`\n\n```\n/content/fenced\n```\n', ACTIVE_CONTEXT),
+      renderer.render('See /content/site/custom\u2011skeleton/1 now.', ACTIVE_CONTEXT),
     );
-    expect(doc.querySelectorAll('a')).toHaveLength(0);
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    // The anchor covers the whole path, not just the part before the hyphen...
+    expect(anchor?.textContent).toBe('/content/site/custom\u2011skeleton/1');
+    // ...and it links to the ASCII node the repository actually stores.
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/custom-skeleton/1.html`);
+  });
+
+  it('linkifies a bare AEM path inside a fenced code block', () => {
+    const doc = parse(renderer.render('```\n/content/fenced\n```\n', ACTIVE_CONTEXT));
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/fenced.html`);
+    // The fenced block keeps its trailing newline; the path itself is the anchor.
+    expect(doc.querySelector('pre code')?.textContent?.trim()).toBe('/content/fenced');
+  });
+
+  it('linkifies the jcr:content path a model wraps in inline code (reported case)', () => {
+    // Regression: a JCR path written as `` **Node:** `/content/.../jcr:content` ``
+    // used to stay plain text because the linkifier skipped `code`/`pre`
+    // content, while the same path bare in prose became a link.
+    const doc = parse(
+      renderer.render(
+        '**Node:** `/content/hpe/base/blueprint/regression/components/' +
+          'new-country-selector-template/home-page-5/jcr:content`',
+        ACTIVE_CONTEXT,
+      ),
+    );
+    const anchor = doc.querySelector('a[data-daisy-link]');
+    expect(anchor?.getAttribute('href')).toBe(
+      `${AUTHOR}/content/hpe/base/blueprint/regression/components/` +
+        'new-country-selector-template/home-page-5.html',
+    );
+    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      {
+        id: 'edit',
+        title: 'Edit',
+        href:
+          `${AUTHOR}/editor.html/content/hpe/base/blueprint/regression/components/` +
+          'new-country-selector-template/home-page-5.html',
+      },
+      {
+        id: 'crx',
+        title: 'CRX',
+        href:
+          `${AUTHOR}/crx/de/index.jsp#/content/hpe/base/blueprint/regression/components/` +
+          'new-country-selector-template/home-page-5/jcr:content',
+      },
+    ]);
+  });
+
+  it('does not linkify a path inside an existing anchor', () => {
+    // A nested `<a>` is invalid, and the outer anchor already carries its own
+    // target, so the anchor's own text is left alone.
+    const doc = parse(renderer.render('[see /content/x](https://other.example/y)', ACTIVE_CONTEXT));
+    expect(doc.querySelectorAll('a[data-daisy-link]')).toHaveLength(0);
+    expect(doc.querySelectorAll('a')).toHaveLength(1);
+    expect(doc.querySelector('a')?.textContent).toBe('see /content/x');
   });
 
   it('rewrites an absolute configured-host page link to its rendered URL', () => {

@@ -1,5 +1,6 @@
 import { el } from '../lib/dom';
 import { loadComposerHistory, saveComposerHistory } from '../lib/composerHistoryStore';
+import { OVERLAY_OFFSET } from '../lib/overlay';
 import { createComposerHistoryNavigator, resolveCaretBounds } from './composerHistory';
 import {
   ASK_USER_DROPDOWN_THRESHOLD,
@@ -437,7 +438,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     const popover = el('sp-popover', { attrs: { class: 'chat-ask__popover' } });
     popover.append(menu);
     const overlay = el('sp-overlay', {
-      attrs: { type: 'manual', placement: 'bottom-start' },
+      attrs: { type: 'manual', placement: 'bottom-start', offset: String(OVERLAY_OFFSET) },
     }) as HTMLElement & { triggerElement?: HTMLElement; open?: boolean };
     overlay.append(popover);
 

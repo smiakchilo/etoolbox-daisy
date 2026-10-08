@@ -250,6 +250,97 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await app.close();
   });
 
+  test('a bare AEM path inside inline code or a fenced block becomes a link too', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    // Put the pane on the host so a relative path resolves (the load fails, but
+    // the attempt is what makes the origin active).
+    const addressInput = shell.locator('#browser-address-bar input');
+    await addressInput.fill(HOST);
+    await addressInput.press('Enter');
+    await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
+      'open',
+      '',
+      { timeout: 60_000 },
+    );
+
+    // Owner request (2026-10-08): the model writes JCR paths inside inline code
+    // and fenced blocks; a path matching the roots must be a link wherever it
+    // appears, exactly as if it were bare prose.
+    await sendMessage(
+      app,
+      shell,
+      '**Node:** `/content/site/beta/jcr:content`\n\n```\n/content/site/gamma\n```',
+    );
+
+    const links = shell.locator(`${ASSISTANT} code a[data-daisy-link]`);
+    await expect(links).toHaveCount(2, { timeout: 30_000 });
+    // Inline code: opens the owning page, trimmed at /jcr:content.
+    await expect(links.nth(0)).toHaveAttribute('href', `${HOST}/content/site/beta.html`);
+    // Fenced block: the same page link a bare path would get.
+    await expect(links.nth(1)).toHaveAttribute('href', `${HOST}/content/site/gamma.html`);
+
+    // The click must still reach the pane's real navigation path.
+    await links.nth(0).click();
+    const banner = shell.locator(BROWSER_MESSAGE);
+    await expect(banner).toContainText(`${HOST}/content/site/beta.html`, { timeout: 60_000 });
+
+    await app.close();
+  });
+
+  test('a markdown table of long path links wraps instead of widening the transcript', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    // Put the pane on the host so the table's bare paths linkify.
+    const addressInput = shell.locator('#browser-address-bar input');
+    await addressInput.fill(HOST);
+    await addressInput.press('Enter');
+    await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
+      'open',
+      '',
+      { timeout: 60_000 },
+    );
+
+    // Mirrors the real chat's table: one long path per cell, one of them using a
+    // U+2011 non-breaking hyphen (`custom\u2011skeleton`), which used to be
+    // linkified only up to `custom`.
+    await sendMessage(
+      app,
+      shell,
+      '| Query | What was returned |\n' +
+        '|---|---|\n' +
+        '| /content/hpe/base/blueprint/regression/templates/custom\u2011skeleton/column-container/1 | ' +
+        '/content/hpe/base/blueprint/regression/components/text-only, ' +
+        '/content/hpe/base/blueprint/regression/templates/custom-fragment/portfolio/portfolio-fragment5-touch |',
+    );
+
+    const table = shell.locator(`${ASSISTANT} table`);
+    await expect(table).toHaveCount(1, { timeout: 30_000 });
+    const links = shell.locator(`${ASSISTANT} table a[data-daisy-link]`);
+    await expect(links).toHaveCount(3);
+
+    // The U+2011 path links over its full length and targets the ASCII node.
+    await expect(links.nth(0)).toHaveAttribute(
+      'href',
+      `${HOST}/content/hpe/base/blueprint/regression/templates/custom-skeleton/column-container/1.html`,
+    );
+
+    // The transcript must not scroll horizontally: the table fits its container.
+    const overflow = await shell.locator('.chat-transcript').evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+
+    await app.close();
+  });
+
   test('a page link offers Edit and CRX in one travelling hover popover', async () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
@@ -279,6 +370,83 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(`${HOST}/editor.html/content/site/alpha.html`, {
+      timeout: 60_000,
+    });
+
+    await app.close();
+  });
+
+  test('moving the pointer swiftly from one link to another keeps the popover open', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    await sendMessage(
+      app,
+      shell,
+      `See [Alpha](${HOST}/content/site/alpha.html) and [Beta](${HOST}/content/site/beta.html).`,
+    );
+    const links = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
+    await expect(links).toHaveCount(2, { timeout: 30_000 });
+
+    await links.nth(0).hover();
+    const overlay = shell.locator('sp-overlay');
+    await expect(overlay).toHaveCount(1);
+    await expect(shell.locator('sp-overlay sp-action-button[title="Edit"]')).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // Leaving a link schedules a hide; moving onto the next link must cancel it,
+    // or the popover transfers there and then closes on its own. The hide grace
+    // is 200ms, so waiting past it proves the old link's timer no longer fires.
+    await links.nth(1).hover();
+    await shell.waitForTimeout(500);
+    await expect
+      .poll(() => overlay.evaluate((element) => (element as unknown as { open: boolean }).open))
+      .toBe(true);
+    await expect(shell.locator('sp-overlay sp-action-button[title="Edit"]')).toBeVisible();
+
+    await app.close();
+  });
+
+  test('carrying the pointer up into a link popover never retargets it at the link above', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    // Two links stacked one per line, the upper directly above the lower. Equal
+    // labels keep them the same width, so the lower link's centre column is
+    // covered by the upper link - exactly the case the owner hit.
+    await sendMessage(
+      app,
+      shell,
+      `- [Alpha](${HOST}/content/site/alpha.html)\n- [Bravo](${HOST}/content/site/bravo.html)`,
+    );
+    const links = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
+    await expect(links).toHaveCount(2, { timeout: 30_000 });
+
+    // Hover the LOWER link; the popover opens above it, over the upper link.
+    const lower = links.nth(1);
+    await lower.hover();
+    const edit = shell.locator('sp-overlay sp-action-button[title="Edit"]');
+    await expect(edit).toBeVisible({ timeout: 30_000 });
+
+    // Carry the pointer up into the popover in small steps, as a hand would. A
+    // popover floating off its link leaves the strip between them uncovered, so
+    // the path crosses the upper anchor and switches the popover to it.
+    const from = await lower.boundingBox();
+    const to = await edit.boundingBox();
+    if (from === null || to === null) throw new Error('popover geometry unavailable');
+    await shell.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await shell.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 24 });
+
+    // The popover must still belong to the lower link: Edit opens Bravo's
+    // editor, where a switch to the upper link would open Alpha's.
+    await edit.click();
+    const banner = shell.locator(BROWSER_MESSAGE);
+    await expect(banner).toContainText(`${HOST}/editor.html/content/site/bravo.html`, {
       timeout: 60_000,
     });
 

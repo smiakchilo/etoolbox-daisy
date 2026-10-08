@@ -348,7 +348,15 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
     }
   }
 
-  /** Wraps every bare AEM-native path in a text node as a clickable anchor. */
+  /**
+   * Wraps every bare AEM-native path in a text node as a clickable anchor.
+   *
+   * Inline code and fenced code blocks are linkified too (owner decision,
+   * 2026-10-08): the model habitually writes a JCR path as `` `/content/...` ``
+   * or inside a ``` block, and a path that matches the roots is a path wherever
+   * it appears. The one exclusion is text already inside an anchor, where a
+   * nested `<a>` is invalid and the outer anchor already carries its target.
+   */
   function linkifyTextNodes(doc: Document, context: LinkContext): void {
     if (context.activeOrigin === undefined) return;
 
@@ -356,7 +364,7 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
       acceptNode(node: Node): number {
         const parent = node.parentElement;
         if (parent === null) return windowRef.NodeFilter.FILTER_REJECT;
-        return parent.closest('a, code, pre') !== null
+        return parent.closest('a') !== null
           ? windowRef.NodeFilter.FILTER_REJECT
           : windowRef.NodeFilter.FILTER_ACCEPT;
       },

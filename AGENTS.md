@@ -526,7 +526,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2658 passed / 14 skipped** (the +2 since
+Current baseline: **`npm run test` → 2664 passed / 14 skipped** (the +3 since
+2661 is the typographic-hyphen fix — a U+2011 non-breaking hyphen (and the other
+hyphen variants: U+2010, U+2012, U+FE63, U+FF0D) is now a path segment character
+and folds to ASCII `-` in the resolved URL, so `custom‑skeleton` links over its
+whole length instead of stopping at `custom`: one `classifyAemPath` case, one
+bare-path case and one `renderMarkdown` case — see `docs/verification.md`
+"Typographic hyphens in paths, and wide link tables (2026-10-08)"; the +3 since
+2658 is the code-span linkification fix — a bare AEM path is now linkified
+inside inline code and fenced code blocks too, not only in prose: one old
+`renderMarkdown` case replaced by four — see `docs/verification.md` "AEM paths
+inside inline/fenced code are links too (2026-10-08)"; the +2 since
 2656 is the deferred-journal-header work — a bare chat no longer leaves a
 journal file, and a dev-only `!!open <ChatId>` trigger was added; see
 `docs/verification.md` "Bare chats leave no journal file, and a dev-only
@@ -596,7 +606,21 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 103 tests; typically 102 passed / 1 failed in the full run** (the
+**Playwright → 107 tests; typically 106 passed / 1 failed in the full run** (the
++1 since 106 is the `message-links.spec.ts` case proving a link popover does not
+retarget the link above when the pointer is carried up into it, plus an offset
+assertion in `skill-autocomplete.spec.ts` — see `docs/verification.md` "Every app
+popover now sits flush against its trigger (2026-10-08)"; the
++1 since 105 is the `message-links.spec.ts` case proving a markdown table of long
+path links wraps instead of widening the transcript — see `docs/verification.md`
+"Typographic hyphens in paths, and wide link tables (2026-10-08)"; the
++1 since 104 is the `message-links.spec.ts` case proving the link popover stays
+open when the pointer moves swiftly from one link to another — see
+`docs/verification.md` "The link popover stays open when the pointer moves to
+another link (2026-10-08)"; the
++1 since 103 is the `message-links.spec.ts` case proving a bare AEM path inside
+inline code or a fenced block becomes a link too — see `docs/verification.md`
+"AEM paths inside inline/fenced code are links too (2026-10-08)"; the
 +1 since 102 is the `message-links.spec.ts` case proving a chat link dismisses
 an open Settings panel — see `docs/verification.md` "A chat link now dismisses
 an open Settings panel (2026-10-08)"; the
@@ -614,11 +638,14 @@ load-correlated flakes — `settings-color-picker` (its 1–2 px geometry), the
 hosts-typing case in `step05-settings-servers.spec.ts`, and the documented
 `step05-loading-indicator` — are green in isolation, so a full run can show 2;
 includes `message-links.spec.ts`, the assistant
-message-link case, now 7 tests covering the Edit/CRX hover popover, the
+message-link case, now 11 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
 on the exact resource - percent-encoding of the path in content-view URLs, the
-never-focused popover buttons, the external-browser path, and a chat link
-dismissing an open Settings panel, and
+never-focused popover buttons, the external-browser path, a chat link
+dismissing an open Settings panel, a bare path inside inline code or a
+fenced block, the popover staying open across a swift link-to-link move, a
+markdown table of long path links wrapping rather than widening the transcript,
+the popover staying on its link when the pointer is carried up into it, and
 `chat-thinking-indicator.spec.ts`, now 2 tests covering the transient reasoning
 billet). (The Session "Authentication"/"Models"
 → "Agents" tab merge moved the unit baseline from 1658, and later work moved it

@@ -2,7 +2,7 @@
 name: search
 description: How to run an AEM search with the aem_query tool - invoke `/search <terms>` for an immediate full-text search, or construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return. Use whenever searching, correcting, or explaining an aem_query call against a conventional AEM Author instance.
 metadata:
-  user-description: Find pages and assets by what they say.
+  user-description: Find pages and assets by their content.
 ---
 
 # Running an AEM search
