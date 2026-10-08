@@ -131,7 +131,9 @@ export interface BrowserToolbarCallbacks {
   /**
    * Fired when a user-initiated navigation begins (a typed/selected address,
    * Back/Forward, or Refresh). The owning pane leaves the home screen when the
-   * user navigates away from it.
+   * user navigates away from it, and dismisses any whole-size panel covering
+   * the page-view region so the navigation's result is visible. Page-caused
+   * navigation never fires this.
    */
   onNavigationStarted?(): void;
   /** Fired when the agent-pane toggle is activated; the shell shows/hides the chat pane. */

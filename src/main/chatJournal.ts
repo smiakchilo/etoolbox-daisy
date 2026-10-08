@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   type AgentEvent,
   type ChatId,
+  type ChatJournalHeaderRecord,
   type ChatJournalRecord,
   CHAT_JOURNAL_SCHEMA_VERSION,
   chatJournalRecordSchema,
@@ -22,7 +23,10 @@ import {
  *
  * One JSON Lines file per application `ChatId` under
  * `<home>/etoolbox-daisy/chats`, described by the record schemas in
- * `src/shared/contracts/chatJournal.ts`. Kept Electron-free - the directory is
+ * `src/shared/contracts/chatJournal.ts`. A file appears only once a chat has
+ * produced its first record: `openChat` defers the `header` line (see
+ * {@link ChatJournal.openChat}), so opening a conversation and never using it
+ * leaves no file behind. Kept Electron-free - the directory is
  * a plain injected string - so it is unit-testable under plain vitest, exactly
  * like `logger.ts`.
  *
@@ -65,9 +69,12 @@ export interface ChatJournalHealth {
 
 export interface ChatJournal {
   /**
-   * Opens `chatId`'s journal. Writes the `header` record unless the file
-   * already has content (a resumed chat appends to its existing journal). A
-   * second call for an already-open chat is a no-op.
+   * Opens `chatId`'s journal. The `header` record is written just before this
+   * chat's first real record, not at open time, so a chat that is opened and
+   * never used leaves no file on disk; whatever records follow are appended
+   * after it. A resumed chat (the file already has content) appends to its
+   * existing journal without a second header. A second call for an
+   * already-open chat is a no-op.
    */
   openChat(params: ChatJournalOpenParams): void;
   /**
@@ -81,7 +88,7 @@ export interface ChatJournal {
   discardUserPrompt(chatId: ChatId, turnId: TurnId): void;
   /** Journals one normalized event; deltas are folded, everything else is written. */
   recordEvent(event: AgentEvent): void;
-  /** Finalizes any partial message and writes the `chat.closed` marker. */
+  /** Finalizes any partial message and writes the `chat.closed` marker. A chat that never wrote a record (opened but unused) writes nothing. */
   closeChat(chatId: ChatId): void;
   getHealth(): ChatJournalHealth;
 }
@@ -104,6 +111,13 @@ interface OutstandingToolCall {
 
 interface OpenChat {
   readonly filePath: string;
+  /**
+   * The `header` record to write immediately before this chat's first real
+   * record, or `undefined` once it has been written (or when the journal was
+   * opened over a file that already had content). Deferring it is what keeps an
+   * opened-but-unused conversation from ever creating a file.
+   */
+  pendingHeader?: ChatJournalHeaderRecord;
   /** Folded deltas per assistant message, plus the turn each belongs to. */
   readonly foldsByMessageId: Map<MessageId, MessageFold>;
   readonly completedMessageIds: Set<MessageId>;
@@ -208,11 +222,26 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
     }
   }
 
+  /**
+   * Writes one record for an open chat, flushing the deferred `header` first.
+   * Every write of a chat's own record goes through here, so the header always
+   * precedes the first record - and a chat that never reaches this point (opened
+   * and never used) leaves no file at all.
+   */
+  function appendRecord(state: OpenChat, record: ChatJournalRecord): void {
+    const pendingHeader = state.pendingHeader;
+    if (pendingHeader !== undefined) {
+      delete state.pendingHeader;
+      writeRecord(state.filePath, pendingHeader);
+    }
+    writeRecord(state.filePath, record);
+  }
+
   function flushPendingPrompt(state: OpenChat, chatId: ChatId, turnId: TurnId): void {
     const pending = state.pendingPrompt;
     if (pending === undefined || pending.turnId !== turnId) return;
     delete state.pendingPrompt;
-    writeRecord(state.filePath, {
+    appendRecord(state, {
       recordType: 'user.prompt',
       at: now(),
       chatId,
@@ -226,7 +255,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       if (state.completedMessageIds.has(messageId)) continue;
       const content = renderFoldedText(entry.fold);
       if (content.length === 0) continue;
-      writeRecord(state.filePath, {
+      appendRecord(state, {
         recordType: 'assistant.message.partial',
         at: now(),
         chatId,
@@ -247,7 +276,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
    */
   function finalizeOutstandingToolCalls(state: OpenChat, chatId: ChatId): void {
     for (const [toolCallId, call] of state.outstandingToolCalls) {
-      writeRecord(state.filePath, {
+      appendRecord(state, {
         recordType: 'tool.call.abandoned',
         at: now(),
         chatId,
@@ -276,15 +305,18 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         outstandingToolCalls: new Map(),
       };
       openChats.set(params.chatId, state);
+      // A resumed chat already has its header on disk; a fresh one defers it
+      // until its first real record (see `appendRecord`), so merely opening a
+      // conversation never creates a file.
       if (fileHasContent(filePath)) return;
-      writeRecord(filePath, {
+      state.pendingHeader = {
         recordType: 'header',
         schemaVersion: CHAT_JOURNAL_SCHEMA_VERSION,
         chatId: params.chatId,
         sdkSessionId: params.sdkSessionId,
         ...(params.serverId !== undefined ? { serverId: params.serverId } : {}),
         startedAt: now(),
-      });
+      };
     },
 
     recordUserPrompt(params) {
@@ -349,7 +381,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         state.outstandingToolCalls.delete(event.toolCallId);
       }
 
-      writeRecord(state.filePath, { recordType: 'agent.event', at: now(), event });
+      appendRecord(state, { recordType: 'agent.event', at: now(), event });
 
       if (isTurnEnd(event)) {
         finalizePendingMessages(state, event.chatId);
@@ -360,10 +392,15 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
     closeChat(chatId) {
       const state = openChats.get(chatId);
       if (state === undefined) return;
+      openChats.delete(chatId);
+      // An opened-but-unused chat has written nothing and has nothing to
+      // finalize, so closing it must not create a file either.
+      const hasPendingContent =
+        state.foldsByMessageId.size > 0 || state.outstandingToolCalls.size > 0;
+      if (state.pendingHeader !== undefined && !hasPendingContent) return;
       finalizePendingMessages(state, chatId);
       finalizeOutstandingToolCalls(state, chatId);
-      writeRecord(state.filePath, { recordType: 'chat.closed', at: now(), chatId });
-      openChats.delete(chatId);
+      appendRecord(state, { recordType: 'chat.closed', at: now(), chatId });
     },
 
     getHealth() {

@@ -321,7 +321,12 @@ a factory that owns all of the preview's state and turns a parsed request / a
 submitted answer into the synthetic `AgentEvent`s the pane paints. The pane
 (`shell/chatPane.ts`) wires the factory and paints what it returns, so a preview
 is retired by deleting its files under `dev/` and the single marked wiring block
-in the pane. Keep new dev-only modules here rather than mixing them into
+in the pane. The second is the **open-by-id trigger**: the pure parser
+`dev/openChatById.ts` (`!!open <chatId>`) plus the pane's
+`openStoredConversation`, which reads that chat's journal, paints it, and
+opens/resumes it (the header's session id first, else a fresh session under the
+same id) — the only way to reach a chat the last-used pointer and its host gate
+can never select. Keep new dev-only modules here rather than mixing them into
 `chat/`/`shell/`. These modules are intentionally **untested** — they exist to
 exercise other code, and testing the test tooling is redundant (their behaviour
 is covered end-to-end by the real features' specs).
@@ -521,7 +526,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2655 passed / 14 skipped** (the +5 since
+Current baseline: **`npm run test` → 2658 passed / 14 skipped** (the +2 since
+2656 is the deferred-journal-header work — a bare chat no longer leaves a
+journal file, and a dev-only `!!open <ChatId>` trigger was added; see
+`docs/verification.md` "Bare chats leave no journal file, and a dev-only
+`!!open <ChatId>` trigger (2026-10-08)"; the +1 since
+2655 is the chat-link-dismisses-Settings fix — an externally-caused navigation
+(chat link, typed address, Back/Forward, Refresh) now dismisses a whole-size
+panel covering the page-view region, while in-page navigation leaves it alone:
+one old `browserPane` case rewritten and two new unit cases (-1 +2) — see
+`docs/verification.md` "A chat link now dismisses an open Settings panel
+(2026-10-08)"; the +5 since
 2650 is the bare-install auto-activation — a credential action activates the
 provider it just made eligible while no provider is active, so setting up the
 first agent no longer needs a separate "Set active" click; see
@@ -581,7 +596,10 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 102 tests; typically 101 passed / 1 failed in the full run** (the
+**Playwright → 103 tests; typically 102 passed / 1 failed in the full run** (the
++1 since 102 is the `message-links.spec.ts` case proving a chat link dismisses
+an open Settings panel — see `docs/verification.md` "A chat link now dismisses
+an open Settings panel (2026-10-08)"; the
 +2 since 100 is `tests/e2e/chat-transcript-scroll.spec.ts`, the transcript
 stick-to-bottom cases against the built app — see `docs/verification.md` "The
 chat transcript got stuck when a layout change looked like scrolling away
@@ -596,10 +614,11 @@ load-correlated flakes — `settings-color-picker` (its 1–2 px geometry), the
 hosts-typing case in `step05-settings-servers.spec.ts`, and the documented
 `step05-loading-indicator` — are green in isolation, so a full run can show 2;
 includes `message-links.spec.ts`, the assistant
-message-link case, now 6 tests covering the Edit/CRX hover popover, the
+message-link case, now 7 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
 on the exact resource - percent-encoding of the path in content-view URLs, the
-never-focused popover buttons, and the external-browser path, and
+never-focused popover buttons, the external-browser path, and a chat link
+dismissing an open Settings panel, and
 `chat-thinking-indicator.spec.ts`, now 2 tests covering the transient reasoning
 billet). (The Session "Authentication"/"Models"
 → "Agents" tab merge moved the unit baseline from 1658, and later work moved it

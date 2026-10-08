@@ -153,9 +153,17 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       showHome();
     },
     onNavigationStarted(): void {
-      if (!homeForced) return;
+      // An externally-caused navigation (a transcript link, a typed/selected
+      // address, Back/Forward, Refresh) reveals the page: dismiss whatever
+      // whole-size panel covers the page-view region, so the destination is
+      // never hidden behind it. In-page navigation never reaches here - it only
+      // produces `browser:state-changed` pushes - so a panel the user opened is
+      // left alone while the AEM page navigates itself.
+      const panelWasOpen = activePanel !== undefined;
+      if (!panelWasOpen && !homeForced) return;
       homeForced = false;
-      updateViewVisibility();
+      if (panelWasOpen) closeActivePanel();
+      else updateViewVisibility();
     },
     onToggleAgentPane(): void {
       callbacks.onToggleAgentPane?.();

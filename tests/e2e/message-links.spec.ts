@@ -186,6 +186,34 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await app.close();
   });
 
+  test('a message link dismisses an open Settings panel so the page is visible', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    await sendMessage(app, shell, `See [Alpha](${HOST}/content/site/alpha.html).`);
+    const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
+    await expect(link).toHaveCount(1, { timeout: 30_000 });
+
+    // Open Settings so it covers the pane's page-view region.
+    const settingsPanel = shell.locator('.settings-panel');
+    await shell.locator('sp-action-button[title="Settings"]').first().click();
+    await expect(settingsPanel).toBeVisible({ timeout: 30_000 });
+
+    // Clicking the link starts an externally-caused navigation, which must
+    // dismiss the covering panel so the newly opened page is visible; the
+    // unresolvable host then makes the pane's error banner the proof the
+    // navigation actually ran.
+    await link.click();
+    await expect(settingsPanel).toBeHidden({ timeout: 30_000 });
+    const banner = shell.locator(BROWSER_MESSAGE);
+    await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
+    await expect(banner).toContainText(`${HOST}/content/site/alpha.html`, { timeout: 60_000 });
+
+    await app.close();
+  });
+
   test('a bare AEM path stays text until the pane is on a host, then becomes a page link', async () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();

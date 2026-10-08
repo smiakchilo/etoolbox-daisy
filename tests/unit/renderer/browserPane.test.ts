@@ -433,7 +433,7 @@ describe('createBrowserPane navigation failure recovery', () => {
     expect(picker?.hidden).toBe(true);
   });
 
-  it('leaves an open panel in place and shows the error row when a failed load has no page to restore', async () => {
+  it('closes an open panel when an external navigation starts, and shows the error row when the load fails', async () => {
     const pane = build();
     const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
@@ -453,15 +453,40 @@ describe('createBrowserPane navigation failure recovery', () => {
     pane.panelHost.open(other);
     pane.navigate('https://dead.example/');
 
+    // An externally-caused navigation reveals the page: the covering panel is
+    // dismissed as the navigation starts, so the destination is never hidden
+    // behind it.
+    expect(other.isOpen).toBe(false);
+    expect(pane.panelHost.isActive(other)).toBe(false);
+
     await vi.waitFor(() => {
       expect(message?.hasAttribute('open')).toBe(true);
     });
-    // The failed load did not yank the user out of the panel they chose.
+    expect(picker?.hidden).toBe(true);
+    // ...and the error row is visible below the (now empty) page-view region.
+    expect(message?.textContent).toContain('Timed out');
+    expect(viewHost?.hidden).toBe(true);
+  });
+
+  it('leaves an open panel alone when the AEM page navigates itself', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const other = createPanel({
+      title: 'Other',
+      closeAriaLabel: 'Close other',
+      content: document.createElement('div'),
+      onDismiss: () => pane.panelHost.close(),
+    });
+    pane.appendPanel(other);
+    pane.panelHost.open(other);
+
+    // An in-page navigation surfaces only as a `browser:state-changed` push; it
+    // must not dismiss the panel the user opened - only an external navigation
+    // (a link, a typed address, Back/Forward, Refresh) does.
+    emitNavigationState();
+
     expect(other.isOpen).toBe(true);
     expect(pane.panelHost.isActive(other)).toBe(true);
-    expect(picker?.hidden).toBe(true);
-    // ...and the error row is visible below the panel.
-    expect(message?.textContent).toContain('Timed out');
     expect(viewHost?.hidden).toBe(true);
   });
 });

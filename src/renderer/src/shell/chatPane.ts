@@ -36,6 +36,7 @@ import {
   type UserInputRequestId,
 } from '../../../shared';
 import { createAskUserPreviewTrigger } from '../dev/askUserPreviewTrigger';
+import { parseOpenChatById, type OpenChatByIdCommand } from '../dev/openChatById';
 
 export interface ChatPane {
   readonly element: HTMLElement;
@@ -747,20 +748,75 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
-   * Consumes a `!!ask ...` cheat code when dev tools are enabled, painting the
-   * preview locally; returns whether it did. The whole preview lives in
-   * `src/renderer/src/dev/` - this is the pane's only reference to it beyond
-   * `onAnswer`/`resetInputMode`/`onStop`.
+   * Consumes a dev-only cheat code when dev tools are enabled; returns whether
+   * it did. `!!ask ...` paints the local ask-user preview, `!!open <chatId>`
+   * opens a stored conversation by id. All of their logic lives in
+   * `src/renderer/src/dev/`; this factory plus `onAnswer`/`resetInputMode`/
+   * `onStop`/`openStoredConversation` are the pane's only coupling to it.
    */
   function onDevCommand(input: string): boolean {
     if (!window.daisy.devTools) return false;
     const started = askUserPreview.start(input);
-    if (started === undefined) return false;
-    transcriptStore.applyEvent(started.toolCall);
-    composer.setInputRequest(started.request);
+    if (started !== undefined) {
+      transcriptStore.applyEvent(started.toolCall);
+      composer.setInputRequest(started.request);
+      refreshEmptyState();
+      repaintTranscript();
+      return true;
+    }
+    const openCommand = parseOpenChatById(input);
+    if (openCommand !== undefined) {
+      void openStoredConversation(openCommand);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Dev-only: opens a stored conversation by id (the `!!open <chatId>` cheat
+   * code). Paints the chat's journal first, so a foreign or unfinished chat is
+   * readable even when its SDK session cannot be resumed, then opens it through
+   * the ordinary path. The header's session id is tried first; when that session
+   * is gone or foreign the same chat is re-opened with a fresh session, which is
+   * what lets the stored transcript stay on screen under a usable conversation.
+   * Reachable only in an unpackaged build (see `onDevCommand`).
+   */
+  async function openStoredConversation(command: OpenChatByIdCommand): Promise<void> {
+    if (command.kind === 'invalid') {
+      statusBanner.showError(
+        `Dev: "!!open <chatId>" needs a valid chat id (got "${command.raw}").`,
+      );
+      return;
+    }
+    const id = command.chatId;
+    const journal = await window.daisy.agentChat.readJournal({ chatId: id });
+    if (!journal.ok) {
+      statusBanner.showError(`Dev: no readable journal for chat ${id}.`);
+      return;
+    }
+    const header = journal.records.find((record) => record.recordType === 'header');
+    adoptChatId(id);
+    transcriptStore.clear();
+    replayJournalIntoTranscript(journal.records, transcriptStore);
+    conversationHasMessage = journal.records.some(
+      (record) => record.recordType === 'user.prompt' || record.recordType === 'agent.event',
+    );
+    stopRequested = false;
+    resetInputMode();
     refreshEmptyState();
     repaintTranscript();
-    return true;
+    transcriptFollower.pin();
+
+    latestSdkSessionId = header?.sdkSessionId;
+    let opened = await openConversation(id, header?.sdkSessionId);
+    if (!opened.ok && header !== undefined) {
+      // The header's session id is stale or foreign: fall back to a fresh
+      // session under the same chat id so the pane still owns a usable chat,
+      // with the stored transcript left on screen.
+      opened = await openConversation(id);
+    }
+    if (!opened.ok) statusBanner.showError(opened.error.message);
+    refreshSessionPresentation();
   }
 
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {

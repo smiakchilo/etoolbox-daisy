@@ -146,7 +146,7 @@ const toolResult = (): AgentEvent => ({
 });
 
 describe('createChatJournal - header', () => {
-  it('writes a header with the chat id, session id, server id and startedAt', () => {
+  it('writes no journal file for a chat that is opened and never used', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
 
@@ -156,16 +156,35 @@ describe('createChatJournal - header', () => {
       serverId: SERVER_ID,
     });
 
-    expect(readRecords(dir)).toEqual([
-      {
-        recordType: 'header',
-        schemaVersion: 1,
-        chatId: CHAT_ID,
-        sdkSessionId: 'sdk-session-1',
-        serverId: 'server-a',
-        startedAt: 1000,
-      },
-    ]);
+    expect(readRecords(dir)).toEqual([]);
+    expect(journal.getHealth()).toEqual({
+      writeFailureCount: 0,
+      droppedRecordCount: 0,
+      lastFailureCode: null,
+    });
+  });
+
+  it('writes the header immediately before the first record, with the chat id, session id, server id and startedAt', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+
+    journal.openChat({
+      chatId: CHAT_ID,
+      sdkSessionId: SDK_SESSION_ID,
+      serverId: SERVER_ID,
+    });
+    journal.recordEvent(stateChanged('sending'));
+
+    const records = readRecords(dir);
+    expect(records[0]).toEqual({
+      recordType: 'header',
+      schemaVersion: 1,
+      chatId: CHAT_ID,
+      sdkSessionId: 'sdk-session-1',
+      serverId: 'server-a',
+      startedAt: 1000,
+    });
+    expect(records).toHaveLength(2);
     expect(journal.getHealth()).toEqual({
       writeFailureCount: 0,
       droppedRecordCount: 0,
@@ -178,7 +197,11 @@ describe('createChatJournal - header', () => {
     const journal = createChatJournal(dir, { now: counterClock() });
     journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
     journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
-    expect(readRecords(dir)).toHaveLength(1);
+    journal.recordEvent(stateChanged('sending'));
+    const headers = readRecords(dir).filter(
+      (record) => (record as { recordType: string }).recordType === 'header',
+    );
+    expect(headers).toHaveLength(1);
   });
 
   it('appends without a header when the file already has content (a resumed chat)', () => {
@@ -186,7 +209,13 @@ describe('createChatJournal - header', () => {
     writeFileSync(path.join(dir, `${CHAT_ID}.jsonl`), '{"recordType":"header"}\n', 'utf8');
     const journal = createChatJournal(dir, { now: counterClock() });
     journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
-    expect(readRecords(dir)).toEqual([{ recordType: 'header' }]);
+    journal.recordEvent(stateChanged('sending'));
+    const records = readRecords(dir);
+    expect(records[0]).toEqual({ recordType: 'header' });
+    expect(
+      records.filter((record) => (record as { recordType: string }).recordType === 'header'),
+    ).toHaveLength(1);
+    expect(records).toHaveLength(2);
   });
 
   it('refuses an unsafe chat id and records the failure instead of throwing', () => {
@@ -240,6 +269,14 @@ describe('createChatJournal - events and prompts', () => {
     ).toBe(false);
   });
 
+  it('writes nothing on closeChat for a chat that was never used', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.closeChat(CHAT_ID);
+    expect(readRecords(dir)).toEqual([]);
+  });
+
   it('folds deltas and writes no per-delta line', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
@@ -275,7 +312,9 @@ describe('createChatJournal - events and prompts', () => {
     expect(records.some((r) => (r as { recordType: string }).recordType === 'user.prompt')).toBe(
       false,
     );
-    expect(records).toHaveLength(1); // header only
+    // Nothing durable at all - not even a header, because the chat never wrote
+    // a real record.
+    expect(records).toHaveLength(0);
   });
 
   it('still flushes the staged prompt on the first non-reasoning event', () => {

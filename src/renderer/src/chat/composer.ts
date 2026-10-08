@@ -79,10 +79,10 @@ export interface ComposerCallbacks {
   /** Delivers the user's answer to an interactive (`ask_user`) question. */
   onAnswer?(answer: UserInputAnswer): void;
   /**
-   * Dev-only: intercepts an input before it is sent, so the local ask-user
-   * preview (`!!ask ...`) can drive the composer without a model or an AEM
-   * instance. Returns whether the input was consumed. Absent in a packaged
-   * build, where the composer never treats any input as a command.
+   * Dev-only: intercepts an input before it is sent, so local cheat codes
+   * (`!!ask ...`, `!!open <chatId>`) can drive the composer without a model or
+   * an AEM instance. Returns whether the input was consumed. Absent in a
+   * packaged build, where the composer never treats any input as a command.
    */
   onDevCommand?(input: string): boolean;
 }
