@@ -13,12 +13,13 @@ import {
   createBridgeCurrentContext,
   createCurrentAemServerContext,
   createCurrentPageContext,
+  createDeferredRuntimeRecycler,
   createEnvironmentFacts,
   createLateBoundAemToolContext,
   createLateBoundUserInput,
   createModelPreferenceCache,
   installAgentService,
-  isModelSelectionLocked,
+  isAgentTurnInFlight,
   resolveBundledSkillsDirectory,
   runAfterFrameLoad,
   shouldUseFakeAgentService,
@@ -357,7 +358,12 @@ if (!gotSingleInstanceLock) {
     // with instead. See `createStartupGatedAgentChatController`'s own doc
     // comment (`agentChatController.ts`). Declared here for the same
     // ordering reason as the model cache above.
-    const agentChatController = createStartupGatedAgentChatController();
+    const agentChatController = createStartupGatedAgentChatController({
+      // Applies any deferred runtime recycle before the next prompt is
+      // dispatched, so "a change made mid-turn takes effect on the next turn"
+      // is exact rather than best-effort.
+      beforeSendMessage: () => runtimeRecycler.drain(),
+    });
 
     // Resolved per call: the agent's runtime is started - and on a proxy change,
     // restarted - well after this registration runs. The hub waits for that
@@ -373,11 +379,28 @@ if (!gotSingleInstanceLock) {
       await agentHub.whenReady();
       return agentHub.loadModelCatalog();
     };
-    // Step 09's "disable changes during an active turn". Read through the
-    // gated controller so it answers honestly ("starting", hence not in a
-    // turn) before the real controller exists.
+
+    // Whether a chat turn is in flight, read through the gated controller so it
+    // answers honestly ("starting", hence not in a turn) before the real one
+    // exists.
     const isTurnInFlight = (): boolean =>
-      isModelSelectionLocked(agentChatController.getStatus().sessionState);
+      isAgentTurnInFlight(agentChatController.getStatus().sessionState);
+
+    // A proxy, token or active-provider change shapes the child runtime, which
+    // can only be applied by stopping the process serving the live turn, so its
+    // recycle is deferred while a turn is in flight and applied on the next
+    // turn - see `agentComposition.ts`. Model/effort changes never reach here:
+    // they are applied at prompt time from the preference cache.
+    const runtimeRecycler = createDeferredRuntimeRecycler({
+      isTurnInFlight,
+      onError: () => logger.error('AGENT_UNAVAILABLE'),
+    });
+
+    // Apply any deferred recycle the moment the turn settles. Idempotent and
+    // cheap when nothing is queued or a turn is still in flight.
+    agentChatController.onEvent(() => {
+      void runtimeRecycler.drain();
+    });
 
     // Recycles the configured agent's runtime after a stored personal-access
     // token has been set or cleared. The settings document is reloaded rather
@@ -412,32 +435,31 @@ if (!gotSingleInstanceLock) {
       modelSelection: {
         definitions: agentDefinitions,
         loadCatalog,
-        isTurnInFlight,
         onPreferencesSaved: (preference) => modelPreferenceCache.set(preference),
       },
       agentSettings: {
         definitions: agentDefinitions,
         loadCatalog,
-        isTurnInFlight,
         // Recycles the runtime only when the change actually shapes it (the
         // active provider or its proxy) - a model/effort change is told to
         // the runtime at prompt time instead. See the agent's `runtimeManager`.
+        // The recycle is deferred while a turn is in flight by `runtimeRecycler`
+        // so a mid-turn change never tears down the live turn: the write is
+        // persisted and applied on the next turn. Awaited by the handler when
+        // applied at once, so the renderer's reload reads a ready runtime; a
+        // broken runtime is logged and swallowed - the settings write itself
+        // already succeeded and must not be reported as failed.
         onAgentSettingsSaved: async (settings) => {
           // An active-provider switch changes which provider's stored model is
           // "the" preference; re-seed the synchronous cache so the next prompt
           // uses the newly active provider's model rather than the previous
-          // one's. Model/effort-only changes re-seed to the same value.
+          // one's. Model/effort-only changes re-seed to the same value. Applied
+          // now, not deferred: the cache is only read when the next prompt
+          // starts, which is exactly when a deferred change should take hold.
           seedModelPreference(settings);
-          // Awaited by the handler: the switch/recycle must finish before the
-          // write is reported done, so the renderer's reload does not read the
-          // half-started runtime (which left the Model/Reasoning pickers
-          // disabled). A broken runtime is logged and swallowed - the settings
-          // write itself already succeeded and must not be reported as failed.
-          try {
+          await runtimeRecycler.request(async () => {
             await agentHub?.reconcile(settings);
-          } catch {
-            logger.error('AGENT_UNAVAILABLE');
-          }
+          });
         },
       },
       // Reads a provider's cheap, non-starting sign-in presence for the
@@ -448,11 +470,12 @@ if (!gotSingleInstanceLock) {
         (await agentHub?.getAuthPresence(agentId)) ?? { present: false },
       // A stored token is a runtime credential, so setting or clearing one has
       // to recycle the runtime - the running process resolved its old credential
-      // at start. Skipped in fake mode: no runtime consumes the token there, and
+      // at start. Deferred while a turn is in flight, like a proxy change.
+      // Skipped in fake mode: no runtime consumes the token there, and
       // recycling would discard the deterministic fake's state.
       onAgentTokenChanged: () => {
         if (useFakeAgentService) return;
-        void refreshRuntimeAfterTokenChange().catch(() => logger.error('AGENT_UNAVAILABLE'));
+        void runtimeRecycler.request(() => refreshRuntimeAfterTokenChange());
       },
     });
 

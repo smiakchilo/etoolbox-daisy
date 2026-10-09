@@ -207,12 +207,15 @@ function buildItem(
   );
   return {
     ...base,
-    modelEnabled: !view.controlsDisabled,
+    // A change is never locked by an in-flight turn: a model/effort change is
+    // applied on the next prompt and a proxy/token/active-provider change is
+    // deferred to the next turn, so the pickers stay live throughout.
+    modelEnabled: true,
     modelOptions: view.modelOptions,
     selectedModelValue: view.selectedModelValue,
     effortOptions: view.reasoningOptions,
     selectedEffortValue: view.selectedReasoningValue,
-    effortDisabled: view.controlsDisabled || view.reasoningDisabled,
+    effortDisabled: view.reasoningDisabled,
   };
 }
 

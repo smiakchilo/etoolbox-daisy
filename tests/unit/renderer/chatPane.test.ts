@@ -141,7 +141,6 @@ beforeEach(() => {
       models: [],
       selectedModel: null,
       selectedReasoningEffort: null,
-      changesLocked: false,
       catalogUnavailable: false,
     },
   });
@@ -1077,7 +1076,6 @@ describe('createChatPane interruptions and session id', () => {
         ],
         selectedModel: 'gpt-5',
         selectedReasoningEffort: 'high',
-        changesLocked: false,
         catalogUnavailable: false,
       },
     });
@@ -1122,7 +1120,6 @@ describe('createChatPane interruptions and session id', () => {
         ],
         selectedModel: 'gpt-5',
         selectedReasoningEffort: 'high',
-        changesLocked: false,
         catalogUnavailable: false,
       },
     });

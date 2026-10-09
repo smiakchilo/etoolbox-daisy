@@ -872,15 +872,12 @@ export async function reorderProxies(
 // ---------------------------------------------------------------------------
 
 /**
- * How this module reaches the two things the model channels need that the
- * settings file cannot tell it: what Copilot offers, and whether a turn is
- * currently running.
+ * How this module reaches the one thing the model channels need that the
+ * settings file cannot tell it: what agent offers.
  *
- * Both are functions rather than values so they are evaluated per request.
- * That matters for each in a different way: the catalogue is unreadable until
- * the Copilot runtime has started in the background (well after these handlers
- * are registered), and `isTurnInFlight` must reflect the state at the moment
- * of the call, not at wiring time.
+ * A function rather than a value so it is evaluated per request: the catalogue
+ * is unreadable until the Copilot runtime has started in the background (well
+ * after these handlers are registered).
  */
 export interface ModelSelectionDependencies {
   /** The discovered agents; decides which node is the configured one. */
@@ -889,8 +886,6 @@ export interface ModelSelectionDependencies {
   readonly loadCatalog: () => Promise<
     Result<readonly ModelCatalogEntry[], { readonly message: string }>
   >;
-  /** True while a chat turn is streaming or running a tool. */
-  readonly isTurnInFlight: () => boolean;
   /**
    * Called after - and only after - a new preference has been persisted
    * successfully. Lets the composition root keep its synchronous
@@ -929,7 +924,6 @@ export async function getModelSelection(
         models: [],
         selectedModel: null,
         selectedReasoningEffort: null,
-        changesLocked: deps.isTurnInFlight(),
         catalogUnavailable: true,
       },
     };
@@ -943,7 +937,6 @@ export async function getModelSelection(
       models: catalog.ok ? catalog.value : [],
       selectedModel: configuredNode?.model ?? null,
       selectedReasoningEffort: configuredNode?.reasoningEffort ?? null,
-      changesLocked: deps.isTurnInFlight(),
       catalogUnavailable: !catalog.ok,
     },
   };
@@ -952,18 +945,22 @@ export async function getModelSelection(
 /**
  * Implements `settings:set-model-preferences`.
  *
- * Three refusals, in this order, and the order is the point:
+ * Two refusals, and the order is the point:
  *
- *  1. `turn_in_flight` - step 09 requires "disable changes during an active
- *     turn". Checked here and not only in the renderer, because a disabled
- *     picker is a hint and this is the enforcement.
- *  2. `model_catalog_unavailable` - a selection cannot be validated against a
+ *  1. `model_catalog_unavailable` - a selection cannot be validated against a
  *     catalogue that could not be read, and storing an unvalidated model would
  *     defer the failure to the next prompt, where it would look like a broken
  *     conversation rather than a rejected setting.
- *  3. `model_not_available` / `unsupported_reasoning_effort` - the model must
+ *  2. `model_not_available` / `unsupported_reasoning_effort` - the model must
  *     be one the SDK actually advertises, and the effort one that model
  *     actually supports.
+ *
+ * There is deliberately no `turn_in_flight` refusal: a model/effort change is
+ * read at the start of the next prompt (`sdkAgentService.ts`), so it takes
+ * effect on the next turn without disturbing the one running, and is always
+ * safe to persist. (The runtime-shaping settings on the Agents tab recycle the
+ * child runtime, and *those* are deferred while a turn is live - see
+ * `agentComposition.ts`.)
  *
  * Clearing (`model: null`) skips the catalogue entirely: reverting to "let
  * Copilot choose" must stay possible even when the runtime is unreachable,
@@ -974,16 +971,6 @@ export async function setModelPreferences(
   deps: ModelSelectionDependencies,
   request: SetModelPreferencesRequest,
 ): Promise<SettingsIpcVoidResult> {
-  if (deps.isTurnInFlight()) {
-    return {
-      ok: false,
-      error: {
-        code: 'turn_in_flight',
-        message: 'Finish or stop the current response before changing the model',
-      },
-    };
-  }
-
   if (request.model !== null) {
     const catalog = await deps.loadCatalog();
     if (!catalog.ok) {
@@ -1049,10 +1036,10 @@ export async function setModelPreferences(
 // ---------------------------------------------------------------------------
 
 /**
- * How the agent-settings channel reaches the two things the settings file
- * cannot tell it: whether a turn currently locks changes, and what the runtime
- * layer must do about a yes/no/proxy/recycle decision. Both are functions
- * evaluated per request, for the same reasons as
+ * How the agent-settings channel reaches what the settings file cannot tell
+ * it: the model catalogue to validate a model/effort change against, and what
+ * the runtime layer must do about a yes/no/proxy/recycle decision. Both are
+ * functions evaluated per request, for the same reasons as
  * {@link ModelSelectionDependencies}.
  */
 export interface AgentSettingsDependencies {
@@ -1062,21 +1049,21 @@ export interface AgentSettingsDependencies {
   readonly loadCatalog: () => Promise<
     Result<readonly ModelCatalogEntry[], { readonly message: string }>
   >;
-  /** True while a chat turn is streaming or running a tool. */
-  readonly isTurnInFlight: () => boolean;
   /**
    * Called after - and only after - an agent-settings change has been
    * persisted successfully, with the whole new document. The composition root
    * decides whether the change requires recycling the Copilot runtime (a proxy
    * or active-provider change does; a model/effort change does not) - see
-   * `agents/copilot/runtimeManager.ts`. Never called on a failed save, so the runtime
-   * is never recycled for a change the file does not record.
+   * `agents/copilot/runtimeManager.ts` - and defers that recycle while a turn is
+   * in flight, so a mid-turn change never tears down the live turn. Never
+   * called on a failed save, so the runtime is never recycled for a change the
+   * file does not record.
    *
-   * The handler awaits the returned promise before reporting the write as done.
-   * An active-provider switch therefore does not resolve until the hub has
-   * switched runtimes, so the renderer's follow-up snapshot reload reads a
-   * runtime that is actually ready (otherwise its auth/model reads race the
-   * still-starting new runtime and the Model/Reasoning pickers stay disabled).
+   * When the recycle is applied at once (no turn in flight), the handler awaits
+   * the returned promise before reporting the write as done, so the renderer's
+   * follow-up snapshot reload reads a runtime that is actually ready. A
+   * deferred recycle resolves immediately instead; the change is applied on the
+   * next turn, and the model cache is reseeded now so that turn sees it.
    */
   readonly onAgentSettingsSaved: (settings: AppSettings) => void | Promise<void>;
 }
@@ -1086,15 +1073,11 @@ export interface AgentSettingsDependencies {
  *
  * Refusals, in this order, and the order matters:
  *
- *  1. `turn_in_flight` - step 09's "disable changes during an active turn"
- *     applies to the agent item as a whole (the proxy picker locks with the
- *     rest); the renderer disabling the controls is a courtesy, this is the
- *     enforcement.
- *  2. `agent_not_found` - the id must name a provider this build actually
+ *  1. `agent_not_found` - the id must name a provider this build actually
  *     implements, not merely one a (possibly newer) settings file mentions.
- *  3. `proxy_not_found` - a named proxy must exist, or the document would fail
+ *  2. `proxy_not_found` - a named proxy must exist, or the document would fail
  *     its own schema as `invalid_change` for a reason the user cannot act on.
- *  4. `model_catalog_unavailable` / `model_not_available` /
+ *  3. `model_catalog_unavailable` / `model_not_available` /
  *     `unsupported_reasoning_effort` - the same catalogue validation
  *     `settings:set-model-preferences` performs, against the model/effort the
  *     document would hold *after* this change (so setting an effort alone is
@@ -1106,6 +1089,11 @@ export interface AgentSettingsDependencies {
  *     model against the *old* runtime's unreadable catalogue is what used to
  *     refuse the very write that would have fixed the connection.
  *
+ * There is deliberately no `turn_in_flight` refusal: a mid-turn change is
+ * persisted immediately and its runtime recycle (proxy/token/active provider)
+ * is deferred to the next turn rather than tearing the live turn down. See
+ * `agentComposition.ts`'s deferred recycler.
+ *
  * Clearing (`model: null`, `proxy: null`) skips catalogue validation for that
  * field: reverting to "let Copilot choose" must stay possible even when the
  * runtime is unreachable, which is when a user is most likely to want to undo.
@@ -1115,16 +1103,6 @@ export async function setAgentSettings(
   deps: AgentSettingsDependencies,
   request: SetAgentSettingsRequest,
 ): Promise<SettingsIpcVoidResult> {
-  if (deps.isTurnInFlight()) {
-    return {
-      ok: false,
-      error: {
-        code: 'turn_in_flight',
-        message: 'Finish or stop the current response before changing agent settings',
-      },
-    };
-  }
-
   if (!isKnownAgentId(request.agentId, deps.definitions)) {
     return {
       ok: false,

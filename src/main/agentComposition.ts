@@ -519,30 +519,106 @@ export function createModelPreferenceCache(initial: ModelPreference): ModelPrefe
 }
 
 /**
- * The chat states during which model selection is locked
- * (implementation-plan.md step 09: "disable changes during an active turn").
+ * The chat states during which a turn is in flight.
  *
- * `cancelling` is included alongside the three obviously-active states.
- * Cancellation is a request, not a completed fact - the SDK session is still
- * winding the turn down and has not yet returned to `idle` - so a `setModel`
- * accepted during it would race the very turn being stopped. Waiting for
- * `idle` costs the user a moment and removes the race entirely.
+ * This is no longer a "model selection is locked" predicate: a model/effort
+ * change is applied on the next prompt and never has to be refused or disabled
+ * (see `src/shared/contracts/modelCatalog.ts`). It now answers a different
+ * question - "may a runtime recycle happen yet?" - for the deferred recycler
+ * below: stopping the child runtime that is serving a live turn would abort it,
+ * so a proxy/token/active-provider recycle waits until this answers false.
  *
- * `error` and `closed` are *not* locked: both mean no turn is running, and
- * locking them would strand a user whose turn failed because of the model
- * they picked, unable to pick a different one - the exact situation in which
- * changing the model is the fix.
+ * `cancelling` counts as in flight: cancellation is a request, not a completed
+ * fact - the SDK session is still winding the turn down and has not yet
+ * returned to `idle` - so recycling during it would race the very turn being
+ * stopped.
+ *
+ * `error` and `closed` do NOT: both mean no turn is running, so a user whose
+ * turn failed because of the model they picked can change it and have the
+ * change applied immediately.
  */
-export const MODEL_SELECTION_LOCKED_STATES: ReadonlySet<SessionStreamState> = new Set([
+export const AGENT_TURN_IN_FLIGHT_STATES: ReadonlySet<SessionStreamState> = new Set([
   'sending',
   'streaming',
   'runningTool',
   'cancelling',
 ]);
 
-/** Whether model selection must be refused/disabled in `state`. */
-export function isModelSelectionLocked(state: SessionStreamState): boolean {
-  return MODEL_SELECTION_LOCKED_STATES.has(state);
+/** Whether a chat turn is currently in flight in `state`. */
+export function isAgentTurnInFlight(state: SessionStreamState): boolean {
+  return AGENT_TURN_IN_FLIGHT_STATES.has(state);
+}
+
+/**
+ * Serializes the agent-runtime recycles a Settings change triggers, deferring
+ * any that arrives while a turn is in flight.
+ *
+ * A proxy, token or active-provider change shapes the child runtime, which can
+ * only be applied by stopping the process serving the live turn - so doing it
+ * mid-turn would abort the turn. This is the "apply on the next turn" half of
+ * the settings policy: when idle a recycle runs immediately (and `request`
+ * resolves once it has, so the renderer's follow-up reload reads a ready
+ * runtime); while `isTurnInFlight()` is true it is queued instead, and is run
+ * as soon as the turn settles - or, at the latest, awaited by the next prompt
+ * through the gated controller's `beforeSendMessage`. A recycle never starts
+ * while a turn is in flight, and the queue is drained in order so a burst of
+ * mid-turn changes lands in the order they were made.
+ *
+ * A throwing recycle is reported through `onError` and does not stop the rest
+ * of the queue: one unresolvable proxy must not wedge every later change.
+ */
+export interface DeferredRuntimeRecycler {
+  /**
+   * Queues `recycle`, applying it at once when no turn is in flight. Resolves
+   * once the recycle has been applied, or immediately when it was deferred.
+   */
+  request(recycle: () => Promise<void>): Promise<void>;
+  /**
+   * Applies any queued recycle once the turn has settled. A no-op while a
+   * recycle is already running or a turn is still in flight, so it is safe to
+   * call on every status change (and before every prompt).
+   */
+  drain(): Promise<void>;
+}
+
+export function createDeferredRuntimeRecycler(deps: {
+  readonly isTurnInFlight: () => boolean;
+  readonly onError: (error: unknown) => void;
+}): DeferredRuntimeRecycler {
+  const queue: Array<() => Promise<void>> = [];
+  let running: Promise<void> | undefined;
+
+  async function runQueue(): Promise<void> {
+    while (queue.length > 0) {
+      // Re-checked each iteration so a send that raced the drain leaves the
+      // rest queued rather than recycling under a fresh turn.
+      if (deps.isTurnInFlight()) return;
+      const recycle = queue.shift();
+      if (recycle === undefined) return;
+      try {
+        await recycle();
+      } catch (error) {
+        deps.onError(error);
+      }
+    }
+  }
+
+  function drain(): Promise<void> {
+    if (running !== undefined) return running;
+    if (queue.length === 0 || deps.isTurnInFlight()) return Promise.resolve();
+    running = runQueue().finally(() => {
+      running = undefined;
+    });
+    return running;
+  }
+
+  return {
+    request(recycle) {
+      queue.push(recycle);
+      return drain();
+    },
+    drain,
+  };
 }
 
 /**

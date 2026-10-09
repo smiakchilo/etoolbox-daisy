@@ -689,6 +689,22 @@ export interface StartupGatedAgentChatController extends AgentChatController {
 }
 
 /**
+ * Optional hooks for {@link createStartupGatedAgentChatController}.
+ */
+export interface StartupGatedAgentChatControllerDeps {
+  /**
+   * Awaited before a prompt is dispatched to the delegate. The composition root
+   * uses it to apply any deferred runtime recycle - a proxy, token or
+   * active-provider change made while a previous turn was live (see
+   * `agentComposition.ts`'s deferred recycler) - so a prompt can never race an
+   * unapplied recycle. Recycling replaces the delegate, so the gated controller
+   * re-reads `real` after the hook resolves rather than calling into a disposed
+   * one.
+   */
+  readonly beforeSendMessage?: () => Promise<void>;
+}
+
+/**
  * Registering the `agent-chat:*` IPC handlers (`ipc/agentChat.ts`) requires
  * an `AgentChatController` to exist *before* the real one can - building the
  * real one needs an `AgentService`, and building that needs
@@ -712,7 +728,9 @@ export interface StartupGatedAgentChatController extends AgentChatController {
  * act on, so "already in the state you asked for" is the honest answer, not
  * a refusal.
  */
-export function createStartupGatedAgentChatController(): StartupGatedAgentChatController {
+export function createStartupGatedAgentChatController(
+  deps: StartupGatedAgentChatControllerDeps = {},
+): StartupGatedAgentChatController {
   let real: AgentChatController | undefined;
   let unavailable = false;
   let unsubscribeRealEvents: (() => void) | undefined;
@@ -752,6 +770,11 @@ export function createStartupGatedAgentChatController(): StartupGatedAgentChatCo
   }
 
   async function sendMessage(request: AgentChatSendMessageRequest): Promise<AgentChatSendResult> {
+    if (!real) return { ok: false, error: notReadyError() };
+    // Applying a deferred runtime recycle here (rather than only on turn end)
+    // is what makes "the change takes effect on the next turn" exact: the hook
+    // may replace `real`, so it is re-read afterwards.
+    await deps.beforeSendMessage?.();
     if (!real) return { ok: false, error: notReadyError() };
     return real.sendMessage(request);
   }

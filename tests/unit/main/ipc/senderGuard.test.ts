@@ -148,12 +148,10 @@ beforeEach(() => {
       // must be callable. The guard itself is asserted by the untrusted sweeps.
       definitions: TEST_AGENT_DEFINITIONS,
       loadCatalog: () => Promise.resolve(err({ message: 'catalogue not available in this suite' })),
-      isTurnInFlight: () => false,
     },
     agentSettings: {
       definitions: TEST_AGENT_DEFINITIONS,
       loadCatalog: () => Promise.resolve(err({ message: 'catalogue not available in this suite' })),
-      isTurnInFlight: () => false,
       onAgentSettingsSaved: vi.fn(),
     },
   });

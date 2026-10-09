@@ -20,7 +20,6 @@ function stateWith(overrides: Partial<ModelSelectionState> = {}): ModelSelection
     ],
     selectedModel: null,
     selectedReasoningEffort: null,
-    changesLocked: false,
     catalogUnavailable: false,
     ...overrides,
   };
@@ -108,19 +107,6 @@ describe('buildModelsViewModel', () => {
     );
     expect(vm.selectedModelValue).toBe(NO_PREFERENCE_VALUE);
     expect(vm.modelOptions).toEqual([{ value: NO_PREFERENCE_VALUE, label: '(Auto)' }]);
-  });
-
-  it('disables the controls while a turn is in flight', () => {
-    const vm = buildModelsViewModel(stateWith({ changesLocked: true }), {
-      model: null,
-      reasoningEffort: null,
-    });
-    expect(vm.controlsDisabled).toBe(true);
-  });
-
-  it('leaves the controls enabled when idle', () => {
-    const vm = buildModelsViewModel(stateWith(), { model: null, reasoningEffort: null });
-    expect(vm.controlsDisabled).toBe(false);
   });
 
   it('keeps a stored selection when the catalogue could not be read', () => {

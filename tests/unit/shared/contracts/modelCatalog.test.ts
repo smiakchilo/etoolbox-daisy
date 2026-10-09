@@ -5,7 +5,7 @@ import {
   parseModelSelectionState,
   supportedReasoningEffortsFor,
   type ModelCatalogEntry,
-} from '../../../../src/shared/contracts/modelCatalog';
+} from '../../../../src/shared';
 
 /**
  * Contract-level tests for the step 09 model catalogue.
@@ -88,21 +88,20 @@ describe('parseModelSelectionState', () => {
       models: [{ id: 'model-a', name: 'Model A', supportedReasoningEfforts: ['low'] }],
       selectedModel: 'model-a',
       selectedReasoningEffort: 'low',
-      changesLocked: false,
       catalogUnavailable: false,
     });
     expect(state.selectedModel).toBe('model-a');
     expect(state.models).toHaveLength(1);
   });
 
-  it('throws when the lock flag is missing, rather than defaulting it to false', () => {
-    // Defaulting would silently enable the pickers during a live turn.
+  it('throws when a required field is missing, rather than defaulting it', () => {
+    // Defaulting `catalogUnavailable` would silently present an unreadable
+    // catalogue as an empty-but-readable one.
     expect(() =>
       parseModelSelectionState({
         models: [],
         selectedModel: null,
         selectedReasoningEffort: null,
-        catalogUnavailable: false,
       }),
     ).toThrow();
   });

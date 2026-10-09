@@ -5,8 +5,8 @@ import { supportedReasoningEffortsFor, type ModelSelectionState } from '../../..
  * (implementation-plan.md step 09), consumed by the Settings panel's Agents
  * tab through `agentsViewModel.ts`. Separated from the DOM for the same reason
  * `transcriptViewModel.ts` is separated from `transcriptView.ts`:
- * every decision worth testing - which options appear, what is preselected and
- * whether the controls are disabled - is decided here, against plain data, with
+ * every decision worth testing - which options appear and what is preselected -
+ * is decided here, against plain data, with
  * no DOM and no custom elements involved. What the user is *told* about a
  * failure is deliberately not decided here: the panel's one banner owns that,
  * and `agentsViewModel.ts` decides which failures deserve a word at all.
@@ -61,8 +61,6 @@ export interface ModelsViewModel {
   readonly selectedReasoningValue: string;
   /** True when the reasoning picker has nothing to offer beyond "no preference". */
   readonly reasoningDisabled: boolean;
-  /** True when both pickers and the save button must be disabled. */
-  readonly controlsDisabled: boolean;
 }
 
 /**
@@ -116,7 +114,6 @@ export function buildModelsViewModel(
     reasoningOptions,
     selectedReasoningValue: reasoningSelected,
     reasoningDisabled: supported.length === 0,
-    controlsDisabled: state.changesLocked,
   };
 }
 

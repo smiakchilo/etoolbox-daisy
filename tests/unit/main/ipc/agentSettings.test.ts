@@ -62,7 +62,6 @@ function deps(overrides: Partial<AgentSettingsDependencies> = {}): AgentSettings
   return {
     definitions: TEST_AGENT_DEFINITIONS,
     loadCatalog: () => Promise.resolve(ok(catalog)),
-    isTurnInFlight: () => false,
     onAgentSettingsSaved: () => undefined,
     ...overrides,
   };
@@ -240,19 +239,5 @@ describe('setAgentSettings', () => {
     const result = await pending;
     expect(result.ok).toBe(true);
     expect(settled).toBe(true);
-  });
-
-  it('checks the turn lock BEFORE the catalogue', async () => {
-    const dir = createScratchRoot();
-    await seedProxyAndModel(dir);
-    const loadCatalog = vi.fn(() => Promise.resolve(UNAVAILABLE));
-
-    const result = await setAgentSettings(dir, deps({ isTurnInFlight: () => true, loadCatalog }), {
-      agentId: TEST_AGENT_ID,
-      changes: { model: 'model-a' },
-    });
-
-    expect(errorCodeOf(result)).toBe('turn_in_flight');
-    expect(loadCatalog).not.toHaveBeenCalled();
   });
 });

@@ -584,6 +584,51 @@ describe('createStartupGatedAgentChatController', () => {
     // ...and its events reach a listener registered before either delegate.
     expect(received.length).toBeGreaterThan(0);
   });
+
+  it('awaits beforeSendMessage and re-reads the delegate, so a recycle applied by the hook sends to the new runtime', async () => {
+    const calls: string[] = [];
+    let release: (() => void) | undefined;
+    const gated = createStartupGatedAgentChatController({
+      beforeSendMessage: () =>
+        new Promise<void>((resolve) => {
+          calls.push('hook');
+          release = resolve;
+        }),
+    });
+
+    const firstService = createFakeAgentService({ idGenerator: counterIdGenerator('first') });
+    const { controller: first } = buildController(firstService);
+    await gated.replaceDelegate(first);
+    const chatId = newChatId('chat-1');
+    await gated.openConversation({ chatId });
+
+    // The re-cycled runtime the hook installs, with the conversation reopened -
+    // exactly what the renderer's status reconciliation does after a recycle.
+    const secondService = createFakeAgentService({ idGenerator: counterIdGenerator('second') });
+    secondService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'ok' }] });
+    const { controller: second } = buildController(secondService);
+    await second.openConversation({ chatId });
+
+    const firstSend = vi.spyOn(firstService, 'sendPrompt');
+    const secondSend = vi.spyOn(secondService, 'sendPrompt');
+
+    const pending = gated.sendMessage({ chatId, prompt: 'hello' });
+    await Promise.resolve();
+    // Awaited: the current delegate is not sent to while the hook is pending.
+    expect(calls).toEqual(['hook']);
+    expect(firstSend).not.toHaveBeenCalled();
+
+    // The deferred recycle lands while the hook is pending; the send must go to
+    // the new delegate, never the disposed one.
+    await gated.replaceDelegate(second);
+    release?.();
+
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(firstSend).not.toHaveBeenCalled();
+    expect(secondSend).toHaveBeenCalledTimes(1);
+    secondService.flush();
+  });
 });
 
 describe('AgentChatController.onStatusChanged', () => {

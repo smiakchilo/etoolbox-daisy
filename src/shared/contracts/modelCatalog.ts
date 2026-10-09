@@ -44,17 +44,15 @@ export type ModelCatalogEntry = Readonly<z.infer<typeof modelCatalogEntrySchema>
 
 /**
  * Everything the Settings window needs to render the model section in one
- * round trip: what may be chosen, what is currently chosen, and whether
- * choosing is allowed right now.
+ * round trip: what may be chosen and what is currently chosen.
  *
- * `changesLocked` exists because step 09 requires "disable changes during an
- * active turn", and the Settings window is a separate `BrowserWindow` that
- * has no view of the chat pane's streaming state. Rather than teach Settings
- * to track turn state, the main process - which already owns the authoritative
- * `AgentChatStatus` - answers the question directly. It is reported as a
- * lock rather than inferred by the renderer so that the *same* condition also
- * guards the write path (`settings:set-model-preferences` refuses with
- * `turn_in_flight`): a disabled picker is a courtesy, not the enforcement.
+ * There is deliberately no "changes are locked while a turn is in flight" flag
+ * any more. A model/effort change is read at the start of the next prompt (see
+ * `sdkAgentService.ts`), so it already takes effect on the next turn without
+ * disturbing the one running; the pickers stay enabled throughout. The
+ * runtime-shaping settings on the Agents tab (proxy, token, active provider)
+ * follow the same "applies on the next turn" rule, with their recycle deferred
+ * while a turn is live - see `agentComposition.ts`'s deferred recycler.
  */
 export const modelSelectionStateSchema = z
   .object({
@@ -63,8 +61,6 @@ export const modelSelectionStateSchema = z
     selectedModel: modelIdSchema.nullable(),
     /** The active agent's stored `reasoningEffort`, or `null`. */
     selectedReasoningEffort: reasoningEffortSchema.nullable(),
-    /** True while a turn is in flight: the pickers must be disabled. */
-    changesLocked: z.boolean(),
     /**
      * True when the catalogue could not be read from the SDK (Copilot still
      * starting, signed out, runtime unavailable). `models` is then empty, and

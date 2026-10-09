@@ -148,9 +148,13 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > settings contracts `appSettings.ts` /
 > `settingsSnapshot.ts` (the latter gained the `browser` object with
 > `disableNativeWebAuthn`, the Settings "Browser" tab's WebAuthn-suppression
-> flag), and `settings-ipc.ts`. Most recently `userInput.ts` gained an optional
+> flag), and `settings-ipc.ts`. `userInput.ts` gained an optional
 > `actions` list (1–4 one-click labels) and made `question` optional — the
-> `ask_user` actions mode (see §5 tools). **There is deliberately no `schemaVersion` field and no
+> `ask_user` actions mode (see §5 tools). Most recently `contracts/modelCatalog.ts`
+> lost `changesLocked` and `settings-ipc.ts` lost `turn_in_flight`, when Step
+> 09's "disable changes during an active turn" lock was replaced by "apply the
+> change on the next turn" — see `docs/verification.md` "Settings changes apply
+> on the next turn (2026-10-09)". **There is deliberately no `schemaVersion` field and no
 > migration code anywhere**: the project has no deployed users and no
 > backward-compatibility obligation, so the persisted shape may change freely.
 > Do not add a version field or a migration. Loading a hand-edited
@@ -561,7 +565,20 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2698 passed / 14 skipped** (the +3 since
+Current baseline: **`npm run test` → 2706 passed / 14 skipped** (net −1 against
+the previous entry's 2707 — the "Settings changes apply on the next turn" work
+removed 7 obsolete lock/refusal cases and added 7 (6 deferred-recycler cases plus
+the `beforeSendMessage` case), with the 5-case lock predicate shrinking to a
+4-case turn-in-flight predicate). Model, proxy,
+token and active-provider changes are no longer disabled or refused mid-turn:
+a model/effort change already applied at the next prompt, and a
+proxy/token/active-provider recycle is now *deferred* to the next turn by the
+deferred recycler (`createDeferredRuntimeRecycler`) that the settings handler
+queues into and the gated controller's `beforeSendMessage` drains; removed
+`changesLocked` from `modelCatalog.ts` and `turn_in_flight` from
+`settings-ipc.ts`, renamed `isModelSelectionLocked` → `isAgentTurnInFlight`,
+and added the recycler/`beforeSendMessage` tests — see `docs/verification.md`
+"Settings changes apply on the next turn (2026-10-09)"; before that, the +3 since
 2695 is the composer `/` autocomplete accepting the highlighted skill on Enter,
 not only Tab — two `composer.test.ts` wiring cases plus a rewritten
 `resolveSkillMenuKey` case, `docs/verification.md` "Composer `/` autocomplete:

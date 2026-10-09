@@ -16,9 +16,11 @@ import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDef
  * Tests for the `settings:get-model-selection` / `settings:set-model-preferences`
  * handlers (implementation-plan.md step 09).
  *
- * The write path is where step 09's "disable changes during an active turn" is
- * actually *enforced* - the disabled picker in the Settings panel is only a
- * courtesy - so the refusals, and their order, are the substance here.
+ * A model/effort change is applied on the next prompt, never mid-turn, so there
+ * is deliberately no turn lock here: the substance is the catalogue validation
+ * (a model the SDK does not offer, or an effort its model does not support,
+ * must never be persisted) and the tolerance for an unreadable catalogue when
+ * clearing.
  */
 
 const scratchRoots: string[] = [];
@@ -46,7 +48,6 @@ function deps(overrides: Partial<ModelSelectionDependencies> = {}): ModelSelecti
   return {
     definitions: TEST_AGENT_DEFINITIONS,
     loadCatalog: () => Promise.resolve(ok(catalog)),
-    isTurnInFlight: () => false,
     ...overrides,
   };
 }
@@ -61,7 +62,7 @@ function errorCodeOf(result: { ok: boolean; error?: { code: string } }): string 
 }
 
 describe('getModelSelection', () => {
-  it('returns the catalogue together with the stored selection and the lock', async () => {
+  it('returns the catalogue together with the stored selection', async () => {
     const dir = createScratchRoot();
     await seedSettings(dir);
     await setModelPreferences(dir, deps(), { model: 'model-a', reasoningEffort: 'high' });
@@ -72,17 +73,7 @@ describe('getModelSelection', () => {
     expect(result.state.models).toHaveLength(2);
     expect(result.state.selectedModel).toBe('model-a');
     expect(result.state.selectedReasoningEffort).toBe('high');
-    expect(result.state.changesLocked).toBe(false);
     expect(result.state.catalogUnavailable).toBe(false);
-  });
-
-  it('reports the lock from the live turn state', async () => {
-    const dir = createScratchRoot();
-    await seedSettings(dir);
-    const result = await getModelSelection(dir, deps({ isTurnInFlight: () => true }));
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.state.changesLocked).toBe(true);
   });
 
   it('reports an unreadable catalogue as a success flag, preserving the stored selection', async () => {
@@ -114,7 +105,9 @@ describe('getModelSelection', () => {
 });
 
 describe('setModelPreferences', () => {
-  it('persists a valid model and reasoning effort', async () => {
+  it('persists a valid model and reasoning effort even mid-turn (there is no turn lock)', async () => {
+    // The whole point of removing the lock: a change while a turn is running is
+    // persisted and simply takes effect on the next prompt.
     const dir = createScratchRoot();
     await seedSettings(dir);
 
@@ -129,41 +122,6 @@ describe('setModelPreferences', () => {
     if (!loaded.ok) return;
     expect(loaded.value.settings.agents[TEST_AGENT_ID]?.model).toBe('model-a');
     expect(loaded.value.settings.agents[TEST_AGENT_ID]?.reasoningEffort).toBe('high');
-  });
-
-  it('refuses while a turn is in flight', async () => {
-    const dir = createScratchRoot();
-    await seedSettings(dir);
-    const result = await setModelPreferences(dir, deps({ isTurnInFlight: () => true }), {
-      model: 'model-a',
-      reasoningEffort: null,
-    });
-    expect(errorCodeOf(result)).toBe('turn_in_flight');
-  });
-
-  it('refuses to CLEAR while a turn is in flight too', async () => {
-    const dir = createScratchRoot();
-    await seedSettings(dir);
-    const result = await setModelPreferences(dir, deps({ isTurnInFlight: () => true }), {
-      model: null,
-      reasoningEffort: null,
-    });
-    expect(errorCodeOf(result)).toBe('turn_in_flight');
-  });
-
-  it('checks the turn lock BEFORE the catalogue', async () => {
-    // Ordering matters: an unreachable runtime during a live turn must report
-    // the turn, which the user can act on, not the catalogue, which they cannot.
-    const dir = createScratchRoot();
-    await seedSettings(dir);
-    const loadCatalog = vi.fn(() => Promise.resolve(err({ message: 'unavailable' })));
-    const result = await setModelPreferences(
-      dir,
-      deps({ isTurnInFlight: () => true, loadCatalog }),
-      { model: 'model-a', reasoningEffort: null },
-    );
-    expect(errorCodeOf(result)).toBe('turn_in_flight');
-    expect(loadCatalog).not.toHaveBeenCalled();
   });
 
   it('refuses a model when the catalogue cannot be read', async () => {
@@ -269,10 +227,6 @@ describe('setModelPreferences', () => {
     const onPreferencesSaved =
       vi.fn<(preference: { model: string | null; reasoningEffort: string | null }) => void>();
 
-    await setModelPreferences(dir, deps({ onPreferencesSaved, isTurnInFlight: () => true }), {
-      model: 'model-a',
-      reasoningEffort: null,
-    });
     await setModelPreferences(dir, deps({ onPreferencesSaved }), {
       model: 'model-ghost',
       reasoningEffort: null,

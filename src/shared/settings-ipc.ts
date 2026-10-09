@@ -110,8 +110,6 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'model_not_available',
   /** The requested reasoning effort is not one the selected model supports. */
   'unsupported_reasoning_effort',
-  /** A turn is in flight; model selection is locked until it finishes (step 09). */
-  'turn_in_flight',
 ] as const;
 
 export type SettingsIpcErrorCode = (typeof SETTINGS_IPC_ERROR_CODES)[number];

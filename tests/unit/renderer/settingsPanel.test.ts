@@ -30,7 +30,6 @@ const modelStateStub = {
   models: [],
   selectedModel: null,
   selectedReasoningEffort: null,
-  changesLocked: false,
   catalogUnavailable: false,
 };
 

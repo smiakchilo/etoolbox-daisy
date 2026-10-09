@@ -253,9 +253,8 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       // batch is announced before we re-read below.
       options.reportSave(outcome);
       void outcome.then((result) => {
-        // Whether accepted or refused (e.g. `turn_in_flight`: a turn started
-        // meanwhile and the lock state on screen is already stale), re-read -
-        // the pickers and lock state must reflect what is actually persisted.
+        // Whether accepted or refused (e.g. `model_not_available`), re-read -
+        // the pickers must reflect what is actually persisted.
         pickersDirty = false;
         if (result.ok) {
           // A committed model/effort change alters the snapshot, and the chat
@@ -595,7 +594,6 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       models: [],
       selectedModel: node?.model ?? null,
       selectedReasoningEffort: node?.reasoningEffort ?? null,
-      changesLocked: false,
       catalogUnavailable: true,
     };
   }

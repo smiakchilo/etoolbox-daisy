@@ -57,7 +57,6 @@ function selectionWith(overrides: Partial<ModelSelectionState> = {}): ModelSelec
     ],
     selectedModel: null,
     selectedReasoningEffort: null,
-    changesLocked: false,
     catalogUnavailable: false,
     ...overrides,
   };
@@ -394,16 +393,21 @@ describe('buildAgentsViewModel', () => {
     expect(item?.selectedEffortValue).toBe('high');
   });
 
-  it('locks both pickers while a response is in progress', () => {
+  it('keeps both pickers enabled while a response is in progress', () => {
+    // A change made mid-turn is applied on the next prompt, so nothing is
+    // disabled: the pickers stay live throughout a turn.
     const [item] = buildAgentsViewModel(
       inputWith({
         auth: authWith({ isAuthenticated: true }),
-        modelSelection: selectionWith({ changesLocked: true }),
+        modelSelection: selectionWith({
+          selectedModel: 'model-a',
+          selectedReasoningEffort: 'high',
+        }),
       }),
       undefined,
     ).items;
-    expect(item?.modelEnabled).toBe(false);
-    expect(item?.effortDisabled).toBe(true);
+    expect(item?.modelEnabled).toBe(true);
+    expect(item?.effortDisabled).toBe(false);
   });
 
   it('leaves a non-active, auth-free provider fixed, showing its stored model and no action', () => {

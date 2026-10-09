@@ -134,7 +134,6 @@ beforeEach(() => {
       models: [],
       selectedModel: null,
       selectedReasoningEffort: null,
-      changesLocked: false,
       catalogUnavailable: false,
     },
   });
@@ -424,7 +423,6 @@ describe('createAgentsSection', () => {
         ],
         selectedModel: 'model-a',
         selectedReasoningEffort: 'high',
-        changesLocked: false,
         catalogUnavailable: false,
       },
     });
@@ -446,7 +444,6 @@ describe('createAgentsSection', () => {
         ],
         selectedModel: 'model-b',
         selectedReasoningEffort: null,
-        changesLocked: false,
         catalogUnavailable: false,
       },
     });
@@ -472,7 +469,6 @@ describe('createAgentsSection', () => {
         ],
         selectedModel: 'model-a',
         selectedReasoningEffort: 'high',
-        changesLocked: false,
         catalogUnavailable: false,
       },
     });
@@ -508,13 +504,12 @@ describe('createAgentsSection', () => {
         ],
         selectedModel: 'model-a',
         selectedReasoningEffort: 'high',
-        changesLocked: false,
         catalogUnavailable: false,
       },
     });
     setModelPreferences.mockResolvedValue({
       ok: false,
-      error: { code: 'turn_in_flight', message: 'Finish or stop the current response' },
+      error: { code: 'model_not_available', message: 'The agent does not offer that model' },
     });
 
     const section = buildSection();
