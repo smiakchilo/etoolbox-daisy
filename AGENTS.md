@@ -561,8 +561,12 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2695 passed / 14 skipped** (the +15 since
-2680 is the interruption-notice Resume action — the "Session stopped" notice is now
+Current baseline: **`npm run test` → 2698 passed / 14 skipped** (the +3 since
+2695 is the composer `/` autocomplete accepting the highlighted skill on Enter,
+not only Tab — two `composer.test.ts` wiring cases plus a rewritten
+`resolveSkillMenuKey` case, `docs/verification.md` "Composer `/` autocomplete:
+Enter (and Tab) accept the highlighted skill (2026-10-09)"; before that, the +15
+since 2680 is the interruption-notice Resume action — the "Session stopped" notice is now
 a billet (`sp-icon-cancel` + tool-call typography) that, while live and newest,
 offers a quiet "Resume" button sending `Resume` as a prompt, and is persisted as a
 new `interruption` journal record replayed as historical/no-button: store flag,

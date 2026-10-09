@@ -71,9 +71,11 @@ export function skillAcceptValue(skill: AgentChatSkill): string {
 export type SkillMenuKeyIntent = 'dismiss' | 'next' | 'previous' | 'accept' | 'ignore';
 
 /**
- * Maps a key to its effect on the open menu. Enter is deliberately `ignore` -
- * it must submit, exactly as it does with the menu closed; Tab (without Shift)
- * accepts the highlighted suggestion.
+ * Maps a key to its effect on the open menu. Both Enter and Tab (each without
+ * Shift) accept the highlighted suggestion: while a suggestion is visible, the
+ * intuitive reading of Enter is "insert the match", not "send the half-typed
+ * token". Shift+Enter and Shift+Tab are left alone (a newline / focus move),
+ * and Escape dismisses without editing.
  */
 export function resolveSkillMenuKey(key: string, shiftKey: boolean): SkillMenuKeyIntent {
   switch (key) {
@@ -83,6 +85,7 @@ export function resolveSkillMenuKey(key: string, shiftKey: boolean): SkillMenuKe
       return 'next';
     case 'ArrowUp':
       return 'previous';
+    case 'Enter':
     case 'Tab':
       return shiftKey ? 'ignore' : 'accept';
     default:

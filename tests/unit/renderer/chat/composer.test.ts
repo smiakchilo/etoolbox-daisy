@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  type Composer,
   createComposer,
   type ComposerSendOutcome,
 } from '../../../../src/renderer/src/chat/composer';
@@ -339,6 +340,64 @@ describe('createComposer', () => {
         resolveFirst?.({ ok: true });
         await Promise.resolve();
       });
+    });
+  });
+
+  describe('skill autocomplete', () => {
+    const SKILLS = [
+      { name: 'search', description: 'Search.' },
+      { name: 'semantic-search', description: 'Semantic search.' },
+    ];
+
+    /** Supplies the catalogue and types `value` into the field. */
+    function withSkills(composer: Composer, field: TextFieldElement, value: string): void {
+      composer.setSkills(SKILLS);
+      field.value = value;
+      field.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    }
+
+    it('accepts the highlighted suggestion on Enter instead of submitting the token', () => {
+      const onSend = vi.fn();
+      const { composer, field } = readyComposer(onSend);
+      withSkills(composer, field, '/s');
+
+      const event = new dom.window.KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      });
+      field.dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(field.value).toBe('/search ');
+      expect(onSend).not.toHaveBeenCalled();
+    });
+
+    it('submits on the Enter after an accept, once the menu has closed', async () => {
+      const onSend = vi.fn().mockResolvedValue({ ok: true } satisfies ComposerSendOutcome);
+      const { composer, field } = readyComposer(onSend);
+      withSkills(composer, field, '/s');
+
+      pressEnter(field);
+      expect(field.value).toBe('/search ');
+      expect(onSend).not.toHaveBeenCalled();
+
+      // The inserted name plus its trailing space closes the menu, so the next
+      // Enter submits the (now complete) prompt as it always did.
+      pressEnter(field);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onSend).toHaveBeenCalledWith('/search');
+    });
+
+    it('still submits on Enter when the field is not a skill token', () => {
+      const onSend = vi.fn().mockResolvedValue({ ok: true } satisfies ComposerSendOutcome);
+      const { composer, field } = readyComposer(onSend);
+      withSkills(composer, field, 'plain message');
+
+      pressEnter(field);
+
+      expect(onSend).toHaveBeenCalledWith('plain message');
     });
   });
 

@@ -94,11 +94,12 @@ describe('resolveSkillMenuKey', () => {
     expect(resolveSkillMenuKey('Escape', false)).toBe('dismiss');
     expect(resolveSkillMenuKey('ArrowDown', false)).toBe('next');
     expect(resolveSkillMenuKey('ArrowUp', false)).toBe('previous');
-    expect(resolveSkillMenuKey('Tab', false)).toBe('accept');
   });
 
-  it('never claims Enter, so it always submits; Shift+Tab is left alone', () => {
-    expect(resolveSkillMenuKey('Enter', false)).toBe('ignore');
+  it('accepts on Enter or Tab, and leaves their shifted forms alone', () => {
+    expect(resolveSkillMenuKey('Enter', false)).toBe('accept');
+    expect(resolveSkillMenuKey('Tab', false)).toBe('accept');
+    expect(resolveSkillMenuKey('Enter', true)).toBe('ignore');
     expect(resolveSkillMenuKey('Tab', true)).toBe('ignore');
     expect(resolveSkillMenuKey('a', false)).toBe('ignore');
   });

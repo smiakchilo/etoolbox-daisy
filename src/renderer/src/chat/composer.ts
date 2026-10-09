@@ -312,8 +312,9 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
   /**
    * Handles a keydown against the open popup, returning whether it was consumed.
-   * Enter is deliberately not consumed - it submits, exactly as it does with the
-   * popup closed; Tab (and a click) is what accepts a suggestion.
+   * Enter and Tab both accept the highlighted suggestion (see
+   * `resolveSkillMenuKey`); a click does too. While the popup is open, Enter is
+   * consumed rather than submitting the half-typed token.
    */
   function handleSkillMenuKey(keyEvent: KeyboardEvent): boolean {
     if (!isSkillMenuOpen(skillMenu)) return false;
@@ -745,9 +746,10 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   field.addEventListener('keydown', (keyEvent) => {
     const isComposing = composing || keyEvent.isComposing;
     // The open skill popup claims the arrow keys (to move its highlight) and
-    // Escape/Tab before history recall or submission see them. Enter is left
-    // alone, so it always submits - see `handleSkillMenuKey`. Neither the popup
-    // nor history recall exists while a question is on screen.
+    // Escape/Tab/Enter before history recall or submission see them - Enter and
+    // Tab accept the highlighted suggestion, Escape dismisses (see
+    // `handleSkillMenuKey`). Neither the popup nor history recall exists while a
+    // question is on screen.
     if (inputRequest === undefined) {
       if (!isComposing && handleSkillMenuKey(keyEvent)) {
         keyEvent.preventDefault();

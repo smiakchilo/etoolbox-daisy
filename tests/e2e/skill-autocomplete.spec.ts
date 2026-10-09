@@ -101,7 +101,7 @@ test.describe('composer skill autocomplete', () => {
     await app.close();
   });
 
-  test('lists only the user-invocable skills, navigates with the arrows, and inserts on Tab or click', async () => {
+  test('lists only the user-invocable skills, navigates with the arrows, and inserts on Enter, Tab or click', async () => {
     const field = shell.locator(COMPOSER_FIELD);
     await field.click();
     await field.fill('/');
@@ -155,6 +155,14 @@ test.describe('composer skill autocomplete', () => {
     await expect(shell.locator(SELECTED_NAME)).toHaveText('semantic-search');
     await field.press('Tab');
     await expect(field).toHaveValue('/semantic-search ');
+    await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
+
+    // Enter accepts the highlighted suggestion too - the intuitive key - rather
+    // than submitting the half-typed `/s` token.
+    await field.fill('/s');
+    await expect(shell.locator(SELECTED_NAME)).toHaveText('search');
+    await field.press('Enter');
+    await expect(field).toHaveValue('/search ');
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Escape dismisses without editing the text.
