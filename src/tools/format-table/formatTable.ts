@@ -64,11 +64,11 @@ export type FormatTableArgs = z.infer<typeof formatTableArgsSchema>;
 export const FORMAT_TABLE_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: FORMAT_TABLE_TOOL_NAME,
   description:
-    'Presents results as the chat\u2019s own table. Pass the JSON you already hold as `data`: ' +
-    'either an array of row objects, or an object with a `rows` array (for example the whole ' +
-    '`aem_query` result). Pass the JSON verbatim - do not reformat, rename, or pre-render ' +
-    'anything: the application builds the table, keeps the identifying path clickable, and ' +
-    'escapes every cell. Set `mode: "new"` for the first page of a table and `mode: "append"` ' +
+    'Presents results as the chat\u2019s own table. Pass the `aem_query` result exactly as you ' +
+    'received it as `data` - the whole result object, or its text with the `Rows: [...]` line - ' +
+    'or an array of row objects. Do not extract, reformat, rename, or pre-render anything: the ' +
+    'application finds the rows itself, builds the table, keeps the identifying path clickable, ' +
+    'and escapes every cell. Set `mode: "new"` for the first page of a table and `mode: "append"` ' +
     'to add a later page to it. This tool does not read AEM itself; it only displays data you ' +
     'already have.',
   // Hand-written rather than `z.toJSONSchema(jsonValueSchema)`: `data` is
@@ -79,8 +79,7 @@ export const FORMAT_TABLE_TOOL_DESCRIPTOR: ToolDescriptor = {
     properties: {
       data: {
         description:
-          'The JSON to present verbatim: an array of row objects, or an object with a `rows` ' +
-          'array (e.g. the whole aem_query result).',
+          'The `aem_query` result exactly as received (object or text), or an array of row objects.',
       },
       mode: {
         type: 'string',
@@ -107,15 +106,96 @@ function isRecord(value: JsonValue | undefined): value is Readonly<Record<string
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** The row objects inside `data`: the array itself, or `data.rows`. */
-function readRows(data: JsonValue): readonly Readonly<Record<string, JsonValue>>[] | undefined {
-  const candidate = Array.isArray(data)
-    ? data
-    : isRecord(data) && Array.isArray(data['rows'])
-      ? data['rows']
-      : undefined;
-  if (candidate === undefined) return undefined;
-  return candidate.filter(isRecord);
+type Row = Readonly<Record<string, JsonValue>>;
+
+/** Keys a weaker model may nest the real payload under (the tool-result envelope, or its own). */
+const WRAPPER_KEYS = ['result', 'data', 'payload', 'output', 'content'] as const;
+const MAX_UNWRAP_DEPTH = 4;
+const ROWS_MARKER = 'Rows: ';
+
+/**
+ * Reads the pagination facts out of `aem_query`'s rendered text, so a model that
+ * pastes the text it was shown (rather than the structured result) still gets a
+ * total line.
+ */
+function paginationFromText(text: string): JsonValue | undefined {
+  const pagination: Record<string, JsonValue> = {};
+  if (text.includes('more results exist beyond this page')) pagination['hasMore'] = true;
+  else if (text.includes('no further results exist')) pagination['hasMore'] = false;
+  const estimated = /approximately (\d+) match\(es\) in total/.exec(text);
+  const exact = /(\d+) match\(es\) in total/.exec(text);
+  if (estimated?.[1] !== undefined) {
+    pagination['total'] = { accuracy: 'estimated', value: Number(estimated[1]) };
+  } else if (exact?.[1] !== undefined) {
+    pagination['total'] = { accuracy: 'exact', value: Number(exact[1]) };
+  }
+  return Object.keys(pagination).length === 0 ? undefined : pagination;
+}
+
+function parseJson(text: string): JsonValue | undefined {
+  try {
+    return JSON.parse(text) as JsonValue;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Turns a string `data` into structured data: JSON text (optionally in a code
+ * fence), or `aem_query`'s rendered text, whose last line is `Rows: [...]`.
+ */
+function parseText(text: string): JsonValue | undefined {
+  const trimmed = text
+    .trim()
+    .replace(/^```[a-zA-Z]*\s*/, '')
+    .replace(/\s*```$/, '')
+    .trim();
+  const direct = parseJson(trimmed);
+  if (direct !== undefined && typeof direct !== 'string') return direct;
+  const markerAt = trimmed.lastIndexOf(ROWS_MARKER);
+  if (markerAt < 0) return undefined;
+  const rows = parseJson(trimmed.slice(markerAt + ROWS_MARKER.length).trim());
+  if (!Array.isArray(rows)) return undefined;
+  const pagination = paginationFromText(trimmed.slice(0, markerAt));
+  return pagination === undefined ? { rows } : { rows, pagination };
+}
+
+interface ResolvedTable {
+  readonly rows: readonly Row[];
+  /** The object carrying the rows, where `pagination`/`total` are read from. */
+  readonly container: JsonValue;
+}
+
+/**
+ * Finds the rows in whatever shape the model handed over: an array of rows, an
+ * object with a `rows` array (the `aem_query` result), either of those as JSON
+ * text, nested under a wrapper key, or a single row object.
+ */
+function resolveTable(data: JsonValue, depth = 0): ResolvedTable | undefined {
+  if (depth > MAX_UNWRAP_DEPTH) return undefined;
+  if (typeof data === 'string') {
+    const parsed = parseText(data);
+    return parsed === undefined ? undefined : resolveTable(parsed, depth + 1);
+  }
+  if (Array.isArray(data)) return { rows: data.filter(isRecord), container: data };
+  if (!isRecord(data)) return undefined;
+
+  const rows = data['rows'];
+  if (Array.isArray(rows)) return { rows: rows.filter(isRecord), container: data };
+  if (typeof rows === 'string') {
+    const parsed = parseText(rows);
+    if (Array.isArray(parsed)) return { rows: parsed.filter(isRecord), container: data };
+  }
+  for (const key of WRAPPER_KEYS) {
+    const inner = data[key];
+    if (inner === undefined) continue;
+    const resolved = resolveTable(inner, depth + 1);
+    if (resolved !== undefined) return resolved;
+  }
+  if (typeof data['jcr:path'] === 'string' || typeof data['path'] === 'string') {
+    return { rows: [data], container: data };
+  }
+  return undefined;
 }
 
 /**
@@ -207,8 +287,9 @@ export function normalizeFormatTable(
   data: JsonValue,
   mode: FormatTableMode,
 ): NormalizedTable | undefined {
-  const rows = readRows(data);
-  if (rows === undefined) return undefined;
+  const resolved = resolveTable(data);
+  if (resolved === undefined) return undefined;
+  const { rows, container } = resolved;
 
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -240,7 +321,7 @@ export function normalizeFormatTable(
   return {
     columns,
     rows: rows.map((row) => columnKeys.map((key) => renderCell(row[key]))),
-    total: totalLine(data),
+    total: totalLine(container),
     mode,
   };
 }
@@ -280,7 +361,8 @@ export function createFormatTableExecutor(host: ToolHost): AemToolExecutor {
     if (normalized === undefined) {
       return Promise.resolve(
         invalidArgument(
-          'format_table `data` must be an array of rows or an object with a `rows` array',
+          'format_table `data` must be the aem_query result (or its `rows` array); ' +
+            'pass the result exactly as received',
           requestId,
         ),
       );

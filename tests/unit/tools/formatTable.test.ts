@@ -105,6 +105,45 @@ describe('normalizeFormatTable', () => {
     expect(normalizeFormatTable('nope', 'new')).toBeUndefined();
   });
 
+  it('accepts the result as JSON text, with or without a code fence', () => {
+    const json = JSON.stringify({
+      rows: [{ 'jcr:path': '/content/a' }],
+      pagination: { total: { accuracy: 'exact', value: 1 } },
+    });
+    for (const text of [json, '```json\n' + json + '\n```']) {
+      const normalized = normalizeFormatTable(text, 'new');
+      expect(normalized?.rows).toEqual([['/content/a']]);
+      expect(normalized?.total).toBe('Total: 1 result');
+    }
+  });
+
+  it("accepts aem_query's rendered text, reading the rows and the total from it", () => {
+    const text = [
+      'AEM query against https://x (revision 1, fetched at 5)',
+      'Returned 2 row(s) at offset 0 with limit 2; more results exist beyond this page - ' +
+        'request the next page at a higher offset; approximately 2 match(es) in total ' +
+        '(estimated, not an exact count)',
+      'Selection: none',
+      'Rows: [{"jcr:path":"/content/a"},{"jcr:path":"/content/b"}]',
+    ].join('\n');
+    const normalized = normalizeFormatTable(text, 'new');
+    expect(normalized?.rows).toEqual([['/content/a'], ['/content/b']]);
+    expect(normalized?.total).toBe('Total: 2+ results');
+  });
+
+  it('unwraps a result nested under a wrapper key and a stringified rows array', () => {
+    expect(normalizeFormatTable({ result: { rows: [{ path: '/a' }] } }, 'new')?.rows).toEqual([
+      ['/a'],
+    ]);
+    expect(normalizeFormatTable({ rows: '[{"path":"/a"}]' }, 'new')?.rows).toEqual([['/a']]);
+  });
+
+  it('treats a single row object as a one-row table', () => {
+    expect(normalizeFormatTable({ 'jcr:path': '/a', title: 'T' }, 'new')?.rows).toEqual([
+      ['/a', 'T'],
+    ]);
+  });
+
   it('stringifies object and multi-valued cells rather than dropping them', () => {
     const normalized = normalizeFormatTable([{ path: '/a', tags: ['x', 'y'] }], 'new');
     expect(normalized?.rows[0]?.[1]).toBe('["x","y"]');
