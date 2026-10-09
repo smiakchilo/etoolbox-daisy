@@ -955,6 +955,76 @@ describe('createTranscriptView - interruption notices', () => {
   });
 });
 
+describe('createTranscriptView - interruption Resume action', () => {
+  function click(target: Element): void {
+    target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+
+  it('offers Resume on a live, still-newest "Session stopped" notice and invokes onResume', () => {
+    const onResume = vi.fn();
+    const view = createTranscriptView(markdownRenderer, { onResume });
+    const store = createTranscriptStore();
+    store.addInterruption('stopped');
+
+    view.repaint(store);
+
+    const button = view.element.querySelector('[data-interruption-resume]');
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toBe('Resume');
+    expect(button?.hasAttribute('quiet')).toBe(true);
+
+    click(button!);
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers no Resume on a notice replayed from history (non-resumable)', () => {
+    const onResume = vi.fn();
+    const view = createTranscriptView(markdownRenderer, { onResume });
+    const store = createTranscriptStore();
+    store.addInterruption('stopped', false);
+
+    view.repaint(store);
+
+    expect(view.element.querySelector('[data-interruption-resume]')).toBeNull();
+  });
+
+  it('drops the Resume action once the notice is no longer the newest item', () => {
+    const onResume = vi.fn();
+    const view = createTranscriptView(markdownRenderer, { onResume });
+    const store = createTranscriptStore();
+    store.addInterruption('stopped');
+    view.repaint(store);
+    expect(view.element.querySelector('[data-interruption-resume]')).not.toBeNull();
+
+    // A later turn makes the notice history; the action must disappear.
+    store.applyUserPrompt(turnId, 'Resume');
+    view.repaint(store);
+
+    expect(view.element.querySelector('[data-interruption-resume]')).toBeNull();
+  });
+
+  it('offers no Resume for a navigation notice', () => {
+    const onResume = vi.fn();
+    const view = createTranscriptView(markdownRenderer, { onResume });
+    const store = createTranscriptStore();
+    store.addInterruption('navigation');
+
+    view.repaint(store);
+
+    expect(view.element.querySelector('[data-interruption-resume]')).toBeNull();
+  });
+
+  it('offers no Resume when the host wired no handler', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.addInterruption('stopped');
+
+    view.repaint(store);
+
+    expect(view.element.querySelector('[data-interruption-resume]')).toBeNull();
+  });
+});
+
 describe('createTranscriptView - bold skill name in a user prompt', () => {
   function renderPrompt(prompt: string, knownSkillNames: readonly string[]): HTMLElement {
     const view = createTranscriptView(markdownRenderer, {

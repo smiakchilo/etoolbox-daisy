@@ -561,7 +561,15 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2680 passed / 14 skipped** (the +10 since
+Current baseline: **`npm run test` → 2695 passed / 14 skipped** (the +15 since
+2680 is the interruption-notice Resume action — the "Session stopped" notice is now
+a billet (`sp-icon-cancel` + tool-call typography) that, while live and newest,
+offers a quiet "Resume" button sending `Resume` as a prompt, and is persisted as a
+new `interruption` journal record replayed as historical/no-button: store flag,
+four transcriptView cases plus the click, the chatPane round-trip, journalReplay,
+two chatJournal writer cases and three controller cases, plus the reader
+round-trip — see `docs/verification.md` "Chat: the interruption notice became a
+billet with a Resume action ... (2026-10-09)"; the +10 since
 2670 is the deterministic-search-tables work — the `format_table` tool, the
 `ask_user` actions mode, composer helpers, adapter/fake `actions`, and transcript
 run-grouping/prose-suppression cases, less the deleted

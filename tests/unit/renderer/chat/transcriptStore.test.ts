@@ -550,9 +550,27 @@ describe('createTranscriptStore', () => {
       const store = createTranscriptStore();
       store.addInterruption('stopped');
       expect(store.items()).toEqual([
-        { kind: 'interruption', interruptionId: 'interruption-1', reason: 'stopped' },
+        {
+          kind: 'interruption',
+          interruptionId: 'interruption-1',
+          reason: 'stopped',
+          resumable: true,
+        },
       ]);
       expect(store.takeDirty()).toBe(true);
+    });
+
+    it('records a non-resumable notice when replayed as history', () => {
+      const store = createTranscriptStore();
+      store.addInterruption('stopped', false);
+      expect(store.items()).toEqual([
+        {
+          kind: 'interruption',
+          interruptionId: 'interruption-1',
+          reason: 'stopped',
+          resumable: false,
+        },
+      ]);
     });
 
     it('gives each notice a distinct id, so two notices never share a cache key', () => {

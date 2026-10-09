@@ -491,9 +491,16 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // tool promises settle *after* that clear and their results are suppressed -
     // the same "no result for a cancelled turn" rule, now also freeing the
     // bridge's single concurrency slot instead of waiting out the deadline.
+    const hadTurn = activeTurn !== undefined;
     cancelAemRequests?.();
     const result = await agentService.abort(request.chatId);
     if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
+    // After the await, so the turn's own `cancelling`/`idle` events (and any
+    // partial/abandoned bookkeeping they finalize) are already journaled and
+    // this notice lands after them. A Stop with no turn in flight records
+    // nothing - mirroring the renderer, which only paints a notice for an
+    // observed `cancelling`.
+    if (hadTurn) chatJournal?.recordInterruption({ chatId: request.chatId, reason: 'stopped' });
     return { ok: true };
   }
 
@@ -587,7 +594,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const result = await agentService.abort(chatId);
     if (!result.ok) {
       logger.error('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED', { ids: { chatId } });
+      return;
     }
+    // Recorded after the turn's own `cancelling`/`idle` events (see `abort`
+    // above for why), so a resumed chat replays the notice in order. The reason
+    // is the one fact only this path knows: an application abort, not a Stop.
+    chatJournal?.recordInterruption({ chatId, reason: 'navigation' });
   }
 
   async function dispose(): Promise<void> {

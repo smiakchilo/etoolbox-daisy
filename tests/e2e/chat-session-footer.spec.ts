@@ -191,7 +191,26 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     await expect(stop).toBeVisible();
     await stop.click();
 
-    await expect(shell.locator(INTERRUPTION)).toHaveText('Session stopped', { timeout: 10_000 });
+    const notice = shell.locator(INTERRUPTION);
+    await expect(notice.locator('.chat-message__interruption-label')).toHaveText(
+      'Session stopped',
+      {
+        timeout: 10_000,
+      },
+    );
+
+    // The live notice offers a quiet Resume action; pressing it sends "Resume"
+    // as an ordinary prompt, so a "Resume" user message appears and the same
+    // session continues.
+    const resume = notice.locator('[data-interruption-resume]');
+    await expect(resume).toBeVisible();
+    await expect(resume).toHaveAttribute('quiet', '');
+    await resume.click();
+    await expect(shell.locator('.chat-message--user').last()).toHaveText('Resume');
+
+    // The send created a fresh (empty) turn; drain it so the shared app is idle
+    // for the next case.
+    await flushFake(app);
   });
 
   test('the footer summarises the agent and reveals its journal file', async () => {

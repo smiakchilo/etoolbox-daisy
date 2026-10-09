@@ -179,6 +179,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     getKnownSkillNames: () => skills.map((skill) => skill.name),
     onOpenLink: (url) => openLink(url),
     onOpenExternal: (url) => openExternal(url),
+    onResume: () => resumeStoppedSession(),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -891,6 +892,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     stopRequested = false;
     persistActiveConversation();
     return { ok: true };
+  }
+
+  /**
+   * The transcript's Resume action on a "Session stopped" notice: send
+   * `Resume` as an ordinary prompt, exactly as if the reader had typed it (so a
+   * "Resume" user message appears and the same session continues). Offered only
+   * for a live, still-newest notice (see `transcriptView.ts`); ignored while a
+   * turn is already in flight, mirroring the composer's own send gate.
+   */
+  function resumeStoppedSession(): void {
+    if (isTurnInFlight(sessionStatus.state)) return;
+    void onSend('Resume');
   }
 
   function onStop(): void {

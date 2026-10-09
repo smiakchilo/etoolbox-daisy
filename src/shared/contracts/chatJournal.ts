@@ -154,6 +154,44 @@ export type ChatJournalAbandonedToolCallRecord = Readonly<
 >;
 
 /**
+ * Why a turn was interrupted. `"stopped"` is a Stop the user pressed;
+ * `"navigation"` is every other app-initiated abort (an AEM server switch, a
+ * cross-origin navigation, a render-process-gone, a destroyed view).
+ *
+ * Declared in the contract layer (not in the renderer) because it is persisted
+ * in a journal record and therefore crosses a process boundary.
+ */
+export const interruptionReasonSchema = z.enum(['stopped', 'navigation']);
+
+export type InterruptionReason = z.infer<typeof interruptionReasonSchema>;
+
+/**
+ * A durable "this turn was interrupted" marker, written by main when it aborts a
+ * turn in flight - a user Stop or an AEM-context-invalidating abort. The live
+ * renderer paints its own notice from the resulting `cancelling` event - this
+ * record exists so a resumed chat's transcript shows the notice too. A replayed
+ * notice is *historical*: the renderer never offers its Resume action for it (see
+ * `transcriptStore.ts`).
+ *
+ * Deliberately a record of its own rather than an `AgentEvent`: the normalized
+ * event stream already carries the `cancelling` state, but only main knows
+ * whether that cancellation was a user Stop or an application abort, and only
+ * the notice carries that distinction.
+ */
+export const chatJournalInterruptionRecordSchema = z
+  .object({
+    recordType: z.literal('interruption'),
+    at: epochMillisecondsSchema,
+    chatId: chatIdSchema,
+    reason: interruptionReasonSchema,
+  })
+  .strict();
+
+export type ChatJournalInterruptionRecord = Readonly<
+  z.infer<typeof chatJournalInterruptionRecordSchema>
+>;
+
+/**
  * The last line written for a chat that the application closed. A synthetic
  * marker, not an `AgentEvent`: the SDK adapter's own `closed`
  * `session.state.changed` may or may not precede it, and a reader should treat
@@ -175,6 +213,7 @@ export const chatJournalRecordSchema = z.discriminatedUnion('recordType', [
   chatJournalAgentEventRecordSchema,
   chatJournalPartialMessageRecordSchema,
   chatJournalAbandonedToolCallRecordSchema,
+  chatJournalInterruptionRecordSchema,
   chatJournalClosedRecordSchema,
 ]);
 

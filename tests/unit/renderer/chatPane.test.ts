@@ -972,7 +972,7 @@ describe('createChatPane interruptions and session id', () => {
   function sessionState(
     chatId: ChatId,
     sequence: number,
-    state: 'sending' | 'cancelling',
+    state: 'sending' | 'cancelling' | 'idle',
   ): AgentEvent {
     return {
       type: 'session.state.changed',
@@ -997,9 +997,36 @@ describe('createChatPane interruptions and session id', () => {
     pushEvent(sessionState(chatId, 1, 'cancelling'));
     await waitForInterruption(pane);
 
-    expect(pane.element.querySelector('.chat-message--interruption')?.textContent).toBe(
+    const notice = pane.element.querySelector('.chat-message--interruption');
+    expect(notice?.querySelector('.chat-message__interruption-label')?.textContent).toBe(
       'Session stopped',
     );
+    // A live "Session stopped" notice offers the Resume action.
+    expect(notice?.querySelector('[data-interruption-resume]')?.textContent).toBe('Resume');
+
+    pane.dispose();
+  });
+
+  it('sends "Resume" as an ordinary prompt when the notice action is pressed', async () => {
+    const pane = await readyPane();
+    const chatId = currentChatId();
+
+    pushEvent(sessionState(chatId, 0, 'sending'));
+    const stop = pane.element.querySelector('.chat-composer__stop');
+    stop?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    pushEvent(sessionState(chatId, 1, 'cancelling'));
+    await waitForInterruption(pane);
+    // The turn has actually stopped (idle) before the reader reaches for Resume.
+    pushEvent(sessionState(chatId, 2, 'idle'));
+
+    sendMessage.mockResolvedValueOnce({ ok: true, turnId: 'turn-resume' as TurnId });
+    const resume = pane.element.querySelector('[data-interruption-resume]');
+    expect(resume).not.toBeNull();
+    resume?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(sendMessage).toHaveBeenCalledWith({ chatId, prompt: 'Resume' });
 
     pane.dispose();
   });

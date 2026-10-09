@@ -10,6 +10,7 @@ import {
   createDeltaFoldState,
   type DeltaFoldState,
   foldTextDelta,
+  type InterruptionReason,
   type MessageId,
   renderFoldedText,
   type SdkSessionId,
@@ -58,6 +59,11 @@ export interface ChatJournalUserPromptParams {
   readonly prompt: string;
 }
 
+export interface ChatJournalInterruptionParams {
+  readonly chatId: ChatId;
+  readonly reason: InterruptionReason;
+}
+
 export interface ChatJournalHealth {
   /** Records that did not reach disk, for any reason. */
   readonly writeFailureCount: number;
@@ -88,6 +94,13 @@ export interface ChatJournal {
   discardUserPrompt(chatId: ChatId, turnId: TurnId): void;
   /** Journals one normalized event; deltas are folded, everything else is written. */
   recordEvent(event: AgentEvent): void;
+  /**
+   * Journals a durable "this turn was interrupted" notice for a Stop or an
+   * AEM-context abort. Written by the controller once it has observed the
+   * turn's own `cancelling`/`idle` events, so the notice lands after them and a
+   * resumed chat replays it in order. Dropped when the chat has no open file.
+   */
+  recordInterruption(params: ChatJournalInterruptionParams): void;
   /** Finalizes any partial message and writes the `chat.closed` marker. A chat that never wrote a record (opened but unused) writes nothing. */
   closeChat(chatId: ChatId): void;
   getHealth(): ChatJournalHealth;
@@ -387,6 +400,20 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         finalizePendingMessages(state, event.chatId);
         finalizeOutstandingToolCalls(state, event.chatId);
       }
+    },
+
+    recordInterruption(params) {
+      const state = openChats.get(params.chatId);
+      if (state === undefined) {
+        droppedRecordCount += 1;
+        return;
+      }
+      appendRecord(state, {
+        recordType: 'interruption',
+        at: now(),
+        chatId: params.chatId,
+        reason: params.reason,
+      });
     },
 
     closeChat(chatId) {

@@ -8,12 +8,15 @@ import type { TranscriptStore } from './transcriptStore';
  *
  * This is a *projection*, per implementation-plan.md step 09: the journal is
  * the UI record, the SDK session (restored by `resume`) is the model's context.
- * Only the two record kinds that have a transcript representation are replayed:
+ * Only the record kinds that have a transcript representation are replayed:
  *
  *  - `user.prompt` - there is no `AgentEvent` for a user's own message, so this
  *    maps to {@link TranscriptStore.applyUserPrompt};
  *  - `agent.event` - a normalized event, fed back through the very same
- *    {@link TranscriptStore.applyEvent} the live stream uses.
+ *    {@link TranscriptStore.applyEvent} the live stream uses;
+ *  - `interruption` - a durable "Session stopped" notice (see `chatJournal.ts`).
+ *    It is replayed as a *historical* notice (`resumable: false`), so a resumed
+ *    chat shows it without offering the Resume action the live pane does.
  *
  * Deliberately ignored:
  *  - `header` and `chat.closed` - journal bookkeeping, no visual;
@@ -42,6 +45,9 @@ export function replayJournalIntoTranscript(
         break;
       case 'agent.event':
         transcriptStore.applyEvent(record.event);
+        break;
+      case 'interruption':
+        transcriptStore.addInterruption(record.reason, false);
         break;
       case 'header':
       case 'assistant.message.partial':

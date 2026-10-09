@@ -7,6 +7,7 @@ import type {
   ChatJournalAgentEventRecord,
   ChatJournalClosedRecord,
   ChatJournalHeaderRecord,
+  ChatJournalInterruptionRecord,
   ChatJournalPartialMessageRecord,
   ChatJournalRecord,
   MessageId,
@@ -104,6 +105,29 @@ describe('replayJournalIntoTranscript', () => {
     const tool = store.toolCallFor('tool-1' as ToolCallId);
     expect(tool?.toolName).toBe('aem_get_json');
     expect(tool?.status).toEqual({ kind: 'succeeded', data: { ok: true } });
+  });
+
+  it('replays a durable interruption record as a historical, non-resumable notice', () => {
+    const interruption: ChatJournalInterruptionRecord = {
+      recordType: 'interruption',
+      at: 9,
+      chatId: CHAT,
+      reason: 'stopped',
+    };
+    const store = createTranscriptStore();
+    replayJournalIntoTranscript([header, userPrompt('turn-1', 'go'), interruption], store);
+
+    // `resumable: false` is the whole point: a restored notice is history and
+    // must never offer the live pane's Resume action.
+    expect(store.items()).toEqual([
+      { kind: 'userPrompt', turnId: 'turn-1' },
+      {
+        kind: 'interruption',
+        interruptionId: 'interruption-1',
+        reason: 'stopped',
+        resumable: false,
+      },
+    ]);
   });
 
   it('ignores header, partial-message, abandoned-tool and closed records', () => {

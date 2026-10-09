@@ -467,3 +467,31 @@ describe('createChatJournal - abandoned tool calls', () => {
     expect(records.at(-1)).toMatchObject({ recordType: 'chat.closed' });
   });
 });
+
+describe('createChatJournal - interruption notices', () => {
+  it('writes an interruption record carrying the reason, after the header', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordEvent(stateChanged('sending'));
+    journal.recordEvent(stateChanged('cancelling'));
+    journal.recordEvent(stateChanged('idle'));
+    journal.recordInterruption({ chatId: CHAT_ID, reason: 'stopped' });
+
+    const records = readRecords(dir);
+    expect(records.at(-1)).toMatchObject({
+      recordType: 'interruption',
+      chatId: CHAT_ID,
+      reason: 'stopped',
+    });
+  });
+
+  it('drops an interruption for a chat with no open journal', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.recordInterruption({ chatId: CHAT_ID, reason: 'navigation' });
+
+    expect(readRecords(dir)).toEqual([]);
+    expect(journal.getHealth().droppedRecordCount).toBe(1);
+  });
+});

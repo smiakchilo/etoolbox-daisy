@@ -40,6 +40,13 @@ const assistantMessage = {
   },
 };
 
+const interruption = {
+  recordType: 'interruption',
+  at: 4,
+  chatId: 'chat-1',
+  reason: 'stopped',
+};
+
 function lines(...records: unknown[]): string {
   return `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
 }
@@ -48,7 +55,7 @@ describe('readChatJournal', () => {
   it('reads and validates every record, preserving order', () => {
     const outcome = readChatJournal(CHATS_DIR, 'chat-1', {
       fileSize: () => 100,
-      readText: () => lines(header, userPrompt, assistantMessage),
+      readText: () => lines(header, userPrompt, assistantMessage, interruption),
     });
 
     expect(outcome.ok).toBe(true);
@@ -57,6 +64,7 @@ describe('readChatJournal', () => {
       'header',
       'user.prompt',
       'agent.event',
+      'interruption',
     ]);
   });
 

@@ -1,6 +1,7 @@
 import { createMessageStream, type MessageStream } from './messageStream';
 import type {
   AgentEvent,
+  InterruptionReason,
   JsonValue,
   MessageId,
   ReasoningId,
@@ -32,19 +33,14 @@ export type TranscriptItem =
       /** Stable per-notice id, so the view can cache one DOM node per notice across repaints. */
       readonly interruptionId: string;
       readonly reason: InterruptionReason;
+      /**
+       * Whether the notice may offer its Resume action. `true` only for a
+       * notice the live pane recorded from this session's own `cancelling`
+       * event; `false` for one replayed from the chat journal, which is
+       * historical by definition (see `addInterruption`).
+       */
+      readonly resumable: boolean;
     };
-
-/**
- * Why a turn was interrupted. `"stopped"` is a Stop the user pressed;
- * `"navigation"` is every other app-initiated abort (an AEM server switch, a
- * cross-origin navigation, a render-process-gone, a destroyed view) - see
- * `agentChatController.ts`'s `handleAemContextInvalidated`.
- *
- * Declared here (not in `transcriptViewModel.ts`) because it is part of a
- * `TranscriptItem`; the view-model module imports it from this one, mirroring
- * how `ToolCallStatus` is already declared here.
- */
-export type InterruptionReason = 'stopped' | 'navigation';
 
 export type ToolCallStatus =
   | { readonly kind: 'requested' }
@@ -117,8 +113,12 @@ export interface TranscriptStore {
    * only the pane knows whether the user pressed Stop or an AEM-context change
    * aborted the turn (see `agentChatController.ts`). Marks the store dirty so a
    * throttled renderer repaints the new notice.
+   *
+   * `resumable` is `true` for a notice from the live session (the pane's own
+   * call) and `false` for one replayed from the chat journal - a historical
+   * notice must never offer its Resume action (see `journalReplay.ts`).
    */
-  addInterruption(reason: InterruptionReason): void;
+  addInterruption(reason: InterruptionReason, resumable?: boolean): void;
   /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
   takeDirty(): boolean;
   /**
@@ -342,12 +342,13 @@ export function createTranscriptStore(
       turnInFlight = inFlight;
       dirty = true;
     },
-    addInterruption(reason) {
+    addInterruption(reason, resumable = true) {
       interruptionSequence += 1;
       order.push({
         kind: 'interruption',
         interruptionId: `interruption-${interruptionSequence}`,
         reason,
+        resumable,
       });
       dirty = true;
     },

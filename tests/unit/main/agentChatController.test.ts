@@ -688,6 +688,7 @@ function createRecordingJournal(): { journal: ChatJournal; calls: JournalCall[] 
     discardUserPrompt: (chatId, turnId) =>
       calls.push({ method: 'discardUserPrompt', args: { chatId, turnId } }),
     recordEvent: (event) => calls.push({ method: 'recordEvent', args: event }),
+    recordInterruption: (params) => calls.push({ method: 'recordInterruption', args: params }),
     closeChat: (chatId) => calls.push({ method: 'closeChat', args: chatId }),
     getHealth: () => ({ writeFailureCount: 0, droppedRecordCount: 0, lastFailureCode: null }),
   };
@@ -795,6 +796,58 @@ describe('agentChatController chat journal', () => {
     expect(calls[0]?.args).toMatchObject({ type: 'session.state.changed', state: 'closed' });
     expect(calls[1]?.args).toBe(chatA);
     expect(calls[2]?.args).toMatchObject({ chatId: chatB });
+  });
+
+  it("records a 'stopped' interruption when a Stop cancels a turn in flight", async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'slow' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+    calls.length = 0;
+
+    await controller.abort({ chatId });
+
+    // The turn's own cancelling/idle events are journaled first; the notice
+    // lands after them, so a resumed chat replays it in order.
+    expect(methods(calls)).toEqual(['recordEvent', 'recordEvent', 'recordInterruption']);
+    expect(calls.at(-1)?.args).toEqual({ chatId, reason: 'stopped' });
+  });
+
+  it('records no interruption when a Stop arrives with no turn in flight', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    calls.length = 0;
+
+    await controller.abort({ chatId });
+
+    expect(methods(calls)).not.toContain('recordInterruption');
+  });
+
+  it("records a 'navigation' interruption on an AEM-context abort", async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'slow' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+    calls.length = 0;
+
+    await controller.handleAemContextInvalidated();
+
+    expect(calls.at(-1)).toEqual({
+      method: 'recordInterruption',
+      args: { chatId, reason: 'navigation' },
+    });
   });
 });
 

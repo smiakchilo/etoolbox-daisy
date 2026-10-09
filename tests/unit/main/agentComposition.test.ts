@@ -470,6 +470,7 @@ describe('installAgentService', () => {
       recordUserPrompt: vi.fn(),
       discardUserPrompt: vi.fn(),
       recordEvent: vi.fn(),
+      recordInterruption: vi.fn(),
       closeChat: vi.fn(),
       getHealth: () => ({ writeFailureCount: 0, droppedRecordCount: 0, lastFailureCode: null }),
     };

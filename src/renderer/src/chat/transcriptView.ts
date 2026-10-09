@@ -58,6 +58,15 @@ export interface TranscriptViewOptions {
    * treated as a skill.
    */
   readonly getKnownSkillNames?: () => readonly string[];
+  /**
+   * Invoked when the reader presses the Resume action on a "Session stopped"
+   * notice: the pane sends `Resume` as an ordinary prompt, exactly as if it had
+   * been typed. Only offered for a *live* notice (one this session recorded) and
+   * only while it is the transcript's newest item; a notice replayed from the
+   * journal, or one the conversation has since moved past, is historical and
+   * shows no action. Absent (a unit test) means no notice offers an action.
+   */
+  readonly onResume?: () => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -373,6 +382,12 @@ export function createTranscriptView(
       toggleThinkingExpansion(thinkingToggle);
       return;
     }
+    const resume = target?.closest?.('[data-interruption-resume]') ?? null;
+    if (resume !== null) {
+      event.preventDefault();
+      options.onResume?.();
+      return;
+    }
     const anchor =
       target?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}], a[${MESSAGE_EXTERNAL_ATTRIBUTE}]`) ?? null;
     const href = anchor?.getAttribute('href') ?? null;
@@ -607,9 +622,19 @@ export function createTranscriptView(
       case 'toolCall':
         return el('div', { attrs: { class: 'chat-tool-call' } });
       case 'interruption':
-        // A borderless one-line notice, like the thinking/tool billets, so it
-        // reads as transcript metadata rather than a message bubble.
-        return el('p', { attrs: { class: 'chat-message chat-message--interruption' } });
+        // A borderless one-line notice, laid out like the thinking/tool billets
+        // (icon + label) so it reads as transcript metadata rather than a
+        // message bubble. The Resume action is appended by `updateShell` only
+        // when the notice is live and still newest.
+        return el('div', {
+          attrs: { class: 'chat-message chat-message--interruption' },
+          children: [
+            el('sp-icon-cancel', {
+              attrs: { class: 'chat-message__interruption-icon', size: 's' },
+            }),
+            el('span', { attrs: { class: 'chat-message__interruption-label' } }),
+          ],
+        });
       case 'thinking':
         // The whole structure (spinner, label, rolling line, chevron,
         // expandable body) is built once here rather than in `updateShell`, so
@@ -657,6 +682,7 @@ export function createTranscriptView(
     store: TranscriptStore,
     item: TranscriptItem,
     shell: HTMLElement,
+    isLast: boolean,
     tableMessage?: ToolTableMessage,
   ): void {
     switch (item.kind) {
@@ -677,9 +703,33 @@ export function createTranscriptView(
         );
         return;
       }
-      case 'interruption':
-        shell.textContent = describeInterruption(item.reason);
+      case 'interruption': {
+        const label = shell.querySelector<HTMLElement>('.chat-message__interruption-label');
+        if (label !== null) label.textContent = describeInterruption(item.reason);
+        // The Resume action is offered only for a live "Session stopped" notice
+        // that is still the transcript's newest item, and only when the host
+        // wired a handler. A navigation notice names an app-initiated abort, and
+        // anything replayed from the journal or since moved past is history -
+        // neither offers the action.
+        const showResume =
+          item.reason === 'stopped' && item.resumable && isLast && options.onResume !== undefined;
+        const existing = shell.querySelector<HTMLElement>('[data-interruption-resume]');
+        if (showResume && existing === null) {
+          shell.append(
+            el('sp-action-button', {
+              attrs: {
+                class: 'chat-message__interruption-resume',
+                quiet: '',
+                'data-interruption-resume': '',
+              },
+              text: 'Resume',
+            }),
+          );
+        } else if (!showResume && existing !== null) {
+          existing.remove();
+        }
         return;
+      }
       case 'message':
         // Must fully REPLACE the node's content on every call, never append
         // to it - see this function's doc comment for why reusing the same
@@ -750,6 +800,7 @@ export function createTranscriptView(
       hoveredLink = undefined;
       const items = store.items();
       const { skip, messages } = planTableRuns(store, items);
+      const lastItem = items[items.length - 1];
       const seenKeys = new Set<string>();
       const nodes: HTMLElement[] = [];
       let sawThinking = false;
@@ -767,7 +818,7 @@ export function createTranscriptView(
           shell = createShell(item);
           cache.set(key, shell);
         }
-        updateShell(store, item, shell, messages.get(key));
+        updateShell(store, item, shell, item === lastItem, messages.get(key));
         nodes.push(shell);
       }
 

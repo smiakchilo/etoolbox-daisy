@@ -124,15 +124,34 @@
   border: 1px solid var(--spectrum-gray-200, #d3d3d3);
 }
 
-/* The interruption notice: a borderless one-line row, like the thinking/tool
-   billets, so it reads as transcript metadata rather than a message bubble.
-   Declared after the base `.chat-message` rules so its padding/background win. */
+/* The interruption notice: a borderless one-line row that borrows the
+   tool-call billet's typography (a 13px, weight-600 gray label beside a small
+   icon) so it reads as transcript metadata rather than a message bubble.
+   Declared after the base `.chat-message` rules so its padding/background win.
+   The Resume action is a quiet Spectrum action button, appended by
+   `transcriptView.ts` only for a live, still-newest notice. */
 .chat-message--interruption {
-  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
   background: transparent;
-  font-size: 12px;
-  font-style: italic;
+  color: var(--spectrum-gray-700, #4b4b4b);
+  font-size: 13px;
+}
+
+.chat-message__interruption-icon {
+  flex: 0 0 auto;
   color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+.chat-message__interruption-label {
+  font-weight: 600;
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+.chat-message__interruption-resume {
+  flex: 0 0 auto;
 }
 
 /* The transient "Thinking" billet: a borderless disclosure row shown while a

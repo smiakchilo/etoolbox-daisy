@@ -1,5 +1,9 @@
-import { type RequiredAction, readLeadingSkillToken } from '../../../shared';
-import type { InterruptionReason, ToolCallStatus } from './transcriptStore';
+import {
+  type InterruptionReason,
+  type RequiredAction,
+  readLeadingSkillToken,
+} from '../../../shared';
+import type { ToolCallStatus } from './transcriptStore';
 
 /**
  * Short label for a tool call's current lifecycle status. `"FAILED"` is
