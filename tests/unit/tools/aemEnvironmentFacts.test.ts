@@ -142,6 +142,6 @@ describe('aem_environment_facts transcript composition', () => {
   });
 
   it('has no result table - the facts are the collapsible rows, not an always-visible table', () => {
-    expect(renderer.readResultTable).toBeUndefined();
+    expect(renderer.readTableMessage).toBeUndefined();
   });
 });

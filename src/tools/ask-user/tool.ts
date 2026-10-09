@@ -16,6 +16,8 @@ export const tool: ToolModule = {
     'for their answer. Use it when the user must choose an option to continue (which page, ' +
     'which variant, yes/no) rather than guessing or listing every possibility. Provide ' +
     '`options` for a choice, `multiple: true` to allow several, and/or `freeInput: true` to ' +
-    'also accept a typed answer. The user\u2019s answer returns as the tool result.',
+    'also accept a typed answer. To offer one-click buttons instead of a text field, pass ' +
+    "`actions` (e.g. ['Load more']); one click answers immediately. The user\u2019s answer " +
+    'returns as the tool result.',
   createExecutor: (host) => createAskUserExecutor(host),
 };

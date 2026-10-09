@@ -216,6 +216,47 @@ describe('createOpenRouterAgentService', () => {
     expect(finalState(events)).toBe('idle');
   });
 
+  it('emits user.input.requested carrying actions for a pending question', async () => {
+    let question: Promise<unknown> | undefined;
+    const service = build({
+      client: createFakeClient({
+        duringResponse: () => {
+          question = service.requestUserInput(CHAT, {
+            actions: ['Load more'],
+            multiple: false,
+            freeInput: false,
+          });
+        },
+      }),
+      buildTools: () => [],
+    });
+    const events = collect(service);
+    await service.initialize();
+    await service.openConversation({ chatId: CHAT });
+    await service.sendPrompt({ chatId: CHAT, turnId: TURN, prompt: 'more?' });
+
+    for (let i = 0; i < 64 && !events.some((e) => e.type === 'user.input.requested'); i += 1) {
+      await Promise.resolve();
+    }
+    const requested = events.find((e) => e.type === 'user.input.requested');
+    expect(requested).toMatchObject({
+      type: 'user.input.requested',
+      actions: ['Load more'],
+      multiple: false,
+      freeInput: false,
+    });
+    if (requested?.type !== 'user.input.requested') throw new Error('no question emitted');
+    expect(requested.question).toBeUndefined();
+
+    await service.respondToInput(CHAT, requested.requestId, {
+      selections: ['Load more'],
+      freeform: null,
+    });
+    await question;
+    await awaitTurnEnd(events);
+    expect(finalState(events)).toBe('idle');
+  });
+
   it('emits an error event and recovers to idle when the request fails', async () => {
     const service = build({ client: createFakeClient({ fail: true }), buildTools: () => [] });
     const events = collect(service);

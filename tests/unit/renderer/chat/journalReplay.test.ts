@@ -67,7 +67,7 @@ describe('replayJournalIntoTranscript', () => {
 
     expect(store.items()).toEqual([
       { kind: 'userPrompt', turnId: 'turn-1' },
-      { kind: 'message', messageId: 'msg-1' },
+      { kind: 'message', messageId: 'msg-1', turnId: 'turn-1' },
     ]);
     expect(store.textForUserPrompt('turn-1' as TurnId)).toBe('hello');
     expect(store.textForMessage('msg-1' as MessageId)).toBe('hi there');

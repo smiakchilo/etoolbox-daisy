@@ -14,6 +14,7 @@ import {
   newRequestId,
   ok,
   requestIdSchema,
+  userInputActionsSchema,
   userInputOptionSchema,
   userInputOptionsSchema,
   userInputQuestionSchema,
@@ -24,9 +25,15 @@ import {
  *
  * Lets the model put a choice to the user: a question with a set of options
  * (radios, or checkboxes when `multiple`), an optional escape hatch to type a
- * free-form answer (`freeInput`), or free-form only. This is the interactive
+ * free-form answer (`freeInput`), free-form only, or a row of one-click
+ * `actions` (buttons in the composer, no text field). This is the interactive
  * half of the assistant - the answer comes back as this call's result, so the
  * model receives it in-context and continues the same turn.
+ *
+ * Actions are deliberately their own mode, mutually exclusive with
+ * `options`/`freeInput`: an action is a single button that answers at once (the
+ * search skills use one, "Load more", with the composer's Stop as the cancel),
+ * where an option is a value to select and then submit.
  *
  * Unlike the AEM read tools it does **not** go through `createToolExecutor`:
  * that builder always binds an AEM envelope to a live server (`currentContext`
@@ -39,11 +46,13 @@ import {
 export const ASK_USER_TOOL_NAME = 'ask_user';
 export const ASK_USER_ALLOWLIST_ENTRY = 'custom:ask_user';
 
-export const askUserArgsSchema = z
+export const askUserArgsObjectSchema = z
   .object({
-    question: userInputQuestionSchema,
+    question: userInputQuestionSchema.optional(),
     /** The selectable variants. Absent means free-input only. */
     options: userInputOptionsSchema.optional(),
+    /** One-click buttons (no text field). Mutually exclusive with `options`. */
+    actions: userInputActionsSchema.optional(),
     /** Allow several selections (checkboxes) rather than one (radios). */
     multiple: z.boolean().default(false),
     /** Offer a "type your own answer" escape hatch. */
@@ -51,17 +60,47 @@ export const askUserArgsSchema = z
   })
   .strict();
 
-export type AskUserArgs = z.infer<typeof askUserArgsSchema>;
+export const askUserArgsSchema = askUserArgsObjectSchema.superRefine((value, ctx) => {
+  if (value.actions !== undefined) {
+    if (value.options !== undefined || value.freeInput) {
+      ctx.addIssue({
+        code: 'custom',
+        message: "ask_user 'actions' cannot be combined with 'options' or 'freeInput'",
+      });
+    }
+    if (value.multiple) {
+      ctx.addIssue({
+        code: 'custom',
+        message: "ask_user 'actions' are single-click; 'multiple' does not apply",
+      });
+    }
+    return;
+  }
+  if (value.options === undefined && !value.freeInput) {
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        'ask_user needs `options`, `actions`, or `freeInput: true` - there is nothing for ' +
+        'the user to answer otherwise',
+    });
+  }
+});
+
+export type AskUserArgs = z.infer<typeof askUserArgsObjectSchema>;
 
 export const ASK_USER_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: ASK_USER_TOOL_NAME,
   description:
     'Ask the user to choose, and wait for their answer. Provide a `question` and a list of ' +
     '`options` to choose from; set `multiple: true` to let them pick several; set ' +
-    '`freeInput: true` to also offer a typed answer. Use this when the user must make a ' +
-    'specific choice to continue, instead of guessing. At least one of `options`/`freeInput` ' +
-    'is required. The chosen option(s), or the typed answer, come back as this call\u2019s result.',
-  parameters: z.toJSONSchema(askUserArgsSchema, { io: 'input' }),
+    '`freeInput: true` to also offer a typed answer. To offer one-click buttons instead (no ' +
+    "text field) - for example a 'Load more' affordance - pass `actions`: a short list of " +
+    'button labels; clicking one answers immediately. The chosen option(s), action, or the ' +
+    'typed answer come back as this call\u2019s result.',
+  // The base object, not the refined schema: `z.toJSONSchema` cannot describe a
+  // `.superRefine` side-constraint, and the cross-field rules are enforced by
+  // the executor's validation, not by the model-facing JSON schema.
+  parameters: z.toJSONSchema(askUserArgsObjectSchema, { io: 'input' }),
 };
 
 export const askUserSuccessSchema = z
@@ -69,7 +108,7 @@ export const askUserSuccessSchema = z
     ok: z.literal(true),
     operation: z.literal(ASK_USER_TOOL_NAME),
     requestId: requestIdSchema,
-    question: userInputQuestionSchema,
+    question: userInputQuestionSchema.optional(),
     selections: z.array(userInputOptionSchema),
     freeform: z.string().nullable(),
   })
@@ -98,7 +137,7 @@ function toSuccessPayload(result: AskUserSuccess): JsonValue {
     ok: true,
     operation: ASK_USER_TOOL_NAME,
     requestId: result.requestId,
-    question: result.question,
+    ...(result.question !== undefined ? { question: result.question } : {}),
     selections: [...result.selections],
     freeform: result.freeform,
     textResultForLlm: renderAskUserSuccess(result),
@@ -126,12 +165,6 @@ export function createAskUserExecutor(host: ToolHost): AemToolExecutor {
       return invalidArgument(message, requestId);
     }
     const args = parsed.data;
-    if (args.options === undefined && !args.freeInput) {
-      return invalidArgument(
-        'ask_user needs `options`, `freeInput: true`, or both - there is nothing for the user to answer otherwise',
-        requestId,
-      );
-    }
 
     if (context.signal?.aborted === true) {
       return err(
@@ -139,15 +172,16 @@ export function createAskUserExecutor(host: ToolHost): AemToolExecutor {
       );
     }
 
-    const request: UserInputRequest =
-      args.options === undefined
-        ? { question: args.question, multiple: args.multiple, freeInput: args.freeInput }
-        : {
-            question: args.question,
-            options: args.options,
-            multiple: args.multiple,
-            freeInput: args.freeInput,
-          };
+    // Each optional field is omitted, not set to `undefined`: under
+    // `exactOptionalPropertyTypes` "absent" and "present but undefined" differ,
+    // and the request contract has an already-defaulted shape.
+    const request: UserInputRequest = {
+      ...(args.question !== undefined ? { question: args.question } : {}),
+      ...(args.options !== undefined ? { options: args.options } : {}),
+      ...(args.actions !== undefined ? { actions: args.actions } : {}),
+      multiple: args.multiple,
+      freeInput: args.freeInput,
+    };
 
     let answer: UserInputAnswer;
     try {
@@ -168,7 +202,7 @@ export function createAskUserExecutor(host: ToolHost): AemToolExecutor {
         ok: true,
         operation: ASK_USER_TOOL_NAME,
         requestId,
-        question: args.question,
+        ...(args.question !== undefined ? { question: args.question } : {}),
         selections: [...answer.selections],
         freeform: answer.freeform,
       }),

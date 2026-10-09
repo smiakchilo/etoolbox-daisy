@@ -13,6 +13,7 @@ import {
 } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
+import { isDeterministicTablePrompt } from '../chat/transcriptViewModel';
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { createTranscriptFollower } from '../chat/transcriptFollower';
 import {
@@ -248,6 +249,14 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // Bumped per read so a slow earlier response cannot overwrite a newer one.
   let modelSelectionRequest = 0;
   let chatId: ChatId | undefined;
+  // The open currently in flight for the pane's chat, if any. The pane adopts
+  // a new id and enables the composer *before* `agentChat.openConversation`
+  // resolves (deliberately - see `startNewSession`), so a send could otherwise
+  // race ahead of main registering that conversation and be refused by the
+  // service with `"<chatId>" is not the open conversation`. `onSend` awaits
+  // this first. See defect fix 2026-10-09.
+  let pendingOpen:
+    { readonly chatId: ChatId; readonly promise: Promise<AgentChatOpenResult> } | undefined;
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
   let conversationEmpty = false;
@@ -461,8 +470,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (event.type === 'user.input.requested') {
         pendingInputRequestId = event.requestId;
         composer.setInputRequest({
-          question: event.question,
+          ...(event.question !== undefined ? { question: event.question } : {}),
           ...(event.options !== undefined ? { options: [...event.options] } : {}),
+          ...(event.actions !== undefined ? { actions: [...event.actions] } : {}),
           multiple: event.multiple,
           freeInput: event.freeInput,
         });
@@ -507,9 +517,16 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   async function openConversation(id: ChatId, resume?: SdkSessionId): Promise<AgentChatOpenResult> {
-    const result = await window.daisy.agentChat.openConversation(
+    const promise = window.daisy.agentChat.openConversation(
       resume === undefined ? { chatId: id } : { chatId: id, resume: { sdkSessionId: resume } },
     );
+    pendingOpen = { chatId: id, promise };
+    let result: AgentChatOpenResult;
+    try {
+      result = await promise;
+    } finally {
+      if (pendingOpen?.promise === promise) pendingOpen = undefined;
+    }
     if (result.ok) {
       // Capture the freshly minted live session id for persistence. A plain
       // read, not a push: pushing a status change on open would make this pane
@@ -576,7 +593,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // only code that clears it runs while the pane still owns no chat.
     if (chatId !== undefined && chatId !== startup.chatId) return;
     if (chatId === undefined) pendingStartup = startup;
-    replayJournalIntoTranscript(startup.records, transcriptStore);
+    replayJournalIntoTranscript(startup.records, transcriptStore, isDeterministicTablePrompt);
     conversationHasMessage = true;
     refreshEmptyState();
     repaintTranscript();
@@ -702,7 +719,14 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     } else if (status.activeChatId !== chatId) {
       sessionStatus = { ...sessionStatus, state: 'idle' };
       const result = await openConversation(chatId);
-      if (!result.ok) statusBanner.showError(result.error.message);
+      if (result.ok) {
+        // The recovery re-opened the pane's conversation; any error row that
+        // named the desync is now stale, so clear it rather than leave it
+        // sitting under a recovered chat.
+        statusBanner.clearError();
+      } else {
+        statusBanner.showError(result.error.message);
+      }
     }
 
     refreshSessionPresentation();
@@ -797,7 +821,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     const header = journal.records.find((record) => record.recordType === 'header');
     adoptChatId(id);
     transcriptStore.clear();
-    replayJournalIntoTranscript(journal.records, transcriptStore);
+    replayJournalIntoTranscript(journal.records, transcriptStore, isDeterministicTablePrompt);
     conversationHasMessage = journal.records.some(
       (record) => record.recordType === 'user.prompt' || record.recordType === 'agent.event',
     );
@@ -820,11 +844,26 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
-    if (chatId === undefined) {
+    const target = chatId;
+    if (target === undefined) {
       statusBanner.showError('Not connected to the agent');
       return { ok: false };
     }
-    const result = await window.daisy.agentChat.sendMessage({ chatId, prompt });
+    // Wait out an in-flight open for this chat before sending. Main registers
+    // the conversation only once `openConversation` resolves, so sending first
+    // is refused by the service with '"<id>" is not the open conversation' -
+    // the new id is adopted (and the composer enabled) up front, deliberately,
+    // so this is the one place the two must be reconciled.
+    const open = pendingOpen;
+    if (open !== undefined && open.chatId === target) {
+      const opened = await open.promise;
+      if (chatId !== target) return { ok: false }; // a newer session replaced it
+      if (!opened.ok) {
+        statusBanner.showError(opened.error.message);
+        return { ok: false };
+      }
+    }
+    const result = await window.daisy.agentChat.sendMessage({ chatId: target, prompt });
     if (!result.ok) {
       // The pane's one banner carries the failure; the composer keeps the
       // typed prompt (see `trySubmit`) and stays silent, so the two never say
@@ -837,6 +876,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // its own error event takes the row straight back.
     statusBanner.clearError();
     transcriptStore.applyUserPrompt(result.turnId, prompt);
+    // A search skill's answer is the `format_table` message, not the model's
+    // prose - suppress this turn's assistant text so only the table shows.
+    if (isDeterministicTablePrompt(prompt)) {
+      transcriptStore.markTurnSuppressed(result.turnId);
+    }
     refreshEmptyState();
     // Sending is deliberate: show the user's own message and the reply that
     // follows, even if they had scrolled up to read history first.

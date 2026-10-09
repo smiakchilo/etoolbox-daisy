@@ -113,6 +113,45 @@ describe('createAskUserExecutor', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe('CANCELLED');
   });
+
+  it('builds an actions request with no options and no question', async () => {
+    let captured: UserInputRequest | undefined;
+    const host = makeHost({ selections: ['Load more'], freeform: null }, (request) => {
+      captured = request;
+    });
+    const result = await createAskUserExecutor(host)({ actions: ['Load more'] }, callContext);
+    expect(captured).toEqual({ actions: ['Load more'], multiple: false, freeInput: false });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const payload = result.value as Readonly<Record<string, unknown>>;
+      expect(payload['selections']).toEqual(['Load more']);
+      expect(payload['question']).toBeUndefined();
+    }
+  });
+
+  it('rejects actions combined with options or freeInput', async () => {
+    const host = makeHost({ selections: [], freeform: null });
+    const withOptions = await createAskUserExecutor(host)(
+      { actions: ['a'], options: ['b'] },
+      callContext,
+    );
+    expect(withOptions.ok).toBe(false);
+    const withFree = await createAskUserExecutor(host)(
+      { actions: ['a'], freeInput: true },
+      callContext,
+    );
+    expect(withFree.ok).toBe(false);
+  });
+
+  it('rejects actions with multiple (they are single-click)', async () => {
+    const host = makeHost({ selections: [], freeform: null });
+    const result = await createAskUserExecutor(host)(
+      { actions: ['a'], multiple: true },
+      callContext,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('INVALID_ARGUMENT');
+  });
 });
 
 describe('renderAskUserSuccess', () => {
@@ -162,6 +201,10 @@ describe('ask_user transcript composition', () => {
 
   it('returns undefined when the call shape is unrecognised', () => {
     expect(renderer.readConversation?.({})).toBeUndefined();
+  });
+
+  it('renders nothing for an actions-only call (the buttons are the interface)', () => {
+    expect(renderer.readConversation?.({ actions: ['Load more'] })).toBeUndefined();
   });
 
   it('still composes a describeCall fallback (never displayed)', () => {

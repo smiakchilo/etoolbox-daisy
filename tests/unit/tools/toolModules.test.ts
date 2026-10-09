@@ -14,6 +14,7 @@ import { tool as environmentFactsTool } from '../../../src/tools/aem-environment
 import { tool as getJsonTool } from '../../../src/tools/aem-get-json/tool';
 import { tool as queryTool } from '../../../src/tools/aem-query/tool';
 import { tool as createPageTool } from '../../../src/tools/aem-create-page/tool';
+import { tool as formatTableTool } from '../../../src/tools/format-table/tool';
 import { createCountingIdGenerator } from '../../support/testIds';
 
 function makeHost(outcome: BrokerOutcome): {
@@ -55,6 +56,7 @@ describe('tool manifests', () => {
     ['aem_get_json', getJsonTool],
     ['aem_query', queryTool],
     ['aem_environment_facts', environmentFactsTool],
+    ['format_table', formatTableTool],
     ['aem_create_page', createPageTool],
   ])('%s is internally consistent', (name, tool: ToolModule) => {
     expect(tool.name).toBe(name);
@@ -68,6 +70,7 @@ describe('tool manifests', () => {
     expect(getJsonTool.disabled).not.toBe(true);
     expect(queryTool.disabled).not.toBe(true);
     expect(environmentFactsTool.disabled).not.toBe(true);
+    expect(formatTableTool.disabled).not.toBe(true);
   });
 });
 

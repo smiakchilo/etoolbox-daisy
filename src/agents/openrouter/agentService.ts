@@ -706,8 +706,9 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
           sequence: nextSequence(chatId),
           turnId: turn.turnId,
           requestId,
-          question: request.question,
+          ...(request.question !== undefined ? { question: request.question } : {}),
           ...(request.options !== undefined ? { options: [...request.options] } : {}),
+          ...(request.actions !== undefined ? { actions: [...request.actions] } : {}),
           multiple: request.multiple,
           freeInput: request.freeInput,
         });

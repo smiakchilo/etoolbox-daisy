@@ -12,33 +12,26 @@ import {
 
 /**
  * Step 08 (docs/implementation-plan.md lines 389-426): the chat pane must
- * render the ACTUAL rows a query returned, and must show the pagination
- * status, against the REAL shipped `out/main/index.js` and its real
- * renderer bundle - not jsdom.
+ * render the ACTUAL rows a search returned, against the REAL shipped
+ * `out/main/index.js` and its real renderer bundle - not jsdom.
  *
- * What this proves that the unit tests cannot:
+ * The table is now drawn by the `format_table` tool as an assistant **message**
+ * (`# | Path`), with the `aem_query` call reduced to a JSON-only billet. This
+ * spec proves the pieces jsdom cannot:
  *
  * 1. The Spectrum `<sp-table>` custom elements this build renders are
- *    actually registered in the shipped renderer bundle. The jsdom unit test
- *    would pass just as happily against unregistered tag names, because
- *    jsdom treats an unknown element as an ordinary `HTMLUnknownElement`.
- *    Here the elements must upgrade: `customElements.get("sp-table")` must
- *    resolve, and the table must have a shadow root. If `main.ts`'s
- *    side-effect imports were missing or misspelled, this is the only test
- *    in the suite that would notice.
- *
- * 2. The row data survives the real IPC boundary. A tool result crosses from
- *    the main process through `agent-chat:event` into the renderer via
- *    structured clone; a shape that a unit test hands directly to the store
- *    has never been serialised at all.
- *
+ *    actually registered in the shipped renderer bundle (jsdom treats an
+ *    unknown element as an ordinary `HTMLUnknownElement`, so a unit test would
+ *    pass against a missing import).
+ * 2. The row data survives the real IPC boundary (structured clone).
  * 3. An author-controlled property value is not parsed as markup in the real
- *    DOM, where a real HTML parser (not jsdom's) is doing the work.
+ *    DOM.
+ * 4. `format_table`'s call line is hidden and its message table is the only
+ *    table the transcript shows.
  *
- * The query itself is scripted through `createFakeAgentService` rather than
- * executed against AEM: this step's AEM-side behaviour is covered by
- * `tests/unit/main/aem/**` and its own mutation battery, and a real AEM
- * instance does not arrive until step 12.
+ * The search is scripted through `createFakeAgentService` rather than executed
+ * against AEM: the AEM-side behaviour is covered by `tests/unit/main/aem/**`,
+ * and a real AEM instance does not arrive until step 12.
  *
  * Run with:
  *   npm run build
@@ -133,43 +126,14 @@ async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
   await button.click();
 }
 
-/** A scripted `aem_query` tool call whose result is `data`. */
-function queryTurn(data: unknown): ScriptedTurn {
-  return {
-    steps: [
-      {
-        kind: 'toolCall',
-        call: {
-          toolName: AEM_QUERY_TOOL_NAME,
-          arguments: { predicates: { path: '/content/site', type: 'cq:Page' } },
-          decision: { kind: 'approved', outcome: { ok: true, data } as never },
-        },
-      },
-    ],
-  };
-}
-
 // noinspection HtmlDeprecatedAttribute
 const FIRST_PAGE = {
   ok: true,
   operation: 'aem_query',
-  requestId: 'req-e2e-1',
-  sourceOrigin: 'https://aem.example.com',
-  serverRevision: 1,
-  predicates: { path: '/content/site', type: 'cq:Page' },
-  fetchedAt: 1_700_000_000_000,
-  rows: [
-    { 'jcr:path': '/content/site/alpha', 'jcr:title': 'Alpha', 'jcr:primaryType': 'cq:Page' },
-    {
-      'jcr:path': '/content/site/beta',
-      'jcr:title': '<img src=x onerror="window.__xss=true">',
-      'jcr:primaryType': 'cq:Page',
-    },
-  ],
-  selection: { kind: 'selected', properties: ['jcr:path', 'jcr:title', 'jcr:primaryType'] },
+  rows: [{ 'jcr:path': '/content/site/alpha' }, { 'jcr:path': '/content/site/beta' }],
   pagination: {
     offset: 0,
-    limit: 2,
+    limit: 20,
     returned: 2,
     hasMore: true,
     total: { accuracy: 'estimated', value: 900 },
@@ -178,18 +142,80 @@ const FIRST_PAGE = {
 
 const LAST_PAGE = {
   ...FIRST_PAGE,
-  requestId: 'req-e2e-2',
-  rows: [{ 'jcr:path': '/content/site/omega', 'jcr:title': 'Omega', 'jcr:primaryType': 'cq:Page' }],
+  rows: [{ 'jcr:path': '/content/site/omega' }],
   pagination: {
     offset: 2,
-    limit: 2,
+    limit: 20,
     returned: 1,
     hasMore: false,
     total: { accuracy: 'exact', value: 3 },
   },
 };
 
-test.describe('Step 08: query results render as a real table with pagination status', () => {
+// noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute,HtmlRequiredAltAttribute,JSUnresolvedFunction
+const XSS_PAGE = {
+  ...FIRST_PAGE,
+  rows: [
+    {
+      'jcr:path': '/content/site/alpha',
+      citation: '<img src=x onerror="window.__xss=true" alt="Image">',
+    },
+  ],
+};
+
+/** A scripted turn: the `aem_query` call, then the `format_table` message. */
+function searchTurn(query: unknown, mode: 'new' | 'append'): ScriptedTurn {
+  return {
+    steps: [
+      {
+        kind: 'toolCall',
+        call: {
+          toolName: AEM_QUERY_TOOL_NAME,
+          arguments: { predicates: { path: '/content/site', type: 'cq:Page' } },
+          decision: { kind: 'approved', outcome: { ok: true, data: query } as never },
+        },
+      },
+      {
+        kind: 'toolCall',
+        call: {
+          toolName: 'format_table',
+          arguments: { data: query as never, mode },
+          decision: {
+            kind: 'approved',
+            outcome: {
+              ok: true,
+              data: {
+                operation: 'format_table',
+                rowCount: 0,
+                mode,
+                textResultForLlm: 'ok',
+                resultType: 'success',
+              } as never,
+            },
+          },
+        },
+      },
+    ],
+  };
+}
+
+/** A scripted turn with only the `aem_query` call (no `format_table`). */
+function queryOnlyTurn(query: unknown): ScriptedTurn {
+  return {
+    steps: [
+      {
+        kind: 'toolCall',
+        call: {
+          toolName: AEM_QUERY_TOOL_NAME,
+          arguments: { predicates: { path: '/content/site' } },
+          decision: { kind: 'approved', outcome: { ok: true, data: query } as never },
+        },
+      },
+    ],
+  };
+}
+
+test.describe('Step 08: query results render as a real table', () => {
   let app: ElectronApp;
   let shell: Page;
 
@@ -204,64 +230,77 @@ test.describe('Step 08: query results render as a real table with pagination sta
     await app.close();
   });
 
-  test('renders the actual result rows in an upgraded Spectrum table', async () => {
-    await scriptTurn(app, queryTurn(FIRST_PAGE));
+  test('renders the aem_query billet, then the format_table message table', async () => {
+    await scriptTurn(app, searchTurn(FIRST_PAGE, 'new'));
     await sendViaComposer(shell, 'find pages under /content/site');
     await flushFake(app);
 
-    const table = shell.locator('.chat-tool-call sp-table');
+    // The query call is still a billet...
+    await expect(shell.locator('.chat-tool-call__header').first()).toContainText('aem_query');
+    // ...but format_table is not: only its message table appears.
+    const table = shell.locator('.chat-table-message sp-table');
     await expect(table).toBeVisible({ timeout: 30_000 });
 
-    // The elements must be REGISTERED custom elements, not unknown tags -
-    // the one thing the jsdom unit test structurally cannot check.
     const upgraded = await shell.evaluate(() => ({
       table: customElements.get('sp-table') !== undefined,
       row: customElements.get('sp-table-row') !== undefined,
       cell: customElements.get('sp-table-cell') !== undefined,
-      hasShadow: document.querySelector('sp-table')?.shadowRoot !== null,
+      hasShadow: document.querySelector('.chat-table-message sp-table')?.shadowRoot !== null,
     }));
     expect(upgraded).toEqual({ table: true, row: true, cell: true, hasShadow: true });
 
-    const cells = await shell.locator('sp-table-body sp-table-row').first().allInnerTexts();
-    expect(cells.join(' ')).toContain('/content/site/alpha');
-    expect(cells.join(' ')).toContain('Alpha');
+    const headers = await shell.locator('.chat-table-message sp-table-head-cell').allTextContents();
+    expect(headers).toEqual(['#', 'Path']);
+
+    const firstRow = await shell
+      .locator('.chat-table-message sp-table-body sp-table-row')
+      .first()
+      .allInnerTexts();
+    expect(firstRow.join(' ')).toContain('/content/site/alpha');
   });
 
-  test('shows one header per projected column with jcr:path first', async () => {
-    const headers = await shell.locator('sp-table-head-cell').allTextContents();
-    expect(headers).toEqual(['jcr:path', 'jcr:title', 'jcr:primaryType']);
+  test('states the estimated total above the table', async () => {
+    await expect(shell.locator('.chat-table-message__total').last()).toContainText(
+      'Total: 900+ results',
+    );
   });
 
-  test('states the page shown, the estimated total, and that more results exist', async () => {
-    const status = shell.locator('.chat-tool-call__pagination').last();
-    await expect(status).toContainText('Showing 1\u20132');
-    await expect(status).toContainText('approximately 900 matches');
-    await expect(status).toContainText('More results exist');
-    // An estimate must never be stated as a fact.
-    await expect(status).not.toContainText('This is the last page');
-  });
+  test('does not execute an author-controlled value as markup', async () => {
+    await scriptTurn(app, searchTurn(XSS_PAGE, 'append'));
+    await sendViaComposer(shell, 'another query');
+    await flushFake(app);
 
-  test('does not execute an author-controlled property value as markup', async () => {
-    // Real Chromium, real HTML parser. If the cell were assigned through
-    // innerHTML, the `onerror` would have fired by now.
     const xssFired = await shell.evaluate(
       () => (window as unknown as Record<string, unknown>)['__xss'] === true,
     );
     expect(xssFired).toBe(false);
-    await expect(shell.locator('.chat-tool-call img')).toHaveCount(0);
+    await expect(shell.locator('.chat-table-message img')).toHaveCount(0);
     // ...and the literal text still reached the user.
-    await expect(shell.locator('.chat-tool-call sp-table')).toContainText('onerror=');
+    await expect(shell.locator('.chat-table-message')).toContainText('onerror=');
   });
 
-  test('a later page reports its own offset and an exact total without hedging', async () => {
-    await scriptTurn(app, queryTurn(LAST_PAGE));
+  test('an append page grows the same table rather than starting a new one', async () => {
+    await scriptTurn(app, searchTurn(LAST_PAGE, 'append'));
     await sendViaComposer(shell, 'show me the next page');
     await flushFake(app);
 
-    const status = shell.locator('.chat-tool-call__pagination').last();
-    await expect(status).toContainText('Showing 3\u20133', { timeout: 30_000 });
-    await expect(status).toContainText('3 matches');
-    await expect(status).toContainText('This is the last page');
-    await expect(status).not.toContainText('approximately');
+    // One table total (the append merged into the first run's table).
+    await expect(shell.locator('.chat-table-message sp-table')).toHaveCount(1, { timeout: 30_000 });
+    const rows = shell.locator('.chat-table-message sp-table-body sp-table-row');
+    await expect(rows.last()).toContainText('/content/site/omega');
+  });
+
+  test('keeps aem_query JSON-only: a query with no format_table draws no table', async () => {
+    await scriptTurn(app, queryOnlyTurn(FIRST_PAGE));
+    await sendViaComposer(shell, 'a query with no table');
+    await flushFake(app);
+
+    // The aem_query billet appears; no new table does.
+    await expect(shell.locator('.chat-tool-call__header').last()).toContainText('aem_query', {
+      timeout: 30_000,
+    });
+    const before = await shell.locator('.chat-table-message sp-table').count();
+    // Still exactly the one table from the earlier run.
+    await expect(shell.locator('.chat-table-message sp-table')).toHaveCount(before);
   });
 });

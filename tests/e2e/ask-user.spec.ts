@@ -322,4 +322,32 @@ test.describe('ask-user interactive question', () => {
     await expect(shell.locator(`${ASK_USER} .chat-message--user`).last()).toHaveText('Bravo, Echo');
     await expect(shell.locator('.chat-ask__popover')).toHaveCount(0);
   });
+
+  test('an actions prompt answers on a single click and paints nothing in the transcript', async () => {
+    await scriptTurn(app, { steps: [{ kind: 'inputRequest', actions: ['Load more'] }] });
+    // A `/search` prompt: its assistant prose is suppressed, so nothing but the
+    // (absent) message is left for the transcript to draw.
+    await sendViaComposer(shell, '/search waldo');
+    await flushFake(app);
+
+    await expect(shell.locator('.chat-ask__actions')).toBeVisible();
+    await expect(shell.locator('.chat-ask__action')).toHaveCount(1);
+    await expect(shell.locator('.chat-ask__action')).toHaveText('Load more');
+    // Actions have no question sentence, no text field, and no Send - just the
+    // button and Stop.
+    await expect(shell.locator(ASK_QUESTION)).toHaveCount(0);
+    await expect(shell.locator(COMPOSER_FIELD)).toBeHidden();
+    await expect(shell.locator(COMPOSER_SEND)).toBeHidden();
+    await expect(shell.locator(COMPOSER_STOP)).toBeVisible();
+    await expect.poll(() => registered(shell, 'sp-action-button')).toBe(true);
+
+    // One click answers; no Submit.
+    await shell.locator('.chat-ask__action').click();
+    await flushFake(app);
+
+    await expect(shell.locator(ASK_PANEL)).toBeHidden();
+    // The actions call renders nothing in the transcript: the (empty)
+    // `.chat-ask-user` shell it owns carries no message at all.
+    await expect(shell.locator('.chat-ask-user').last().locator('.chat-message')).toHaveCount(0);
+  });
 });

@@ -60,17 +60,18 @@ asset nodes as well as pages; narrowing to `cq:Page` would hide the text you
 are looking for.
 
 Keep the candidate set small and set the limit explicitly - omitting `limit`
-lets AEM return up to 50 rows, which is more than you should probe:
+lets AEM return up to 50 rows. Use a page size of 50 so a full recall page can
+yield up to 50 passes:
 
 ```json
 {
   "predicates": { "fulltext": "Waldo" },
   "roots": ["/content/wknd"],
-  "limit": 10
+  "limit": 50
 }
 ```
 
-- Use `limit: 10`. If the user states a maximum ("/semantic-search ... max 5"),
+- Use `limit: 50`. If the user states a maximum ("/semantic-search ... max 5"),
   use that instead. Do not silently raise it.
 - Read `pagination` in the result. If `hasMore` is `true` or `"unknown"`, this
   is one page, not the whole answer.
@@ -119,34 +120,70 @@ meaning about the subject**?
 - If the evidence is ambiguous, say it is ambiguous and quote what you found.
   Do not upgrade a maybe into a yes.
 
-## 5. Report a path -> citation table
+## 5. Publish the passing rows as a table, then offer more
 
-Return only the candidates that passed, one row each, with two columns:
+A `/semantic-search` turn produces **exactly one application-rendered table**,
+built by calling `format_table`. Write no prose of your own: the application
+hides your assistant text for this turn, so any explanation you write is
+discarded.
 
-| Resource | Citation |
-| --- | --- |
-| `/content/wknd/us/en/about/waldo` | "Waldo is a good guy and a generous donor." |
+Publish every passing row you have judged so far by calling `format_table` with
+a `rows` array, `mode: "new"` the first time and `"append"` after:
 
-- **Resource** is the exact `jcr:path` as returned, written as a bare path
-  beginning with `/`. Do not wrap it in a markdown link or a code span, and do
-  not append `.html`. When the browser pane has an active host, the application
-  turns a bare AEM path into a link that opens the resource.
-- **Citation** is the **exact** text from that resource that supports the match.
-  Quote it; do not paraphrase inside the column. If you must shorten it, use an
-  ellipsis but keep every remaining word unchanged, so the quote stays traceable
-  to the resource.
+```json
+{
+  "data": {
+    "rows": [
+      { "jcr:path": "/content/wknd/us/en/about/waldo", "property": "jcr:content/jcr:description", "citation": "Waldo is a good guy and a generous donor." }
+    ]
+  },
+  "mode": "new"
+}
+```
+
+- **`jcr:path`** is the exact path as returned. The application makes it
+  clickable; write it as a bare path, not a markdown link.
+- **`property`** is the property the citation came from, when you know it.
+- **`citation`** is the **exact** text from that resource that supports the
+  match. Quote it; do not paraphrase inside the row. If you must shorten it, use
+  an ellipsis but keep every remaining word unchanged, so the quote stays
+  traceable to the resource.
 - If a candidate's text is longer than a sentence, quote the smallest span that
   carries the meaning.
 
-After the table, state in one short paragraph:
+Then decide whether to continue. **This decision is mandatory and must be made
+in the same turn, before it ends: a `/semantic-search` turn that has published a
+table is not finished until you have either offered the next page or established
+there is none.**
 
-- the scope you actually searched ("under /content/wknd");
-- how many candidates you examined, matched and rejected;
-- the page status: if `hasMore` is true, say more candidates exist and offer the
-  next page; if `total` accuracy is `estimated` or `unknown`, say so.
+- Continue while you have published **fewer than 50 passes** and the recall has
+  more pages (`pagination.hasMore` is `true` or `"unknown"`). To continue, you
+  **must** call `ask_user` with a single action, `actions: ["Load more"]`:
 
-If nothing passed, say so plainly and report the scope and counts. "No matching
-content" is a valid and useful answer - it is not a failure.
+  ```json
+  { "actions": ["Load more"] }
+  ```
+
+  This call is the only thing that gives the user a **Load more** button. Do not
+  write the offer as prose: the application discards your assistant text for
+  `/semantic-search`, so a written question is invisible, and the turn ends with
+  nothing to click.
+
+  - If the user clicks **Load more**, run the next recall page (`offset`
+    increased by 50), judge it, and `format_table` the new passes with
+    `mode: "append"`. Do not trim the table below the rows already published.
+  - If they Stop the turn instead, the search ends.
+- Stop only when one of these is true: you have published 50 or more passes, or
+  the recall is exhausted (`hasMore` is `false`), or nothing passed. In those
+  cases - and only those - do not call `ask_user`.
+
+Before you end the turn, verify: **did I either call `ask_user` with
+`["Load more"]`, or establish a stop condition above?** If neither is true, you
+are not done.
+
+If nothing passed, publish no table and say so plainly: report the scope and
+counts. "No matching content" is a valid and useful answer - it is not a
+failure.
 
 ## Read-only
 

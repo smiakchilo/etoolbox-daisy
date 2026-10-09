@@ -69,8 +69,9 @@ export function createAskUserPreviewTrigger(): AskUserPreviewTrigger {
       const toolCallId = `preview-${String(sequence++)}` as ToolCallId;
       activeToolCallId = toolCallId;
       const args: Record<string, JsonValue> = {
-        question: request.question,
+        ...(request.question !== undefined ? { question: request.question } : {}),
         ...(request.options !== undefined ? { options: [...request.options] } : {}),
+        ...(request.actions !== undefined ? { actions: [...request.actions] } : {}),
         multiple: request.multiple,
         freeInput: request.freeInput,
       };

@@ -525,111 +525,139 @@ describe('createTranscriptView', () => {
   });
 });
 
-describe('createTranscriptView - aem_query result table (Step 08)', () => {
-  // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute
-  const queryData = {
-    ok: true,
-    operation: 'aem_query',
-    rows: [
-      { 'jcr:path': '/content/site/a', 'jcr:title': 'Alpha' },
-      { 'jcr:path': '/content/site/b', 'jcr:title': '<img src=x onerror=alert(1) alt="Image">' },
-    ],
-    pagination: {
-      offset: 0,
-      limit: 25,
-      returned: 2,
-      hasMore: true,
-      total: { accuracy: 'estimated', value: 900 },
-    },
-  };
+describe('createTranscriptView - format_table message table', () => {
+  const AUTHOR = 'https://author.example';
+  const activeContext: LinkContext = { hostOrigins: [AUTHOR], activeOrigin: AUTHOR };
 
-  function queryResultEvent(sequence: number, data: unknown): AgentEvent {
+  function callId(n: number): ToolCallId {
+    return toolCallIdSchema.parse(`ft-${String(n)}`);
+  }
+
+  function requested(sequence: number, n: number, args: Record<string, unknown>): AgentEvent {
+    return agentEventSchema.parse({
+      type: 'tool.call.requested',
+      chatId,
+      sequence,
+      toolCallId: callId(n),
+      toolName: 'format_table',
+      arguments: args,
+    });
+  }
+
+  function result(sequence: number, n: number, rowCount: number, mode: string): AgentEvent {
     return agentEventSchema.parse({
       type: 'tool.result',
       chatId,
       sequence,
-      toolCallId,
-      outcome: { ok: true, data },
+      toolCallId: callId(n),
+      outcome: {
+        ok: true,
+        data: {
+          operation: 'format_table',
+          rowCount,
+          mode,
+          textResultForLlm: 'ok',
+          resultType: 'success',
+        },
+      },
     });
   }
 
-  function renderQuery(data: unknown): HTMLElement {
-    const view = createTranscriptView(markdownRenderer);
+  // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute
+  const page = {
+    rows: [{ 'jcr:path': '/content/site/a' }, { 'jcr:path': '/content/site/b' }],
+    pagination: { total: { accuracy: 'estimated', value: 900 } },
+  };
+
+  function renderTable(
+    events: readonly AgentEvent[],
+    context: LinkContext = activeContext,
+  ): HTMLElement {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => context });
     const store = createTranscriptStore();
-    store.applyEvent(toolRequested(0, 'aem_query'));
-    store.applyEvent(queryResultEvent(1, data));
+    for (const event of events) store.applyEvent(event);
     view.repaint(store);
     return view.element;
   }
 
-  it('renders the actual result rows in a Spectrum table', () => {
-    const element = renderQuery(queryData);
-    const table = element.querySelector('sp-table');
-    expect(table).not.toBeNull();
-    const bodyRows = element.querySelectorAll('sp-table-body sp-table-row');
-    expect(bodyRows).toHaveLength(2);
-    const firstRowCells = [...bodyRows[0]!.querySelectorAll('sp-table-cell')].map(
-      (cell) => cell.textContent,
+  it('renders the rows as an assistant message table with a leading # column', () => {
+    const element = renderTable([requested(0, 1, { data: page }), result(1, 1, 2, 'new')]);
+    const rows = element.querySelectorAll('sp-table-body sp-table-row');
+    expect(rows).toHaveLength(2);
+    const firstCells = [...rows[0]!.querySelectorAll('sp-table-cell')].map((c) => c.textContent);
+    expect(firstCells).toEqual(['1', '/content/site/a']);
+    const headers = [...element.querySelectorAll('sp-table-head-cell')].map((c) => c.textContent);
+    expect(headers).toEqual(['#', 'Path']);
+  });
+
+  it('makes the Path cell a clickable, stamped link against the active host', () => {
+    const element = renderTable([requested(0, 1, { data: page }), result(1, 1, 2, 'new')]);
+    const anchor = element.querySelector('sp-table-body a[data-daisy-link]');
+    expect(anchor).not.toBeNull();
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/a.html`);
+  });
+
+  it('renders the total line above the table', () => {
+    const element = renderTable([requested(0, 1, { data: page }), result(1, 1, 2, 'new')]);
+    expect(element.querySelector('.chat-table-message__total')?.textContent).toBe(
+      'Total: approximately 900 results',
     );
-    expect(firstRowCells).toEqual(['/content/site/a', 'Alpha']);
   });
 
-  it('renders one header cell per projected column, jcr:path first', () => {
-    const element = renderQuery(queryData);
-    const headers = [...element.querySelectorAll('sp-table-head-cell')].map(
-      (cell) => cell.textContent,
+  it('renders only the total line, no table, when the page matched nothing', () => {
+    const element = renderTable([
+      requested(0, 1, {
+        data: { rows: [], pagination: { total: { accuracy: 'exact', value: 0 } } },
+      }),
+      result(1, 1, 0, 'new'),
+    ]);
+    expect(element.querySelector('sp-table')).toBeNull();
+    expect(element.querySelector('.chat-table-message__total')?.textContent).toBe(
+      'Total: 0 results',
     );
-    expect(headers).toEqual(['jcr:path', 'jcr:title']);
   });
 
-  it('shows the pagination status alongside the rows', () => {
-    const element = renderQuery(queryData);
-    const status = element.querySelector('.chat-tool-call__pagination');
-    expect(status?.textContent).toMatch(/Showing 1\u20132/);
-    expect(status?.textContent).toMatch(/approximately 900 matches/);
-    expect(status?.textContent).toMatch(/More results exist/);
-  });
-
-  it('never parses a property value as HTML', () => {
-    const element = renderQuery(queryData);
-    // The literal text must survive, and it must not have become an element.
+  it('never renders a format_table billet, and never parses a cell as HTML', () => {
+    // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute,HtmlRequiredAltAttribute,JSUnresolvedFunction
+    const element = renderTable([
+      requested(0, 1, {
+        data: {
+          rows: [
+            { 'jcr:path': '/content/site/a', citation: '<img src=x onerror=alert(1) alt="Image">' },
+          ],
+        },
+      }),
+      result(1, 1, 1, 'new'),
+    ]);
+    expect(element.querySelector('.chat-tool-call')).toBeNull();
     // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute
     expect(element.textContent).toContain('<img src=x onerror=alert(1) alt="Image">');
     expect(element.querySelector('img')).toBeNull();
   });
 
-  it('renders no table for an aem_get_json result', () => {
-    const view = createTranscriptView(markdownRenderer);
-    const store = createTranscriptStore();
-    store.applyEvent(toolRequested(0, 'aem_get_json'));
-    store.applyEvent(queryResultEvent(1, { ok: true, operation: 'aem_get_json', data: {} }));
-    view.repaint(store);
-    expect(view.element.querySelector('sp-table')).toBeNull();
+  it('groups an append call into one table that stays at the run end', () => {
+    const element = renderTable([
+      requested(0, 1, { data: page }),
+      result(1, 1, 2, 'new'),
+      requested(2, 2, { data: { rows: [{ 'jcr:path': '/content/site/c' }] }, mode: 'append' }),
+      result(3, 2, 1, 'append'),
+    ]);
+    // One table message, three accumulated rows, and no billet anywhere.
+    expect(element.querySelectorAll('sp-table')).toHaveLength(1);
+    expect(element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(3);
+    expect(element.querySelectorAll('.chat-tool-call')).toHaveLength(0);
+    const lastRow = element.querySelector('sp-table-body sp-table-row:last-child');
+    expect(lastRow?.textContent).toContain('/content/site/c');
   });
 
-  it('shows the status but no table when the page matched nothing', () => {
-    const element = renderQuery({
-      ok: true,
-      operation: 'aem_query',
-      rows: [],
-      pagination: {
-        offset: 0,
-        limit: 25,
-        returned: 0,
-        hasMore: false,
-        total: { accuracy: 'exact', value: 0 },
-      },
-    });
-    expect(element.querySelector('sp-table')).toBeNull();
-    expect(element.querySelector('.chat-tool-call__pagination')?.textContent).toMatch(
-      /No matches on this page/,
-    );
-  });
-
-  it('keeps the transcript alive when the payload is malformed', () => {
-    const element = renderQuery({ operation: 'aem_query', rows: 'not an array' });
-    expect(element.querySelector('sp-table')).toBeNull();
-    expect(element.querySelector('.chat-tool-call')).not.toBeNull();
+  it('starts a fresh table on a new call (mode defaults to new)', () => {
+    const element = renderTable([
+      requested(0, 1, { data: { rows: [{ 'jcr:path': '/content/site/a' }] } }),
+      result(1, 1, 1, 'new'),
+      requested(2, 2, { data: { rows: [{ 'jcr:path': '/content/other/x' }] } }),
+      result(3, 2, 1, 'new'),
+    ]);
+    expect(element.querySelectorAll('sp-table')).toHaveLength(2);
   });
 });
 

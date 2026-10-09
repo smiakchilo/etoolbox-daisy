@@ -151,7 +151,7 @@ describe('createTranscriptStore', () => {
       store.applyEvent(messageStarted(0));
       store.applyEvent(delta(1, 'Hi'));
       store.applyEvent(completed(2, 'Hi there'));
-      expect(store.items()).toEqual([{ kind: 'message', messageId }]);
+      expect(store.items()).toEqual([{ kind: 'message', messageId, turnId }]);
     });
 
     it('delegates text to the underlying message stream (folds deltas, replaces on completion)', () => {
@@ -162,6 +162,27 @@ describe('createTranscriptStore', () => {
 
       store.applyEvent(completed(2, 'I checked the page, done.'));
       expect(store.textForMessage(messageId)).toBe('I checked the page, done.');
+    });
+
+    it('creates no message item at all for a turn marked suppressed', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, '/search waldo');
+      store.markTurnSuppressed(turnId);
+      store.applyEvent(messageStarted(0));
+      store.applyEvent(delta(1, 'I searched...'));
+      store.applyEvent(completed(2, 'I searched...'));
+      expect(store.items().some((item) => item.kind === 'message')).toBe(false);
+      // The user's own prompt is still shown.
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+    });
+
+    it('forgets suppression on clear()', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, '/search waldo');
+      store.markTurnSuppressed(turnId);
+      store.clear();
+      store.applyEvent(messageStarted(0));
+      expect(store.items().some((item) => item.kind === 'message')).toBe(true);
     });
   });
 
@@ -297,7 +318,7 @@ describe('createTranscriptStore', () => {
 
       expect(store.items()).toEqual([
         { kind: 'userPrompt', turnId },
-        { kind: 'message', messageId },
+        { kind: 'message', messageId, turnId },
       ]);
       expect(store.takeDirty()).toBe(true);
     });
@@ -323,7 +344,7 @@ describe('createTranscriptStore', () => {
 
       expect(store.items()).toEqual([
         { kind: 'userPrompt', turnId },
-        { kind: 'message', messageId },
+        { kind: 'message', messageId, turnId },
         { kind: 'userPrompt', turnId: secondTurn },
         { kind: 'thinking' },
       ]);
@@ -463,7 +484,7 @@ describe('createTranscriptStore', () => {
       expect(store.items()).toEqual([
         { kind: 'userPrompt', turnId },
         { kind: 'toolCall', toolCallId },
-        { kind: 'message', messageId },
+        { kind: 'message', messageId, turnId },
       ]);
     });
   });

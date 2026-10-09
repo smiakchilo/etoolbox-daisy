@@ -145,11 +145,33 @@ export interface AskUserDraft {
 }
 
 /**
+ * Whether the request is a one-click `actions` prompt: the composer renders a
+ * button per action and hides the text field (and Send). An action answers the
+ * moment it is clicked, so there is nothing to compose or submit - the
+ * composer's own Stop stays available to cancel the turn.
+ */
+export function isActionsRequest(request: UserInputRequest): boolean {
+  return request.actions !== undefined && request.actions.length > 0;
+}
+
+/**
+ * The answer a clicked action delivers: the action's label as the sole
+ * selection, with no freeform text - the one shape the plan fixes for an action
+ * click (`{ selections: [label], freeform: null }`).
+ */
+export function buildActionAnswer(action: string): UserInputAnswer {
+  return { selections: [action], freeform: null };
+}
+
+/**
  * Whether the draft is a complete answer the user may submit. Free input
  * requires non-whitespace text; a multiple-choice question requires at least
- * one selection; a single-choice question requires exactly one.
+ * one selection; a single-choice question requires exactly one. An `actions`
+ * prompt is never "submitted" - a button click answers directly - so it is
+ * always incomplete here.
  */
 export function isAskUserAnswerComplete(request: UserInputRequest, draft: AskUserDraft): boolean {
+  if (isActionsRequest(request)) return false;
   if (draft.freeInputActive || request.options === undefined) {
     return draft.freeform.trim().length > 0;
   }

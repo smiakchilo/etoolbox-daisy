@@ -6,6 +6,7 @@ import {
   type StartupConversation,
 } from '../../../src/renderer/src/shell/chatPane';
 import type {
+  AgentChatOpenResult,
   AgentChatStatus,
   AgentEvent,
   AgentSettingsSnapshot,
@@ -1183,6 +1184,44 @@ describe('createChatPane interruptions and session id', () => {
     const pane = await readyPane();
 
     expect(pane.element.querySelector('.chat-pane__footer')?.hasAttribute('hidden')).toBe(true);
+
+    pane.dispose();
+  });
+
+  it('holds a send until an in-flight open resolves, so it is never refused as "not the open conversation"', async () => {
+    const pane = await readyPane();
+    expect(openConversation).toHaveBeenCalledTimes(1);
+
+    // The next open (New session) hangs until we release it.
+    let release: ((value: AgentChatOpenResult) => void) | undefined;
+    openConversation.mockImplementationOnce(
+      () =>
+        new Promise<AgentChatOpenResult>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    const newChatId = (openConversation.mock.calls[1]?.[0] as { chatId: ChatId }).chatId;
+
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement & {
+      value: string;
+    };
+    field.value = 'hello';
+    sendButton(pane)?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    // The send waits for the open rather than racing it (which the service
+    // would refuse: the new id is adopted before the open resolves).
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    release?.({ ok: true, chatId: newChatId });
+    await flush();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[0]).toMatchObject({ chatId: newChatId, prompt: 'hello' });
 
     pane.dispose();
   });

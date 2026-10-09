@@ -23,6 +23,7 @@ import {
   err,
   hasMoreSchema,
   jcrPathSchema,
+  jsonValueSchema,
   ok,
   originSchema,
   parseOrigin,
@@ -208,7 +209,9 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     'result fields are returned. Alternatively, pass `roots` (a list of JCR paths - ' +
     "typically this host's content roots from the current-page context block) to run the same " +
     'query once per root and merge the rows; `limit` and `offset` then apply to each root, and ' +
-    'the effective roots are reported back. Do not combine `roots` with a `path` predicate.',
+    'the effective roots are reported back. Do not combine `roots` with a `path` predicate. ' +
+    'This tool returns data only and renders no table: after it succeeds, present the results ' +
+    "with the 'format_table' tool, passing this result's JSON verbatim.",
   parameters: z.toJSONSchema(aemQueryArgsSchema, { io: 'input' }),
 };
 
@@ -275,7 +278,7 @@ export const aemQuerySuccessSchema = z
      */
     roots: z.array(z.string()).optional(),
     fetchedAt: z.number().int().nonnegative(),
-    rows: z.array(z.unknown()),
+    rows: z.array(jsonValueSchema),
     selection: propertySelectionSchema,
     pagination: paginationMetadataSchema,
   })
@@ -934,7 +937,11 @@ export interface AemQueryExecutorConfig<TRuntimeDeps extends Record<string, unkn
 /**
  * Builds the `AemToolExecutor` the SDK adapter registers for `aem_query`.
  * Structurally identical to `aem_get_json`'s, via the shared
- * `createToolExecutor`.
+ * `createToolExecutor`, with one addition: a `toPayload` that keeps the
+ * structured result (`rows`, `pagination`, `selection`) alongside the rendered
+ * text. The transcript's table now comes from `format_table`, but this tool
+ * still contributes its own structured payload so a caller that wants the rows
+ * - the model hand-off, or a diagnostic - does not have to re-parse the text.
  */
 export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemQueryExecutorConfig<TRuntimeDeps>,
@@ -944,6 +951,20 @@ export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unkno
     argsSchema: aemQueryArgsSchema,
     requestSchema: aemQueryRequestSchema,
     render: renderQuerySuccess,
+    // The payload is the whole success shape (rows/pagination/selection), plus
+    // the two fields every payload carries: `textResultForLlm` (the model's
+    // rendering) and `resultType`. `roots` is re-added only when present: under
+    // `exactOptionalPropertyTypes` an optional property is omitted, never set
+    // to `undefined`, and `JsonValue` has no `undefined`.
+    toPayload: (result): JsonValue => {
+      const { roots, ...rest } = result;
+      return {
+        ...rest,
+        ...(roots !== undefined ? { roots: [...roots] } : {}),
+        textResultForLlm: renderQuerySuccess(result),
+        resultType: 'success',
+      };
+    },
     failureFallbackMessage: 'AEM query failed',
     ...config,
   });

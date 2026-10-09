@@ -1,4 +1,4 @@
-import type { JsonValue, ToolResultTable } from '../../../shared';
+import type { JsonValue, ToolTableMessage } from '../../../shared';
 import { el } from '../lib/dom';
 import {
   EMPTY_LINK_CONTEXT,
@@ -6,6 +6,8 @@ import {
   MESSAGE_EXTERNAL_ATTRIBUTE,
   MESSAGE_LINK_ATTRIBUTE,
   parseLinkActions,
+  resolveMessageLink,
+  serializeLinkActions,
   type LinkContext,
 } from './linkTargets';
 import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
@@ -78,43 +80,6 @@ function keyFor(item: TranscriptItem): string {
 }
 
 /**
- * Renders a tool's tabular result as a Spectrum `<sp-table>` plus its pagination
- * status line.
- *
- * Every cell is set through `text:` (i.e. `textContent`), never through
- * `innerHTML`: these strings are JCR property values that came from an AEM
- * instance, and an author can put anything in a `jcr:title`. Assistant
- * message text goes through the markdown renderer, which sanitises; tool
- * result data has no such pass and must never be parsed as HTML here.
- */
-function renderResultTable(table: ToolResultTable): readonly HTMLElement[] {
-  const status = el('p', {
-    attrs: { class: 'chat-tool-call__pagination' },
-    text: table.status,
-  });
-
-  if (table.rows.length === 0) return [status];
-
-  const head = el('sp-table-head', {});
-  head.append(
-    ...table.columns.map((column) => el('sp-table-head-cell', { attrs: {}, text: column })),
-  );
-
-  const body = el('sp-table-body', {});
-  for (const row of table.rows) {
-    const rowEl = el('sp-table-row', {});
-    rowEl.append(...row.map((cell) => el('sp-table-cell', { attrs: {}, text: cell })));
-    body.append(rowEl);
-  }
-
-  const tableEl = el('sp-table', {
-    attrs: { class: 'chat-tool-call__table', size: 's' },
-  });
-  tableEl.append(head, body);
-  return [tableEl, status];
-}
-
-/**
  * The disclosure control of a tool-call billet: the requested icon, the
  * `name - status` label (kept as its own `.chat-tool-call__header` element
  * because the E2E asserts that exact text), an optional one-line summary of
@@ -169,8 +134,7 @@ function renderToolCallToggle(
 /**
  * The label/value rows revealed when a billet is expanded. Every value is set
  * through `textContent`: these are model-authored strings, so this is a
- * second `queryResultViewModel.ts`-style boundary and must never be parsed as
- * markup.
+ * hard text boundary and must never be parsed as markup.
  */
 function renderToolCallParameters(view: ToolCallView, expanded: boolean): HTMLElement {
   const { parameters } = describeToolCall(view.toolName, view.args, succeededData(view));
@@ -219,11 +183,6 @@ function renderToolCallBody(
     renderToolCallToggle(view, toolCallId, expanded),
     renderToolCallParameters(view, expanded),
   ];
-
-  if (view.status.kind === 'succeeded') {
-    const table = toolRendererRegistry.readResultTable(view.toolName, view.status.data);
-    if (table !== undefined) nodes.push(...renderResultTable(table));
-  }
 
   if (view.status.kind === 'rejected') {
     nodes.push(el('p', { attrs: { class: 'chat-tool-call__detail' }, text: view.status.reason }));
@@ -473,6 +432,172 @@ export function createTranscriptView(
     shell.replaceChildren(...children);
   }
 
+  /**
+   * One table cell. A `Path` cell that resolves against the active host becomes
+   * an anchor carrying the same link stamps the markdown renderer uses, so the
+   * transcript's existing click/hover handling treats it exactly like a bare
+   * path in a message. Every other cell is plain text (`textContent`), never
+   * parsed as markup: these strings came from AEM and an author can put
+   * anything in a `jcr:title`.
+   */
+  function renderMessageCell(value: string, header: string): HTMLElement {
+    if (header === 'Path') {
+      const resolved = resolveMessageLink(value, getLinkContext());
+      if (resolved !== undefined) {
+        const anchor = el('a', { attrs: { href: resolved.href }, text: value });
+        anchor.setAttribute(
+          resolved.openIn === 'external' ? MESSAGE_EXTERNAL_ATTRIBUTE : MESSAGE_LINK_ATTRIBUTE,
+          '',
+        );
+        if (resolved.openIn === 'external') anchor.setAttribute('title', 'Opens in your browser');
+        if (resolved.actions.length > 0) {
+          anchor.setAttribute(MESSAGE_ACTIONS_ATTRIBUTE, serializeLinkActions(resolved.actions));
+        }
+        return anchor;
+      }
+    }
+    const span = el('span', { text: value });
+    // The Value/Citation column is clamped to a readable number of lines rather
+    // than letting one long quote grow its row without bound (see chat.css).
+    if (header === 'Value' || header === 'Citation') {
+      span.className = 'chat-table-message__clamp';
+    }
+    return span;
+  }
+
+  /**
+   * Renders one run's table as the assistant **message**: an optional total line
+   * above a Spectrum `<sp-table>`, with a leading `#` row-number column. The
+   * columns come from the accumulated `format_table` calls; a zero-row run
+   * renders only its total line (no empty table).
+   */
+  function renderTableMessage(message: ToolTableMessage): readonly HTMLElement[] {
+    const nodes: HTMLElement[] = [];
+    if (message.total !== undefined) {
+      nodes.push(el('p', { attrs: { class: 'chat-table-message__total' }, text: message.total }));
+    }
+    const { columns, rows } = message.table;
+    if (rows.length === 0) return nodes;
+
+    const head = el('sp-table-head', {});
+    head.append(el('sp-table-head-cell', { attrs: {}, text: '#' }));
+    for (const column of columns) {
+      head.append(el('sp-table-head-cell', { attrs: {}, text: column }));
+    }
+
+    const body = el('sp-table-body', {});
+    rows.forEach((row, index) => {
+      const rowEl = el('sp-table-row', {});
+      rowEl.append(
+        el('sp-table-cell', {
+          attrs: { class: 'chat-table-message__index' },
+          text: String(index + 1),
+        }),
+      );
+      columns.forEach((column, columnIndex) => {
+        const cell = el('sp-table-cell', {});
+        cell.append(renderMessageCell(row[columnIndex] ?? '', column));
+        rowEl.append(cell);
+      });
+      body.append(rowEl);
+    });
+
+    const tableEl = el('sp-table', {
+      attrs: { class: 'chat-table-message__table', size: 's' },
+    });
+    tableEl.append(head, body);
+    nodes.push(tableEl);
+    return nodes;
+  }
+
+  /**
+   * Groups the transcript's `presentation: 'message'` tool calls into runs (a
+   * `mode: 'new'` call starts one, `mode: 'append'` adds to it) and returns, for
+   * each item, whether it renders nothing and which run-message it renders.
+   *
+   * Stateless and recomputed on every repaint: only the run's **last** call
+   * renders the accumulated table (so a page's table replaces the previous one
+   * and stays at the end), and every earlier call in the run renders nothing.
+   * Columns are unioned across the run's pages, with each page's rows remapped
+   * to the union so a later page cannot shift a cell under the wrong header.
+   */
+  function planTableRuns(
+    store: TranscriptStore,
+    items: readonly TranscriptItem[],
+  ): {
+    readonly skip: ReadonlySet<string>;
+    readonly messages: ReadonlyMap<string, ToolTableMessage>;
+  } {
+    const skip = new Set<string>();
+    const messages = new Map<string, ToolTableMessage>();
+    interface Run {
+      readonly keys: string[];
+      readonly columns: string[];
+      readonly pages: {
+        readonly columns: readonly string[];
+        readonly rows: readonly (readonly string[])[];
+      }[];
+      total: string | undefined;
+    }
+    let current: Run | undefined;
+
+    const flush = (): void => {
+      if (current === undefined) return;
+      const run = current;
+      current = undefined;
+      const lastKey = run.keys[run.keys.length - 1];
+      if (lastKey !== undefined) {
+        const rows = run.pages.flatMap((page) =>
+          page.rows.map((row) =>
+            run.columns.map((column) => {
+              const index = page.columns.indexOf(column);
+              return index === -1 ? '' : (row[index] ?? '');
+            }),
+          ),
+        );
+        messages.set(lastKey, {
+          mode: 'new',
+          total: run.total,
+          table: { columns: run.columns, rows, status: '', mayHaveMore: false },
+        });
+      }
+      // Everything before the last call of the run is hidden.
+      for (let index = 0; index < run.keys.length - 1; index += 1) skip.add(run.keys[index]!);
+    };
+
+    for (const item of items) {
+      if (item.kind !== 'toolCall') continue;
+      const key = keyFor(item);
+      const view = store.toolCallFor(item.toolCallId);
+      if (view === undefined || toolRendererRegistry.presentationOf(view.toolName) !== 'message') {
+        continue;
+      }
+      const message = toolRendererRegistry.readTableMessage(
+        view.toolName,
+        view.args,
+        succeededData(view),
+      );
+      if (message === undefined) {
+        // An unrecognised message call shows nothing - never a billet.
+        skip.add(key);
+        continue;
+      }
+      if (message.mode === 'new' || current === undefined) {
+        flush();
+        current = { keys: [key], columns: [], pages: [], total: undefined };
+      } else {
+        current.keys.push(key);
+      }
+      for (const column of message.table.columns) {
+        if (!current.columns.includes(column)) current.columns.push(column);
+      }
+      current.pages.push({ columns: message.table.columns, rows: message.table.rows });
+      current.total = message.total ?? current.total;
+    }
+    flush();
+    return { skip, messages };
+  }
+
   function createShell(item: TranscriptItem): HTMLElement {
     switch (item.kind) {
       case 'userPrompt':
@@ -528,7 +653,12 @@ export function createTranscriptView(
     }
   }
 
-  function updateShell(store: TranscriptStore, item: TranscriptItem, shell: HTMLElement): void {
+  function updateShell(
+    store: TranscriptStore,
+    item: TranscriptItem,
+    shell: HTMLElement,
+    tableMessage?: ToolTableMessage,
+  ): void {
     switch (item.kind) {
       case 'userPrompt': {
         const text = store.textForUserPrompt(item.turnId);
@@ -560,6 +690,13 @@ export function createTranscriptView(
         );
         return;
       case 'toolCall': {
+        if (tableMessage !== undefined) {
+          // A `presentation: 'message'` tool (format_table): its call paints an
+          // assistant message - the accumulated table - not a billet.
+          shell.className = 'chat-message chat-message--assistant chat-table-message';
+          shell.replaceChildren(...renderTableMessage(tableMessage));
+          return;
+        }
         const view = store.toolCallFor(item.toolCallId);
         if (
           view !== undefined &&
@@ -612,20 +749,25 @@ export function createTranscriptView(
       popover?.hideNow();
       hoveredLink = undefined;
       const items = store.items();
+      const { skip, messages } = planTableRuns(store, items);
       const seenKeys = new Set<string>();
       const nodes: HTMLElement[] = [];
       let sawThinking = false;
 
       for (const item of items) {
         const key = keyFor(item);
-        seenKeys.add(key);
         if (item.kind === 'thinking') sawThinking = true;
+        // An intermediate `format_table` call (everything but a run's last)
+        // renders nothing; leaving it out of `seenKeys` also evicts any node it
+        // owned when it stopped being the run's last call.
+        if (skip.has(key)) continue;
+        seenKeys.add(key);
         let shell = cache.get(key);
         if (shell === undefined) {
           shell = createShell(item);
           cache.set(key, shell);
         }
-        updateShell(store, item, shell);
+        updateShell(store, item, shell, messages.get(key));
         nodes.push(shell);
       }
 

@@ -621,6 +621,54 @@ describe('scripted input requests', () => {
     expect(events.at(-1)).toMatchObject({ type: 'session.state.changed', state: 'idle' });
   });
 
+  it('scripts an actions-only question: the event and call arguments carry the actions and no question', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    const ids = counterIdGenerator();
+    const chatId = newChatId(ids);
+    const turnId = newTurnId(ids);
+    const events: AgentEvent[] = [];
+    service.onEvent((event) => events.push(event));
+
+    await service.openConversation({ chatId });
+    service.scriptNextResponse({ steps: [{ kind: 'inputRequest', actions: ['Load more'] }] });
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+    service.advance();
+    service.advance();
+    service.advance();
+    service.advance();
+
+    const call = events.find((event) => event.type === 'tool.call.requested');
+    expect(call).toMatchObject({
+      type: 'tool.call.requested',
+      arguments: { actions: ['Load more'] },
+    });
+    if (call?.type === 'tool.call.requested') {
+      expect(call.arguments['question']).toBeUndefined();
+    }
+    const requested = events.find((event) => event.type === 'user.input.requested');
+    expect(requested).toMatchObject({
+      type: 'user.input.requested',
+      actions: ['Load more'],
+      multiple: false,
+      freeInput: false,
+    });
+    if (requested?.type !== 'user.input.requested') throw new Error('no question emitted');
+    expect(requested.question).toBeUndefined();
+
+    await service.respondToInput(chatId, requested.requestId, {
+      selections: ['Load more'],
+      freeform: null,
+    });
+    service.flush();
+    const result = events.find((event) => event.type === 'tool.result');
+    if (result?.type === 'tool.result' && result.outcome.ok) {
+      expect(result.outcome.data).toMatchObject({
+        operation: 'ask_user',
+        selections: ['Load more'],
+      });
+    }
+  });
+
   it('refuses requestUserInput - the fake scripts questions instead of running executors', async () => {
     const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
     const result = await service.requestUserInput(newChatId(counterIdGenerator()), {

@@ -136,8 +136,11 @@ export interface ScriptedToolCall {
  */
 export interface ScriptedInputRequestStep {
   readonly kind: 'inputRequest';
-  readonly question: string;
+  /** Absent for an actions-only prompt (the buttons are the whole interface). */
+  readonly question?: string;
   readonly options?: readonly string[];
+  /** One-click button labels (e.g. `['Load more']`). Mutually exclusive with `options`. */
+  readonly actions?: readonly string[];
   readonly multiple?: boolean;
   readonly freeInput?: boolean;
 }
@@ -236,7 +239,7 @@ interface PendingTurn {
 interface PendingInput {
   readonly requestId: UserInputRequestId;
   readonly toolCallId: ToolCallId;
-  readonly question: string;
+  readonly question: string | undefined;
   readonly result: ToolResultEvent;
   answered: boolean;
 }
@@ -553,12 +556,12 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   }
 
   /** The `ask_user` success payload the fake emits, matching the real tool's own result shape. */
-  function askUserPayload(question: string, answer: UserInputAnswer): JsonValue {
+  function askUserPayload(question: string | undefined, answer: UserInputAnswer): JsonValue {
     return {
       ok: true,
       operation: FAKE_ASK_USER_TOOL_NAME,
       requestId: newRequestId(idGenerator),
-      question,
+      ...(question !== undefined ? { question } : {}),
       selections: [...answer.selections],
       freeform: answer.freeform,
       textResultForLlm:
@@ -633,18 +636,21 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
         const multiple = step.multiple ?? false;
         const freeInput = step.freeInput ?? false;
         const options = step.options === undefined ? undefined : [...step.options];
+        const actions = step.actions === undefined ? undefined : [...step.actions];
+        const shared = {
+          ...(step.question !== undefined ? { question: step.question } : {}),
+          ...(options !== undefined ? { options } : {}),
+          ...(actions !== undefined ? { actions } : {}),
+          multiple,
+          freeInput,
+        };
         queue.push({
           type: 'tool.call.requested',
           chatId,
           sequence: nextSequence(chatId),
           toolCallId,
           toolName: FAKE_ASK_USER_TOOL_NAME,
-          arguments: {
-            question: step.question,
-            ...(options !== undefined ? { options } : {}),
-            multiple,
-            freeInput,
-          },
+          arguments: shared,
         });
         queue.push(makeToolApprovedEvent(chatId, toolCallId));
         queue.push({
@@ -653,10 +659,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
           sequence: nextSequence(chatId),
           turnId,
           requestId,
-          question: step.question,
-          ...(options !== undefined ? { options } : {}),
-          multiple,
-          freeInput,
+          ...shared,
         });
         const result: ToolResultEvent = {
           type: 'tool.result',

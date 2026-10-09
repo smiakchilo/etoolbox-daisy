@@ -3,6 +3,7 @@ import {
   describeInterruption,
   describeRequiredAction,
   describeToolCallStatus,
+  isDeterministicTablePrompt,
   latestReasoningLine,
   splitLeadingSkill,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
@@ -132,5 +133,19 @@ describe('splitLeadingSkill', () => {
       trailing: ' /search Waldo',
       skill: false,
     });
+  });
+});
+
+describe('isDeterministicTablePrompt', () => {
+  it('recognises the two search skills, with or without trailing text', () => {
+    expect(isDeterministicTablePrompt('/search waldo')).toBe(true);
+    expect(isDeterministicTablePrompt('/search')).toBe(true);
+    expect(isDeterministicTablePrompt('/semantic-search good waldo')).toBe(true);
+  });
+
+  it('does not suppress any other prompt', () => {
+    expect(isDeterministicTablePrompt('search for waldo')).toBe(false);
+    expect(isDeterministicTablePrompt('/other-skill x')).toBe(false);
+    expect(isDeterministicTablePrompt('plain question')).toBe(false);
   });
 });

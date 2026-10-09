@@ -24,7 +24,7 @@ import type {
  */
 export type TranscriptItem =
   | { readonly kind: 'userPrompt'; readonly turnId: TurnId }
-  | { readonly kind: 'message'; readonly messageId: MessageId }
+  | { readonly kind: 'message'; readonly messageId: MessageId; readonly turnId: TurnId }
   | { readonly kind: 'toolCall'; readonly toolCallId: ToolCallId }
   | { readonly kind: 'thinking' }
   | {
@@ -70,6 +70,16 @@ export interface TranscriptStore {
    * the only place that text is ever known.
    */
   applyUserPrompt(turnId: TurnId, prompt: string): void;
+  /**
+   * Marks `turnId` as text-suppressed: no assistant `message` item is created
+   * for it, so the model's own prose never appears in the transcript. Used for
+   * a turn that invoked a search skill, whose answer is a `format_table`
+   * message, not prose. Must be called before the turn's first message event
+   * (the pane calls it immediately after `applyUserPrompt`, before any event
+   * can arrive); a suppressed turn is suppressed on live events and on journal
+   * replay alike.
+   */
+  markTurnSuppressed(turnId: TurnId): void;
   /** Every transcript item observed so far, in first-seen order. */
   items(): readonly TranscriptItem[];
   /** The current best-known text of an assistant message - see `MessageStream.textFor`. */
@@ -130,6 +140,9 @@ export function createTranscriptStore(
   const knownToolCallIds = new Set<ToolCallId>();
   const userPrompts = new Map<TurnId, string>();
   const toolCalls = new Map<ToolCallId, ToolCallView>();
+  // Turns whose assistant prose is hidden (a search skill's turn, whose answer
+  // is a `format_table` message). See `markTurnSuppressed`.
+  const suppressedTurns = new Set<TurnId>();
   let dirty = false;
   // Monotonic id source for interruption notices, so each notice gets its own
   // cached DOM node in the view and two notices can never share a cache key.
@@ -181,10 +194,14 @@ export function createTranscriptStore(
     dirty = true;
   }
 
-  function ensureMessageItem(messageId: MessageId): void {
+  function ensureMessageItem(messageId: MessageId, turnId: TurnId): void {
     if (knownMessageIds.has(messageId)) return;
+    // A suppressed turn keeps no assistant message item at all: the model's
+    // prose for a search turn is replaced by the `format_table` message, and
+    // suppressing at the source means the same rule holds live and on replay.
+    if (suppressedTurns.has(turnId)) return;
     knownMessageIds.add(messageId);
-    order.push({ kind: 'message', messageId });
+    order.push({ kind: 'message', messageId, turnId });
     dirty = true;
   }
 
@@ -212,7 +229,7 @@ export function createTranscriptStore(
       messageStream.applyEvent(event);
       switch (event.type) {
         case 'assistant.message.started':
-          ensureMessageItem(event.messageId);
+          ensureMessageItem(event.messageId, event.turnId);
           return;
         case 'assistant.text.delta':
         case 'assistant.message.completed':
@@ -225,7 +242,7 @@ export function createTranscriptStore(
           // The assistant moving on to real output also ends any reasoning
           // block still on screen.
           endReasoningBlock();
-          ensureMessageItem(event.messageId);
+          ensureMessageItem(event.messageId, event.turnId);
           return;
         case 'assistant.reasoning.delta':
           if (activeReasoningId === event.reasoningId) {
@@ -303,6 +320,23 @@ export function createTranscriptStore(
       awaitingAssistantText = true;
       dirty = true;
     },
+    markTurnSuppressed(turnId) {
+      if (suppressedTurns.has(turnId)) return;
+      suppressedTurns.add(turnId);
+      // Suppression is normally recorded before the turn's first event (the
+      // pane marks it on send), but an event can race ahead of the send reply.
+      // Any message item already created for this turn is removed here so the
+      // invariant - a suppressed turn has no assistant message - holds
+      // regardless of ordering.
+      for (let index = order.length - 1; index >= 0; index -= 1) {
+        const item = order[index];
+        if (item?.kind === 'message' && item.turnId === turnId) {
+          knownMessageIds.delete(item.messageId);
+          order.splice(index, 1);
+        }
+      }
+      dirty = true;
+    },
     setTurnInFlight(inFlight) {
       if (turnInFlight === inFlight) return;
       turnInFlight = inFlight;
@@ -350,6 +384,7 @@ export function createTranscriptStore(
         order.length > 0 ||
         userPrompts.size > 0 ||
         toolCalls.size > 0 ||
+        suppressedTurns.size > 0 ||
         turnInFlight ||
         awaitingAssistantText;
       order.length = 0;
@@ -357,6 +392,7 @@ export function createTranscriptStore(
       knownToolCallIds.clear();
       userPrompts.clear();
       toolCalls.clear();
+      suppressedTurns.clear();
       currentTurnId = undefined;
       awaitingAssistantText = false;
       turnInFlight = false;

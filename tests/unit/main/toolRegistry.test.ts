@@ -163,6 +163,7 @@ describe('discovered tools (the real src/tools folders)', () => {
       'aem_get_json',
       'aem_query',
       'ask_user',
+      'format_table',
     ]);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
     expect([...registry.allowlistEntries].sort()).toEqual([
@@ -170,6 +171,7 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:aem_get_json',
       'custom:aem_query',
       'custom:ask_user',
+      'custom:format_table',
     ]);
   });
 });

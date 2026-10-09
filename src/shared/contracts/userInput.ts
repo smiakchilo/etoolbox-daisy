@@ -26,6 +26,14 @@ export const USER_INPUT_OPTION_MAX_LENGTH = 200;
 export const USER_INPUT_MAX_OPTIONS = 50;
 /** A typed free-input answer. */
 export const USER_INPUT_FREEFORM_MAX_LENGTH = 50_000;
+/**
+ * The most one-click actions a question may carry. Actions are buttons shown in
+ * the composer (the text field is hidden), so keep them few - an action row is
+ * not a menu. The search skills use a single action ("Load more"); the
+ * composer's own Stop is the cancel affordance, so an action row may hold as
+ * few as one.
+ */
+export const USER_INPUT_MAX_ACTIONS = 4;
 
 export const userInputQuestionSchema = z.string().min(1).max(USER_INPUT_QUESTION_MAX_LENGTH);
 
@@ -37,21 +45,51 @@ export const userInputOptionsSchema = z
   .max(USER_INPUT_MAX_OPTIONS);
 
 /**
+ * One-click actions. Like `options`, these are labels; unlike `options`, the
+ * composer renders each as a button that answers the question the instant it is
+ * clicked, so a single action is legal (the deliberate "one question, one
+ * button, and Stop to cancel" shape).
+ */
+export const userInputActionsSchema = z
+  .array(userInputOptionSchema)
+  .min(1)
+  .max(USER_INPUT_MAX_ACTIONS);
+
+/**
  * The model-facing request, normalized: the tool applies the "false by default"
  * defaults before this reaches the application, so a consumer never has to
  * re-decide what an omitted `multiple` meant.
+ *
+ * `question` is optional: an ordinary choice or free-input question always
+ * carries one, but a pure action prompt ("Load more") has no sentence to show -
+ * the buttons are the whole interface. At least one of `question` / `options` /
+ * `actions` must be present; a request with none of them asks nothing.
  */
 export const userInputRequestSchema = z
   .object({
-    question: userInputQuestionSchema,
+    question: userInputQuestionSchema.optional(),
     /** The selectable variants. Absent means free-input only. */
     options: userInputOptionsSchema.optional(),
+    /** One-click buttons (no text field); mutually exclusive with `options`. */
+    actions: userInputActionsSchema.optional(),
     /** Checkboxes (many) rather than radios/picker (one). */
     multiple: z.boolean(),
     /** Offer the "type your own answer" escape hatch alongside the options. */
     freeInput: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.question === undefined &&
+      value.options === undefined &&
+      value.actions === undefined
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'A user-input request needs a question, options, or actions',
+      });
+    }
+  });
 
 export type UserInputRequest = Readonly<z.infer<typeof userInputRequestSchema>>;
 

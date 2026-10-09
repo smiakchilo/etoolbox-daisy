@@ -21,19 +21,80 @@ You are invoked as `/search <terms>`, and the user's term(s) are handed to you
 as **your input for the turn** - the directive that invokes this skill says so,
 and the term(s) follow it. **That input is the search string.** Run the search
 for it immediately; do not ask the user what to search for, and do not answer by
-explaining this skill:
+explaining this skill.
 
-- Search the input with a `fulltext` predicate, scoped to the host's content
-  roots via `roots` (the same recall the semantic-search skill performs).
-- Set `limit` explicitly (20 is a sensible default), and say which scope you
-  used.
-- `fulltext` matches the words, not the meaning: report what the index returned,
-  then read a hit's text with `aem_get_json` when the answer depends on it.
-- If the input is empty, then - and only then - ask what to search for.
+A `/search` turn produces **exactly one application-rendered table**, built by
+calling the tools in order. Write no prose of your own: the application hides
+your assistant text for this turn, so any explanation you write is discarded.
+
+**All three steps below are mandatory and in order.** A `/search` turn is **not
+finished** when the table is on screen - that is the halfway point. It ends only
+after step 3, and the normal case is that step 3 calls `ask_user` with
+`["Load more"]`. Ending the turn after step 2 - a table, but no `ask_user` and no
+check of `hasMore` - is a failure of this skill: the user is left staring at one
+page of results with no way to reach the rest. Do not do it.
+
+1. **Query.** Call `aem_query` with a `fulltext` predicate set to the input, the
+   host's content roots as `roots`, `properties: []` (so each hit returns only
+   its `jcr:path`), `limit: 50`, and `offset` starting at `0`:
+
+   ```json
+   {
+     "predicates": { "fulltext": "<terms>" },
+     "roots": ["/content/wknd"],
+     "properties": [],
+     "limit": 50,
+     "offset": 0
+   }
+   ```
+
+2. **Present.** Call `format_table` with this result's JSON as `data` and
+   `mode: "new"` on the first page, `"append"` on every later page:
+
+   ```json
+   { "data": { "rows": [ { "jcr:path": "/content/wknd/us/en" } ], "pagination": { "total": { "accuracy": "estimated", "value": 42 } } }, "mode": "new" }
+   ```
+
+   Pass the result **verbatim**; do not reformat or rename anything. The
+   application renders the total line and the `# | Path` table.
+
+3. **Offer more - this step must run before your turn ends.** After
+   `format_table`, read the `aem_query` result's `pagination.hasMore` and act on
+   it **now**, in this same turn:
+
+   - If `hasMore` is `true` or `"unknown"`, you **must** call `ask_user` with
+     exactly one action, `actions: ["Load more"]`:
+
+     ```json
+     { "actions": ["Load more"] }
+     ```
+
+     This call is the only thing that gives the user a **Load more** button. A
+     written question - "there are more results, shall I load them?" - is **not**
+     a substitute: the application discards your prose for `/search`, so the user
+     sees nothing and the turn ends with nothing to click. The button appears
+     only if you call `ask_user`.
+
+   - If the user clicks **Load more**, repeat from step 1 with `offset`
+     increased by `50`, then `format_table` with `mode: "append"` - and then run
+     this step again on the new result.
+   - If they Stop the turn instead, the search ends.
+   - **Only** if `hasMore` is `false` is there nothing to load. Then, and only
+     then, do not ask.
+
+   Before you end a `/search` turn, verify: **did I either call `ask_user` with
+   `["Load more"]`, or see `hasMore === false`?** If neither is true, you are not
+   done - call `ask_user` with `["Load more"]`. When in doubt, ask: an
+   unnecessary Load more is harmless, a missing one strands the user on page 1.
+
+If the input is empty, then - and only then - ask what to search for with a
+normal `ask_user` question (options or free input), not with `actions`.
 
 `/search` is only the shortcut for a plain term. For anything more specific - a
 concrete path, a property value, a date or numeric range - build the predicate
-map yourself as the rest of this skill describes.
+map yourself as the rest of this skill describes; still present the result with
+`format_table`. A hand-built query is still a `/search` turn, so it still ends
+with step 3: offer **Load more** whenever `hasMore` is not `false`.
 
 ## Always scope
 
@@ -50,7 +111,7 @@ single call:
 {
   "predicates": { "type": "cq:Page" },
   "roots": ["/content/wknd", "/content/shared"],
-  "limit": 20
+  "limit": 50
 }
 ```
 
@@ -159,7 +220,7 @@ compact identifying fields — enough to tell hits apart and to follow up with
 {
   "predicates": { "path": "/content/wknd", "type": "cq:Page" },
   "properties": ["jcr:content/jcr:title", "jcr:content/cq:lastModified"],
-  "limit": 20
+  "limit": 50
 }
 ```
 

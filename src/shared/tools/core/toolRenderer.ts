@@ -47,13 +47,29 @@ export interface ToolResultTable {
 }
 
 /**
+ * A whole table the transcript paints as an assistant **message** (in place of
+ * a billet), optionally under a one-line total. This is what a
+ * `presentation: 'message'` tool returns: `format_table` accumulates its rows
+ * across a search run and the transcript renders one such message for the run.
+ */
+export interface ToolTableMessage {
+  /** Whether this call starts a new run or appends to the current one. */
+  readonly mode: 'new' | 'append';
+  /** The total line shown above the table, or `undefined` for no total. */
+  readonly total: string | undefined;
+  readonly table: ToolResultTable;
+}
+
+/**
  * How the transcript presents a tool's calls. `'billet'` - the default - is the
  * standard icon-led, expandable line every read tool uses. `'conversation'` is
  * for a tool whose call is really a message exchange with the user
  * (`ask_user`): the transcript renders the question and answer as ordinary
- * messages, with no billet at all.
+ * messages, with no billet at all. `'message'` is for a tool whose call renders
+ * its own assistant message rather than a call line (`format_table`): the
+ * transcript hides the billet and paints the returned message instead.
  */
-export type ToolPresentation = 'billet' | 'conversation';
+export type ToolPresentation = 'billet' | 'conversation' | 'message';
 
 /**
  * The question/answer pair a `presentation: 'conversation'` tool paints into
@@ -105,8 +121,16 @@ export interface ToolRendererModule {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ) => ToolConversationItem | undefined;
-  /** Optional: turns a succeeded call's payload into a table; `undefined` means "no table". */
-  readonly readResultTable?: (data: JsonValue | undefined) => ToolResultTable | undefined;
+  /**
+   * Required for a `presentation: 'message'` tool: composes the assistant
+   * message to paint from the call's own arguments (and optionally its result).
+   * Returns `undefined` when this build does not recognise the call, in which
+   * case the view shows nothing for that call.
+   */
+  readonly readTableMessage?: (
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ) => ToolTableMessage | undefined;
 }
 
 /**

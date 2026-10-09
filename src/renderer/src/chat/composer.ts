@@ -3,7 +3,9 @@ import { loadComposerHistory, saveComposerHistory } from '../lib/composerHistory
 import { createComposerHistoryNavigator, resolveCaretBounds } from './composerHistory';
 import {
   ASK_USER_DROPDOWN_THRESHOLD,
+  buildActionAnswer,
   buildAskUserAnswer,
+  isActionsRequest,
   isAskUserAnswerComplete,
   type AskUserDraft,
   type ComposerButtonState,
@@ -472,6 +474,27 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     overlay.remove();
   }
 
+  /**
+   * The one-click action buttons of an `actions` prompt. Each answers the
+   * instant it is clicked (there is no Submit), so a click leaves the
+   * interactive UI and delivers the action label as the whole answer.
+   */
+  function buildActionButtons(actions: readonly string[]): HTMLElement {
+    const row = el('div', { attrs: { class: 'chat-ask__actions' } });
+    for (const action of actions) {
+      const button = el('sp-action-button', {
+        attrs: { class: 'chat-ask__action', 'aria-label': action },
+        text: action,
+      });
+      button.addEventListener('click', () => {
+        exitInputMode();
+        callbacks.onAnswer?.(buildActionAnswer(action));
+      });
+      row.append(button);
+    }
+    return row;
+  }
+
   /** Paints the current question and its controls into `askPanel`. */
   function renderAskPanel(): void {
     // A rebuild replaces the option controls; drop any portal overlay the
@@ -483,10 +506,20 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       askPanel.hidden = true;
       return;
     }
+    const children: HTMLElement[] = [];
+    if (request.question !== undefined) {
+      children.push(el('p', { attrs: { class: 'chat-ask__question' }, text: request.question }));
+    }
+    const actions = request.actions;
+    if (actions !== undefined && actions.length > 0) {
+      // Actions replace the whole controls area: buttons only, no question
+      // options, no free-input escape hatch (the two modes are exclusive).
+      children.push(buildActionButtons(actions));
+      askPanel.replaceChildren(...children);
+      askPanel.hidden = false;
+      return;
+    }
     const freeActive = draft.freeInputActive || request.options === undefined;
-    const children: HTMLElement[] = [
-      el('p', { attrs: { class: 'chat-ask__question' }, text: request.question }),
-    ];
     if (!freeActive && request.options !== undefined) {
       children.push(buildOptionControls(request.options));
     }
@@ -526,6 +559,16 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     // the turn is in flight (so the session state says "stop"), but Send must
     // become "submit this answer" and Stop must stay available to cancel.
     if (inputRequest !== undefined) {
+      if (isActionsRequest(inputRequest)) {
+        // Actions mode: buttons only. The text field and Send are hidden (a
+        // click answers directly, so there is nothing to submit); Stop stays so
+        // the turn can still be cancelled.
+        field.style.display = 'none';
+        askPanel.style.display = '';
+        sendButton.style.display = 'none';
+        stopButton.style.display = '';
+        return;
+      }
       const freeActive = draft.freeInputActive || inputRequest.options === undefined;
       field.style.display = freeActive ? '' : 'none';
       askPanel.style.display = '';
@@ -804,7 +847,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       closeSkillMenu();
       inputRequest = request;
       draft.freeform = '';
-      draft.freeInputActive = request.options === undefined;
+      draft.freeInputActive = request.options === undefined && !isActionsRequest(request);
       // The dropdown variants (>5 options) default to the first option, so the
       // control shows a value instead of a placeholder and Submit is enabled
       // from the start. The radio/checkbox lists stay unselected (they have no

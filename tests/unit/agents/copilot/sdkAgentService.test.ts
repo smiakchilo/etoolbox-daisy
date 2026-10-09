@@ -1141,3 +1141,40 @@ describe('sdkAgentService - open session id', () => {
     expect(service.getOpenSessionId()).toBe('fake-session-id');
   });
 });
+
+describe('sdkAgentService - interactive questions', () => {
+  it('emits user.input.requested carrying actions and no question for an actions prompt', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const { service, chatId, events } = await setUpOpenConversation(sessionHandle, ids);
+
+    const turnId = newTurnId(ids);
+    expect((await service.sendPrompt({ chatId, turnId, prompt: 'more?' })).ok).toBe(true);
+
+    const pending = service.requestUserInput(chatId, {
+      actions: ['Load more'],
+      multiple: false,
+      freeInput: false,
+    });
+    const requested = events.find((event) => event.type === 'user.input.requested');
+    expect(requested).toMatchObject({
+      type: 'user.input.requested',
+      actions: ['Load more'],
+      multiple: false,
+      freeInput: false,
+    });
+    if (requested?.type !== 'user.input.requested') throw new Error('no question emitted');
+    expect(requested.question).toBeUndefined();
+
+    expect(
+      (
+        await service.respondToInput(chatId, requested.requestId, {
+          selections: ['Load more'],
+          freeform: null,
+        })
+      ).ok,
+    ).toBe(true);
+    await pending;
+    sessionHandle.emit({ type: 'session.idle', data: {} });
+  });
+});

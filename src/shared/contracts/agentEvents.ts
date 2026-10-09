@@ -10,7 +10,11 @@ import {
   type MessageId,
 } from './ids';
 import { toolErrorSchema, type ToolError } from './errors';
-import { userInputOptionsSchema, userInputQuestionSchema } from './userInput';
+import {
+  userInputActionsSchema,
+  userInputOptionsSchema,
+  userInputQuestionSchema,
+} from './userInput';
 
 /**
  * The normalized Copilot agent event stream (implementation-plan.md step 03,
@@ -281,7 +285,9 @@ const errorEventSchema = z
  * `requestId` is what `respondToInput` correlates the answer with; `turnId`
  * lets the ownership guard drop a late question from a turn the user has since
  * abandoned. `multiple`/`freeInput` are required (already defaulted) so no
- * consumer re-decides what an omitted field meant.
+ * consumer re-decides what an omitted field meant. `question` is optional (an
+ * actions-only prompt has none), and `actions` carries the one-click buttons a
+ * prompt may offer instead of a text field.
  */
 const userInputRequestedEventSchema = z
   .object({
@@ -289,8 +295,9 @@ const userInputRequestedEventSchema = z
     ...baseEventFields,
     turnId: turnIdSchema,
     requestId: userInputRequestIdSchema,
-    question: userInputQuestionSchema,
+    question: userInputQuestionSchema.optional(),
     options: userInputOptionsSchema.optional(),
+    actions: userInputActionsSchema.optional(),
     multiple: z.boolean(),
     freeInput: z.boolean(),
   })

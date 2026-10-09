@@ -121,3 +121,22 @@ export function splitLeadingSkill(
   const leading = `/${token.name}`;
   return { leading, trailing: prompt.slice(leading.length), skill: true };
 }
+
+/**
+ * The bundled skills whose answer is a deterministic, application-rendered
+ * table rather than the model's own prose. A turn that invokes one of these
+ * (`/search`, `/semantic-search`) has its assistant text suppressed from the
+ * transcript: the `format_table` message is the whole answer, so the model's
+ * surrounding prose ("here are the results...", ad-hoc Markdown tables) would
+ * only duplicate or contradict it.
+ *
+ * Deliberately a constant, not the live skill catalogue: suppression is decided
+ * on send, before the catalogue may have loaded, and must not change with it.
+ */
+export const DETERMINISTIC_TABLE_SKILLS: readonly string[] = ['search', 'semantic-search'];
+
+/** Whether `prompt` invokes one of {@link DETERMINISTIC_TABLE_SKILLS}. */
+export function isDeterministicTablePrompt(prompt: string): boolean {
+  const token = readLeadingSkillToken(prompt);
+  return token !== undefined && DETERMINISTIC_TABLE_SKILLS.includes(token.name);
+}

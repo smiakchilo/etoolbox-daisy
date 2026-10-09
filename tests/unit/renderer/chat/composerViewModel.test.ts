@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildActionAnswer,
   buildAskUserAnswer,
   computeComposerButtonState,
   describeCanSendBlockReason,
+  isActionsRequest,
   isAskUserAnswerComplete,
   isTurnInFlight,
   shouldSubmitOnEnter,
@@ -230,5 +232,31 @@ describe('ask-user answer completeness', () => {
       selections: [],
       freeform: 'typed',
     });
+  });
+});
+
+describe('ask-user actions', () => {
+  const request = (overrides: Partial<UserInputRequest> = {}): UserInputRequest => ({
+    actions: ['Load more'],
+    multiple: false,
+    freeInput: false,
+    ...overrides,
+  });
+
+  it('recognises an actions request and no other', () => {
+    expect(isActionsRequest(request())).toBe(true);
+    expect(
+      isActionsRequest({ question: 'Q', options: ['A'], multiple: false, freeInput: false }),
+    ).toBe(false);
+  });
+
+  it('is never "complete" - an action answers directly, it is not submitted', () => {
+    expect(
+      isAskUserAnswerComplete(request(), { selections: [], freeform: '', freeInputActive: false }),
+    ).toBe(false);
+  });
+
+  it('builds the action label as the sole selection with no freeform', () => {
+    expect(buildActionAnswer('Load more')).toEqual({ selections: ['Load more'], freeform: null });
   });
 });

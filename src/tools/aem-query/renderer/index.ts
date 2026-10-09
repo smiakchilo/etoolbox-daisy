@@ -5,7 +5,6 @@ import {
   asStringArray,
   parameterRows,
 } from '../../../shared';
-import { readQueryResultTable } from './queryResultViewModel';
 
 function asPredicates(value: JsonValue | undefined): Readonly<Record<string, string>> | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -62,5 +61,4 @@ function describeCall(args: Readonly<Record<string, JsonValue>>): ToolCallDetail
 export const renderer: ToolRendererModule = {
   toolName: 'aem_query',
   describeCall,
-  readResultTable: (data) => readQueryResultTable('aem_query', data),
 };

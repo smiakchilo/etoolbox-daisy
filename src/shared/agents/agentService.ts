@@ -202,9 +202,9 @@ export interface AgentService {
    *
    * This is how an interactive tool (`ask_user`) blocks: the adapter emits a
    * `user.input.requested` `AgentEvent` - the composer notices it, swaps its
-   * text field for the selection UI, and the answer comes back through
-   * {@link respondToInput}. The turn stays in flight (`runningTool`) for the
-   * whole exchange.
+   * text field for the selection UI (options, a free-input field, or one-click
+   * `actions`), and the answer comes back through {@link respondToInput}. The
+   * turn stays in flight (`runningTool`) for the whole exchange.
    *
    * Refused when `chatId` is not the open conversation, or when no turn is in
    * flight (there is nothing for a question to belong to). Never resolves on

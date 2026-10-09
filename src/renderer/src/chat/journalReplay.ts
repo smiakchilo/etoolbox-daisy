@@ -26,11 +26,19 @@ import type { TranscriptStore } from './transcriptStore';
 export function replayJournalIntoTranscript(
   records: readonly ChatJournalRecord[],
   transcriptStore: TranscriptStore,
+  shouldSuppressTurn: (prompt: string) => boolean = () => false,
 ): void {
   for (const record of records) {
     switch (record.recordType) {
       case 'user.prompt':
         transcriptStore.applyUserPrompt(record.turnId, record.prompt);
+        // The suppression decision is re-derived from the replayed prompt, so a
+        // search turn's prose stays hidden after a restart exactly as it was
+        // live. Done here (between the prompt and its events) so no message
+        // item is ever created for a suppressed turn.
+        if (shouldSuppressTurn(record.prompt)) {
+          transcriptStore.markTurnSuppressed(record.turnId);
+        }
         break;
       case 'agent.event':
         transcriptStore.applyEvent(record.event);

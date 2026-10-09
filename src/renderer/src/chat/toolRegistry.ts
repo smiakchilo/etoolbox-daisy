@@ -5,7 +5,7 @@ import {
   type ToolConversationItem,
   type ToolPresentation,
   type ToolRendererModule,
-  type ToolResultTable,
+  type ToolTableMessage,
 } from '../../../shared';
 
 export type { ToolCallDetails, ToolCallParameter } from '../../../shared';
@@ -26,7 +26,6 @@ export interface ToolRendererRegistry {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ): ToolCallDetails;
-  readResultTable(toolName: string, data: JsonValue | undefined): ToolResultTable | undefined;
   /** How the transcript presents this tool's calls; `'billet'` for an unknown tool. */
   presentationOf(toolName: string): ToolPresentation;
   /** The question/answer pair a `'conversation'` tool paints; `undefined` otherwise. */
@@ -35,6 +34,12 @@ export interface ToolRendererRegistry {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ): ToolConversationItem | undefined;
+  /** The assistant message a `'message'` tool paints; `undefined` otherwise. */
+  readTableMessage(
+    toolName: string,
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ): ToolTableMessage | undefined;
   readonly toolNames: readonly string[];
 }
 
@@ -65,11 +70,11 @@ export function createToolRendererRegistry(
         return describeGenericArgs(args);
       }
     },
-    readResultTable(toolName, data) {
-      const read = byName.get(toolName)?.readResultTable;
+    readTableMessage(toolName, args, data) {
+      const read = byName.get(toolName)?.readTableMessage;
       if (read === undefined) return undefined;
       try {
-        return read(data);
+        return read(args, data);
       } catch {
         return undefined;
       }

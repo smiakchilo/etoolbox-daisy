@@ -61,18 +61,18 @@ describe('createToolRendererRegistry', () => {
     expect(registry.describeCall('demo_tool', {}).summary).toBe('demo');
   });
 
-  it('returns undefined rather than throwing when readResultTable throws', () => {
+  it('returns undefined rather than throwing when readTableMessage throws', () => {
     const registry = createToolRendererRegistry({
       './demo/renderer/index.ts': {
         renderer: rendererModule({
-          readResultTable: () => {
+          readTableMessage: () => {
             throw new Error('table bug');
           },
         }),
       },
     });
-    expect(registry.readResultTable('demo_tool', {})).toBeUndefined();
-    expect(registry.readResultTable('other', {})).toBeUndefined();
+    expect(registry.readTableMessage('demo_tool', {})).toBeUndefined();
+    expect(registry.readTableMessage('other', {})).toBeUndefined();
   });
 });
 
@@ -83,6 +83,7 @@ describe('discovered renderers (the real src/tools folders)', () => {
       'aem_get_json',
       'aem_query',
       'ask_user',
+      'format_table',
     ]);
   });
 });

@@ -376,6 +376,56 @@
   color: var(--spectrum-gray-700, #4b4b4b);
 }
 
+/* The `format_table` message: an assistant-width table, optionally under a
+   total line. It grows to its content's height rather than scrolling inside
+   itself - the transcript is the app's one scrolling region. */
+.chat-table-message {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.chat-table-message__total {
+  margin: 0;
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+/* The table spans the message and grows with its content. Its cells are set to
+   the assistant message's own text size: `size: "s"` had rendered them at
+   Spectrum's small size, visibly smaller than the surrounding prose. */
+.chat-table-message__table {
+  width: 100%;
+  --mod-table-row-font-size: var(--spectrum-font-size-100, 14px);
+  --mod-table-header-font-size: var(--spectrum-font-size-100, 14px);
+}
+
+/* Spectrum lays each row out as a flex row whose cells default to `flex: 1`, so
+   the `#` column and the content column split the width evenly. Pin the `#`
+   column to a fixed, non-wrapping width - identical in every row and the header,
+   so the columns stay aligned - and let the content column take the rest. */
+.chat-table-message__table sp-table-head-cell:first-child,
+.chat-table-message__table sp-table-cell:first-child {
+  flex: 0 0 2.5rem;
+  padding-inline: 8px;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.chat-table-message a {
+  overflow-wrap: anywhere;
+}
+
+/* A long citation is clamped to ten lines rather than growing its row without
+   bound; the full text stays in the DOM (and is selectable) behind the clamp. */
+.chat-table-message__clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 10;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
 /* Must be visually distinguishable from every other tool-call status
    (implementation-plan.md step 07), especially --succeeded. Borderless now, so
    the tint alone carries the signal; the `FAILED` label remains the textual

@@ -148,7 +148,9 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > settings contracts `appSettings.ts` /
 > `settingsSnapshot.ts` (the latter gained the `browser` object with
 > `disableNativeWebAuthn`, the Settings "Browser" tab's WebAuthn-suppression
-> flag), and `settings-ipc.ts`. **There is deliberately no `schemaVersion` field and no
+> flag), and `settings-ipc.ts`. Most recently `userInput.ts` gained an optional
+> `actions` list (1–4 one-click labels) and made `question` optional — the
+> `ask_user` actions mode (see §5 tools). **There is deliberately no `schemaVersion` field and no
 > migration code anywhere**: the project has no deployed users and no
 > backward-compatibility obligation, so the persisted shape may change freely.
 > Do not add a version field or a migration. Loading a hand-edited
@@ -342,7 +344,9 @@ a tool folder.
 src/tools/<name>/
   tool.ts              exports `tool: ToolModule` (manifest + createExecutor(host))
   <name>.ts            the tool's own request/result types, URL building, projection
-  renderer/index.ts    exports `renderer: ToolRenderer` (getDetails, optional result table)
+  renderer/index.ts    exports `renderer: ToolRendererModule` (describeCall = getDetails;
+                       `readConversation` for `presentation: 'conversation'`,
+                       `readTableMessage` for `presentation: 'message'`)
 ```
 
 - The contract lives in `src/shared/tools/core/` (`toolModule.ts`,
@@ -367,9 +371,28 @@ src/tools/<name>/
   as a conversation rather than a billet: its renderer sets
   `presentation: 'conversation'` and supplies `readConversation`, so the
   transcript paints the question as an assistant message and the answer as a
-  user message. The SDK has a built-in `ask_user`; this app leaves it
+  user message. It also has an **actions** mode (`actions`: 1–4 button labels,
+  mutually exclusive with `options`/`freeInput`): the composer shows one button
+  per action (no text field, no Send) and a single click answers immediately -
+  the search skills use one, `["Load more"]`, with the composer's Stop as the
+  cancel. An actions-only call has no `question`, so the transcript paints
+  nothing for it. The SDK has a built-in `ask_user`; this app leaves it
   un-allowlisted and ships its own (see docs/compatibility.md 4.3). A dev-only
   `!!ask ...` composer trigger previews the UI locally (see section 9).
+- `aem_query` is **JSON-only**: it renders no table. Its `toPayload` keeps the
+  structured `rows`/`pagination`/`selection` so the model can hand the result on
+  (and so a diagnostic sees it), but the transcript shows only the billet. Its
+  instructions tell the model to present results with `format_table`.
+- `format_table` is the **only** table renderer. It takes the JSON the model
+  already holds as `data` (an array of rows, or an object with a `rows` array -
+  typically the whole `aem_query` result) plus `mode: 'new' | 'append'`, and its
+  renderer sets `presentation: 'message'` + `readTableMessage`, so the transcript
+  paints an assistant message - an optional `Total: ...` line above a
+  `#`-prefixed Spectrum table, the Path cell clickable, every cell via
+  `textContent` - instead of a billet. `transcriptView.ts` groups
+  `format_table` calls into **runs** (new starts one, append adds to it), unions
+  the columns, and paints one table at the run's last call; the call lines are
+  hidden. `getDetails()` is the safety net only: `N rows` / `Rows: N`.
 - `aem_environment_facts` reports the current host's origin and its
   content/component roots. It takes no arguments: the application resolves the
   facts from the live pane URL matched against the settings hosts, through
@@ -484,6 +507,18 @@ and forbids asking the user to restate it; the skill bodies then say that input
 is the search string. Both halves are load-bearing: without the framing the
 model loads the skill and asks what to search for (observed live).
 
+Both search skills now answer with **exactly one application-rendered table**:
+`/search` runs `aem_query` (`fulltext`, the host roots, `properties: []`,
+`limit: 20`) and hands each page to `format_table` (`mode: 'new'` then
+`'append'`), then offers one `ask_user` action (`["Load more"]`) while more
+results exist; `/semantic-search` recalls with `aem_query`, reads candidates with
+`aem_get_json`, judges by meaning, and `format_table`s the passing
+`{ jcr:path, property, citation }` rows. The application suppresses the model's
+own prose for a turn whose prompt invokes either skill (`isDeterministicTablePrompt`
+in `src/renderer/src/chat/transcriptViewModel.ts`), so the table is the whole
+answer. See the `format_table` bullet in the tools section above and
+`docs/verification.md` "Deterministic search tables ... (2026-10-09)".
+
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**
 session instructions (`AEM_ASSISTANT_INSTRUCTIONS_POLICY`, composed by
@@ -526,7 +561,12 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2670 passed / 14 skipped** (the +1 since
+Current baseline: **`npm run test` → 2680 passed / 14 skipped** (the +10 since
+2670 is the deterministic-search-tables work — the `format_table` tool, the
+`ask_user` actions mode, composer helpers, adapter/fake `actions`, and transcript
+run-grouping/prose-suppression cases, less the deleted
+`queryResultViewModel.test.ts`; see `docs/verification.md` "Deterministic search
+tables ... (2026-10-09)"; before that, the +1 since
 2669 is the OpenRouter auth-read race fix — `getAuthStatus`/`getAuthPresence`
 now await the in-flight install, so a Settings open that races startup no longer
 leaves the Model picker disabled; see `docs/verification.md` "OpenRouter's auth
@@ -614,7 +654,18 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 108 tests; typically 107 passed / 1 failed in the full run** (the
+**Playwright → 115 tests; a full run is typically 109 passed / 6 failed.** The
+deterministic-search-tables work added `tests/e2e/search-tables.spec.ts` (2
+cases), one ask-user `actions` case, and rewrote `step08-query-results.spec.ts`
+to the `aem_query` billet + `format_table` message flow (still 5 cases) — see
+`docs/verification.md` "Deterministic search tables ... (2026-10-09)". The 6
+failures are **pre-existing and environment-bound**: `settings-tabs.spec.ts:30`
+and four `step05-network-error.spec.ts` cases reproduce identically on a clean
+HEAD (the browser-pane hosts panel / network banner), and
+`chat-transcript-scroll.spec.ts` is the documented load-correlated flake (green
+in isolation). The new specs and the ask-user case are green. (The previously
+documented `settings-tabs.spec.ts:121` note below is stale.) The older baseline
+narrative follows: the
 +1 since 107 is `home-screen.spec.ts`, proving the welcome screen's close control
 sits on the identical screen position a panel's close control does, so opening
 and closing Settings over the home screen does not move it — see
