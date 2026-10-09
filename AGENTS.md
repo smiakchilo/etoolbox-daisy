@@ -565,8 +565,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2706 passed / 14 skipped** (net −1 against
-the previous entry's 2707 — the "Settings changes apply on the next turn" work
+Current baseline: **`npm run test` → 2708 passed / 14 skipped** (net +2 against
+the previous entry's 2706 — the transcript no longer lands on the *top* of the
+newest entry: `transcriptFollower` now recognises its own programmatic scroll by
+the `scrollTop` it left the viewport at, so a late-laying-out entry (an
+`sp-table`) can no longer be misread as the reader scrolling away — see
+`docs/verification.md` "The transcript landed on the *top* of the newest entry
+... (2026-10-09)"; before that, 2706 was net −1 against the previous entry's 2707
+— the "Settings changes apply on the next turn" work
 removed 7 obsolete lock/refusal cases and added 7 (6 deferred-recycler cases plus
 the `beforeSendMessage` case), with the 5-case lock predicate shrinking to a
 4-case turn-in-flight predicate). Model, proxy,
@@ -683,7 +689,12 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 115 tests; a full run is typically 109 passed / 6 failed.** The
+**Playwright → 116 tests; a full run is typically 110 passed / 6 failed.** The
++1 since 115 is the `chat-transcript-scroll.spec.ts` case proving a tool-call
+billet as the newest entry is followed to its bottom (and its expansion too):
+the follow rule covers every transcript entry, not only an assistant message —
+see `docs/verification.md` "The follow rule covers tool-call billets too
+(2026-10-09)". The
 deterministic-search-tables work added `tests/e2e/search-tables.spec.ts` (2
 cases), one ask-user `actions` case, and rewrote `step08-query-results.spec.ts`
 to the `aem_query` billet + `format_table` message flow (still 5 cases) — see

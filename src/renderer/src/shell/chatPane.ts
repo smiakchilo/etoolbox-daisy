@@ -1068,9 +1068,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   });
 
   /**
-   * Keeps the transcript on its newest entry while the reader is at the bottom,
-   * and re-pins it across layout changes (a banner appearing, the composer
-   * growing, a late-loading image) that used to look like scrolling away - see
+   * Keeps the transcript on its newest entry - an assistant message or a
+   * tool-call billet alike - while the reader is at the bottom, and re-pins it
+   * across layout changes (a banner appearing, the composer growing, a
+   * late-loading image) that used to look like scrolling away - see
    * `transcriptFollower.ts`. Every repaint path (the throttled timer,
    * `startNewSession`'s immediate one, a link-context change) goes through here
    * so they can never disagree about following.

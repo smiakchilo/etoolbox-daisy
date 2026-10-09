@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import type { ScriptedTurn } from '../../src/main/agents/fakeAgentService';
+import { AEM_QUERY_TOOL_NAME } from '../../src/tools/aem-query/aemQuery';
+import type { ScriptedStep, ScriptedTurn } from '../../src/main/agents/fakeAgentService';
 import {
   FAKE_AGENT_SERVICE_ENV_VAR,
   TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
@@ -33,6 +34,19 @@ const COMPOSER_SEND = '.chat-composer__send';
 const COMPOSER_FIELD = '.chat-composer textarea';
 const TRANSCRIPT = '.chat-transcript';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
+const TOOL_CALL = '.chat-tool-call';
+
+/** A scripted `aem_query` tool call: its billet is the newest transcript entry. */
+function queryStep(data: unknown): ScriptedStep {
+  return {
+    kind: 'toolCall',
+    call: {
+      toolName: AEM_QUERY_TOOL_NAME,
+      arguments: { predicates: { path: '/content/site' } },
+      decision: { kind: 'approved', outcome: { ok: true, data } as never },
+    },
+  };
+}
 
 /** `scrollHeight - scrollTop - clientHeight`; 0 means the scroller is at its bottom. */
 async function bottomGap(shell: Page): Promise<number> {
@@ -241,6 +255,35 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
     await scriptTurn(app, { steps: [{ kind: 'delta', text: 'Done.' }] });
     await sendViaComposer(shell, 'one more');
     await flushFake(app);
+    await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
+  });
+
+  test('a tool-call billet as the newest entry is followed to its bottom too', async () => {
+    // The follow rule is about the newest *entry*, not only an assistant
+    // message: a tool-call billet is appended, and later grows when the reader
+    // expands it, and both must land at its bottom.
+    await scriptTurn(app, {
+      steps: [
+        { kind: 'delta', text: longAnswer(60) },
+        queryStep({ rows: [{ 'jcr:path': '/content/site/a' }], total: 1 }),
+      ],
+    });
+    await sendViaComposer(shell, 'query the site');
+    await flushFake(app);
+
+    const billet = shell.locator(TOOL_CALL).last();
+    await expect(billet).toBeVisible({ timeout: 30_000 });
+    // The billet, not a message, is the last element - and it is on screen to
+    // its own bottom, not stranded at its top.
+    const lastChild = await shell
+      .locator(`${TRANSCRIPT} .chat-transcript__messages`)
+      .evaluate((el) => el.lastElementChild?.className ?? '');
+    expect(lastChild).toContain('chat-tool-call');
+    await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
+
+    // Expanding the newest billet grows it; the transcript follows that growth
+    // to the bottom as well.
+    await billet.locator('.chat-tool-call__toggle').click();
     await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
   });
 });

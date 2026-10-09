@@ -129,6 +129,50 @@ describe('createTranscriptFollower', () => {
     follower.dispose();
   });
 
+  it('keeps following when the newest entry grows before our own scroll event arrives', () => {
+    // The reported "lands on the top of the last message" case: a repaint pins
+    // the viewport to the bottom of the entry as it is so far rendered, then the
+    // entry finishes laying out (taller), and only afterwards does the browser
+    // deliver the `scroll` event for our own programmatic scroll. Reading that
+    // event's geometry against the taller scroller misreads a pinned reader as
+    // having scrolled away and strands the entry at its top.
+    const { element, box } = scroller(1000, 400);
+    const follower = createTranscriptFollower({ scroller: element });
+    element.scrollTop = 600; // pinned to the bottom of the pre-entry content
+
+    follower.repaint(() => {
+      box.scrollHeight = 1200; // the entry appears; we pin to its (short) bottom
+    });
+    box.scrollHeight = 2000; // the entry finishes laying out, taller
+    element.dispatchEvent(new dom.window.Event('scroll')); // our own scroll lands late
+
+    // The reader never scrolled, so a later layout change must still reach the
+    // bottom - not leave the viewport at the top of the grown entry.
+    triggerLayoutChange();
+    expect(element.scrollTop).toBe(2000);
+    follower.dispose();
+  });
+
+  it('still respects a reader scroll that lands away from our own position', () => {
+    // Guards the fix above from over-reaching: only a scroll event at the exact
+    // position we set is ours; a reader move to any other position is intent.
+    const { element, box } = scroller(1000, 400);
+    const follower = createTranscriptFollower({ scroller: element });
+    element.scrollTop = 600;
+    follower.repaint(() => {
+      box.scrollHeight = 1200;
+    }); // ownScrollTop === 1200
+
+    element.scrollTop = 300; // the reader scrolls up
+    element.dispatchEvent(new dom.window.Event('scroll'));
+
+    box.clientHeight = 200;
+    triggerLayoutChange();
+
+    expect(element.scrollTop).toBe(300);
+    follower.dispose();
+  });
+
   it('does not re-pin on a layout change once the reader has scrolled up', () => {
     const { element, box } = scroller(1000, 400);
     const follower = createTranscriptFollower({ scroller: element });
