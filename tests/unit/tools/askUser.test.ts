@@ -207,6 +207,15 @@ describe('ask_user transcript composition', () => {
     expect(renderer.readConversation?.({ actions: ['Load more'] })).toBeUndefined();
   });
 
+  it('renders nothing for an actions call even when it also carries a question', () => {
+    // Actions are captionless: neither the question nor the answer is painted,
+    // so a question passed alongside `actions` is suppressed too. Both stay in
+    // the chat journal.
+    expect(
+      renderer.readConversation?.({ question: 'Ignored caption', actions: ['Action'] }),
+    ).toBeUndefined();
+  });
+
   it('still composes a describeCall fallback (never displayed)', () => {
     const details = renderer.describeCall({ question: 'Pick', options: ['A', 'B'] });
     expect(details.summary).toBe('Pick');

@@ -558,6 +558,19 @@
   position: relative;
 }
 
+/* While the composer carries one-click action buttons it stops being an input
+   and becomes a button strip: no visible border, a contrasting gray fill under
+   the buttons. `border-color: transparent` (not `border: none`) keeps the 1px
+   box so nothing shifts, and the `:has()` selector (0,3,0) outranks base.css's
+   shared `.chat-composer__frame:focus-within` rule (0,2,0) so focus never
+   reintroduces the edge. The border transition is switched off so entering the
+   mode snaps the edge away instead of animating it out. */
+.chat-composer__frame:has(.chat-ask__actions:not([hidden])) {
+  border-color: transparent;
+  background: var(--spectrum-gray-200, #eaeaea);
+  transition: none;
+}
+
 /* The `/` autocomplete's anchor: a zero-height, non-interactive point at the
    frame's top-left, so the popup opens flush with the composer's left edge and
    can flip below the top edge when there is no room above. */
@@ -645,6 +658,22 @@
 }
 
 .chat-ask[hidden] {
+  display: none;
+}
+
+/* The one-click action buttons of an `actions` prompt. They live in the
+   composer's action row (not the ask panel), so they share a line with
+   Cancel: `margin-inline-end: auto` pins them left while Cancel stays right.
+   The gap is the project's 100 spacing token, matching the Send/Stop row and
+   the link popover. `nowrap` keeps them on a single line. */
+.chat-ask__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--spectrum-spacing-100, 8px);
+  margin-inline-end: auto;
+}
+
+.chat-ask__actions[hidden] {
   display: none;
 }
 

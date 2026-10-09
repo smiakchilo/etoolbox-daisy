@@ -94,9 +94,10 @@ export const ASK_USER_TOOL_DESCRIPTOR: ToolDescriptor = {
     'Ask the user to choose, and wait for their answer. Provide a `question` and a list of ' +
     '`options` to choose from; set `multiple: true` to let them pick several; set ' +
     '`freeInput: true` to also offer a typed answer. To offer one-click buttons instead (no ' +
-    "text field) - for example a 'Load more' affordance - pass `actions`: a short list of " +
-    'button labels; clicking one answers immediately. The chosen option(s), action, or the ' +
-    'typed answer come back as this call\u2019s result.',
+    "text field and no caption) - for example a 'Load more' affordance - pass `actions`: a " +
+    'short list of button labels. Each label must be self-explanatory, since no question is ' +
+    'shown with the buttons; clicking one answers immediately. The chosen option(s), action, ' +
+    'or the typed answer come back as this call\u2019s result.',
   // The base object, not the refined schema: `z.toJSONSchema` cannot describe a
   // `.superRefine` side-constraint, and the cross-field rules are enforced by
   // the executor's validation, not by the model-facing JSON schema.

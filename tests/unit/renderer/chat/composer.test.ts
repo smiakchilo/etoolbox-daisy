@@ -621,4 +621,60 @@ describe('createComposer', () => {
       expect(field.value).toBe('newest');
     });
   });
+
+  describe('an ask-user actions prompt', () => {
+    function composerInActionsMode(onAnswer: () => void): Composer {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer });
+      // A question is only ever asked mid-turn, so the composer is in "stop".
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({
+        actions: ['Refine', 'Show more'],
+        multiple: false,
+        freeInput: false,
+      });
+      return composer;
+    }
+
+    it('shows one button per action, in the action row beside Cancel, with no caption', () => {
+      const composer = composerInActionsMode(vi.fn());
+
+      const actionsRow = query(composer.element, '.chat-ask__actions');
+      expect(actionsRow.hasAttribute('hidden')).toBe(false);
+      const buttons = composer.element.querySelectorAll('.chat-ask__action');
+      expect(buttons).toHaveLength(2);
+      expect(buttons[0]?.textContent).toBe('Refine');
+      expect(buttons[1]?.textContent).toBe('Show more');
+
+      // The buttons share the composer's action row with Cancel (the Stop
+      // control), so all buttons sit on one line.
+      const row = query(composer.element, '.chat-composer__actions');
+      expect(row.contains(actionsRow)).toBe(true);
+      expect(row.contains(query(composer.element, '.chat-composer__stop'))).toBe(true);
+
+      // Actions are captionless: the ask panel is hidden and paints no question.
+      const askPanel = query(composer.element, '.chat-ask');
+      expect(askPanel.hasAttribute('hidden')).toBe(true);
+      expect(composer.element.querySelector('.chat-ask__question')).toBeNull();
+
+      // The text field and Send are hidden; Cancel (Stop) stays available.
+      expect(isShown(query(composer.element, 'sp-textfield'))).toBe(false);
+      expect(isShown(query(composer.element, '.chat-composer__send'))).toBe(false);
+      expect(isShown(query(composer.element, '.chat-composer__stop'))).toBe(true);
+    });
+
+    it('answers with the clicked label and leaves the interactive UI', () => {
+      const onAnswer = vi.fn();
+      const composer = composerInActionsMode(onAnswer);
+
+      composer.element
+        .querySelectorAll('.chat-ask__action')
+        .item(1)
+        .dispatchEvent(new dom.window.MouseEvent('click'));
+
+      expect(onAnswer).toHaveBeenCalledWith({ selections: ['Show more'], freeform: null });
+      // A click leaves the interactive UI: the field returns, the buttons go.
+      expect(isShown(query(composer.element, 'sp-textfield'))).toBe(true);
+      expect(query(composer.element, '.chat-ask__actions').hasAttribute('hidden')).toBe(true);
+    });
+  });
 });

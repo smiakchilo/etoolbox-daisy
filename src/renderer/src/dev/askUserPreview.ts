@@ -1,4 +1,4 @@
-import type { UserInputRequest } from '../../../shared';
+import { type UserInputRequest, USER_INPUT_MAX_ACTIONS } from '../../../shared';
 
 /**
  * The dev-only ask-user preview (Tier 1): a `!!ask ...` cheat code typed into
@@ -33,6 +33,8 @@ function numberedOptions(count: number): string[] {
  *   !!ask multi 8          multiple, 8 options (multi-select dropdown)
  *   !!ask free             free input only
  *   !!ask radio 3 +free    options plus the free-input link
+ *   !!ask actions          one-click actions: a single "Action" button (no question/text field)
+ *   !!ask actions 3        one-click actions: 3 buttons, all labelled "Action"
  *   !!ask long             long question/labels (wrapping)
  *   !!ask nasty            HTML-ish labels (proves textContent, never HTML)
  */
@@ -84,6 +86,27 @@ export function parseAskUserPreview(input: string): UserInputRequest | undefined
       freeInput,
     };
   }
+  if (kind === 'actions') {
+    const requested = Number.parseInt(tokens[1] ?? '1', 10);
+    const count = Number.isFinite(requested)
+      ? Math.min(Math.max(requested, 1), USER_INPUT_MAX_ACTIONS)
+      : 1;
+    // The label is deliberately neutral ("Action"): the preview exercises the
+    // buttons' layout, not their wording. The multi case still carries a
+    // question so the preview proves a caption passed alongside actions is
+    // suppressed - in the composer and in the transcript. An `actions` request
+    // carries no options or free-input - a click answers on its own - so
+    // `multiple`/`freeInput` stay false.
+    if (count === 1) {
+      return { actions: ['Action'], multiple: false, freeInput: false };
+    }
+    return {
+      question: 'Choose an action',
+      actions: Array.from({ length: count }, () => 'Action'),
+      multiple: false,
+      freeInput: false,
+    };
+  }
   if (kind === 'radio' || kind === 'multi') {
     const requested = Number.parseInt(tokens[1] ?? '3', 10);
     const count = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : 3;
@@ -96,7 +119,7 @@ export function parseAskUserPreview(input: string): UserInputRequest | undefined
   }
 
   return {
-    question: `Unrecognised preview "${rest}" - try: radio N, multi N, free, long, nasty`,
+    question: `Unrecognised preview "${rest}" - try: radio N, multi N, free, actions [N], long, nasty`,
     options: DEFAULT_OPTIONS,
     multiple: false,
     freeInput: false,

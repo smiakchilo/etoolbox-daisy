@@ -457,6 +457,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // taken effect.
     appliedProxyKey = currentProxy?.id ?? '';
 
+    // A same-origin navigation - a transcript link, a CRX/Edit popover, a typed
+    // same-host address, a host re-select - changes the page, not the AEM
+    // context (same origin, same session, same request target), so it must
+    // neither invalidate in-flight tool requests nor cancel the agent's turn.
+    // This is the *same* rule the Chromium `did-start-navigation` listener
+    // applies through `isSameOriginNavigation`; that listener also logs the load
+    // as `BROWSER_NAVIGATION`, so a skipped bump here is not silent. A switch to
+    // a different origin - or any switch while no server is active - still
+    // bumps.
+    //
     // Bumped *before* the switch is attempted, not after it succeeds. From this
     // point the view is no longer reliably showing the document that any
     // in-flight tool request was issued against, and a request invalidated by a
@@ -464,7 +474,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // reply from the outgoing server accepted as describing the incoming one is
     // not. `did-start-navigation` also fires during the switch and bumps again;
     // the epoch only has to move forward, never to move exactly once.
-    navigationEpoch.bump('server_switch');
+    if (!isSameOriginNavigation(targetUrl ?? server.origin)) {
+      navigationEpoch.bump('server_switch');
+    }
 
     const outcome = await switchController.switchTo(server, targetUrl);
     if (!outcome.ok) {

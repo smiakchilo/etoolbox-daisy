@@ -323,29 +323,69 @@ test.describe('ask-user interactive question', () => {
     await expect(shell.locator('.chat-ask__popover')).toHaveCount(0);
   });
 
-  test('an actions prompt answers on a single click and paints nothing in the transcript', async () => {
-    await scriptTurn(app, { steps: [{ kind: 'inputRequest', actions: ['Load more'] }] });
+  test('an actions prompt fits its buttons and Cancel on one line, and paints nothing in the transcript', async () => {
+    await scriptTurn(app, {
+      steps: [{ kind: 'inputRequest', actions: ['Refine', 'Show more'] }],
+    });
     // A `/search` prompt: its assistant prose is suppressed, so nothing but the
     // (absent) message is left for the transcript to draw.
     await sendViaComposer(shell, '/search waldo');
     await flushFake(app);
 
     await expect(shell.locator('.chat-ask__actions')).toBeVisible();
-    await expect(shell.locator('.chat-ask__action')).toHaveCount(1);
-    await expect(shell.locator('.chat-ask__action')).toHaveText('Load more');
-    // Actions have no question sentence, no text field, and no Send - just the
-    // button and Stop.
+    await expect(shell.locator('.chat-ask__action')).toHaveCount(2);
+    await expect(shell.locator('.chat-ask__action').nth(0)).toHaveText('Refine');
+    await expect(shell.locator('.chat-ask__action').nth(1)).toHaveText('Show more');
+    // Actions have no caption sentence, no text field, and no Send - just the
+    // buttons and Cancel.
     await expect(shell.locator(ASK_QUESTION)).toHaveCount(0);
     await expect(shell.locator(COMPOSER_FIELD)).toBeHidden();
     await expect(shell.locator(COMPOSER_SEND)).toBeHidden();
     await expect(shell.locator(COMPOSER_STOP)).toBeVisible();
     await expect.poll(() => registered(shell, 'sp-action-button')).toBe(true);
 
+    // All buttons share one line: the two actions and Cancel's vertical extents
+    // overlap, the actions are separated by a gap, and Cancel is rightmost.
+    const first = await shell.locator('.chat-ask__action').nth(0).boundingBox();
+    const second = await shell.locator('.chat-ask__action').nth(1).boundingBox();
+    const cancel = await shell.locator(COMPOSER_STOP).boundingBox();
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(cancel).not.toBeNull();
+    if (first && second && cancel) {
+      expect(first.y).toBeLessThan(second.y + second.height);
+      expect(second.y).toBeLessThan(first.y + first.height);
+      expect(second.y).toBeLessThan(cancel.y + cancel.height);
+      expect(cancel.y).toBeLessThan(second.y + second.height);
+      // A visible gap between the two action buttons...
+      expect(second.x - (first.x + first.width)).toBeGreaterThan(2);
+      // ...and Cancel sits to the right of the last action.
+      expect(cancel.x).toBeGreaterThan(second.x + second.width);
+    }
+
+    // The frame becomes a contrasting gray strip with no visible border while
+    // the action buttons are shown.
+    const frameStyle = await shell.locator('.chat-composer__frame').evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, borderColor: style.borderTopColor };
+    });
+    // `--spectrum-gray-200` resolves to #e6e6e6 under the pinned Spectrum theme.
+    expect(frameStyle.background).toBe('rgb(230, 230, 230)');
+    expect(frameStyle.borderColor).toBe('rgba(0, 0, 0, 0)');
+
     // One click answers; no Submit.
-    await shell.locator('.chat-ask__action').click();
+    await shell.locator('.chat-ask__action').first().click();
     await flushFake(app);
 
     await expect(shell.locator(ASK_PANEL)).toBeHidden();
+    // Leaving actions mode restores the ordinary bordered white input.
+    await expect
+      .poll(() =>
+        shell
+          .locator('.chat-composer__frame')
+          .evaluate((element) => getComputedStyle(element).backgroundColor),
+      )
+      .toBe('rgb(255, 255, 255)');
     // The actions call renders nothing in the transcript: the (empty)
     // `.chat-ask-user` shell it owns carries no message at all.
     await expect(shell.locator('.chat-ask-user').last().locator('.chat-message')).toHaveCount(0);

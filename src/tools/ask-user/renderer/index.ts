@@ -63,10 +63,20 @@ function describeCall(
   };
 }
 
+/** Whether the call is the one-click `actions` mode. */
+function isActionsArgs(args: Readonly<Record<string, JsonValue>>): boolean {
+  const actions = asStringArray(args['actions']);
+  return actions !== undefined && actions.length > 0;
+}
+
 function readConversation(
   args: Readonly<Record<string, JsonValue>>,
   data?: JsonValue,
 ): ToolConversationItem | undefined {
+  // An `actions` prompt never paints in the transcript: its buttons are
+  // self-explanatory, so neither the (optional) question nor the clicked
+  // answer is shown. Both stay in the chat journal. See AGENTS.md section 5.
+  if (isActionsArgs(args)) return undefined;
   const question = questionFromArgs(args);
   if (question === undefined) {
     // A shape this build does not recognise: render nothing rather than a

@@ -157,6 +157,12 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   // question reads "question, then field".
   const askPanel = el('div', { attrs: { class: 'chat-ask', hidden: '' } });
 
+  // The one-click buttons of an `actions` ask-user prompt. Unlike the options,
+  // these are NOT in the ask panel: they share the composer's action row with
+  // Send/Stop so every button sits on one line, with Cancel pinned right (see
+  // `chat.css`'s `.chat-ask__actions`). Hidden until an actions request arrives.
+  const actionButtons = el('div', { attrs: { class: 'chat-ask__actions', hidden: '' } });
+
   // Every message the composer would once have shown inline (the connecting
   // state, a send-blocked reason, a send failure) is routed to the chat pane's
   // single `sp-alert-banner` instead - see `chatPane.ts`'s
@@ -476,24 +482,20 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   }
 
   /**
-   * The one-click action buttons of an `actions` prompt. Each answers the
-   * instant it is clicked (there is no Submit), so a click leaves the
-   * interactive UI and delivers the action label as the whole answer.
+   * One one-click action button. It answers the instant it is clicked (there
+   * is no Submit), so a click leaves the interactive UI and delivers the action
+   * label as the whole answer.
    */
-  function buildActionButtons(actions: readonly string[]): HTMLElement {
-    const row = el('div', { attrs: { class: 'chat-ask__actions' } });
-    for (const action of actions) {
-      const button = el('sp-action-button', {
-        attrs: { class: 'chat-ask__action', 'aria-label': action },
-        text: action,
-      });
-      button.addEventListener('click', () => {
-        exitInputMode();
-        callbacks.onAnswer?.(buildActionAnswer(action));
-      });
-      row.append(button);
-    }
-    return row;
+  function buildActionButton(action: string): HTMLElement {
+    const button = el('sp-action-button', {
+      attrs: { class: 'chat-ask__action', 'aria-label': action },
+      text: action,
+    });
+    button.addEventListener('click', () => {
+      exitInputMode();
+      callbacks.onAnswer?.(buildActionAnswer(action));
+    });
+    return button;
   }
 
   /** Paints the current question and its controls into `askPanel`. */
@@ -505,20 +507,27 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     if (request === undefined) {
       askPanel.replaceChildren();
       askPanel.hidden = true;
+      actionButtons.replaceChildren();
+      actionButtons.hidden = true;
       return;
-    }
-    const children: HTMLElement[] = [];
-    if (request.question !== undefined) {
-      children.push(el('p', { attrs: { class: 'chat-ask__question' }, text: request.question }));
     }
     const actions = request.actions;
     if (actions !== undefined && actions.length > 0) {
-      // Actions replace the whole controls area: buttons only, no question
-      // options, no free-input escape hatch (the two modes are exclusive).
-      children.push(buildActionButtons(actions));
-      askPanel.replaceChildren(...children);
-      askPanel.hidden = false;
+      // Actions are a mode of their own: one-click buttons that share the
+      // composer's action row with Cancel (so they sit on one line) and carry
+      // no caption - a button's label explains itself. The ask panel stays
+      // empty and hidden.
+      actionButtons.replaceChildren(...actions.map(buildActionButton));
+      actionButtons.hidden = false;
+      askPanel.replaceChildren();
+      askPanel.hidden = true;
       return;
+    }
+    actionButtons.replaceChildren();
+    actionButtons.hidden = true;
+    const children: HTMLElement[] = [];
+    if (request.question !== undefined) {
+      children.push(el('p', { attrs: { class: 'chat-ask__question' }, text: request.question }));
     }
     const freeActive = draft.freeInputActive || request.options === undefined;
     if (!freeActive && request.options !== undefined) {
@@ -550,6 +559,8 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     draft.freeInputActive = false;
     askPanel.replaceChildren();
     askPanel.hidden = true;
+    actionButtons.replaceChildren();
+    actionButtons.hidden = true;
     field.value = '';
     field.style.display = '';
     applyPresentation();
@@ -563,9 +574,11 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       if (isActionsRequest(inputRequest)) {
         // Actions mode: buttons only. The text field and Send are hidden (a
         // click answers directly, so there is nothing to submit); Stop stays so
-        // the turn can still be cancelled.
+        // the turn can still be cancelled. The action buttons live in the
+        // action row (see `actionButtons`), on the same line as Stop, so the
+        // ask panel is left empty and hidden.
         field.style.display = 'none';
-        askPanel.style.display = '';
+        askPanel.style.display = 'none';
         sendButton.style.display = 'none';
         stopButton.style.display = '';
         return;
@@ -785,7 +798,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
   const actions = el('div', {
     attrs: { class: 'chat-composer__actions' },
-    children: [sendButton, stopButton],
+    children: [actionButtons, sendButton, stopButton],
   });
   // The `/` autocomplete anchors here, not to `frame`: a zero-height marker at
   // the frame's top-left. Spectrum's flip then has somewhere on-screen to put

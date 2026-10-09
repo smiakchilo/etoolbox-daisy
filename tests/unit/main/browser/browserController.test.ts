@@ -1180,6 +1180,47 @@ describe('browserController same-origin navigation and invalidation logging', ()
     expect(harness.controller.navigationEpoch.current()).toBeGreaterThan(before);
   });
 
+  it('does NOT invalidate an app navigation (chat link) that stays on the active origin', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+    const before = harness.controller.navigationEpoch.current();
+    harness.loggerSpies.info.mockClear();
+
+    // The exact path a transcript link takes: `navigate` resolves the URL
+    // against the configured hosts and calls `switchServer(id, url)`. Same
+    // origin, so the AEM context is unchanged and the turn must survive.
+    const result = await harness.controller.navigate(
+      'https://author.example/crx/de/index.jsp#/content/other',
+    );
+
+    expect(result.ok).toBe(true);
+    expect(harness.controller.navigationEpoch.current()).toBe(before);
+    const codes = harness.loggerSpies.info.mock.calls.map((call) => call[0] as string);
+    expect(codes).not.toContain('BROWSER_SWITCH_STARTED');
+    expect(codes).toContain('BROWSER_SWITCH_COMPLETED');
+  });
+
+  it('still invalidates a switch to a different origin while a server is active', async () => {
+    const serverA = makeServer();
+    const serverB = makeServer({
+      id: newServerId(() => 'server-b'),
+      origin: 'https://other.example',
+    });
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, {
+      ...defaultAppSettings(),
+      hosts: [serverA, serverB],
+    });
+    await harness.controller.switchServer(serverA.id);
+    const before = harness.controller.navigationEpoch.current();
+
+    await harness.controller.switchServer(serverB.id);
+
+    expect(harness.controller.navigationEpoch.current()).toBeGreaterThan(before);
+  });
+
   it('logs the start and completion of a server switch', async () => {
     const server = makeServer();
     const harness = makeControllerHarness();
