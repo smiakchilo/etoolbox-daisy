@@ -100,6 +100,21 @@ describe('createAskUserExecutor', () => {
     if (!result.ok) expect(result.error.code).toBe('CANCELLED');
   });
 
+  it('maps a dismissed (empty) answer to a CANCELLED failure, not an empty choice', async () => {
+    // The composer's cancel delivers `buildNoAnswer()`: neither a selection nor
+    // freeform text. A real answer is never empty, so this reads as a decline.
+    const host = makeHost({ selections: [], freeform: null });
+    const result = await createAskUserExecutor(host)(
+      { question: 'Pick', options: ['a', 'b'] },
+      callContext,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('CANCELLED');
+      expect(result.error.message).toContain('dismissed');
+    }
+  });
+
   it('honours an already-aborted signal without asking', async () => {
     let asked = false;
     const host = makeHost({ selections: [], freeform: null }, () => {

@@ -109,6 +109,24 @@ function succeededData(view: ToolCallView): JsonValue | undefined {
   return view.status.kind === 'succeeded' ? view.status.data : undefined;
 }
 
+/**
+ * The rendered content of a table message as one comparable string: everything
+ * `renderTableMessage` depends on - the mode, total, columns and rows, plus the
+ * link context (a `Path` cell's href is resolved against the active host). Used
+ * to skip rebuilding a table that has not changed - see
+ * `createTranscriptView`'s `renderedTableSignatures`.
+ */
+function tableMessageSignature(message: ToolTableMessage, context: LinkContext): string {
+  return [
+    message.mode,
+    message.total ?? '',
+    context.activeOrigin ?? '',
+    context.hostOrigins.join(','),
+    message.table.columns.join('\u0001'),
+    message.table.rows.map((row) => row.join('\u0001')).join('\u0002'),
+  ].join('\u0000');
+}
+
 function renderToolCallToggle(
   view: ToolCallView,
   toolCallId: string,
@@ -270,6 +288,16 @@ export function createTranscriptView(
   let expandedThinking = false;
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
   const getKnownSkillNames = options.getKnownSkillNames ?? (() => []);
+
+  // The content signature of the table last rendered into each message shell.
+  // `updateShell` runs for every item on every repaint (a streaming delta
+  // repaints the whole transcript), and rebuilding an unchanged `sp-table` is
+  // not free: a freshly-created custom element has no height until it upgrades,
+  // so the transcript momentarily collapses and the stick-to-bottom follower can
+  // pin to the wrong place - the reported "the whole table was re-rendered and
+  // the transcript jumped up to its top". A table is rebuilt only when its
+  // rows, columns, total, or link context actually change.
+  const renderedTableSignatures = new WeakMap<HTMLElement, string>();
 
   // The one travelling hover popover for pane links that offer actions. It is
   // undefined in a jsdom unit test (the Spectrum overlay is not registered
@@ -481,47 +509,47 @@ export function createTranscriptView(
   }
 
   /**
-   * Renders one run's table as the assistant **message**: an optional total line
-   * above a Spectrum `<sp-table>`, with a leading `#` row-number column. The
-   * columns come from the accumulated `format_table` calls; a zero-row run
+   * Renders one run's table as the assistant **message**: a Spectrum `<sp-table>`
+   * with a leading `#` row-number column and, beneath it, an optional total line.
+   * The columns come from the accumulated `format_table` calls; a zero-row run
    * renders only its total line (no empty table).
    */
   function renderTableMessage(message: ToolTableMessage): readonly HTMLElement[] {
     const nodes: HTMLElement[] = [];
+    const { columns, rows } = message.table;
+    if (rows.length > 0) {
+      const head = el('sp-table-head', {});
+      head.append(el('sp-table-head-cell', { attrs: {}, text: '#' }));
+      for (const column of columns) {
+        head.append(el('sp-table-head-cell', { attrs: {}, text: column }));
+      }
+
+      const body = el('sp-table-body', {});
+      rows.forEach((row, index) => {
+        const rowEl = el('sp-table-row', {});
+        rowEl.append(
+          el('sp-table-cell', {
+            attrs: { class: 'chat-table-message__index' },
+            text: String(index + 1),
+          }),
+        );
+        columns.forEach((column, columnIndex) => {
+          const cell = el('sp-table-cell', {});
+          cell.append(renderMessageCell(row[columnIndex] ?? '', column));
+          rowEl.append(cell);
+        });
+        body.append(rowEl);
+      });
+
+      const tableEl = el('sp-table', {
+        attrs: { class: 'chat-table-message__table', size: 's' },
+      });
+      tableEl.append(head, body);
+      nodes.push(tableEl);
+    }
     if (message.total !== undefined) {
       nodes.push(el('p', { attrs: { class: 'chat-table-message__total' }, text: message.total }));
     }
-    const { columns, rows } = message.table;
-    if (rows.length === 0) return nodes;
-
-    const head = el('sp-table-head', {});
-    head.append(el('sp-table-head-cell', { attrs: {}, text: '#' }));
-    for (const column of columns) {
-      head.append(el('sp-table-head-cell', { attrs: {}, text: column }));
-    }
-
-    const body = el('sp-table-body', {});
-    rows.forEach((row, index) => {
-      const rowEl = el('sp-table-row', {});
-      rowEl.append(
-        el('sp-table-cell', {
-          attrs: { class: 'chat-table-message__index' },
-          text: String(index + 1),
-        }),
-      );
-      columns.forEach((column, columnIndex) => {
-        const cell = el('sp-table-cell', {});
-        cell.append(renderMessageCell(row[columnIndex] ?? '', column));
-        rowEl.append(cell);
-      });
-      body.append(rowEl);
-    });
-
-    const tableEl = el('sp-table', {
-      attrs: { class: 'chat-table-message__table', size: 's' },
-    });
-    tableEl.append(head, body);
-    nodes.push(tableEl);
     return nodes;
   }
 
@@ -629,7 +657,7 @@ export function createTranscriptView(
         return el('div', {
           attrs: { class: 'chat-message chat-message--interruption' },
           children: [
-            el('sp-icon-cancel', {
+            el('sp-icon-cross600', {
               attrs: { class: 'chat-message__interruption-icon', size: 's' },
             }),
             el('span', { attrs: { class: 'chat-message__interruption-label' } }),
@@ -742,9 +770,14 @@ export function createTranscriptView(
       case 'toolCall': {
         if (tableMessage !== undefined) {
           // A `presentation: 'message'` tool (format_table): its call paints an
-          // assistant message - the accumulated table - not a billet.
+          // assistant message - the accumulated table - not a billet. Rebuilt
+          // only when its content changed (see `renderedTableSignatures`).
           shell.className = 'chat-message chat-message--assistant chat-table-message';
-          shell.replaceChildren(...renderTableMessage(tableMessage));
+          const signature = tableMessageSignature(tableMessage, getLinkContext());
+          if (renderedTableSignatures.get(shell) !== signature) {
+            renderedTableSignatures.set(shell, signature);
+            shell.replaceChildren(...renderTableMessage(tableMessage));
+          }
           return;
         }
         const view = store.toolCallFor(item.toolCallId);

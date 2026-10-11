@@ -33,7 +33,6 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-chevron-up.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-delete-outline.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-send.js';
-import '@spectrum-web-components/icons-workflow/icons/sp-icon-cancel.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-actions.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-open-in-light.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-file-txt.js';

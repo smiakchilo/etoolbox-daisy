@@ -597,11 +597,14 @@ describe('createTranscriptView - format_table message table', () => {
     expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/a.html`);
   });
 
-  it('renders the total line above the table', () => {
+  it('renders the total line below the table', () => {
     const element = renderTable([requested(0, 1, { data: page }), result(1, 1, 2, 'new')]);
-    expect(element.querySelector('.chat-table-message__total')?.textContent).toBe(
-      'Total: approximately 900 results',
-    );
+    const total = element.querySelector('.chat-table-message__total');
+    expect(total?.textContent).toBe('Total: approximately 900 results');
+    // The owner's fix: the total reads under the table, not above it.
+    const table = element.querySelector('sp-table');
+    expect(table).not.toBeNull();
+    expect(total?.previousElementSibling).toBe(table);
   });
 
   it('renders only the total line, no table, when the page matched nothing', () => {
@@ -615,6 +618,38 @@ describe('createTranscriptView - format_table message table', () => {
     expect(element.querySelector('.chat-table-message__total')?.textContent).toBe(
       'Total: 0 results',
     );
+  });
+
+  it('reuses the table node across repaints instead of rebuilding it', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    view.repaint(store);
+    const first = view.element.querySelector('sp-table');
+    expect(first).not.toBeNull();
+
+    // A repaint with unchanged content must not create a new `sp-table`: a fresh
+    // custom element collapses until it upgrades, which shifted the transcript's
+    // scroll position (the reported "the whole table was re-rendered").
+    view.repaint(store);
+    expect(view.element.querySelector('sp-table')).toBe(first);
+  });
+
+  it('rebuilds the table when the link context changes', () => {
+    let context: LinkContext = activeContext;
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => context });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    view.repaint(store);
+    const first = view.element.querySelector('sp-table');
+
+    // A `Path` cell's href resolves against the active host, so a context change
+    // must re-render it rather than reuse the stale table.
+    context = { hostOrigins: [], activeOrigin: undefined };
+    view.repaint(store);
+    expect(view.element.querySelector('sp-table')).not.toBe(first);
   });
 
   it('never renders a format_table billet, and never parses a cell as HTML', () => {

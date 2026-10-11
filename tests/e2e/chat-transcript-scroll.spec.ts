@@ -48,6 +48,36 @@ function queryStep(data: unknown): ScriptedStep {
   };
 }
 
+/** A scripted `format_table` call: its run paints the assistant-message table. */
+function formatTableStep(data: unknown, mode: 'new' | 'append'): ScriptedStep {
+  return {
+    kind: 'toolCall',
+    call: {
+      toolName: 'format_table',
+      arguments: { data: data as never, mode },
+      decision: {
+        kind: 'approved',
+        outcome: {
+          ok: true,
+          data: {
+            operation: 'format_table',
+            rowCount: 0,
+            mode,
+            textResultForLlm: 'ok',
+            resultType: 'success',
+          } as never,
+        },
+      },
+    },
+  };
+}
+
+/** Enough rows that the table is taller than the transcript viewport. */
+const tallTable = {
+  rows: Array.from({ length: 80 }, (_, i) => ({ 'jcr:path': `/content/site/page-${i + 1}` })),
+  pagination: { hasMore: true, total: { accuracy: 'exact', value: 80 } },
+};
+
 /** `scrollHeight - scrollTop - clientHeight`; 0 means the scroller is at its bottom. */
 async function bottomGap(shell: Page): Promise<number> {
   return shell
@@ -284,6 +314,78 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
     // Expanding the newest billet grows it; the transcript follows that growth
     // to the bottom as well.
     await billet.locator('.chat-tool-call__toggle').click();
+    await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
+  });
+
+  test('a table as the newest entry is not rebuilt on later repaints, so the view stays at its bottom', async () => {
+    // A `/search` turn: the model's prose is suppressed, so the tall table is
+    // the transcript's last entry. Repaints still happen after it lands (the
+    // model reasons). Rebuilding the `sp-table` on each repaint momentarily
+    // collapses the custom element, and the stick-to-bottom follower can pin to
+    // the wrong place - the reported "the whole table re-rendered and the
+    // transcript jumped up to its top".
+    await scriptTurn(app, {
+      steps: [
+        formatTableStep(tallTable, 'new'),
+        { kind: 'reasoning', text: 'Looking through the results now. ' },
+        { kind: 'reasoning', text: 'Comparing the matches. ' },
+        { kind: 'reasoning', text: 'Summarising. ' },
+      ],
+    });
+    await sendViaComposer(shell, '/search anything');
+
+    // Deliver events until the table exists.
+    for (
+      let i = 0;
+      i < 50 && (await shell.locator('.chat-table-message sp-table').count()) === 0;
+      i += 1
+    ) {
+      if (!(await advanceFake(app))) break;
+    }
+    await expect(shell.locator('.chat-table-message sp-table')).toBeVisible();
+
+    // Count `sp-table` elements added to the transcript from now on. A reused
+    // table adds none; a rebuild inserts a fresh `sp-table` into its shell on
+    // every repaint. (Only a directly-added `sp-table` counts - the transcript
+    // re-attaching the table's shell when the Thinking billet appears is not a
+    // rebuild.)
+    await shell.evaluate(() => {
+      const win = window as unknown as { __tableAdds: number };
+      win.__tableAdds = 0;
+      const target = document.querySelector('.chat-transcript__messages');
+      if (target === null) return;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && node.matches('sp-table')) win.__tableAdds += 1;
+          }
+        }
+      }).observe(target, { childList: true, subtree: true });
+    });
+
+    // Deliver the remaining events slowly enough for the transcript's 100 ms
+    // repaint timer to fire between them - each reasoning delta repaints while
+    // the table is on screen.
+    for (let i = 0; i < 60; i += 1) {
+      if (!(await advanceFake(app))) break;
+      await shell.waitForTimeout(150);
+    }
+
+    // Those repaints reused the table instead of rebuilding it.
+    const added = await shell.evaluate(
+      () => (window as unknown as { __tableAdds: number }).__tableAdds,
+    );
+    expect(added).toBe(0);
+
+    // The turn finished with the table as the newest entry, at its bottom.
+    await flushFake(app);
+    await expect
+      .poll(() =>
+        shell
+          .locator(`${TRANSCRIPT} .chat-transcript__messages`)
+          .evaluate((el) => el.lastElementChild?.className ?? ''),
+      )
+      .toContain('chat-table-message');
     await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
   });
 });

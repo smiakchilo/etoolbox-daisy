@@ -7,6 +7,7 @@ import { createComposer, type ComposerSendOutcome } from '../chat/composer';
 import { replayJournalIntoTranscript } from '../chat/journalReplay';
 import { createStatusBanner, type StatusBanner } from '../settings/statusBanner';
 import {
+  buildNoAnswer,
   computeComposerButtonState,
   describeCanSendBlockReason,
   isTurnInFlight,
@@ -958,6 +959,16 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       return;
     }
     if (chatId === undefined) return;
+    // A question owns the composer while it is on screen: its cancel means "no
+    // answer", not "cancel the session". Dismiss the question and let the turn
+    // continue - the `ask_user` tool reports the decline and the model wraps up
+    // (the Load-more search loop's cancel ends the search, it does not abort the
+    // turn). Aborting here would tear the whole turn down instead.
+    if (pendingInputRequestId !== undefined) {
+      composer.setInputRequest(undefined);
+      onAnswer(buildNoAnswer());
+      return;
+    }
     // The `cancelling` event this abort produces is this pane's own Stop, not
     // an AEM-context abort - record it as such (see the event subscription).
     // Guarded on a turn actually being in flight, so a stray Stop with nothing

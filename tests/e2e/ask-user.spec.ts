@@ -171,9 +171,9 @@ test.describe('ask-user interactive question', () => {
     await expect(shell.locator(COMPOSER_FIELD)).toBeHidden();
 
     // Stop is shown alongside Submit, and its icon is the real registered
-    // `sp-icon-cancel` (not an inert unknown tag from a missing import).
-    await expect(shell.locator(`${COMPOSER_STOP} sp-icon-cancel`)).toHaveCount(1);
-    await expect.poll(() => registered(shell, 'sp-icon-cancel')).toBe(true);
+    // `sp-icon-cross600` (not an inert unknown tag from a missing import).
+    await expect(shell.locator(`${COMPOSER_STOP} sp-icon-cross600`)).toHaveCount(1);
+    await expect.poll(() => registered(shell, 'sp-icon-cross600')).toBe(true);
 
     await shell.locator('.chat-ask sp-radio').nth(0).click();
     await submitAnswer(app, shell);
@@ -393,5 +393,60 @@ test.describe('ask-user interactive question', () => {
     // The actions call renders nothing in the transcript: the (empty)
     // `.chat-ask-user` shell it owns carries no message at all.
     await expect(shell.locator('.chat-ask-user').last().locator('.chat-message')).toHaveCount(0);
+  });
+
+  test('Cancel on a pending question dismisses it without ending the turn', async () => {
+    await scriptTurn(app, {
+      steps: [{ kind: 'inputRequest', actions: ['Load more'] }],
+    });
+    await sendViaComposer(shell, '/search waldo');
+    await flushFake(app);
+
+    await expect(shell.locator('.chat-ask__action')).toHaveText('Load more');
+    // Cancel is the composer's Stop: it means "no answer" here, not "stop the
+    // session" (the /search Load-more loop's cancel) - see `chatPane.onStop`.
+    await shell.locator(COMPOSER_STOP).click();
+    await flushFake(app);
+
+    // The question is dismissed and the ordinary bordered composer returns...
+    await expect(shell.locator('.chat-ask__actions')).toBeHidden();
+    await expect
+      .poll(() =>
+        shell
+          .locator('.chat-composer__frame')
+          .evaluate((element) => getComputedStyle(element).backgroundColor),
+      )
+      .toBe('rgb(255, 255, 255)');
+    // ...and the turn was never aborted, so no "Session stopped" notice exists.
+    await expect(shell.locator('.chat-message--interruption')).toHaveCount(0);
+    await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
+  });
+
+  test('Cancel still works after several "Load more" clicks (no state desync)', async () => {
+    await scriptTurn(app, {
+      steps: [
+        { kind: 'inputRequest', actions: ['Load more'] },
+        { kind: 'inputRequest', actions: ['Load more'] },
+        { kind: 'inputRequest', actions: ['Load more'] },
+      ],
+    });
+    await sendViaComposer(shell, '/search Greenlake');
+    await flushFake(app);
+
+    // Answer the first two questions with the action, as a real run does.
+    await shell.locator('.chat-ask__action').click();
+    await flushFake(app);
+    await expect(shell.locator('.chat-ask__action')).toBeVisible();
+    await shell.locator('.chat-ask__action').click();
+    await flushFake(app);
+    await expect(shell.locator('.chat-ask__action')).toBeVisible();
+
+    // Then cancel the third: still a "no answer", still no session stop.
+    await shell.locator(COMPOSER_STOP).click();
+    await flushFake(app);
+
+    await expect(shell.locator('.chat-ask__actions')).toBeHidden();
+    await expect(shell.locator('.chat-message--interruption')).toHaveCount(0);
+    await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
   });
 });

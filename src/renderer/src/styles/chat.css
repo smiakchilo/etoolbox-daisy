@@ -395,8 +395,8 @@
   color: var(--spectrum-gray-700, #4b4b4b);
 }
 
-/* The `format_table` message: an assistant-width table, optionally under a
-   total line. It grows to its content's height rather than scrolling inside
+/* The `format_table` message: an assistant-width table with an optional total
+   line beneath it. It grows to its content's height rather than scrolling inside
    itself - the transcript is the app's one scrolling region. */
 .chat-table-message {
   display: flex;

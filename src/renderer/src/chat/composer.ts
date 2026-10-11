@@ -156,7 +156,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   const stopButton = el('sp-action-button', {
     attrs: { class: 'chat-composer__stop', 'aria-label': 'Stop' },
   });
-  stopButton.append(el('sp-icon-cancel', { attrs: { slot: 'icon' } }));
+  stopButton.append(el('sp-icon-cross600', { attrs: { slot: 'icon' } }));
 
   // The interactive-question panel, hidden until `setInputRequest` shows a
   // question. Declared here (not with the frame) because `applyPresentation`

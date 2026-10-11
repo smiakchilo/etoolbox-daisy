@@ -200,6 +200,18 @@ test.describe('deterministic search tables', () => {
     await expect(shell.locator('.chat-table-message__total').last()).toContainText(
       'Total: 5+ results',
     );
+    // The owner's fix: the total line reads BELOW the table, not above it.
+    const totalBelowTable = await shell
+      .locator('.chat-table-message')
+      .last()
+      .evaluate((element) => {
+        const total = element.querySelector('.chat-table-message__total');
+        const table = element.querySelector('sp-table');
+        if (total === null || table === null) return false;
+        // 4 = Node.DOCUMENT_POSITION_FOLLOWING.
+        return (table.compareDocumentPosition(total) & 4) !== 0;
+      });
+    expect(totalBelowTable).toBe(true);
     await expect(shell.locator('.chat-table-message sp-table-head-cell')).toHaveText(['#', 'Path']);
     await expect(shell.locator('.chat-table-message sp-table-body sp-table-row')).toHaveCount(2);
     // The prose-suppressed turn left no ordinary assistant message (the table

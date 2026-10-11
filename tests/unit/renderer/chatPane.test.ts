@@ -40,6 +40,7 @@ const getStatus = vi.fn();
 const openConversation = vi.fn();
 const sendMessage = vi.fn();
 const abort = vi.fn();
+const respondToInput = vi.fn();
 const navigate = vi.fn();
 const listSkills = vi.fn();
 const revealJournal = vi.fn();
@@ -129,6 +130,7 @@ beforeEach(() => {
   openConversation.mockReset();
   sendMessage.mockReset();
   abort.mockReset();
+  respondToInput.mockReset();
   navigate.mockReset();
   listSkills.mockReset();
   listSkills.mockResolvedValue({ ok: true, skills: [] });
@@ -154,6 +156,7 @@ beforeEach(() => {
   openConversation.mockResolvedValue({ ok: true, chatId: 'chat-1' as ChatId });
   sendMessage.mockResolvedValue({ ok: true, turnId: 'turn-1' });
   abort.mockResolvedValue({ ok: true });
+  respondToInput.mockResolvedValue({ ok: true });
   navigate.mockResolvedValue({ ok: true });
 
   dom = new JSDOM();
@@ -165,6 +168,7 @@ beforeEach(() => {
       openConversation,
       sendMessage,
       abort,
+      respondToInput,
       listSkills,
       revealJournal,
       onEvent: vi.fn((listener: (event: AgentEvent) => void) => {
@@ -1060,6 +1064,43 @@ describe('createChatPane interruptions and session id', () => {
     expect(pane.element.querySelector('.chat-message--interruption')?.textContent).toBe(
       'Session interrupted by navigation',
     );
+
+    pane.dispose();
+  });
+
+  it('delivers a "no answer" rather than aborting when Stop is pressed on a pending question', async () => {
+    const pane = await readyPane();
+    const chatId = currentChatId();
+
+    pushEvent(sessionState(chatId, 0, 'sending'));
+    pushEvent({
+      type: 'user.input.requested',
+      chatId,
+      sequence: 1,
+      turnId: 'turn-1',
+      requestId: 'req-1',
+      question: 'Pick a colour',
+      options: ['Red', 'Green'],
+      multiple: false,
+      freeInput: false,
+    } as AgentEvent);
+    await flush();
+
+    const stop = pane.element.querySelector('.chat-composer__stop');
+    expect(stop).not.toBeNull();
+    stop?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    // The question's cancel is a "no answer", never an abort of the turn: the
+    // ask_user tool reports the decline and the model wraps up.
+    expect(abort).not.toHaveBeenCalled();
+    expect(respondToInput).toHaveBeenCalledWith({
+      chatId,
+      requestId: 'req-1',
+      answer: { selections: [], freeform: null },
+    });
+    // And the interactive UI is dismissed, back to the ordinary composer.
+    expect(pane.element.querySelector('.chat-ask')?.hasAttribute('hidden')).toBe(true);
 
     pane.dispose();
   });

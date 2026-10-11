@@ -155,6 +155,8 @@ function invalidArgument(message: string, requestId: RequestId): Result<JsonValu
  * "false by default" options, and delegates to `host.requestUserInput` - the
  * application resolves that from the live turn, or rejects it if the turn is
  * aborted first (which surfaces here as a `CANCELLED` failure, never a crash).
+ * An empty answer - the user dismissed the question via the composer's cancel -
+ * is likewise reported as `CANCELLED`, since no choice was made.
  */
 export function createAskUserExecutor(host: ToolHost): AemToolExecutor {
   return async (rawArgs, context) => {
@@ -196,6 +198,22 @@ export function createAskUserExecutor(host: ToolHost): AemToolExecutor {
           ? caught.message.slice(0, 500)
           : 'The question was not answered';
       return err(createToolError('CANCELLED', message, requestId));
+    }
+
+    // A dismissed question comes back as an empty answer - the composer's
+    // cancel means "no answer", not "cancel the turn" (see `buildNoAnswer`). A
+    // real answer is never empty (the composer only submits a complete draft),
+    // so this is unambiguously a decline: report it as CANCELLED, which both
+    // tells the model the user did not answer and lets a caller that loops on
+    // the answer (the `aem_query_format_ask` "Load more" button) end its loop.
+    if (answer.selections.length === 0 && (answer.freeform ?? '').trim().length === 0) {
+      return err(
+        createToolError(
+          'CANCELLED',
+          'The user dismissed the question without answering',
+          requestId,
+        ),
+      );
     }
 
     return ok(

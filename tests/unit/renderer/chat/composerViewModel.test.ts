@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildActionAnswer,
   buildAskUserAnswer,
+  buildNoAnswer,
   computeComposerButtonState,
   describeCanSendBlockReason,
   isActionsRequest,
@@ -258,5 +259,9 @@ describe('ask-user actions', () => {
 
   it('builds the action label as the sole selection with no freeform', () => {
     expect(buildActionAnswer('Load more')).toEqual({ selections: ['Load more'], freeform: null });
+  });
+
+  it('builds the cancel as an explicit "no answer" - empty selections and no freeform', () => {
+    expect(buildNoAnswer()).toEqual({ selections: [], freeform: null });
   });
 });

@@ -592,10 +592,24 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2744 passed / 14 skipped** (+2 against the
-previous 2742: New session now focuses the composer — `Composer.focus()` and its
-call in `startNewSession` (`composer.test.ts` + `chatPane.test.ts`); see
-`docs/verification.md` "New session focuses the composer (2026-10-11)"). Before
+Current baseline: **`npm run test` → 2752 passed / 14 skipped** (+2 against the
+2750 of the previous entry - the search table is no longer rebuilt on every
+repaint; two `transcriptView.test.ts` cases. See `docs/verification.md` "The
+search table was rebuilt on every repaint (2026-10-11)"). Before that it was 2750
+(+3 against the
+2747 the working tree already measured - this section's previous 2744 was stale).
+The +3 is the chat-panel fixes: a `buildNoAnswer` builder case
+(`composerViewModel.test.ts`), the `ask_user` dismissed-answer case
+(`askUser.test.ts`), and the pane's cancel-on-a-question case
+(`chatPane.test.ts`). The same change also moved the search total line below the
+table, swapped the composer's cancel icon to `sp-icon-cross600`, and added one
+Playwright case. See `docs/verification.md` "Chat panel: cancel means \"no
+answer\", the cross600 cancel icon, and the total line under the table
+(2026-10-11)". Before that the working tree measured 2747 (the +3 nobody recorded
+here); before that it was 2744 (+2 against the previous 2742: New session now
+focuses the composer — `Composer.focus()` and its call in `startNewSession`
+(`composer.test.ts` + `chatPane.test.ts`); see `docs/verification.md` "New
+session focuses the composer (2026-10-11)"). Before
 that it was 2742 (+6 against the
 previous 2736: one conversation open at a time — the controller's
 single-flight/`superseded` guard (`agentChatController.test.ts`) and the pane's
@@ -730,7 +744,18 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 116 tests; a full run is typically 110 passed / 6 failed.** The
+**Playwright → 119 tests; a full run is typically 110 passed / 6 failed.** The
++1 since 118 is the `chat-transcript-scroll.spec.ts` case proving the search
+table is not rebuilt on later repaints (so the transcript stays at its bottom,
+instead of jumping to the table's top). The
++2 since 116 is the `ask-user.spec.ts` work proving the composer's cancel on a
+pending question dismisses it as a "no answer" without ending the turn (no
+"Session stopped" notice) - one case on the first question, one after several
+"Load more" clicks to rule out a state desync; the same change's
+`search-tables.spec.ts` case gained an assertion that the total line sits below
+the table. See
+`docs/verification.md` "Chat panel: cancel means \"no answer\", the cross600
+cancel icon, and the total line under the table (2026-10-11)". The
 +1 since 115 is the `chat-transcript-scroll.spec.ts` case proving a tool-call
 billet as the newest entry is followed to its bottom (and its expansion too):
 the follow rule covers every transcript entry, not only an assistant message —

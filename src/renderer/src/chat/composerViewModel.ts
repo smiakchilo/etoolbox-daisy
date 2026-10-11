@@ -164,6 +164,17 @@ export function buildActionAnswer(action: string): UserInputAnswer {
 }
 
 /**
+ * The answer a **dismissed** question delivers: the composer's cancel means "no
+ * answer", not "cancel the whole turn". It is the one answer with neither a
+ * selection nor freeform text, and a real answer is never empty (the composer
+ * only submits a complete draft), so a consumer - the `ask_user` executor - can
+ * read it as a decline rather than a choice. See `chatPane.ts`'s `onStop`.
+ */
+export function buildNoAnswer(): UserInputAnswer {
+  return { selections: [], freeform: null };
+}
+
+/**
  * Whether the draft is a complete answer the user may submit. Free input
  * requires non-whitespace text; a multiple-choice question requires at least
  * one selection; a single-choice question requires exactly one. An `actions`
