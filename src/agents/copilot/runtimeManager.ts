@@ -10,8 +10,10 @@ import { meta } from './meta';
  * Before this existed there were two clients: one cached privately in
  * `ipc/agent.ts` for sign-in/out, one created in `index.ts` for chat and the
  * model catalogue. That is a known defect in its own right (opening Settings
- * could spawn a second `copilot-runtime.exe`; see
- * `docs/handoff-two-copilot-clients.md`), and it also made the agents
+ * could spawn a second `copilot-runtime.exe`; the measured residual is recorded
+ * in `docs/backlog.md`, "Real-path Copilot runtime process count and quit
+ * cleanup"),
+ * and it also made the agents
  * surface's proxy selection impossible to honour honestly: the proxy is an
  * environment variable the child process is started with, so applying it
  * means stopping the old runtime and starting a new one, and *both* callers

@@ -25,6 +25,7 @@ function makeHost(
     },
     clock: () => 1,
     idGenerator: ids,
+    invokeTool: () => Promise.reject(new Error('not used')),
   };
 }
 
@@ -89,6 +90,7 @@ describe('createAskUserExecutor', () => {
       ...makeHost({ selections: [], freeform: null }),
       requestUserInput: () => Promise.reject(new Error('The question was cancelled')),
       idGenerator: ids,
+      invokeTool: () => Promise.reject(new Error('not used')),
     };
     const result = await createAskUserExecutor(host)(
       { question: 'Pick', options: ['a'] },

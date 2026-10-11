@@ -1,16 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  discoverToolLoaders,
-  buildToolRegistry,
+  type NestedToolCallObserver,
   type ToolLoadFailure,
   type ToolModuleLoaders,
+  buildToolRegistry,
+  discoverToolLoaders,
+  MAX_NESTED_TOOL_DEPTH,
 } from '../../../src/main/tools/registry';
-import type { ToolHost, ToolModule } from '../../../src/shared';
-import { newChatId, newServerId, newTurnId } from '../../../src/shared';
+import {
+  type AemToolExecutor,
+  type JsonValue,
+  type ToolHost,
+  type ToolHostServices,
+  type ToolModule,
+  newChatId,
+  newServerId,
+  newToolCallId,
+  newTurnId,
+} from '../../../src/shared';
 import { createCountingIdGenerator } from '../../support/testIds';
 
 const ids = createCountingIdGenerator('reg');
-const host: ToolHost = {
+const host: ToolHostServices = {
   bridge: { request: () => Promise.resolve({ kind: 'cancelled' }) },
   currentContext: () => ({
     origin: 'https://aem.example.com',
@@ -151,6 +162,225 @@ describe('buildToolRegistry', () => {
     expect(registry.allowlistEntries).toEqual([]);
     expect(registry.instructions).toMatch(/read-only assistant/);
   });
+
+  it('rejects a manifest whose uses is not a string list', async () => {
+    const registry = await buildToolRegistry({
+      host,
+      loaders: loaders({
+        '/tools/a/tool.ts': () => Promise.resolve({ tool: { ...fakeTool('tool_a'), uses: [1] } }),
+      }),
+    });
+    expect(registry.enabledNames).toEqual([]);
+    expect(registry.failures).toHaveLength(1);
+  });
+
+  it('reports a declared dependency that is not enabled, but keeps the tool', async () => {
+    const registry = await buildToolRegistry({
+      host,
+      loaders: loaders({
+        '/tools/a/tool.ts': () =>
+          Promise.resolve({ tool: fakeTool('tool_a', { uses: ['tool_off', 'tool_gone'] }) }),
+        '/tools/off/tool.ts': () =>
+          Promise.resolve({ tool: fakeTool('tool_off', { disabled: true }) }),
+      }),
+    });
+    expect(registry.enabledNames).toEqual(['tool_a']);
+    expect(registry.failures.map((f) => f.reason)).toEqual([
+      "Declared dependency 'tool_off' is not an enabled tool",
+      "Declared dependency 'tool_gone' is not an enabled tool",
+    ]);
+  });
+});
+
+describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
+  /** Builds a registry whose `caller` captures its host, plus the given callees. */
+  async function setUp(params: {
+    readonly uses: readonly string[];
+    readonly callees?: Readonly<Record<string, AemToolExecutor>>;
+    readonly disabled?: readonly string[];
+    readonly nestedCalls?: NestedToolCallObserver;
+  }): Promise<ToolHost> {
+    let captured: ToolHost | undefined;
+    const entries: Record<string, () => Promise<unknown>> = {
+      // Sorts after the callees' 'b-' prefix is irrelevant: handlers resolve lazily.
+      '/tools/a-caller/tool.ts': () =>
+        Promise.resolve({
+          tool: fakeTool('caller', {
+            uses: params.uses,
+            createExecutor: (toolHost) => {
+              captured = toolHost;
+              return () => Promise.resolve({ ok: true, value: {} });
+            },
+          }),
+        }),
+    };
+    for (const [name, executor] of Object.entries(params.callees ?? {})) {
+      entries[`/tools/b-${name}/tool.ts`] = () =>
+        Promise.resolve({
+          tool: fakeTool(name, {
+            createExecutor: () => executor,
+            ...(params.disabled?.includes(name) === true ? { disabled: true } : {}),
+          }),
+        });
+    }
+    await buildToolRegistry({
+      host,
+      loaders: loaders(entries),
+      ...(params.nestedCalls === undefined ? {} : { nestedCalls: params.nestedCalls }),
+    });
+    if (captured === undefined) throw new Error('caller was not constructed');
+    return captured;
+  }
+
+  const parent = (): { toolCallId: ReturnType<typeof newToolCallId>; signal: undefined } => ({
+    toolCallId: newToolCallId(ids),
+    signal: undefined,
+  });
+
+  it('runs a declared, enabled tool registered after the caller and returns its result', async () => {
+    const callee = vi.fn<AemToolExecutor>(() =>
+      Promise.resolve({ ok: true, value: { echoed: true } }),
+    );
+    const toolHost = await setUp({ uses: ['callee'], callees: { callee } });
+
+    const result = await toolHost.invokeTool('callee', { a: 1 }, parent());
+
+    expect(result).toEqual({ ok: true, value: { echoed: true } });
+    expect(callee).toHaveBeenCalledTimes(1);
+    expect(callee.mock.calls[0]?.[0]).toEqual({ a: 1 });
+  });
+
+  it('passes the parent abort signal through and mints a fresh tool-call id', async () => {
+    const callee = vi.fn<AemToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
+    const toolHost = await setUp({ uses: ['callee'], callees: { callee } });
+    const controller = new AbortController();
+    const parentId = newToolCallId(ids);
+
+    await toolHost.invokeTool('callee', {}, { toolCallId: parentId, signal: controller.signal });
+
+    const context = callee.mock.calls[0]?.[1];
+    expect(context?.signal).toBe(controller.signal);
+    expect(context?.toolCallId).not.toBe(parentId);
+  });
+
+  it('refuses a tool missing from the caller uses list, without running it', async () => {
+    const callee = vi.fn<AemToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
+    const toolHost = await setUp({ uses: [], callees: { callee } });
+
+    const result = await toolHost.invokeTool('callee', {}, parent());
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('ACCESS_DENIED');
+    expect(callee).not.toHaveBeenCalled();
+  });
+
+  it('refuses a self-call even when the tool lists itself', async () => {
+    const toolHost = await setUp({ uses: ['caller'] });
+    const result = await toolHost.invokeTool('caller', {}, parent());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe('ACCESS_DENIED');
+  });
+
+  it('answers NOT_FOUND for a declared tool that is disabled or absent', async () => {
+    const callee = vi.fn<AemToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
+    const toolHost = await setUp({
+      uses: ['callee', 'absent'],
+      callees: { callee },
+      disabled: ['callee'],
+    });
+
+    for (const name of ['callee', 'absent']) {
+      const result = await toolHost.invokeTool(name, {}, parent());
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
+    }
+    expect(callee).not.toHaveBeenCalled();
+  });
+
+  it('turns a throwing callee into a structured error', async () => {
+    const callee: AemToolExecutor = () => Promise.reject(new Error('kaboom'));
+    const toolHost = await setUp({ uses: ['callee'], callees: { callee } });
+    const result = await toolHost.invokeTool('callee', {}, parent());
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('UNEXPECTED_RESPONSE');
+      expect(result.error.message).toMatch(/kaboom/);
+    }
+  });
+
+  it('limits nesting depth', async () => {
+    // A chain: caller -> link -> link -> ... Each link calls itself through a
+    // second name so the self-call guard does not trip first.
+    let pingHost: ToolHost | undefined;
+    let pongHost: ToolHost | undefined;
+    const depthsReached: number[] = [];
+    let depth = 0;
+    const relay =
+      (getHost: () => ToolHost | undefined, next: string): AemToolExecutor =>
+      async (_args, context) => {
+        depth += 1;
+        depthsReached.push(depth);
+        const result = await getHost()!.invokeTool(next, {}, context);
+        depth -= 1;
+        return result.ok ? result : { ok: true, value: { stoppedBy: result.error.code } };
+      };
+    await buildToolRegistry({
+      host,
+      loaders: loaders({
+        '/tools/ping/tool.ts': () =>
+          Promise.resolve({
+            tool: fakeTool('ping', {
+              uses: ['pong'],
+              createExecutor: (h) => {
+                pingHost = h;
+                return relay(() => pingHost, 'pong');
+              },
+            }),
+          }),
+        '/tools/pong/tool.ts': () =>
+          Promise.resolve({
+            tool: fakeTool('pong', {
+              uses: ['ping'],
+              createExecutor: (h) => {
+                pongHost = h;
+                return relay(() => pongHost, 'ping');
+              },
+            }),
+          }),
+      }),
+    });
+
+    const result = await pingHost!.invokeTool('pong', {}, parent());
+
+    expect(result).toEqual({ ok: true, value: { stoppedBy: 'ACCESS_DENIED' } });
+    expect(Math.max(...depthsReached)).toBe(MAX_NESTED_TOOL_DEPTH);
+  });
+
+  it('tells the observer about a call that ran, in order, with its outcome', async () => {
+    const seen: Array<{ phase: string; toolName?: string; outcome?: JsonValue }> = [];
+    const callee: AemToolExecutor = () => Promise.resolve({ ok: true, value: { n: 2 } });
+    const toolHost = await setUp({
+      uses: ['callee'],
+      callees: { callee },
+      nestedCalls: {
+        onCallStarted: (call) => seen.push({ phase: 'started', toolName: call.toolName }),
+        onCallSettled: (call, outcome) =>
+          seen.push({
+            phase: 'settled',
+            toolName: call.toolName,
+            outcome: outcome.ok ? outcome.value : null,
+          }),
+      },
+    });
+
+    await toolHost.invokeTool('callee', { x: 'y' }, parent());
+    await toolHost.invokeTool('not_declared', {}, parent());
+
+    expect(seen).toEqual([
+      { phase: 'started', toolName: 'callee' },
+      { phase: 'settled', toolName: 'callee', outcome: { n: 2 } },
+    ]);
+  });
 });
 
 describe('discovered tools (the real src/tools folders)', () => {
@@ -162,6 +392,7 @@ describe('discovered tools (the real src/tools folders)', () => {
       'aem_environment_facts',
       'aem_get_json',
       'aem_query',
+      'aem_query_format_ask',
       'ask_user',
       'format_table',
     ]);
@@ -170,6 +401,7 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:aem_environment_facts',
       'custom:aem_get_json',
       'custom:aem_query',
+      'custom:aem_query_format_ask',
       'custom:ask_user',
       'custom:format_table',
     ]);

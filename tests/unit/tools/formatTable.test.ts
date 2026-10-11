@@ -21,6 +21,7 @@ function makeHost(): ToolHost {
     requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
     clock: () => 1,
     idGenerator: ids,
+    invokeTool: () => Promise.reject(new Error('not used')),
   };
 }
 

@@ -1,6 +1,6 @@
 ---
 name: search
-description: How to run an AEM search with the aem_query tool - invoke `/search <terms>` for an immediate full-text search, or construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return. Use whenever searching, correcting, or explaining an aem_query call against a conventional AEM Author instance.
+description: How to run an AEM search - invoke `/search <terms>` for an immediate full-text search with the aem_query_format_ask tool, or construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return. Use whenever searching, correcting, or explaining an aem_query call against a conventional AEM Author instance.
 metadata:
   user-description: Find pages and assets by their content.
 ---
@@ -23,78 +23,45 @@ and the term(s) follow it. **That input is the search string.** Run the search
 for it immediately; do not ask the user what to search for, and do not answer by
 explaining this skill.
 
-A `/search` turn produces **exactly one application-rendered table**, built by
-calling the tools in order. Write no prose of your own: the application hides
-your assistant text for this turn, so any explanation you write is discarded.
+A `/search` turn produces **exactly one application-rendered table**. Write no
+prose of your own: the application hides your assistant text for this turn, so
+any explanation you write is discarded.
 
-**All three steps below are mandatory and in order.** A `/search` turn is **not
-finished** when the table is on screen - that is the halfway point. It ends only
-after step 3, and the normal case is that step 3 calls `ask_user` with
-`["Load more"]`. Ending the turn after step 2 - a table, but no `ask_user` and no
-check of `hasMore` - is a failure of this skill: the user is left staring at one
-page of results with no way to reach the rest. Do not do it.
+**Make exactly one call: `aem_query_format_ask`, with the input as `terms`.**
 
-1. **Query.** Call `aem_query` with a `fulltext` predicate set to the input, the
-   host's content roots as `roots`, `properties: []` (so each hit returns only
-   its `jcr:path`), `limit: 50`, and `offset` starting at `0`:
+```json
+{ "terms": "<terms>" }
+```
 
-   ```json
-   {
-     "predicates": { "fulltext": "<terms>" },
-     "roots": ["/content/wknd"],
-     "properties": [],
-     "limit": 50,
-     "offset": 0
-   }
-   ```
-
-2. **Present.** Call `format_table` with this result's JSON as `data` and
-   `mode: "new"` on the first page, `"append"` on every later page:
-
-   ```json
-   { "data": { "rows": [ { "jcr:path": "/content/wknd/us/en" } ], "pagination": { "total": { "accuracy": "estimated", "value": 42 } } }, "mode": "new" }
-   ```
-
-   Pass the result **verbatim**; do not reformat or rename anything. The
-   application renders the total line and the `# | Path` table.
-
-3. **Offer more - this step must run before your turn ends.** After
-   `format_table`, read the `aem_query` result's `pagination.hasMore` and act on
-   it **now**, in this same turn:
-
-   - If `hasMore` is `true` or `"unknown"`, you **must** call `ask_user` with
-     exactly one action, `actions: ["Load more"]`:
-
-     ```json
-     { "actions": ["Load more"] }
-     ```
-
-     This call is the only thing that gives the user a **Load more** button. A
-     written question - "there are more results, shall I load them?" - is **not**
-     a substitute: the application discards your prose for `/search`, so the user
-     sees nothing and the turn ends with nothing to click. The button appears
-     only if you call `ask_user`.
-
-   - If the user clicks **Load more**, repeat from step 1 with `offset`
-     increased by `50`, then `format_table` with `mode: "append"` - and then run
-     this step again on the new result.
-   - If they Stop the turn instead, the search ends.
-   - **Only** if `hasMore` is `false` is there nothing to load. Then, and only
-     then, do not ask.
-
-   Before you end a `/search` turn, verify: **did I either call `ask_user` with
-   `["Load more"]`, or see `hasMore === false`?** If neither is true, you are not
-   done - call `ask_user` with `["Load more"]`. When in doubt, ask: an
-   unnecessary Load more is harmless, a missing one strands the user on page 1.
+That one tool does the whole search: it runs `aem_query` (full text, the host's
+content roots, 50 rows per page), shows the page with `format_table`, and while
+more results may exist offers the user a **Load more** button through
+`ask_user`, loading and appending the next page on each click. When it returns,
+the table is on screen and the user is done. Do **not** call `aem_query`,
+`format_table` or `ask_user` yourself for a plain `/search`, and do not repeat
+the results. Pass `roots` only when the user named a scope; never pass `limit`
+unless the user asked for a page size.
 
 If the input is empty, then - and only then - ask what to search for with a
 normal `ask_user` question (options or free input), not with `actions`.
 
+### Hand-built queries
+
 `/search` is only the shortcut for a plain term. For anything more specific - a
-concrete path, a property value, a date or numeric range - build the predicate
-map yourself as the rest of this skill describes; still present the result with
-`format_table`. A hand-built query is still a `/search` turn, so it still ends
-with step 3: offer **Load more** whenever `hasMore` is not `false`.
+concrete path, a property value, a type, a date or numeric range, an ordering -
+build the predicate map yourself as the rest of this skill describes and run the
+three steps in order, all in this same turn:
+
+1. **Query.** Call `aem_query` with your predicates, the content roots as
+   `roots` (unless you used a `path`), `limit: 50`, and `offset` starting at `0`.
+2. **Present.** Call `format_table` with that result's JSON **verbatim** as
+   `data`, and `mode: "new"` on the first page, `"append"` on every later page.
+3. **Offer more.** If the result's `pagination.hasMore` is `true` or
+   `"unknown"`, you **must** call `ask_user` with exactly
+   `{ "actions": ["Load more"] }` - a written question is not a substitute,
+   since the application discards your prose. On **Load more**, repeat from
+   step 1 with `offset` increased by `50` and `mode: "append"`. Only when
+   `hasMore` is `false` is there nothing to offer.
 
 ## Always scope
 

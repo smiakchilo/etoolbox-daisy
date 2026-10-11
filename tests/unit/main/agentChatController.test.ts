@@ -60,6 +60,11 @@ function noopLogger(): Logger {
   };
 }
 
+/** Lets a controller's `await` chains settle without advancing a timer. */
+async function flushMicrotasks(): Promise<void> {
+  for (let tick = 0; tick < 20; tick += 1) await Promise.resolve();
+}
+
 function serverContext(overrides: Partial<AemServerContext> = {}): AemServerContext {
   return {
     origin: 'https://author.example.com',
@@ -191,6 +196,73 @@ function createLeakyAgentService(): LeakyAgentService {
       for (const listener of eventListeners) listener(event);
     },
     sentPrompts,
+  };
+}
+
+/**
+ * An `AgentService` double whose `openConversation` is held open until the test
+ * settles it, so the controller's single-flight + `superseded` behaviour can be
+ * driven deterministically. Like the real adapters, it commits its "open chat"
+ * only when an open *settles* - which is exactly what let a real out-of-order
+ * completion leave the service on the older chat while the controller had moved
+ * on.
+ */
+interface DeferredOpenService extends AgentService {
+  /** Every `openConversation` the controller actually handed to the service, in order. */
+  readonly openCalls: ChatId[];
+  /** Resolves the pending open for `chatId`, committing it as open on success. */
+  settleOpen(chatId: ChatId, result: Result<ChatId, AgentServiceError>): void;
+  /** The chat this service currently considers open, or `undefined`. */
+  openChatId(): ChatId | undefined;
+}
+
+function createDeferredOpenService(): DeferredOpenService {
+  const eventListeners = new Set<(event: AgentEvent) => void>();
+  const authListeners = new Set<(state: AgentAuthState) => void>();
+  const authState: AgentAuthState = { apiVersion: 1, isAuthenticated: true };
+  const openCalls: ChatId[] = [];
+  const pending = new Map<ChatId, (result: Result<ChatId, AgentServiceError>) => void>();
+  let openChatId: ChatId | undefined;
+
+  return {
+    initialize: () => Promise.resolve(ok(undefined)),
+    getAuthState: () => authState,
+    getOpenSessionId: () => undefined,
+    onAuthStateChanged(listener) {
+      authListeners.add(listener);
+      return () => authListeners.delete(listener);
+    },
+    onEvent(listener) {
+      eventListeners.add(listener);
+      return () => eventListeners.delete(listener);
+    },
+    openConversation(request) {
+      openCalls.push(request.chatId);
+      return new Promise<Result<ChatId, AgentServiceError>>((resolve) => {
+        pending.set(request.chatId, (result) => {
+          if (result.ok) openChatId = request.chatId;
+          resolve(result);
+        });
+      });
+    },
+    sendPrompt: () => Promise.resolve(ok(undefined)),
+    abort: () => Promise.resolve(ok(undefined)),
+    closeConversation: () => Promise.resolve(ok(undefined)),
+    requestUserInput: () => Promise.resolve(ok({ selections: [], freeform: null })),
+    respondToInput: () => Promise.resolve(ok(undefined)),
+    dispose() {
+      eventListeners.clear();
+      authListeners.clear();
+      return Promise.resolve();
+    },
+    openCalls,
+    settleOpen(chatId, result) {
+      const settle = pending.get(chatId);
+      pending.delete(chatId);
+      if (settle === undefined) throw new Error(`no pending open for ${String(chatId)}`);
+      settle(result);
+    },
+    openChatId: () => openChatId,
   };
 }
 
@@ -1142,5 +1214,233 @@ describe('interactive questions', () => {
       answer: { selections: [], freeform: null },
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('nested tool calls (ToolHost.invokeTool)', () => {
+  const spyLogger = (error: Logger['error']): Logger => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error,
+    getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
+  });
+  const started = {
+    phase: 'started' as const,
+    toolCallId: 'nested-1' as never,
+    toolName: 'format_table',
+    args: { data: [], mode: 'new' },
+  };
+  const settled = {
+    phase: 'settled' as const,
+    toolCallId: 'nested-1' as never,
+    outcome: ok({ rows: 0 }),
+  };
+
+  it('forwards and journals a nested call as tool events of the active turn', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    const chatId = newChatId('chat-n');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'done' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+
+    controller.recordNestedToolCall(started);
+    controller.recordNestedToolCall(settled);
+
+    const requested = received.find((event) => event.type === 'tool.call.requested');
+    expect(requested).toMatchObject({
+      chatId,
+      toolCallId: 'nested-1',
+      toolName: 'format_table',
+      arguments: { data: [], mode: 'new' },
+    });
+    expect(received.find((event) => event.type === 'tool.result')).toMatchObject({
+      toolCallId: 'nested-1',
+      outcome: { ok: true, data: { rows: 0 } },
+    });
+    const journaled = calls
+      .filter((call) => call.method === 'recordEvent')
+      .map((call) => (call.args as AgentEvent).type);
+    expect(journaled).toContain('tool.call.requested');
+    expect(journaled).toContain('tool.result');
+
+    agentService.flush();
+    expect(received.at(-1)).toMatchObject({ type: 'session.state.changed', state: 'idle' });
+  });
+
+  it('carries a failed nested outcome as a structured tool error', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    const chatId = newChatId('chat-e');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'x' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+    controller.recordNestedToolCall(started);
+    controller.recordNestedToolCall({
+      phase: 'settled',
+      toolCallId: 'nested-1' as never,
+      outcome: {
+        ok: false,
+        error: {
+          code: 'CANCELLED',
+          message: 'Stopped',
+          requestId: 'req-1' as never,
+          retryable: false,
+          requiredAction: 'none',
+        },
+      },
+    });
+
+    expect(received.find((event) => event.type === 'tool.result')).toMatchObject({
+      outcome: { ok: false, error: { code: 'CANCELLED' } },
+    });
+  });
+
+  it('ignores a nested call when no turn is running', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const error = vi.fn();
+    const { controller } = buildController(agentService, {
+      chatJournal: journal,
+      logger: spyLogger(error),
+    });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    controller.recordNestedToolCall(started);
+    await controller.openConversation({ chatId: newChatId('chat-idle') });
+    controller.recordNestedToolCall(started);
+
+    expect(received.filter((event) => event.type === 'tool.call.requested')).toEqual([]);
+    expect(methods(calls)).not.toContain('recordEvent');
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('drops a nested call quietly once the turn is being cancelled', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const error = vi.fn();
+    const { controller } = buildController(agentService, { logger: spyLogger(error) });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    const chatId = newChatId('chat-c');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'x' }] });
+    const sent = await controller.sendMessage({ chatId, prompt: 'hi' });
+    if (!sent.ok) throw new Error('unreachable');
+    const aborting = controller.abort({ chatId });
+    controller.recordNestedToolCall(started);
+    await aborting;
+
+    expect(received.filter((event) => event.type === 'tool.call.requested')).toEqual([]);
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('is forwarded by the startup-gated controller once the real one is installed', async () => {
+    const { controller: real } = buildController(
+      createFakeAgentService({ idGenerator: counterIdGenerator('fake') }),
+    );
+    const spy = vi.spyOn(real, 'recordNestedToolCall');
+    const gated = createStartupGatedAgentChatController();
+    gated.recordNestedToolCall(started);
+    await gated.replaceDelegate(real);
+    gated.recordNestedToolCall(started);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // Single-flight + supersede for openConversation (the "XXX is not the open
+  // conversation" banner: two opens for different chats completing out of
+  // order left the service on the older chat)
+  // -------------------------------------------------------------------------
+
+  it('serializes concurrent opens so the service is never mid-open for two chats, and reports the superseded one as not-applicable', async () => {
+    const agentService = createDeferredOpenService();
+    const { controller } = buildController(agentService);
+
+    const first = controller.openConversation({ chatId: newChatId('chat-a') });
+    const second = controller.openConversation({ chatId: newChatId('chat-b') });
+    await flushMicrotasks();
+
+    // Single-flight: chat-b is not handed to the service until chat-a settles -
+    // that is what removes the out-of-order completion in the first place.
+    expect(agentService.openCalls).toEqual([newChatId('chat-a')]);
+    expect(controller.getStatus().activeChatId).toBe('chat-b');
+
+    agentService.settleOpen(newChatId('chat-a'), ok(newChatId('chat-a')));
+    await flushMicrotasks();
+    expect(agentService.openCalls).toEqual([newChatId('chat-a'), newChatId('chat-b')]);
+
+    agentService.settleOpen(newChatId('chat-b'), ok(newChatId('chat-b')));
+
+    // The superseded request is "not applicable", never a failure of chat-b.
+    await expect(first).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'PRECONDITION_FAILED' },
+    });
+    await expect(second).resolves.toEqual({ ok: true, chatId: 'chat-b' });
+    expect(controller.getStatus().activeChatId).toBe('chat-b');
+    expect(agentService.openChatId()).toBe('chat-b');
+
+    // And the send the pane would make goes through: controller and service agree.
+    await expect(
+      controller.sendMessage({ chatId: newChatId('chat-b'), prompt: 'hi' }),
+    ).resolves.toMatchObject({ ok: true });
+  });
+
+  it('does not let a superseded open that failed clear the chat a newer open made active', async () => {
+    const agentService = createDeferredOpenService();
+    const { controller } = buildController(agentService);
+
+    const first = controller.openConversation({ chatId: newChatId('chat-a') });
+    const second = controller.openConversation({ chatId: newChatId('chat-b') });
+    await flushMicrotasks();
+
+    // chat-a (superseded) fails; chat-b then opens. Without the supersede guard
+    // chat-a's failure would reset activeChatId to undefined *after* chat-b had
+    // already become the active chat, so the next send would be refused.
+    agentService.settleOpen(newChatId('chat-a'), {
+      ok: false,
+      error: { code: 'AGENT_UNAVAILABLE', message: 'could not open' },
+    });
+    await flushMicrotasks();
+    agentService.settleOpen(newChatId('chat-b'), ok(newChatId('chat-b')));
+
+    await expect(first).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'PRECONDITION_FAILED' },
+    });
+    await expect(second).resolves.toEqual({ ok: true, chatId: 'chat-b' });
+    expect(controller.getStatus().activeChatId).toBe('chat-b');
+  });
+
+  it('serializes a repeated open of the same chat and leaves that chat open', async () => {
+    const agentService = createDeferredOpenService();
+    const { controller } = buildController(agentService);
+    const chatId = newChatId('chat-a');
+
+    const first = controller.openConversation({ chatId });
+    const second = controller.openConversation({ chatId });
+    await flushMicrotasks();
+    expect(agentService.openCalls).toEqual([chatId]);
+
+    agentService.settleOpen(chatId, ok(chatId));
+    await flushMicrotasks();
+    expect(agentService.openCalls).toEqual([chatId, chatId]);
+    agentService.settleOpen(chatId, ok(chatId));
+
+    await expect(first).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'PRECONDITION_FAILED' },
+    });
+    await expect(second).resolves.toEqual({ ok: true, chatId });
+    expect(controller.getStatus().activeChatId).toBe(chatId);
   });
 });

@@ -549,6 +549,21 @@ if (!gotSingleInstanceLock) {
         console.error(`Tool ${failure.source} was not registered: ${failure.reason}`);
         logger.warn('TOOL_REGISTRATION_FAILED', { count: 1 });
       },
+      // A tool calling another tool (`ToolHost.invokeTool`) shows that call in
+      // the transcript and journal like one the model made.
+      nestedCalls: {
+        onCallStarted: ({ toolCallId, toolName, args }) => {
+          agentChatController.recordNestedToolCall({
+            phase: 'started',
+            toolCallId,
+            toolName,
+            args,
+          });
+        },
+        onCallSettled: ({ toolCallId }, outcome) => {
+          agentChatController.recordNestedToolCall({ phase: 'settled', toolCallId, outcome });
+        },
+      },
     });
     const bundledSkillsDirectory = resolveBundledSkillsDirectory({
       isPackaged: app.isPackaged,

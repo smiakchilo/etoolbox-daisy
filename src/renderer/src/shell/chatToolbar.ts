@@ -18,7 +18,18 @@ export interface ChatToolbarCallbacks {
   readonly onNewSession: () => void;
 }
 
-export function createChatToolbar(callbacks: ChatToolbarCallbacks): HTMLElement {
+export interface ChatToolbar {
+  readonly element: HTMLElement;
+  /**
+   * Enables or disables "New session". The pane disables it while a
+   * conversation open is still resolving, so a second conversation cannot be
+   * started over one that is not finished opening (see `chatPane.ts`'s
+   * `openConversation`).
+   */
+  setNewSessionEnabled(enabled: boolean): void;
+}
+
+export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar {
   const toolbar = el('div', { attrs: { class: 'toolbar chat-toolbar', role: 'toolbar' } });
 
   const newSessionButton = el('sp-action-button', {
@@ -58,5 +69,11 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): HTMLElement 
   });
 
   toolbar.append(newSessionButton, historyButton, settingsButton);
-  return toolbar;
+  return {
+    element: toolbar,
+    setNewSessionEnabled(enabled: boolean): void {
+      if (enabled) newSessionButton.removeAttribute('disabled');
+      else newSessionButton.setAttribute('disabled', '');
+    },
+  };
 }

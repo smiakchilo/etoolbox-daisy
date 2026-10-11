@@ -18,7 +18,7 @@ import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { createTranscriptFollower } from '../chat/transcriptFollower';
 import {
   applyAgentEvent,
-  type AgentChatOpenResult,
+  type AgentChatError,
   type AgentChatSkill,
   type AgentChatStatus,
   type AgentId,
@@ -108,6 +108,19 @@ export interface StartupConversation {
   readonly sdkSessionId: SdkSessionId;
   readonly records: readonly ChatJournalRecord[];
 }
+
+/**
+ * The pane's own outcome for opening a conversation, a refinement of the raw
+ * `AgentChatOpenResult` that adds `'superseded'`: a newer `openConversation`
+ * replaced this one before it resolved, so its result no longer describes the
+ * pane's conversation. Callers must treat `'superseded'` as a no-op - never as
+ * a failure - so a stale open cannot raise an error banner, retry, or run the
+ * resume-failure fallback over a conversation the pane has already moved to.
+ */
+type ConversationOpen =
+  | { readonly outcome: 'opened' }
+  | { readonly outcome: 'superseded' }
+  | { readonly outcome: 'failed'; readonly error: AgentChatError };
 
 /**
  * The right-hand chat pane: toolbar, transcript, and composer, wired to the
@@ -256,8 +269,19 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // race ahead of main registering that conversation and be refused by the
   // service with `"<chatId>" is not the open conversation`. `onSend` awaits
   // this first. See defect fix 2026-10-09.
+  //
+  // It is also the pane's single-flight slot: starting a second open while one
+  // is in flight replaces this value, which is how the first open recognises
+  // that it has been superseded (its promise is no longer the one here) and
+  // reports `'superseded'` rather than a failure. See `ConversationOpen`.
   let pendingOpen:
-    { readonly chatId: ChatId; readonly promise: Promise<AgentChatOpenResult> } | undefined;
+    { readonly chatId: ChatId; readonly promise: Promise<ConversationOpen> } | undefined;
+  // Set once the toolbar exists (below). `openConversation` disables the
+  // "New session" control for as long as an open is in flight, so the user
+  // cannot start a second conversation while the first is still resolving -
+  // the condition that let an older open finish last and win (see the
+  // controller's `openChain`). A no-op until assigned.
+  let setNewSessionEnabled: (enabled: boolean) => void = () => undefined;
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
   let conversationEmpty = false;
@@ -517,32 +541,46 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     });
   }
 
-  async function openConversation(id: ChatId, resume?: SdkSessionId): Promise<AgentChatOpenResult> {
-    const promise = window.daisy.agentChat.openConversation(
+  async function openConversation(id: ChatId, resume?: SdkSessionId): Promise<ConversationOpen> {
+    const raw = window.daisy.agentChat.openConversation(
       resume === undefined ? { chatId: id } : { chatId: id, resume: { sdkSessionId: resume } },
     );
+    // The promise held in `pendingOpen` is the one `onSend` awaits. A later
+    // `openConversation` overwrites `pendingOpen`; that overwrite is exactly
+    // how this call learns it was superseded once it resolves.
+    const promise: Promise<ConversationOpen> = raw.then((result) =>
+      result.ok ? { outcome: 'opened' } : { outcome: 'failed', error: result.error },
+    );
     pendingOpen = { chatId: id, promise };
-    let result: AgentChatOpenResult;
+    setNewSessionEnabled(false);
     try {
-      result = await promise;
+      const outcome = await promise;
+      // A newer open replaced this one before it settled: the pane has moved to
+      // a different conversation, so this result is no longer its business.
+      if (pendingOpen?.promise !== promise) return { outcome: 'superseded' };
+      if (outcome.outcome === 'opened') {
+        // Capture the freshly minted live session id for persistence. A plain
+        // read, not a push: pushing a status change on open would make this pane
+        // react to a conversation some other caller opened (the pane's re-open is
+        // meant for its own runtime-recycle recovery).
+        void window.daisy.agentChat.getStatus().then(
+          (status) => {
+            if (status.sdkSessionId === null) return;
+            latestSdkSessionId = status.sdkSessionId;
+            persistActiveConversation();
+          },
+          () => undefined,
+        );
+      }
+      return outcome;
     } finally {
-      if (pendingOpen?.promise === promise) pendingOpen = undefined;
+      // Only the open that is still current clears the slot and re-enables
+      // "New session"; a superseded one leaves both to its successor.
+      if (pendingOpen?.promise === promise) {
+        pendingOpen = undefined;
+        setNewSessionEnabled(true);
+      }
     }
-    if (result.ok) {
-      // Capture the freshly minted live session id for persistence. A plain
-      // read, not a push: pushing a status change on open would make this pane
-      // react to a conversation some other caller opened (the pane's re-open is
-      // meant for its own runtime-recycle recovery).
-      void window.daisy.agentChat.getStatus().then(
-        (status) => {
-          if (status.sdkSessionId === null) return;
-          latestSdkSessionId = status.sdkSessionId;
-          persistActiveConversation();
-        },
-        () => undefined,
-      );
-    }
-    return result;
   }
 
   /**
@@ -624,7 +662,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     transcriptStore.clear();
     refreshEmptyState();
     const result = await openConversation(id);
-    if (!result.ok) statusBanner.showError(result.error.message);
+    if (result.outcome === 'failed') statusBanner.showError(result.error.message);
   }
 
   /**
@@ -697,15 +735,17 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           adoptChatId(startup.chatId);
           latestSdkSessionId = startup.sdkSessionId;
           const opened = await openConversation(startup.chatId, startup.sdkSessionId);
-          if (opened.ok) {
+          if (opened.outcome === 'opened') {
             persistActiveConversation();
-          } else {
+          } else if (opened.outcome === 'failed') {
             // Silent fallback, as agreed: no banner, and - the important part -
             // no old transcript left on screen under a new session. Forget the
             // pointer so the next launch does not retry a session that is gone.
             options.onConversationUnavailable?.();
             await startFreshConversation();
           }
+          // 'superseded': a newer conversation now owns the pane (e.g. a
+          // concurrent recover), so this resume's outcome is moot.
         }
         startupResumeInFlight = false;
       }
@@ -720,12 +760,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     } else if (status.activeChatId !== chatId) {
       sessionStatus = { ...sessionStatus, state: 'idle' };
       const result = await openConversation(chatId);
-      if (result.ok) {
+      if (result.outcome === 'opened') {
         // The recovery re-opened the pane's conversation; any error row that
         // named the desync is now stale, so clear it rather than leave it
         // sitting under a recovered chat.
         statusBanner.clearError();
-      } else {
+      } else if (result.outcome === 'failed') {
         statusBanner.showError(result.error.message);
       }
     }
@@ -834,13 +874,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
     latestSdkSessionId = header?.sdkSessionId;
     let opened = await openConversation(id, header?.sdkSessionId);
-    if (!opened.ok && header !== undefined) {
+    if (opened.outcome === 'failed' && header !== undefined) {
       // The header's session id is stale or foreign: fall back to a fresh
       // session under the same chat id so the pane still owns a usable chat,
       // with the stored transcript left on screen.
       opened = await openConversation(id);
     }
-    if (!opened.ok) statusBanner.showError(opened.error.message);
+    if (opened.outcome === 'failed') statusBanner.showError(opened.error.message);
     refreshSessionPresentation();
   }
 
@@ -859,7 +899,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (open !== undefined && open.chatId === target) {
       const opened = await open.promise;
       if (chatId !== target) return { ok: false }; // a newer session replaced it
-      if (!opened.ok) {
+      if (opened.outcome === 'failed') {
         statusBanner.showError(opened.error.message);
         return { ok: false };
       }
@@ -969,9 +1009,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * success.
    */
   function startNewSession(): void {
-    // No conversation is open yet (the service is still starting), so there
-    // is no transcript or context for this to clean up.
-    if (chatId === undefined) return;
+    // No conversation is open yet (the service is still starting), and while an
+    // open is in flight this control is disabled (see `openConversation`): a
+    // second conversation must not start over a first that is still resolving.
+    if (chatId === undefined || pendingOpen !== undefined) return;
     const id = newChatId(() => crypto.randomUUID());
     adoptChatId(id);
     conversationHasMessage = false;
@@ -989,7 +1030,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     repaintTranscript();
     refreshSessionPresentation();
     void openConversation(id).then((result) => {
-      if (!result.ok) statusBanner.showError(result.error.message);
+      if (result.outcome === 'failed') statusBanner.showError(result.error.message);
     });
   }
 
@@ -1085,13 +1126,16 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     transcriptFollower.repaint(() => transcriptView.repaint(transcriptStore));
   }
 
+  const chatToolbar = createChatToolbar({
+    onOpenSettings: () => options.onOpenSettings(),
+    onNewSession: startNewSession,
+  });
+  setNewSessionEnabled = (enabled) => chatToolbar.setNewSessionEnabled(enabled);
+
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
     children: [
-      createChatToolbar({
-        onOpenSettings: () => options.onOpenSettings(),
-        onNewSession: startNewSession,
-      }),
+      chatToolbar.element,
       transcript,
       composer.element,
       transcriptFooter,

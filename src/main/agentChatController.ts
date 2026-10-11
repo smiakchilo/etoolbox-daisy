@@ -17,16 +17,19 @@ import {
   type ChatId,
   type CurrentAemToolContext,
   type IdGenerator,
+  type JsonValue,
   type MessageId,
   type RequiredAction,
   type Result,
   type ServerId,
   type SessionStatus,
   type ToolCallId,
+  type ToolError,
   type ToolErrorCode,
   type TurnId,
   type UserInputAnswer,
   type UserInputRequest,
+  agentEventSchema,
   applyAgentEvent,
   canSendMessage,
   err,
@@ -160,6 +163,12 @@ export interface AgentChatController {
    * (`agent-chat:respond-to-input`), releasing the turn waiting on it.
    */
   respondToInput(request: AgentChatRespondToInputRequest): Promise<AgentChatVoidResult>;
+  /**
+   * Feeds a tool call one tool made through `ToolHost.invokeTool` into the
+   * event stream - journal, ownership guard, reducer, listeners - so it shows
+   * in the transcript like a model-made call. Ignored with no turn in flight.
+   */
+  recordNestedToolCall(event: NestedToolCallEvent): void;
   /** Notifies `listener` of every `AgentEvent` that survives the ownership guard, in order. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**
@@ -213,6 +222,20 @@ function notOpenConversationError(chatId: ChatId): AgentChatError {
   );
 }
 
+/**
+ * The outcome of an `openConversation` request that a newer request superseded
+ * before it resolved. This controller already set `activeChatId` to the newer
+ * chat, so this request's own result no longer describes the active
+ * conversation - the caller must treat it as "not applicable", never as a
+ * failure of the conversation now in force.
+ */
+function supersededOpenError(): AgentChatError {
+  return createAgentChatError(
+    'PRECONDITION_FAILED',
+    'A newer conversation was requested before this one finished opening',
+  );
+}
+
 const BLOCK_REASON_MESSAGES: Readonly<Record<CanSendBlockReason, string>> = {
   session_closed: 'This conversation is closed',
   not_authenticated: 'Sign in to the agent to send a message',
@@ -252,6 +275,23 @@ interface ActiveTurn {
   readonly toolCallIds: Set<ToolCallId>;
 }
 
+/**
+ * One phase of a tool call a tool made through `ToolHost.invokeTool` (see
+ * `src/main/tools/registry.ts`). Agent-agnostic: no SDK sees these calls.
+ */
+export type NestedToolCallEvent =
+  | {
+      readonly phase: 'started';
+      readonly toolCallId: ToolCallId;
+      readonly toolName: string;
+      readonly args: Readonly<Record<string, JsonValue>>;
+    }
+  | {
+      readonly phase: 'settled';
+      readonly toolCallId: ToolCallId;
+      readonly outcome: Result<JsonValue, ToolError>;
+    };
+
 export function createAgentChatController(deps: AgentChatControllerDeps): AgentChatController {
   const { agentService, idGenerator, logger } = deps;
   const chatJournal = deps.chatJournal;
@@ -259,6 +299,24 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 
   let activeChatId: ChatId | undefined;
   let activeTurn: ActiveTurn | undefined;
+  /**
+   * Single-flight for `openConversation`. At most one
+   * `agentService.openConversation` call may be in flight at a time, and
+   * `openSequence` is bumped for every request so a request that a newer one
+   * superseded can be recognised after its await.
+   *
+   * This is what keeps the service's own "open conversation" in step with this
+   * controller's `activeChatId`. Without it, two opens for different chats
+   * could run concurrently and complete out of order - the slower, *earlier*
+   * one finishing last and leaving the service on the wrong chat while this
+   * controller had already moved on - so the very next send was refused by the
+   * service with `"<chatId>" is not the open conversation` (the agent pane
+   * showed that as its banner). One open at a time removes the interleaving by
+   * construction; the sequence number is the second, independent guard against
+   * a superseded request mutating state after the fact.
+   */
+  let openChain: Promise<void> = Promise.resolve();
+  let openSequence = 0;
   let sessionStatus: SessionStatus = {
     state: 'idle',
     authenticated: agentService.getAuthState().isAuthenticated,
@@ -353,9 +411,17 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // renderer. The journal routes by `event.chatId` and drops events for a
     // chat it has no open file for.
     chatJournal?.recordEvent(event);
+    ingestOwnedEvent(event, false);
+  });
+
+  /** The ownership-guarded half of the event pipe, shared by service events and nested tool calls. */
+  function ingestOwnedEvent(event: AgentEvent, nested: boolean): void {
     if (!isOwnedEvent(event)) return; // Late/foreign event - dropped, never forwarded, never queued.
     const applied = applyAgentEvent(sessionStatus, event);
     if (!applied.ok) {
+      // A nested call settling after Stop moved the chat to `cancelling` is
+      // expected (the composite tool is still unwinding) and dropped quietly.
+      if (nested) return;
       // Unreachable if `isOwnedEvent` is correct: an event just accepted as
       // belonging to the active turn that the shared reducer still refuses
       // is a bug worth surfacing, not silently forwarding a bad transition.
@@ -369,7 +435,43 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     recordTurnMembership(event);
     clearTurnIfTerminal();
     for (const listener of [...forwardListeners]) listener(event);
-  });
+  }
+
+  /**
+   * Shows a tool call one tool made through `ToolHost.invokeTool` exactly like
+   * a call the model made: the same journal record, ownership guard, reducer
+   * and listeners. The agent never sees these events - its SDK did not make
+   * the call - so this controller is where they enter the stream.
+   */
+  function recordNestedToolCall(event: NestedToolCallEvent): void {
+    if (activeChatId === undefined || activeTurn === undefined) return;
+    const parsed = agentEventSchema.safeParse(
+      event.phase === 'started'
+        ? {
+            type: 'tool.call.requested',
+            chatId: activeChatId,
+            sequence: 0,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            arguments: event.args,
+          }
+        : {
+            type: 'tool.result',
+            chatId: activeChatId,
+            sequence: 0,
+            toolCallId: event.toolCallId,
+            outcome: event.outcome.ok
+              ? { ok: true, data: event.outcome.value }
+              : { ok: false, error: event.outcome.error },
+          },
+    );
+    if (!parsed.success) {
+      logger.error('AGENT_CHAT_NESTED_TOOL_EVENT_INVALID', { ids: { chatId: activeChatId } });
+      return;
+    }
+    chatJournal?.recordEvent(parsed.data);
+    ingestOwnedEvent(parsed.data, true);
+  }
 
   function getStatus(): AgentChatStatus {
     return {
@@ -390,6 +492,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
   async function openConversation(
     request: AgentChatOpenConversationRequest,
   ): Promise<AgentChatOpenResult> {
+    const sequence = ++openSequence;
     const isSameChat = activeChatId === request.chatId;
     const previousChatId = activeChatId;
     // Ownership flips BEFORE calling into the service: any teardown event
@@ -401,11 +504,38 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       activeTurn = undefined;
       sessionStatus = { ...sessionStatus, state: 'idle' };
     }
-    const result = await agentService.openConversation(
-      request.resume === undefined
-        ? { chatId: request.chatId }
-        : { chatId: request.chatId, resume: request.resume },
-    );
+
+    // Single-flight: wait for any earlier open to settle before asking the
+    // service to open this one, so the service is never mid-open for two chats
+    // at once (see `openChain`'s doc comment). `release` resolves this call's
+    // own link in the chain once its service call is done.
+    const prior = openChain;
+    let release: () => void = () => undefined;
+    openChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prior;
+
+    let result: Result<ChatId, AgentServiceError>;
+    try {
+      result = await agentService.openConversation(
+        request.resume === undefined
+          ? { chatId: request.chatId }
+          : { chatId: request.chatId, resume: request.resume },
+      );
+    } finally {
+      release();
+    }
+
+    // A newer open was requested while this one was in flight: this request is
+    // superseded. It no longer describes the active conversation (the newer
+    // open owns, or is opening, that now), so leave every piece of state, the
+    // journal and the turn bookkeeping untouched and report it as
+    // no-longer-applicable rather than as a failure of the current chat.
+    if (sequence !== openSequence) {
+      return { ok: false, error: supersededOpenError() };
+    }
+
     // The previous chat is gone either way (the service tears it down before
     // attempting the new one), so its journal is closed - after the await, so
     // its teardown events above are still recorded.
@@ -617,6 +747,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     closeConversation,
     requestUserInput,
     respondToInput,
+    recordNestedToolCall,
     onEvent,
     onStatusChanged,
     currentAemToolContext,
@@ -806,6 +937,10 @@ export function createStartupGatedAgentChatController(
     return real.respondToInput(request);
   }
 
+  function recordNestedToolCall(event: NestedToolCallEvent): void {
+    real?.recordNestedToolCall(event);
+  }
+
   function onEvent(listener: (event: AgentEvent) => void): () => void {
     forwardListeners.add(listener);
     return () => {
@@ -884,6 +1019,7 @@ export function createStartupGatedAgentChatController(
     closeConversation,
     requestUserInput,
     respondToInput,
+    recordNestedToolCall,
     onEvent,
     onStatusChanged,
     currentAemToolContext,

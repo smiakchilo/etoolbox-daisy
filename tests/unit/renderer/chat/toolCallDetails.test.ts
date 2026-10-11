@@ -123,6 +123,34 @@ describe('describeToolCall - aem_environment_facts', () => {
   });
 });
 
+describe('describeToolCall - aem_query_format_ask', () => {
+  it('summarises the search terms and reads the totals from the finished result', () => {
+    const details = describeToolCall(
+      'aem_query_format_ask',
+      { terms: 'waldo' },
+      {
+        operation: 'aem_query_format_ask',
+        roots: ['/content/a'],
+        pageSize: 50,
+        pages: 1,
+        rows: 3,
+        total: { accuracy: 'exact', value: 3 },
+        hasMore: false,
+      },
+    );
+
+    expect(details.summary).toBe('Search: waldo');
+    expect(details.parameters.map((row) => row.label)).toEqual([
+      'Terms',
+      'Roots',
+      'Page size',
+      'Pages',
+      'Rows',
+      'Total',
+    ]);
+  });
+});
+
 describe('describeToolCall - unknown tools', () => {
   it('falls back to the full argument object so no tool is ever invisible', () => {
     const details = describeToolCall('aem_unknown_tool', {

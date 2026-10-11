@@ -4,8 +4,10 @@
 or a tool**, go straight to §5 "Agents are plugins" / "Tools are plugins" and
 follow their step-by-step recipes; the deeper rationale is in
 `docs/agent-plugin-architecture.md` and `docs/tool-plugin-architecture.md`.
-For step-plan work, then read `docs/handoff-steps-09-12.md`. Together they are
-enough to start work without re-deriving anything.
+For step-plan work, the authoritative contract is `docs/implementation-plan.md`;
+the consciously-deferred work is in `docs/backlog.md` and the known-open
+delivery items in §11 below. Together they are enough to start work without
+re-deriving anything.
 
 ---
 
@@ -37,7 +39,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/verification.md` | The **evidence log**, one section per completed step. | Append a section per step. Record what was *executed*, not what was written. |
 | `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits. | Read before adding, removing or restructuring an agent/SDK. |
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
-| `docs/handoff-steps-09-12.md` | Current state, open items, traps, and the next permitted step. | Your starting point for new work. |
+| `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained. | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
 
 ---
 
@@ -413,6 +415,31 @@ src/tools/<name>/
 - Tests live in `tests/unit/tools/` (manifests, executors),
   `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
   snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
+- **Tool-to-tool bridge.** A tool's executor may call another tool by name
+  through `host.invokeTool(name, args, context)` — the target's real executor,
+  validation included — but only a tool it lists in its manifest's `uses`. The
+  registry (`createInvokeTool`, `src/main/tools/registry.ts`) refuses a
+  self-call, an undeclared target and a nesting deeper than
+  `MAX_NESTED_TOOL_DEPTH` (3) with `ACCESS_DENIED`, a missing/disabled target
+  with `NOT_FOUND`, and maps a throwing executor to `UNEXPECTED_RESPONSE`; a
+  declared `uses` target that is not enabled is reported as a registration
+  failure. Each nested call is reported to the chat controller
+  (`recordNestedToolCall`) and journaled as ordinary `tool.call.requested` /
+  `tool.result` events of the live turn, so it renders **flat** — exactly as if
+  the model had made it (a `format_table` still paints its table, an `ask_user`
+  still shows its buttons) — and replays from the journal. A tool still never
+  imports another tool folder; `invokeTool` is the only coupling.
+- **Composite tools are named "base tool + mixins", in run order**:
+  `aem_query_format_ask` = `aem_query`, then `format_table`, then `ask_user`. Its
+  folder is the kebab-case of the same name.
+- `aem_query_format_ask` is the first composite: given `terms` (and optional
+  `roots` — default the host content roots — and `limit`, default 50) it runs a
+  full-text `aem_query`, shows the page with `format_table` (`new`, then
+  `append`), and while `hasMore` is not `false` offers `ask_user`
+  `{ actions: ["Load more"] }`, looping on each click. The model gets only a
+  short summary (`textResultForLlm`), never the rows to relay — the point is
+  that weak models no longer have to copy JSON between tools. Its billet reads
+  `Search: <terms>` with rows Terms, Roots, Page size, then Pages, Rows, Total.
 
 #### Recipe: add a new tool
 
@@ -512,10 +539,10 @@ is the search string. Both halves are load-bearing: without the framing the
 model loads the skill and asks what to search for (observed live).
 
 Both search skills now answer with **exactly one application-rendered table**:
-`/search` runs `aem_query` (`fulltext`, the host roots, `properties: []`,
-`limit: 20`) and hands each page to `format_table` (`mode: 'new'` then
-`'append'`), then offers one `ask_user` action (`["Load more"]`) while more
-results exist; `/semantic-search` recalls with `aem_query`, reads candidates with
+`/search` makes a single `aem_query_format_ask` call (`{ "terms": ... }`), which
+runs `aem_query`, `format_table` and the `ask_user` `["Load more"]` loop itself
+through the tool-to-tool bridge (hand-built predicate queries still chain the
+three tools by hand, as the skill describes); `/semantic-search` recalls with `aem_query`, reads candidates with
 `aem_get_json`, judges by meaning, and `format_table`s the passing
 `{ jcr:path, property, citation }` rows. The application suppresses the model's
 own prose for a turn whose prompt invokes either skill (`isDeterministicTablePrompt`
@@ -565,7 +592,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2708 passed / 14 skipped** (net +2 against
+Current baseline: **`npm run test` → 2742 passed / 14 skipped** (+6 against the
+previous 2736: one conversation open at a time — the controller's
+single-flight/`superseded` guard (`agentChatController.test.ts`) and the pane's
+"New session" gate plus superseded-open swallowing (`chatPane.test.ts`); see
+`docs/verification.md` "Chat: one conversation opens at a time - the \"is not the
+open conversation\" banner (2026-10-11)"). Before that it was 2736 (+28 against
+the previous 2708: the tool-to-tool bridge — `invokeTool` guards in
+`toolRegistry.test.ts`, nested-call cases in `agentChatController.test.ts`, the
+`aem_query_format_ask` executor/renderer suite and its `toolCallDetails` case;
+see `docs/verification.md` "Tool-to-tool bridge and the `aem_query_format_ask`
+composite (2026-10-09)"). Before that it was 2708 (net +2 against
 the previous entry's 2706 — the transcript no longer lands on the *top* of the
 newest entry: `transcriptFollower` now recognises its own programmatic scroll by
 the `scrollTop` it left the viewport at, so a late-laying-out entry (an
@@ -964,13 +1001,16 @@ zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
 
 ## 11. Known open items
 
+Deferred, consciously-put-off work lives in `docs/backlog.md` (kept out of this
+file).
+
 | Item | State |
 | --- | --- |
 | Step 07 manual smoke checklist | **Written, never run by a human.** Needs real Copilot + real AEM. |
-| Two Copilot clients | **Design fixed.** `src/agents/copilot/runtimeManager.ts` owns one `CopilotClient` for auth and chat (`replaceDelegate`), replacing `ipc/agent.ts`'s separate `cachedClient`; fake mode answers auth from the fake, so it spawns no runtime at all. The **real-path process count is still unmeasured** — measure before Step 10's shutdown work. Plan: `docs/handoff-two-copilot-clients.md`. |
-| `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — covered by the same handoff. |
-| U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory. |
-| Host `proxyId` | Persisted, integrity-checked and projected, but **not applied** to the live AEM session/bridge fetch. (The *active agent's* proxy is applied to the Copilot runtime and sign-in.) |
+| Two Copilot clients | **Design fixed.** `src/agents/copilot/runtimeManager.ts` owns one `CopilotClient` for auth and chat (`replaceDelegate`), replacing `ipc/agent.ts`'s separate `cachedClient`; fake mode answers auth from the fake, so it spawns no runtime at all. The **real-path process count is still unmeasured** — measure before Step 10's shutdown work. Plan: `docs/backlog.md` "Real-path Copilot runtime process count and quit cleanup". |
+| `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — tracked in `docs/backlog.md` (same entry). |
+| U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory — see `docs/backlog.md` "Milestones B and C". |
+| Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live AEM session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/aem/proxyResolution.ts`). |
 | `step05-address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |

@@ -1250,3 +1250,115 @@ describe('createChatPane interruptions and session id', () => {
     pane.dispose();
   });
 });
+
+describe('createChatPane conversation open serialization', () => {
+  const rememberedConversation = {
+    chatId: 'chat-remembered' as ChatId,
+    sdkSessionId: 'sdk-remembered' as SdkSessionId,
+    records: [] as readonly ChatJournalRecord[],
+  };
+
+  function newSessionButton(pane: ChatPane): HTMLElement | null {
+    return pane.element.querySelector('[title="New session"]');
+  }
+
+  it('disables "New session" while an open is in flight, and re-enables it when the open settles', async () => {
+    let release: ((value: AgentChatOpenResult) => void) | undefined;
+    openConversation.mockImplementationOnce(
+      () =>
+        new Promise<AgentChatOpenResult>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    expect(openConversation).toHaveBeenCalledTimes(1);
+    expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(true);
+
+    release?.({ ok: true, chatId: 'chat-1' as ChatId });
+    await flush();
+
+    expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(false);
+    pane.dispose();
+  });
+
+  it('swallows a superseded open instead of surfacing its failure', async () => {
+    let releaseFirst: ((value: AgentChatOpenResult) => void) | undefined;
+    openConversation
+      .mockImplementationOnce(
+        () =>
+          new Promise<AgentChatOpenResult>((resolve) => {
+            releaseFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(() => Promise.resolve({ ok: true, chatId: 'chat-2' as ChatId }));
+
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    expect(openConversation).toHaveBeenCalledTimes(1);
+
+    // A second status says main owns nothing while the pane has adopted its id:
+    // the recovery re-opens it, superseding the still-pending first open.
+    pushStatus(
+      definedStatus({ auth: { apiVersion: 1, isAuthenticated: true }, activeChatId: null }),
+    );
+    await flush();
+    expect(openConversation).toHaveBeenCalledTimes(2);
+
+    // The superseded first open fails - it must not become the pane's banner.
+    releaseFirst?.({ ok: false, error: { code: 'AGENT_UNAVAILABLE', message: 'stale' } });
+    await flush();
+
+    // Waits out the banner's collapse animation if a standing row was up; a
+    // wrongly-surfaced error would keep it open and time this out.
+    await waitForBannerClosed(pane);
+    expect(agentBanner(pane)?.textContent ?? '').not.toContain('stale');
+    pane.dispose();
+  });
+
+  it('does not run the resume-failure fallback when a superseded resume open fails', async () => {
+    const onConversationUnavailable = vi.fn();
+    let releaseResume: ((value: AgentChatOpenResult) => void) | undefined;
+    openConversation
+      .mockImplementationOnce(
+        () =>
+          new Promise<AgentChatOpenResult>((resolve) => {
+            releaseResume = resolve;
+          }),
+      )
+      .mockImplementationOnce(() =>
+        Promise.resolve({ ok: true, chatId: 'chat-remembered' as ChatId }),
+      );
+
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(rememberedConversation),
+      onConversationUnavailable,
+    });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    expect(openConversation).toHaveBeenCalledTimes(1);
+
+    pushStatus(
+      definedStatus({ auth: { apiVersion: 1, isAuthenticated: true }, activeChatId: null }),
+    );
+    await flush();
+    expect(openConversation).toHaveBeenCalledTimes(2);
+
+    // The superseded resume reports failure; the pane must NOT clear the saved
+    // pointer or start a fresh chat over the one the recovery now owns.
+    releaseResume?.({ ok: false, error: { code: 'AGENT_UNAVAILABLE', message: 'session gone' } });
+    await flush();
+
+    expect(onConversationUnavailable).not.toHaveBeenCalled();
+    expect(openConversation).toHaveBeenCalledTimes(2);
+    pane.dispose();
+  });
+});

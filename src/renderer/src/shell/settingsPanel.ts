@@ -16,7 +16,7 @@ import { createPanel, type Panel } from './panel';
 /**
  * The Settings surface as a whole-size panel (`panel.ts`), superseding the
  * separate Settings child window (`requirements-decisions.md` section 8, as
- * deviated - see `docs/handoff-steps-09-12.md`). It reuses the same section
+ * deviated). It reuses the same section
  * components the window used to mount (hosts, agents, proxies) and the same
  * re-fetch-on-change rhythm:
  * every section that mutates settings calls back into `reload`, which

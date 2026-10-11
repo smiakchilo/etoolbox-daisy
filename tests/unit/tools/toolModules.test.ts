@@ -45,6 +45,7 @@ function makeHost(outcome: BrokerOutcome): {
       requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
       clock: () => 1_700_000_000_000,
       idGenerator: ids,
+      invokeTool: () => Promise.reject(new Error('not used')),
     },
   };
 }

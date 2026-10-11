@@ -76,11 +76,11 @@ test('Settings sections are real tab panels, switching their content', async () 
 
     // Every section is one tab, labelled with its former heading. (The
     // certificate-exceptions tab was removed when approval moved into the
-    // browser pane's banner - see handoff-steps-09-12.md's deviation note.
-    // The standalone Authentication and Models tabs were folded into the
-    // single Agents tab, which hosts the provider's active badge/set-active
-    // control, sign-in and model/effort pickers together - see
-    // agentsSection.ts.)
+    // browser pane's banner - see docs/verification.md's certificate-prompt
+    // deviation note. The standalone Authentication and Models tabs were
+    // folded into the single Agents tab, which hosts the provider's
+    // active badge/set-active control, sign-in and model/effort pickers
+    // together - see agentsSection.ts.)
     const labels = ['Hosts', 'Agents', 'Browser', 'Proxies'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {

@@ -24,8 +24,9 @@ import { tlsExceptionSchema, type TlsException } from '../../shared';
  *    through the injected {@link ConnectionCloser}. (There is deliberately no
  *    in-app revoke path: exceptions are only ever *added* here, and removed
  *    by editing the persisted `settings.json` with the app closed - a fresh
- *    Chromium session has no cached decisions to clear. See
- *    handoff-steps-09-12.md's certificate-prompt deviation note.)
+ *    Chromium session has no cached decisions to clear. See the certificate-
+ *    prompt deviation note in `docs/verification.md`, "Deviation record —
+ *    certificate-exception approvals moved into the browser pane".)
  *
  * Matching requires an exact origin (scheme + host + port) AND the
  * certificate's SHA-256 fingerprint AND the reported error class (e.g.

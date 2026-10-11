@@ -8,7 +8,7 @@ import type {
   UserInputAnswer,
   UserInputRequest,
 } from '../../contracts';
-import { err, ok } from '../../result';
+import { type Result, err, ok } from '../../result';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
 import type { AemResponseOutcome } from './responseValidation';
@@ -26,9 +26,14 @@ import { firstIssueMessage } from './validationIssue';
  * registry discovers it by glob. Nothing else in the application names a tool.
  */
 
+/** The per-call context the SDK hands an executor: its tool-call id and abort signal. */
+export type ToolExecutionContext = Parameters<AemToolExecutor>[1];
+
 /**
  * What a tool may ask of the application at run time. Deliberately small: a
- * tool cannot reach the session, the settings, the window, or another tool.
+ * tool cannot reach the session, the settings or the window, and it reaches
+ * another tool only through {@link ToolHost.invokeTool}, and only a tool it
+ * declared in {@link ToolModule.uses}.
  */
 export interface ToolHost {
   readonly bridge: {
@@ -70,7 +75,30 @@ export interface ToolHost {
     requestId: RequestId,
     kind: AemResponseOutcome['kind'],
   ) => void;
+  /**
+   * Runs another enabled tool's executor directly - the tool-to-tool bridge. A
+   * composite tool uses it to chain tools deterministically instead of relying
+   * on the model to relay one tool's JSON into the next.
+   *
+   * `name` must be listed in the caller's {@link ToolModule.uses}; a tool may
+   * not call itself, and nesting is depth-limited. `parent` is the caller's own
+   * execution context: its abort signal is passed through, so a Stop cancels
+   * the nested call too. The nested call is shown in the transcript and the
+   * chat journal like a call the model made. It resolves `err(ToolError)` -
+   * never throws - when the target is undeclared, missing or disabled.
+   */
+  readonly invokeTool: (
+    name: string,
+    args: Readonly<Record<string, JsonValue>>,
+    parent: ToolExecutionContext,
+  ) => Promise<Result<JsonValue, ToolError>>;
 }
+
+/**
+ * The application-supplied part of a {@link ToolHost}: everything except
+ * `invokeTool`, which the registry binds per calling tool.
+ */
+export type ToolHostServices = Omit<ToolHost, 'invokeTool'>;
 
 export interface ToolModule {
   readonly name: string;
@@ -85,6 +113,12 @@ export interface ToolModule {
   readonly disabled?: boolean;
   /** One paragraph telling the model when to use this tool; joined into the session instructions. */
   readonly instructions: string;
+  /**
+   * The other tools this one calls through {@link ToolHost.invokeTool}. A
+   * composite ("synthetic") tool declares its parts here; a call to any tool
+   * not listed is refused.
+   */
+  readonly uses?: readonly string[];
   readonly createExecutor: (host: ToolHost) => AemToolExecutor;
 }
 
