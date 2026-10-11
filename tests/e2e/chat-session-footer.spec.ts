@@ -191,6 +191,10 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     await expect(stop).toBeVisible();
     await stop.click();
 
+    // The Cancel returns the keyboard to the prompt field, so the user can type
+    // straight away rather than having to click back into it.
+    await expect(shell.locator(COMPOSER_FIELD)).toBeFocused();
+
     const notice = shell.locator(INTERRUPTION);
     await expect(notice.locator('.chat-message__interruption-label')).toHaveText(
       'Session stopped',

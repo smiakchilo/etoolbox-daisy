@@ -410,6 +410,8 @@ test.describe('ask-user interactive question', () => {
 
     // The question is dismissed and the ordinary bordered composer returns...
     await expect(shell.locator('.chat-ask__actions')).toBeHidden();
+    // ...with the text field focused, so Cancel leaves the user ready to type...
+    await expect(shell.locator(COMPOSER_FIELD)).toBeFocused();
     await expect
       .poll(() =>
         shell

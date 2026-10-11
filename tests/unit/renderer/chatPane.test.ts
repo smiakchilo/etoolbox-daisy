@@ -1010,11 +1010,16 @@ describe('createChatPane interruptions and session id', () => {
     const chatId = currentChatId();
 
     pushEvent(sessionState(chatId, 0, 'sending'));
+    const field = pane.element.querySelector('sp-textfield') as HTMLElement;
+    const focusSpy = vi.spyOn(field, 'focus');
     const stop = pane.element.querySelector('.chat-composer__stop');
     expect(stop).not.toBeNull();
     stop?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
     expect(abort).toHaveBeenCalledTimes(1);
+    // The keyboard returns to the prompt field after the Cancel.
+    expect(focusSpy).toHaveBeenCalled();
+    focusSpy.mockRestore();
 
     pushEvent(sessionState(chatId, 1, 'cancelling'));
     await waitForInterruption(pane);
@@ -1088,6 +1093,8 @@ describe('createChatPane interruptions and session id', () => {
 
     const stop = pane.element.querySelector('.chat-composer__stop');
     expect(stop).not.toBeNull();
+    const field = pane.element.querySelector('sp-textfield') as HTMLElement;
+    const focusSpy = vi.spyOn(field, 'focus');
     stop?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
 
@@ -1099,8 +1106,11 @@ describe('createChatPane interruptions and session id', () => {
       requestId: 'req-1',
       answer: { selections: [], freeform: null },
     });
-    // And the interactive UI is dismissed, back to the ordinary composer.
+    // And the interactive UI is dismissed, back to the ordinary composer, with
+    // the keyboard already in the field so the user can type straight away.
     expect(pane.element.querySelector('.chat-ask')?.hasAttribute('hidden')).toBe(true);
+    expect(focusSpy).toHaveBeenCalled();
+    focusSpy.mockRestore();
 
     pane.dispose();
   });

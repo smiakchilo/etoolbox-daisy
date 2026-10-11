@@ -610,8 +610,15 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2764 passed / 14 skipped** (+12 against the
-2752 of the previous entry - **skills are auto-inferred from their
+Current baseline: **`npm run test` → 2766 passed / 14 skipped** (+2 against the
+2764 of the previous entry - **the composer keeps focus after a Cancel/Stop**:
+the Stop control's click handler now focuses the prompt field right after
+`onStop()` runs, so both the true Cancel (abort) and the "back to text input"
+dismissal of an `ask_user` question leave the keyboard in the field. Two
+`composer.test.ts` cases (plus focus-spy assertions in two `chatPane.test.ts`
+cases and two E2E specs). See `docs/verification.md` "The composer keeps focus
+after a Cancel/Stop (2026-10-11)"). Before that it was 2764 (+12 against the
+2752 of the entry before - **skills are auto-inferred from their
 descriptions**: a `skill` catalogue is composed onto the session instructions,
 the two search skills are mode-agnostic, and a model-loaded search turn has its
 prose suppressed. 3 `renderSkillCatalogue`, 3 model-catalogue, 5 transcript-store

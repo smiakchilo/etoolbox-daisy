@@ -230,6 +230,46 @@ describe('createComposer', () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it('returns the keyboard to the field after a true Cancel (Stop) click', () => {
+    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+    composer.setButtonState({ kind: 'stop' });
+    const field = query(composer.element, 'sp-textfield');
+    const focusSpy = vi.spyOn(field, 'focus');
+
+    query(composer.element, '.chat-composer__stop').click();
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    focusSpy.mockRestore();
+  });
+
+  it('returns the keyboard to the field when Cancel dismisses an ask-user question', () => {
+    // The pane's `onStop` dismisses a pending question, which is what switches
+    // the composer back to the ordinary text-input mode. The explicit type
+    // annotation lets `onStop` refer to the composer it is being built into.
+    const composer: Composer = createComposer({
+      onSend: vi.fn(),
+      onStop: () => composer.setInputRequest(undefined),
+    });
+    composer.setButtonState({ kind: 'stop' });
+    composer.setInputRequest({
+      question: 'Pick a colour',
+      options: ['Red', 'Green'],
+      multiple: false,
+      freeInput: false,
+    });
+    const field = query(composer.element, 'sp-textfield');
+    // The field starts hidden behind the option controls.
+    expect(isShown(field)).toBe(false);
+    const focusSpy = vi.spyOn(field, 'focus');
+
+    query(composer.element, '.chat-composer__stop').click();
+
+    // Back in text-input mode, and focused so the user can type straight away.
+    expect(isShown(field)).toBe(true);
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    focusSpy.mockRestore();
+  });
+
   describe('submitting a prompt', () => {
     it('submits the trimmed field text on a plain Enter and clears the field', async () => {
       const onSend = vi.fn().mockResolvedValue({ ok: true } satisfies ComposerSendOutcome);

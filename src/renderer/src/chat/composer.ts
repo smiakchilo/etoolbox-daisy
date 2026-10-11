@@ -799,8 +799,17 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   sendButton.addEventListener('click', () => {
     trySubmit();
   });
+  // Stop doubles as the ask-user Cancel: whether this click aborts the turn or
+  // dismisses the on-screen question (restoring the ordinary text field), the
+  // keyboard must end up back in the prompt field so the user can type straight
+  // away. The focus is applied here, after `onStop` has run, because that is
+  // where `setInputRequest(undefined)` re-shows the field - focusing a still
+  // `display: none` field would do nothing. Programmatic dismissals (the turn
+  // ending on its own, a new session) do not go through this click handler, so
+  // they never steal focus from elsewhere.
   stopButton.addEventListener('click', () => {
     callbacks.onStop();
+    field.focus();
   });
 
   const actions = el('div', {
