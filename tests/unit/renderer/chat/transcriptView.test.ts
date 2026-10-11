@@ -727,7 +727,7 @@ describe('createTranscriptView - openable message links', () => {
 
     expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
       { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr:content/x` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
     ]);
   });
 

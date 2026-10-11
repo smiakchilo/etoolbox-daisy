@@ -219,9 +219,11 @@ function withoutHtmlExtension(pathname: string): string {
  * it; this mirrors `buildResourceUrl`'s "decode once, re-encode per segment"
  * rule.
  *
- * Only the content-view URLs (page, editor, asset preview, `assetdetails`) are
- * built from this. The **CRX** action deliberately keeps the raw JCR path in
- * its `#fragment`, where CRXDE Lite reads it verbatim and `:` needs no escaping.
+ * Every pane URL - the content-view URLs (page, editor, asset preview,
+ * `assetdetails`) and the **CRX** action's `#fragment` alike - is built from
+ * this. CRXDE Lite resolves the fragment by decoding it back to a JCR path, so
+ * a raw `:` there makes the tree view fail to select the node (reported
+ * 2026-10-11); `jcr:content` must reach CRX as `jcr%3Acontent`.
  */
 function encodeAemPathname(pathname: string): string {
   let decoded: string;
@@ -257,7 +259,7 @@ export function classifyAemPath(origin: string, rawPathname: string): ResolvedLi
   const crx: LinkAction = {
     id: 'crx',
     title: 'CRX',
-    href: `${origin}/crx/de/index.jsp#${pathNoHtml}`,
+    href: `${origin}/crx/de/index.jsp#${encodeAemPathname(pathNoHtml)}`,
   };
 
   if (isContentPath(path)) {

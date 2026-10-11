@@ -66,7 +66,7 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     // re-classifying the trimmed href can never retarget CRX at the page.
     expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
       { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr:content/x` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
     ]);
   });
 
@@ -76,16 +76,16 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/a/b.html`);
     expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
       { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr:content/x` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
     ]);
   });
 
-  it('percent-encodes jcr:content in the content-view href, leaving the CRX fragment raw', () => {
+  it('percent-encodes jcr:content in the content-view href and the CRX fragment alike', () => {
     const doc = parse(renderer.render('See /apps/x/jcr:content/y now.', ACTIVE_CONTEXT));
     const anchor = doc.querySelector('a[data-daisy-link]');
     expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/apps/x/jcr%3Acontent/y`);
     expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/apps/x/jcr:content/y` },
+      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/apps/x/jcr%3Acontent/y` },
     ]);
   });
 
@@ -165,7 +165,7 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
         title: 'CRX',
         href:
           `${AUTHOR}/crx/de/index.jsp#/content/hpe/base/blueprint/regression/components/` +
-          'new-country-selector-template/home-page-5/jcr:content',
+          'new-country-selector-template/home-page-5/jcr%3Acontent',
       },
     ]);
   });

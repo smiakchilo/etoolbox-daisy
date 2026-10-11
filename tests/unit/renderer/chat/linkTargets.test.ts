@@ -105,30 +105,31 @@ describe('linkTargets - classifyAemPath', () => {
     expect(classifyAemPath(AUTHOR, '/content/site/en/page/jcr:content')).toEqual(
       pane(`${AUTHOR}/content/site/en/page.html`, [
         editAction(`${AUTHOR}/editor.html/content/site/en/page.html`),
-        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr:content`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr%3Acontent`),
       ]),
     );
     expect(classifyAemPath(AUTHOR, '/content/hpe/us/en/page/jcr:content/myComponent/2')).toEqual(
       pane(`${AUTHOR}/content/hpe/us/en/page.html`, [
         editAction(`${AUTHOR}/editor.html/content/hpe/us/en/page.html`),
-        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/hpe/us/en/page/jcr:content/myComponent/2`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/hpe/us/en/page/jcr%3Acontent/myComponent/2`),
       ]),
     );
     // A `.html` suffix on the resource is trimmed before the page is built.
     expect(classifyAemPath(AUTHOR, '/content/site/en/page/jcr:content/x.html')).toEqual(
       pane(`${AUTHOR}/content/site/en/page.html`, [
         editAction(`${AUTHOR}/editor.html/content/site/en/page.html`),
-        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr:content/x`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr%3Acontent/x`),
       ]),
     );
   });
 
-  it('percent-encodes the path in content-view URLs, but not in the CRX fragment', () => {
-    // `:` is not safe in a URL path, so `jcr:content` is escaped there - while
-    // the CRX fragment keeps the raw JCR path, which CRXDE Lite reads verbatim.
+  it('percent-encodes the path in every pane URL, the CRX fragment included', () => {
+    // `:` is not safe in a URL path, so `jcr:content` is escaped in the content
+    // view and in the CRX fragment, which CRXDE Lite decodes back to the JCR
+    // path before selecting the node.
     expect(classifyAemPath(AUTHOR, '/apps/x/jcr:content/y')).toEqual(
       pane(`${AUTHOR}/apps/x/jcr%3Acontent/y`, [
-        crxAction(`${AUTHOR}/crx/de/index.jsp#/apps/x/jcr:content/y`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/apps/x/jcr%3Acontent/y`),
       ]),
     );
     // A DAM asset preview and its assetdetails Edit both encode the path.
@@ -141,7 +142,7 @@ describe('linkTargets - classifyAemPath', () => {
     expect(classifyAemPath(AUTHOR, '/content/caf\u00e9/site name/page')).toEqual(
       pane(`${AUTHOR}/content/caf%C3%A9/site%20name/page.html`, [
         editAction(`${AUTHOR}/editor.html/content/caf%C3%A9/site%20name/page.html`),
-        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/caf\u00e9/site name/page`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/caf%C3%A9/site%20name/page`),
       ]),
     );
     // An already percent-encoded path must not be double-encoded.

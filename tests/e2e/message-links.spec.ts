@@ -512,7 +512,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(
-      `${HOST}/crx/de/index.jsp#/content/site/alpha/jcr:content/myComponent/2`,
+      `${HOST}/crx/de/index.jsp#/content/site/alpha/jcr%3Acontent/myComponent/2`,
       { timeout: 60_000 },
     );
 
