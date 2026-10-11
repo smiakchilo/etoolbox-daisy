@@ -198,4 +198,42 @@ describe('createSkillCatalog', () => {
 
     expect(await catalog.load()).toBe(first);
   });
+
+  it('exposes a model catalogue of every skill, using the technical description', async () => {
+    const dir = makeSkillsDir({
+      search:
+        '---\nname: search\ndescription: Technical search guidance.\nmetadata:\n  user-description: Find things.\n---\n',
+      'query-results': frontMatter('query-results', 'Reading results.', false),
+    });
+    const catalog = createSkillCatalog(dir);
+
+    // Nothing is known before the one read lands.
+    expect(catalog.modelCatalogue()).toEqual([]);
+    await catalog.load();
+
+    // Both skills are in the model catalogue (the auxiliary one included), and
+    // the model sees the technical description, not the user-facing summary.
+    expect(catalog.modelCatalogue()).toEqual([
+      { name: 'query-results', description: 'Reading results.' },
+      { name: 'search', description: 'Technical search guidance.' },
+    ]);
+    // The composer's catalogue still omits the auxiliary skill and shows the
+    // user-facing summary.
+    expect(catalog.current()).toEqual([{ name: 'search', description: 'Find things.' }]);
+  });
+
+  it('falls back to the user description for a model entry with no technical one', async () => {
+    const dir = makeSkillsDir({
+      only: '---\nname: only\nmetadata:\n  user-description: A friendly phrase.\n---\n',
+    });
+    const catalog = createSkillCatalog(dir);
+    await catalog.load();
+    expect(catalog.modelCatalogue()).toEqual([{ name: 'only', description: 'A friendly phrase.' }]);
+  });
+
+  it('reports an empty model catalogue when the read fails', async () => {
+    const catalog = createSkillCatalog(path.join(tmpdir(), 'daisy-does-not-exist-xyz'));
+    await catalog.load();
+    expect(catalog.modelCatalogue()).toEqual([]);
+  });
 });

@@ -80,8 +80,9 @@ export function createSkillToolSpec(
   const available = names.length > 0 ? names.join(', ') : 'none';
   const description =
     'Load one of the application\u2019s bundled AEM skills by name and return its full ' +
-    `instructions. Available skills: ${available}. Call this when the user's message begins ` +
-    'with /<skillname>, or when they explicitly ask to use a skill, before acting on it.';
+    `instructions. Available skills: ${available}. Call this when a request matches one of ` +
+    'the skills described in your instructions, or when the user explicitly asks to use a ' +
+    'skill, before acting on it.';
 
   const parameters = {
     type: 'object',

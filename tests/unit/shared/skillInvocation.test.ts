@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SKILL_TOOL_NAME,
   filterSkillsByName,
   readLeadingSkillToken,
+  renderSkillCatalogue,
   renderSkillInvocationDirective,
   resolveSkillPrompt,
 } from '../../../src/shared';
@@ -80,6 +82,31 @@ describe('renderSkillInvocationDirective', () => {
     expect(directive).toContain("The text below is the user's input for this skill");
     expect(directive).toContain('do not ask the user to restate it');
     expect(directive.endsWith('why zero rows?')).toBe(true);
+  });
+});
+
+describe('renderSkillCatalogue', () => {
+  it('returns an empty string for an empty catalogue, so no heading is added', () => {
+    expect(renderSkillCatalogue([])).toBe('');
+  });
+
+  it('lists every skill name and its model-facing description', () => {
+    const block = renderSkillCatalogue([
+      { name: 'search', description: 'Find pages by content.' },
+      { name: 'query-results', description: 'Read a query result correctly.' },
+    ]);
+    expect(block).toContain('- search: Find pages by content.');
+    expect(block).toContain('- query-results: Read a query result correctly.');
+  });
+
+  it('tells the model to load a matching skill before acting, via the skill tool', () => {
+    const block = renderSkillCatalogue([{ name: 'search', description: 'Find pages.' }]);
+    expect(block).toContain('before acting');
+    expect(block).toContain(`\`${SKILL_TOOL_NAME}\` tool`);
+    expect(block).toContain(`{"${SKILL_TOOL_NAME}":"<name>"}`);
+    expect(block).toContain('Available skills:');
+    // The model must not be invited to ask the user whether to load it.
+    expect(block).toContain('do not ask the user to confirm');
   });
 });
 

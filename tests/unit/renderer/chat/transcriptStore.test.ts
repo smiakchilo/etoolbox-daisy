@@ -138,6 +138,20 @@ function toolResultFailed(sequence: number): AgentEvent {
   });
 }
 
+const skillToolCallId: ToolCallId = toolCallIdSchema.parse('skill-call-1');
+
+/** A `skill` tool call (the internal skill loader) for `skillName`. */
+function skillRequested(sequence: number, skillName: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.requested',
+    chatId,
+    sequence,
+    toolCallId: skillToolCallId,
+    toolName: 'skill',
+    arguments: { skill: skillName },
+  });
+}
+
 describe('createTranscriptStore', () => {
   it('starts empty', () => {
     const store = createTranscriptStore();
@@ -183,6 +197,59 @@ describe('createTranscriptStore', () => {
       store.clear();
       store.applyEvent(messageStarted(0));
       expect(store.items().some((item) => item.kind === 'message')).toBe(true);
+    });
+  });
+
+  describe('auto-inferred skill turns', () => {
+    it('hides the internal skill call, so loading a skill is never a visible tool call', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'find pages about Waldo');
+      store.applyEvent(skillRequested(0, 'search'));
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+      expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+    });
+
+    it('suppresses a search turn the model chose on its own, exactly like /search', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'find pages about Waldo');
+      store.applyEvent(skillRequested(0, 'search'));
+      store.applyEvent(messageStarted(1));
+      store.applyEvent(delta(2, 'I will search for that.'));
+      store.applyEvent(completed(3, 'I will search for that.'));
+      expect(store.items().some((item) => item.kind === 'message')).toBe(false);
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+    });
+
+    it('removes prose that arrived before the skill was loaded', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'text about Waldo, ranked by meaning');
+      store.applyEvent(messageStarted(0));
+      store.applyEvent(completed(1, 'Let me think about that.'));
+      expect(store.items().some((item) => item.kind === 'message')).toBe(true);
+
+      store.applyEvent(skillRequested(2, 'semantic-search'));
+
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+      expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+    });
+
+    it('hides an auxiliary skill call but keeps the turn prose', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'where do paths live?');
+      store.applyEvent(skillRequested(0, 'daisy-conventions'));
+      store.applyEvent(messageStarted(1));
+      store.applyEvent(delta(2, 'Under /content by default.'));
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'message', messageId, turnId },
+      ]);
+      expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+    });
+
+    it('hides the skill call even when no turn is in flight', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(skillRequested(0, 'search'));
+      expect(store.items()).toEqual([]);
     });
   });
 

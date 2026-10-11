@@ -1,6 +1,6 @@
 ---
 name: semantic-search
-description: How to answer a `/semantic-search <text>` request against a conventional AEM Author instance - recall everything the full-text index can find for the subject in the text, judge each candidate by the meaning the text carries, and report the matches with a path-to-citation table. Use whenever the user invokes `/semantic-search`, rather than supplying a path, a property value, or a structured predicate.
+description: How to run a semantic search against a conventional AEM Author instance - recall everything the full-text index can find for a subject, judge each candidate by the meaning the request carries, and report the passing matches as a path-to-citation table. Use whenever the user asks for content by meaning, quality, topic, or description rather than by an exact word, a path, a property value, or a structured predicate - including when they invoke `/semantic-search <text>`.
 metadata:
   user-description: Find content by meaning, not just matching words.
 ---
@@ -20,9 +20,16 @@ from condemnation; you can.
 
 ## 1. Split the request into a subject and a meaning
 
-You are invoked as `/semantic-search <text>`, and the `<text>` is handed to you
-as **your input for the turn**. The whole input is the request: from it you take
-a subject to search and a meaning to judge against.
+This skill is reached two ways, and the request is the same in both:
+
+- **The user typed `/semantic-search <text>`.** The `<text>` is handed to you as
+  **your input for the turn**.
+- **You loaded this skill yourself** because the request is for content by
+  meaning, quality, topic, or description rather than an exact word, a path, or
+  a property value.
+
+Either way, the whole request is the input: from it you take a subject to search
+and a meaning to judge against. Do not ask the user to restate it.
 
 - input `good Waldo` -> subject `Waldo`; meaning "Waldo is good, benevolent,
   upstanding".

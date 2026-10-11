@@ -1,6 +1,6 @@
 ---
 name: search
-description: How to run an AEM search - invoke `/search <terms>` for an immediate full-text search with the aem_query_format_ask tool, or construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return. Use whenever searching, correcting, or explaining an aem_query call against a conventional AEM Author instance.
+description: How to run an AEM search against a conventional AEM Author instance - construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return, or run an immediate full-text search with the aem_query_format_ask tool. Use whenever the user asks to find, search for, look up, or list AEM content (pages, assets, components) - including when they invoke `/search <terms>`. Do not load it merely to explain a result that already came back; that is the query-results skill.
 metadata:
   user-description: Find pages and assets by their content.
 ---
@@ -15,22 +15,27 @@ available here; do not write SQL2, JCR-SQL, XPath, or GraphQL.
 
 All predicate values are strings, including numbers and booleans.
 
-## Invoked as `/search <terms>`
+## A plain-term search
 
-You are invoked as `/search <terms>`, and the user's term(s) are handed to you
-as **your input for the turn** - the directive that invokes this skill says so,
-and the term(s) follow it. **That input is the search string.** Run the search
-for it immediately; do not ask the user what to search for, and do not answer by
-explaining this skill.
+This skill is reached two ways, and the search string is the same in both:
 
-A `/search` turn produces **exactly one application-rendered table**. Write no
-prose of your own: the application hides your assistant text for this turn, so
-any explanation you write is discarded.
+- **The user typed `/search <terms>`.** The term(s) follow the directive that
+  names this skill, and they are **your input for the turn**. That input is the
+  search string.
+- **You loaded this skill yourself** because the request is a search. The user's
+  request is the search string - **do not ask them to restate it, and do not
+  answer by explaining this skill.**
 
-**Make exactly one call: `aem_query_format_ask`, with the input as `terms`.**
+Either way, run the search immediately. Do not ask the user what to search for.
+
+A plain-term search produces **exactly one application-rendered table**. Write
+no prose of your own: the application hides your assistant text for a search
+turn, so any explanation you write is discarded.
+
+**Make exactly one call: `aem_query_format_ask`, with the search string as `terms`.**
 
 ```json
-{ "terms": "<terms>" }
+{ "terms": "<search string>" }
 ```
 
 That one tool does the whole search: it runs `aem_query` (full text, the host's
@@ -38,16 +43,17 @@ content roots, 50 rows per page), shows the page with `format_table`, and while
 more results may exist offers the user a **Load more** button through
 `ask_user`, loading and appending the next page on each click. When it returns,
 the table is on screen and the user is done. Do **not** call `aem_query`,
-`format_table` or `ask_user` yourself for a plain `/search`, and do not repeat
+`format_table` or `ask_user` yourself for a plain search, and do not repeat
 the results. Pass `roots` only when the user named a scope; never pass `limit`
 unless the user asked for a page size.
 
-If the input is empty, then - and only then - ask what to search for with a
-normal `ask_user` question (options or free input), not with `actions`.
+If the request has no searchable terms at all, then - and only then - ask what
+to search for with a normal `ask_user` question (options or free input), not
+with `actions`.
 
 ### Hand-built queries
 
-`/search` is only the shortcut for a plain term. For anything more specific - a
+A plain term uses the `/search` shortcut above. For anything more specific - a
 concrete path, a property value, a type, a date or numeric range, an ordering -
 build the predicate map yourself as the rest of this skill describes and run the
 three steps in order, all in this same turn:

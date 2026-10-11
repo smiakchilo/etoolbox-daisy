@@ -51,7 +51,11 @@ describe('createSkillToolSpec', () => {
     const spec = createSkillToolSpec([root], ['search', 'semantic-search'], () => 'id');
     expect(spec?.name).toBe('skill');
     expect(spec?.description).toContain('search, semantic-search');
-    expect(spec?.description).toContain('/<skillname>');
+    // The trigger is "a request matches a skill described in your
+    // instructions", never a `/<skillname>`-only rule - the model may load a
+    // skill on its own initiative.
+    expect(spec?.description).toContain('matches one of the skills described in your instructions');
+    expect(spec?.description).not.toContain('/<skillname>');
   });
 
   it('loads a skill body as the model-facing result', async () => {

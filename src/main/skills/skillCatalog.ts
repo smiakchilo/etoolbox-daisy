@@ -1,7 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AgentChatSkill } from '../../shared';
+import type { AgentChatSkill, SkillCatalogueEntry } from '../../shared';
 
 /**
  * Reads the application's own bundled skill catalogue for the composer's `/`
@@ -126,31 +126,42 @@ export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter 
   };
 }
 
+/** The two views of one directory read: what the composer offers, and what the model is told. */
+interface SkillCatalogueRead {
+  /** User-invocable skills, for the composer's `/` autocomplete. */
+  readonly invocable: readonly AgentChatSkill[];
+  /**
+   * Every skill with a usable description, for the session instructions. This
+   * deliberately includes skills with `user-invocable: false`: those are the
+   * "agent-only" skills the model is meant to load on its own, so withholding
+   * them from the model's catalogue would defeat their purpose.
+   */
+  readonly model: readonly SkillCatalogueEntry[];
+}
+
 /**
- * Reads and parses every `<directory>/<skill>/SKILL.md`, sorted by name for a
- * stable order, keeping only the skills the user may invoke (`user-invocable`
- * not `false`).
+ * Reads every `<directory>/<skill>/SKILL.md` once and projects it onto the two
+ * catalogues above, sorted by name for a stable order.
  *
- * The `description` a skill is reported with is its user-facing summary: the
- * front matter's `metadata.user-description` when present, else the technical
- * `description` (see `ParsedSkillFrontMatter.userDescription`). The model still
- * reads the full `SKILL.md` body itself through its `skill` tool.
- *
- * Auxiliary skills the model loads on its own - `query-results`,
- * `daisy-conventions` - set `user-invocable: false`,
- * so they are deliberately absent from the `/` autocomplete even though the
- * runtime still loads their bodies. Never rejects: a missing directory, an
- * unreadable file, or a file without usable front matter is simply omitted.
+ * The `description` a skill is reported to the *user* with is its user-facing
+ * summary: the front matter's `metadata.user-description` when present, else
+ * the technical `description`. The model is given the technical `description`
+ * instead (falling back to the user summary only when no technical one exists),
+ * because that is the text written to tell the model when to load the skill.
+ * The body itself is never read here - the runtime loads it through the `skill`
+ * tool. Never rejects: a missing directory, an unreadable file, or a file
+ * without usable front matter is simply omitted.
  */
-export async function readSkillCatalog(directory: string): Promise<AgentChatSkill[]> {
+async function readSkillCatalogue(directory: string): Promise<SkillCatalogueRead> {
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch {
-    return [];
+    return { invocable: [], model: [] };
   }
 
-  const skills: AgentChatSkill[] = [];
+  const invocable: AgentChatSkill[] = [];
+  const model: SkillCatalogueEntry[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     let markdown: string;
@@ -160,15 +171,36 @@ export async function readSkillCatalog(directory: string): Promise<AgentChatSkil
       continue;
     }
     const parsed = parseSkillFrontMatter(markdown);
-    if (parsed === undefined || !parsed.userInvocable) continue;
+    if (parsed === undefined) continue;
     const userFacing = parsed.userDescription === '' ? parsed.description : parsed.userDescription;
-    skills.push({
+    if (parsed.userInvocable) {
+      invocable.push({
+        name: parsed.name,
+        description: userFacing.slice(0, DESCRIPTION_MAX_LENGTH),
+      });
+    }
+    const modelFacing = parsed.description === '' ? parsed.userDescription : parsed.description;
+    model.push({
       name: parsed.name,
-      description: userFacing.slice(0, DESCRIPTION_MAX_LENGTH),
+      description: modelFacing.slice(0, DESCRIPTION_MAX_LENGTH),
     });
   }
-  skills.sort((left, right) => left.name.localeCompare(right.name));
-  return skills;
+  const byName = (left: { name: string }, right: { name: string }): number =>
+    left.name.localeCompare(right.name);
+  invocable.sort(byName);
+  model.sort(byName);
+  return { invocable, model };
+}
+
+/**
+ * Reads and parses every user-invocable `<directory>/<skill>/SKILL.md`, sorted
+ * by name for a stable order, for the composer's `/` autocomplete. See
+ * {@link readSkillCatalogue} for the shared read and the description rules; the
+ * model-facing half is exposed through {@link createSkillCatalog}'s
+ * `modelCatalogue`.
+ */
+export async function readSkillCatalog(directory: string): Promise<AgentChatSkill[]> {
+  return [...(await readSkillCatalogue(directory)).invocable];
 }
 
 /**
@@ -180,33 +212,42 @@ export async function readSkillCatalog(directory: string): Promise<AgentChatSkil
  * synchronous snapshot the send path consults - it is `[]` until the first
  * `load()` resolves, which is exactly "no skills are known yet", so a prompt
  * sent before the catalogue arrives is passed through unchanged.
+ *
+ * `modelCatalogue()` is the synchronous model-facing snapshot (every skill,
+ * with its technical description). It is `[]` until the same `load()` resolves,
+ * so the session instructions must be composed after `load()` - see
+ * `src/main/index.ts`, which awaits it before the agent starts.
  */
 export interface SkillCatalog {
   load(): Promise<readonly AgentChatSkill[]>;
   current(): readonly AgentChatSkill[];
+  modelCatalogue(): readonly SkillCatalogueEntry[];
 }
 
 export function createSkillCatalog(directory: string): SkillCatalog {
-  let loaded: readonly AgentChatSkill[] | undefined;
+  let loaded: SkillCatalogueRead | undefined;
   let inFlight: Promise<readonly AgentChatSkill[]> | undefined;
 
   return {
     load(): Promise<readonly AgentChatSkill[]> {
-      if (loaded !== undefined) return Promise.resolve(loaded);
-      inFlight ??= readSkillCatalog(directory).then(
-        (skills) => {
-          loaded = skills;
-          return skills;
+      if (loaded !== undefined) return Promise.resolve(loaded.invocable);
+      inFlight ??= readSkillCatalogue(directory).then(
+        (read) => {
+          loaded = read;
+          return read.invocable;
         },
         () => {
-          loaded = [];
-          return loaded;
+          loaded = { invocable: [], model: [] };
+          return loaded.invocable;
         },
       );
       return inFlight;
     },
     current(): readonly AgentChatSkill[] {
-      return loaded ?? [];
+      return loaded?.invocable ?? [];
+    },
+    modelCatalogue(): readonly SkillCatalogueEntry[] {
+      return loaded?.model ?? [];
     },
   };
 }

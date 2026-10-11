@@ -9,7 +9,27 @@
  * convention - the composer's autocomplete and the send-path rewrite - as pure
  * functions so both share one interpretation of "the leading token" (see
  * `src/shared`'s no-Electron/no-Node/no-browser-globals rule).
+ *
+ * It also owns the *catalogue* the model is shown in its session instructions
+ * (`renderSkillCatalogue`), which is what lets the model choose a skill from a
+ * description on its own initiative rather than only when the user types
+ * `/name` (see `docs/verification.md` "Skills are auto-inferred...").
  */
+
+/**
+ * The model-facing name of the runtime helper tool that loads a skill. Both
+ * agents expose a tool by this name (Copilot's is runtime-built; OpenRouter
+ * ships its own - see `src/agents/openrouter/skill.ts`), and the transcript
+ * store treats a call to it as internal plumbing rather than a user-visible
+ * tool call.
+ */
+export const SKILL_TOOL_NAME = 'skill';
+
+/** One bundled skill as the model sees it: the name to load and why. */
+export interface SkillCatalogueEntry {
+  readonly name: string;
+  readonly description: string;
+}
 
 export interface LeadingSkillToken {
   /** The skill name: the run of non-space characters immediately after the leading `/`. */
@@ -71,12 +91,42 @@ export function filterSkillsByName<T extends { readonly name: string }>(
 export function renderSkillInvocationDirective(name: string, rest: string): string {
   const directive =
     `The user has explicitly invoked the "${name}" skill. Load it first by calling the ` +
-    `\`skill\` tool with {"skill":"${name}"}, then follow its guidance.`;
+    `\`${SKILL_TOOL_NAME}\` tool with {"${SKILL_TOOL_NAME}":"${name}"}, then follow its guidance.`;
   if (rest === '') return directive;
   return (
     `${directive}\n\n` +
     `The text below is the user's input for this skill. Act on it directly; do not ` +
     `ask the user to restate it.\n\n${rest}`
+  );
+}
+
+/**
+ * The block appended to the session instructions that tells the model the
+ * bundled skills exist, what each is for, and how to load one - so a request
+ * that matches a skill's description is answered with that skill even when the
+ * user never typed `/name`.
+ *
+ * Returns `""` for an empty catalogue, so an install with no skills adds
+ * nothing rather than an empty "Available skills:" heading. The entries are
+ * the model-facing `description` from each `SKILL.md`, never the shorthanded
+ * user-facing summary shown in the composer's `/` menu.
+ *
+ * The wording is load-bearing: without "load it ... before acting" the model
+ * reads the list as documentation and answers from its own knowledge instead
+ * of loading the skill (the same failure `renderSkillInvocationDirective`
+ * exists to prevent for the explicit `/name` path).
+ */
+export function renderSkillCatalogue(skills: readonly SkillCatalogueEntry[]): string {
+  if (skills.length === 0) return '';
+  const lines = skills.map((skill) => `- ${skill.name}: ${skill.description}`);
+  return (
+    'The application ships the following skills - short, task-specific guides that you load ' +
+    'on demand. When a request matches a skill, load it **before acting** by calling the ' +
+    `\`${SKILL_TOOL_NAME}\` tool with {"${SKILL_TOOL_NAME}":"<name>"}, then follow the guidance ` +
+    'it returns. A skill you choose to load is as binding as one the user invoked by name. ' +
+    'Do not answer such a request from memory, and do not ask the user to confirm - just ' +
+    'load the matching skill.\n\nAvailable skills:\n' +
+    lines.join('\n')
   );
 }
 

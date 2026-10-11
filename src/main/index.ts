@@ -3,7 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type AppSettings, type AuthStatus, err, resolveSkillPrompt } from '../shared';
+import {
+  type AppSettings,
+  type AuthStatus,
+  err,
+  renderSkillCatalogue,
+  resolveSkillPrompt,
+} from '../shared';
 import { createAemSession } from './aem';
 import { createAemBridgeBroker } from './aem/bridgeBroker';
 import { createAemBridgeTransport } from './aem/bridgeTransport';
@@ -709,13 +715,26 @@ if (!gotSingleInstanceLock) {
           // agent calls this through `AgentHost.createProxyFetch` instead of
           // importing a proxy library into its own folder.
           createProxyFetch: (connection) => buildProxyFetch(connection.proxy),
-          toolkit: () => ({
-            allowlistEntries: toolRegistry.allowlistEntries,
-            instructions: toolRegistry.instructions,
-            toolHandlers: toolRegistry.toolHandlers,
-            toolDescriptors: toolRegistry.descriptors,
-            bundledSkillDirectories: [bundledSkillsDirectory],
-          }),
+          toolkit: () => {
+            // The model-facing skill catalogue is composed onto the tool
+            // instructions here, where both catalogues are known. `skillCatalog`
+            // is loaded before the agent starts (see `startAgentService` below),
+            // so `modelCatalogue()` is populated by the time any agent reads
+            // this - which is what makes the model able to load a skill from its
+            // description, not only from an explicit `/name` (see
+            // `renderSkillCatalogue`).
+            const skillCatalogue = renderSkillCatalogue(skillCatalog.modelCatalogue());
+            return {
+              allowlistEntries: toolRegistry.allowlistEntries,
+              instructions:
+                skillCatalogue === ''
+                  ? toolRegistry.instructions
+                  : `${toolRegistry.instructions}\n\n${skillCatalogue}`,
+              toolHandlers: toolRegistry.toolHandlers,
+              toolDescriptors: toolRegistry.descriptors,
+              bundledSkillDirectories: [bundledSkillsDirectory],
+            };
+          },
           // Step 09: read from the cache on every use, so a model chosen in
           // Settings reaches the next prompt without a restart. Deliberately
           // synchronous - `sendPrompt` must not wait on a disk read.
@@ -777,7 +796,16 @@ if (!gotSingleInstanceLock) {
           // registering here beyond the always-present IPC sets above.
           return;
         },
-        startAgentService: async () => hub.start(storedSettings),
+        startAgentService: async () => {
+          // Load the bundled skill catalogue before the agent starts, so
+          // `toolkit().instructions` can carry the model-facing catalogue. This
+          // is off the window's startup path: `startAgentRuntime` runs after the
+          // shell has painted (see `runAfterFrameLoad`). A failed read resolves
+          // to an empty catalogue, so this can never block the agent from
+          // starting.
+          await skillCatalog.load();
+          await hub.start(storedSettings);
+        },
         // No free-text field exists on `Logger` by design (see its own module
         // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary
         // code for exactly this failure ("the agent runtime ... is

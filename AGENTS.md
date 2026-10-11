@@ -531,12 +531,27 @@ back to `description` when it is absent, so the home screen and the composer's
 one). This is a contract, not a preference: a skill without it ships its
 technical `description` to the user.
 
+**Skills are auto-inferred from their descriptions, not only invoked by name.**
+The composition root composes the model-facing catalogue — every bundled skill
+with its technical `description` — onto the session instructions
+(`renderSkillCatalogue` in `src/shared/skillInvocation.ts`, appended to
+`toolkit.instructions` in `src/main/index.ts` after `skillCatalog.load()`), so
+the model can choose a skill from its description the way other harnesses do;
+`user-invocable: false` skills are in that catalogue too (they are the
+agent-only ones). A model-chosen skill load is represented as the internal
+`skill` tool call (`SKILL_TOOL_NAME`): Copilot's runtime `skill.invoked` event
+is mapped onto it by `sdkAgentService.ts`, OpenRouter's own `skill` tool already
+emits it, and `transcriptStore.ts` renders it as nothing while using it to
+suppress a search skill's prose (below).
+
 `/search <terms>` and `/semantic-search <text>` accept their argument as one
 plain string — no separate "comment" is required. The `/skillname` rewrite in
 `src/shared/skillInvocation.ts` frames the trailing text as the skill's input
 and forbids asking the user to restate it; the skill bodies then say that input
 is the search string. Both halves are load-bearing: without the framing the
-model loads the skill and asks what to search for (observed live).
+model loads the skill and asks what to search for (observed live). The bodies
+are written for **both** paths: an explicit `/name` turn and a turn where the
+model loaded the skill on its own.
 
 Both search skills now answer with **exactly one application-rendered table**:
 `/search` makes a single `aem_query_format_ask` call (`{ "terms": ... }`), which
@@ -545,10 +560,13 @@ through the tool-to-tool bridge (hand-built predicate queries still chain the
 three tools by hand, as the skill describes); `/semantic-search` recalls with `aem_query`, reads candidates with
 `aem_get_json`, judges by meaning, and `format_table`s the passing
 `{ jcr:path, property, citation }` rows. The application suppresses the model's
-own prose for a turn whose prompt invokes either skill (`isDeterministicTablePrompt`
-in `src/renderer/src/chat/transcriptViewModel.ts`), so the table is the whole
-answer. See the `format_table` bullet in the tools section above and
-`docs/verification.md` "Deterministic search tables ... (2026-10-09)".
+own prose for a search turn two ways: at send for a turn whose prompt invokes
+either skill (`isDeterministicTablePrompt` in
+`src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model
+loads `search`/`semantic-search` on its own (`transcriptStore.ts`'s `skill`
+handling), so the table is the whole answer either way. See the `format_table`
+bullet in the tools section above and `docs/verification.md` "Skills are
+auto-inferred from their descriptions ... (2026-10-11)".
 
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**
@@ -592,8 +610,15 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2752 passed / 14 skipped** (+2 against the
-2750 of the previous entry - the search table is no longer rebuilt on every
+Current baseline: **`npm run test` → 2764 passed / 14 skipped** (+12 against the
+2752 of the previous entry - **skills are auto-inferred from their
+descriptions**: a `skill` catalogue is composed onto the session instructions,
+the two search skills are mode-agnostic, and a model-loaded search turn has its
+prose suppressed. 3 `renderSkillCatalogue`, 3 model-catalogue, 5 transcript-store
+and 1 Copilot `skill.invoked` cases. See `docs/verification.md` "Skills are
+auto-inferred from their descriptions ... (2026-10-11)"). Before that it was 2752
+(+2 against the
+2750 of the entry before - the search table is no longer rebuilt on every
 repaint; two `transcriptView.test.ts` cases. See `docs/verification.md` "The
 search table was rebuilt on every repaint (2026-10-11)"). Before that it was 2750
 (+3 against the
@@ -744,7 +769,12 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 119 tests; a full run is typically 110 passed / 6 failed.** The
+**Playwright → 120 tests; a full run is typically 110 passed / 6 failed.** The
++1 since 119 is the `search-tables.spec.ts` case proving an auto-inferred search
+turn (a natural-language prompt, no `/name`) has its prose suppressed and its
+internal `skill` call hidden, because the model chose the skill itself. See
+`docs/verification.md` "Skills are auto-inferred from their descriptions ...
+(2026-10-11)". Before that, the
 +1 since 118 is the `chat-transcript-scroll.spec.ts` case proving the search
 table is not rebuilt on later repaints (so the transcript stays at its bottom,
 instead of jumping to the table's top). The
@@ -884,14 +914,18 @@ build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/age
 
 ## 8. Verified API facts — do not re-derive these
 
-**Skills are not auto-injected.** Activation needs bundled directories *and*
-exactly one built-in tool whose model-facing name is `skill` (`execute_skill` is
-**not** a valid allowlist entry). With skills enabled but the tool withheld,
-**the model hallucinates plausible skill content instead of failing.** Verify
-only via `session.rpc.skills.list()` and `session.rpc.tools.getCurrentMetadata()`
-— never by reading a model answer. Proven live: no directory ⇒ `skills: []`,
-tools `[]`; directory supplied ⇒ 4 skills (`source: "custom"`, `enabled: true`),
-tools exactly `["skill"]`; unchanged after resume.
+**Skills are not auto-injected (the bodies).** Activation needs bundled
+directories *and* exactly one built-in tool whose model-facing name is `skill`
+(`execute_skill` is **not** a valid allowlist entry). With skills enabled but the
+tool withheld, **the model hallucinates plausible skill content instead of
+failing.** Verify only via `session.rpc.skills.list()` and
+`session.rpc.tools.getCurrentMetadata()` — never by reading a model answer.
+Proven live: no directory ⇒ `skills: []`, tools `[]`; directory supplied ⇒ 4
+skills (`source: "custom"`, `enabled: true`), tools exactly `["skill"]`;
+unchanged after resume. (The app now *does* inject the skill **catalogue** —
+names + descriptions — through its own session instructions so the model can
+pick a skill without a `/name`; that is the app's text, not the runtime's, and
+does not contradict this fact about the bodies.)
 
 **Skills path resolution.** `electron-builder.yml` sets
 `extraResources: { from: resources, to: resources }`. Packaged →

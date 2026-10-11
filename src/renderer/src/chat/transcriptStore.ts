@@ -1,13 +1,15 @@
 import { createMessageStream, type MessageStream } from './messageStream';
-import type {
-  AgentEvent,
-  InterruptionReason,
-  JsonValue,
-  MessageId,
-  ReasoningId,
-  ToolCallId,
-  ToolError,
-  TurnId,
+import { DETERMINISTIC_TABLE_SKILLS } from './transcriptViewModel';
+import {
+  type AgentEvent,
+  type InterruptionReason,
+  type JsonValue,
+  type MessageId,
+  type ReasoningId,
+  type ToolCallId,
+  type ToolError,
+  type TurnId,
+  SKILL_TOOL_NAME,
 } from '../../../shared';
 
 /**
@@ -236,6 +238,29 @@ export function createTranscriptStore(
     dirty = true;
   }
 
+  /**
+   * Marks `turnId` as text-suppressed, removing any assistant `message` item it
+   * has already created. Idempotent: a second call (the pane's `markTurnSuppressed`
+   * followed by the turn's own `skill` call, say) is a no-op.
+   */
+  function suppressTurn(turnId: TurnId): void {
+    if (suppressedTurns.has(turnId)) return;
+    suppressedTurns.add(turnId);
+    // Suppression is normally recorded before the turn's first event (the pane
+    // marks an explicit `/search` on send), but the model choosing a skill on
+    // its own can only be known from its `skill` call mid-turn. Any message item
+    // already created for this turn is removed here so the invariant - a
+    // suppressed turn has no assistant message - holds regardless of ordering.
+    for (let index = order.length - 1; index >= 0; index -= 1) {
+      const item = order[index];
+      if (item?.kind === 'message' && item.turnId === turnId) {
+        knownMessageIds.delete(item.messageId);
+        order.splice(index, 1);
+      }
+    }
+    dirty = true;
+  }
+
   return {
     applyEvent(event) {
       messageStream.applyEvent(event);
@@ -274,6 +299,26 @@ export function createTranscriptStore(
           // A tool call ends the reasoning block that preceded it, exactly as
           // assistant text does.
           endReasoningBlock();
+          // The `skill` helper is internal plumbing, never a user-visible tool
+          // call: loading a skill is how the model reaches a task guide, not a
+          // read the reader needs to see. Its one transcript effect is that a
+          // skill whose answer *is* its own rendered output (a search skill's
+          // table) suppresses this turn's prose, so a skill the model chose on
+          // its own is handled exactly like `/search` (see `suppressTurn`). It
+          // is emitted by both agents under this exact name - Copilot maps its
+          // runtime's `skill.invoked` event onto it, OpenRouter's own `skill`
+          // tool already produces it (see `src/shared/skillInvocation.ts`).
+          if (event.toolName === SKILL_TOOL_NAME) {
+            const skillName = event.arguments[SKILL_TOOL_NAME];
+            if (
+              typeof skillName === 'string' &&
+              DETERMINISTIC_TABLE_SKILLS.includes(skillName) &&
+              currentTurnId !== undefined
+            ) {
+              suppressTurn(currentTurnId);
+            }
+            return;
+          }
           ensureToolCallItem(event.toolCallId);
           toolCalls.set(event.toolCallId, {
             toolCallId: event.toolCallId,
@@ -333,21 +378,7 @@ export function createTranscriptStore(
       dirty = true;
     },
     markTurnSuppressed(turnId) {
-      if (suppressedTurns.has(turnId)) return;
-      suppressedTurns.add(turnId);
-      // Suppression is normally recorded before the turn's first event (the
-      // pane marks it on send), but an event can race ahead of the send reply.
-      // Any message item already created for this turn is removed here so the
-      // invariant - a suppressed turn has no assistant message - holds
-      // regardless of ordering.
-      for (let index = order.length - 1; index >= 0; index -= 1) {
-        const item = order[index];
-        if (item?.kind === 'message' && item.turnId === turnId) {
-          knownMessageIds.delete(item.messageId);
-          order.splice(index, 1);
-        }
-      }
-      dirty = true;
+      suppressTurn(turnId);
     },
     setTurnInFlight(inFlight) {
       if (turnInFlight === inFlight) return;

@@ -30,6 +30,7 @@ import {
   type UserInputAnswer,
   type UserInputRequest,
   type UserInputRequestId,
+  SKILL_TOOL_NAME,
   agentEventSchema,
   applyAgentEvent,
   canSendMessage,
@@ -902,6 +903,39 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
             chatId,
             sequence: nextSequence(chatId),
             toolCallId,
+          });
+          return;
+        }
+        case 'skill.invoked': {
+          // The runtime's built-in `skill` tool runs inside the runtime, so it
+          // never produces an `external_tool.requested` and, per finding 3, no
+          // tool-lifecycle event this adapter maps. `skill.invoked` is the one
+          // signal that a bundled skill was loaded, and it is projected onto the
+          // same `skill` tool-call pair OpenRouter's app-owned skill tool emits -
+          // the transcript store treats that call as internal (hidden) and uses
+          // it to suppress a search skill's prose (see `transcriptStore.ts`).
+          // The turn is charged for the call so a late duplicate is ignored
+          // exactly like any other external tool.
+          if (currentTurn === undefined) return;
+          const parsed = toolCallIdSchema.safeParse(event.id);
+          const skillToolCallId = parsed.success
+            ? parsed.data
+            : toolCallIdSchema.parse(idGenerator());
+          if (currentTurn.toolCallIds.has(skillToolCallId)) return;
+          currentTurn.toolCallIds.add(skillToolCallId);
+          applyAndEmit({
+            type: 'tool.call.requested',
+            chatId,
+            sequence: nextSequence(chatId),
+            toolCallId: skillToolCallId,
+            toolName: SKILL_TOOL_NAME,
+            arguments: { [SKILL_TOOL_NAME]: event.data.name },
+          });
+          applyAndEmit({
+            type: 'tool.call.approved',
+            chatId,
+            sequence: nextSequence(chatId),
+            toolCallId: skillToolCallId,
           });
           return;
         }

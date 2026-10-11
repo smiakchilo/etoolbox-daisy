@@ -252,4 +252,50 @@ test.describe('deterministic search tables', () => {
       shell.locator('.chat-table-message').last().locator('.chat-table-message__total'),
     ).toHaveCount(0);
   });
+
+  test('a skill the model chose on its own (no /name) hides its prose and keeps the table', async () => {
+    // A natural-language prompt: `isDeterministicTablePrompt` is false at send,
+    // so the prose can only be suppressed retroactively, by the turn's own
+    // internal `skill` call (which the store hides). The leading delta proves
+    // the message item is removed even though it was created before the skill
+    // was loaded.
+    const AUTO_PATH = '/content/wknd/auto-inferred-only';
+    const AUTO = {
+      rows: [{ 'jcr:path': AUTO_PATH }],
+      pagination: { hasMore: false, total: { accuracy: 'exact', value: 1 } },
+    };
+    const tablesBefore = await shell.locator('.chat-table-message').count();
+    await scriptTurn(app, {
+      steps: [
+        { kind: 'delta', text: 'Let me search for that.' },
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'skill',
+            arguments: { skill: 'search' },
+            decision: { kind: 'approved', outcome: { ok: true, data: {} } },
+          },
+        },
+        formatTableStep(AUTO, 'new'),
+      ],
+    });
+    await sendViaComposer(shell, 'find content about waldo');
+    await flushFake(app);
+
+    // This turn really ran: its own prompt and its own new table appeared. (The
+    // previous runs' tables remain, so a bare `.last()` assertion would pass
+    // even if this turn never fired.)
+    await expect(shell.locator('.chat-message--user').last()).toHaveText(
+      'find content about waldo',
+    );
+    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1, {
+      timeout: 30_000,
+    });
+    await expect(shell.locator('.chat-table-message').last()).toContainText(AUTO_PATH);
+    // Every assistant message on screen is a table message: no auto-inferred
+    // search turn leaks prose around its table, and the internal `skill` call
+    // is not rendered as a billet.
+    await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
+    await expect(shell.locator('.chat-tool-call').filter({ hasText: 'skill' })).toHaveCount(0);
+  });
 });
