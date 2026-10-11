@@ -25,8 +25,20 @@ import type { ToolCallView, TranscriptItem, TranscriptStore } from './transcript
 
 export interface TranscriptView {
   readonly element: HTMLElement;
-  /** Repaints the transcript from `store`'s current items and text. Call when `store.takeDirty()` is true. */
-  repaint(store: TranscriptStore): void;
+  /**
+   * Repaints the transcript from `store`'s current items and text. Call when
+   * `store.takeDirty()` is true.
+   *
+   * Returns the elements of any **message the application just updated in
+   * place** - an already-rendered `presentation: 'message'` run whose
+   * accumulated content changed (a search table gaining a `Load more` page).
+   * The pane reveals the last of these, so an update stays visible even for a
+   * reader who scrolled up to read history. It is empty when nothing was
+   * updated, in which case the ordinary stick-to-bottom rule applies. Streaming
+   * assistant text is deliberately excluded: that is new content being written,
+   * not a settled message changed under the reader.
+   */
+  repaint(store: TranscriptStore): readonly HTMLElement[];
   /** Removes the transcript's overlay and listeners. Call when the pane is torn down. */
   dispose(): void;
 }
@@ -122,6 +134,22 @@ function tableMessageSignature(message: ToolTableMessage, context: LinkContext):
     message.total ?? '',
     context.activeOrigin ?? '',
     context.hostOrigins.join(','),
+    message.table.columns.join('\u0001'),
+    message.table.rows.map((row) => row.join('\u0001')).join('\u0002'),
+  ].join('\u0000');
+}
+
+/**
+ * The *content* of a rendered table run - mode, total, columns and rows - with
+ * no link context. This is the signature `repaint` compares across repaints to
+ * decide a run was **updated by code** (a `Load more` page appended to it): a
+ * `Path` cell whose href merely re-resolved against a new host is a re-render,
+ * not an update, and must not force the transcript to reveal the table.
+ */
+function tableRunContentSignature(message: ToolTableMessage): string {
+  return [
+    message.mode,
+    message.total ?? '',
     message.table.columns.join('\u0001'),
     message.table.rows.map((row) => row.join('\u0001')).join('\u0002'),
   ].join('\u0000');
@@ -298,6 +326,15 @@ export function createTranscriptView(
   // the transcript jumped up to its top". A table is rebuilt only when its
   // rows, columns, total, or link context actually change.
   const renderedTableSignatures = new WeakMap<HTMLElement, string>();
+
+  // The content signature of each rendered table run as of the previous repaint,
+  // keyed by the run's **stable start** (`runIds`), not by the call that happens
+  // to render it now. A run whose signature changes between repaints is one the
+  // application updated in place - a `Load more` page appended - so its message
+  // is reported from `repaint` for the pane to reveal. Keying by the start, not
+  // the rendered call, is what lets an append (which moves the rendered call)
+  // read as the same run changing rather than a new one appearing.
+  let renderedRunSignatures = new Map<string, string>();
 
   // The one travelling hover popover for pane links that offer actions. It is
   // undefined in a jsdom unit test (the Spectrum overlay is not registered
@@ -570,9 +607,14 @@ export function createTranscriptView(
   ): {
     readonly skip: ReadonlySet<string>;
     readonly messages: ReadonlyMap<string, ToolTableMessage>;
+    readonly runIds: ReadonlyMap<string, string>;
   } {
     const skip = new Set<string>();
     const messages = new Map<string, ToolTableMessage>();
+    // The rendered message key -> the run's stable start key (its first call).
+    // The rendered key moves as an append arrives; the start key does not, so
+    // `repaint` can recognise the same run changing rather than a new one.
+    const runIds = new Map<string, string>();
     interface Run {
       readonly keys: string[];
       readonly columns: string[];
@@ -589,7 +631,8 @@ export function createTranscriptView(
       const run = current;
       current = undefined;
       const lastKey = run.keys[run.keys.length - 1];
-      if (lastKey !== undefined) {
+      const firstKey = run.keys[0];
+      if (lastKey !== undefined && firstKey !== undefined) {
         const rows = run.pages.flatMap((page) =>
           page.rows.map((row) =>
             run.columns.map((column) => {
@@ -603,6 +646,7 @@ export function createTranscriptView(
           total: run.total,
           table: { columns: run.columns, rows, status: '', mayHaveMore: false },
         });
+        runIds.set(lastKey, firstKey);
       }
       // Everything before the last call of the run is hidden.
       for (let index = 0; index < run.keys.length - 1; index += 1) skip.add(run.keys[index]!);
@@ -638,7 +682,7 @@ export function createTranscriptView(
       current.total = message.total ?? current.total;
     }
     flush();
-    return { skip, messages };
+    return { skip, messages, runIds };
   }
 
   function createShell(item: TranscriptItem): HTMLElement {
@@ -832,10 +876,14 @@ export function createTranscriptView(
       popover?.hideNow();
       hoveredLink = undefined;
       const items = store.items();
-      const { skip, messages } = planTableRuns(store, items);
+      const { skip, messages, runIds } = planTableRuns(store, items);
       const lastItem = items[items.length - 1];
       const seenKeys = new Set<string>();
       const nodes: HTMLElement[] = [];
+      // Messages the application updated in place this repaint - see the
+      // `repaint` doc on `TranscriptView` and `renderedRunSignatures`.
+      const updatedMessages: HTMLElement[] = [];
+      const nextRunSignatures = new Map<string, string>();
       let sawThinking = false;
 
       for (const item of items) {
@@ -851,9 +899,20 @@ export function createTranscriptView(
           shell = createShell(item);
           cache.set(key, shell);
         }
-        updateShell(store, item, shell, item === lastItem, messages.get(key));
+        const tableMessage = messages.get(key);
+        updateShell(store, item, shell, item === lastItem, tableMessage);
+        if (tableMessage !== undefined) {
+          const runId = runIds.get(key);
+          if (runId !== undefined) {
+            const signature = tableRunContentSignature(tableMessage);
+            const previous = renderedRunSignatures.get(runId);
+            if (previous !== undefined && previous !== signature) updatedMessages.push(shell);
+            nextRunSignatures.set(runId, signature);
+          }
+        }
         nodes.push(shell);
       }
+      renderedRunSignatures = nextRunSignatures;
 
       // The billet is gone entirely (its turn ended): drop any expansion so
       // the next block starts collapsed. `updateShell` handles the case where
@@ -871,6 +930,8 @@ export function createTranscriptView(
       // `hasSameChildren`: re-inserting unchanged nodes restarts their CSS
       // animations, which made the thinking spinner stutter on every delta.
       if (!hasSameChildren(element, nodes)) element.replaceChildren(...nodes);
+
+      return updatedMessages;
     },
     dispose() {
       popover?.dispose();

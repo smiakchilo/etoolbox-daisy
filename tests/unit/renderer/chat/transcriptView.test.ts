@@ -694,6 +694,59 @@ describe('createTranscriptView - format_table message table', () => {
     ]);
     expect(element.querySelectorAll('sp-table')).toHaveLength(2);
   });
+
+  it('reports the table as updated when an append grows an existing run', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+
+    // The first render of a run is new content, not an in-place update, and an
+    // unchanged repaint reports nothing either.
+    expect(view.repaint(store)).toEqual([]);
+    expect(view.repaint(store)).toEqual([]);
+
+    store.applyEvent(
+      requested(2, 2, { data: { rows: [{ 'jcr:path': '/content/site/c' }] }, mode: 'append' }),
+    );
+    store.applyEvent(result(3, 2, 1, 'append'));
+
+    // The append grew the same run: its message is reported so the pane can
+    // reveal it, and it now carries all three accumulated rows.
+    const updated = view.repaint(store);
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.classList.contains('chat-table-message')).toBe(true);
+    expect(updated[0]?.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(3);
+
+    // Detected once only: the next repaint has no change to report.
+    expect(view.repaint(store)).toEqual([]);
+  });
+
+  it('does not report a table update when only the link context changed', () => {
+    let context: LinkContext = activeContext;
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => context });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    expect(view.repaint(store)).toEqual([]);
+
+    // A `Path` cell's href re-resolves, so the table rebuilds - but its content
+    // is unchanged. That is a re-render, not an application update, and must not
+    // force the transcript to reveal the table.
+    context = { hostOrigins: [], activeOrigin: undefined };
+    expect(view.repaint(store)).toEqual([]);
+  });
+
+  it('never reports streaming assistant text as an update', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(delta(0, 'streaming '));
+    expect(view.repaint(store)).toEqual([]);
+    store.applyEvent(delta(1, 'text grows'));
+    // Growing assistant text is new content being written, not a settled
+    // message changed by code: the ordinary follow rule must stay in charge.
+    expect(view.repaint(store)).toEqual([]);
+  });
 });
 
 describe('createTranscriptView - openable message links', () => {

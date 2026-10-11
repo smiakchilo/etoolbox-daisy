@@ -1133,6 +1133,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * `transcriptFollower.ts`. Every repaint path (the throttled timer,
    * `startNewSession`'s immediate one, a link-context change) goes through here
    * so they can never disagree about following.
+   *
+   * A repaint may also report a message the application updated in place (a
+   * search table gaining an appended page). That update supersedes the reader's
+   * scroll position, so its bottom is revealed even if they had scrolled up.
    */
   const transcriptFollower = createTranscriptFollower({
     scroller: transcript,
@@ -1140,7 +1144,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   });
 
   function repaintTranscript(): void {
-    transcriptFollower.repaint(() => transcriptView.repaint(transcriptStore));
+    let updated: readonly HTMLElement[] = [];
+    transcriptFollower.repaint(() => {
+      updated = transcriptView.repaint(transcriptStore);
+    });
+    const updatedMessage = updated[updated.length - 1];
+    if (updatedMessage !== undefined) transcriptFollower.reveal(updatedMessage);
   }
 
   const chatToolbar = createChatToolbar({

@@ -388,4 +388,47 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
       .toContain('chat-table-message');
     await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
   });
+
+  test('a search table grown by Load more is revealed even after the reader scrolled up', async () => {
+    // The application updating a message already in the transcript - here a
+    // search table gaining an appended page - must bring that message's bottom
+    // into view even though the reader had scrolled up: they clicked the
+    // update, so the update wins over the ordinary "leave a scrolled-up reader
+    // alone" rule.
+    const appendTable = {
+      rows: Array.from({ length: 5 }, (_, i) => ({
+        'jcr:path': `/content/site/extra-${i + 1}`,
+      })),
+    };
+    await scriptTurn(app, {
+      steps: [
+        formatTableStep(tallTable, 'new'),
+        { kind: 'inputRequest', actions: ['Load more'] },
+        formatTableStep(appendTable, 'append'),
+      ],
+    });
+    await sendViaComposer(shell, '/search anything');
+
+    // Deliver the turn up to its unanswered "Load more": the tall first page
+    // is on screen and the one-click action waits in the composer. Scope every
+    // table assertion to the *last* table - earlier tests in this shared app
+    // left their own tables on the transcript.
+    await flushFake(app);
+    const lastTable = () => shell.locator('.chat-table-message').last();
+    await expect(lastTable().locator('sp-table')).toBeVisible({ timeout: 30_000 });
+    await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
+    await expect(lastTable().locator('sp-table-body sp-table-row')).toHaveCount(80);
+    await expect(shell.locator('.chat-ask__action')).toBeVisible();
+
+    // The reader scrolls up to read history while the Load more button waits.
+    await wheelUp(shell);
+    await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeGreaterThan(4);
+
+    // Load more appends a page to the *same* table. The viewer stays where it
+    // is unless the update is revealed, so the table's new bottom is the proof.
+    await shell.locator('.chat-ask__action').click();
+    await flushFake(app);
+    await expect(lastTable().locator('sp-table-body sp-table-row')).toHaveCount(85);
+    await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
+  });
 });

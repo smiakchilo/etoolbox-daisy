@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTranscriptFollower } from '../../../../src/renderer/src/chat/transcriptFollower';
 
 /**
@@ -196,6 +196,46 @@ describe('createTranscriptFollower', () => {
     expect(element.scrollTop).toBe(1000);
 
     // Following resumed: a later repaint keeps the viewport at the bottom.
+    follower.repaint(() => {
+      box.scrollHeight = 1200;
+    });
+    expect(element.scrollTop).toBe(1200);
+    follower.dispose();
+  });
+
+  it('reveals an in-place-updated message and resumes following after a scroll up', () => {
+    const { element, box } = scroller(1000, 400);
+    const follower = createTranscriptFollower({ scroller: element });
+    element.scrollTop = 100;
+    element.dispatchEvent(new dom.window.Event('scroll')); // the reader scrolled up
+
+    const message = dom.window.document.createElement('div');
+    const scrollIntoView = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
+    message.scrollIntoView = scrollIntoView;
+
+    follower.reveal(message);
+
+    // The updated message's bottom is brought into view...
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end' });
+    // ...and following resumes, so a later repaint keeps the viewport pinned.
+    follower.repaint(() => {
+      box.scrollHeight = 1200;
+    });
+    expect(element.scrollTop).toBe(1200);
+    follower.dispose();
+  });
+
+  it('reveals without throwing when the element has no scrollIntoView', () => {
+    // jsdom does not implement `scrollIntoView` at all; a reveal must not
+    // depend on it (production always has it).
+    const { element, box } = scroller(1000, 400);
+    const follower = createTranscriptFollower({ scroller: element });
+    const message = dom.window.document.createElement('div');
+    expect(Reflect.get(message, 'scrollIntoView')).toBeUndefined();
+
+    expect(() => follower.reveal(message)).not.toThrow();
+    // Following still resumed, so the ResizeObserver can pin the message in
+    // once the browser lays it out.
     follower.repaint(() => {
       box.scrollHeight = 1200;
     });

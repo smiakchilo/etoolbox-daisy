@@ -610,7 +610,18 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2766 passed / 14 skipped** (+2 against the
+Current baseline: **`npm run test` → 2771 passed / 14 skipped** (+5 against the
+2766 of the previous entry - **a message the application updates in place is
+revealed even after the reader scrolled up**: `TranscriptView.repaint` now
+reports a `presentation: 'message'` run whose content changed (a `/search` or
+`/semantic-search` table gaining a `Load more` page) and `TranscriptFollower.reveal`
+scrolls that message's bottom into view and resumes following, superseding the
+"do not scroll if the reader conscientiously scrolled up" rule. 2
+`transcriptFollower` and 3 `transcriptView` cases, plus one
+`chat-transcript-scroll` E2E case against the built app; a mutation (reveal
+disabled) was caught with `bottomGap 2622`. See `docs/verification.md` "A message
+the application updates in place is revealed ... (2026-10-11)"). Before that it
+was 2766 (+2 against the
 2764 of the previous entry - **the composer keeps focus after a Cancel/Stop**:
 the Stop control's click handler now focuses the prompt field right after
 `onStop()` runs, so both the true Cancel (abort) and the "back to text input"
@@ -776,7 +787,13 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 120 tests; a full run is typically 110 passed / 6 failed.** The
+**Playwright → 121 tests; a full run is typically 111 passed / 6 failed.** The
++1 since 120 is the `chat-transcript-scroll.spec.ts` case proving a `/search`
+table grown by **Load more** is revealed at its bottom even after a real wheel
+scroll up (an 80-row table growing to 85, `bottomGap <= 4`); a mutation with the
+pane's `reveal` disabled left `bottomGap 2622`. See
+`docs/verification.md` "A message the application updates in place is revealed
+... (2026-10-11)". Before that, the
 +1 since 119 is the `search-tables.spec.ts` case proving an auto-inferred search
 turn (a natural-language prompt, no `/name`) has its prose suppressed and its
 internal `skill` call hidden, because the model chose the skill itself. See

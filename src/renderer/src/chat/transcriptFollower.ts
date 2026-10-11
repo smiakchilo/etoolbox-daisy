@@ -34,6 +34,13 @@
  *
  * Geometry itself (`isScrolledToBottom`) stays in `transcriptScroll.ts`, which
  * is DOM-free; this module owns only the stateful wiring.
+ *
+ * One change deliberately supersedes the intent above: a message the
+ * *application* updates in place - an already-rendered table gaining a `Load
+ * more` page - is revealed (`reveal`) even for a reader who scrolled up. The
+ * reader did not cause that change, so the ordinary "respect a scrolled-up
+ * reader" rule would leave the very content that just changed half off screen;
+ * the update therefore wins, and following resumes.
  */
 
 import { isScrolledToBottom, type Scrollable } from './transcriptScroll';
@@ -65,6 +72,17 @@ export interface TranscriptFollower {
    * up to read history first.
    */
   pin(): void;
+  /**
+   * Reveals a message the application just updated in place: scrolls its bottom
+   * into view and resumes following, even if the reader had scrolled up. Unlike
+   * every other content change - which the follow intent rightly suppresses so
+   * a reader's scroll position is respected - an app-driven update to an
+   * existing message supersedes that intent, because leaving it half-visible
+   * would hide the very content that just changed. Used for a search table
+   * gaining an appended page; the pane passes the element the transcript view
+   * reported as updated.
+   */
+  reveal(element: HTMLElement): void;
   dispose(): void;
 }
 
@@ -115,6 +133,16 @@ export function createTranscriptFollower(options: TranscriptFollowerOptions): Tr
     pin(): void {
       following = true;
       scrollToBottom();
+    },
+    reveal(element): void {
+      // An app-driven update supersedes the reader's scroll position: resume
+      // following as if the reader had asked for it, then bring the updated
+      // message's bottom to the viewport's bottom.
+      following = true;
+      element.scrollIntoView?.({ block: 'end' });
+      // Our own move fires a `scroll` event too (asynchronously); record where it
+      // left the viewport so the handler recognises it as ours, not the reader's.
+      ownScrollTop = scroller.scrollTop;
     },
     dispose(): void {
       scroller.removeEventListener('scroll', onScroll);
