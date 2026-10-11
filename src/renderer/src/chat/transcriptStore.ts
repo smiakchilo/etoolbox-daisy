@@ -107,6 +107,14 @@ export interface TranscriptStore {
    */
   setTurnInFlight(inFlight: boolean): void;
   /**
+   * Marks whether the in-flight turn is blocked on an interactive question
+   * (`ask_user`). The turn is formally still running, but it is waiting on the
+   * user, not thinking, so the trailing "Thinking" billet is hidden for as
+   * long as this is `true`. Driven by the pane from the same state that swaps
+   * the composer into its selection UI.
+   */
+  setAwaitingUserInput(awaiting: boolean): void;
+  /**
    * Appends a durable "the turn was interrupted" notice to the transcript.
    * Called by the pane when it observes the session enter `cancelling` - the
    * store never infers an interruption from the event stream itself, because
@@ -156,6 +164,7 @@ export function createTranscriptStore(
   // first text event for that turn.
   let awaitingAssistantText = false;
   let turnInFlight = false;
+  let awaitingUserInput = false;
   // The reasoning block currently being shown, if any. `activeReasoningId`
   // identifies the block (a delta for a different id starts a new one);
   // `reasoningText` is its accumulated text. Both are cleared the moment the
@@ -169,10 +178,13 @@ export function createTranscriptStore(
    * either no assistant text has arrived yet (the plain spinner + label) or a
    * reasoning block is being streamed (spinner + label + one rolling line).
    * The reasoning arm is what lets a later block reappear after an earlier one
-   * ended, even though the turn has already produced text.
+   * ended, even though the turn has already produced text. A turn waiting on an
+   * interactive question is not thinking, so it never shows the billet.
    */
   function thinkingVisible(): boolean {
-    return turnInFlight && (awaitingAssistantText || reasoningText.length > 0);
+    return (
+      turnInFlight && !awaitingUserInput && (awaitingAssistantText || reasoningText.length > 0)
+    );
   }
 
   /**
@@ -342,6 +354,11 @@ export function createTranscriptStore(
       turnInFlight = inFlight;
       dirty = true;
     },
+    setAwaitingUserInput(awaiting) {
+      if (awaitingUserInput === awaiting) return;
+      awaitingUserInput = awaiting;
+      dirty = true;
+    },
     addInterruption(reason, resumable = true) {
       interruptionSequence += 1;
       order.push({
@@ -387,6 +404,7 @@ export function createTranscriptStore(
         toolCalls.size > 0 ||
         suppressedTurns.size > 0 ||
         turnInFlight ||
+        awaitingUserInput ||
         awaitingAssistantText;
       order.length = 0;
       knownMessageIds.clear();
@@ -397,6 +415,7 @@ export function createTranscriptStore(
       currentTurnId = undefined;
       awaitingAssistantText = false;
       turnInFlight = false;
+      awaitingUserInput = false;
       activeReasoningId = undefined;
       reasoningText = '';
       interruptionSequence = 0;

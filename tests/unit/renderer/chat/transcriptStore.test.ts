@@ -323,6 +323,38 @@ describe('createTranscriptStore', () => {
       expect(store.takeDirty()).toBe(true);
     });
 
+    it('hides thinking while the turn waits on a question, and restores it once answered', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.takeDirty();
+
+      store.setAwaitingUserInput(true);
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+      expect(store.takeDirty()).toBe(true);
+
+      store.setAwaitingUserInput(false);
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }, { kind: 'thinking' }]);
+      expect(store.takeDirty()).toBe(true);
+    });
+
+    it('does not mark the store dirty when the awaiting-input flag is unchanged', () => {
+      const store = createTranscriptStore();
+      store.setAwaitingUserInput(true);
+      store.takeDirty();
+      store.setAwaitingUserInput(true);
+      expect(store.takeDirty()).toBe(false);
+    });
+
+    it('forgets a pending question when the transcript is cleared', () => {
+      const store = createTranscriptStore();
+      store.setAwaitingUserInput(true);
+      store.clear();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }, { kind: 'thinking' }]);
+    });
+
     it('drops the thinking item when the turn leaves the in-flight state', () => {
       const store = createTranscriptStore();
       store.applyUserPrompt(turnId, 'hi');

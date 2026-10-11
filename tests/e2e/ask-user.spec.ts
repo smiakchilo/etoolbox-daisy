@@ -159,6 +159,10 @@ test.describe('ask-user interactive question', () => {
     await flushFake(app);
 
     await expect(shell.locator(ASK_PANEL)).toBeVisible();
+    // The turn is waiting on the user, not thinking. The transcript repaints
+    // every 100 ms, so give it several to show the billet if it were going to.
+    await shell.waitForTimeout(500);
+    await expect(shell.locator('.chat-message--thinking')).toHaveCount(0);
     await expect(shell.locator(ASK_QUESTION)).toHaveText('Pick a colour');
     await expect(shell.locator('.chat-ask sp-radio')).toHaveCount(3);
     await expect.poll(() => registered(shell, 'sp-radio')).toBe(true);

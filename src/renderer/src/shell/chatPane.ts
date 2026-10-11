@@ -494,6 +494,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       // clears it, so an aborted question cannot leave the composer stuck.
       if (event.type === 'user.input.requested') {
         pendingInputRequestId = event.requestId;
+        transcriptStore.setAwaitingUserInput(true);
         composer.setInputRequest({
           ...(event.question !== undefined ? { question: event.question } : {}),
           ...(event.options !== undefined ? { options: [...event.options] } : {}),
@@ -782,12 +783,14 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   function clearPendingInput(): void {
     if (pendingInputRequestId === undefined) return;
     pendingInputRequestId = undefined;
+    transcriptStore.setAwaitingUserInput(false);
     composer.setInputRequest(undefined);
   }
 
   /** Drops any interactive/preview input state, e.g. on a new conversation. */
   function resetInputMode(): void {
     pendingInputRequestId = undefined;
+    transcriptStore.setAwaitingUserInput(false);
     askUserPreview.reset();
     composer.setInputRequest(undefined);
   }
@@ -807,6 +810,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (chatId === undefined || pendingInputRequestId === undefined) return;
     const requestId = pendingInputRequestId;
     pendingInputRequestId = undefined;
+    transcriptStore.setAwaitingUserInput(false);
     void window.daisy.agentChat.respondToInput({ chatId, requestId, answer }).then((result) => {
       if (!result.ok) statusBanner.showError(result.error.message);
     });
