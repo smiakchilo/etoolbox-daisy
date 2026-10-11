@@ -1029,6 +1029,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // clean slate and should see one immediately.
     repaintTranscript();
     refreshSessionPresentation();
+    // A fresh conversation should be ready to type into immediately.
+    composer.focus();
     void openConversation(id).then((result) => {
       if (result.outcome === 'failed') statusBanner.showError(result.error.message);
     });

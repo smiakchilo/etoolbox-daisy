@@ -592,7 +592,11 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2742 passed / 14 skipped** (+6 against the
+Current baseline: **`npm run test` → 2744 passed / 14 skipped** (+2 against the
+previous 2742: New session now focuses the composer — `Composer.focus()` and its
+call in `startNewSession` (`composer.test.ts` + `chatPane.test.ts`); see
+`docs/verification.md` "New session focuses the composer (2026-10-11)"). Before
+that it was 2742 (+6 against the
 previous 2736: one conversation open at a time — the controller's
 single-flight/`superseded` guard (`agentChatController.test.ts`) and the pane's
 "New session" gate plus superseded-open swallowing (`chatPane.test.ts`); see

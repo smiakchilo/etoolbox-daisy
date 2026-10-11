@@ -523,6 +523,25 @@ describe('createChatPane status push', () => {
     pane.dispose();
   });
 
+  it('New session focuses the composer so the fresh conversation is ready to type into', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const field = pane.element.querySelector('.chat-composer__field') as HTMLElement;
+    const focusSpy = vi.spyOn(field, 'focus');
+
+    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+
+    pane.dispose();
+    focusSpy.mockRestore();
+  });
+
   it('New session does nothing before any conversation has been opened', () => {
     // The service is still `starting`, so no `ChatId` has been minted yet:
     // there is no transcript or context to clean up, and the click must not

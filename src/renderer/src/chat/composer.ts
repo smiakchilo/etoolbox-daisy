@@ -113,6 +113,13 @@ export interface Composer {
    * submits the answer; Stop stays available to cancel the turn.
    */
   setInputRequest(request: UserInputRequest | undefined): void;
+  /**
+   * Puts the keyboard caret in the prompt field. Used when the pane wants the
+   * user to start typing straight away - most importantly after "New session",
+   * so a fresh conversation opens ready for input rather than requiring a click
+   * into the field first.
+   */
+  focus(): void;
   /** Releases the resize observer that keeps the empty-state field stretched. */
   dispose(): void;
 }
@@ -878,6 +885,9 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       renderAskPanel();
       applyPresentation();
       if (draft.freeInputActive) field.focus();
+    },
+    focus() {
+      field.focus();
     },
     dispose() {
       disposeMultiOverlay();

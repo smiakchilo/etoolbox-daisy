@@ -105,6 +105,17 @@ describe('createComposer', () => {
     expect(field.getAttribute('rows')).toBe('8');
   });
 
+  it('focus() puts the caret in the prompt field', () => {
+    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+    const field = query(composer.element, 'sp-textfield');
+    const focusSpy = vi.spyOn(field, 'focus');
+
+    composer.focus();
+
+    expect(focusSpy).toHaveBeenCalledTimes(1);
+    focusSpy.mockRestore();
+  });
+
   describe('keeping the empty-state field stretched to the pane height', () => {
     const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
 
