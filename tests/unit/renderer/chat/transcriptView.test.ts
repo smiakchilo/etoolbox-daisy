@@ -813,6 +813,38 @@ describe('createTranscriptView - format_table message table', () => {
     expect(view.element.querySelector('sp-table')).toBe(first);
   });
 
+  it('appends a Load more page to the SAME table node, and never detaches it', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    // A settled sibling between the run's pages: the run continues across it, so
+    // growing the table must move the table past this node - not replay the list.
+    store.applyEvent(toolRequestedWithArgs(2, 'aem_get_json', {}));
+    view.repaint(store);
+
+    const table = view.element.querySelector('sp-table');
+    const firstRow = view.element.querySelector('sp-table-body sp-table-row');
+    expect(table).not.toBeNull();
+    expect(firstRow).not.toBeNull();
+
+    store.applyEvent(
+      requested(3, 2, { data: { rows: [{ 'jcr:path': '/content/site/c' }] }, mode: 'append' }),
+    );
+    store.applyEvent(result(4, 2, 1, 'append'));
+    view.repaint(store);
+
+    // The same `<sp-table>` - with its first row intact - now carries the
+    // appended page. A fresh custom element has no height until it upgrades, so
+    // rebuilding it is exactly the reported "the whole table collapsed" stutter.
+    expect(view.element.querySelector('sp-table')).toBe(table);
+    expect(view.element.querySelector('sp-table-body sp-table-row')).toBe(firstRow);
+    expect(view.element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(3);
+    // The table moved to the run's end, past the sibling billet, without being
+    // rebuilt.
+    expect(view.element.lastElementChild).toBe(table?.closest('.chat-table-message'));
+  });
+
   it('rebuilds the table when the link context changes', () => {
     let context: LinkContext = activeContext;
     const view = createTranscriptView(markdownRenderer, { getLinkContext: () => context });

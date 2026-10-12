@@ -424,11 +424,40 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
     await wheelUp(shell);
     await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeGreaterThan(4);
 
+    // Hold the table ELEMENT itself, and count any `sp-table` the transcript
+    // adds from here. An in-place append reuses this element and adds none; a
+    // rebuild inserts a fresh (momentarily heightless) `sp-table`.
+    const tableHandle = await lastTable().locator('sp-table').elementHandle();
+    expect(tableHandle).not.toBeNull();
+    await shell.evaluate(() => {
+      const win = window as unknown as { __tableAdds: number };
+      win.__tableAdds = 0;
+      const target = document.querySelector('.chat-transcript__messages');
+      if (target === null) return;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (node instanceof Element && node.matches('sp-table')) win.__tableAdds += 1;
+          }
+        }
+      }).observe(target, { childList: true, subtree: true });
+    });
+
     // Load more appends a page to the *same* table. The viewer stays where it
     // is unless the update is revealed, so the table's new bottom is the proof.
     await shell.locator('.chat-ask__action').click();
     await flushFake(app);
     await expect(lastTable().locator('sp-table-body sp-table-row')).toHaveCount(85);
+    // The very element held before the click still exists and now carries all 85
+    // rows: the append grew it in place rather than replacing it.
+    const heldRows = await tableHandle?.evaluate(
+      (el) => el.querySelectorAll('sp-table-body sp-table-row').length,
+    );
+    expect(heldRows).toBe(85);
+    const addedTables = await shell.evaluate(
+      () => (window as unknown as { __tableAdds: number }).__tableAdds,
+    );
+    expect(addedTables).toBe(0);
     await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
   });
 });

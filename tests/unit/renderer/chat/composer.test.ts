@@ -715,7 +715,7 @@ describe('createComposer', () => {
       expect(isShown(query(composer.element, '.chat-composer__stop'))).toBe(true);
     });
 
-    it('answers with the clicked label and leaves the interactive UI', () => {
+    it('answers with the clicked label and holds the (disabled) panel until the turn ends', () => {
       const onAnswer = vi.fn();
       const composer = composerInActionsMode(onAnswer);
 
@@ -725,9 +725,61 @@ describe('createComposer', () => {
         .dispatchEvent(new dom.window.MouseEvent('click'));
 
       expect(onAnswer).toHaveBeenCalledWith({ selections: ['Show more'], freeform: null });
-      // A click leaves the interactive UI: the field returns, the buttons go.
+      // The answered panel is held rather than flashing back to the (taller)
+      // text field, which is the composer jump the Load-more loop showed. The
+      // buttons are disabled so a second click cannot re-answer.
+      expect(isShown(query(composer.element, 'sp-textfield'))).toBe(false);
+      expect(query(composer.element, '.chat-ask__actions').hasAttribute('hidden')).toBe(false);
+      for (const button of composer.element.querySelectorAll('.chat-ask__action')) {
+        expect(button.hasAttribute('disabled')).toBe(true);
+      }
+
+      // Only when the turn leaves the in-flight state does the field return.
+      composer.setButtonState({ kind: 'send-enabled' });
       expect(isShown(query(composer.element, 'sp-textfield'))).toBe(true);
       expect(query(composer.element, '.chat-ask__actions').hasAttribute('hidden')).toBe(true);
+    });
+
+    it('replaces the held panel in place when the next question arrives, without showing the field', () => {
+      const onAnswer = vi.fn();
+      const composer = composerInActionsMode(onAnswer);
+
+      composer.element
+        .querySelectorAll('.chat-ask__action')
+        .item(0)
+        .dispatchEvent(new dom.window.MouseEvent('click'));
+
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+
+      // The field never appeared, and the fresh question's button is enabled.
+      expect(isShown(query(composer.element, 'sp-textfield'))).toBe(false);
+      const buttons = composer.element.querySelectorAll('.chat-ask__action');
+      expect(buttons).toHaveLength(1);
+      expect(buttons[0]?.textContent).toBe('Load more');
+      expect(buttons[0]?.hasAttribute('disabled')).toBe(false);
+    });
+
+    it('focuses the field when Stop is clicked while the answered panel is held', () => {
+      const onStop = vi.fn();
+      const composer = createComposer({ onSend: vi.fn(), onStop });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+      composer.element
+        .querySelectorAll('.chat-ask__action')
+        .item(0)
+        .dispatchEvent(new dom.window.MouseEvent('click'));
+
+      const field = query(composer.element, 'sp-textfield');
+      const focusSpy = vi.spyOn(field, 'focus');
+      query(composer.element, '.chat-composer__stop').click();
+      expect(onStop).toHaveBeenCalledTimes(1);
+      // The panel is still held (the field is hidden), so focus is deferred.
+      expect(focusSpy).not.toHaveBeenCalled();
+
+      // The turn ends: the field returns and takes focus, so the user can type.
+      composer.setButtonState({ kind: 'send-enabled' });
+      expect(focusSpy).toHaveBeenCalledTimes(1);
+      focusSpy.mockRestore();
     });
   });
 
@@ -850,6 +902,28 @@ describe('createComposer', () => {
       composer.setInputRequest({ actions: ['Refine'], multiple: false, freeInput: false });
 
       expect(frameOf(composer).classList.contains(FLASH_CLASS)).toBe(true);
+    });
+
+    it('does not flash when the next question replaces a held answered action panel', () => {
+      const composer = createComposer({
+        onSend: vi.fn(),
+        onStop: vi.fn(),
+        onAnswer: vi.fn(),
+      });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+      const frame = frameOf(composer);
+      endFlash(frame);
+
+      // Answer it: the panel is held, with the reader's eyes already on the row.
+      composer.element
+        .querySelectorAll('.chat-ask__action')
+        .item(0)
+        .dispatchEvent(new dom.window.MouseEvent('click'));
+
+      // The loop's next question replaces the held panel in place: no flash.
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(false);
     });
 
     it('does not flash when the question is dismissed', () => {

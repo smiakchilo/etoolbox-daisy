@@ -452,6 +452,64 @@ test.describe('ask-user interactive question', () => {
     await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
   });
 
+  test('the text field never flashes between consecutive "Load more" questions', async () => {
+    await scriptTurn(app, {
+      steps: [
+        { kind: 'inputRequest', actions: ['Load more'] },
+        { kind: 'inputRequest', actions: ['Load more'] },
+        { kind: 'inputRequest', actions: ['Load more'] },
+      ],
+    });
+    await sendViaComposer(shell, '/search Waldo');
+    await flushFake(app);
+    await expect(shell.locator('.chat-ask__action')).toBeVisible();
+
+    // Record every moment the prompt field is made visible while the loop runs,
+    // and every time the frame's attention flash is applied. The answered action
+    // panel is held (disabled) across the gap, so neither should happen between
+    // questions; the bug restored the taller field for the gap, which is the
+    // composer jump this fixes, and re-flashed the frame the reader was already
+    // looking at.
+    await shell.evaluate(() => {
+      const win = window as unknown as { __fieldShown: number; __flashes: number };
+      win.__fieldShown = 0;
+      win.__flashes = 0;
+      const field = document.querySelector('.chat-composer__field');
+      if (field !== null) {
+        new MutationObserver(() => {
+          if ((field as HTMLElement).style.display !== 'none') win.__fieldShown += 1;
+        }).observe(field, { attributes: true, attributeFilter: ['style'] });
+      }
+      const frame = document.querySelector('.chat-composer__frame');
+      if (frame !== null) {
+        new MutationObserver(() => {
+          if (frame.classList.contains('chat-composer__frame--attention')) win.__flashes += 1;
+        }).observe(frame, { attributes: true, attributeFilter: ['class'] });
+      }
+    });
+
+    // Answer the first two questions; each next one replaces the held panel.
+    for (let i = 0; i < 2; i += 1) {
+      await shell.locator('.chat-ask__action').click();
+      await flushFake(app);
+      await expect(shell.locator('.chat-ask__action')).toBeVisible();
+    }
+
+    const observed = await shell.evaluate(() => {
+      const win = window as unknown as { __fieldShown: number; __flashes: number };
+      return { fieldShown: win.__fieldShown, flashes: win.__flashes };
+    });
+    expect(observed.fieldShown).toBe(0);
+    expect(observed.flashes).toBe(0);
+    await expect(shell.locator(COMPOSER_FIELD)).toBeHidden();
+
+    // Leave the composer out of input mode for the next case: Cancel answers "no
+    // answer" (it does not abort the turn), so the field comes back.
+    await shell.locator(COMPOSER_STOP).click();
+    await flushFake(app);
+    await expect(shell.locator(COMPOSER_FIELD)).toBeVisible();
+  });
+
   test('a >5 dropdown wears the action strip, and a new question flashes the frame once', async () => {
     await scriptTurn(app, {
       steps: [

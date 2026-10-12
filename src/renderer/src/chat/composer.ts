@@ -230,6 +230,21 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   // mutable answer being built. See `setInputRequest` and `applyPresentation`.
   let inputRequest: UserInputRequest | undefined;
   const draft: MutableAskDraft = { selections: [], freeform: '', freeInputActive: false };
+  // Whether an answered one-click-actions question (the `/search` /
+  // `/semantic-search` "Load more" loop) is being held on screen while the turn
+  // continues. On the click, the question is answered and `inputRequest` is
+  // left in place (buttons disabled) instead of immediately restoring the
+  // ordinary text field: the loop's next question usually arrives within a few
+  // hundred milliseconds, and flipping to the (four-rows-tall) field and back
+  // made the composer jump. The panel is released when the next question
+  // replaces it (`setInputRequest`) or the turn leaves the in-flight state
+  // (`setButtonState`), whichever happens first.
+  let holdingAnsweredActions = false;
+  // Set when a Stop/Cancel click happens while the interactive UI is (or is
+  // about to be) on screen, so the prompt field is focused once it actually
+  // returns. Needed for a held actions panel, where the field is still hidden at
+  // click time; the immediate case focuses directly (see the click handler).
+  let focusFieldOnExit = false;
   // The portal overlay the >5 multiple-choice dropdown attaches to the theme,
   // tracked so it can be removed when the question goes away. An `sp-overlay`
   // is NOT a child of `askPanel` (it portals out to `sp-theme`), so clearing the
@@ -511,8 +526,8 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
 
   /**
    * One one-click action button. It answers the instant it is clicked (there
-   * is no Submit), so a click leaves the interactive UI and delivers the action
-   * label as the whole answer.
+   * is no Submit); the answered panel is held on screen (buttons disabled) until
+   * the next question or the end of the turn - see `holdingAnsweredActions`.
    */
   function buildActionButton(action: string): HTMLElement {
     const button = el('sp-action-button', {
@@ -520,7 +535,11 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       text: action,
     });
     button.addEventListener('click', () => {
-      exitInputMode();
+      // Answer in place: hold the (now answered, disabled) panel rather than
+      // restoring the taller text field, so the loop's next question can replace
+      // it without the frame jumping - see `holdingAnsweredActions`.
+      holdingAnsweredActions = true;
+      for (const sibling of actionButtons.children) sibling.setAttribute('disabled', '');
       callbacks.onAnswer?.(buildActionAnswer(action));
     });
     return button;
@@ -582,6 +601,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   function exitInputMode(): void {
     disposeMultiOverlay();
     inputRequest = undefined;
+    holdingAnsweredActions = false;
     draft.selections = [];
     draft.freeform = '';
     draft.freeInputActive = false;
@@ -593,6 +613,10 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     field.value = '';
     field.style.display = '';
     applyPresentation();
+    if (focusFieldOnExit) {
+      focusFieldOnExit = false;
+      field.focus();
+    }
   }
 
   function applyPresentation(): void {
@@ -830,7 +854,15 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   // ending on its own, a new session) do not go through this click handler, so
   // they never steal focus from elsewhere.
   stopButton.addEventListener('click', () => {
+    const wasInInputMode = inputRequest !== undefined;
     callbacks.onStop();
+    // Leaving a pending question (`setInputRequest(undefined)` inside `onStop`)
+    // already restored and focused the field. But a held actions panel outlives
+    // the click (the field is still hidden), so defer the focus to `exitInputMode`.
+    if (wasInInputMode && inputRequest !== undefined) {
+      focusFieldOnExit = true;
+      return;
+    }
     field.focus();
   });
 
@@ -895,6 +927,13 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     element,
     setButtonState(state) {
       current = state;
+      // The held action panel is released the moment the turn stops being in
+      // flight (`stop`): that is the loop ending (exhausted, or the user
+      // cancelled) rather than another question coming. `stop` keeps the hold.
+      if (holdingAnsweredActions && state.kind !== 'stop') {
+        exitInputMode();
+        return;
+      }
       applyPresentation();
     },
     setConversationEmpty(empty) {
@@ -918,6 +957,14 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
         return;
       }
       closeSkillMenu();
+      // A new question supersedes any answered action panel still being held:
+      // clear the hold and rebuild the controls (which re-enables the buttons).
+      // The held panel answers a click the reader just made with their eyes
+      // already on the actions row, and its replacement is the same one-row
+      // strip, so the attention flash would be noise rather than a prompt - skip
+      // it. A question that *appears over the text field* still flashes.
+      const replacingHeldPanel = holdingAnsweredActions;
+      holdingAnsweredActions = false;
       inputRequest = request;
       draft.freeform = '';
       draft.freeInputActive = request.options === undefined && !isActionsRequest(request);
@@ -937,7 +984,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       field.value = '';
       renderAskPanel();
       applyPresentation();
-      flashAttention();
+      if (!replacingHeldPanel) flashAttention();
       if (draft.freeInputActive) field.focus();
     },
     focus() {

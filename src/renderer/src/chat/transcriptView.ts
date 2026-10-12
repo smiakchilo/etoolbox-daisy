@@ -127,21 +127,49 @@ function succeededData(view: ToolCallView): JsonValue | undefined {
 }
 
 /**
- * The rendered content of a table message as one comparable string: everything
- * `renderTableMessage` depends on - the mode, total, columns and rows, plus the
- * link context (a `Path` cell's href is resolved against the active host). Used
- * to skip rebuilding a table that has not changed - see
- * `createTranscriptView`'s `renderedTableSignatures`.
+ * What a table message's shell currently renders, so a repaint can tell an
+ * unchanged table (touching nothing), a run that merely grew a page (appending
+ * rows to the SAME `<sp-table>`), and a genuine re-render (a new run, changed
+ * columns, or a link-context switch) apart. Held per shell in
+ * `createTranscriptView`'s `renderedTables`.
+ *
+ * The row-reference members are what let an append avoid recreating the table:
+ * a fresh `sp-table` has no height until its Lit shadow DOM renders (a
+ * microtask later), so replacing it momentarily collapses the transcript and
+ * the stick-to-bottom follower pins to the wrong place - the reported
+ * "stutter".
  */
-function tableMessageSignature(message: ToolTableMessage, context: LinkContext): string {
-  return [
-    message.mode,
-    message.total ?? '',
-    context.activeOrigin ?? '',
-    context.hostOrigins.join(','),
-    message.table.columns.join('\u0001'),
-    message.table.rows.map((row) => row.join('\u0001')).join('\u0002'),
-  ].join('\u0000');
+interface RenderedTable {
+  readonly columns: readonly string[];
+  readonly rows: readonly (readonly string[])[];
+  readonly total: string | undefined;
+  /** `linkContextSignature` of the context the current hrefs resolved against. */
+  readonly context: string;
+  /** The rendered `<sp-table>`, when the run has at least one row. */
+  readonly table: HTMLElement | undefined;
+  /** Its `<sp-table-body>`, the element a growth appends rows to. */
+  readonly body: HTMLElement | undefined;
+  /** The total line, when one is shown, so a growth can rewrite its text. */
+  readonly totalEl: HTMLElement | undefined;
+}
+
+/**
+ * The link context a rendered table's `Path` cells were resolved against, as
+ * one comparable string. A change (the active host switching) makes every href
+ * stale, so the table must be fully re-rendered rather than grown in place -
+ * see `applyTableMessage`.
+ */
+function linkContextSignature(context: LinkContext): string {
+  return [context.activeOrigin ?? '', context.hostOrigins.join(',')].join('\u0000');
+}
+
+/** Positional string-array equality, used to compare table columns and rows. */
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
 }
 
 /**
@@ -388,6 +416,32 @@ function hasSameChildren(element: HTMLElement, nodes: readonly HTMLElement[]): b
 }
 
 /**
+ * Makes `parent`'s children exactly `nodes`, in order, moving or inserting only
+ * the nodes that are out of place rather than replaying the whole list.
+ *
+ * This is the same concern `hasSameChildren` guards, taken a step further: a
+ * repaint that *reorders* entries - a search table moving down to the run's new
+ * last call when a `Load more` page arrives, displacing the billets and the
+ * `ask_user` exchange before it - used to call `replaceChildren`, detaching and
+ * re-attaching every node. Re-inserting a mounted node restarts any CSS
+ * animation it contains and forces a full relayout, which is the "neighboring
+ * containers jump" half of the reported stutter. Moving only the misplaced
+ * nodes leaves settled entries - and the table itself - attached and untouched.
+ */
+function reconcileChildren(parent: HTMLElement, nodes: readonly HTMLElement[]): void {
+  if (hasSameChildren(parent, nodes)) return;
+  let index = 0;
+  for (const node of nodes) {
+    const current = parent.children[index] ?? null;
+    if (current !== node) parent.insertBefore(node, current);
+    index += 1;
+  }
+  while (parent.children.length > nodes.length) {
+    parent.lastElementChild?.remove();
+  }
+}
+
+/**
  * Renders a `TranscriptStore`'s items into `element`.
  *
  * Each item gets one persistent DOM node, cached by `keyFor` and reused
@@ -422,15 +476,17 @@ export function createTranscriptView(
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
   const getKnownSkillNames = options.getKnownSkillNames ?? (() => []);
 
-  // The content signature of the table last rendered into each message shell.
+  // The rendered table state of the message shell each run currently owns.
   // `updateShell` runs for every item on every repaint (a streaming delta
   // repaints the whole transcript), and rebuilding an unchanged `sp-table` is
-  // not free: a freshly-created custom element has no height until it upgrades,
-  // so the transcript momentarily collapses and the stick-to-bottom follower can
-  // pin to the wrong place - the reported "the whole table was re-rendered and
-  // the transcript jumped up to its top". A table is rebuilt only when its
-  // rows, columns, total, or link context actually change.
-  const renderedTableSignatures = new WeakMap<HTMLElement, string>();
+  // not free: a freshly-created custom element has no height until its Lit
+  // shadow DOM renders, so the transcript momentarily collapses and the
+  // stick-to-bottom follower can pin to the wrong place - the reported "the
+  // whole table was re-rendered and the transcript jumped up to its top". A
+  // table is touched only when its columns, rows, total or link context
+  // actually change, and a page appended to a run grows the same `<sp-table>`
+  // in place - see `applyTableMessage`.
+  const renderedTables = new WeakMap<HTMLElement, RenderedTable>();
 
   // The body state of the tool-call billet last rendered into each shell. A
   // repaint that changes only a running call's progress line must NOT rebuild
@@ -662,6 +718,31 @@ export function createTranscriptView(
   }
 
   /**
+   * One row of a run's table: the leading `#` index cell and one cell per
+   * column. Extracted so a `Load more` growth can append a row to the existing
+   * table without recreating it (see `applyTableMessage`).
+   */
+  function renderTableRow(
+    row: readonly string[],
+    columns: readonly string[],
+    rowIndex: number,
+  ): HTMLElement {
+    const rowEl = el('sp-table-row', {});
+    rowEl.append(
+      el('sp-table-cell', {
+        attrs: { class: 'chat-table-message__index' },
+        text: String(rowIndex + 1),
+      }),
+    );
+    columns.forEach((column, columnIndex) => {
+      const cell = el('sp-table-cell', {});
+      cell.append(renderMessageCell(row[columnIndex] ?? '', column));
+      rowEl.append(cell);
+    });
+    return rowEl;
+  }
+
+  /**
    * Renders one run's table as the assistant **message**: a Spectrum `<sp-table>`
    * with a leading `#` row-number column and, beneath it, an optional total line.
    * The columns come from the accumulated `format_table` calls; a zero-row run
@@ -679,19 +760,7 @@ export function createTranscriptView(
 
       const body = el('sp-table-body', {});
       rows.forEach((row, index) => {
-        const rowEl = el('sp-table-row', {});
-        rowEl.append(
-          el('sp-table-cell', {
-            attrs: { class: 'chat-table-message__index' },
-            text: String(index + 1),
-          }),
-        );
-        columns.forEach((column, columnIndex) => {
-          const cell = el('sp-table-cell', {});
-          cell.append(renderMessageCell(row[columnIndex] ?? '', column));
-          rowEl.append(cell);
-        });
-        body.append(rowEl);
+        body.append(renderTableRow(row, columns, index));
       });
 
       const tableEl = el('sp-table', {
@@ -704,6 +773,83 @@ export function createTranscriptView(
       nodes.push(el('p', { attrs: { class: 'chat-table-message__total' }, text: message.total }));
     }
     return nodes;
+  }
+
+  /**
+   * Writes a table message's total line into `shell`, reusing `existing` when
+   * there is one and creating or removing the node as the message gains or
+   * loses a total. Returns the node now in place, for the next call to reuse.
+   */
+  function applyTableTotal(
+    shell: HTMLElement,
+    existing: HTMLElement | undefined,
+    total: string | undefined,
+  ): HTMLElement | undefined {
+    if (total === undefined) {
+      existing?.remove();
+      return undefined;
+    }
+    if (existing !== undefined) {
+      if (existing.textContent !== total) existing.textContent = total;
+      return existing;
+    }
+    const node = el('p', { attrs: { class: 'chat-table-message__total' }, text: total });
+    shell.append(node);
+    return node;
+  }
+
+  /**
+   * Reconciles a shell's rendered table with the message `planTableRuns` now
+   * computes for its run, in one of three ways:
+   *
+   * - **unchanged** (same columns, rows, total and link context) - touch
+   *   nothing, so a repaint triggered for an unrelated reason never rebuilds it;
+   * - **grown** (same columns and context, the previous rows a prefix of the new
+   *   ones - a `Load more` page) - append only the new rows to the SAME
+   *   `<sp-table>` and rewrite the total line, so the table never collapses;
+   * - **otherwise** - a full re-render (a new run, changed columns, or a
+   *   link-context switch that makes every href stale).
+   */
+  function applyTableMessage(shell: HTMLElement, message: ToolTableMessage): void {
+    const context = linkContextSignature(getLinkContext());
+    const { columns, rows } = message.table;
+    const previous = renderedTables.get(shell);
+    if (
+      previous !== undefined &&
+      previous.context === context &&
+      previous.total === message.total &&
+      sameStrings(previous.columns, columns) &&
+      previous.rows.length === rows.length &&
+      previous.rows.every((row, index) => sameStrings(row, rows[index] ?? []))
+    ) {
+      return;
+    }
+    if (
+      previous !== undefined &&
+      previous.context === context &&
+      previous.table !== undefined &&
+      previous.body !== undefined &&
+      sameStrings(previous.columns, columns) &&
+      rows.length >= previous.rows.length &&
+      previous.rows.every((row, index) => sameStrings(row, rows[index] ?? []))
+    ) {
+      for (let index = previous.rows.length; index < rows.length; index += 1) {
+        previous.body.append(renderTableRow(rows[index] ?? [], columns, index));
+      }
+      const totalEl = applyTableTotal(shell, previous.totalEl, message.total);
+      renderedTables.set(shell, { ...previous, rows, total: message.total, totalEl });
+      return;
+    }
+    shell.replaceChildren(...renderTableMessage(message));
+    renderedTables.set(shell, {
+      columns,
+      rows,
+      total: message.total,
+      context,
+      table: shell.querySelector<HTMLElement>('sp-table') ?? undefined,
+      body: shell.querySelector<HTMLElement>('sp-table-body') ?? undefined,
+      totalEl: shell.querySelector<HTMLElement>('.chat-table-message__total') ?? undefined,
+    });
   }
 
   /**
@@ -930,14 +1076,11 @@ export function createTranscriptView(
       case 'toolCall': {
         if (tableMessage !== undefined) {
           // A `presentation: 'message'` tool (format_table): its call paints an
-          // assistant message - the accumulated table - not a billet. Rebuilt
-          // only when its content changed (see `renderedTableSignatures`).
+          // assistant message - the accumulated table - not a billet. Touched
+          // only when its content changed, and a `Load more` page grows the
+          // existing table in place (see `applyTableMessage`).
           shell.className = 'chat-message chat-message--assistant chat-table-message';
-          const signature = tableMessageSignature(tableMessage, getLinkContext());
-          if (renderedTableSignatures.get(shell) !== signature) {
-            renderedTableSignatures.set(shell, signature);
-            shell.replaceChildren(...renderTableMessage(tableMessage));
-          }
+          applyTableMessage(shell, tableMessage);
           return;
         }
         const view = store.toolCallFor(item.toolCallId);
@@ -1024,13 +1167,18 @@ export function createTranscriptView(
         // A running billet is hidden while the turn waits on a question, so at
         // most one "unfinished process" indicator is ever on screen.
         if (hiddenWhileAwaitingInput(store, item)) continue;
-        seenKeys.add(key);
-        let shell = cache.get(key);
+        const tableMessage = messages.get(key);
+        // A table run's shell is cached under the run's **stable start** key
+        // (`runIds`), not the call that happens to render it now: a `Load more`
+        // page makes a later call the run's renderer, and re-keying the shell
+        // would create a fresh one - and a fresh `<sp-table>` - on every append.
+        const renderKey = tableMessage !== undefined ? (runIds.get(key) ?? key) : key;
+        seenKeys.add(renderKey);
+        let shell = cache.get(renderKey);
         if (shell === undefined) {
           shell = createShell(item);
-          cache.set(key, shell);
+          cache.set(renderKey, shell);
         }
-        const tableMessage = messages.get(key);
         updateShell(store, item, shell, item === lastItem, tableMessage);
         if (tableMessage !== undefined) {
           const runId = runIds.get(key);
@@ -1057,10 +1205,12 @@ export function createTranscriptView(
         if (!seenKeys.has(key)) cache.delete(key);
       }
 
-      // Only touch the DOM when the ordered node list actually changed. See
-      // `hasSameChildren`: re-inserting unchanged nodes restarts their CSS
-      // animations, which made the thinking spinner stutter on every delta.
-      if (!hasSameChildren(element, nodes)) element.replaceChildren(...nodes);
+      // Only touch the DOM when the ordered node list actually changed, and then
+      // only the nodes that moved. See `reconcileChildren`: re-inserting
+      // unchanged nodes restarts their CSS animations and relayouts everything,
+      // which made the thinking spinner stutter on every delta and made a search
+      // table's `Load more` jump its neighbors.
+      reconcileChildren(element, nodes);
 
       return updatedMessages;
     },
