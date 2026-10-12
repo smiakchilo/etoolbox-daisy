@@ -9,10 +9,11 @@ import {
 } from '../../../src/main/tools/registry';
 import {
   type AemToolExecutor,
+  type InternalToolModule,
   type JsonValue,
+  type ModelToolModule,
   type ToolHost,
   type ToolHostServices,
-  type ToolModule,
   newChatId,
   newServerId,
   newToolCallId,
@@ -39,7 +40,7 @@ const host: ToolHostServices = {
   idGenerator: ids,
 };
 
-function fakeTool(name: string, overrides: Partial<ToolModule> = {}): ToolModule {
+function fakeTool(name: string, overrides: Partial<ModelToolModule> = {}): ModelToolModule {
   return {
     name,
     descriptor: {
@@ -111,10 +112,13 @@ describe('buildToolRegistry', () => {
           }),
         '/tools/hidden/tool.ts': () =>
           Promise.resolve({
-            tool: fakeTool('tool_hidden', {
+            // An internal tool needs no descriptor, allowlist entry or
+            // instructions - only a name and an executor.
+            tool: {
+              name: 'tool_hidden',
               internal: true,
               createExecutor: () => () => Promise.resolve({ ok: true, value: { hidden: true } }),
-            }),
+            } satisfies InternalToolModule,
           }),
       }),
     });

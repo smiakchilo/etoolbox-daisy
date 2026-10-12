@@ -1,4 +1,4 @@
-import { type ToolModule } from '../../shared';
+import { type ModelToolModule } from '../../shared';
 import {
   ASK_USER_ALLOWLIST_ENTRY,
   ASK_USER_TOOL_DESCRIPTOR,
@@ -7,7 +7,7 @@ import {
 } from './askUser';
 
 /** The plugin manifest the main-process registry discovers. Delete this folder to remove the tool. */
-export const tool: ToolModule = {
+export const tool: ModelToolModule = {
   name: ASK_USER_TOOL_NAME,
   descriptor: ASK_USER_TOOL_DESCRIPTOR,
   allowlistEntry: ASK_USER_ALLOWLIST_ENTRY,

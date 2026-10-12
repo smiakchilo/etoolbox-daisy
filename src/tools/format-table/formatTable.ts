@@ -4,7 +4,6 @@ import {
   type JsonValue,
   type RequestId,
   type Result,
-  type ToolDescriptor,
   type ToolError,
   type ToolHost,
   createToolError,
@@ -38,7 +37,6 @@ import {
  */
 
 export const FORMAT_TABLE_TOOL_NAME = 'format_table';
-export const FORMAT_TABLE_ALLOWLIST_ENTRY = 'custom:format_table';
 
 /**
  * `'new'` starts a fresh table; `'append'` adds this page's rows to the current
@@ -68,42 +66,6 @@ export const formatTableArgsSchema = z
   .strict();
 
 export type FormatTableArgs = z.infer<typeof formatTableArgsSchema>;
-
-export const FORMAT_TABLE_TOOL_DESCRIPTOR: ToolDescriptor = {
-  name: FORMAT_TABLE_TOOL_NAME,
-  description:
-    'Presents rows as the chat\u2019s own table. Internal: called only by the search tools ' +
-    '(`aem_query_format_ask`, `aem_semantic_search`) through the tool-to-tool bridge, never by ' +
-    'the model. `data` is the `aem_query` result or an array of row objects; `mode: "new"` ' +
-    'starts a table and `mode: "append"` adds a later page to it; `totalLine` replaces the ' +
-    'derived total line verbatim.',
-  // Hand-written rather than `z.toJSONSchema(jsonValueSchema)`: `data` is
-  // arbitrary JSON (a recursive schema), and a plain, readable description
-  // teaches the model the shape better than a `$ref` graph would.
-  parameters: {
-    type: 'object',
-    properties: {
-      data: {
-        description:
-          'The `aem_query` result exactly as received (object or text), or an array of row objects.',
-      },
-      mode: {
-        type: 'string',
-        enum: ['new', 'append'],
-        default: 'new',
-        description:
-          '"new" (default) starts a fresh table; "append" adds this page\'s rows to the current one.',
-      },
-      totalLine: {
-        type: 'string',
-        description:
-          'Optional text that replaces the derived total line verbatim, e.g. "Did not find any relevant results so far".',
-      },
-    },
-    required: ['data'],
-    additionalProperties: false,
-  },
-};
 
 /** One value rendered as a table cell. Objects/arrays are JSON-stringified rather than dropped. */
 function renderCell(value: JsonValue | undefined): string {

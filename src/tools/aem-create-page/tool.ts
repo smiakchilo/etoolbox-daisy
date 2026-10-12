@@ -1,4 +1,4 @@
-import { type ToolModule } from '../../shared';
+import { type ModelToolModule } from '../../shared';
 import {
   AEM_CREATE_PAGE_ALLOWLIST_ENTRY,
   AEM_CREATE_PAGE_TOOL_DESCRIPTOR,
@@ -12,7 +12,7 @@ import {
  * transport (`ToolHost.bridge`), removing `disabled`, and reconciling the
  * shared "read-only" session instructions.
  */
-export const tool: ToolModule = {
+export const tool: ModelToolModule = {
   name: AEM_CREATE_PAGE_TOOL_NAME,
   descriptor: AEM_CREATE_PAGE_TOOL_DESCRIPTOR,
   allowlistEntry: AEM_CREATE_PAGE_ALLOWLIST_ENTRY,

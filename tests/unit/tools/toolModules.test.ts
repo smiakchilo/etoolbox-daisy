@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type BrokerOutcome,
+  type CurrentAemToolContext,
+  type ModelToolModule,
+  type ToolEnvelopeBase,
+  type ToolHost,
   composeAssistantInstructions,
   newChatId,
   newServerId,
   newTurnId,
-  type BrokerOutcome,
-  type CurrentAemToolContext,
-  type ToolEnvelopeBase,
-  type ToolHost,
-  type ToolModule,
 } from '../../../src/shared';
 import { tool as environmentFactsTool } from '../../../src/tools/environment-facts/tool';
 import { tool as getJsonTool } from '../../../src/tools/aem-get-json/tool';
@@ -61,15 +61,23 @@ describe('tool manifests', () => {
     ['aem_get_json', getJsonTool],
     ['aem_query', queryTool],
     ['environment_facts', environmentFactsTool],
-    ['format_table', formatTableTool],
     ['aem_create_page', createPageTool],
     ['browser_navigate', browserNavigateTool],
     ['ask_user', askUserTool],
-  ])('%s is internally consistent', (name, tool: ToolModule) => {
+  ])('%s is internally consistent', (name, tool: ModelToolModule) => {
     expect(tool.name).toBe(name);
     expect(tool.descriptor.name).toBe(name);
     expect(tool.allowlistEntry).toBe(`custom:${name}`);
     expect(tool.instructions.length).toBeGreaterThan(0);
+  });
+
+  it('exposes format_table as an internal tool with no model-facing surface', () => {
+    expect(formatTableTool.name).toBe('format_table');
+    expect(formatTableTool.internal).toBe(true);
+    // The model never sees it, so the contract lets it omit these entirely.
+    expect('descriptor' in formatTableTool).toBe(false);
+    expect('allowlistEntry' in formatTableTool).toBe(false);
+    expect('instructions' in formatTableTool).toBe(false);
   });
 
   it('keeps aem_create_page disabled while the bridge has no write transport', () => {

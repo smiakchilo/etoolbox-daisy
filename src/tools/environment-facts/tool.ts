@@ -1,4 +1,4 @@
-import { type ToolModule } from '../../shared';
+import { type ModelToolModule } from '../../shared';
 import {
   ENVIRONMENT_FACTS_ALLOWLIST_ENTRY,
   ENVIRONMENT_FACTS_TOOL_DESCRIPTOR,
@@ -13,7 +13,7 @@ import {
  * No `aem_` prefix: the action is not AEM-specific - "environment facts" is a
  * question any environment could answer (AGENTS.md section 5).
  */
-export const tool: ToolModule = {
+export const tool: ModelToolModule = {
   name: ENVIRONMENT_FACTS_TOOL_NAME,
   descriptor: ENVIRONMENT_FACTS_TOOL_DESCRIPTOR,
   allowlistEntry: ENVIRONMENT_FACTS_ALLOWLIST_ENTRY,

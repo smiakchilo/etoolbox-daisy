@@ -375,7 +375,9 @@ a tool folder.
 
 ```
 src/tools/<name>/
-  tool.ts              exports `tool: ToolModule` (manifest + createExecutor(host))
+  tool.ts              exports `tool: ModelToolModule` (manifest +
+                       createExecutor) - or `tool: InternalToolModule` (name +
+                       createExecutor only; no model-facing surface)
   <name>.ts            the tool's own request/result types, URL building, projection
   renderer/index.ts    exports `renderer: ToolRendererModule` (describeCall = getDetails;
                        `readConversation` for `presentation: 'conversation'`,
@@ -387,7 +389,9 @@ src/tools/<name>/
   own args/result types; `src/shared/tools/index.ts` no longer lists tools.
 - `tool.ts` manifest: `name` must equal `descriptor.name`, `allowlistEntry` must
   be `custom:<name>`, `disabled: true` switches it off (loader, executor and
-  instructions are all skipped). A load failure, bad shape, name mismatch,
+  instructions are all skipped). An **internal** tool (`internal: true`,
+  `InternalToolModule`) declares none of `descriptor`/`allowlistEntry`/
+  `instructions` - the model never sees it. A load failure, bad shape, name mismatch,
   duplicate name or throwing `createExecutor` disables **only that tool**; the app
   logs `TOOL_REGISTRATION_FAILED` and continues (`src/main/tools/registry.ts`).
 - ESLint (Rule 4) confines a tool to its own folder plus `src/shared`; renderer
@@ -426,7 +430,8 @@ src/tools/<name>/
   (and so a diagnostic sees it), but the transcript shows only the billet. Its
   instructions point the model at `aem_query_format_ask` to show results.
 - `format_table` is the **only** table renderer, and it is **internal**
-  (`internal: true` on its `ToolModule`): the registry keeps it out of the
+  (`InternalToolModule`: `internal: true`, no descriptor/allowlist/instructions):
+  the registry keeps it out of the
   model's handlers, descriptors, allowlist and instructions (it is listed in
   `ToolRegistry.internalNames`), but the composites still reach it through
   `invokeTool`. It takes `data` (an array of rows, or an object with a `rows`
@@ -553,9 +558,11 @@ src/tools/<name>/
    building, projection and `create<Name>Executor` (use `createToolExecutor`
    from `src/shared/tools/core/toolModule.ts`). Export a `ToolDescriptor`, the
    tool name (`snake_case`, e.g. `aem_get_json`) and its allowlist entry.
-3. `src/tools/<name>/tool.ts` — `export const tool: ToolModule = { name,
+3. `src/tools/<name>/tool.ts` — `export const tool: ModelToolModule = { name,
    descriptor, allowlistEntry: 'custom:<name>', instructions, createExecutor(host)
-   }`. `name` must equal `descriptor.name`. `instructions` is a paragraph telling
+   }` (an `InternalToolModule` = `{ name, internal: true, createExecutor(host) }`
+   omits the model-facing fields). `name` must equal `descriptor.name`.
+   `instructions` is a paragraph telling
    the model when to use it; it is composed into the session prompt only while
    the tool is enabled. Copy `src/tools/aem-get-json/tool.ts`.
 4. Network access only via `host.bridge.request(envelope, url)` (GET through the

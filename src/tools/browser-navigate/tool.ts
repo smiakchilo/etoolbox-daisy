@@ -1,4 +1,4 @@
-import { type ToolModule } from '../../shared';
+import { type ModelToolModule } from '../../shared';
 import {
   BROWSER_NAVIGATE_ALLOWLIST_ENTRY,
   BROWSER_NAVIGATE_TOOL_DESCRIPTOR,
@@ -7,7 +7,7 @@ import {
 } from './browserNavigate';
 
 /** The plugin manifest the main-process registry discovers. Delete this folder to remove the tool. */
-export const tool: ToolModule = {
+export const tool: ModelToolModule = {
   name: BROWSER_NAVIGATE_TOOL_NAME,
   descriptor: BROWSER_NAVIGATE_TOOL_DESCRIPTOR,
   allowlistEntry: BROWSER_NAVIGATE_ALLOWLIST_ENTRY,

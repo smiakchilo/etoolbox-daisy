@@ -83,21 +83,29 @@ export const MAX_NESTED_TOOL_DEPTH = 3;
 function isToolModule(value: unknown): value is ToolModule {
   if (typeof value !== 'object' || value === null) return false;
   const v = value as Record<string, unknown>;
-  const descriptor = v['descriptor'] as { name?: unknown } | undefined;
   const name = v['name'];
+  if (typeof name !== 'string') return false;
+  if (typeof v['createExecutor'] !== 'function') return false;
+  if (v['disabled'] !== undefined && typeof v['disabled'] !== 'boolean') return false;
+  if (v['internal'] !== undefined && typeof v['internal'] !== 'boolean') return false;
   const uses = v['uses'];
+  if (
+    uses !== undefined &&
+    !(Array.isArray(uses) && uses.every((entry) => typeof entry === 'string'))
+  ) {
+    return false;
+  }
+  // An `internal` tool is a building block the model never sees, so it needs
+  // no descriptor, allowlist entry or instructions.
+  if (v['internal'] === true) return true;
+  // A model-callable tool must describe itself and carry its allowlist entry.
+  const descriptor = v['descriptor'] as { name?: unknown } | undefined;
   return (
-    typeof name === 'string' &&
-    typeof v['allowlistEntry'] === 'string' &&
-    typeof v['instructions'] === 'string' &&
-    typeof v['createExecutor'] === 'function' &&
     typeof descriptor === 'object' &&
     descriptor !== null &&
     descriptor.name === name &&
     v['allowlistEntry'] === `custom:${name}` &&
-    (v['internal'] === undefined || typeof v['internal'] === 'boolean') &&
-    (uses === undefined ||
-      (Array.isArray(uses) && uses.every((entry) => typeof entry === 'string')))
+    typeof v['instructions'] === 'string'
   );
 }
 

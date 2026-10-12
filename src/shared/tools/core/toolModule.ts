@@ -35,7 +35,7 @@ export type ToolExecutionContext = Parameters<AemToolExecutor>[1];
  * What a tool may ask of the application at run time. Deliberately small: a
  * tool cannot reach the session, the settings or the window, and it reaches
  * another tool only through {@link ToolHost.invokeTool}, and only a tool it
- * declared in {@link ToolModule.uses}.
+ * declared in its own `uses` list.
  */
 export interface ToolHost {
   readonly bridge: {
@@ -106,7 +106,7 @@ export interface ToolHost {
    * composite tool uses it to chain tools deterministically instead of relying
    * on the model to relay one tool's JSON into the next.
    *
-   * `name` must be listed in the caller's {@link ToolModule.uses}; a tool may
+   * `name` must be listed in the caller's `uses` list; a tool may
    * not call itself, and nesting is depth-limited. `parent` is the caller's own
    * execution context: its abort signal is passed through, so a Stop cancels
    * the nested call too. The nested call is shown in the transcript and the
@@ -126,26 +126,15 @@ export interface ToolHost {
  */
 export type ToolHostServices = Omit<ToolHost, 'invokeTool'>;
 
-export interface ToolModule {
+/** What every tool declares, whether or not the model may call it. */
+interface ToolModuleBase {
   readonly name: string;
-  readonly descriptor: ToolDescriptor;
-  /** The source-qualified allowlist entry (`custom:<name>`) the policy grants. */
-  readonly allowlistEntry: string;
   /**
    * Turns the tool off without deleting it: a disabled tool is still
    * type-checked, but is never registered, allowlisted, or described to the
    * model.
    */
   readonly disabled?: boolean;
-  /**
-   * A building block for other tools, not a tool for the model: it is callable
-   * only through {@link ToolHost.invokeTool} by a tool that lists it in `uses`,
-   * and is never handed to the agent, allowlisted, or described to the model.
-   * Its calls are still journaled and rendered like any other tool call.
-   */
-  readonly internal?: boolean;
-  /** One paragraph telling the model when to use this tool; joined into the session instructions. */
-  readonly instructions: string;
   /**
    * The other tools this one calls through {@link ToolHost.invokeTool}. A
    * composite ("synthetic") tool declares its parts here; a call to any tool
@@ -154,6 +143,37 @@ export interface ToolModule {
   readonly uses?: readonly string[];
   readonly createExecutor: (host: ToolHost) => AemToolExecutor;
 }
+
+/**
+ * A tool the model may call: it must describe itself and carry the allowlist
+ * entry the policy grants. `internal` is absent (or `false`).
+ */
+export interface ModelToolModule extends ToolModuleBase {
+  readonly internal?: false;
+  readonly descriptor: ToolDescriptor;
+  /** The source-qualified allowlist entry (`custom:<name>`) the policy grants. */
+  readonly allowlistEntry: string;
+  /** One paragraph telling the model when to use this tool; joined into the session instructions. */
+  readonly instructions: string;
+}
+
+/**
+ * A building block for other tools, not a tool for the model: it is callable
+ * only through {@link ToolHost.invokeTool} by a tool that lists it in `uses`,
+ * and is never handed to the agent, allowlisted, or described to the model -
+ * so it needs no descriptor, allowlist entry or instructions. Its calls are
+ * still journaled and rendered like any other tool call.
+ */
+export interface InternalToolModule extends ToolModuleBase {
+  readonly internal: true;
+}
+
+/**
+ * The plugin contract, as it is actually used: either a {@link ModelToolModule}
+ * (the model may call it) or an {@link InternalToolModule} (only another tool
+ * reaches it, through `invokeTool`).
+ */
+export type ToolModule = ModelToolModule | InternalToolModule;
 
 /** A tool's own `execute` outcome: its success shape (tagged with `operation`) or an error. */
 export type ToolOutcome<TSuccess extends { readonly ok: true; readonly operation: string }> =

@@ -1,4 +1,4 @@
-import { type ToolModule } from '../../shared';
+import { type ModelToolModule } from '../../shared';
 import {
   AEM_QUERY_ALLOWLIST_ENTRY,
   AEM_QUERY_TOOL_DESCRIPTOR,
@@ -8,7 +8,7 @@ import {
 } from './aemQuery';
 
 /** The plugin manifest the main-process registry discovers. Delete this folder to remove the tool. */
-export const tool: ToolModule = {
+export const tool: ModelToolModule = {
   name: AEM_QUERY_TOOL_NAME,
   descriptor: AEM_QUERY_TOOL_DESCRIPTOR,
   allowlistEntry: AEM_QUERY_ALLOWLIST_ENTRY,
