@@ -140,6 +140,8 @@ interface FakeAemViewControls {
   readonly closePopups: ReturnType<typeof vi.fn>;
   readonly destroy: ReturnType<typeof vi.fn>;
   loadURLImpl: (url: string) => Promise<void>;
+  /** Sets the live document URL the fake reports, without a load. */
+  setNavigationUrl: (url: string) => void;
 }
 
 /**
@@ -199,6 +201,11 @@ function makeFakeWebContents(): FakeWebContentsControls {
 }
 
 function makeFakeAemView(): FakeAemViewControls {
+  // The live document URL the fake reports. `loadURL` records the URL it was
+  // asked to load, so a test that needs "the pane is now on X" (e.g.
+  // `openForAgent`'s post-settle check) gets it for free; tests may also set it
+  // directly through `setNavigationUrl`.
+  let navigationUrl = '';
   const loadURL = vi.fn(async (url: string) => {
     await controls.loadURLImpl(url);
   });
@@ -206,19 +213,18 @@ function makeFakeAemView(): FakeAemViewControls {
   const destroy = vi.fn();
   const closePopups = vi.fn();
   const windowOpenRouter: WindowOpenRouter = { attachTo: vi.fn(), closeAll: closePopups };
-  const navigationState: BrowserNavigationState = {
-    url: '',
-    canGoBack: false,
-    canGoForward: false,
-    isLoading: false,
-    hasDocument: false,
-  };
   const webContentsControls = makeFakeWebContents();
   const view: AemBrowserView = {
     webContents: webContentsControls.webContents,
     windowOpenRouter,
     setBounds: vi.fn(),
-    getNavigationState: vi.fn(() => navigationState),
+    getNavigationState: vi.fn((): BrowserNavigationState => ({
+      url: navigationUrl,
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument: navigationUrl.length > 0,
+    })),
     goBack: vi.fn(() => Promise.resolve({ ok: true as const })),
     goForward: vi.fn(() => Promise.resolve({ ok: true as const })),
     reload: vi.fn(() => Promise.resolve({ ok: true as const })),
@@ -233,7 +239,13 @@ function makeFakeAemView(): FakeAemViewControls {
     stop,
     closePopups,
     destroy,
-    loadURLImpl: () => Promise.resolve(),
+    loadURLImpl: (url) => {
+      navigationUrl = url;
+      return Promise.resolve();
+    },
+    setNavigationUrl: (url) => {
+      navigationUrl = url;
+    },
   };
   return controls;
 }
@@ -1237,5 +1249,117 @@ describe('browserController same-origin navigation and invalidation logging', ()
     const harness = makeControllerHarness();
     harness.controller.destroy();
     expect(harness.loggerSpies.info).toHaveBeenCalledWith('BROWSER_VIEW_DESTROYED');
+  });
+});
+
+describe('browserController.openForAgent', () => {
+  it('opens a same-host page and reports it as not switched', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+
+    const result = await harness.controller.openForAgent({
+      serverId: server.id,
+      path: '/content/wknd.html',
+    });
+
+    expect(result).toEqual({
+      kind: 'opened',
+      url: 'https://author.example/content/wknd.html',
+      switched: false,
+    });
+    expect(harness.aemViewControls.loadURL).toHaveBeenLastCalledWith(
+      'https://author.example/content/wknd.html',
+    );
+  });
+
+  it('attributes a cross-host agent switch to the agent', async () => {
+    const serverA = makeServer();
+    const serverB = makeServer({
+      id: newServerId(() => 'server-b'),
+      origin: 'https://other.example',
+    });
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, {
+      ...defaultAppSettings(),
+      hosts: [serverA, serverB],
+    });
+    await harness.controller.switchServer(serverA.id);
+
+    const changes: Array<{ reason: string; initiator: string }> = [];
+    harness.controller.navigationEpoch.subscribe((change) => {
+      changes.push({ reason: change.reason, initiator: change.initiator });
+    });
+
+    const result = await harness.controller.openForAgent({
+      serverId: serverB.id,
+      path: '/content/other.html',
+    });
+
+    expect(result).toEqual({
+      kind: 'opened',
+      url: 'https://other.example/content/other.html',
+      switched: true,
+    });
+    expect(changes).toContainEqual({ reason: 'server_switch', initiator: 'agent' });
+    // The `did-start-navigation`-style bump the tracker would emit is driven
+    // separately in `navigationEpoch.test.ts`; here the manual bump is enough.
+  });
+
+  it('refuses an invalid path without loading anything', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+
+    const result = await harness.controller.openForAgent({
+      serverId: server.id,
+      path: 'https://evil.example/x',
+    });
+
+    expect(result).toEqual({ kind: 'invalid_path' });
+    expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown server', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(makeServer()));
+
+    const result = await harness.controller.openForAgent({
+      serverId: newServerId(() => 'missing'),
+      path: '/content/x.html',
+    });
+
+    expect(result).toEqual({ kind: 'server_not_found' });
+  });
+
+  it('cancels, and bumps as a user navigation, when the pane did not land on the target host', async () => {
+    const serverA = makeServer();
+    const serverB = makeServer({
+      id: newServerId(() => 'server-b'),
+      origin: 'https://other.example',
+    });
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, {
+      ...defaultAppSettings(),
+      hosts: [serverA, serverB],
+    });
+    await harness.controller.switchServer(serverA.id);
+    // The load never commits the new document (a page-initiated navigation
+    // raced it), so the pane is still on server A after the switch.
+    harness.aemViewControls.loadURLImpl = () => Promise.resolve();
+
+    const changes: Array<{ initiator: string }> = [];
+    harness.controller.navigationEpoch.subscribe((change) => {
+      changes.push({ initiator: change.initiator });
+    });
+
+    const result = await harness.controller.openForAgent({
+      serverId: serverB.id,
+      path: '/content/other.html',
+    });
+
+    expect(result).toEqual({ kind: 'cancelled' });
+    expect(changes).toContainEqual({ initiator: 'user' });
   });
 });

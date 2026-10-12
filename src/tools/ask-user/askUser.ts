@@ -131,7 +131,7 @@ export function renderAskUserSuccess(result: AskUserSuccess): string {
 /**
  * The structured success plus the SDK's render fields, so `ask_user`'s own
  * renderer can paint the question/answer from the result payload. Mirrors
- * `aem-environment-facts`'s `toSuccessPayload`.
+ * `environment-facts`'s `toSuccessPayload`.
  */
 function toSuccessPayload(result: AskUserSuccess): JsonValue {
   return {

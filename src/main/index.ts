@@ -17,6 +17,7 @@ import { createToolHttpLogger } from './aem/toolHttpLog';
 import { createStartupGatedAgentChatController } from './agentChatController';
 import {
   createBridgeCurrentContext,
+  createConfiguredHosts,
   createCurrentAemServerContext,
   createCurrentPageContext,
   createDeferredRuntimeRecycler,
@@ -532,6 +533,11 @@ if (!gotSingleInstanceLock) {
       () => browserController.currentDocumentUrl(),
       () => loadSettingsSync(appPaths.settings).hosts,
     );
+    // The model-facing host catalogue (labels + origins + roots) and the
+    // agent's navigation capability. `openPage` resolves the origin from the
+    // configured host itself, so no origin reaches the pane from a tool
+    // argument.
+    const configuredHosts = createConfiguredHosts(() => loadSettingsSync(appPaths.settings).hosts);
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
@@ -540,6 +546,8 @@ if (!gotSingleInstanceLock) {
         bridge: aemBridgeBroker,
         currentContext: lateBoundAemToolContext.currentContext,
         environmentFacts,
+        configuredHosts,
+        openPage: (target) => browserController.openForAgent(target),
         requestUserInput: lateBoundUserInput.requestUserInput,
         clock: Date.now,
         idGenerator: randomUUID,

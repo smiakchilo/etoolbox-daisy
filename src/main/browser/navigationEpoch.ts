@@ -9,9 +9,18 @@ import type { WebContents } from 'electron';
 export type NavigationEpochBumpReason =
   'document_navigation' | 'server_switch' | 'render_process_gone' | 'view_destroyed';
 
+/**
+ * Who caused an epoch invalidation. A *user* navigation makes the agent's
+ * in-flight work moot, so it aborts the turn (`agentComposition.ts`); an
+ * *agent* navigation (the `browser_navigate` tool moving the pane to resolve a
+ * page on another host) does not - the turn is doing exactly what it asked for.
+ */
+export type NavigationEpochInitiator = 'user' | 'agent';
+
 export interface NavigationEpochChange {
   readonly epoch: number;
   readonly reason: NavigationEpochBumpReason;
+  readonly initiator: NavigationEpochInitiator;
 }
 
 export interface NavigationEpochTracker {
@@ -20,8 +29,12 @@ export interface NavigationEpochTracker {
    * must still match to be honoured.
    */
   current(): number;
-  /** Invalidates every in-flight request and returns the new epoch. */
-  bump(reason: NavigationEpochBumpReason): number;
+  /**
+   * Invalidates every in-flight request and returns the new epoch. `initiator`
+   * defaults to `'user'` - the safe default for any caller that does not know
+   * it is acting for the agent.
+   */
+  bump(reason: NavigationEpochBumpReason, initiator?: NavigationEpochInitiator): number;
   /** Notified after every bump. Returns an unsubscribe function. */
   subscribe(listener: (change: NavigationEpochChange) => void): () => void;
 }
@@ -49,9 +62,9 @@ export function createNavigationEpochTracker(initialEpoch = 0): NavigationEpochT
 
   return {
     current: () => epoch,
-    bump(reason) {
+    bump(reason, initiator = 'user') {
       epoch += 1;
-      const change: NavigationEpochChange = { epoch, reason };
+      const change: NavigationEpochChange = { epoch, reason, initiator };
       // Copied before iterating so a listener that unsubscribes itself - which
       // the request broker does when it cancels - cannot mutate the set mid-loop.
       for (const listener of [...listeners]) listener(change);
@@ -85,6 +98,14 @@ export interface NavigationEpochTrackingOptions {
    */
   readonly isSameOriginNavigation?: (url: string) => boolean;
   /**
+   * Attributes a *bumping* main-frame navigation to its initiator, read at the
+   * moment of the bump. Returns `'agent'` only while the application is
+   * deliberately navigating the pane for the agent (the `browser_navigate`
+   * tool), so the switch's own load - and any SSO redirect hop it follows - is
+   * not mistaken for the user leaving the page. Defaults to `'user'`.
+   */
+  readonly bumpInitiator?: () => NavigationEpochInitiator;
+  /**
    * Observability hook, called for a main-frame navigation that did *not*
    * invalidate. Never called for one that did - that path is visible as the
    * epoch change itself.
@@ -109,6 +130,7 @@ export function attachNavigationEpochTracking(
   options: NavigationEpochTrackingOptions = {},
 ): () => void {
   const isSameOrigin = options.isSameOriginNavigation ?? ((): boolean => false);
+  const bumpInitiator = options.bumpInitiator ?? ((): NavigationEpochInitiator => 'user');
 
   /** Same-origin navigations are reported but not bumped - see the option's doc. */
   const handleMainFrameNavigation = (url: string): void => {
@@ -116,7 +138,7 @@ export function attachNavigationEpochTracking(
       options.onSameOriginNavigation?.(url);
       return;
     }
-    tracker.bump('document_navigation');
+    tracker.bump('document_navigation', bumpInitiator());
   };
 
   // Reads the `details` event object rather than the trailing positional

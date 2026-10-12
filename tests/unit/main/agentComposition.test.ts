@@ -20,6 +20,10 @@ import {
 } from '../../../src/main/agentComposition';
 import { createFakeAgentService } from '../../../src/main/agents/fakeAgentService';
 import type { ActiveAemServer } from '../../../src/main/browser/browserController';
+import type {
+  NavigationEpochChange,
+  NavigationEpochTracker,
+} from '../../../src/main/browser/navigationEpoch';
 import type { ChatJournal } from '../../../src/main/chatJournal';
 import type { Logger } from '../../../src/main/logger';
 import {
@@ -291,25 +295,52 @@ describe('createLateBoundAemToolContext', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireNavigationEpochCancellation', () => {
-  it("cancels the chat controller's in-flight turn whenever the navigation epoch bumps", () => {
-    let bumpListener: (() => void) | undefined;
-    const navigationEpoch = {
-      subscribe: vi.fn((listener: () => void) => {
-        bumpListener = listener;
-        return vi.fn();
-      }),
-    };
+  const USER_CHANGE: NavigationEpochChange = {
+    epoch: 1,
+    reason: 'server_switch',
+    initiator: 'user',
+  };
+
+  /** Captures the listener `wireNavigationEpochCancellation` subscribes with. */
+  function captureBumpListener(): {
+    navigationEpoch: Pick<NavigationEpochTracker, 'subscribe'>;
+    subscribe: ReturnType<typeof vi.fn>;
+    emit: (change: NavigationEpochChange) => void;
+  } {
+    let listener: ((change: NavigationEpochChange) => void) | undefined;
+    const subscribe = vi.fn((next: (change: NavigationEpochChange) => void) => {
+      listener = next;
+      return vi.fn();
+    });
+    return { navigationEpoch: { subscribe }, subscribe, emit: (change) => listener?.(change) };
+  }
+
+  it("cancels the chat controller's in-flight turn when a user-initiated navigation bumps", () => {
+    const { navigationEpoch, subscribe, emit } = captureBumpListener();
     const handleAemContextInvalidated = vi.fn(() => Promise.resolve());
     const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
       handleAemContextInvalidated,
     };
 
     wireNavigationEpochCancellation(navigationEpoch, chatController, noopLogger().logger);
-    expect(navigationEpoch.subscribe).toHaveBeenCalledTimes(1);
+    expect(subscribe).toHaveBeenCalledTimes(1);
 
-    bumpListener?.();
+    emit(USER_CHANGE);
 
     expect(handleAemContextInvalidated).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT cancel the turn when the agent itself navigated', () => {
+    const { navigationEpoch, emit } = captureBumpListener();
+    const handleAemContextInvalidated = vi.fn(() => Promise.resolve());
+    const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
+      handleAemContextInvalidated,
+    };
+
+    wireNavigationEpochCancellation(navigationEpoch, chatController, noopLogger().logger);
+    emit({ epoch: 2, reason: 'server_switch', initiator: 'agent' });
+
+    expect(handleAemContextInvalidated).not.toHaveBeenCalled();
   });
 
   it("returns the tracker's own unsubscribe function", () => {
@@ -329,20 +360,14 @@ describe('wireNavigationEpochCancellation', () => {
   });
 
   it('logs rather than throws if a non-conformant AgentService rejects instead of resolving a Result', async () => {
-    let bumpListener: (() => void) | undefined;
-    const navigationEpoch = {
-      subscribe: vi.fn((listener: () => void) => {
-        bumpListener = listener;
-        return vi.fn();
-      }),
-    };
+    const { navigationEpoch, emit } = captureBumpListener();
     const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
       handleAemContextInvalidated: () => Promise.reject(new Error('boom')),
     };
     const { logger, spies } = noopLogger();
 
     wireNavigationEpochCancellation(navigationEpoch, chatController, logger);
-    bumpListener?.();
+    emit(USER_CHANGE);
     // Let the rejected promise's `.catch` microtask run.
     await Promise.resolve();
     await Promise.resolve();

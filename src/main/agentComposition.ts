@@ -11,6 +11,7 @@ import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
 import {
   type AgentService,
+  type ConfiguredHostInfo,
   type CurrentAemContext,
   type CurrentAemToolContext,
   type EnvironmentFacts,
@@ -136,6 +137,32 @@ export function createEnvironmentFacts(
 }
 
 /**
+ * Builds the model-facing host catalogue the `environment_facts` tool and the
+ * `browser_navigate` tool read: every configured host as a label, an origin and
+ * its effective roots.
+ *
+ * `getHosts` is read fresh on every call, so a host added, renamed or re-rooted
+ * in Settings is visible on the very next tool call - the same
+ * closure-not-snapshot rule as {@link createEnvironmentFacts}. The origins come
+ * from the settings document, never from a tool argument.
+ */
+export function createConfiguredHosts(
+  getHosts: () => readonly ServerConfig[],
+): () => readonly ConfiguredHostInfo[] {
+  return () =>
+    getHosts().map((host) => {
+      const roots = resolveEnvironmentRoots(host.contentRoots, host.componentRoots);
+      return {
+        serverId: host.id,
+        label: host.label,
+        origin: host.origin,
+        contentRoots: roots.contentRoots,
+        componentRoots: roots.componentRoots,
+      };
+    });
+}
+
+/**
  * No server selected has to become a `CurrentAemContext` that makes
  * `classifyStaleness` (`toolContracts.ts`) fail *closed* for any request
  * already in flight, never one that happens to let a stray reply through.
@@ -258,11 +285,17 @@ export function createLateBoundUserInput(): LateBoundUserInput {
 
 /**
  * Subscribes to `navigationEpoch` and cancels the chat controller's in-flight
- * turn on every bump (document navigation, server switch, render-process-
- * gone, view-destroyed - see `NavigationEpochBumpReason`), so an AEM-context-
- * invalidating event cancels in-flight agent work the same way pressing Stop
- * does. Returns the unsubscribe function; the composition root calls it
- * alongside every other shutdown cleanup.
+ * turn on every *user*-initiated bump (document navigation, server switch,
+ * render-process-gone, view-destroyed - see `NavigationEpochBumpReason`), so an
+ * AEM-context-invalidating event the user caused cancels in-flight agent work
+ * the same way pressing Stop does.
+ *
+ * An *agent*-initiated bump is deliberately ignored: the `browser_navigate`
+ * tool moving the pane to another host so it can resolve a page name there is
+ * the turn doing what it was asked, not a reason to abort it. The epoch still
+ * moves (the broker discards in-flight replies from the previous document);
+ * only the cancellation is skipped. Returns the unsubscribe function; the
+ * composition root calls it alongside every other shutdown cleanup.
  *
  * `handleAemContextInvalidated()` already logs and swallows a `Result`-shaped
  * failure from `agentService.abort` internally (see its own doc comment) and
@@ -276,7 +309,8 @@ export function wireNavigationEpochCancellation(
   chatController: Pick<AgentChatController, 'handleAemContextInvalidated'>,
   logger: Logger,
 ): () => void {
-  return navigationEpoch.subscribe(() => {
+  return navigationEpoch.subscribe((change) => {
+    if (change.initiator === 'agent') return;
     chatController.handleAemContextInvalidated().catch(() => {
       logger.error('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED');
     });

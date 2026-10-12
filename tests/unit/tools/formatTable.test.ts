@@ -18,6 +18,8 @@ function makeHost(): ToolHost {
       throw new Error('format_table must never ask for an AEM context');
     },
     environmentFacts: () => undefined,
+    configuredHosts: () => [],
+    openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
     clock: () => 1,
     idGenerator: ids,

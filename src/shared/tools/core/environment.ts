@@ -7,7 +7,7 @@
  * roots may be written on one line, separated by commas or semicolons -
  * so this module owns the one interpretation of that text every consumer
  * shares: the query tool's root fan-out, the model-facing current-page context
- * block, and the `aem_environment_facts` tool.
+ * block, and the `environment_facts` tool.
  *
  * Pure and dependency-free (no Electron, no Node built-ins, no browser
  * globals), so it runs unchanged in main, preload and renderer.

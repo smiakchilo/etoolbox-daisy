@@ -79,11 +79,12 @@ describe('createToolRendererRegistry', () => {
 describe('discovered renderers (the real src/tools folders)', () => {
   it('finds the shipped tools', () => {
     expect([...toolRendererRegistry.toolNames].sort()).toEqual([
-      'aem_environment_facts',
       'aem_get_json',
       'aem_query',
       'aem_query_format_ask',
       'ask_user',
+      'browser_navigate',
+      'environment_facts',
       'format_table',
     ]);
   });

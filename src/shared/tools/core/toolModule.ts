@@ -11,6 +11,7 @@ import type {
 import { type Result, err, ok } from '../../result';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
+import type { ConfiguredHostInfo, OpenPageOutcome, OpenPageTarget } from './navigation';
 import type { AemResponseOutcome } from './responseValidation';
 import type {
   AemToolExecutor,
@@ -53,6 +54,21 @@ export interface ToolHost {
    * {@link currentContext}, the model can never influence it.
    */
   readonly environmentFacts: () => EnvironmentFacts | undefined;
+  /**
+   * Every configured host, as the model may see it: label, origin and effective
+   * roots. Read fresh on every call, so a host added, renamed or re-rooted in
+   * Settings is visible immediately. The model reads origins from here; it
+   * never supplies one.
+   */
+  readonly configuredHosts: () => readonly ConfiguredHostInfo[];
+  /**
+   * Opens a page on a configured host in the browser pane. The origin is
+   * resolved by the application from `target.serverId` - the model supplies a
+   * host *label*, which the tool maps to this id - so no origin, scheme or
+   * port can reach the pane from a tool argument. The path is re-validated
+   * here even though the tool already validated it.
+   */
+  readonly openPage: (target: OpenPageTarget) => Promise<OpenPageOutcome>;
   /**
    * Puts an interactive question to the user and resolves with their answer.
    *
@@ -256,7 +272,8 @@ export const AEM_ASSISTANT_INSTRUCTIONS_PREFIX =
   'request that names no path or server as targeting it - do not ask the user to restate ' +
   'where they are. Scope content searches to the content roots and component searches to the ' +
   'component roots named above. The only external capabilities available to you are the tools ' +
-  'described next, and they act on the AEM instance the user currently has open.';
+  'described next. Most act on the AEM instance the user currently has open; a tool may also ' +
+  'open a page on another configured host in the browser pane.';
 
 /**
  * The read-only, no-side-channel policy every session carries, whether or not
@@ -271,9 +288,10 @@ export const AEM_ASSISTANT_INSTRUCTIONS_POLICY =
   'route - not /crx or CRXDE, Package Manager, the Sling POST servlet, curl, shell commands, ' +
   'files, or any external tool or server - and do not suggest them. If the user asks for a ' +
   'change, say that the application is read-only against AEM and offer to gather the ' +
-  'information that would support the change. The application binds every request to the AEM ' +
-  'instance open in the browser pane: never put a host, scheme, port, or full URL into a tool ' +
-  'argument.';
+  'information that would support the change. The application binds every AEM request to the ' +
+  'instance open in the browser pane: never put a scheme, port, origin, or full URL into a tool ' +
+  'argument. A configured host may be named by its label, which the application resolves to ' +
+  "that host's own origin.";
 
 /** The shared closing on error handling. */
 export const AEM_ASSISTANT_INSTRUCTIONS_SUFFIX =

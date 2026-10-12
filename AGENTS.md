@@ -399,19 +399,43 @@ src/tools/<name>/
   `format_table` calls into **runs** (new starts one, append adds to it), unions
   the columns, and paints one table at the run's last call; the call lines are
   hidden. `getDetails()` is the safety net only: `N rows` / `Rows: N`.
-- `aem_environment_facts` reports the current host's origin and its
-  content/component roots. It takes no arguments: the application resolves the
-  facts from the live pane URL matched against the settings hosts, through
-  `ToolHost.environmentFacts` — never from model input. Its success payload is
-  structured (a `toPayload`), so its renderer can read it: `describeCall` now
-  receives the succeeded result as a second argument, letting this zero-argument
-  tool summarise the call with the host URL and show the facts as the collapsible
-  rows. A host's
-  roots live on `ServerConfig` as optional free text (`contentRoots`/
+- `environment_facts` reports **every configured host** as a label, an origin and
+  its effective content/component roots, flagging the one the browser pane is
+  currently on. It takes no arguments: the application resolves the facts from
+  the settings document and the live pane URL, through
+  `ToolHost.configuredHosts` / `ToolHost.environmentFacts` — never from model
+  input. Its success payload is structured, so its renderer can read it:
+  `describeCall` receives the succeeded result as a second argument, letting this
+  zero-argument tool summarise the call with the current host's URL and show the
+  hosts as collapsible rows. It deliberately carries no `aem_` prefix: "environment
+  facts" is a question any environment could answer (see the naming rule below). A
+  host's roots live on `ServerConfig` as optional free text (`contentRoots`/
   `componentRoots`); `src/shared/tools/core/environment.ts` owns the one
   interpretation of that text (comma-or-semicolon split, comma wins, trimming, the
   `/content`/`/apps` defaults) and the nesting-aware `effectiveRoots`, shared
   by the tool, the per-turn context block and `aem_query`'s `roots` fan-out.
+- `browser_navigate` opens a page in the browser pane. It takes a host **label**
+  (or none, for the pane's current host) and a **verbatim browser path**
+  (`/content/site/page.html`, `/editor.html/content/site/page.html`, `/crx/de`);
+  the application resolves the label to a configured host and builds the URL from
+  that host's own origin, so no scheme, port or origin can reach the pane from a
+  tool argument. It calls `ToolHost.openPage({ serverId, path })`, which the
+  browser controller serves through `openForAgent`. That navigation is
+  **agent-initiated**: it still bumps the navigation epoch (so in-flight requests
+  from the previous document are discarded) but does **not** cancel the agent's
+  own turn, so the model can move to a host and then resolve a page name there in
+  the same turn. A *user* navigation still cancels, as it always did
+  (`wireNavigationEpochCancellation` skips only `initiator: 'agent'`); after an
+  agent switch settles, if the pane did not land on the target host the epoch is
+  bumped as a user navigation, so an in-page link click mid-switch still cancels.
+  It is hand-rolled (like `ask_user`), so it works with no active server when the
+  host is named explicitly. No `aem_` prefix: navigating a browser pane is not
+  AEM-specific.
+- **Tool names: `aem_` only for AEM-specific actions.** A tool takes the `aem_`
+  prefix only when the action itself has no equivalent outside AEM — `aem_query`
+  (AEM's QueryBuilder), `aem_get_json` (AEM's Sling/JSON rendering),
+  `aem_create_page` (`cq:Page`). A generic action takes no prefix —
+  `environment_facts`, `browser_navigate`, `ask_user`, `format_table`.
 - Tests live in `tests/unit/tools/` (manifests, executors),
   `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
   snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
@@ -514,9 +538,9 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 
 ### `resources/skills/`
 
-Four bundled skills, each a `SKILL.md`: `search` and `semantic-search`
-(both user-invocable — they appear in the composer's `/` autocomplete), plus
-`daisy-conventions` and `query-results` (auxiliary —
+Five bundled skills, each a `SKILL.md`: `search`, `semantic-search` and
+`navigate` (all user-invocable — they appear in the composer's `/`
+autocomplete), plus `daisy-conventions` and `query-results` (auxiliary —
 `user-invocable: false`, so the runtime still loads them for the model but the
 `/` menu does not list them; see `src/main/skills/skillCatalog.ts`).
 Application-owned only — never loaded from the user's home, a project
@@ -610,7 +634,22 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2771 passed / 14 skipped** (+5 against the
+Current baseline: **`npm run test` → 2796 passed / 14 skipped** (+25 against the
+2771 of the previous entry - **"Navigate to page": a `browser_navigate` tool, a
+`navigate` skill, and cause-aware navigation cancellation**. `browser_navigate`
+opens a page on a configured host (label -> origin resolved by the application;
+verbatim browser path); `environment_facts` was renamed from
+`aem_environment_facts` and now reports every configured host, not only the
+current one; the navigation epoch carries an `initiator`, so an agent-initiated
+switch (`openForAgent`) no longer cancels the agent's own turn while a user
+navigation still does. New: `tests/unit/tools/browserNavigate.test.ts` (13),
+`tests/unit/tools/environmentFacts.test.ts` (7), the `openForAgent` cases in
+`browserController.test.ts` (5), the initiator cases in `navigationEpoch.test.ts`
+(+2) and `agentComposition.test.ts` (+1). Two mutations were caught (the
+agent-initiator skip, and `openForAgent`'s post-settle check). See
+`docs/verification.md` "Navigate to page: a browser_navigate tool, the navigate
+skill, and cause-aware navigation cancellation (2026-10-11)"). Before that it was
+2771 (+5 against the
 2766 of the previous entry - **a message the application updates in place is
 revealed even after the reader scrolled up**: `TranscriptView.repaint` now
 reports a `presentation: 'message'` run whose content changed (a `/search` or
@@ -787,7 +826,12 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 121 tests; a full run is typically 111 passed / 6 failed.** The
+**Playwright → 123 tests; a full run is typically 117 passed / 6 failed.** The
++2 since 121 is `navigate.spec.ts`, proving the built renderer's
+`browser_navigate` and `environment_facts` billets (summary + expanded rows); the
+new user-invocable `navigate` skill also moved `skill-autocomplete.spec.ts`'s
+expected list from 2 to 3 skills. See
+`docs/verification.md` "Navigate to page: ... (2026-10-11)". Before that, the
 +1 since 120 is the `chat-transcript-scroll.spec.ts` case proving a `/search`
 table grown by **Load more** is revealed at its bottom even after a real wheel
 scroll up (an 80-row table growing to 85, `bottomGap <= 4`); a mutation with the

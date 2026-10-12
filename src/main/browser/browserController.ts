@@ -10,11 +10,13 @@ import type {
   BrowserIpcError,
   BrowserIpcVoidResult,
   OpenExternalRequest,
+  OpenPageOutcome,
+  OpenPageTarget,
   ViewBounds,
 } from '../../shared';
 import type { AppSettings } from '../../shared';
 import type { ProxyConfig, ServerId } from '../../shared';
-import { parseNavigationTarget } from '../../shared';
+import { buildNavigationUrl, parseNavigationTarget, validateBrowserPath } from '../../shared';
 import { applyServerTargetingChange, loadSettings, saveSettings } from '../settingsStore';
 import type { AemSession } from '../aem';
 import type { ProxyPlainCredentials } from '../aem';
@@ -36,6 +38,7 @@ import {
   attachNavigationEpochTracking,
   createNavigationEpochTracker,
   type NavigationEpochBumpReason,
+  type NavigationEpochInitiator,
   type NavigationEpochTracker,
 } from './navigationEpoch';
 
@@ -131,6 +134,15 @@ export interface BrowserController {
    */
   currentDocumentUrl(): string | undefined;
   navigate(rawValue: string): Promise<BrowserIpcVoidResult>;
+  /**
+   * Opens a page on a configured host for the agent (`browser_navigate`). The
+   * origin is resolved here from `target.serverId`, never from the tool's
+   * arguments. This is an *agent-initiated* navigation: it still bumps the
+   * epoch (so in-flight requests from the previous document are discarded),
+   * but it does not cancel the agent's own turn - that is the whole point, so
+   * the model can resolve a page name on a host it has just moved to.
+   */
+  openForAgent(target: OpenPageTarget): Promise<OpenPageOutcome>;
   /**
    * Opens a transcript link's URL in the OS default browser. The URL is
    * re-validated here (http(s), no userinfo) so the renderer can never drive an
@@ -232,6 +244,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // comment for what this does and does not track.
   let activeServerState: ActiveAemServer | undefined;
 
+  /**
+   * Set only while `openForAgent` is deliberately moving the pane for the
+   * agent. `attachNavigationEpochTracking`'s `bumpInitiator` reads it, so the
+   * switch's own load - and any SSO redirect hop it follows, which is *not* the
+   * target URL - is attributed to the agent rather than to the user. Any
+   * user-initiated navigation entry point clears it, so a user navigation
+   * arriving mid-switch is attributed to the user (and cancels the turn, as it
+   * always did).
+   */
+  let agentNavigation: { readonly targetOrigin: string } | undefined;
+
   const buildAemView = options.createAemView ?? createAemBrowserView;
   const aemView = buildAemView({
     window,
@@ -269,6 +292,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     navigationEpoch,
     {
       isSameOriginNavigation,
+      // While the agent owns the navigation, its load (and any SSO redirect
+      // hop) is the agent's; otherwise a bumping navigation is the user's.
+      bumpInitiator: () => (agentNavigation !== undefined ? 'agent' : 'user'),
       onSameOriginNavigation: (url) => {
         logger.info('BROWSER_NAVIGATION', { url: toLoggableUrl(url) });
       },
@@ -429,7 +455,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   async function switchServer(
     serverId: ServerId,
     targetUrl?: string,
+    initiator: NavigationEpochInitiator = 'user',
   ): Promise<BrowserIpcVoidResult> {
+    // A user-initiated switch takes the navigation away from the agent: any
+    // later bumping navigation is the user's, not a continuation of an agent
+    // switch. (An agent switch keeps `agentNavigation` set - `openForAgent`
+    // owns that cell.)
+    if (initiator === 'user') {
+      agentNavigation = undefined;
+    }
     // Any user-initiated switch supersedes a pending certificate-retry
     // target (the renderer's prompt was dismissed by this switch).
     certificateRetryTarget = undefined;
@@ -475,7 +509,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // not. `did-start-navigation` also fires during the switch and bumps again;
     // the epoch only has to move forward, never to move exactly once.
     if (!isSameOriginNavigation(targetUrl ?? server.origin)) {
-      navigationEpoch.bump('server_switch');
+      navigationEpoch.bump('server_switch', initiator);
     }
 
     const outcome = await switchController.switchTo(server, targetUrl);
@@ -523,6 +557,81 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     appliedProxyKey = currentProxy?.id ?? '';
     logger.info('BROWSER_SWITCH_COMPLETED');
     return ok();
+  }
+
+  /** Two origins' hosts (hostname and port), tolerating an http->https redirect. */
+  function sameHost(left: string, right: string): boolean {
+    const strip = (origin: string): string => origin.replace(/^https?:\/\//i, '');
+    return strip(left) === strip(right);
+  }
+
+  /**
+   * The agent's navigation capability (`ToolHost.openPage`). Resolves the host
+   * from settings, validates the path, and performs an *agent-initiated*
+   * switch. `agentNavigation` is set for the whole switch, so the epoch bumps it
+   * causes - including an SSO redirect hop, which is not the target URL - are
+   * attributed to the agent rather than to the user.
+   *
+   * A user navigation arriving meanwhile clears `agentNavigation` (via
+   * `switchServer`/`goBack`/...), supersedes this switch, and so still cancels
+   * the turn. After the switch settles, if the pane did not land on the target
+   * host - a supersede, or a page-initiated navigation during the window - the
+   * epoch is bumped as a *user* navigation, so an in-page link click mid-switch
+   * still cancels the turn.
+   */
+  async function openForAgent(target: OpenPageTarget): Promise<OpenPageOutcome> {
+    let settings: AppSettings;
+    try {
+      settings = await loadSettingsOrThrow();
+    } catch {
+      return { kind: 'storage_error' };
+    }
+    const server = settings.hosts.find((candidate) => candidate.id === target.serverId);
+    if (server === undefined) return { kind: 'server_not_found' };
+
+    const path = validateBrowserPath(target.path);
+    if (!path.ok) return { kind: 'invalid_path' };
+    const built = buildNavigationUrl({ origin: server.origin, path: path.value });
+    if (!built.ok) return { kind: 'invalid_path' };
+
+    const switched = !isSameOriginNavigation(built.value);
+    agentNavigation = { targetOrigin: server.origin };
+    try {
+      const result = await switchServer(server.id, built.value, 'agent');
+      if (!result.ok) {
+        switch (result.error.code) {
+          case 'network_error':
+            return {
+              kind: 'network_error',
+              errorCode: result.error.errorCode ?? '',
+              message: result.error.message,
+            };
+          case 'server_not_found':
+            return { kind: 'server_not_found' };
+          case 'storage_error':
+            return { kind: 'storage_error' };
+          default:
+            return { kind: 'no_view' };
+        }
+      }
+      // `switchServer` reports a superseded switch as success (the newer
+      // navigation owns the outcome), so confirm the pane actually landed on
+      // the target host rather than trusting the return value.
+      const landed = currentDocumentUrl();
+      const landedTarget = landed === undefined ? undefined : parseNavigationTarget(landed);
+      const onTarget =
+        activeServerState?.serverId === server.id &&
+        landedTarget !== undefined &&
+        landedTarget.ok &&
+        sameHost(landedTarget.origin, server.origin);
+      if (!onTarget || landed === undefined) {
+        navigationEpoch.bump('document_navigation', 'user');
+        return { kind: 'cancelled' };
+      }
+      return { kind: 'opened', url: landed, switched };
+    } finally {
+      agentNavigation = undefined;
+    }
   }
 
   async function withPersistedTlsException(
@@ -677,12 +786,15 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   }
 
   async function goBack(): Promise<BrowserIpcVoidResult> {
+    agentNavigation = undefined;
     return settleHistoryCommand(await aemView.goBack());
   }
   async function goForward(): Promise<BrowserIpcVoidResult> {
+    agentNavigation = undefined;
     return settleHistoryCommand(await aemView.goForward());
   }
   async function reload(): Promise<BrowserIpcVoidResult> {
+    agentNavigation = undefined;
     return settleHistoryCommand(await aemView.reload());
   }
   function stop(): BrowserIpcVoidResult {
@@ -707,6 +819,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     activeServer: () => activeServerState,
     currentDocumentUrl,
     navigate,
+    openForAgent,
     openExternal,
     switchServer,
     goBack,

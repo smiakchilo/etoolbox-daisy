@@ -99,27 +99,85 @@ describe('describeToolCall - aem_query', () => {
   });
 });
 
-describe('describeToolCall - aem_environment_facts', () => {
+describe('describeToolCall - environment_facts', () => {
   const data = {
-    operation: 'aem_environment_facts',
-    sourceOrigin: 'https://author.example',
-    contentRoots: ['/content/a'],
-    componentRoots: ['/apps'],
+    operation: 'environment_facts',
+    hosts: [
+      {
+        label: 'HPE DEV',
+        origin: 'https://author.example',
+        contentRoots: ['/content/a'],
+        componentRoots: ['/apps'],
+        current: true,
+      },
+      {
+        label: 'Staging',
+        origin: 'https://stage.example',
+        contentRoots: ['/content'],
+        componentRoots: ['/apps'],
+        current: false,
+      },
+    ],
   };
 
-  it('summarises with the host URL and lists the facts as rows, read from the result', () => {
-    const details = describeToolCall('aem_environment_facts', {}, data);
+  it('summarises with the current host URL and lists the facts as rows, read from the result', () => {
+    const details = describeToolCall('environment_facts', {}, data);
 
     expect(details.summary).toBe('https://author.example');
-    expect(details.parameters).toContainEqual({ label: 'Host', value: 'https://author.example' });
+    expect(details.parameters).toContainEqual({
+      label: 'Current host',
+      value: 'https://author.example',
+    });
     expect(details.parameters).toContainEqual({ label: 'Content roots', value: '/content/a' });
     expect(details.parameters).toContainEqual({ label: 'Component roots', value: '/apps' });
+    expect(details.parameters).toContainEqual({
+      label: 'Hosts',
+      value: 'HPE DEV (current): https://author.example; Staging: https://stage.example',
+    });
   });
 
   it('falls back to the generic argument view before the result arrives', () => {
-    const details = describeToolCall('aem_environment_facts', {});
+    const details = describeToolCall('environment_facts', {});
 
     expect(details.parameters).toEqual([{ label: 'Arguments', value: '(none)' }]);
+  });
+});
+
+describe('describeToolCall - browser_navigate', () => {
+  it('summarises the host and path, and reads the outcome from the result', () => {
+    const details = describeToolCall(
+      'browser_navigate',
+      { host: 'HPE DEV', path: '/content/wknd.html' },
+      {
+        operation: 'browser_navigate',
+        hostLabel: 'HPE DEV',
+        origin: 'https://author.example',
+        path: '/content/wknd.html',
+        url: 'https://author.example/content/wknd.html',
+        switched: false,
+      },
+    );
+
+    expect(details.summary).toBe('Open HPE DEV: /content/wknd.html');
+    expect(details.parameters).toEqual([
+      { label: 'Host', value: 'HPE DEV' },
+      { label: 'Origin', value: 'https://author.example' },
+      { label: 'Path', value: '/content/wknd.html' },
+      { label: 'Result', value: 'Opened' },
+    ]);
+  });
+
+  it('reads the host from the arguments while the call is pending', () => {
+    const details = describeToolCall('browser_navigate', {
+      host: 'HPE DEV',
+      path: '/crx/de',
+    });
+
+    expect(details.summary).toBe('Open HPE DEV: /crx/de');
+    expect(details.parameters).toEqual([
+      { label: 'Host', value: 'HPE DEV' },
+      { label: 'Path', value: '/crx/de' },
+    ]);
   });
 });
 

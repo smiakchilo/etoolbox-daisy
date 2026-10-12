@@ -61,6 +61,8 @@ function makeHost(responder: Responder, contentRoots?: readonly string[]) {
       contentRoots === undefined
         ? undefined
         : { origin: 'https://aem.example', contentRoots, componentRoots: ['/apps'] },
+    configuredHosts: () => [],
+    openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.reject(new Error('the composite asks only through ask_user')),
     clock: () => 1,
     idGenerator: createCountingIdGenerator('qfa'),

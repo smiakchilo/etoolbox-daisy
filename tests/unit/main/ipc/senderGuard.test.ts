@@ -180,6 +180,7 @@ beforeEach(() => {
       throw new Error('currentDocumentUrl must not be read by the IPC layer');
     },
     navigate: () => Promise.resolve(record('navigate')),
+    openForAgent: () => Promise.resolve({ kind: 'no_view' }),
     openExternal: () => Promise.resolve(record('openExternal')),
     switchServer: () => Promise.resolve(record('switchServer')),
     goBack: () => Promise.resolve(record('goBack')),

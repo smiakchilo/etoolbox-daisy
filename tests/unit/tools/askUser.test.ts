@@ -19,6 +19,8 @@ function makeHost(
       throw new Error('ask_user must never ask for an AEM context');
     },
     environmentFacts: () => undefined,
+    configuredHosts: () => [],
+    openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: (request) => {
       capture?.(request);
       return Promise.resolve(answer);

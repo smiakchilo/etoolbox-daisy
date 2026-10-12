@@ -919,10 +919,10 @@ describe('createTranscriptView - tool-call billet disclosure', () => {
     expect(params?.textContent).toContain('10');
   });
 
-  it('summarises aem_environment_facts with the host URL and hides its facts when collapsed', () => {
+  it('summarises environment_facts with the current host URL and hides its facts when collapsed', () => {
     const view = createTranscriptView(markdownRenderer);
     const store = createTranscriptStore();
-    store.applyEvent(toolRequestedWithArgs(0, 'aem_environment_facts', {}));
+    store.applyEvent(toolRequestedWithArgs(0, 'environment_facts', {}));
     store.applyEvent(
       agentEventSchema.parse({
         type: 'tool.result',
@@ -932,10 +932,16 @@ describe('createTranscriptView - tool-call billet disclosure', () => {
         outcome: {
           ok: true,
           data: {
-            operation: 'aem_environment_facts',
-            sourceOrigin: 'https://author.example',
-            contentRoots: ['/content'],
-            componentRoots: ['/apps'],
+            operation: 'environment_facts',
+            hosts: [
+              {
+                label: 'HPE DEV',
+                origin: 'https://author.example',
+                contentRoots: ['/content'],
+                componentRoots: ['/apps'],
+                current: true,
+              },
+            ],
           },
         },
       }),
@@ -956,7 +962,7 @@ describe('createTranscriptView - tool-call billet disclosure', () => {
     click(toggle);
     params = view.element.querySelector<HTMLElement>('.chat-tool-call__params');
     expect(params?.hidden).toBe(false);
-    expect(params?.textContent).toContain('Host');
+    expect(params?.textContent).toContain('Current host');
     expect(params?.textContent).toContain('https://author.example');
     expect(params?.textContent).toContain('Content roots');
     expect(params?.textContent).toContain('/content');

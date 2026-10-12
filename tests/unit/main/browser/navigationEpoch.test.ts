@@ -89,12 +89,16 @@ describe('createNavigationEpochTracker', () => {
     expect(seen).toStrictEqual([1, 2, 3, 4, 5]);
   });
 
-  it('reports the reason alongside the new epoch', () => {
+  it('reports the reason and initiator alongside the new epoch', () => {
     const tracker = createNavigationEpochTracker();
     const changes: NavigationEpochChange[] = [];
     tracker.subscribe((change) => changes.push(change));
     tracker.bump('server_switch');
-    expect(changes).toStrictEqual([{ epoch: 1, reason: 'server_switch' }]);
+    tracker.bump('server_switch', 'agent');
+    expect(changes).toStrictEqual([
+      { epoch: 1, reason: 'server_switch', initiator: 'user' },
+      { epoch: 2, reason: 'server_switch', initiator: 'agent' },
+    ]);
   });
 
   it('stops notifying after unsubscribe', () => {
@@ -266,5 +270,29 @@ describe('attachNavigationEpochTracking - same-origin navigation', () => {
     fake.emit('did-navigate', {}, 'https://aem.example.com/content/other.html');
 
     expect(tracker.current()).toBe(0);
+  });
+
+  it('attributes a bumping navigation to the agent while an agent switch owns it', () => {
+    const fake = createFakeWebContents();
+    const tracker = createNavigationEpochTracker();
+    let agent = true;
+    const changes: NavigationEpochChange[] = [];
+    tracker.subscribe((change) => changes.push(change));
+    attachNavigationEpochTracking(fake.webContents, tracker, {
+      bumpInitiator: () => (agent ? 'agent' : 'user'),
+    });
+
+    fake.emit('did-start-navigation', startNavigation());
+    expect(changes).toStrictEqual([
+      { epoch: 1, reason: 'document_navigation', initiator: 'agent' },
+    ]);
+
+    agent = false;
+    fake.emit('did-start-navigation', startNavigation());
+    expect(changes[1]).toEqual({
+      epoch: 2,
+      reason: 'document_navigation',
+      initiator: 'user',
+    });
   });
 });

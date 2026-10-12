@@ -107,10 +107,11 @@ test.describe('composer skill autocomplete', () => {
     await field.fill('/');
 
     // The real catalogue, read from resources/skills on disk. Only
-    // user-invocable skills appear - `query-results` is auxiliary
-    // (`user-invocable: false`) and must not be offered.
+    // user-invocable skills appear - `query-results` (and `daisy-conventions`)
+    // are auxiliary (`user-invocable: false`) and must not be offered.
     await expect.poll(() => skillOverlayOpen(shell)).toBe(true);
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(3);
+    await expect(shell.locator(SKILL_NAME, { hasText: /^navigate$/ })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: /^search$/ })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: 'semantic-search' })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: 'query-results' })).toHaveCount(0);
