@@ -136,6 +136,39 @@ describe('replayJournalIntoTranscript', () => {
     expect(tool?.status).toEqual({ kind: 'succeeded', data: { ok: true } });
   });
 
+  it('settles an unresolved replayed tool call as abandoned, not still running', () => {
+    // The app closed mid-turn: the journal has the call's requested/approved
+    // events but never a result. A repaired transcript must not show a spinner
+    // that can never stop.
+    const store = createTranscriptStore();
+    const requested: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 4,
+      event: {
+        type: 'tool.call.requested',
+        chatId: CHAT,
+        sequence: 1,
+        toolCallId: 'tool-open' as ToolCallId,
+        toolName: 'aem_semantic_search',
+        arguments: { terms: 'waldo' },
+      },
+    };
+    const approved: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 5,
+      event: {
+        type: 'tool.call.approved',
+        chatId: CHAT,
+        sequence: 2,
+        toolCallId: 'tool-open' as ToolCallId,
+      },
+    };
+
+    replayJournalIntoTranscript([userPrompt('turn-1', 'search'), requested, approved], store);
+
+    expect(store.toolCallFor('tool-open' as ToolCallId)?.status).toEqual({ kind: 'abandoned' });
+  });
+
   it('replays a durable interruption record as a historical, non-resumable notice', () => {
     const interruption: ChatJournalInterruptionRecord = {
       recordType: 'interruption',

@@ -23,6 +23,11 @@ export function describeToolCallStatus(status: ToolCallStatus): string {
       return 'Completed';
     case 'failed':
       return 'FAILED';
+    case 'abandoned':
+      // A replayed call the journal never resolved (the app closed mid-turn).
+      // It is not running and never will be, so the spinner is gone; the word
+      // says why, rather than implying a completion that never happened.
+      return 'Interrupted';
     default: {
       return status;
     }

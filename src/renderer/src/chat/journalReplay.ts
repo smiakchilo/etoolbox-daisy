@@ -21,11 +21,14 @@ import type { TranscriptStore } from './transcriptStore';
  * Deliberately ignored:
  *  - `header`, `chat.closed` and `turn.summary` - journal bookkeeping /
  *    diagnostics, no visual;
- *  - `assistant.message.partial` and `tool.call.abandoned` - a stopped turn's
- *    salvaged text / an unresolved tool call. Neither has a `TranscriptStore`
- *    representation, and inventing one (e.g. rendering salvaged partial text as
- *    a completed message) would misrepresent an interrupted turn. They are
- *    dropped rather than shown as something they were not.
+ *  - `assistant.message.partial` - a stopped turn's salvaged text; rendering it
+ *    as a completed message would misrepresent the interrupted turn, so it is
+ *    dropped rather than shown as something it was not;
+ *  - `tool.call.abandoned` - an unresolved tool call. The record is not consumed
+ *    directly: the final {@link TranscriptStore.abandonRunningToolCalls} settles
+ *    *every* call the replay left running, which is the same set (and also
+ *    covers a hard exit that never wrote the record), so the record needs no
+ *    handler of its own.
  */
 export function replayJournalIntoTranscript(
   records: readonly ChatJournalRecord[],
@@ -58,4 +61,8 @@ export function replayJournalIntoTranscript(
         break;
     }
   }
+  // A rebuilt transcript has no live turn, so nothing can still be running: a
+  // call the journal left without a result renders as an honest non-spinning
+  // "Interrupted" billet instead of a spinner that will never stop.
+  transcriptStore.abandonRunningToolCalls();
 }

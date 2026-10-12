@@ -29,7 +29,7 @@ import {
  * requirements-decisions.md section 2 forbids for anything beyond content
  * the user already has access to, and (b) couple every consumer to an SDK
  * version instead of to this module. So every event below is a deliberately
- * narrow, hand-picked projection: fifteen variants, each a `.strict()` object of
+ * narrow, hand-picked projection: sixteen variants, each a `.strict()` object of
  * named fields, with no `unknown`/`Record<string, unknown>` escape hatch
  * anywhere in the tree. If a caller wants something this module does not
  * expose, that is a decision to revisit here, not a reason to reach past it.
@@ -71,6 +71,13 @@ const baseEventFields = {
 const toolNameSchema = z.string().min(1).max(200);
 
 const REJECTION_REASON_MAX_LENGTH = 500;
+
+/**
+ * The most a progress note may say. Deliberately short: a progress line is a
+ * glance, not a sentence, and an over-long one would be the only way a tool
+ * could grow the event with arbitrary text.
+ */
+const PROGRESS_TEXT_MAX_LENGTH = 120;
 
 /**
  * The text explaining why a tool call was rejected. Corresponds in spirit to
@@ -263,6 +270,29 @@ const toolResultEventSchema = z
  * know which turn or tool call was in flight, it should supply them so the
  * UI can attach the error to the right place instead of only a chat-wide banner.
  */
+/**
+ * A live, human-readable progress note for one in-flight tool call, e.g.
+ * "Reading 12 of 20". The renderer shows it on that call's billet while the
+ * call runs, so a tool that takes a while (reading the content of many AEM
+ * hits) is visibly working rather than apparently stalled.
+ *
+ * Emitted by the application, not by an agent adapter: a tool executor reports
+ * it through `ToolHost.reportToolProgress`, and the chat controller injects it
+ * into the stream keyed to the tool call the executor belongs to. It is
+ * deliberately transient - never written to the chat journal
+ * (`chatJournal.ts`) - so it lives in the moment and is gone on replay, exactly
+ * like the reasoning variants. Several calls can be in flight in one turn, so
+ * it names the call it belongs to.
+ */
+const toolCallProgressEventSchema = z
+  .object({
+    type: z.literal('tool.call.progress'),
+    ...baseEventFields,
+    toolCallId: toolCallIdSchema,
+    text: z.string().min(1).max(PROGRESS_TEXT_MAX_LENGTH),
+  })
+  .strict();
+
 const errorEventSchema = z
   .object({
     type: z.literal('error'),
@@ -416,6 +446,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   toolCallApprovedEventSchema,
   toolCallRejectedEventSchema,
   toolResultEventSchema,
+  toolCallProgressEventSchema,
   errorEventSchema,
   sessionStateChangedEventSchema,
   userInputRequestedEventSchema,
@@ -433,6 +464,7 @@ export type ToolCallRequestedEvent = z.infer<typeof toolCallRequestedEventSchema
 export type ToolCallApprovedEvent = z.infer<typeof toolCallApprovedEventSchema>;
 export type ToolCallRejectedEvent = z.infer<typeof toolCallRejectedEventSchema>;
 export type ToolResultEvent = z.infer<typeof toolResultEventSchema>;
+export type ToolCallProgressEvent = z.infer<typeof toolCallProgressEventSchema>;
 export type ErrorEvent = z.infer<typeof errorEventSchema>;
 export type SessionStateChangedEvent = z.infer<typeof sessionStateChangedEventSchema>;
 export type UserInputRequestedEvent = z.infer<typeof userInputRequestedEventSchema>;

@@ -2,6 +2,8 @@ import {
   type JsonValue,
   type ToolCallDetails,
   type ToolRendererModule,
+  asCount,
+  asRecord,
   asStringArray,
   parameterRows,
 } from '../../../shared';
@@ -15,15 +17,6 @@ import { describePredicates, describeSearchTotal } from '../aemQueryFormatAsk';
  * `key=value; ...` for a hand-built search); the rows are Terms or Predicates,
  * Roots, Page size, then - once the search finished - Pages, Rows and Total.
  */
-function asRecord(value: JsonValue | undefined): Readonly<Record<string, JsonValue>> | undefined {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-  return value as Readonly<Record<string, JsonValue>>;
-}
-
-function asCount(value: JsonValue | undefined): string | undefined {
-  return typeof value === 'number' ? String(value) : undefined;
-}
-
 function describeCall(
   args: Readonly<Record<string, JsonValue>>,
   data?: JsonValue,

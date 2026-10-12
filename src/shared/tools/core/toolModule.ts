@@ -4,6 +4,7 @@ import type {
   IdGenerator,
   JsonValue,
   RequestId,
+  ToolCallId,
   ToolError,
   UserInputAnswer,
   UserInputRequest,
@@ -91,6 +92,15 @@ export interface ToolHost {
     requestId: RequestId,
     kind: AemResponseOutcome['kind'],
   ) => void;
+  /**
+   * Optional progress sink for a tool that can take a while: a short,
+   * human-readable note (e.g. "Reading 12 of 20") the renderer shows on the
+   * running tool call's billet, so a long read is visibly working. `toolCallId`
+   * is the calling tool's own `ToolExecutionContext.toolCallId` - the note is
+   * attached to that call, not invented. UX only: it never affects the result,
+   * it is never journaled, and a tool that omits it simply shows no progress.
+   */
+  readonly reportToolProgress?: (toolCallId: ToolCallId, text: string) => void;
   /**
    * Runs another enabled tool's executor directly - the tool-to-tool bridge. A
    * composite tool uses it to chain tools deterministically instead of relying

@@ -324,6 +324,16 @@
   color: var(--spectrum-gray-600, #6e6e6e);
 }
 
+/* A running call's live progress line (e.g. "Reading 12 of 20"). It sits
+   after the flexing summary, so it never gets ellipsised away, and it is
+   monospaced like the summary because it counts reads. */
+.chat-tool-call__progress {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: var(--spectrum-gray-600, #6e6e6e);
+}
+
 .chat-tool-call__chevron {
   transition: transform 0.13s ease-in-out;
 }
@@ -432,6 +442,12 @@
 }
 
 .chat-table-message a {
+  overflow-wrap: anywhere;
+}
+
+/* The Property column: a bare property name, wrapped at any character exactly
+   like the Path column's link, so a long name cannot widen the table. */
+.chat-table-message__wrap {
   overflow-wrap: anywhere;
 }
 

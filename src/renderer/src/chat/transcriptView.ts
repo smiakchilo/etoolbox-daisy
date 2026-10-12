@@ -21,7 +21,12 @@ import {
 } from './transcriptViewModel';
 import { describeToolCall } from './toolCallDetails';
 import { toolRendererRegistry } from './toolRegistry';
-import type { ToolCallView, TranscriptItem, TranscriptStore } from './transcriptStore';
+import type {
+  ToolCallStatus,
+  ToolCallView,
+  TranscriptItem,
+  TranscriptStore,
+} from './transcriptStore';
 
 export interface TranscriptView {
   readonly element: HTMLElement;
@@ -155,6 +160,22 @@ function tableRunContentSignature(message: ToolTableMessage): string {
   ].join('\u0000');
 }
 
+/**
+ * Whether `item` is a running tool call whose billet must be hidden because the
+ * turn is blocked on an interactive question. Nothing is actively working while
+ * the user is being asked, so a running *billet* is hidden exactly as the
+ * "Thinking" item is. A call that renders as a conversation or a message (an
+ * `ask_user` question, a `format_table` result) is never hidden - its rendering
+ * is the very thing the user is answering or reading.
+ */
+function hiddenWhileAwaitingInput(store: TranscriptStore, item: TranscriptItem): boolean {
+  if (item.kind !== 'toolCall' || !store.isAwaitingUserInput()) return false;
+  const view = store.toolCallFor(item.toolCallId);
+  if (view === undefined) return false;
+  if (view.status.kind !== 'requested' && view.status.kind !== 'approved') return false;
+  return toolRendererRegistry.presentationOf(view.toolName) === 'billet';
+}
+
 function renderToolCallToggle(
   view: ToolCallView,
   toolCallId: string,
@@ -170,8 +191,17 @@ function renderToolCallToggle(
       title: expanded ? 'Hide call details' : 'Show call details',
     },
   });
+  // A call that has been requested but not yet settled shows an indeterminate
+  // spinner where the static tool icon otherwise sits, so a long call (a
+  // semantic search reading every hit's content) is visibly working rather than
+  // apparently stalled.
+  const running = view.status.kind === 'requested' || view.status.kind === 'approved';
   toggle.append(
-    el('sp-icon-actions', { attrs: { class: 'chat-tool-call__icon', size: 's' } }),
+    running
+      ? el('sp-progress-circle', {
+          attrs: { class: 'chat-tool-call__icon', size: 's', indeterminate: '', label: 'Working' },
+        })
+      : el('sp-icon-actions', { attrs: { class: 'chat-tool-call__icon', size: 's' } }),
     el('span', {
       attrs: { class: 'chat-tool-call__header' },
       text: `${view.toolName} \u2014 ${describeToolCallStatus(view.status)}`,
@@ -180,10 +210,85 @@ function renderToolCallToggle(
   if (summary !== undefined && summary !== '') {
     toggle.append(el('span', { attrs: { class: 'chat-tool-call__summary' }, text: summary }));
   }
+  // Always present, even when empty: `updateShell` updates this span's text in
+  // place on each progress tick rather than rebuilding the toggle, so the
+  // running spinner's animation is never restarted (see `applyToolCallProgress`).
+  const progressText = running ? (view.progress ?? '') : '';
+  const progress = el('span', {
+    attrs: { class: 'chat-tool-call__progress' },
+    text: progressText,
+  });
+  progress.hidden = progressText === '';
+  toggle.append(progress);
   toggle.append(
     el('sp-icon-chevron-down', { attrs: { class: 'chat-tool-call__chevron', size: 's' } }),
   );
   return toggle;
+}
+
+/**
+ * The facts a tool-call billet's *body* is drawn from, apart from progress.
+ * Compared by reference (the store keeps `args`/`status` objects stable across a
+ * progress-only update) so a progress tick is recognised as "body unchanged"
+ * without re-serialising large payloads - and so the toggle is not rebuilt,
+ * which would restart the running spinner's CSS animation (the stutter the
+ * "Thinking" billet was cured of). Progress is applied in place by
+ * {@link applyToolCallProgress} instead.
+ */
+interface ToolCallBodyState {
+  readonly toolName: string;
+  readonly statusKind: ToolCallStatus['kind'];
+  readonly expanded: boolean;
+  readonly args: Readonly<Record<string, JsonValue>>;
+  /** The status object (succeeded data / failed error / rejected reason), by reference. */
+  readonly detail: unknown;
+}
+
+function toolCallBodyState(view: ToolCallView, expanded: boolean): ToolCallBodyState {
+  const { status } = view;
+  return {
+    toolName: view.toolName,
+    statusKind: status.kind,
+    expanded,
+    args: view.args,
+    detail:
+      status.kind === 'succeeded'
+        ? status.data
+        : status.kind === 'failed'
+          ? status.error
+          : status.kind === 'rejected'
+            ? status.reason
+            : undefined,
+  };
+}
+
+function sameToolCallBody(
+  previous: ToolCallBodyState | undefined,
+  next: ToolCallBodyState,
+): boolean {
+  return (
+    previous !== undefined &&
+    previous.toolName === next.toolName &&
+    previous.statusKind === next.statusKind &&
+    previous.expanded === next.expanded &&
+    previous.args === next.args &&
+    previous.detail === next.detail
+  );
+}
+
+/**
+ * Writes a running call's progress line into its already-rendered billet without
+ * rebuilding it. A settled call shows no progress; the span stays in the DOM but
+ * hidden (see `renderToolCallToggle`).
+ */
+function applyToolCallProgress(shell: HTMLElement, view: ToolCallView): void {
+  const progress = shell.querySelector<HTMLElement>('.chat-tool-call__progress');
+  if (progress === null) return;
+  const running = view.status.kind === 'requested' || view.status.kind === 'approved';
+  const text = running ? (view.progress ?? '') : '';
+  if (progress.textContent === text) return;
+  progress.textContent = text;
+  progress.hidden = text === '';
 }
 
 /**
@@ -326,6 +431,13 @@ export function createTranscriptView(
   // the transcript jumped up to its top". A table is rebuilt only when its
   // rows, columns, total, or link context actually change.
   const renderedTableSignatures = new WeakMap<HTMLElement, string>();
+
+  // The body state of the tool-call billet last rendered into each shell. A
+  // repaint that changes only a running call's progress line must NOT rebuild
+  // the billet: recreating the spinner element restarts its animation, which is
+  // exactly the stutter the "Thinking" billet already fixed by updating in
+  // place. See `ToolCallBodyState`.
+  const renderedToolCallBodies = new WeakMap<HTMLElement, ToolCallBodyState>();
 
   // The content signature of each rendered table run as of the previous repaint,
   // keyed by the run's **stable start** (`runIds`), not by the call that happens
@@ -541,6 +653,10 @@ export function createTranscriptView(
     // than letting one long quote grow its row without bound (see chat.css).
     if (header === 'Value' || header === 'Citation') {
       span.className = 'chat-table-message__clamp';
+    } else if (header === 'Property') {
+      // A property name wraps at any character, exactly like the Path column's
+      // link, so a long name cannot widen the table.
+      span.className = 'chat-table-message__wrap';
     }
     return span;
   }
@@ -838,7 +954,19 @@ export function createTranscriptView(
             ? 'chat-tool-call'
             : `chat-tool-call chat-tool-call--${view.status.kind}`;
         if (expanded) shell.classList.add('chat-tool-call--expanded');
-        shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
+        // Rebuild the billet only when its non-progress content changed; a
+        // progress tick updates the existing line in place so the spinner keeps
+        // spinning (see `renderedToolCallBodies`).
+        if (view === undefined) {
+          shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
+          return;
+        }
+        const bodyState = toolCallBodyState(view, expanded);
+        if (!sameToolCallBody(renderedToolCallBodies.get(shell), bodyState)) {
+          renderedToolCallBodies.set(shell, bodyState);
+          shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
+        }
+        applyToolCallProgress(shell, view);
         return;
       }
       case 'thinking': {
@@ -893,6 +1021,9 @@ export function createTranscriptView(
         // renders nothing; leaving it out of `seenKeys` also evicts any node it
         // owned when it stopped being the run's last call.
         if (skip.has(key)) continue;
+        // A running billet is hidden while the turn waits on a question, so at
+        // most one "unfinished process" indicator is ever on screen.
+        if (hiddenWhileAwaitingInput(store, item)) continue;
         seenKeys.add(key);
         let shell = cache.get(key);
         if (shell === undefined) {

@@ -138,6 +138,16 @@ function toolResultFailed(sequence: number): AgentEvent {
   });
 }
 
+function toolProgress(sequence: number, text: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.progress',
+    chatId,
+    sequence,
+    toolCallId,
+    text,
+  });
+}
+
 const skillToolCallId: ToolCallId = toolCallIdSchema.parse('skill-call-1');
 
 /** A `skill` tool call (the internal skill loader) for `skillName`. */
@@ -345,6 +355,52 @@ describe('createTranscriptStore', () => {
       expect(store.items()).toEqual([]);
       expect(store.toolCallFor(toolCallId)).toBeUndefined();
     });
+
+    it('records a progress note on the running call and drops it once the call settles', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      store.applyEvent(toolProgress(2, 'Reading 12 of 20'));
+      expect(store.toolCallFor(toolCallId)?.progress).toBe('Reading 12 of 20');
+
+      store.applyEvent(toolResultSucceeded(3));
+      // Progress is running-only: a settled call carries none.
+      expect(store.toolCallFor(toolCallId)?.progress).toBeUndefined();
+    });
+
+    it('drops a progress note for a toolCallId that was never requested', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(toolProgress(0, 'Reading 1 of 2'));
+      expect(store.items()).toEqual([]);
+      expect(store.toolCallFor(toolCallId)).toBeUndefined();
+    });
+
+    it('settles every running call as abandoned, dropping its running-only progress', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      store.applyEvent(toolProgress(2, 'Reading 1 of 2'));
+
+      store.abandonRunningToolCalls();
+
+      const view = store.toolCallFor(toolCallId);
+      expect(view?.status).toEqual({ kind: 'abandoned' });
+      expect(view?.progress).toBeUndefined();
+      // The item stays: it is an honest, non-spinning "Interrupted" billet.
+      expect(store.items()).toEqual([{ kind: 'toolCall', toolCallId }]);
+    });
+
+    it('leaves a settled call untouched when nothing is running', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolResultSucceeded(1));
+      store.takeDirty();
+
+      store.abandonRunningToolCalls();
+
+      expect(store.toolCallFor(toolCallId)?.status.kind).toBe('succeeded');
+      expect(store.takeDirty()).toBe(false);
+    });
   });
 
   describe('events with no transcript item of their own', () => {
@@ -418,6 +474,40 @@ describe('createTranscriptStore', () => {
       store.setAwaitingUserInput(false);
       expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }, { kind: 'thinking' }]);
       expect(store.takeDirty()).toBe(true);
+    });
+
+    it('hides thinking while a tool call runs, and restores it when the call settles', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(toolRequested(0));
+
+      // A running tool call supersedes the Thinking billet.
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'toolCall', toolCallId },
+      ]);
+
+      store.applyEvent(toolResultSucceeded(1));
+      // No text has arrived, so Thinking comes back now that nothing is running.
+      expect(store.items()).toContainEqual({ kind: 'thinking' });
+    });
+
+    it('shows thinking for a new turn even after a previous call was abandoned mid-flight', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'first');
+      store.setTurnInFlight(true);
+      // A call that never settles (the turn is stopped while it is running).
+      store.applyEvent(toolRequested(0));
+      store.setTurnInFlight(false);
+
+      const secondTurn: TurnId = turnIdSchema.parse('turn-2');
+      store.applyUserPrompt(secondTurn, 'second');
+      store.setTurnInFlight(true);
+
+      // The abandoned call no longer counts as running, so it cannot keep
+      // Thinking hidden in the next turn.
+      expect(store.items()).toContainEqual({ kind: 'thinking' });
     });
 
     it('does not mark the store dirty when the awaiting-input flag is unchanged', () => {

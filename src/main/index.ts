@@ -23,6 +23,7 @@ import {
   createDeferredRuntimeRecycler,
   createEnvironmentFacts,
   createLateBoundAemToolContext,
+  createLateBoundToolProgress,
   createLateBoundUserInput,
   createModelPreferenceCache,
   installAgentService,
@@ -542,6 +543,9 @@ if (!gotSingleInstanceLock) {
     // The `ask_user` tool's interactive-question capability, late-bound to the
     // chat controller for the same reason (see `createLateBoundUserInput`).
     const lateBoundUserInput = createLateBoundUserInput();
+    // A long-running tool's progress notes, late-bound to the chat controller
+    // for the same construction-order reason (see `createLateBoundToolProgress`).
+    const lateBoundToolProgress = createLateBoundToolProgress();
     // The host's content/component roots, resolved from the live pane URL and
     // the current settings document. Read fresh so a roots edit in Settings is
     // visible immediately; `loadSettingsSync` is a small synchronous read.
@@ -573,6 +577,7 @@ if (!gotSingleInstanceLock) {
         recordResponseClassification: (requestId, kind) => {
           toolLogger.classification({ requestId, kind });
         },
+        reportToolProgress: (toolCallId, text) => lateBoundToolProgress.report(toolCallId, text),
       },
       onFailure: (failure) => {
         // The logger has no free-text field by design, so the reason goes to stderr.
@@ -610,6 +615,7 @@ if (!gotSingleInstanceLock) {
 
     lateBoundAemToolContext.bind(agentChatController);
     lateBoundUserInput.bind(agentChatController);
+    lateBoundToolProgress.bind(agentChatController);
 
     const unregisterAgentChatIpc = registerAgentChatIpcHandlers({
       controller: agentChatController,

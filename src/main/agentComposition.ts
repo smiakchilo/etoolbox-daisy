@@ -20,6 +20,7 @@ import {
   type ModelPreference,
   type ServerConfig,
   type SessionStreamState,
+  type ToolCallId,
   type UserInputAnswer,
   type UserInputRequest,
   deriveCurrentPageContext,
@@ -272,6 +273,30 @@ export function createLateBoundUserInput(): LateBoundUserInput {
       const result = await bound.requestUserInput(request);
       if (!result.ok) throw new Error(result.error.message);
       return result.value;
+    },
+    bind: (controller) => {
+      bound = controller;
+    },
+  };
+}
+
+/**
+ * The tool host's progress capability, late-bound for the same construction
+ * order as {@link LateBoundAemToolContext} and {@link LateBoundUserInput}: the
+ * tool registry is built before the chat controller exists. Unlike those, an
+ * early report is a silent no-op rather than a throw - a progress note is pure
+ * UX, so losing one that raced startup must never fail a tool call.
+ */
+export interface LateBoundToolProgress {
+  readonly report: (toolCallId: ToolCallId, text: string) => void;
+  readonly bind: (controller: Pick<AgentChatController, 'recordToolProgress'>) => void;
+}
+
+export function createLateBoundToolProgress(): LateBoundToolProgress {
+  let bound: Pick<AgentChatController, 'recordToolProgress'> | undefined;
+  return {
+    report: (toolCallId, text) => {
+      bound?.recordToolProgress(toolCallId, text);
     },
     bind: (controller) => {
       bound = controller;

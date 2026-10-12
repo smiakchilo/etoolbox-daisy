@@ -1389,6 +1389,58 @@ describe('nested tool calls (ToolHost.invokeTool)', () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it('forwards a tool progress note to the renderer but never journals it', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    const chatId = newChatId('chat-p');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'x' }] });
+    await controller.sendMessage({ chatId, prompt: 'hi' });
+    // Registers `nested-1` as a tool call of the active turn (progress is only
+    // accepted for a call the turn owns).
+    controller.recordNestedToolCall(started);
+    controller.recordToolProgress('nested-1' as never, 'Reading 12 of 20');
+
+    expect(received.find((event) => event.type === 'tool.call.progress')).toMatchObject({
+      chatId,
+      toolCallId: 'nested-1',
+      text: 'Reading 12 of 20',
+    });
+    const journaled = calls
+      .filter((call) => call.method === 'recordEvent')
+      .map((call) => (call.args as AgentEvent).type);
+    expect(journaled).toContain('tool.call.requested');
+    // Transient: running-only status, meaningless on replay.
+    expect(journaled).not.toContain('tool.call.progress');
+  });
+
+  it('ignores a tool progress note when no turn is running', () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    controller.recordToolProgress('nested-1' as never, 'Reading 1 of 2');
+
+    expect(received.filter((event) => event.type === 'tool.call.progress')).toEqual([]);
+  });
+
+  it('is forwarded by the startup-gated controller once the real one is installed', async () => {
+    const { controller: real } = buildController(
+      createFakeAgentService({ idGenerator: counterIdGenerator('fake') }),
+    );
+    const spy = vi.spyOn(real, 'recordToolProgress');
+    const gated = createStartupGatedAgentChatController();
+    gated.recordToolProgress('nested-1' as never, 'Reading 1 of 2');
+    await gated.replaceDelegate(real);
+    gated.recordToolProgress('nested-1' as never, 'Reading 2 of 2');
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   // -------------------------------------------------------------------------
   // Single-flight + supersede for openConversation (the "XXX is not the open
   // conversation" banner: two opens for different chats completing out of

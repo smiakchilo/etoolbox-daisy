@@ -169,6 +169,14 @@ export interface AgentChatController {
    * in the transcript like a model-made call. Ignored with no turn in flight.
    */
   recordNestedToolCall(event: NestedToolCallEvent): void;
+  /**
+   * Injects a transient progress note for one in-flight tool call into the
+   * event stream (listeners only - it is never journaled), so a call that takes
+   * a while shows what it is doing. Called from a tool executor through the
+   * `ToolHost.reportToolProgress` capability, not over IPC. Ignored with no
+   * turn in flight.
+   */
+  recordToolProgress(toolCallId: ToolCallId, text: string): void;
   /** Notifies `listener` of every `AgentEvent` that survives the ownership guard, in order. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**
@@ -359,6 +367,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
         return activeTurn !== undefined;
       case 'tool.call.approved':
       case 'tool.call.rejected':
+      case 'tool.call.progress':
       case 'tool.result':
         return activeTurn !== undefined && activeTurn.toolCallIds.has(event.toolCallId);
       case 'user.input.requested':
@@ -476,6 +485,29 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       return;
     }
     chatJournal?.recordEvent(parsed.data);
+    ingestOwnedEvent(parsed.data, true);
+  }
+
+  /**
+   * Shows a transient progress note on an already-running tool call's billet.
+   * Deliberately NOT journaled (unlike `recordNestedToolCall`): the note is
+   * running-only status, meaningless on replay. The ownership guard is still
+   * applied, so a late note for a call this controller no longer tracks is
+   * dropped like any other late event.
+   */
+  function recordToolProgress(toolCallId: ToolCallId, text: string): void {
+    if (activeChatId === undefined || activeTurn === undefined) return;
+    const parsed = agentEventSchema.safeParse({
+      type: 'tool.call.progress',
+      chatId: activeChatId,
+      sequence: 0,
+      toolCallId,
+      text,
+    });
+    if (!parsed.success) {
+      logger.error('AGENT_CHAT_TOOL_PROGRESS_INVALID', { ids: { chatId: activeChatId } });
+      return;
+    }
     ingestOwnedEvent(parsed.data, true);
   }
 
@@ -754,6 +786,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     requestUserInput,
     respondToInput,
     recordNestedToolCall,
+    recordToolProgress,
     onEvent,
     onStatusChanged,
     currentAemToolContext,
@@ -947,6 +980,10 @@ export function createStartupGatedAgentChatController(
     real?.recordNestedToolCall(event);
   }
 
+  function recordToolProgress(toolCallId: ToolCallId, text: string): void {
+    real?.recordToolProgress(toolCallId, text);
+  }
+
   function onEvent(listener: (event: AgentEvent) => void): () => void {
     forwardListeners.add(listener);
     return () => {
@@ -1026,6 +1063,7 @@ export function createStartupGatedAgentChatController(
     requestUserInput,
     respondToInput,
     recordNestedToolCall,
+    recordToolProgress,
     onEvent,
     onStatusChanged,
     currentAemToolContext,

@@ -31,12 +31,16 @@ describe('describeToolCallStatus', () => {
       { kind: 'rejected', reason: 'no' },
       { kind: 'succeeded', data: null },
       { kind: 'failed', error: toolError() },
+      { kind: 'abandoned' },
     ];
     const descriptions = statuses.map((status) => describeToolCallStatus(status));
     for (const description of descriptions) {
       expect(description.length).toBeGreaterThan(0);
     }
     expect(new Set(descriptions).size).toBe(statuses.length);
+    // A replayed unresolved call reads as "Interrupted", not as running.
+    expect(describeToolCallStatus({ kind: 'abandoned' })).toBe('Interrupted');
+    expect(describeToolCallStatus({ kind: 'abandoned' })).not.toBe('Running');
   });
 
   it("labels a failed status literally 'FAILED', distinct from a succeeded 'Completed'", () => {

@@ -49,13 +49,28 @@ export type ToolCallStatus =
   | { readonly kind: 'approved' }
   | { readonly kind: 'rejected'; readonly reason: string }
   | { readonly kind: 'succeeded'; readonly data: JsonValue }
-  | { readonly kind: 'failed'; readonly error: ToolError };
+  | { readonly kind: 'failed'; readonly error: ToolError }
+  /*
+   * A call the journal left unresolved: the app closed (or its turn was
+   * stopped) between `tool.call.requested` and any result. Only ever set while
+   * rebuilding a transcript from the journal (`abandonRunningToolCalls`) - a
+   * live call always settles with a result. It is deliberately NOT running:
+   * the executor's state died with the app, so the call can never resume, and
+   * rendering it as a spinner forever would be a lie.
+   */
+  | { readonly kind: 'abandoned' };
 
 export interface ToolCallView {
   readonly toolCallId: ToolCallId;
   readonly toolName: string;
   readonly args: Readonly<Record<string, JsonValue>>;
   readonly status: ToolCallStatus;
+  /**
+   * A transient, running-only progress note (e.g. "Reading 12 of 20") for a
+   * call that reports one. Absent for a call that never does, and dropped the
+   * moment the call settles - it is never shown beside a finished status.
+   */
+  readonly progress?: string;
 }
 
 export interface TranscriptStore {
@@ -78,7 +93,12 @@ export interface TranscriptStore {
    * replay alike.
    */
   markTurnSuppressed(turnId: TurnId): void;
-  /** Every transcript item observed so far, in first-seen order. */
+  /**
+   * The items the transcript should render now, in first-seen order. Durable
+   * items are always included; the trailing `thinking` item is appended while
+   * the model is reasoning with no tool call in flight (`isAwaitingUserInput`
+   * and the running tool calls together decide that - see `thinkingVisible`).
+   */
   items(): readonly TranscriptItem[];
   /** The current best-known text of an assistant message - see `MessageStream.textFor`. */
   textForMessage(messageId: MessageId): string;
@@ -86,6 +106,16 @@ export interface TranscriptStore {
   textForUserPrompt(turnId: TurnId): string;
   /** The current view of one tool call, or `undefined` if `toolCallId` has not been observed. */
   toolCallFor(toolCallId: ToolCallId): ToolCallView | undefined;
+  /**
+   * Settles every still-running tool call as `abandoned`. Called once a journal
+   * replay finishes (see `journalReplay.ts`): a rebuilt transcript has no live
+   * turn, so a call the journal left without a result - the app closed mid-turn,
+   * or its turn was stopped - is not running any more and can never resume. The
+   * journal's own `tool.call.abandoned` record exists for exactly this
+   * distinction; this is what makes the transcript honour it (and covers a hard
+   * exit that never wrote the record). A no-op when nothing is running.
+   */
+  abandonRunningToolCalls(): void;
   /**
    * The reasoning text of the transient "Thinking" billet, or `""` when none
    * is being shown. Reasoning never becomes a transcript item of its own - the
@@ -116,6 +146,14 @@ export interface TranscriptStore {
    * the composer into its selection UI.
    */
   setAwaitingUserInput(awaiting: boolean): void;
+  /**
+   * Whether the turn is currently blocked on an interactive question. Read by
+   * the view on each repaint: nothing is actively working while the user is
+   * being asked, so a *running* tool-call billet is hidden for as long as this
+   * is `true` (the view decides which calls are billets, since only it knows a
+   * tool's presentation), exactly as the "Thinking" item is.
+   */
+  isAwaitingUserInput(): boolean;
   /**
    * Appends a durable "the turn was interrupted" notice to the transcript.
    * Called by the pane when it observes the session enter `cancelling` - the
@@ -150,6 +188,11 @@ export function createTranscriptStore(
   const knownToolCallIds = new Set<ToolCallId>();
   const userPrompts = new Map<TurnId, string>();
   const toolCalls = new Map<ToolCallId, ToolCallView>();
+  // Tool calls currently running (requested or approved). Tracked separately
+  // from `toolCalls` so the transcript can ask "is anything actually working?"
+  // in O(1) and can drop a call that an interruption abandoned without having
+  // to invent a terminal status for it.
+  const runningToolCalls = new Set<ToolCallId>();
   // Turns whose assistant prose is hidden (a search skill's turn, whose answer
   // is a `format_table` message). See `markTurnSuppressed`.
   const suppressedTurns = new Set<TurnId>();
@@ -176,16 +219,33 @@ export function createTranscriptStore(
   let reasoningText = '';
 
   /**
+   * Whether any tool call in this conversation is still running. The transcript
+   * shows exactly one "unfinished process" indicator at a time: a running tool
+   * call supersedes the "Thinking" billet (see `thinkingVisible`), and while the
+   * turn is blocked on an interactive question neither is shown.
+   */
+  function anyToolCallRunning(): boolean {
+    return runningToolCalls.size > 0;
+  }
+
+  /**
    * The trailing "Thinking" billet is visible while a turn is in flight and
    * either no assistant text has arrived yet (the plain spinner + label) or a
    * reasoning block is being streamed (spinner + label + one rolling line).
    * The reasoning arm is what lets a later block reappear after an earlier one
-   * ended, even though the turn has already produced text. A turn waiting on an
-   * interactive question is not thinking, so it never shows the billet.
+   * ended, even though the turn has already produced text.
+   *
+   * Hidden while the turn waits on an interactive question, and hidden while a
+   * tool call is running: "Thinking" means the model is reasoning with no
+   * particular tool call in flight, and a running call "grabs the control" from
+   * it, so the two never spin side by side.
    */
   function thinkingVisible(): boolean {
     return (
-      turnInFlight && !awaitingUserInput && (awaitingAssistantText || reasoningText.length > 0)
+      turnInFlight &&
+      !awaitingUserInput &&
+      !anyToolCallRunning() &&
+      (awaitingAssistantText || reasoningText.length > 0)
     );
   }
 
@@ -234,7 +294,32 @@ export function createTranscriptStore(
     // ownership-guarded event stream (see `agentChatController.ts`), but
     // this store does not assume that guarantee holds.
     if (existing === undefined) return;
-    toolCalls.set(toolCallId, { ...existing, status });
+    // Progress is running-only: once the call settles it is dropped, so it can
+    // never be shown beside a completed/failed status (under
+    // `exactOptionalPropertyTypes` an absent optional field is omitted, not set
+    // to `undefined`).
+    const stillRunning = status.kind === 'requested' || status.kind === 'approved';
+    if (stillRunning) runningToolCalls.add(toolCallId);
+    else runningToolCalls.delete(toolCallId);
+    toolCalls.set(toolCallId, {
+      toolCallId: existing.toolCallId,
+      toolName: existing.toolName,
+      args: existing.args,
+      status,
+      ...(stillRunning && existing.progress !== undefined ? { progress: existing.progress } : {}),
+    });
+    dirty = true;
+  }
+
+  /**
+   * Records a transient progress note on an already-known tool call. A note for
+   * a call this store never saw `requested` for is dropped, exactly as
+   * `updateToolCallStatus` drops an orphan status update.
+   */
+  function setToolCallProgress(toolCallId: ToolCallId, text: string): void {
+    const existing = toolCalls.get(toolCallId);
+    if (existing === undefined || existing.progress === text) return;
+    toolCalls.set(toolCallId, { ...existing, progress: text });
     dirty = true;
   }
 
@@ -320,6 +405,7 @@ export function createTranscriptStore(
             return;
           }
           ensureToolCallItem(event.toolCallId);
+          runningToolCalls.add(event.toolCallId);
           toolCalls.set(event.toolCallId, {
             toolCallId: event.toolCallId,
             toolName: event.toolName,
@@ -345,6 +431,11 @@ export function createTranscriptStore(
               ? { kind: 'succeeded', data: event.outcome.data }
               : { kind: 'failed', error: event.outcome.error },
           );
+          return;
+        case 'tool.call.progress':
+          // A running-only status line - never its own transcript item, it just
+          // annotates the tool call's billet (see `ToolCallView.progress`).
+          setToolCallProgress(event.toolCallId, event.text);
           return;
         case 'error':
         case 'session.state.changed':
@@ -386,6 +477,10 @@ export function createTranscriptStore(
     setTurnInFlight(inFlight) {
       if (turnInFlight === inFlight) return;
       turnInFlight = inFlight;
+      // A turn that is no longer in flight has nothing running: drop any call
+      // an interruption or a lost result abandoned, so it can no longer
+      // suppress the "Thinking" billet or hide itself as "awaiting input".
+      if (!inFlight) runningToolCalls.clear();
       dirty = true;
     },
     setAwaitingUserInput(awaiting) {
@@ -395,6 +490,9 @@ export function createTranscriptStore(
     },
     addInterruption(reason, resumable = true) {
       interruptionSequence += 1;
+      // The turn was stopped: whatever a tool call's billet still says, nothing
+      // is running any more, so a stale entry must not keep "Thinking" hidden.
+      runningToolCalls.clear();
       order.push({
         kind: 'interruption',
         interruptionId: `interruption-${interruptionSequence}`,
@@ -408,6 +506,9 @@ export function createTranscriptStore(
       const thinkingItem: TranscriptItem = { kind: 'thinking' };
       return [...order, thinkingItem];
     },
+    isAwaitingUserInput() {
+      return awaitingUserInput;
+    },
     textForMessage(messageId) {
       return messageStream.textFor(messageId);
     },
@@ -416,6 +517,17 @@ export function createTranscriptStore(
     },
     toolCallFor(toolCallId) {
       return toolCalls.get(toolCallId);
+    },
+    abandonRunningToolCalls() {
+      if (runningToolCalls.size === 0) return;
+      // `updateToolCallStatus` drops each call's running-only progress and
+      // removes it from `runningToolCalls`; the explicit clear then covers a
+      // running id with no view (which would otherwise linger).
+      for (const toolCallId of [...runningToolCalls]) {
+        updateToolCallStatus(toolCallId, { kind: 'abandoned' });
+      }
+      runningToolCalls.clear();
+      dirty = true;
     },
     thinkingReasoning() {
       return thinkingVisible() ? reasoningText : '';
@@ -445,6 +557,7 @@ export function createTranscriptStore(
       knownToolCallIds.clear();
       userPrompts.clear();
       toolCalls.clear();
+      runningToolCalls.clear();
       suppressedTurns.clear();
       currentTurnId = undefined;
       awaitingAssistantText = false;

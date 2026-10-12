@@ -152,7 +152,13 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `disableNativeWebAuthn`, the Settings "Browser" tab's WebAuthn-suppression
 > flag), and `settings-ipc.ts`. `userInput.ts` gained an optional
 > `actions` list (1–4 one-click labels) and made `question` optional — the
-> `ask_user` actions mode (see §5 tools). Most recently `contracts/modelCatalog.ts`
+> `ask_user` actions mode (see §5 tools). Most recently `contracts/agentEvents.ts`
+> gained a sixteenth variant, `tool.call.progress` (a transient, never-journaled
+> progress note for one in-flight tool call), with the optional
+> `ToolHost.reportToolProgress` capability that emits it — the spinner + live
+> "Reading n of m" on a long semantic search — see `docs/verification.md`
+> "Semantic search: a live progress line, concrete node paths, and a 20-hit page
+> (2026-10-12)". Before that `contracts/modelCatalog.ts`
 > lost `changesLocked` and `settings-ipc.ts` lost `turn_in_flight`, when Step
 > 09's "disable changes during an active turn" lock was replaced by "apply the
 > change on the next turn" — see `docs/verification.md` "Settings changes apply
@@ -328,6 +334,20 @@ goes through `marked` + `DOMPurify`. **Never set a cell or message with
 `innerHTML`** — the transcript uses `textContent`, and there are mutation tests
 guarding that.
 
+**At most one "unfinished process" indicator is on screen.** A running tool-call
+billet supersedes the transient "Thinking" item (`transcriptStore.ts`'s
+`thinkingVisible` requires no running tool call), and while the turn is blocked
+on an `ask_user` question the *running billet* is hidden too — `transcriptView.ts`'s
+`hiddenWhileAwaitingInput`, which reads `TranscriptStore.isAwaitingUserInput()` and
+skips only ordinary billets, so a question
+(`presentation: 'conversation'`) and a `format_table` result (`'message'`) stay
+visible. A running billet's progress line is written in place (the billet is
+rebuilt only when its non-progress content changes), so a spinner never restarts
+on a tick. A transcript rebuilt from the journal settles every still-running call
+(`TranscriptStore.abandonRunningToolCalls`, called by `journalReplay.ts`), so a
+call the journal never resolved — the app closed mid-turn — shows `Interrupted`
+with the static icon, never a spinner that can never stop.
+
 `dev/` holds **dev-only modules** — manual previews/mocks that are never
 business logic and are unreachable in a packaged build (gated by
 `window.daisy.devTools`; see §9). The first is the ask-user preview: the pure
@@ -456,7 +476,7 @@ src/tools/<name>/
   (AEM's QueryBuilder), `aem_get_json` (AEM's Sling/JSON rendering),
   `aem_create_page` (`cq:Page`). A generic action takes no prefix —
   `environment_facts`, `browser_navigate`, `ask_user`, `format_table`.
-- **The search page size is one constant**: `SEARCH_PAGE_SIZE` (50) in
+- **The search page size is one constant**: `SEARCH_PAGE_SIZE` (20) in
   `src/shared/tools/core/search.ts` is the default `limit` of both search
   composites; change it there.
 - Tests live in `tests/unit/tools/` (manifests, executors),
@@ -496,14 +516,33 @@ src/tools/<name>/
   for one page (default `SEARCH_PAGE_SIZE`), reads **every** hit in code (QueryBuilder
   `path.self` + `fulltext` + `p.hits=full` through `host.bridge`, a pool of 4,
   falling back to the hit itself), and returns a numbered candidate list in
-  `textResultForLlm`. Call B `{ searchId, matches }` shows the judged matches
+  `textResultForLlm`. Reading every hit is the slow part and has no transcript
+  entry of its own, so while it reads the executor reports a `Reading n of m`
+  note through `ToolHost.reportToolProgress` (keyed to its own
+  `context.toolCallId`); the running billet shows it beside a spinner, written
+  in place (the billet is rebuilt only when its non-progress content changes, so
+  the spinner's animation never restarts on a tick). Call B
+  `{ searchId, matches }` shows the judged matches
   with `format_table` (`new`, then `append`), always passing a `totalLine`
   that counts the **relevant** matches (`describeRelevantTotal`: "Total: N
   relevant results so far", or "Did not find any relevant results so far"; no
   "so far" once AEM is exhausted), so an empty run still shows a message, then, unless `hasMore === false`, offers
   `ask_user` `["Load more"]`: a click returns the next page's candidates, a
   cancel ends the search. The model never decides how many hits to read or when
-  to stop. Billet: `Semantic search: <terms>`; its `AEM hits` row is the raw query total.
+  to stop. Each matched row's `Path` is the **concrete node** the excerpt's
+  property lives on (`jcr:path` = the excerpt's `nodePath`), and `Property` is
+  that property's own bare name — not the page the query matched, and not a
+  relative label (the model-facing candidate list still shows the hit-relative
+  label, e.g. `jcr:content/text/text`). Billet: a **start** call
+  (`{ terms, context }`) is summarised by its terms alone, and its `AEM hits` row
+  is the raw query total; a **continue** call (`{ searchId, matches }`) carries no
+  terms of its own and, while it runs (which includes the read after Load more) or
+  if it was abandoned, none to borrow from its result either - so it reads
+  `judging N match(es)` with Search ID/Matched rows. Neither summary repeats the
+  tool's own name: the header already reads `aem_semantic_search`, so a
+  `Semantic search:` prefix printed the words twice on one line (as `aem_query`
+  shows `fulltext=...`, never "Query: ..."). `describeCall` keys on the call's own
+  `terms`, never its result's (a continue call's result echoes them).
 
 #### Recipe: add a new tool
 
@@ -675,7 +714,47 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2899 passed / 14 skipped** (+6 against the
+Current baseline: **`npm run test` → 2922 passed / 14 skipped** (+3 against the
+2919 of the previous entry - **the semantic-search continue call is no longer a
+blank billet**: `describeCall` keys on the call's own `terms`, so a continue call
+(`{ searchId, matches }`) reads `judging N match(es)` (no `Semantic search:`
+prefix - the header already names the tool) with Search ID/Matched rows instead
+of `Semantic search:` with a dead chevron, and the two search renderers' shared
+JSON helpers (`asRecord`/`asCount`/`asText`) moved to
+`src/shared/tools/core/toolRenderer.ts` - 2 `aem-semantic-search` renderer + 1
+`toolCallDetails` case; see `docs/verification.md` "The semantic-search continue
+call no longer renders as a blank billet (2026-10-12)"). Before that it was 2919
+(+4 against the
+2915 of the previous entry - **a restored unfinished call reads "Interrupted"**:
+`ToolCallStatus` gains `abandoned`, labelled "Interrupted" and drawn with the
+static icon, and `replayJournalIntoTranscript` settles every still-running call
+at the end of the replay (`TranscriptStore.abandonRunningToolCalls`), so a call
+the journal never resolved - the app closed mid-turn - no longer spins forever
+("Load more" cannot resume: the executor's state died with the process) - 1
+`journalReplay` + 2 `transcriptStore` + 1 `transcriptView` cases; see
+`docs/verification.md` "A restored unfinished tool call no longer spins forever
+(2026-10-12)"). Before that it was 2915 (+4 against the
+2911 of the previous entry - **one unfinished-process indicator at a time**:
+"Thinking" is hidden while any tool call runs, a running billet is hidden while
+the turn waits on an `ask_user` question (`TranscriptStore.isAwaitingUserInput`,
+with the view's `hiddenWhileAwaitingInput` deciding by a tool's presentation), and
+a running tool-call billet's progress line is written in place so its spinner no
+longer restarts on each tick - 2 `transcriptStore` + 2 `transcriptView` cases; see
+`docs/verification.md` "Semantic search: a live progress line, concrete node
+paths, and a 20-hit page (2026-10-12)", follow-up). Before that it was 2911 (+12
+against the
+2899 of the previous entry - **semantic-search feedback, concrete node paths and
+a 20-hit page**: a new transient `tool.call.progress` agent event plus the
+optional `ToolHost.reportToolProgress` capability, rendered as a spinner and a
+live "Reading n of m" line on a running tool-call billet (2 `agentEvents` schema
+cases, 3 `agentChatController` cases, 2 `transcriptStore` cases, 3
+`transcriptView` cases, 1 `aemSemanticSearch` progress case); the
+`aem_semantic_search` table's `Path` is now the concrete node the excerpt's
+property lives on and `Property` its bare name, wrapped at any character (1
+`aemSemanticSearch` case, 1 `transcriptView` case, and the strengthened
+`/semantic-search` E2E case); and `SEARCH_PAGE_SIZE` is 20, not 50 — see
+`docs/verification.md` "Semantic search: a live progress line, concrete node
+paths, and a 20-hit page (2026-10-12)"). Before that it was 2899 (+6 against the
 2893 of the previous entry - **relevant-match totals, an internal `format_table`
 and one page-size constant**: `format_table`'s `notice` became `totalLine`,
 `aem_semantic_search`'s total counts relevant matches, `format_table` is
@@ -921,7 +1000,11 @@ instead of a proxy-side handshake error);
 **Playwright → 124 tests; a full run is typically 118 passed / 6 failed.** The
 `/semantic-search` case in `search-tables.spec.ts` was rewritten (count
 unchanged) to the `aem_semantic_search` flow: "Did not find any relevant results
-so far" in the total slot, then an appended row with "Total: 1 relevant result". Before that, the
+so far" in the total slot, then an appended row with "Total: 1 relevant result";
+it now also asserts, against the built app, that the row's `Path` cell is the
+concrete node path and its `Property` cell is the bare `jcr:description` wearing
+the wrap-at-any-character class — see `docs/verification.md` "Semantic search: a
+live progress line, concrete node paths, and a 20-hit page (2026-10-12)"). Before that, the
 +1 since 123 is the `ask-user.spec.ts` case proving, against the built app, that
 a >5-option dropdown wears the action strip (gray frame, transparent border) with
 a white, dark-text free-answer control and Submit, and that a new question flashes

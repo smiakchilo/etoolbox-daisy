@@ -112,6 +112,17 @@ function validToolResult(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function validToolCallProgress(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'tool.call.progress',
+    chatId: 'chat-1',
+    sequence: 5,
+    toolCallId: 'call-1',
+    text: 'Reading 12 of 20',
+    ...overrides,
+  };
+}
+
 function validError(overrides: Record<string, unknown> = {}) {
   return {
     type: 'error',
@@ -148,6 +159,7 @@ describe('agentEventSchema: valid variants', () => {
     ['tool.call.requested', validToolCallRequested()],
     ['tool.call.approved', validToolCallApproved()],
     ['tool.call.rejected', validToolCallRejected()],
+    ['tool.call.progress', validToolCallProgress()],
     ['tool.result (success)', validToolResult()],
     [
       'tool.result (failure)',
@@ -243,6 +255,13 @@ describe('agentEventSchema: does not forward raw SDK payloads', () => {
 
   it('rejects a reasoning event missing turnId', () => {
     expect(agentEventSchema.safeParse(omitKey(validReasoningDelta(), 'turnId')).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects a tool.call.progress note with empty text, or with no toolCallId to attach it to', () => {
+    expect(agentEventSchema.safeParse(validToolCallProgress({ text: '' })).success).toBe(false);
+    expect(agentEventSchema.safeParse(omitKey(validToolCallProgress(), 'toolCallId')).success).toBe(
       false,
     );
   });

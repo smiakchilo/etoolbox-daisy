@@ -93,6 +93,15 @@ function toolRequested(sequence: number, toolName = 'aem_get_json'): AgentEvent 
   });
 }
 
+function toolApproved(sequence: number): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.approved',
+    chatId,
+    sequence,
+    toolCallId,
+  });
+}
+
 function toolRequestedWithArgs(
   sequence: number,
   toolName: string,
@@ -105,6 +114,16 @@ function toolRequestedWithArgs(
     toolCallId,
     toolName,
     arguments: args,
+  });
+}
+
+function toolProgress(sequence: number, text: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.progress',
+    chatId,
+    sequence,
+    toolCallId,
+    text,
   });
 }
 
@@ -250,6 +269,104 @@ describe('createTranscriptView', () => {
       expect(toolNode?.textContent).toContain('FAILED');
       expect(toolNode?.textContent).toContain('The requested page does not exist.');
       expect(toolNode?.textContent).toContain('Sign in to AEM in the browser pane, then try again');
+    });
+
+    it('shows a spinner on a running call and the static icon once it settles', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      view.repaint(store);
+      const running = view.element.querySelector('.chat-tool-call');
+      const runningIcon = running?.querySelector('.chat-tool-call__icon');
+      expect(runningIcon?.tagName.toLowerCase()).toBe('sp-progress-circle');
+
+      store.applyEvent(toolResult(1, true));
+      view.repaint(store);
+      const settled = view.element.querySelector('.chat-tool-call');
+      const settledIcon = settled?.querySelector('.chat-tool-call__icon');
+      expect(settledIcon?.tagName.toLowerCase()).toBe('sp-icon-actions');
+    });
+
+    it('renders a running call\u2019s progress note and hides it once the call settles', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolProgress(1, 'Reading 12 of 20'));
+      view.repaint(store);
+      const line = view.element.querySelector<HTMLElement>('.chat-tool-call__progress');
+      expect(line?.textContent).toBe('Reading 12 of 20');
+      expect(line?.hidden).toBe(false);
+
+      store.applyEvent(toolResult(2, true));
+      view.repaint(store);
+      // The span stays in the DOM (so a later progress tick can update it in
+      // place) but is hidden: a settled call never shows a stale note.
+      const settled = view.element.querySelector<HTMLElement>('.chat-tool-call__progress');
+      expect(settled?.hidden).toBe(true);
+      expect(settled?.textContent).toBe('');
+    });
+
+    it('hides a running billet while the turn waits on a question, and shows it again after', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'hi');
+      store.setTurnInFlight(true);
+      store.applyEvent(toolRequestedWithArgs(0, 'aem_semantic_search', { terms: 'x' }));
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-tool-call')).not.toBeNull();
+
+      store.setAwaitingUserInput(true);
+      view.repaint(store);
+      // Nothing is actively working while the user is being asked: the running
+      // billet is hidden exactly as the Thinking billet is.
+      expect(view.element.querySelector('.chat-tool-call')).toBeNull();
+      expect(view.element.querySelector('.chat-message--thinking')).toBeNull();
+
+      store.setAwaitingUserInput(false);
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-tool-call')).not.toBeNull();
+    });
+
+    it('renders a replayed unresolved call as a non-spinning "Interrupted" billet', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      // What a journal replay does to a call the journal never resolved.
+      store.abandonRunningToolCalls();
+      view.repaint(store);
+
+      const node = view.element.querySelector('.chat-tool-call');
+      expect(node?.textContent).toContain('Interrupted');
+      expect(node?.textContent).not.toContain('Running');
+      // No spinner: the static icon, exactly as a settled call shows.
+      expect(node?.querySelector('.chat-tool-call__icon')?.tagName.toLowerCase()).toBe(
+        'sp-icon-actions',
+      );
+      expect(node?.querySelector<HTMLElement>('.chat-tool-call__progress')?.hidden).toBe(true);
+    });
+
+    it('updates the progress line in place instead of rebuilding the running billet', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      view.repaint(store);
+      const toggle = view.element.querySelector('.chat-tool-call__toggle');
+      const spinner = view.element.querySelector('.chat-tool-call__icon');
+      expect(toggle).not.toBeNull();
+
+      store.applyEvent(toolProgress(2, 'Reading 1 of 20'));
+      store.applyEvent(toolProgress(3, 'Reading 2 of 20'));
+      view.repaint(store);
+
+      // Same nodes, new text: the spinner is not recreated, so its animation
+      // never restarts on a progress tick (the "Thinking"-billet stutter fix).
+      expect(view.element.querySelector('.chat-tool-call__toggle')).toBe(toggle);
+      expect(view.element.querySelector('.chat-tool-call__icon')).toBe(spinner);
+      expect(view.element.querySelector('.chat-tool-call__progress')?.textContent).toBe(
+        'Reading 2 of 20',
+      );
     });
   });
 
@@ -437,7 +554,7 @@ describe('createTranscriptView', () => {
       );
     });
 
-    it('erases the reasoning text when a tool call is requested', () => {
+    it('hides the Thinking billet while a tool call runs, and restores it once the call settles', () => {
       const view = createTranscriptView(markdownRenderer);
       const store = createTranscriptStore();
       startTurn(store);
@@ -450,6 +567,16 @@ describe('createTranscriptView', () => {
       store.applyEvent(toolRequested(1));
       view.repaint(store);
 
+      // A running tool call supersedes the Thinking billet: exactly one
+      // "unfinished process" indicator is on screen.
+      expect(view.element.querySelector('.chat-message--thinking')).toBeNull();
+      expect(view.element.querySelector('.chat-tool-call')).not.toBeNull();
+
+      // Once it settles, and no assistant text has arrived, Thinking returns
+      // (the earlier reasoning text already erased).
+      store.applyEvent(toolResult(2, true));
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message--thinking')).not.toBeNull();
       expect(view.element.querySelector('.chat-message__thinking-line')?.textContent).toBe('');
     });
 
@@ -588,6 +715,27 @@ describe('createTranscriptView - format_table message table', () => {
     expect(firstCells).toEqual(['1', '/content/site/a']);
     const headers = [...element.querySelectorAll('sp-table-head-cell')].map((c) => c.textContent);
     expect(headers).toEqual(['#', 'Path']);
+  });
+
+  it('wraps the Property column at any character, like the Path column', () => {
+    const data = {
+      rows: [
+        {
+          'jcr:path': '/content/site/a/jcr:content/text',
+          property: 'aVeryLongPropertyNameThatCannotBreakOnItsOwn',
+          citation: 'x',
+        },
+      ],
+      pagination: { total: { accuracy: 'exact', value: 1 } },
+    };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
+    const headers = [...element.querySelectorAll('sp-table-head-cell')].map((c) => c.textContent);
+    expect(headers).toEqual(['#', 'Path', 'Property', 'Citation']);
+    const propertyCell = element.querySelector(
+      'sp-table-body sp-table-row sp-table-cell:nth-child(3) > span',
+    );
+    expect(propertyCell?.textContent).toBe('aVeryLongPropertyNameThatCannotBreakOnItsOwn');
+    expect(propertyCell?.className).toBe('chat-table-message__wrap');
   });
 
   it('makes the Path cell a clickable, stamped link against the active host', () => {
@@ -890,11 +1038,13 @@ describe('createTranscriptView - tool-call billet disclosure', () => {
     return { view, store };
   }
 
-  it('renders each call as a disclosure row preceded by an sp-icon-actions icon and a chevron', () => {
+  it('renders each running call as a disclosure row preceded by a spinner and a chevron', () => {
     const { view } = renderGetJson();
 
     const icon = view.element.querySelector('.chat-tool-call__icon');
-    expect(icon?.tagName.toLowerCase()).toBe('sp-icon-actions');
+    // A running call shows the indeterminate spinner, not the static tool icon
+    // (see the settled case in 'tool call lifecycle').
+    expect(icon?.tagName.toLowerCase()).toBe('sp-progress-circle');
     expect(view.element.querySelector('.chat-tool-call__chevron')).not.toBeNull();
     // Prepended: the icon is the toggle's first child.
     expect(view.element.querySelector('.chat-tool-call__toggle')?.firstElementChild).toBe(icon);

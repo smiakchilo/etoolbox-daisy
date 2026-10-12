@@ -196,8 +196,10 @@ const SEMANTIC_EMPTY = {
 const SEMANTIC = {
   rows: [
     {
-      'jcr:path': '/content/wknd/us/en/about/waldo',
-      property: 'jcr:content/jcr:description',
+      // The concrete node path and the bare property name, as the executor now
+      // produces them (not the page the query matched).
+      'jcr:path': '/content/wknd/us/en/about/waldo/jcr:content',
+      property: 'jcr:description',
       citation: 'Waldo is a good guy and a generous donor.',
     },
   ],
@@ -284,9 +286,14 @@ test.describe('deterministic search tables', () => {
 
     // The tool call itself is a billet; the run's table message starts empty,
     // with "no relevant results so far" in the total slot instead of a table.
-    await expect(
-      shell.locator('.chat-tool-call').filter({ hasText: 'Semantic search: waldo' }).first(),
-    ).toBeVisible({ timeout: 30_000 });
+    const semanticStartBillet = shell
+      .locator('.chat-tool-call')
+      .filter({ hasText: 'aem_semantic_search' })
+      .first();
+    await expect(semanticStartBillet).toBeVisible({ timeout: 30_000 });
+    // The summary is the terms alone - the header already names the tool, so the
+    // billet must not print "semantic search" twice.
+    await expect(semanticStartBillet.locator('.chat-tool-call__summary')).toHaveText('waldo');
     await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
     const message = shell.locator('.chat-table-message').last();
     await expect(message.locator('.chat-table-message__total')).toHaveText(NO_MATCHES);
@@ -306,6 +313,15 @@ test.describe('deterministic search tables', () => {
       'Citation',
     ]);
     await expect(message.locator('sp-table-body sp-table-row')).toHaveCount(1);
+    // The new column semantics: Path is the concrete node the property lives
+    // on, Property the bare name, and the Property cell the wrap-at-any-
+    // character class the Path link also gets.
+    await expect(message.locator('sp-table-body sp-table-cell').nth(1)).toContainText(
+      '/content/wknd/us/en/about/waldo/jcr:content',
+    );
+    await expect(message.locator('sp-table-body .chat-table-message__wrap')).toHaveText(
+      'jcr:description',
+    );
     await expect(message.locator('.chat-table-message__total')).toHaveText(ONE_MATCH);
     const totalBelowTable = await message.evaluate((element) => {
       const total = element.querySelector('.chat-table-message__total');
@@ -316,6 +332,17 @@ test.describe('deterministic search tables', () => {
     });
     expect(totalBelowTable).toBe(true);
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
+    // The continue call (`{ searchId, matches }`) carries no terms: it is
+    // summarised by its matches, never as a blank label - even though its result
+    // echoes the terms - and without repeating the tool name.
+    const semanticContinueBillet = shell
+      .locator('.chat-tool-call')
+      .filter({ hasText: 'judging 0 matches' })
+      .first();
+    await expect(semanticContinueBillet).toBeVisible();
+    await expect(semanticContinueBillet.locator('.chat-tool-call__summary')).toHaveText(
+      'judging 0 matches',
+    );
   });
   test('a skill the model chose on its own (no /name) hides its prose and keeps the table', async () => {
     // A natural-language prompt: `isDeterministicTablePrompt` is false at send,

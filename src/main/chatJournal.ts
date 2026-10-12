@@ -524,12 +524,16 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       // Reasoning is transient by contract: it is shown in the moment and then
       // discarded, never accumulated as durable history (see `agentEvents.ts`'s
       // reasoning variants and docs/compatibility.md section 6 - the SDK marks
-      // the deltas `ephemeral`). Returning before the turn bookkeeping below
-      // also means a reasoning block can never flush a pending prompt on its
-      // own; the turn's first non-reasoning event does that instead.
+      // the deltas `ephemeral`). A tool-call progress note is transient for the
+      // same reason: it is a running-only status line, so recording every tick
+      // would bloat the journal with content that is meaningless on replay.
+      // Returning before the turn bookkeeping below also means neither can
+      // flush a pending prompt on its own; the turn's first non-transient event
+      // does that instead.
       if (
         event.type === 'assistant.reasoning.delta' ||
-        event.type === 'assistant.reasoning.completed'
+        event.type === 'assistant.reasoning.completed' ||
+        event.type === 'tool.call.progress'
       ) {
         return;
       }

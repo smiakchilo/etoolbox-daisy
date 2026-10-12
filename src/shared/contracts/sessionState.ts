@@ -256,13 +256,16 @@ function nextStreamStateForEvent(
       return event.state;
     // An ask-user question is emitted mid-`runningTool` and does not itself
     // move the turn: the tool call that requested it already did, and the
-    // answer arrives as that call's `tool.result`. The `model.*` events are
+    // answer arrives as that call's `tool.result`. A tool-call progress note is
+    // likewise a status update for a turn the `tool.call.requested` event
+    // already moved to `runningTool`. The `model.*` events are
     // diagnostics-only: observing which model ran never moves the turn.
     case 'assistant.text.delta':
     case 'assistant.message.completed':
     case 'assistant.reasoning.delta':
     case 'assistant.reasoning.completed':
     case 'tool.call.approved':
+    case 'tool.call.progress':
     case 'user.input.requested':
     case 'model.changed':
     case 'model.usage':

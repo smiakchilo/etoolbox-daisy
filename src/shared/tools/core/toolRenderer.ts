@@ -157,6 +157,24 @@ export function asStringArray(value: JsonValue | undefined): readonly string[] |
   return value.filter((entry): entry is string => typeof entry === 'string');
 }
 
+/** Reads a JSON object defensively: `undefined` for anything that is not a plain object. */
+export function asRecord(
+  value: JsonValue | undefined,
+): Readonly<Record<string, JsonValue>> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  return value as Readonly<Record<string, JsonValue>>;
+}
+
+/** A `JsonValue` as display text only when it is a number; otherwise `undefined` (row omitted). */
+export function asCount(value: JsonValue | undefined): string | undefined {
+  return typeof value === 'number' ? String(value) : undefined;
+}
+
+/** A `JsonValue` as display text only when it is a non-empty string; otherwise `undefined`. */
+export function asText(value: JsonValue | undefined): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
 /** One argument value as display text; objects and arrays are JSON-stringified rather than dropped. */
 export function renderArgValue(value: JsonValue): string {
   if (value === null) return 'null';

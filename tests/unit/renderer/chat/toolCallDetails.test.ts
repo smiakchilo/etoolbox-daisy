@@ -210,10 +210,10 @@ describe('describeToolCall - aem_query_format_ask', () => {
 });
 
 describe('describeToolCall - aem_semantic_search', () => {
-  it('summarises the terms and the page, and reads the progress from the result', () => {
+  it('summarises a start call and reads the progress from its result', () => {
     const details = describeToolCall(
       'aem_semantic_search',
-      { searchId: 's-1', matches: [1] },
+      { terms: 'waldo', context: 'Waldo is good' },
       {
         operation: 'aem_semantic_search',
         terms: 'waldo',
@@ -228,7 +228,7 @@ describe('describeToolCall - aem_semantic_search', () => {
       },
     );
 
-    expect(details.summary).toBe('Semantic search: waldo (page 2)');
+    expect(details.summary).toBe('waldo (page 2)');
     expect(details.parameters.map((row) => row.label)).toEqual([
       'Terms',
       'Context',
@@ -238,6 +238,20 @@ describe('describeToolCall - aem_semantic_search', () => {
       'Candidates read',
       'Matches shown',
       'AEM hits',
+    ]);
+  });
+
+  it('summarises a continue call by its matches, with Search ID and Matched rows', () => {
+    // A continue call (`{ searchId, matches }`) has no terms of its own; it must
+    // never render as a blank "Semantic search:" with a dead chevron.
+    const details = describeToolCall('aem_semantic_search', {
+      searchId: 's-1',
+      matches: [3, { candidate: 7 }],
+    });
+    expect(details.summary).toBe('judging 2 matches');
+    expect(details.parameters).toEqual([
+      { label: 'Search ID', value: 's-1' },
+      { label: 'Matched', value: '3, 7' },
     ]);
   });
 });
