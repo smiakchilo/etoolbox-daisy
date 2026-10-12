@@ -641,7 +641,13 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2858 passed / 14 skipped** (+6 against the
+Current baseline: **`npm run test` → 2866 passed / 14 skipped** (+8 against the
+2858 of the previous entry - **`ask_user` hung because the runtime's built-in
+`ask_user` hijacked the app tool**: every app tool now sets
+`overridesBuiltInTool: true`, and a 15 s dispatch watchdog fails a turn whose app
+tool started but never reached the application; 8 `sdkAgentService` cases; see
+`docs/verification.md` "ask_user hung: the runtime built-in hijacked the app tool
+(2026-10-12)"). Before that it was 2858 (+6 against the
 2852 of the previous entry - **startup-restore presentation**: "New session" now
 start-disabled and derived from `chatId !== undefined && pendingOpen === undefined`
 (`chatPane.ts`'s `updateNewSessionEnabled`), the composer's Send disabled while a

@@ -139,7 +139,9 @@ import {
  *    settle (resolve/reject), never from any SDK event.
  *    `tool.execution_start`/`tool.execution_complete`/`external_tool.completed`
  *    are all left unmapped as a result (the latter is, per the SDK's own
- *    docs, a UI-dismissal signal only regardless).
+ *    docs, a UI-dismissal signal only regardless). The first two are still
+ *    *observed*, never mapped, by the tool-dispatch watchdog - see
+ *    {@link TOOL_DISPATCH_TIMEOUT_MS}.
  * 4. `EventSequencer` (agentEvents.ts) is a duplicate/gap *detector* for a
  *    downstream consumer of an already-sequenced stream - it does not
  *    assign sequence numbers, and has no method that could. Neither this
@@ -398,6 +400,22 @@ function defaultIdGenerator(): IdGenerator {
   return () => randomUUID();
 }
 
+/**
+ * How long one of the application's own tools may sit between the runtime's
+ * `tool.execution_start` and its dispatch to this process before the turn is
+ * failed. A dispatched app tool always produces `permission.requested` (a
+ * `custom-tool` request) and `external_tool.requested` within milliseconds of
+ * its start - observed live, including for three parallel calls - so a start
+ * that is followed by neither means the runtime ran something else under that
+ * name, and nothing in this process will ever answer it. Observed live: before
+ * `overridesBuiltInTool` was set, the runtime ran its own built-in `ask_user`
+ * for the app's `ask_user`, raised `user_input.requested` (which this app does
+ * not handle) and the turn waited forever behind the "thinking" indicator. The
+ * watchdog stops *before* any legitimate wait: an `ask_user` answer is awaited
+ * only after `external_tool.requested`, which disarms it.
+ */
+export const TOOL_DISPATCH_TIMEOUT_MS = 15_000;
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -465,6 +483,9 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   const pendingPermissionsByRequestId = new Map<string, PendingPermission>();
   const pendingUserInputByRequestId = new Map<UserInputRequestId, PendingUserInput>();
   const deltaFoldByMessageId = new Map<MessageId, DeltaFoldState>();
+  /** Armed per SDK `toolCallId` by `tool.execution_start`; see {@link TOOL_DISPATCH_TIMEOUT_MS}. */
+  const dispatchWatchdogByToolCallId = new Map<string, ReturnType<typeof setTimeout>>();
+  const appToolNames: ReadonlySet<string> = new Set(Object.keys(options.toolHandlers ?? {}));
 
   function nextSequence(chatId: ChatId): number {
     const sequence = sequenceByChatId.get(chatId) ?? 0;
@@ -548,6 +569,72 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     const pending = [...pendingUserInputByRequestId.values()];
     pendingUserInputByRequestId.clear();
     for (const entry of pending) entry.reject(new Error('The question was cancelled'));
+  }
+
+  function disarmDispatchWatchdog(toolCallId: string | undefined): void {
+    if (toolCallId === undefined) return;
+    const timer = dispatchWatchdogByToolCallId.get(toolCallId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    dispatchWatchdogByToolCallId.delete(toolCallId);
+  }
+
+  function disarmAllDispatchWatchdogs(): void {
+    for (const timer of dispatchWatchdogByToolCallId.values()) clearTimeout(timer);
+    dispatchWatchdogByToolCallId.clear();
+  }
+
+  function armDispatchWatchdog(
+    chatId: ChatId,
+    turn: CurrentTurn,
+    toolCallId: string,
+    toolName: string,
+  ): void {
+    disarmDispatchWatchdog(toolCallId);
+    const timer = setTimeout(() => {
+      dispatchWatchdogByToolCallId.delete(toolCallId);
+      failUndispatchedTool(chatId, turn, toolName);
+    }, TOOL_DISPATCH_TIMEOUT_MS);
+    dispatchWatchdogByToolCallId.set(toolCallId, timer);
+  }
+
+  /**
+   * Fails the turn whose app tool the runtime started but never dispatched
+   * (see {@link TOOL_DISPATCH_TIMEOUT_MS}), and aborts the runtime's side of it,
+   * so the user gets an error instead of an indefinite "thinking" indicator.
+   * A no-op if that turn has already ended.
+   */
+  function failUndispatchedTool(chatId: ChatId, turn: CurrentTurn, toolName: string): void {
+    if (currentTurn !== turn || openChatId !== chatId || streamState === 'closed') return;
+    console.error(
+      `sdkAgentService: the runtime started tool "${toolName}" but never dispatched it to the ` +
+        `application within ${String(TOOL_DISPATCH_TIMEOUT_MS)} ms; failing the turn`,
+    );
+    currentTurn = undefined;
+    disarmAllDispatchWatchdogs();
+    pendingPermissionsByRequestId.clear();
+    rejectPendingUserInputs();
+    openSession?.abort().catch((error: unknown) => {
+      console.error(
+        'sdkAgentService: session.abort() rejected after a tool dispatch timeout',
+        error,
+      );
+    });
+    try {
+      applyAndEmit({
+        type: 'error',
+        chatId,
+        sequence: nextSequence(chatId),
+        turnId: turn.turnId,
+        error: createToolError(
+          'AGENT_UNAVAILABLE',
+          `The agent started the "${toolName}" tool, but the call never reached the application`,
+          newRequestId(idGenerator),
+        ),
+      });
+    } catch (caught) {
+      reportInternalMappingFailure(chatId, 'tool.dispatch.timeout', caught);
+    }
   }
 
   /**
@@ -658,6 +745,13 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     const descriptor = toolDescriptorsByName.get(name);
     return {
       name,
+      // Without this, a name the runtime also has as a built-in is silently
+      // run by the built-in: observed live for `ask_user`, which then waits on
+      // a `user_input.requested` nothing here answers, so the turn hangs (and
+      // `tools.getCurrentMetadata()` still misleadingly reports the app's
+      // schema). Set on every app tool, verified harmless on a non-clashing
+      // name, so a future tool can never be hijacked the same way.
+      overridesBuiltInTool: true,
       ...(descriptor !== undefined
         ? {
             description: descriptor.description,
@@ -719,6 +813,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       );
     }
     currentTurn = undefined;
+    disarmAllDispatchWatchdogs();
     pendingPermissionsByRequestId.clear();
     rejectPendingUserInputs();
     try {
@@ -752,6 +847,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     if (openChatId === chatId) openChatId = undefined;
     appliedModelPreference = undefined;
     modelObserver.reset();
+    disarmAllDispatchWatchdogs();
     pendingPermissionsByRequestId.clear();
     rejectPendingUserInputs();
     deltaFoldByMessageId.clear();
@@ -775,6 +871,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   function reportInternalMappingFailure(chatId: ChatId, eventType: string, caught: unknown): void {
     console.error('sdkAgentService: failed to process SDK session event', eventType, caught);
     currentTurn = undefined;
+    disarmAllDispatchWatchdogs();
     pendingPermissionsByRequestId.clear();
     rejectPendingUserInputs();
     if (streamState === 'closed') return;
@@ -797,12 +894,13 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   /**
    * Projects one raw SDK `SessionEvent` onto zero or more normalized
    * `AgentEvent`s. Only the event types listed below are mapped; everything
-   * else (~120 other SDK event types, including `abort`,
-   * `tool.execution_start`, `tool.execution_complete`, and
+   * else (~120 other SDK event types, including `abort` and
    * `external_tool.completed` - see finding 3 in this module's doc comment
    * for why the tool-lifecycle events specifically are deliberately
-   * excluded) is ignored. `tool.result` is emitted elsewhere, from
-   * `wrapToolExecutor` below - not from this function.
+   * excluded) is ignored. `tool.execution_start`/`tool.execution_complete`
+   * are observed only to arm/disarm the dispatch watchdog
+   * ({@link TOOL_DISPATCH_TIMEOUT_MS}); they emit nothing. `tool.result` is
+   * emitted elsewhere, from `wrapToolExecutor` below - not from this function.
    */
   function handleSdkEvent(chatId: ChatId, event: SessionEvent): void {
     if (chatId !== openChatId) return;
@@ -903,7 +1001,21 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           });
           return;
         }
+        case 'tool.execution_start': {
+          // Observed, never mapped (finding 3): arms the dispatch watchdog for
+          // the application's own tools only - a runtime built-in such as
+          // `skill` legitimately never reaches this process.
+          if (currentTurn === undefined) return;
+          if (!appToolNames.has(event.data.toolName)) return;
+          armDispatchWatchdog(chatId, currentTurn, event.data.toolCallId, event.data.toolName);
+          return;
+        }
+        case 'tool.execution_complete': {
+          disarmDispatchWatchdog(event.data.toolCallId);
+          return;
+        }
         case 'external_tool.requested': {
+          disarmDispatchWatchdog(event.data.toolCallId);
           if (currentTurn === undefined) return;
           const toolCallId = toolCallIdSchema.parse(event.data.toolCallId);
           if (currentTurn.toolCallIds.has(toolCallId)) return;
@@ -964,6 +1076,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           // event - shell/write/read/mcp/etc. permission kinds have no
           // corresponding variant in this module's contract.
           if (request.kind !== 'custom-tool') return;
+          disarmDispatchWatchdog(request.toolCallId);
           pendingPermissionsByRequestId.set(event.data.requestId, {
             ...(request.toolCallId !== undefined ? { toolCallId: request.toolCallId } : {}),
             toolName: request.toolName,
@@ -1013,6 +1126,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           if (currentTurn === undefined) return;
           const turnId = currentTurn.turnId;
           currentTurn = undefined;
+          disarmAllDispatchWatchdogs();
           pendingPermissionsByRequestId.clear();
           applyAndEmit(makeSessionStateEvent(chatId, 'idle', turnId));
           return;
@@ -1020,6 +1134,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         case 'session.error': {
           const turnId = currentTurn?.turnId;
           currentTurn = undefined;
+          disarmAllDispatchWatchdogs();
           pendingPermissionsByRequestId.clear();
           rejectPendingUserInputs();
           const toolError = createToolError(

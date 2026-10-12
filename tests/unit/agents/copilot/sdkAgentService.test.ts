@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  createSdkAgentService,
   type AemToolExecutor,
   type AgentAuthStatusSource,
+  createSdkAgentService,
+  TOOL_DISPATCH_TIMEOUT_MS,
 } from '../../../../src/agents/copilot/sdkAgentService';
 import type {
   HardenedSessionClient,
@@ -592,6 +593,169 @@ describe('sdkAgentService - tool lifecycle', () => {
 
     expect(events.some((event) => event.type === 'tool.result')).toBe(false);
     assertLegalSequence(events);
+  });
+});
+
+describe('sdkAgentService - app tools versus runtime built-ins', () => {
+  it('registers every app tool with overridesBuiltInTool, so a clashing built-in (ask_user) can never run in its place', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const { createSession } = await setUpOpenConversation(sessionHandle, ids, undefined, {
+      aem_get_json: executor,
+      ask_user: executor,
+    });
+
+    const tools = createSession.mock.calls[0]?.[0]?.tools ?? [];
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['aem_get_json', 'ask_user']);
+    for (const tool of tools) expect(tool.overridesBuiltInTool).toBe(true);
+  });
+});
+
+describe('sdkAgentService - tool dispatch watchdog', () => {
+  const TOOL_CALL_ID = 'call-1';
+
+  async function startTurnWithAppTool() {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const setup = await setUpOpenConversation(sessionHandle, ids, undefined, {
+      ask_user: executor,
+    });
+    const turnId = newTurnId(ids);
+    await setup.service.sendPrompt({ chatId: setup.chatId, turnId, prompt: 'hi' });
+    sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: 'msg-1' } });
+    return { ...setup, sessionHandle, ids, turnId };
+  }
+
+  function emitStart(sessionHandle: FakeSessionHandle, toolName = 'ask_user'): void {
+    sessionHandle.emit({
+      type: 'tool.execution_start',
+      data: { toolCallId: TOOL_CALL_ID, toolName, arguments: {} },
+    });
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('fails the turn and aborts the runtime when an app tool starts but never reaches the application', async () => {
+    const { service, chatId, events, sessionHandle, ids, turnId } = await startTurnWithAppTool();
+    vi.useFakeTimers();
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    emitStart(sessionHandle);
+    vi.advanceTimersByTime(TOOL_DISPATCH_TIMEOUT_MS - 1);
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    expect(events.find((event) => event.type === 'error')).toMatchObject({
+      turnId,
+      error: { code: 'AGENT_UNAVAILABLE' },
+    });
+    expect(sessionHandle.abort).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('"ask_user"'));
+    expect(assertLegalSequence(events).state).toBe('idle');
+
+    // The composer is usable again: a late event for the failed turn is
+    // dropped and the next prompt is accepted.
+    const countAfterFailure = events.length;
+    sessionHandle.emit({ type: 'session.idle', data: {} });
+    expect(events).toHaveLength(countAfterFailure);
+    const next = await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'again' });
+    expect(next.ok).toBe(true);
+  });
+
+  const dispatchSignals: readonly {
+    readonly name: string;
+    readonly emit: (sessionHandle: FakeSessionHandle) => void;
+  }[] = [
+    {
+      name: 'permission.requested',
+      emit: (sessionHandle) => {
+        sessionHandle.emit({
+          type: 'permission.requested',
+          data: {
+            requestId: 'perm-1',
+            permissionRequest: {
+              kind: 'custom-tool',
+              toolCallId: TOOL_CALL_ID,
+              toolName: 'ask_user',
+              toolDescription: '',
+              args: {},
+            },
+          },
+        });
+      },
+    },
+    {
+      name: 'external_tool.requested',
+      emit: (sessionHandle) => {
+        sessionHandle.emit({
+          type: 'external_tool.requested',
+          data: {
+            requestId: 'req-1',
+            toolCallId: TOOL_CALL_ID,
+            toolName: 'ask_user',
+            arguments: {},
+          },
+        });
+      },
+    },
+    {
+      name: 'tool.execution_complete',
+      emit: (sessionHandle) => {
+        sessionHandle.emit({
+          type: 'tool.execution_complete',
+          data: { toolCallId: TOOL_CALL_ID, success: true },
+        });
+      },
+    },
+    {
+      name: 'session.idle',
+      emit: (sessionHandle) => {
+        sessionHandle.emit({ type: 'session.idle', data: {} });
+      },
+    },
+  ];
+
+  for (const signal of dispatchSignals) {
+    it(`is disarmed by ${signal.name}`, async () => {
+      const { events, sessionHandle } = await startTurnWithAppTool();
+      vi.useFakeTimers();
+
+      emitStart(sessionHandle);
+      signal.emit(sessionHandle);
+      vi.advanceTimersByTime(TOOL_DISPATCH_TIMEOUT_MS * 2);
+
+      expect(events.some((event) => event.type === 'error')).toBe(false);
+      expect(sessionHandle.abort).not.toHaveBeenCalled();
+      assertLegalSequence(events);
+    });
+  }
+
+  it('is disarmed by a user abort', async () => {
+    const { service, chatId, events, sessionHandle } = await startTurnWithAppTool();
+    vi.useFakeTimers();
+
+    emitStart(sessionHandle);
+    await service.abort(chatId);
+    vi.advanceTimersByTime(TOOL_DISPATCH_TIMEOUT_MS * 2);
+
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(sessionHandle.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a runtime built-in tool (skill), which legitimately never reaches the application', async () => {
+    const { events, sessionHandle } = await startTurnWithAppTool();
+    vi.useFakeTimers();
+
+    emitStart(sessionHandle, 'skill');
+    vi.advanceTimersByTime(TOOL_DISPATCH_TIMEOUT_MS * 2);
+
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(sessionHandle.abort).not.toHaveBeenCalled();
   });
 });
 

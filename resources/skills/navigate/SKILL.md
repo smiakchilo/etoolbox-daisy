@@ -1,6 +1,6 @@
 ---
 name: navigate
-description: How to open a page in the AEM browser pane when the user asks to go to, open, or navigate to a page - by host label, by a full or partial path, or by a page name or title. Resolve the host with environment_facts and the page with aem_query, disambiguate with ask_user, and open the result with browser_navigate. Use whenever the user says "open", "go to", "navigate to", or "show me" a page, including when they invoke `/navigate <what>`.
+description: How to open a page in the AEM browser pane when the user asks to go to, open, or navigate to a page - by host label, by a full or partial path, or by a page name or title. Resolve the host with environment_facts, then resolve a name or title with aem_query in strict order - a node-name contains pattern first, then the page title, then a full-text search - and when more than one page matches, always disambiguate with ask_user rather than choosing; open the result with browser_navigate. Use whenever the user says "open", "go to", "navigate to", or "show me" a page, including when they invoke `/navigate <what>`.
 metadata:
   user-description: Open a page in the AEM browser pane.
 ---
@@ -33,41 +33,129 @@ at all.
 
 ## 2. Work out the page
 
-The user may give a **path**, a **page name**, or a **page title**.
+The user may give a **path**, a **page name**, or a **page title**. A given path
+is used directly; a name or title is resolved by the strict, ordered phases
+below. Run the phases in order and never skip or merge them.
 
 ### A path was given
 
 Use it. A path may be full (`/content/wknd/us/en/resource-library`) or partial
 (`us/en/resource-library`). A partial path is relative to a site or content
 root, so make it absolute with `aem_query` (a `path` predicate) before opening
-it. Turn the resolved content path into a browser path as described in
-**Building the URL** below.
+it, then go to **Open it** below. A given path needs no name/title search.
 
 ### A name or title was given
 
-Resolve it on the **current** host with `aem_query`, scoped to that host's
-content roots and `type=cq:Page`. Search the node **name** first, then the
-**title**, trying the natural variants of the phrase:
+Build the **name pattern** from the phrase first: lower-case it, replace every
+run of spaces, hyphens or underscores with a single `*`, then wrap the whole
+thing in `*` ... `*`. `*` is the `nodename` wildcard - it stands for any or no
+characters - so the pattern *contains* the phrase. `"Elastic Browser"` and
+`"elastic_browser"` both become `*elastic*browser*`, which matches
+`elastic-browser`, `elastic_browser`, `new-elastic_browser`, `elastic-browser2`
+and `elastic browser` alike. It is not a regex.
 
-- "home page" → node name `home`, then title `home`.
-- "media library page" → node names `media-library`, `media_library`,
-  `media%20library`, `media library`, then the title `media library`.
+Then run the phases in order, and enter the next phase **only** when the current
+one found nothing.
 
-Use the `nodename` predicate for names and `fulltext` (with
-`fulltext.relPath=jcr:content`) or a `property` predicate on
-`jcr:content/jcr:title` for titles. If the first attempt returns nothing, try
-the next variant; do not give up after one. Ask for a narrow `properties`
-projection (`jcr:content/jcr:title`) so the result stays small.
+#### Phase A - the node name (always first)
 
-## 3. Disambiguate
+Run **one `aem_query`** for the whole name pattern, scoped to the current host's
+content roots (from the current page context block, or `environment_facts`):
 
-If the search returns **more than one** plausible page - the same page in
-several locales, a draft and a live copy, two similarly named pages - do not
-pick one. Call `ask_user` with one option per candidate, each labelled with its
-title and its path, and open the one the user chooses. If it returns **no**
-plausible page, say so and ask for a clearer path or name.
+```json
+{
+  "predicates": { "type": "cq:Page", "nodename": "*elastic*browser*" },
+  "roots": ["<the host's content roots>"],
+  "properties": ["jcr:content/jcr:title"],
+  "limit": 50
+}
+```
 
-## 4. A page on a different host
+Page through it with `offset` while `pagination.hasMore` is `true` or
+`"unknown"`.
+
+- **Any rows -> that is the candidate set. Go to Phase D.**
+- **No rows -> go to Phase B.**
+
+Never use `fulltext` in Phase A: a full-text search finds pages that merely
+*mention* the words and is not the name search the user asked for. A **failed**
+query (an error result, for example an unindexed `nodename` traversal that AEM
+aborted) is **not** an empty result - relay the failure; do not treat it as "no
+match" and do not silently fall through.
+
+#### Phase B - the page title (only when Phase A found nothing)
+
+Search the **spaced** phrase in the page's title. Run one `aem_query`, scoped to
+the current host's content roots:
+
+```json
+{
+  "predicates": {
+    "type": "cq:Page",
+    "group.p.or": "true",
+    "group.1_property": "jcr:content/jcr:title",
+    "group.1_property.operation": "like",
+    "group.1_property.value": "%elastic%browser%",
+    "group.2_property": "jcr:content/pageTitle",
+    "group.2_property.operation": "like",
+    "group.2_property.value": "%elastic%browser%"
+  },
+  "roots": ["<the host's content roots>"],
+  "properties": ["jcr:content/jcr:title", "jcr:content/pageTitle"],
+  "limit": 50
+}
+```
+
+`property.operation=like` is `jcr:like`: `%` stands for any characters, so
+`%elastic%browser%` matches the phrase anywhere in either title property, with
+any separator.
+
+- **Any rows -> that is the candidate set. Go to Phase D.**
+- **No rows -> go to Phase C.**
+
+#### Phase C - full text (only when Phase A and Phase B found nothing)
+
+The name and the title both came back empty, so fall back to a full-text search
+of the spaced phrase, scoped to the current host's content roots:
+
+```json
+{
+  "predicates": { "type": "cq:Page", "fulltext": "elastic browser" },
+  "roots": ["<the host's content roots>"],
+  "properties": ["jcr:content/jcr:title"],
+  "limit": 50
+}
+```
+
+This is the broadest phase - it matches pages that merely mention the words -
+so reach it only when the name and title searches found nothing.
+
+- **Any rows -> that is the candidate set. Go to Phase D.**
+- **Still nothing -> report that no page matched and ask for a clearer name or
+  path. Open nothing.**
+
+#### Phase D - never choose for the user
+
+- **Exactly one candidate -> open it** (**Open it** below).
+- **More than one candidate -> you MUST call `ask_user`.** Build one option per
+  candidate and label it `"<title> - <jcr:path>"` (omit the title when it is
+  absent). Every candidate from the matching phase must appear in the list, one
+  option each, none omitted. Open **only** the option the user chooses.
+
+Do not pick the "best" match, the one on the current page, the one in the
+"right" locale, or the one that looks most plausible. Do not open anything
+before the answer comes back - not even the first candidate. If more than 50
+candidates match (the `ask_user` limit), do not silently truncate the list:
+report the count and ask the user to narrow the phrase.
+
+### The path you open is copied, never composed
+
+`browser_navigate`'s `path` **must be copied character-for-character from the
+`jcr:path` of a row returned earlier in this same turn** (then turned into a
+browser path per **Building the URL**). Never type a path from memory, from the
+current page, or from a guess.
+
+## 3. A page on a different host
 
 `aem_query` and `aem_get_json` only read the host the browser pane is currently
 on. So if the host you identified in step 1 is **not** the current host:
@@ -80,7 +168,7 @@ on. So if the host you identified in step 1 is **not** the current host:
   `environment_facts` and run the search from step 2 against the now-current
   host.
 
-## 5. Building the URL
+## 4. Building the URL
 
 `browser_navigate` takes a **verbatim browser path** and joins it to the host's
 own origin. You choose the form:
@@ -96,7 +184,7 @@ own origin. You choose the form:
 Never include a scheme, host, or port - the application supplies the origin
 from the configured host.
 
-## 6. Open it
+## 5. Open it
 
 Call `browser_navigate` **once** with `host` (the configured label) and `path`.
 On success it reports the URL it opened. If it reports a failure, relay the
