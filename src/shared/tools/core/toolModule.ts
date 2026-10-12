@@ -273,7 +273,9 @@ export const AEM_ASSISTANT_INSTRUCTIONS_PREFIX =
   'where they are. Scope content searches to the content roots and component searches to the ' +
   'component roots named above. The only external capabilities available to you are the tools ' +
   'described next. Most act on the AEM instance the user currently has open; a tool may also ' +
-  'open a page on another configured host in the browser pane.';
+  'open a page on another configured host in the browser pane. Never invent an AEM path from a ' +
+  "page's name: resolve a named page with a search and open only the path it returns, or a path " +
+  'the user gave.';
 
 /**
  * The read-only, no-side-channel policy every session carries, whether or not

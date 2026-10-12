@@ -1,6 +1,6 @@
 ---
 name: navigate
-description: How to open a page in the AEM browser pane when the user asks to go to, open, or navigate to a page - by host label, by a full or partial path, or by a page name or title. Resolve the host with environment_facts, then resolve a name or title with aem_query in strict order - a node-name contains pattern first, then the page title, then a full-text search - and when more than one page matches, always disambiguate with ask_user rather than choosing; open the result with browser_navigate. Use whenever the user says "open", "go to", "navigate to", or "show me" a page, including when they invoke `/navigate <what>`.
+description: Load this before browser_navigate whenever the user asks to open a page by name or title rather than giving a path. How to open a page in the AEM browser pane when the user asks to go to, open, or navigate to a page - by host label, by a full or partial path, or by a page name or title. Resolve the host with environment_facts; resolve a name or title with aem_query in strict order, never assuming a path from a name - a node-name contains pattern first, then the page title, then a full-text search - and when more than one page matches, always disambiguate with ask_user, listing every match as an option and never a curated subset, rather than choosing; open the result with browser_navigate. Use whenever the user says "open", "go to", "navigate to", or "show me" a page, including when they invoke `/navigate <what>`.
 metadata:
   user-description: Open a page in the AEM browser pane.
 ---
@@ -16,6 +16,16 @@ This skill is reached two ways, and the target is the same in both:
 Either way, open the page. The whole job is: work out **which host** and **which
 page**, then call `browser_navigate` once. If you cannot determine one of them,
 say so and ask for a clearer instruction - never guess a path or a host.
+
+**Search, never assume.** A page the user names - "the home page", "elastic
+browser", "the resource library" - is always found by **searching**, never by
+inferring a path from it. If the user did not literally write a path, you have
+not been given one. The only two paths you may ever hand to `browser_navigate`
+are a path the user literally wrote, and a `jcr:path` copied from a query result
+in this same turn. That a site "usually" keeps its home at
+`/content/<site>/us/en`, or that a name resembles a path, changes nothing: run
+the phases and open what they return. `/content/<site>/us/en` is a guess, not a
+home page - and a guessed path is wrong as often as it is right.
 
 ## 1. Work out the host
 
@@ -44,6 +54,11 @@ Use it. A path may be full (`/content/wknd/us/en/resource-library`) or partial
 root, so make it absolute with `aem_query` (a `path` predicate) before opening
 it, then go to **Open it** below. A given path needs no name/title search.
 
+Treat this as a path **only** when the user actually wrote path-like text -
+segments separated by `/`. A name is not a path, however obvious the site's
+structure looks: "the home page" is a name to search for, not
+`/content/<site>/us/en`.
+
 ### A name or title was given
 
 Build the **name pattern** from the phrase first: lower-case it, replace every
@@ -53,6 +68,10 @@ characters - so the pattern *contains* the phrase. `"Elastic Browser"` and
 `"elastic_browser"` both become `*elastic*browser*`, which matches
 `elastic-browser`, `elastic_browser`, `new-elastic_browser`, `elastic-browser2`
 and `elastic browser` alike. It is not a regex.
+
+A generic trailing word - "page", "screen" - is **not** part of the name: "the
+home page" is searched as `*home*`, and "Go to elastic browser page" as
+`*elastic*browser*`.
 
 Then run the phases in order, and enter the next phase **only** when the current
 one found nothing.
@@ -71,8 +90,9 @@ content roots (from the current page context block, or `environment_facts`):
 }
 ```
 
-Page through it with `offset` while `pagination.hasMore` is `true` or
-`"unknown"`.
+Run it once with `limit: 50`; do **not** page through it. The first call is
+enough to tell one match from many, and Phase D lists exactly the rows this call
+returned.
 
 - **Any rows -> that is the candidate set. Go to Phase D.**
 - **No rows -> go to Phase B.**
@@ -137,16 +157,24 @@ so reach it only when the name and title searches found nothing.
 #### Phase D - never choose for the user
 
 - **Exactly one candidate -> open it** (**Open it** below).
-- **More than one candidate -> you MUST call `ask_user`.** Build one option per
-  candidate and label it `"<title> - <jcr:path>"` (omit the title when it is
-  absent). Every candidate from the matching phase must appear in the list, one
-  option each, none omitted. Open **only** the option the user chooses.
+- **More than one candidate -> you MUST call `ask_user` with an option for
+  every candidate you retrieved.** Pass the whole list, one option per row, each
+  labelled `"<title> - <jcr:path>"` (the path alone when the title is absent;
+  trim the title if the label would overrun the option length limit). Never
+  sample, never pick a "representative" subset, and never ask the user to narrow
+  instead of listing. The composer renders more than five options as a dropdown
+  that holds them all, so a long list is expected - not a reason to trim it.
 
 Do not pick the "best" match, the one on the current page, the one in the
 "right" locale, or the one that looks most plausible. Do not open anything
-before the answer comes back - not even the first candidate. If more than 50
-candidates match (the `ask_user` limit), do not silently truncate the list:
-report the count and ask the user to narrow the phrase.
+before the answer comes back - not even the first candidate.
+
+If the matching search returned fewer rows than it reported (`hasMore` is `true`
+or `"unknown"`), add `freeInput: true` so the user can type a path that is not in
+the list, and say in the question that the list covers the first matches. Still
+list every row you retrieved - each phase runs with `limit: 50`, so the
+`ask_user` option limit (50) is the only thing that could ever shorten the list,
+and it never will.
 
 ### The path you open is copied, never composed
 
@@ -166,7 +194,8 @@ on. So if the host you identified in step 1 is **not** the current host:
   `browser_navigate` (pass `host` and a path - the host root `/`, or the content
   root). The pane now shows that host, and this turn continues. Then re-read
   `environment_facts` and run the search from step 2 against the now-current
-  host.
+  host. Never invent a path on the target host and navigate straight to it -
+  switching is only half the job; the search is the other half.
 
 ## 4. Building the URL
 

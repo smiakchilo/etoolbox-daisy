@@ -44,9 +44,25 @@ export const browserNavigateArgsObjectSchema = z
      * A configured host's label (e.g. "HPE DEV"). Omit it to target the host
      * the browser pane is currently on.
      */
-    host: z.string().min(1).max(200).optional(),
+    host: z
+      .string()
+      .min(1)
+      .max(200)
+      .describe(
+        'A configured host\'s label, e.g. "HPE DEV" (get labels with environment_facts). ' +
+          'Omit it to use the host the browser pane is on.',
+      )
+      .optional(),
     /** A verbatim browser path beginning with `/` (e.g. `/content/wkend.html`, `/crx/de`). */
-    path: z.string().min(1).max(2000),
+    path: z
+      .string()
+      .min(1)
+      .max(2000)
+      .describe(
+        "A verbatim browser path beginning with '/'. Pass ONLY a path the user wrote, or a " +
+          'jcr:path that aem_query returned in this same turn - never a path you construct from ' +
+          "a page's name (a request for 'the home page' is not '/content/<site>/us/en').",
+      ),
   })
   .strict();
 
@@ -80,8 +96,10 @@ export const BROWSER_NAVIGATE_TOOL_DESCRIPTOR: ToolDescriptor = {
     'labels with environment_facts); omit it to use the host the pane is already on. `path` is ' +
     "the verbatim browser path, beginning with '/': a content page's rendered view " +
     '(`/content/site/page.html`), its editor (`/editor.html/content/site/page.html`), or any ' +
-    'other path on the host such as `/crx/de`. Never include a scheme, host or port. The ' +
-    'application resolves the label to the configured host and builds the URL itself.',
+    'other path on the host such as `/crx/de`. Resolve the page first: a page the user names ' +
+    'must be found with `aem_query`, and `path` is then copied from that result - a path is ' +
+    'never constructed from a name. Never include a scheme, host or port. The application ' +
+    'resolves the label to the configured host and builds the URL itself.',
   // The base object, not the refined schema: `z.toJSONSchema` cannot describe a
   // `.superRefine` side-constraint, and the path rules are enforced by the
   // executor's validation, not by the model-facing JSON schema.

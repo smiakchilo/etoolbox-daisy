@@ -21,7 +21,9 @@ export const tool: ToolModule = {
     '\'append\' after) to present it. Prefer the indexed predicates: use "fulltext" for text and ' +
     'add a "type" when you know the node type. A "property" or "nodename" predicate is only ' +
     'served by an index; on a property the instance does not index, AEM traverses the whole ' +
-    'subtree and stops without returning data - narrow the path/roots or add a "type" instead.',
+    'subtree and stops without returning data - narrow the path/roots or add a "type" instead. ' +
+    'To open a page the user names, resolve it here first: browser_navigate accepts only a path ' +
+    'this search returned, or a path the user typed - never one built from a name.',
   createExecutor: (host) =>
     createAemQueryExecutor({
       execute: (envelope, deps) =>
