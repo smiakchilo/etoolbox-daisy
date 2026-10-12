@@ -451,4 +451,81 @@ test.describe('ask-user interactive question', () => {
     await expect(shell.locator('.chat-message--interruption')).toHaveCount(0);
     await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
   });
+
+  test('a >5 dropdown wears the action strip, and a new question flashes the frame once', async () => {
+    await scriptTurn(app, {
+      steps: [
+        {
+          kind: 'inputRequest',
+          question: 'Pick one of many',
+          options: ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf'],
+          freeInput: true,
+        },
+      ],
+    });
+    // Watch the frame's class list before the question arrives, so the one-time
+    // flash is observed rather than merely inferred from its aftermath.
+    await shell.evaluate(() => {
+      const frame = document.querySelector('.chat-composer__frame');
+      if (frame === null) throw new Error('no composer frame');
+      const scope = window as unknown as { __flashSeen: boolean };
+      scope.__flashSeen = false;
+      new MutationObserver(() => {
+        if (frame.classList.contains('chat-composer__frame--attention')) scope.__flashSeen = true;
+      }).observe(frame, { attributes: true, attributeFilter: ['class'] });
+    });
+
+    await sendViaComposer(shell, 'ask me many');
+    await flushFake(app);
+    await shell.locator('.chat-ask sp-picker').waitFor({ state: 'visible' });
+
+    // The dropdown takes the same strip as the action buttons: a contrasting
+    // gray fill, no visible border.
+    const frameStyle = await shell.locator('.chat-composer__frame').evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, borderColor: style.borderTopColor };
+    });
+    expect(frameStyle.background).toBe('rgb(230, 230, 230)');
+    expect(frameStyle.borderColor).toBe('rgba(0, 0, 0, 0)');
+
+    // The free-answer control and Submit drop the blue they wear on the white
+    // radio/checkbox frame and become light-surfaced buttons with dark content.
+    const freeStyle = await shell.locator('.chat-ask__free').evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        color: style.color,
+        decoration: style.textDecorationLine,
+      };
+    });
+    expect(freeStyle.background).toBe('rgb(253, 253, 253)');
+    expect(freeStyle.color).toBe('rgb(34, 34, 34)');
+    expect(freeStyle.decoration).toBe('none');
+
+    const sendStyle = await shell.locator(COMPOSER_SEND).evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, color: style.color };
+    });
+    expect(sendStyle.background).toBe('rgb(253, 253, 253)');
+    expect(sendStyle.color).toBe('rgb(34, 34, 34)');
+
+    // The flash: the class appeared for this question, then removed itself when
+    // the fade ended - it is not left stuck on.
+    await expect
+      .poll(() => shell.evaluate(() => (window as unknown as { __flashSeen: boolean }).__flashSeen))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        shell
+          .locator('.chat-composer__frame')
+          .evaluate((element) => element.classList.contains('chat-composer__frame--attention')),
+      )
+      .toBe(false);
+
+    // Answer so the composer returns to its ordinary mode.
+    await shell.locator('.chat-ask sp-picker').click();
+    await shell.locator('sp-menu-item[value="Delta"]').click();
+    await submitAnswer(app, shell);
+    await expect(shell.locator(`${ASK_USER} .chat-message--user`).last()).toHaveText('Delta');
+  });
 });

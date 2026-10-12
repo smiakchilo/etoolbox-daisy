@@ -52,6 +52,27 @@ const TEXTAREA_MAX_LINES = 20;
 const SEND_ACCENT_CLASS = 'chat-composer__send--enabled';
 
 /**
+ * The one-time attention flash the composer frame runs when a new `ask_user`
+ * question replaces the text input - a blue wash over the frame that fades back
+ * to whatever background the visible variant rests on (see `chat.css`'s
+ * `chat-composer-attention`). The class is added once per question and removed
+ * on `animationend`, so the pane's periodic repaint can never replay it.
+ */
+const ATTENTION_CLASS = 'chat-composer__frame--attention';
+
+/** The `@keyframes` name the frame's `animationend` listener filters on. */
+const ATTENTION_ANIMATION = 'chat-composer-attention';
+
+/**
+ * Puts the composer frame into its "button strip" look - no visible border, a
+ * contrasting gray fill - while it asks a one-click-actions or >5-option
+ * dropdown question (see `chat.css`). Applied for the whole lifetime of such a
+ * question, so it survives the "type your own answer" swap that hides the
+ * dropdown control itself.
+ */
+const STRIP_CLASS = 'chat-composer__frame--strip';
+
+/**
  * The composer's mutable working copy of an in-progress ask-user answer. Kept
  * mutable so the option controls (which the DOM owns) can update it in place
  * without rebuilding themselves on every keystroke/selection.
@@ -564,6 +585,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
     draft.selections = [];
     draft.freeform = '';
     draft.freeInputActive = false;
+    frame.classList.remove(STRIP_CLASS);
     askPanel.replaceChildren();
     askPanel.hidden = true;
     actionButtons.replaceChildren();
@@ -832,6 +854,26 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   });
   const element = el('div', { attrs: { class: 'chat-composer' }, children: [frame] });
 
+  /**
+   * Runs the frame's attention flash, once, for a question that has just
+   * appeared. The class is dropped by the listener below as soon as the fade
+   * ends; removing it first and forcing a style flush means a question that
+   * arrives before the previous flash has finished (the `/search` Load-more
+   * loop can replace one question with the next in well under a second) still
+   * replays it, instead of being coalesced into the running animation.
+   */
+  function flashAttention(): void {
+    frame.classList.remove(ATTENTION_CLASS);
+    void frame.offsetWidth;
+    frame.classList.add(ATTENTION_CLASS);
+  }
+
+  frame.addEventListener('animationend', (event) => {
+    if (event.animationName === ATTENTION_ANIMATION) {
+      frame.classList.remove(ATTENTION_CLASS);
+    }
+  });
+
   // The `/` autocomplete popup, anchored to the marker. Undefined under jsdom
   // (Spectrum's overlay/popover tags are not registered there); the composer's
   // skill state is still maintained, it just has no popup to draw.
@@ -883,16 +925,19 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       // control shows a value instead of a placeholder and Submit is enabled
       // from the start. The radio/checkbox lists stay unselected (they have no
       // placeholder to avoid).
-      const dropdownDefault =
+      const dropdown =
         !draft.freeInputActive &&
         request.options !== undefined &&
-        request.options.length > ASK_USER_DROPDOWN_THRESHOLD
-          ? request.options[0]
-          : undefined;
+        request.options.length > ASK_USER_DROPDOWN_THRESHOLD;
+      // Actions and the >5-option dropdowns share the frame's "button strip"
+      // look; the radio/checkbox variants keep the ordinary white input frame.
+      frame.classList.toggle(STRIP_CLASS, isActionsRequest(request) || dropdown);
+      const dropdownDefault = dropdown ? request.options?.[0] : undefined;
       draft.selections = dropdownDefault === undefined ? [] : [dropdownDefault];
       field.value = '';
       renderAskPanel();
       applyPresentation();
+      flashAttention();
       if (draft.freeInputActive) field.focus();
     },
     focus() {

@@ -392,6 +392,15 @@ src/tools/<name>/
   nothing for it. The SDK has a built-in `ask_user`; this app leaves it
   un-allowlisted and ships its own (see docs/compatibility.md 4.3). A dev-only
   `!!ask ...` composer trigger previews the UI locally (see section 9).
+  Presentation: every mode washes the composer frame accent-blue once and fades
+  to that variant's resting background (`chat-composer__frame--attention`, removed
+  on `animationend` so a repaint cannot replay it); a one-click-actions or
+  >5-option dropdown question wears a gray, borderless "strip" frame
+  (`chat-composer__frame--strip`) and paints its "type your own answer" control
+  and Submit as light-surfaced, dark-content buttons rather than blue, while the
+  radio/checkbox variants keep the white framed input with a blue link and Send.
+  See `docs/verification.md` "The ask-user question flash and the dropdown strip
+  styling (2026-10-12)".
 - `aem_query` is **JSON-only**: it renders no table. Its `toPayload` keeps the
   structured `rows`/`pagination`/`selection` so the model can hand the result on
   (and so a diagnostic sees it), but the transcript shows only the billet. Its
@@ -641,7 +650,16 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2866 passed / 14 skipped** (+8 against the
+Current baseline: **`npm run test` → 2872 passed / 14 skipped** (+6 against the
+2866 of the previous entry - **the ask-user question flash and the dropdown
+strip styling**: every `ask_user` mode now flashes the composer frame blue once
+(the `chat-composer__frame--attention` overlay, removed on `animationend` so a
+repaint cannot replay it) and fades to that variant's resting background, and the
+two >5-option dropdowns now wear the same gray, borderless strip as the action
+buttons with the "type your own answer" control and Submit painted as white,
+dark-text buttons instead of blue; 4 `composer.test.ts` flash cases and 2 strip
+cases; see `docs/verification.md` "The ask-user question flash and the dropdown
+strip styling (2026-10-12)"). Before that it was 2866 (+8 against the
 2858 of the previous entry - **`ask_user` hung because the runtime's built-in
 `ask_user` hijacked the app tool**: every app tool now sets
 `overridesBuiltInTool: true`, and a 15 s dispatch watchdog fails a turn whose app
@@ -861,7 +879,13 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 123 tests; a full run is typically 117 passed / 6 failed.** The
+**Playwright → 124 tests; a full run is typically 118 passed / 6 failed.** The
++1 since 123 is the `ask-user.spec.ts` case proving, against the built app, that
+a >5-option dropdown wears the action strip (gray frame, transparent border) with
+a white, dark-text free-answer control and Submit, and that a new question flashes
+the frame once (a `MutationObserver` sees the class arrive and clear). See
+`docs/verification.md` "The ask-user question flash and the dropdown strip styling
+(2026-10-12)". Before that, the
 +2 since 121 is `navigate.spec.ts`, proving the built renderer's
 `browser_navigate` and `environment_facts` billets (summary + expanded rows); the
 new user-invocable `navigate` skill also moved `skill-autocomplete.spec.ts`'s

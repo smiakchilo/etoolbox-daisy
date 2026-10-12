@@ -558,14 +558,19 @@
   position: relative;
 }
 
-/* While the composer carries one-click action buttons it stops being an input
-   and becomes a button strip: no visible border, a contrasting gray fill under
-   the buttons. `border-color: transparent` (not `border: none`) keeps the 1px
-   box so nothing shifts, and the `:has()` selector (0,3,0) outranks base.css's
-   shared `.chat-composer__frame:focus-within` rule (0,2,0) so focus never
-   reintroduces the edge. The border transition is switched off so entering the
-   mode snaps the edge away instead of animating it out. */
-.chat-composer__frame:has(.chat-ask__actions:not([hidden])) {
+/* While the composer asks a one-click-actions or >5-option dropdown question it
+   stops being an input and becomes a button strip: no visible border, a
+   contrasting gray fill under the controls. `composer.ts` toggles
+   `chat-composer__frame--strip` for exactly those questions rather than matching
+   the controls with `:has()`, because "type your own answer" hides the dropdown
+   while the question is still open and the strip should stay. `border-color:
+   transparent` (not `border: none`) keeps the 1px box so nothing shifts; the
+   two-class selector ties base.css's `.chat-composer__frame:focus-within`
+   (0,2,0) and, loaded after it, wins - so focus never reintroduces the edge. The
+   border transition is switched off so entering the mode snaps the edge away
+   instead of animating it out. The radio/checkbox variants (<5 options) keep
+   the ordinary white input frame. */
+.chat-composer__frame.chat-composer__frame--strip {
   border-color: transparent;
   background: var(--spectrum-gray-200, #eaeaea);
   transition: none;
@@ -635,6 +640,30 @@
   --mod-actionbutton-content-color-hover: var(--spectrum-white, #ffffff);
   --mod-actionbutton-content-color-down: var(--spectrum-white, #ffffff);
   --mod-actionbutton-content-color-focus: var(--spectrum-white, #ffffff);
+}
+
+/* On the gray dropdown/actions strip an accent-blue Send would sit below
+   contrast, so it is painted like the strip's own action buttons instead: a
+   light surface, a hairline border, dark content. The values mirror
+   `sp-action-button` at rest and its hover/active steps (verified against the
+   built app: fill --spectrum-gray-75, hover --spectrum-gray-200, active
+   --spectrum-gray-300, border --spectrum-gray-400 -> --spectrum-gray-500,
+   content --spectrum-gray-800 -> near-black). Scoped to the `--enabled` class
+   so a disabled Submit still falls through to the component's muted disabled
+   tokens and never looks pressable. */
+.chat-composer__frame--strip .chat-composer__send--enabled {
+  --mod-actionbutton-background-color-default: var(--spectrum-gray-75, #fdfdfd);
+  --mod-actionbutton-background-color-hover: var(--spectrum-gray-200, #e6e6e6);
+  --mod-actionbutton-background-color-down: var(--spectrum-gray-300, #d5d5d5);
+  --mod-actionbutton-background-color-focus: var(--spectrum-gray-75, #fdfdfd);
+  --mod-actionbutton-border-color-default: var(--spectrum-gray-400, #b1b1b1);
+  --mod-actionbutton-border-color-hover: var(--spectrum-gray-500, #909090);
+  --mod-actionbutton-border-color-down: var(--spectrum-gray-500, #909090);
+  --mod-actionbutton-border-color-focus: var(--spectrum-gray-400, #b1b1b1);
+  --mod-actionbutton-content-color-default: var(--spectrum-gray-800, #222222);
+  --mod-actionbutton-content-color-hover: var(--spectrum-gray-900, #000000);
+  --mod-actionbutton-content-color-down: var(--spectrum-gray-900, #000000);
+  --mod-actionbutton-content-color-focus: var(--spectrum-gray-800, #222222);
 }
 
 /* The single travelling link-action popover: a compact row of icon-only actions. */
@@ -707,6 +736,35 @@
   cursor: pointer;
 }
 
+/* On the gray dropdown/actions strip the blue link would sit below contrast, so
+   the free-input escape hatch is painted as a button instead - the same resting
+   surface as the strip's action buttons (fill --spectrum-gray-75, hairline
+   --spectrum-gray-400 border, --spectrum-gray-800 content, 4px radius, 32px
+   tall) with their hover/active steps. Values verified against
+   `sp-action-button` in the built app. The radio/checkbox variants keep the
+   blue link. */
+.chat-composer__frame--strip .chat-ask__free {
+  align-self: flex-start;
+  padding: 0 11px;
+  border: 1px solid var(--spectrum-gray-400, #b1b1b1);
+  border-radius: var(--spectrum-corner-radius-100, 4px);
+  background: var(--spectrum-gray-75, #fdfdfd);
+  color: var(--spectrum-gray-800, #222222);
+  font-size: var(--spectrum-font-size-100, 14px);
+  line-height: var(--spectrum-component-height-100, 32px);
+  text-decoration: none;
+}
+
+.chat-composer__frame--strip .chat-ask__free:hover {
+  border-color: var(--spectrum-gray-500, #909090);
+  background: var(--spectrum-gray-200, #e6e6e6);
+  color: var(--spectrum-gray-900, #000000);
+}
+
+.chat-composer__frame--strip .chat-ask__free:active {
+  background: var(--spectrum-gray-300, #d5d5d5);
+}
+
 .chat-ask__multi {
   display: flex;
   width: 100%;
@@ -742,4 +800,40 @@
   flex-direction: column;
   gap: var(--spectrum-spacing-100, 8px);
   width: 100%;
+}
+
+/* The one-time attention flash: when a new `ask_user` question replaces the
+   text input, the composer frame is washed in the accent blue and fades back to
+   its resting background - white for the radio/checkbox variants, the gray
+   strip for the dropdown/actions ones. The fade runs on a pseudo-element
+   overlay (not the frame's own background) so it lands exactly on whatever the
+   variant rests on, with no colour pop; `pointer-events: none` keeps it out of
+   the way of the controls it covers, and `forwards` holds it invisible until
+   `composer.ts` drops the class on `animationend` (which is also what makes a
+   repaint unable to replay it). */
+.chat-composer__frame--attention::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--spectrum-accent-background-color-default, #0265dc);
+  pointer-events: none;
+  animation: chat-composer-attention var(--spectrum-animation-duration-2000, 1s)
+    var(--spectrum-animation-ease-out, ease-out) forwards;
+}
+
+@keyframes chat-composer-attention {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer__frame--attention::after {
+    animation: none;
+    opacity: 0;
+  }
 }

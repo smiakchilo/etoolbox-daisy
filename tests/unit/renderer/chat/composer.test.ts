@@ -730,4 +730,138 @@ describe('createComposer', () => {
       expect(query(composer.element, '.chat-ask__actions').hasAttribute('hidden')).toBe(true);
     });
   });
+
+  describe("the composer frame's button strip", () => {
+    const STRIP_CLASS = 'chat-composer__frame--strip';
+
+    function frameOf(composer: Composer): HTMLElement {
+      return query(composer.element, '.chat-composer__frame');
+    }
+
+    it('is worn by an actions question and a >5-option dropdown, but not the radio/checkbox lists', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      const frame = frameOf(composer);
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(false);
+
+      composer.setInputRequest({ actions: ['Refine'], multiple: false, freeInput: false });
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(true);
+
+      composer.setInputRequest({
+        question: 'Pick one',
+        options: ['A', 'B', 'C', 'D', 'E', 'F'],
+        multiple: false,
+        freeInput: false,
+      });
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(true);
+
+      composer.setInputRequest({
+        question: 'Pick a colour',
+        options: ['Red', 'Green'],
+        multiple: false,
+        freeInput: false,
+      });
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(false);
+    });
+
+    it('stays on when a dropdown question swaps to free input, and clears on dismissal', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      const frame = frameOf(composer);
+      composer.setInputRequest({
+        question: 'Pick one',
+        options: ['A', 'B', 'C', 'D', 'E', 'F'],
+        multiple: false,
+        freeInput: true,
+      });
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(true);
+
+      // "Type your own answer" hides the dropdown but the question is still the
+      // same one, so the strip must not flip back to the white input frame.
+      query(composer.element, '.chat-ask__free').click();
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(true);
+
+      composer.setInputRequest(undefined);
+      expect(frame.classList.contains(STRIP_CLASS)).toBe(false);
+    });
+  });
+
+  describe('the ask-user attention flash', () => {
+    const FLASH_CLASS = 'chat-composer__frame--attention';
+
+    function frameOf(composer: Composer): HTMLElement {
+      return query(composer.element, '.chat-composer__frame');
+    }
+
+    function dropdownQuestion() {
+      return {
+        question: 'Pick one',
+        options: ['A', 'B', 'C', 'D', 'E', 'F'],
+        multiple: false,
+        freeInput: false,
+      };
+    }
+
+    /** Fires the frame's own fade's `animationend`, exactly as the browser does. */
+    function endFlash(frame: HTMLElement): void {
+      const event = new dom.window.Event('animationend');
+      Object.defineProperty(event, 'animationName', { value: 'chat-composer-attention' });
+      frame.dispatchEvent(event);
+    }
+
+    it('flashes when a question appears, and stops as soon as the fade ends', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      const frame = frameOf(composer);
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(false);
+
+      composer.setInputRequest({
+        question: 'Pick a colour',
+        options: ['Red', 'Green'],
+        multiple: false,
+        freeInput: false,
+      });
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(true);
+
+      endFlash(frame);
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(false);
+    });
+
+    it('does not replay on a repaint, but flashes again for the next question', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      composer.setButtonState({ kind: 'stop' });
+      const frame = frameOf(composer);
+      const question = dropdownQuestion();
+
+      composer.setInputRequest(question);
+      endFlash(frame);
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(false);
+
+      // The pane repaints on every event/status poll; none of that may re-flash.
+      composer.setButtonState({ kind: 'stop' });
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(false);
+
+      // A later question flashes afresh.
+      composer.setInputRequest(question);
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(true);
+    });
+
+    it('flashes for an actions question, which has no option controls', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      composer.setButtonState({ kind: 'stop' });
+
+      composer.setInputRequest({ actions: ['Refine'], multiple: false, freeInput: false });
+
+      expect(frameOf(composer).classList.contains(FLASH_CLASS)).toBe(true);
+    });
+
+    it('does not flash when the question is dismissed', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({ actions: ['Refine'], multiple: false, freeInput: false });
+      const frame = frameOf(composer);
+      endFlash(frame);
+
+      composer.setInputRequest(undefined);
+
+      expect(frame.classList.contains(FLASH_CLASS)).toBe(false);
+    });
+  });
 });
