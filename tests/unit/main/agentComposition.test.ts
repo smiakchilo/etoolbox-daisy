@@ -6,6 +6,7 @@ import {
 import {
   type InstallAgentServiceDeps,
   createBridgeCurrentContext,
+  createConfiguredHosts,
   createCurrentAemServerContext,
   createCurrentPageContext,
   createEnvironmentFacts,
@@ -29,10 +30,14 @@ import type { Logger } from '../../../src/main/logger';
 import {
   type AgentService,
   type CurrentAemToolContext,
+  type ProjectConfig,
+  type ProjectId,
   type ServerConfig,
   newChatId,
+  newProjectId,
   newServerId,
   newTurnId,
+  projectConfigSchema,
   serverConfigSchema,
 } from '../../../src/shared';
 
@@ -138,6 +143,7 @@ describe('createCurrentPageContext', () => {
         origin: 'https://author.example',
         contentRoots: ['/content/a', '/content/b'],
         componentRoots: ['/apps/a'],
+        contentPriorityPaths: [],
       }),
     );
     const context = provider();
@@ -159,41 +165,51 @@ describe('createCurrentPageContext', () => {
 });
 
 describe('createEnvironmentFacts', () => {
-  function host(
-    origin: string,
-    roots: { contentRoots?: string; componentRoots?: string } = {},
-  ): ServerConfig {
+  function host(origin: string, projectId?: ProjectId): ServerConfig {
     return serverConfigSchema.parse({
       id: newServerId(counterIds('server')),
       label: 'Host',
       origin,
       color: { kind: 'swatch', swatch: 'blue' },
-      ...roots,
+      ...(projectId !== undefined ? { projectId } : {}),
       revision: 0,
     });
   }
 
-  it('matches the live URL to a configured host and resolves its roots', () => {
+  function project(
+    contentRoots: string,
+    componentRoots: string,
+    contentPriorityPaths?: string,
+  ): ProjectConfig {
+    return projectConfigSchema.parse({
+      id: newProjectId(counterIds('project')),
+      label: 'Project',
+      contentRoots,
+      componentRoots,
+      ...(contentPriorityPaths !== undefined ? { contentPriorityPaths } : {}),
+    });
+  }
+
+  it('matches the live URL to a configured host and resolves its project roots', () => {
+    const hpe = project('/content/a; /content/b', '/apps/a, /apps/b', '/content/a/x, /content/b');
     const facts = createEnvironmentFacts(
       () => 'https://author.example/editor.html/content/wknd/us/en.html',
-      () => [
-        host('https://author.example', {
-          contentRoots: '/content/a; /content/b',
-          componentRoots: '/apps/a, /apps/b',
-        }),
-      ],
+      () => [host('https://author.example', hpe.id)],
+      () => [hpe],
     )();
     expect(facts).toEqual({
       origin: 'https://author.example',
       contentRoots: ['/content/a', '/content/b'],
       componentRoots: ['/apps/a', '/apps/b'],
+      contentPriorityPaths: ['/content/a/x', '/content/b'],
     });
   });
 
-  it('defaults the roots when the matched host configures none', () => {
+  it('defaults the roots when the matched host has no project', () => {
     const facts = createEnvironmentFacts(
       () => 'https://author.example/content/x.html',
       () => [host('https://author.example')],
+      () => [],
     )();
     expect(facts?.contentRoots).toEqual(['/content']);
     expect(facts?.componentRoots).toEqual(['/apps']);
@@ -204,14 +220,68 @@ describe('createEnvironmentFacts', () => {
       createEnvironmentFacts(
         () => 'https://unconfigured.example/x.html',
         () => [host('https://author.example')],
+        () => [],
       )(),
     ).toBeUndefined();
     expect(
       createEnvironmentFacts(
         () => undefined,
         () => [host('https://author.example')],
+        () => [],
       )(),
     ).toBeUndefined();
+  });
+});
+
+describe('createConfiguredHosts', () => {
+  function project(id: string, contentRoots: string, componentRoots: string): ProjectConfig {
+    return projectConfigSchema.parse({
+      id: newProjectId(() => id),
+      label: `Project ${id}`,
+      contentRoots,
+      componentRoots,
+    });
+  }
+
+  function host(origin: string, projectId?: ProjectId): ServerConfig {
+    return serverConfigSchema.parse({
+      id: newServerId(counterIds('server')),
+      label: 'Host',
+      origin,
+      color: { kind: 'swatch', swatch: 'blue' },
+      ...(projectId !== undefined ? { projectId } : {}),
+      revision: 0,
+    });
+  }
+
+  it('resolves each host’s roots through its project, defaulting when it has none', () => {
+    const hpe = project('project-hpe', '/content/hpe', '/apps/hpe');
+    const configured = createConfiguredHosts(
+      () => [host('https://hpe.example', hpe.id), host('https://bare.example')],
+      () => [hpe],
+    )();
+
+    expect(
+      configured.map((entry) => ({
+        label: entry.label,
+        origin: entry.origin,
+        contentRoots: entry.contentRoots,
+        componentRoots: entry.componentRoots,
+      })),
+    ).toEqual([
+      {
+        label: 'Host',
+        origin: 'https://hpe.example',
+        contentRoots: ['/content/hpe'],
+        componentRoots: ['/apps/hpe'],
+      },
+      {
+        label: 'Host',
+        origin: 'https://bare.example',
+        contentRoots: ['/content'],
+        componentRoots: ['/apps'],
+      },
+    ]);
   });
 });
 

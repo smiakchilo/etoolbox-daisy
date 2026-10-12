@@ -25,6 +25,8 @@ export interface ConfiguredHostInfo {
   readonly origin: string;
   readonly contentRoots: readonly string[];
   readonly componentRoots: readonly string[];
+  /** Content priority paths in written order; empty when the host's project names none. */
+  readonly contentPriorityPaths: readonly string[];
 }
 
 /**

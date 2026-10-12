@@ -23,6 +23,7 @@ interface HostFact {
   readonly origin: string;
   readonly contentRoots: readonly string[];
   readonly componentRoots: readonly string[];
+  readonly priorityPaths: readonly string[];
   readonly current: boolean;
 }
 
@@ -49,6 +50,7 @@ function asHosts(value: JsonValue | undefined): readonly HostFact[] {
       origin,
       contentRoots: asStringList(record['contentRoots']),
       componentRoots: asStringList(record['componentRoots']),
+      priorityPaths: asStringList(record['priorityPaths']),
       current: record['current'] === true,
     });
   }
@@ -78,6 +80,12 @@ function describeCall(
       ['Current host', current?.origin],
       ['Content roots', current?.contentRoots.join(', ')],
       ['Component roots', current?.componentRoots.join(', ')],
+      [
+        'Priority paths',
+        current !== undefined && current.priorityPaths.length > 0
+          ? current.priorityPaths.join(', ')
+          : undefined,
+      ],
       ['Hosts', hostList.length > 0 ? hostList : undefined],
     ]),
   };

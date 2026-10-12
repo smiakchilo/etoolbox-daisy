@@ -546,18 +546,23 @@ if (!gotSingleInstanceLock) {
     // A long-running tool's progress notes, late-bound to the chat controller
     // for the same construction-order reason (see `createLateBoundToolProgress`).
     const lateBoundToolProgress = createLateBoundToolProgress();
-    // The host's content/component roots, resolved from the live pane URL and
-    // the current settings document. Read fresh so a roots edit in Settings is
-    // visible immediately; `loadSettingsSync` is a small synchronous read.
+    // The host's content/component roots, resolved from the live pane URL, the
+    // current settings document and the host's selected project. Read fresh so
+    // a roots/project edit in Settings is visible immediately;
+    // `loadSettingsSync` is a small synchronous read.
     const environmentFacts = createEnvironmentFacts(
       () => browserController.currentDocumentUrl(),
       () => loadSettingsSync(appPaths.settings).hosts,
+      () => loadSettingsSync(appPaths.settings).projects,
     );
     // The model-facing host catalogue (labels + origins + roots) and the
     // agent's navigation capability. `openPage` resolves the origin from the
     // configured host itself, so no origin reaches the pane from a tool
     // argument.
-    const configuredHosts = createConfiguredHosts(() => loadSettingsSync(appPaths.settings).hosts);
+    const configuredHosts = createConfiguredHosts(
+      () => loadSettingsSync(appPaths.settings).hosts,
+      () => loadSettingsSync(appPaths.settings).projects,
+    );
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({

@@ -1,6 +1,8 @@
 import type { AppInfo } from './app-info';
 import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from './agent-auth';
 import type {
+  AddProjectRequest,
+  AddProjectResult,
   AddProxyRequest,
   AddProxyResult,
   AddServerRequest,
@@ -8,14 +10,17 @@ import type {
   GetModelSelectionResult,
   GetSettingsSnapshotResult,
   PasswordTarget,
+  RemoveProjectRequest,
   RemoveProxyRequest,
   RemoveServerRequest,
+  ReorderProjectsRequest,
   ReorderProxiesRequest,
   ReorderServersRequest,
   SetAgentSettingsRequest,
   SetModelPreferencesRequest,
   SettingsIpcVoidResult,
   UpdateBrowserSettingsRequest,
+  UpdateProjectRequest,
   UpdateProxyRequest,
   UpdateServerPresentationRequest,
   UpdateServerPresentationResult,
@@ -184,6 +189,14 @@ export interface DaisySettingsApi {
   removeProxy(request: RemoveProxyRequest): Promise<SettingsIpcVoidResult>;
   /** Persists the proxy list's order (the Settings "Proxies" multifield's up/down actions). */
   reorderProxies(request: ReorderProxiesRequest): Promise<SettingsIpcVoidResult>;
+  /** Creates one entry in the projects library (the Settings "Projects" multifield's "Add item"). */
+  addProject(request: AddProjectRequest): Promise<AddProjectResult>;
+  /** Replaces one project entry's label and content/component roots. */
+  updateProject(request: UpdateProjectRequest): Promise<SettingsIpcVoidResult>;
+  /** Deletes one project entry (clearing it from every host that referenced it). */
+  removeProject(request: RemoveProjectRequest): Promise<SettingsIpcVoidResult>;
+  /** Persists the project list's order (the Settings "Projects" multifield's up/down actions). */
+  reorderProjects(request: ReorderProjectsRequest): Promise<SettingsIpcVoidResult>;
   /**
    * The model catalogue, the stored selection, and whether a turn currently
    * locks changes - all in one call (step 09). See

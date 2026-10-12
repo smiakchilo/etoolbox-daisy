@@ -41,6 +41,17 @@ export const SETTINGS_UPDATE_PROXY_CHANNEL = 'settings:update-proxy' as const;
 export const SETTINGS_REMOVE_PROXY_CHANNEL = 'settings:remove-proxy' as const;
 export const SETTINGS_REORDER_PROXIES_CHANNEL = 'settings:reorder-proxies' as const;
 /**
+ * The projects library (`settings.json`'s `projects` array), edited through the
+ * Settings "Projects" multifield and selected per hosts by the "Hosts" tab's
+ * Project combobox. `add-project` creates one entry, `update-project` replaces
+ * its label/roots, `remove-project` deletes it, and `reorder-projects`
+ * persists the list order.
+ */
+export const SETTINGS_ADD_PROJECT_CHANNEL = 'settings:add-project' as const;
+export const SETTINGS_UPDATE_PROJECT_CHANNEL = 'settings:update-project' as const;
+export const SETTINGS_REMOVE_PROJECT_CHANNEL = 'settings:remove-project' as const;
+export const SETTINGS_REORDER_PROJECTS_CHANNEL = 'settings:reorder-projects' as const;
+/**
  * Persists the host list's order (the rows in the Settings "Hosts" multifield
  * can be moved up/down; the order is meaningful because it drives the browser
  * toolbar's host picker). A full permutation of the configured server ids, not

@@ -3,8 +3,10 @@ import {
   appSettingsSchema,
   appSettingsSnapshotSchema,
   HOST_PROXY_NONE,
+  newProjectId,
   newProxyId,
   newServerId,
+  projectConfigSchema,
   proxyConfigSchema,
   serverConfigSchema,
   serverSnapshotSchema,
@@ -89,25 +91,29 @@ describe('toAppSettingsSnapshot', () => {
     expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
   });
 
-  it('projects a host’s content and component roots through unchanged', () => {
-    const serverA = server('server-a', 'https://a.example', {
+  it('projects a host’s project reference (projectId) through unchanged', () => {
+    const project = projectConfigSchema.parse({
+      id: newProjectId(() => 'project-1'),
+      label: 'HPE',
       contentRoots: '/content/a; /content/b',
       componentRoots: '/apps/a',
     });
+    const serverA = server('server-a', 'https://a.example', { projectId: project.id });
     const settings = appSettingsSchema.parse({
       hosts: [serverA],
+      projects: [project],
       proxies: [],
       agents: { [TEST_AGENT_ID]: { active: true } },
     });
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
 
-    expect(snapshot.hosts[0]?.contentRoots).toBe('/content/a; /content/b');
-    expect(snapshot.hosts[0]?.componentRoots).toBe('/apps/a');
+    expect(snapshot.hosts[0]?.projectId).toBe(project.id);
+    expect(snapshot.projects[0]?.contentRoots).toBe('/content/a; /content/b');
     expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
   });
 
-  it('omits the roots keys entirely when the host configures none', () => {
+  it('omits the projectId key entirely when the host configures no project', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({
       hosts: [serverA],
@@ -117,8 +123,8 @@ describe('toAppSettingsSnapshot', () => {
 
     const snapshot = toAppSettingsSnapshot(settings, () => false);
 
-    expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('contentRoots');
-    expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('componentRoots');
+    expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('projectId');
+    expect(snapshot.projects).toEqual([]);
   });
 
   it('calls the predicate with the exact secretRef recorded for that proxy', () => {

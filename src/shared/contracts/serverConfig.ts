@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { proxyIdSchema, serverIdSchema } from './ids';
+import { type ProjectId, projectIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
 
 /**
@@ -25,24 +25,6 @@ export const serverLabelSchema = z
   .min(1, 'must not be empty')
   .max(SERVER_LABEL_MAX_LENGTH, `must be at most ${String(SERVER_LABEL_MAX_LENGTH)} characters`)
   .refine((value) => value.trim() === value, 'must not have leading or trailing whitespace');
-
-const ENVIRONMENT_ROOT_TEXT_MAX_LENGTH = 2000;
-
-/**
- * Free text naming one or more JCR roots for a host, e.g.
- * `/content/a, /content/b`. The interpretation - comma-or-semicolon
- * separation (a comma wins over a semicolon), trimming, dropping unusable
- * tokens, and the `/content`/`/apps`
- * defaults - lives in `src/shared/tools/core/environment.ts`; this schema only
- * bounds the string. An empty string is accepted and means "no roots written",
- * identical to omitting the field; the forgiving reader drops it on load.
- */
-export const environmentRootTextSchema = z
-  .string()
-  .max(
-    ENVIRONMENT_ROOT_TEXT_MAX_LENGTH,
-    `must be at most ${String(ENVIRONMENT_ROOT_TEXT_MAX_LENGTH)} characters`,
-  );
 
 /**
  * A closed set of named accents, aligned with Adobe Spectrum's semantic
@@ -239,18 +221,18 @@ export const serverConfigSchema = z
     proxyId: hostProxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
     /**
-     * Where content lives on this instance, in free text (one or more JCR roots
-     * separated by `,`, or by `;` when no comma is present). Optional: absent
-     * means "use the `/content`
-     * default". Edited in Settings beside the label, so it is presentation -
-     * changing it never bumps `revision`.
+     * Which entry of the settings `projects` library describes this host's
+     * data layout (content/component roots), by id; the label is only ever a
+     * display concern. Absent means "(Default)" - no project, so the agent is
+     * told only the `/content`/`/apps` defaults. Referential integrity (a real
+     * id naming a configured project) is enforced by `appSettingsSchema`, not
+     * here, because only the whole document can see the library.
+     *
+     * Presentation, not targeting: it steers what the agent is told about the
+     * host's layout, not how a request reaches AEM, so changing it never bumps
+     * `revision` (the per-turn context block re-reads it).
      */
-    contentRoots: environmentRootTextSchema.optional(),
-    /**
-     * Where components live on this instance, in the same free-text form.
-     * Optional: absent means "use the `/apps` default".
-     */
-    componentRoots: environmentRootTextSchema.optional(),
+    projectId: projectIdSchema.optional(),
     revision: serverRevisionSchema,
   })
   .strict();
@@ -265,29 +247,51 @@ export type ServerConfig = Readonly<z.infer<typeof serverConfigSchema>>;
  * merged with an `if (isPresentationOnly(...))` check inside one function:
  * the type checker, not a runtime branch, is what stops a future caller from
  * passing a rename through the revision-bumping path by mistake - `label`/
- * `color`/`contentRoots`/`componentRoots` simply are not assignable to
- * {@link ServerTargetingChanges}.
+ * `color`/`projectId` simply are not assignable to {@link ServerTargetingChanges}.
  *
- * The roots are presentation rather than targeting: they steer what the agent
- * is told about the host's content and component layout, not how a request
- * reaches AEM, and the per-turn context block re-reads them, so changing them
- * must not invalidate an in-flight bridge request.
+ * The project reference is presentation rather than targeting: it steers what
+ * the agent is told about the host's content and component layout, not how a
+ * request reaches AEM, and the per-turn context block re-reads it, so changing
+ * it must not invalidate an in-flight bridge request.
  */
-export type ServerPresentationChanges = Partial<
-  Pick<ServerConfig, 'label' | 'color' | 'contentRoots' | 'componentRoots'>
->;
+export interface ServerPresentationChanges {
+  readonly label?: ServerConfig['label'];
+  readonly color?: ServerConfig['color'];
+  /**
+   * Which entry of the settings `projects` library describes this host's data
+   * layout, or `null` to reset it to "(Default)" (no project). Omitting the
+   * key leaves it unchanged - the same three-state convention
+   * {@link ServerTargetingChanges.proxyId} uses, for the same reason
+   * (`exactOptionalPropertyTypes` cannot distinguish an absent key from one
+   * set to `undefined`).
+   */
+  readonly projectId?: ProjectId | null;
+}
 
 /**
- * Updates label/colour only. `revision` is left untouched on purpose: it
- * exists solely so an in-flight AEM request can detect that its *targeting*
- * information (origin/proxy/TLS trust) is stale, and a rename or recolour
- * changes neither.
+ * Updates the presentation-only fields (label/colour/project). `revision` is
+ * left untouched on purpose: it exists solely so an in-flight AEM request can
+ * detect that its *targeting* information (origin/proxy/TLS trust) is stale,
+ * and none of these changes that. The project reference is presentation too -
+ * it steers what the agent is told about the host's content/component layout,
+ * and the per-turn context block re-reads it, so changing it must not
+ * invalidate an in-flight bridge request.
  */
 export function updatePresentation(
   config: ServerConfig,
   changes: ServerPresentationChanges,
 ): ServerConfig {
-  return serverConfigSchema.parse({ ...config, ...changes });
+  const next: Record<string, unknown> = { ...config };
+  if ('projectId' in changes) {
+    if (changes.projectId === null) {
+      delete next['projectId'];
+    } else {
+      next['projectId'] = changes.projectId;
+    }
+  }
+  if (changes.label !== undefined) next['label'] = changes.label;
+  if (changes.color !== undefined) next['color'] = changes.color;
+  return serverConfigSchema.parse(next);
 }
 
 /**

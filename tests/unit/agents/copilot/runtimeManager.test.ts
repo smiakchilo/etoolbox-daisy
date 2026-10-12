@@ -34,6 +34,7 @@ function settingsWith(overrides: { active?: AgentId; proxy?: ProxyId } = {}): Ap
   const active = overrides.active ?? TEST_AGENT_ID;
   return {
     hosts: [],
+    projects: [],
     proxies: [],
     agents: {
       [TEST_AGENT_ID]: { active: active === TEST_AGENT_ID },

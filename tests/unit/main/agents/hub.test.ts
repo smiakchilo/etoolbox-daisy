@@ -24,6 +24,7 @@ const DEFINITIONS: readonly AgentDefinition[] = [
 function settingsWithActive(id: AgentId | undefined): AppSettings {
   return {
     hosts: [],
+    projects: [],
     proxies: [],
     agents: {
       [ALPHA]: { active: id === ALPHA },

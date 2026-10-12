@@ -8,6 +8,7 @@ import {
   type IdGenerator,
   type JsonObject,
   type JsonValue,
+  type PrioritySegment,
   type PropertySelection,
   type RequestId,
   type RequiredAction,
@@ -27,6 +28,7 @@ import {
   ok,
   originSchema,
   parseOrigin,
+  planPrioritySegments,
   propertiesSelectionSchema,
   propertySelectionSchema,
   renderHasMore,
@@ -210,6 +212,10 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     "typically this host's content roots from the current-page context block) to run the same " +
     'query once per root and merge the rows; `limit` and `offset` then apply to each root, and ' +
     'the effective roots are reported back. Do not combine `roots` with a `path` predicate. ' +
+    'When the host configures priority paths and the search scope contains them, the ' +
+    'application returns rows from those paths first, in the configured order, then the rest ' +
+    'of the scope; `offset` and `limit` then address the whole ordered result as one list ' +
+    '(also across several `roots`). ' +
     'This tool returns data only and renders no table: to show search results to the user, ' +
     "call 'aem_query_format_ask' with the same `predicates` instead.",
   parameters: z.toJSONSchema(aemQueryArgsSchema, { io: 'input' }),
@@ -277,6 +283,12 @@ export const aemQuerySuccessSchema = z
      * query, which is always bracketed by its own `path` predicate.
      */
     roots: z.array(z.string()).optional(),
+    /**
+     * Present only when the host's priority paths ordered this result: the
+     * priority paths that applied to the scope, in the order they were read
+     * (everything else follows them). Omitted when no priority applied.
+     */
+    priorityPaths: z.array(z.string()).optional(),
     fetchedAt: z.number().int().nonnegative(),
     rows: z.array(jsonValueSchema),
     selection: propertySelectionSchema,
@@ -308,15 +320,27 @@ function renderTotal(total: TotalMatches): string {
 
 export function renderQuerySuccess(result: AemQuerySuccess): string {
   const { pagination } = result;
+  const prioritized = result.priorityPaths !== undefined && result.priorityPaths.length > 0;
   const lines = [
     `AEM query against ${result.sourceOrigin} (revision ${String(result.serverRevision)}, ` +
       `fetched at ${String(result.fetchedAt)})`,
     `Returned ${String(pagination.returned)} row(s) at offset ${String(pagination.offset)} ` +
-      `with limit ${String(pagination.limit)}${result.roots !== undefined ? ' per root' : ''}; ` +
+      `with limit ${String(pagination.limit)}${
+        result.roots !== undefined && !prioritized ? ' per root' : ''
+      }; ` +
       `${renderHasMore(pagination.hasMore)}; ${renderTotal(pagination.total)}`,
   ];
   if (result.roots !== undefined && result.roots.length > 0) {
-    lines.push(`Scoped to roots: ${result.roots.join(', ')} (one query per root, merged)`);
+    lines.push(
+      prioritized
+        ? `Scoped to roots: ${result.roots.join(', ')} (read root by root)`
+        : `Scoped to roots: ${result.roots.join(', ')} (one query per root, merged)`,
+    );
+  }
+  if (result.priorityPaths !== undefined && prioritized) {
+    lines.push(
+      `Ordered by priority paths: ${result.priorityPaths.join(', ')}, then the rest of the scope`,
+    );
   }
   lines.push(
     `Selection: ${renderSelection(result.selection)}`,
@@ -552,6 +576,8 @@ export interface ProjectQueryResultInput {
   readonly fetchedAt: number;
   /** The effective roots actually queried, for a root fan-out; omitted otherwise. */
   readonly roots?: readonly string[] | undefined;
+  /** The priority paths that ordered the result, in read order; omitted otherwise. */
+  readonly priorityPaths?: readonly string[] | undefined;
 }
 
 /**
@@ -586,6 +612,7 @@ export function projectQueryResult(input: ProjectQueryResultInput): AemQuerySucc
     serverRevision: input.serverRevision,
     predicates: { ...input.args.predicates },
     ...(input.roots !== undefined ? { roots: [...input.roots] } : {}),
+    ...(input.priorityPaths !== undefined ? { priorityPaths: [...input.priorityPaths] } : {}),
     fetchedAt: input.fetchedAt,
     rows,
     selection,
@@ -735,6 +762,13 @@ export interface AemQueryDeps {
    * Never affects the result.
    */
   readonly onClassified?: (requestId: RequestId, kind: AemResponseOutcome['kind']) => void;
+  /**
+   * The host's content priority paths, in written order, read by the executor
+   * from the application's environment facts when the tool runs. Never taken
+   * from the model. When one applies to the query scope the result is read in
+   * priority order (see {@link executePrioritizedQuery}).
+   */
+  readonly priorityPaths?: readonly string[] | undefined;
 }
 
 interface SingleQueryOutcome {
@@ -853,13 +887,186 @@ function mergeQueryEnvelopes(envelopes: readonly QueryEnvelope[]): QueryEnvelope
   };
 }
 
+/**
+ * The roots a priority ordering would apply to, or `undefined` when the query
+ * is not scoped in a way the application can reorder: the explicit `roots`
+ * (already collapsed), or a plain `path` predicate. A `path` carrying
+ * `path.flat`/`path.exact`/`path.self` sub-keys is left alone.
+ */
+function resolvePriorityScope(
+  args: AemQueryArgs,
+  roots: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (roots !== undefined) return roots;
+  const path = args.predicates['path'];
+  if (path === undefined) return undefined;
+  if (Object.keys(args.predicates).some((key) => key.startsWith('path.'))) return undefined;
+  const scope = effectiveRoots([path]);
+  return scope.length > 0 ? scope : undefined;
+}
+
+/**
+ * The smallest `N_group` name the model's own predicates do not already use, so
+ * the application's exclusion group can never merge with, or overwrite, one of
+ * the model's.
+ */
+function pickExclusionGroupName(predicates: Readonly<Record<string, string>>): string {
+  const keys = Object.keys(predicates);
+  for (let index = 1; ; index += 1) {
+    const name = `${String(index)}_group`;
+    if (!keys.some((key) => key === name || key.startsWith(`${name}.`))) return name;
+  }
+}
+
+/** The model's predicates narrowed to one segment: its path, minus the excluded paths. */
+function segmentPredicates(
+  predicates: Readonly<Record<string, string>>,
+  segment: PrioritySegment,
+  groupName: string,
+): Record<string, string> {
+  const scoped: Record<string, string> = { ...predicates, path: segment.path };
+  if (segment.exclude.length === 0) return scoped;
+  scoped[`${groupName}.p.not`] = 'true';
+  scoped[`${groupName}.p.or`] = 'true';
+  segment.exclude.forEach((path, index) => {
+    scoped[`${groupName}.${String(index + 1)}_path`] = path;
+  });
+  return scoped;
+}
+
+/**
+ * Reads one page - `[offset, offset + limit)` of the *whole ordered result* -
+ * out of disjoint segments, so the caller keeps paging with `offset += limit`
+ * and never sees where one segment ends and the next begins. The mapping is
+ * stateless: each call re-walks the segments in order, querying a segment at
+ * the offset still to be skipped and for the rows still needed. A segment that
+ * returns fewer rows than asked with `more === false` is exhausted; its size
+ * is subtracted from the offset and the walk moves on. Once the page is full
+ * every remaining segment gets a one-row probe, only to learn whether anything
+ * follows and how many rows there are.
+ *
+ * When the end of a segment cannot be established the walk stops and reports
+ * `hasMore: 'unknown'` - an offset is never guessed.
+ */
+async function executePrioritizedQuery(
+  envelope: AemQueryRequest,
+  deps: AemQueryDeps,
+  segments: readonly PrioritySegment[],
+  priorityPaths: readonly string[],
+  roots: readonly string[] | undefined,
+): Promise<AemQueryResult> {
+  const { args, requestId } = envelope;
+  const groupName = pickExclusionGroupName(args.predicates);
+
+  const hits: JsonValue[] = [];
+  const totals: TotalMatches[] = [];
+  const hasMores: HasMore[] = [];
+  let projectedProperties: readonly string[] = DEFAULT_PROJECTION;
+  let remainingOffset = args.offset;
+  let need = args.limit;
+
+  const respond = (page: QueryEnvelope): AemQueryResult =>
+    projectQueryResult({
+      envelope: page,
+      args,
+      projectedProperties,
+      requestId,
+      sourceOrigin: deps.origin,
+      serverRevision: envelope.serverRevision,
+      fetchedAt: deps.now(),
+      ...(roots !== undefined ? { roots } : {}),
+      priorityPaths,
+    });
+
+  for (const segment of segments) {
+    const predicates = segmentPredicates(args.predicates, segment, groupName);
+
+    if (need === 0) {
+      const probe = await runSingleQuery(deps, requestId, predicates, 0, 1, args.properties);
+      if (!probe.ok) return toolError(probe.key, requestId);
+      const found = probe.value.envelope;
+      if (found.hits.length > 0) {
+        // The probe's own total is a one-row guess; counting it would inflate the
+        // total past what was read ("22+" after a 20-row page). It only makes the
+        // total a lower bound.
+        totals.push({ accuracy: 'estimated', value: 0 });
+        hasMores.push(true);
+      } else {
+        totals.push(found.total);
+        hasMores.push(found.hasMore === false ? false : 'unknown');
+      }
+      continue;
+    }
+
+    const asked = need;
+    const single = await runSingleQuery(
+      deps,
+      requestId,
+      predicates,
+      remainingOffset,
+      asked,
+      args.properties,
+    );
+    if (!single.ok) return toolError(single.key, requestId);
+    projectedProperties = single.value.projectedProperties;
+    const found = single.value.envelope;
+    hits.push(...found.hits);
+    need -= found.hits.length;
+
+    if (found.hits.length === asked) {
+      totals.push(found.total);
+      hasMores.push(found.hasMore);
+      continue;
+    }
+
+    // Fewer rows than asked: only `more === false` proves the segment is over.
+    const size =
+      found.hasMore !== false
+        ? undefined
+        : found.hits.length > 0
+          ? remainingOffset + found.hits.length
+          : found.total.accuracy === 'unknown' || found.total.value > remainingOffset
+            ? undefined
+            : found.total.value;
+    if (size === undefined) {
+      return respond({ hits, hasMore: 'unknown', total: { accuracy: 'unknown' } });
+    }
+    totals.push({ accuracy: 'exact', value: size });
+    hasMores.push(false);
+    remainingOffset = Math.max(0, remainingOffset - size);
+  }
+
+  return respond({ hits, hasMore: mergeHasMore(hasMores), total: mergeTotals(totals) });
+}
+
 export async function executeAemQuery(
   envelope: AemQueryRequest,
   deps: AemQueryDeps,
 ): Promise<AemQueryResult> {
   const args = envelope.args;
+  const priorities = deps.priorityPaths ?? [];
 
-  if (args.roots === undefined) {
+  let roots: readonly string[] | undefined;
+  if (args.roots !== undefined) {
+    if (Object.prototype.hasOwnProperty.call(args.predicates, 'path')) {
+      return toolError('roots_and_path_conflict', envelope.requestId);
+    }
+    roots = effectiveRoots(args.roots);
+    if (roots.length === 0) {
+      return toolError('roots_not_usable', envelope.requestId);
+    }
+  }
+
+  if (priorities.length > 0) {
+    const scope = resolvePriorityScope(args, roots);
+    const segments = scope === undefined ? undefined : planPrioritySegments(scope, priorities);
+    if (scope !== undefined && segments !== undefined) {
+      const applicable = segments.slice(0, segments.length - scope.length).map((s) => s.path);
+      return executePrioritizedQuery(envelope, deps, segments, applicable, roots);
+    }
+  }
+
+  if (roots === undefined) {
     const single = await runSingleQuery(
       deps,
       envelope.requestId,
@@ -878,15 +1085,6 @@ export async function executeAemQuery(
       serverRevision: envelope.serverRevision,
       fetchedAt: deps.now(),
     });
-  }
-
-  if (Object.prototype.hasOwnProperty.call(args.predicates, 'path')) {
-    return toolError('roots_and_path_conflict', envelope.requestId);
-  }
-
-  const roots = effectiveRoots(args.roots);
-  if (roots.length === 0) {
-    return toolError('roots_not_usable', envelope.requestId);
   }
 
   const envelopes: QueryEnvelope[] = [];
@@ -957,10 +1155,11 @@ export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unkno
     // `exactOptionalPropertyTypes` an optional property is omitted, never set
     // to `undefined`, and `JsonValue` has no `undefined`.
     toPayload: (result): JsonValue => {
-      const { roots, ...rest } = result;
+      const { roots, priorityPaths, ...rest } = result;
       return {
         ...rest,
         ...(roots !== undefined ? { roots: [...roots] } : {}),
+        ...(priorityPaths !== undefined ? { priorityPaths: [...priorityPaths] } : {}),
         textResultForLlm: renderQuerySuccess(result),
         resultType: 'success',
       };

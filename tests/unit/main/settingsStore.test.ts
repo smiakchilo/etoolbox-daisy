@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  addProject,
   addProxy,
   addServer,
   agentTokenSecretRef,
@@ -15,26 +16,32 @@ import {
   loadSettingsSync,
   normalizeSettingsDocument,
   proxySecretRef,
+  removeProject,
   removeProxy,
   removeServer,
   repairProxyEntries,
+  reorderProjects,
   reorderProxies,
   reorderServers,
   saveSettings,
   settingsFilePath,
   updateAgentToken,
   updateModelPreferences,
+  updateProject,
   updateProxy,
 } from '../../../src/main/settingsStore';
 import {
   type AgentId,
   type AppSettings,
+  type ProjectConfig,
   type ServerConfig,
   appSettingsSchema,
   defaultAppSettings,
   HOST_PROXY_NONE,
+  newProjectId,
   newProxyId,
   newServerId,
+  projectConfigSchema,
   proxyConfigSchema,
   serverConfigSchema,
 } from '../../../src/shared';
@@ -311,10 +318,11 @@ describe('normalizeSettingsDocument', () => {
     return normalizeSettingsDocument(raw) as Record<string, unknown>;
   }
 
-  it('defaults missing hosts, proxies and agents', () => {
+  it('defaults missing hosts, projects, proxies and agents', () => {
     const normalized = normalize({});
 
     expect(normalized['hosts']).toEqual([]);
+    expect(normalized['projects']).toEqual([]);
     expect(normalized['proxies']).toEqual([]);
     expect(normalized['agents']).toEqual({});
   });
@@ -440,7 +448,7 @@ describe('normalizeSettingsDocument', () => {
     });
   });
 
-  it('keeps and trims a host’s roots, and drops an empty one', () => {
+  it('drops legacy host roots, which moved to projects', () => {
     const normalized = normalize({
       hosts: [
         {
@@ -450,7 +458,7 @@ describe('normalizeSettingsDocument', () => {
           color: { kind: 'swatch', swatch: 'blue' },
           revision: 0,
           contentRoots: '  /content/a; /content/b  ',
-          componentRoots: '   ',
+          componentRoots: '/apps/a',
         },
       ],
       proxies: [],
@@ -458,8 +466,68 @@ describe('normalizeSettingsDocument', () => {
     });
 
     const host = (normalized['hosts'] as Record<string, unknown>[])[0];
-    expect(host?.['contentRoots']).toBe('/content/a; /content/b');
+    expect(host).not.toHaveProperty('contentRoots');
     expect(host).not.toHaveProperty('componentRoots');
+  });
+
+  it('keeps and trims a project’s roots, and drops an empty one', () => {
+    const normalized = normalize({
+      hosts: [],
+      projects: [
+        {
+          id: 'project-a',
+          label: '  HPE  ',
+          contentRoots: '  /content/a; /content/b  ',
+          componentRoots: '   ',
+          contentPriorityPaths: '  /content/a/x  ',
+        },
+      ],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const project = (normalized['projects'] as Record<string, unknown>[])[0];
+    expect(project?.['id']).toBe('project-a');
+    expect(project?.['label']).toBe('HPE');
+    expect(project?.['contentRoots']).toBe('/content/a; /content/b');
+    expect(project?.['contentPriorityPaths']).toBe('/content/a/x');
+    expect(project).not.toHaveProperty('componentRoots');
+  });
+
+  it('drops a project with no usable label', () => {
+    const normalized = normalize({
+      hosts: [],
+      projects: [
+        { id: 'project-a', label: '   ' },
+        { id: 'project-b', label: 'Acme' },
+      ],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const projects = normalized['projects'] as Record<string, unknown>[];
+    expect(projects).toHaveLength(1);
+    expect(projects[0]?.['id']).toBe('project-b');
+  });
+
+  it('clears a host’s reference to a project that does not resolve', () => {
+    const normalized = normalize({
+      hosts: [
+        {
+          id: 'server-a',
+          origin: 'https://a.example',
+          label: 'A',
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+          projectId: 'ghost',
+        },
+      ],
+      projects: [],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    expect((normalized['hosts'] as Record<string, unknown>[])[0]).not.toHaveProperty('projectId');
   });
 
   it('clears references that no longer resolve and an effort with no model', () => {
@@ -1143,6 +1211,133 @@ describe('proxy library mutations', () => {
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe('invalid_change');
+  });
+});
+
+describe('project library mutations', () => {
+  const projectId = newProjectId(() => 'project-a');
+
+  function withProject(overrides: Partial<ProjectConfig> = {}): AppSettings {
+    return {
+      ...defaultAppSettings(),
+      projects: [projectConfigSchema.parse({ id: projectId, label: 'HPE', ...overrides })],
+    };
+  }
+
+  it('addProject appends an entry with its roots', () => {
+    const result = addProject(defaultAppSettings(), projectId, {
+      label: 'HPE',
+      contentRoots: '/content/a; /content/b',
+      componentRoots: '/apps/a',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.projects).toEqual([
+        {
+          id: projectId,
+          label: 'HPE',
+          contentRoots: '/content/a; /content/b',
+          componentRoots: '/apps/a',
+        },
+      ]);
+      expect(result.value.project.id).toBe(projectId);
+    }
+  });
+
+  it('addProject drops a blank root rather than storing an empty string', () => {
+    const result = addProject(defaultAppSettings(), projectId, {
+      label: 'HPE',
+      contentRoots: '   ',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.projects[0]).not.toHaveProperty('contentRoots');
+    }
+  });
+
+  it('updateProject is a full replace: omitting a root clears it', () => {
+    const settings = withProject({ contentRoots: '/content/a', componentRoots: '/apps/a' });
+
+    const result = updateProject(settings, projectId, { label: 'HPE Dev' });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.settings.projects[0]).toEqual({ id: projectId, label: 'HPE Dev' });
+    }
+  });
+
+  it('addProject stores priority paths, and updateProject clears them when omitted', () => {
+    const added = addProject(defaultAppSettings(), projectId, {
+      label: 'HPE',
+      contentPriorityPaths: '  /content/a/x, /content/a/y  ',
+    });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.value.settings.projects[0]?.contentPriorityPaths).toBe(
+      '/content/a/x, /content/a/y',
+    );
+
+    const cleared = updateProject(added.value.settings, projectId, { label: 'HPE' });
+    expect(cleared.ok).toBe(true);
+    if (cleared.ok) {
+      expect(cleared.value.settings.projects[0]).not.toHaveProperty('contentPriorityPaths');
+    }
+  });
+
+  it('updateProject returns project_not_found for an unknown id', () => {
+    const result = updateProject(defaultAppSettings(), projectId, { label: 'X' });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('project_not_found');
+  });
+
+  it('removeProject clears the reference from every host that named it', () => {
+    const host = serverConfigSchema.parse({
+      id: newServerId(() => 'server-a'),
+      label: 'A',
+      origin: 'https://a.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      projectId,
+      revision: 0,
+    });
+    const settings: AppSettings = { ...withProject(), hosts: [host] };
+
+    const result = removeProject(settings, projectId);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.projects).toEqual([]);
+      expect(result.value.hosts[0]).not.toHaveProperty('projectId');
+    }
+  });
+
+  it('removeProject returns project_not_found for an unknown id', () => {
+    const result = removeProject(defaultAppSettings(), projectId);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('project_not_found');
+  });
+
+  it('reorderProjects persists the whole desired order and rejects a non-permutation', () => {
+    const a = newProjectId(() => 'project-a');
+    const b = newProjectId(() => 'project-b');
+    const settings: AppSettings = {
+      ...defaultAppSettings(),
+      projects: [
+        projectConfigSchema.parse({ id: a, label: 'A' }),
+        projectConfigSchema.parse({ id: b, label: 'B' }),
+      ],
+    };
+
+    const reordered = reorderProjects(settings, [b, a]);
+    expect(reordered.ok).toBe(true);
+    if (reordered.ok) expect(reordered.value.projects.map((project) => project.id)).toEqual([b, a]);
+
+    const wrong = reorderProjects(settings, [a]);
+    expect(wrong.ok).toBe(false);
+    if (!wrong.ok) expect(wrong.error.kind).toBe('invalid_change');
   });
 });
 

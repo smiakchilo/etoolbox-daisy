@@ -17,6 +17,7 @@ export * from './origin';
 export * from './userInput';
 export * from './agents';
 export * from './serverConfig';
+export * from './projectConfig';
 export * from './appSettings';
 export * from './modelCatalog';
 export * from './settingsSnapshot';

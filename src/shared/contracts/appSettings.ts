@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { agentIdSchema, proxyIdSchema } from './ids';
 import { originSchema } from './origin';
+import { projectConfigSchema, type ProjectConfig } from './projectConfig';
 import {
   HOST_PROXY_NONE,
   proxyCredentialsSchema,
@@ -162,6 +163,15 @@ export type BrowserSettings = Readonly<z.infer<typeof browserSettingsSchema>>;
 export const appSettingsSchema = z
   .object({
     hosts: z.array(serverConfigSchema),
+    /**
+     * The projects library: named bundles of host-structure facts
+     * (content/component roots) that a host references by id. Edited through
+     * the Settings "Projects" multifield and selected per hosts by the Settings
+     * "Hosts" Project combobox. Defaulted to `[]` like `browser` below, because
+     * a settings file written before projects existed has no such key and must
+     * still load; `normalizeSettingsDocument` supplies it on the real read path.
+     */
+    projects: z.array(projectConfigSchema).default([]),
     proxies: z.array(proxyConfigSchema),
     agents: z.record(agentIdSchema, agentSettingsSchema),
     browser: browserSettingsSchema.default({ disableNativeWebAuthn: true }),
@@ -188,6 +198,18 @@ export const appSettingsSchema = z
         });
       } else {
         seenOrigins.add(server.origin);
+      }
+    });
+    const seenProjectIds = new Set<string>();
+    settings.projects.forEach((project, index) => {
+      if (seenProjectIds.has(project.id)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `duplicate project id: ${project.id}`,
+          path: ['projects', index, 'id'],
+        });
+      } else {
+        seenProjectIds.add(project.id);
       }
     });
     const seenProxyIds = new Set<string>();
@@ -217,6 +239,19 @@ export const appSettingsSchema = z
           code: 'custom',
           message: `proxyId "${host.proxyId}" does not refer to a configured proxy`,
           path: ['hosts', index, 'proxyId'],
+        });
+      }
+    });
+    // A host's project reference must resolve too: a dangling reference would
+    // silently fall back to the default roots instead of the ones the user
+    // configured. Removing a project clears it from every host that named it
+    // (see `removeProject` in `settingsStore.ts`).
+    settings.hosts.forEach((host, index) => {
+      if (host.projectId !== undefined && !seenProjectIds.has(host.projectId)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `projectId "${host.projectId}" does not refer to a configured project`,
+          path: ['hosts', index, 'projectId'],
         });
       }
     });
@@ -266,18 +301,23 @@ export const appSettingsSchema = z
     }
   });
 
-export type AppSettings = Readonly<Omit<z.infer<typeof appSettingsSchema>, 'hosts' | 'proxies'>> & {
+export type AppSettings = Readonly<
+  Omit<z.infer<typeof appSettingsSchema>, 'hosts' | 'proxies' | 'projects'>
+> & {
   readonly hosts: readonly ServerConfig[];
   readonly proxies: readonly ProxyConfig[];
+  readonly projects: readonly ProjectConfig[];
 };
 
 /**
- * A valid, empty settings document: no hosts, no proxies, no agent nodes (the
- * agent catalogue is discovered, not seeded here), and the browser defaults (`browser.disableNativeWebAuthn: true`).
+ * A valid, empty settings document: no hosts, no projects, no proxies, no
+ * agent nodes (the agent catalogue is discovered, not seeded here), and the
+ * browser defaults (`browser.disableNativeWebAuthn: true`).
  */
 export function defaultAppSettings(): AppSettings {
   return appSettingsSchema.parse({
     hosts: [],
+    projects: [],
     proxies: [],
     agents: {},
     browser: {},

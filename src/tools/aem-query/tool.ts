@@ -23,7 +23,10 @@ export const tool: ModelToolModule = {
     'served by an index; on a property the instance does not index, AEM traverses the whole ' +
     'subtree and stops without returning data - narrow the path/roots or add a "type" instead. ' +
     'To open a page the user names, resolve it here first: browser_navigate accepts only a path ' +
-    'this search returned, or a path the user typed - never one built from a name.',
+    'this search returned, or a path the user typed - never one built from a name. When the ' +
+    'host configures priority paths, the application orders the rows by them (the priority paths ' +
+    "first, in order, then the rest of the scope) and 'offset' keeps addressing the one ordered " +
+    'list, so keep paging with a higher offset.',
   createExecutor: (host) =>
     createAemQueryExecutor({
       execute: (envelope, deps) =>
@@ -32,6 +35,7 @@ export const tool: ModelToolModule = {
           now: deps.now,
           fetchThroughBridge: (url) => host.bridge.request(envelope, url),
           onClassified: (requestId, kind) => host.recordResponseClassification?.(requestId, kind),
+          priorityPaths: host.environmentFacts()?.contentPriorityPaths,
         }),
       runtimeDeps: { now: host.clock },
       currentContext: host.currentContext,

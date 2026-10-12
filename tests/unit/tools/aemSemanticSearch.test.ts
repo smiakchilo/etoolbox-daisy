@@ -86,7 +86,12 @@ function makeHost(
       chatId: 'chat' as never,
       turnId: 'turn' as never,
     }),
-    environmentFacts: () => ({ origin: ORIGIN, contentRoots, componentRoots: ['/apps'] }),
+    environmentFacts: () => ({
+      origin: ORIGIN,
+      contentRoots,
+      componentRoots: ['/apps'],
+      contentPriorityPaths: [],
+    }),
     configuredHosts: () => [],
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.reject(new Error('asks only through ask_user')),

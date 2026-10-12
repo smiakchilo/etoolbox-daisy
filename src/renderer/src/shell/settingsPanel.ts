@@ -2,6 +2,7 @@ import { el } from '../lib/dom';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
 import type { AppSettingsSnapshot } from '../../../shared';
 import { createAgentsSection } from '../settings/agentsSection';
+import { createProjectsSection } from '../settings/projectsSection';
 import { createProxiesSection } from '../settings/proxiesSection';
 import { createHostsSection } from '../settings/hostsSection';
 import { createBrowserSection } from '../settings/browserSection';
@@ -17,10 +18,10 @@ import { createPanel, type Panel } from './panel';
  * The Settings surface as a whole-size panel (`panel.ts`), superseding the
  * separate Settings child window (`requirements-decisions.md` section 8, as
  * deviated). It reuses the same section
- * components the window used to mount (hosts, agents, proxies) and the same
- * re-fetch-on-change rhythm:
+ * components the window used to mount (hosts, projects, agents, proxies) and
+ * the same re-fetch-on-change rhythm:
  * every section that mutates settings calls back into `reload`, which
- * re-reads the snapshot, re-renders the host/proxy sections,
+ * re-reads the snapshot, re-renders the host/project/proxy sections,
  * refreshes the Agents tab, and reports the fresh snapshot to the caller
  * so the shell's browser pane follows along in real time.
  *
@@ -50,7 +51,7 @@ export interface SettingsPanel extends Panel {
 }
 
 /** The Settings panel's tab ids, in strip order. */
-export type SettingsTab = 'hosts' | 'agents' | 'proxies' | 'browser';
+export type SettingsTab = 'hosts' | 'projects' | 'agents' | 'proxies' | 'browser';
 
 export interface CreateSettingsPanelOptions {
   /**
@@ -114,6 +115,11 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     status,
     reportSave: reportWith,
   });
+  const projectsSection = createProjectsSection({
+    onSettingsChanged: () => void reload(),
+    status,
+    reportSave: reportWith,
+  });
   const browserSection = createBrowserSection({
     status,
     reportSave: reportWith,
@@ -132,8 +138,12 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     // server options should follow the committed state immediately).
     // The hosts section is always told about the latest proxies: its Proxy
     // combobox must reflect library changes even when a host edit is pending.
-    hostsSection.update(result.snapshot.hosts, result.snapshot.proxies);
+    // The hosts section is always told about the latest proxies and projects:
+    // its Proxy/Project comboboxes must reflect library changes even when a
+    // host edit is pending.
+    hostsSection.update(result.snapshot.hosts, result.snapshot.proxies, result.snapshot.projects);
     if (!proxiesSection.hasPendingEdits()) proxiesSection.update(result.snapshot.proxies);
+    if (!projectsSection.hasPendingEdits()) projectsSection.update(result.snapshot.projects);
     browserSection.update(result.snapshot);
     // The Agents tab does its own IPC reads rather than rendering a projection
     // of the snapshot: it needs the live sign-in status and the active agent's
@@ -150,6 +160,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   async function flushPendingEdits(): Promise<void> {
     await hostsSection.flushNow();
     await proxiesSection.flushNow();
+    await projectsSection.flushNow();
     await agentsSection.flushNow();
   }
 
@@ -163,6 +174,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     readonly element: HTMLElement;
   }> = [
     { value: 'hosts', label: 'Hosts', element: hostsSection.element },
+    { value: 'projects', label: 'Projects', element: projectsSection.element },
     { value: 'agents', label: 'Agents', element: agentsSection.element },
     // Browser sits ahead of Proxies: the default proxy is a property of the
     // browser pane, and a host's Proxy combobox offers "(Default)" which points
@@ -234,6 +246,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     dispose(): void {
       hostsSection.dispose();
       proxiesSection.dispose();
+      projectsSection.dispose();
       agentsSection.dispose();
       browserSection.dispose();
       panel.dispose();

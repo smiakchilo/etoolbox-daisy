@@ -24,6 +24,7 @@ const HOSTS: readonly ConfiguredHostInfo[] = [
     origin: 'https://author.example',
     contentRoots: ['/content/a', '/content/b'],
     componentRoots: ['/apps/a'],
+    contentPriorityPaths: ['/content/a/blueprint'],
   },
   {
     serverId: newServerId(ids),
@@ -31,6 +32,7 @@ const HOSTS: readonly ConfiguredHostInfo[] = [
     origin: 'https://stage.example',
     contentRoots: ['/content'],
     componentRoots: ['/apps'],
+    contentPriorityPaths: [],
   },
 ];
 
@@ -78,6 +80,22 @@ describe('executeEnvironmentFacts', () => {
     expect(payload.fetchedAt).toBe(42);
   });
 
+  it('reports priority paths only for a host that configures them', () => {
+    const result = executeEnvironmentFacts(newRequestId(ids), {
+      configuredHosts: () => HOSTS,
+      currentOrigin: () => 'https://author.example',
+      now: () => 42,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const payload = result.value as unknown as {
+      hosts: Array<{ priorityPaths?: string[]; textResultForLlm?: string }>;
+      textResultForLlm?: string;
+    };
+    expect(payload.hosts[0]?.priorityPaths).toEqual(['/content/a/blueprint']);
+    expect(payload.hosts[1]).not.toHaveProperty('priorityPaths');
+  });
+
   it('fails when no host is configured', () => {
     const result = executeEnvironmentFacts(newRequestId(ids), {
       configuredHosts: () => [],
@@ -99,6 +117,7 @@ describe('createEnvironmentFactsExecutor', () => {
           origin: 'https://author.example',
           contentRoots: ['/content/a', '/content/b'],
           componentRoots: ['/apps/a'],
+          contentPriorityPaths: [],
         }),
       }),
     );

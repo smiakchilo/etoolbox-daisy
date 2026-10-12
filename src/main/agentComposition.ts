@@ -18,6 +18,7 @@ import {
   type IdGenerator,
   type ModelCatalogEntry,
   type ModelPreference,
+  type ProjectConfig,
   type ServerConfig,
   type SessionStreamState,
   type ToolCallId,
@@ -27,7 +28,7 @@ import {
   originsMatch,
   parseNavigationTarget,
   renderCurrentPageContextForModel,
-  resolveEnvironmentRoots,
+  resolveHostEnvironmentRoots,
 } from '../shared';
 
 /**
@@ -120,6 +121,7 @@ export function createCurrentPageContext(
 export function createEnvironmentFacts(
   getDocumentUrl: () => string | undefined,
   getHosts: () => readonly ServerConfig[],
+  getProjects: () => readonly ProjectConfig[],
 ): () => EnvironmentFacts | undefined {
   return () => {
     const documentUrl = getDocumentUrl();
@@ -128,11 +130,12 @@ export function createEnvironmentFacts(
     if (!target.ok) return undefined;
     const host = getHosts().find((candidate) => originsMatch(candidate.origin, target.origin));
     if (host === undefined) return undefined;
-    const roots = resolveEnvironmentRoots(host.contentRoots, host.componentRoots);
+    const roots = resolveHostEnvironmentRoots(host, getProjects());
     return {
       origin: target.origin,
       contentRoots: roots.contentRoots,
       componentRoots: roots.componentRoots,
+      contentPriorityPaths: roots.contentPriorityPaths,
     };
   };
 }
@@ -140,25 +143,27 @@ export function createEnvironmentFacts(
 /**
  * Builds the model-facing host catalogue the `environment_facts` tool and the
  * `browser_navigate` tool read: every configured host as a label, an origin and
- * its effective roots.
+ * its effective roots (resolved through the host's selected project).
  *
- * `getHosts` is read fresh on every call, so a host added, renamed or re-rooted
- * in Settings is visible on the very next tool call - the same
- * closure-not-snapshot rule as {@link createEnvironmentFacts}. The origins come
- * from the settings document, never from a tool argument.
+ * `getHosts`/`getProjects` are read fresh on every call, so a host added,
+ * renamed or re-rooted in Settings is visible on the very next tool call - the
+ * same closure-not-snapshot rule as {@link createEnvironmentFacts}. The origins
+ * come from the settings document, never from a tool argument.
  */
 export function createConfiguredHosts(
   getHosts: () => readonly ServerConfig[],
+  getProjects: () => readonly ProjectConfig[],
 ): () => readonly ConfiguredHostInfo[] {
   return () =>
     getHosts().map((host) => {
-      const roots = resolveEnvironmentRoots(host.contentRoots, host.componentRoots);
+      const roots = resolveHostEnvironmentRoots(host, getProjects());
       return {
         serverId: host.id,
         label: host.label,
         origin: host.origin,
         contentRoots: roots.contentRoots,
         componentRoots: roots.componentRoots,
+        contentPriorityPaths: roots.contentPriorityPaths,
       };
     });
 }

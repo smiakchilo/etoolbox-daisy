@@ -81,15 +81,17 @@ test('Settings sections are real tab panels, switching their content', async () 
     // folded into the single Agents tab, which hosts the provider's
     // active badge/set-active control, sign-in and model/effort pickers
     // together - see agentsSection.ts.)
-    const labels = ['Hosts', 'Agents', 'Browser', 'Proxies'];
+    const labels = ['Hosts', 'Projects', 'Agents', 'Browser', 'Proxies'];
     await expect(tabs.locator('sp-tab')).toHaveCount(labels.length);
     for (const label of labels) {
       await expect(tabs.locator('sp-tab', { hasText: label })).toHaveCount(1);
     }
-    // Browser sits ahead of Proxies (position 3), because a host's Proxy
-    // combobox offers "(Default)" pointing at the browser's default proxy.
-    await expect(tabs.locator('sp-tab').nth(2)).toHaveText('Browser');
-    await expect(tabs.locator('sp-tab').nth(3)).toHaveText('Proxies');
+    // Projects sits right after Hosts; Browser sits ahead of Proxies, because a
+    // host's Proxy combobox offers "(Default)" pointing at the browser's default
+    // proxy.
+    await expect(tabs.locator('sp-tab').nth(1)).toHaveText('Projects');
+    await expect(tabs.locator('sp-tab').nth(3)).toHaveText('Browser');
+    await expect(tabs.locator('sp-tab').nth(4)).toHaveText('Proxies');
 
     // Hosts is selected by default; every other panel is hidden. The panel's
     // node value is `hosts` (not `servers`) - the surface language was renamed
@@ -98,7 +100,7 @@ test('Settings sections are real tab panels, switching their content', async () 
     const selectedPanel = settings.locator('.settings-panel__tab-panel[selected]');
     await expect(selectedPanel).toHaveCount(1);
     await expect(selectedPanel.first()).toHaveAttribute('value', 'hosts');
-    for (const panelValue of ['browser', 'agents', 'proxies']) {
+    for (const panelValue of ['browser', 'agents', 'proxies', 'projects']) {
       await expect(
         settings.locator(`.settings-panel__tab-panel[value="${panelValue}"]`),
       ).toBeHidden();

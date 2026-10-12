@@ -1,13 +1,15 @@
 import { z } from 'zod';
 import {
   appSettingsSnapshotSchema,
+  projectSnapshotSchema,
   proxySnapshotSchema,
   serverSnapshotSchema,
   type AppSettingsSnapshot,
+  type ProjectSnapshot,
   type ProxySnapshot,
   type ServerSnapshot,
 } from './contracts';
-import { proxyIdSchema, serverIdSchema } from './contracts';
+import { projectIdSchema, proxyIdSchema, serverIdSchema } from './contracts';
 import { agentIdSchema } from './contracts';
 import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
@@ -96,6 +98,8 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'server_not_found',
   /** No proxy-library entry with the given id exists. */
   'proxy_not_found',
+  /** No project-library entry with the given id exists. */
+  'project_not_found',
   /** No agent with the given id exists in the agent registry. */
   'agent_not_found',
   /** An origin change was requested without the matching confirmation for that exact origin. */
@@ -184,10 +188,8 @@ export const addServerRequestSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
-    /** Optional free-text content roots captured on a draft row. */
-    contentRoots: environmentRootTextSchema.optional(),
-    /** Optional free-text component roots captured on a draft row. */
-    componentRoots: environmentRootTextSchema.optional(),
+    /** Optional project id captured on a draft row (its "(Default)" choice is the absence of this key). */
+    projectId: projectIdSchema.optional(),
   })
   .strict();
 
@@ -211,9 +213,9 @@ export const removeServerRequestSchema = z.object({ serverId: serverIdSchema }).
 export type RemoveServerRequest = Readonly<z.infer<typeof removeServerRequestSchema>>;
 
 /**
- * `settings:update-server-presentation` - label/colour and the content/component
- * roots, never bumps `revision`. A roots field sent as `""` clears it (the
- * reader drops an empty value on the next load).
+ * `settings:update-server-presentation` - label/colour and the project
+ * reference, never bumps `revision`. `projectId: null` resets the host to
+ * "(Default)" (no project); omitting it leaves the current selection alone.
  */
 export const updateServerPresentationRequestSchema = z
   .object({
@@ -222,8 +224,7 @@ export const updateServerPresentationRequestSchema = z
       .object({
         label: serverLabelSchema.optional(),
         color: serverColorSchema.optional(),
-        contentRoots: environmentRootTextSchema.optional(),
-        componentRoots: environmentRootTextSchema.optional(),
+        projectId: projectIdSchema.nullable().optional(),
       })
       .strict(),
   })
@@ -334,6 +335,74 @@ export const reorderProxiesRequestSchema = z
   .strict();
 
 export type ReorderProxiesRequest = Readonly<z.infer<typeof reorderProxiesRequestSchema>>;
+
+// ---------------------------------------------------------------------------
+// Projects library (the `projects` array)
+// ---------------------------------------------------------------------------
+
+/**
+ * `settings:add-project` - creates one entry in the projects library (the
+ * "Add item" action of the Settings "Projects" multifield). `label` is
+ * required; the content/component roots are optional free text captured while
+ * the row is still a draft.
+ */
+export const addProjectRequestSchema = z
+  .object({
+    label: serverLabelSchema,
+    contentRoots: environmentRootTextSchema.optional(),
+    componentRoots: environmentRootTextSchema.optional(),
+    contentPriorityPaths: environmentRootTextSchema.optional(),
+  })
+  .strict();
+
+export type AddProjectRequest = Readonly<z.infer<typeof addProjectRequestSchema>>;
+
+export const addProjectResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), project: projectSnapshotSchema }).strict(),
+  z.object({ ok: z.literal(false), error: settingsIpcErrorSchema }).strict(),
+]);
+
+export type AddProjectResult =
+  | { readonly ok: true; readonly project: ProjectSnapshot }
+  | { readonly ok: false; readonly error: SettingsIpcError };
+
+export function parseAddProjectResult(candidate: unknown): AddProjectResult {
+  return addProjectResultSchema.parse(candidate);
+}
+
+/**
+ * `settings:update-project` - replaces one entry's label and roots. A full
+ * replace, not a patch, matching `updateProxyRequestSchema`'s shape: omitting a
+ * roots key clears it (the reader drops an empty value on the next load).
+ */
+export const updateProjectRequestSchema = z
+  .object({
+    projectId: projectIdSchema,
+    label: serverLabelSchema,
+    contentRoots: environmentRootTextSchema.optional(),
+    componentRoots: environmentRootTextSchema.optional(),
+    contentPriorityPaths: environmentRootTextSchema.optional(),
+  })
+  .strict();
+
+export type UpdateProjectRequest = Readonly<z.infer<typeof updateProjectRequestSchema>>;
+
+/** `settings:remove-project`. */
+export const removeProjectRequestSchema = z.object({ projectId: projectIdSchema }).strict();
+export type RemoveProjectRequest = Readonly<z.infer<typeof removeProjectRequestSchema>>;
+
+/**
+ * `settings:reorder-projects` - the Settings "Projects" multifield's up/down
+ * actions. The whole desired order, not one step; main validates it is a
+ * permutation (see `reorderProjects` in `settingsStore.ts`).
+ */
+export const reorderProjectsRequestSchema = z
+  .object({
+    projectIds: z.array(projectIdSchema),
+  })
+  .strict();
+
+export type ReorderProjectsRequest = Readonly<z.infer<typeof reorderProjectsRequestSchema>>;
 
 // ---------------------------------------------------------------------------
 // Settings mutation results (step 05)

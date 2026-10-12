@@ -26,6 +26,8 @@ export interface EnvironmentFacts {
   readonly contentRoots: readonly string[];
   /** Effective component roots, in written order, never empty (defaults to `/apps`). */
   readonly componentRoots: readonly string[];
+  /** Content priority paths, in written order; empty when the project names none. */
+  readonly contentPriorityPaths: readonly string[];
 }
 
 /**
@@ -86,9 +88,66 @@ export function effectiveRoots(roots: readonly string[]): string[] {
   );
 }
 
+/**
+ * Interprets a project's "Priority paths" text: the same splitting and
+ * normalization as the roots, but the written order is the priority order and
+ * is kept. A path that equals, or sits inside, an *earlier* priority is
+ * dropped - the earlier one already covers it. A later path that contains an
+ * earlier one is kept (`/a/b/en` before `/a/b` is meaningful). There is no
+ * default: empty text means no priorities.
+ */
+export function parsePriorityPathText(text: string | undefined): string[] {
+  const priorities: string[] = [];
+  for (const path of parseRootText(text)) {
+    if (priorities.some((earlier) => path === earlier || isDescendantOf(path, earlier))) continue;
+    priorities.push(path);
+  }
+  return priorities;
+}
+
+/** One slice of a priority-ordered query: a path minus the paths excluded from it. */
+export interface PrioritySegment {
+  readonly path: string;
+  readonly exclude: readonly string[];
+}
+
+/**
+ * Splits a query scope into the ordered, disjoint segments a priority-ordered
+ * search reads one after another: first one segment per applicable priority
+ * (in written order, each minus the earlier priorities nested inside it), then
+ * the remainder of every scope root (minus the priorities inside it).
+ *
+ * A priority applies when it sits strictly inside some scope root; one outside
+ * every scope, or equal to a scope root (which would not reorder anything), is
+ * ignored. Returns `undefined` when nothing applies, meaning the ordinary,
+ * unsegmented query is used.
+ */
+export function planPrioritySegments(
+  scopeRoots: readonly string[],
+  priorities: readonly string[],
+): PrioritySegment[] | undefined {
+  const applicable = priorities.filter((priority) =>
+    scopeRoots.some((root) => isDescendantOf(priority, root)),
+  );
+  if (applicable.length === 0) return undefined;
+
+  const segments: PrioritySegment[] = applicable.map((path, index) => ({
+    path,
+    exclude: applicable.slice(0, index).filter((earlier) => isDescendantOf(earlier, path)),
+  }));
+  for (const root of scopeRoots) {
+    segments.push({
+      path: root,
+      exclude: applicable.filter((priority) => isDescendantOf(priority, root)),
+    });
+  }
+  return segments;
+}
+
 export interface ResolvedEnvironmentRoots {
   readonly contentRoots: readonly string[];
   readonly componentRoots: readonly string[];
+  readonly contentPriorityPaths: readonly string[];
 }
 
 /**
@@ -99,11 +158,55 @@ export interface ResolvedEnvironmentRoots {
 export function resolveEnvironmentRoots(
   contentRootText: string | undefined,
   componentRootText: string | undefined,
+  priorityPathText?: string,
 ): ResolvedEnvironmentRoots {
   const content = effectiveRoots(parseRootText(contentRootText));
   const component = effectiveRoots(parseRootText(componentRootText));
   return {
     contentRoots: content.length > 0 ? content : [CONTENT_ROOT_DEFAULT],
     componentRoots: component.length > 0 ? component : [COMPONENT_ROOT_DEFAULT],
+    contentPriorityPaths: parsePriorityPathText(priorityPathText),
   };
+}
+
+/**
+ * The minimum shape of a host needed to resolve its project: a host may name a
+ * project by id, or none (the "(Default)" selection). Kept structural rather
+ * than importing `ServerConfig` so this module stays free of the contracts -
+ * the same discipline the rest of `tools/core` follows.
+ */
+export interface HostProjectRef {
+  readonly projectId?: string | undefined;
+}
+
+/**
+ * The minimum shape of a project entry needed to resolve a host's roots. Kept
+ * structural for the same reason as {@link HostProjectRef}.
+ */
+export interface ProjectRoots {
+  readonly id: string;
+  readonly contentRoots?: string | undefined;
+  readonly componentRoots?: string | undefined;
+  readonly contentPriorityPaths?: string | undefined;
+}
+
+/**
+ * Resolves a host's effective content/component roots from its selected
+ * project. A host with no project - or one naming a project that no longer
+ * exists - falls back to the `/content`/`/apps` defaults (the same as a project
+ * that writes no roots), which is exactly what "(Default)" means in Settings.
+ */
+export function resolveHostEnvironmentRoots(
+  host: HostProjectRef,
+  projects: readonly ProjectRoots[],
+): ResolvedEnvironmentRoots {
+  const project =
+    host.projectId === undefined
+      ? undefined
+      : projects.find((candidate) => candidate.id === host.projectId);
+  return resolveEnvironmentRoots(
+    project?.contentRoots,
+    project?.componentRoots,
+    project?.contentPriorityPaths,
+  );
 }

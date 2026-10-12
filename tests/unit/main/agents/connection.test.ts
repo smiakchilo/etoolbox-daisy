@@ -35,6 +35,7 @@ function proxyWith(overrides: Partial<ProxyConfig> = {}): ProxyConfig {
 function settingsWith(proxyId: ProxyId | undefined): AppSettings {
   return {
     hosts: [],
+    projects: [],
     proxies: [proxyWith()],
     agents: {
       [AGENT]: proxyId === undefined ? { active: true } : { active: true, proxy: proxyId },

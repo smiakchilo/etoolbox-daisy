@@ -1,38 +1,48 @@
 import { randomUUID } from 'node:crypto';
 import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 import {
+  SETTINGS_ADD_PROJECT_CHANNEL,
   SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
   SETTINGS_CLEAR_PASSWORD_CHANNEL,
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
+  SETTINGS_REMOVE_PROJECT_CHANNEL,
   SETTINGS_REMOVE_PROXY_CHANNEL,
   SETTINGS_REMOVE_SERVER_CHANNEL,
+  SETTINGS_REORDER_PROJECTS_CHANNEL,
   SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
   SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
+  SETTINGS_UPDATE_PROJECT_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
 } from '../../shared';
 import {
+  addProjectRequestSchema,
   addProxyRequestSchema,
   addServerRequestSchema,
   clearPasswordRequestSchema,
+  removeProjectRequestSchema,
   removeProxyRequestSchema,
   removeServerRequestSchema,
+  reorderProjectsRequestSchema,
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
   setAgentSettingsRequestSchema,
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
   updateBrowserSettingsRequestSchema,
+  updateProjectRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
+  type AddProjectRequest,
+  type AddProjectResult,
   type AddProxyRequest,
   type AddProxyResult,
   type AddServerRequest,
@@ -43,9 +53,13 @@ import {
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
   type PasswordTarget,
+  type ProjectConfig,
+  type ProjectSnapshot,
   type ProxySnapshot,
+  type RemoveProjectRequest,
   type RemoveProxyRequest,
   type RemoveServerRequest,
+  type ReorderProjectsRequest,
   type ReorderProxiesRequest,
   type ReorderServersRequest,
   type ServerTargetingMutationKind,
@@ -55,6 +69,7 @@ import {
   type SettingsIpcError,
   type SettingsIpcVoidResult,
   type UpdateBrowserSettingsRequest,
+  type UpdateProjectRequest,
   type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
   type UpdateServerPresentationResult,
@@ -71,12 +86,13 @@ import type {
   ServerPresentationChanges,
   ServerTargetingChanges,
 } from '../../shared';
-import { newProxyId, newServerId } from '../../shared';
+import { newProjectId, newProxyId, newServerId } from '../../shared';
 import { isKnownAgentId, type AgentDefinition } from '../../shared';
 import { err, ok, type Result } from '../../shared';
 import {
   configuredAgentId,
   agentTokenSecretRef,
+  addProject as createProjectEntry,
   addProxy as createProxyEntry,
   addServer as createServerEntry,
   applyBrowserSettingsChange,
@@ -84,14 +100,17 @@ import {
   applyServerTargetingChange,
   confirmOriginChange,
   loadSettings,
+  removeProject as deleteProjectEntry,
   removeProxy as deleteProxyEntry,
   removeServer as deleteServerEntry,
+  reorderProjects as reorderProjectEntries,
   reorderProxies as reorderProxyEntries,
   reorderServers as reorderServerEntries,
   saveSettings,
   updateAgentSettings as updateAgentSettingsEntry,
   updateAgentToken as updateAgentTokenEntry,
   updateModelPreferences as updateModelPreferencesEntry,
+  updateProject as updateProjectEntry,
   updateProxy as updateProxyEntry,
   type AgentSettingsChanges,
   type ServerMutationKind,
@@ -544,8 +563,7 @@ export async function addServer(
     label: request.label,
     origin: request.origin,
     color: request.color,
-    ...(request.contentRoots !== undefined ? { contentRoots: request.contentRoots } : {}),
-    ...(request.componentRoots !== undefined ? { componentRoots: request.componentRoots } : {}),
+    ...(request.projectId !== undefined ? { projectId: request.projectId } : {}),
   });
   if (!created.ok) {
     return { ok: false, error: { code: created.error.kind, message: created.error.message } };
@@ -639,8 +657,7 @@ function presentationChangesFrom(
   return {
     ...(changes.label !== undefined ? { label: changes.label } : {}),
     ...(changes.color !== undefined ? { color: changes.color } : {}),
-    ...(changes.contentRoots !== undefined ? { contentRoots: changes.contentRoots } : {}),
-    ...(changes.componentRoots !== undefined ? { componentRoots: changes.componentRoots } : {}),
+    ...(changes.projectId !== undefined ? { projectId: changes.projectId } : {}),
   };
 }
 
@@ -856,6 +873,133 @@ export async function reorderProxies(
   }
 
   const reordered = reorderProxyEntries(loaded.value, request.proxyIds);
+  if (!reordered.ok) {
+    return { ok: false, error: { code: reordered.error.kind, message: reordered.error.message } };
+  }
+
+  const saved = await persist(settingsDir, reordered.value);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
+/**
+ * Projects library (the "Projects" multifield). A project carries no secret
+ * material, so these handlers take no `secretStore` - unlike the proxy ones -
+ * and `remove-project` clears the reference from every host that named it (see
+ * `settingsStore.ts`'s `removeProject`).
+ */
+
+/** Projects one {@link ProjectConfig} the same way `settings:get-snapshot` projects every entry. */
+function toProjectSnapshot(project: ProjectConfig): ProjectSnapshot {
+  const snapshot = toAppSettingsSnapshot(
+    { ...defaultAppSettings(), projects: [project] },
+    () => false,
+  );
+  const projected = snapshot.projects[0];
+  if (!projected) {
+    // `project` was just placed into `projects` above, so this is unreachable;
+    // thrown (not returned as a `Result`) because it signals a bug in this
+    // function itself, not a caller-triggerable failure.
+    throw new Error('toProjectSnapshot: projection lost the project');
+  }
+  return projected;
+}
+
+/** Implements `settings:add-project`. */
+export async function addProject(
+  settingsDir: string,
+  request: AddProjectRequest,
+): Promise<AddProjectResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const newId = newProjectId(() => randomUUID());
+  const created = createProjectEntry(loaded.value, newId, {
+    label: request.label,
+    ...(request.contentRoots !== undefined ? { contentRoots: request.contentRoots } : {}),
+    ...(request.componentRoots !== undefined ? { componentRoots: request.componentRoots } : {}),
+    ...(request.contentPriorityPaths !== undefined
+      ? { contentPriorityPaths: request.contentPriorityPaths }
+      : {}),
+  });
+  if (!created.ok) {
+    return { ok: false, error: { code: created.error.kind, message: created.error.message } };
+  }
+
+  const saved = await persist(settingsDir, created.value.settings);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+
+  return { ok: true, project: toProjectSnapshot(created.value.project) };
+}
+
+/** Implements `settings:update-project` (a full replace of label + roots). */
+export async function updateProject(
+  settingsDir: string,
+  request: UpdateProjectRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const updated = updateProjectEntry(loaded.value, request.projectId, {
+    label: request.label,
+    ...(request.contentRoots !== undefined ? { contentRoots: request.contentRoots } : {}),
+    ...(request.componentRoots !== undefined ? { componentRoots: request.componentRoots } : {}),
+    ...(request.contentPriorityPaths !== undefined
+      ? { contentPriorityPaths: request.contentPriorityPaths }
+      : {}),
+  });
+  if (!updated.ok) {
+    return { ok: false, error: { code: updated.error.kind, message: updated.error.message } };
+  }
+
+  const saved = await persist(settingsDir, updated.value.settings);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
+/** Implements `settings:remove-project`. */
+export async function removeProject(
+  settingsDir: string,
+  request: RemoveProjectRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const removed = deleteProjectEntry(loaded.value, request.projectId);
+  if (!removed.ok) {
+    return { ok: false, error: { code: removed.error.kind, message: removed.error.message } };
+  }
+
+  const saved = await persist(settingsDir, removed.value);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
+/** Implements `settings:reorder-projects`. The requested order is validated as a permutation by `settingsStore.ts`'s `reorderProjects`. */
+export async function reorderProjects(
+  settingsDir: string,
+  request: ReorderProjectsRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const reordered = reorderProjectEntries(loaded.value, request.projectIds);
   if (!reordered.ok) {
     return { ok: false, error: { code: reordered.error.kind, message: reordered.error.message } };
   }
@@ -1559,6 +1703,62 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
       return reorderProxies(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_ADD_PROJECT_CHANNEL,
+    async (event, rawRequest: unknown): Promise<AddProjectResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = addProjectRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return addProject(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_UPDATE_PROJECT_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = updateProjectRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return updateProject(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_REMOVE_PROJECT_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = removeProjectRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return removeProject(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_REORDER_PROJECTS_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = reorderProjectsRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return reorderProjects(deps.settingsDir, parsed.data);
     },
   );
 

@@ -128,6 +128,7 @@ describe('getSettingsSnapshotResultSchema', () => {
       ok: true,
       snapshot: {
         hosts: [],
+        projects: [],
         proxies: [],
         agents: { [TEST_AGENT_ID]: { active: true } },
         browser: { disableNativeWebAuthn: true },

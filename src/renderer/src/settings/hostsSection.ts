@@ -4,6 +4,8 @@ import { createMultifield } from '../lib/multifield';
 import {
   HOST_PROXY_NONE,
   type HostProxyId,
+  type ProjectId,
+  type ProjectSnapshot,
   type ProxySnapshot,
   type ServerColor,
   type ServerId,
@@ -11,6 +13,7 @@ import {
   type ServerSwatch,
 } from '../../../shared';
 import { colorKey, createColorPicker } from './colorPicker';
+import { createProjectPicker, type ProjectSelection } from './projectPicker';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import { createCommitSaver } from './commitSaver';
 import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
@@ -36,6 +39,16 @@ function hostProxyIdFromSelection(selection: ProxySelection): HostProxyId | unde
   return selection.proxyId;
 }
 
+/** The stored project selection as the picker's value; `undefined` means "(Default)". */
+function selectionFromHostProjectId(projectId: ProjectId | undefined): ProjectSelection {
+  return projectId === undefined ? { kind: 'default' } : { kind: 'project', projectId };
+}
+
+/** The picker's value as the stored selection; `undefined` means "(Default)" (no project). */
+function hostProjectIdFromSelection(selection: ProjectSelection): ProjectId | undefined {
+  return selection.kind === 'default' ? undefined : selection.projectId;
+}
+
 /** Everything a host item needs from the section (and, one level up, the panel). */
 interface HostItemContext {
   status: StatusBannerSink;
@@ -45,6 +58,8 @@ interface HostItemContext {
   removeRow(key: string): void;
   /** The live proxy library, for the item's Proxy combobox. */
   proxies(): readonly ProxySnapshot[];
+  /** The live project library, for the item's Project combobox. */
+  projects(): readonly ProjectSnapshot[];
 }
 
 interface HostItemHandle {
@@ -55,6 +70,8 @@ interface HostItemHandle {
   serverId(): ServerId | undefined;
   /** Re-derives the Proxy combobox options from a changed proxy library. */
   setProxyOptions(proxies: readonly ProxySnapshot[]): void;
+  /** Re-derives the Project combobox options from a changed project library. */
+  setProjectOptions(projects: readonly ProjectSnapshot[]): void;
   /** Asks for removal (drafts remove immediately; saved hosts arm the banner confirmation). */
   requestRemoval(): void;
   /** True while this item has unsaved input or an unconfirmed action pending. */
@@ -121,10 +138,9 @@ function buildHostItem(
 ): HostItemHandle {
   const addressFieldId = `${fieldIdBase}-address`;
   const labelFieldId = `${fieldIdBase}-label`;
-  const contentRootsFieldId = `${fieldIdBase}-content-roots`;
-  const componentRootsFieldId = `${fieldIdBase}-component-roots`;
   const colorFieldId = `${fieldIdBase}-color`;
   const proxyFieldId = `${fieldIdBase}-proxy`;
+  const projectFieldId = `${fieldIdBase}-project`;
 
   const addressField = el('sp-textfield', {
     attrs: {
@@ -150,28 +166,6 @@ function buildHostItem(
   const labelHelp = el('span', { attrs: { slot: 'negative-help-text' } });
   labelField.append(labelHelp);
 
-  // Free-text root lists. Presentation, not targeting: they describe the host's
-  // content/component layout for the agent and never bump the host revision.
-  const contentRootsField = el('sp-textfield', {
-    attrs: {
-      id: contentRootsFieldId,
-      class: 'host-field__input',
-      placeholder: 'E.g. /content/a, /content/b (comma-separated)',
-      'aria-label': 'Content roots',
-    },
-  }) as TextField;
-  contentRootsField.value = server?.contentRoots ?? '';
-
-  const componentRootsField = el('sp-textfield', {
-    attrs: {
-      id: componentRootsFieldId,
-      class: 'host-field__input',
-      placeholder: 'E.g. /apps/a, /apps/b (comma-separated)',
-      'aria-label': 'Component roots',
-    },
-  }) as TextField;
-  componentRootsField.value = server?.componentRoots ?? '';
-
   const colorPicker = createColorPicker({
     fieldId: colorFieldId,
     initial: server?.color ?? DEFAULT_COLOR,
@@ -185,6 +179,13 @@ function buildHostItem(
     proxies: ctx.proxies(),
     includeDefault: true,
     onChange: onProxySelectionChange,
+  });
+
+  const projectPicker = createProjectPicker({
+    fieldId: projectFieldId,
+    initial: selectionFromHostProjectId(server?.projectId),
+    projects: ctx.projects(),
+    onChange: onProjectSelectionChange,
   });
 
   const fields = el('div', {
@@ -229,23 +230,12 @@ function buildHostItem(
           proxyPicker.element,
         ],
       }),
-      // 4. Component roots.
+      // 4. Project.
       el('div', {
         attrs: { class: 'host-field' },
         children: [
-          el('sp-field-label', {
-            attrs: { for: componentRootsFieldId },
-            text: 'Component roots',
-          }),
-          componentRootsField,
-        ],
-      }),
-      // 5. Content roots.
-      el('div', {
-        attrs: { class: 'host-field' },
-        children: [
-          el('sp-field-label', { attrs: { for: contentRootsFieldId }, text: 'Content roots' }),
-          contentRootsField,
+          el('sp-field-label', { attrs: { for: projectFieldId }, text: 'Project' }),
+          projectPicker.element,
         ],
       }),
     ],
@@ -256,10 +246,9 @@ function buildHostItem(
   let serverId: ServerId | undefined = server?.id;
   let savedOrigin = server?.origin ?? '';
   let savedLabel = server?.label ?? '';
-  let savedContentRoots = server?.contentRoots ?? '';
-  let savedComponentRoots = server?.componentRoots ?? '';
   let savedColorKey = colorKey(server?.color ?? DEFAULT_COLOR);
   let savedProxyId: HostProxyId | undefined = server?.proxyId;
+  let savedProjectId: ProjectId | undefined = server?.projectId;
   /** A draft's explicit proxy choice, applied once the host exists (see `runSave`). */
   let pendingProxyId: HostProxyId | undefined;
 
@@ -335,6 +324,44 @@ function buildHostItem(
     );
   }
 
+  /**
+   * The Project combobox changed. A saved host persists it immediately as a
+   * presentation change (a project never bumps the revision: it steers what the
+   * agent is told about the host's layout, not how a request reaches AEM, so it
+   * needs no confirmation either). A draft's choice is read straight from the
+   * picker when the host is created (`runSave`), so nothing is stored here.
+   *
+   * "(Default)" is stored by *omitting* `projectId` (so the request sends
+   * `null`); an entry is stored as its id.
+   */
+  function onProjectSelectionChange(): void {
+    if (busy) return;
+    if (removeArmed) {
+      removeArmed = false;
+      ctx.status.clear();
+    }
+
+    const next = hostProjectIdFromSelection(projectPicker.read());
+    if (serverId === undefined) return;
+    if (next === savedProjectId) return;
+
+    reportMutation(
+      window.daisy.settings
+        .updateServerPresentation({ serverId, changes: { projectId: next ?? null } })
+        .then(
+          (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
+          (error: unknown) => ({
+            ok: false,
+            error: error instanceof Error ? error.message : 'Could not change the project',
+          }),
+        ),
+      () => undefined,
+      () => {
+        savedProjectId = next;
+      },
+    );
+  }
+
   // The confirming action: a single OK click persists the staged origin.
   const applyOriginAction: StatusBannerAction = {
     label: 'OK',
@@ -380,8 +407,10 @@ function buildHostItem(
     const color = refreshColor();
     if (!label.ok || !color.ok || color.color === undefined) return undefined;
 
-    const nextContentRoots = contentRootsField.value.trim();
-    const nextComponentRoots = componentRootsField.value.trim();
+    // The Project picker is read straight from the row: a draft's choice is
+    // applied as part of `addServer`, and a saved host's change was already
+    // persisted by `onProjectSelectionChange`.
+    const nextProjectId = hostProjectIdFromSelection(projectPicker.read());
 
     if (serverId === undefined) {
       return window.daisy.settings
@@ -389,8 +418,7 @@ function buildHostItem(
           label: label.label,
           origin: address.origin,
           color: color.color,
-          ...(nextContentRoots.length > 0 ? { contentRoots: nextContentRoots } : {}),
-          ...(nextComponentRoots.length > 0 ? { componentRoots: nextComponentRoots } : {}),
+          ...(nextProjectId !== undefined ? { projectId: nextProjectId } : {}),
         })
         .then(
           (result) => {
@@ -399,10 +427,9 @@ function buildHostItem(
             serverId = createdId;
             savedOrigin = result.server.origin;
             savedLabel = result.server.label;
-            savedContentRoots = result.server.contentRoots ?? '';
-            savedComponentRoots = result.server.componentRoots ?? '';
             savedColorKey = colorKey(result.server.color);
             savedProxyId = result.server.proxyId;
+            savedProjectId = result.server.projectId;
             // Apply a proxy chosen while this row was still a draft.
             if (pendingProxyId !== undefined) {
               const targetProxyId = pendingProxyId;
@@ -451,22 +478,15 @@ function buildHostItem(
 
     const nextLabel = label.label;
     const nextColor = color.color;
-    if (
-      nextLabel === savedLabel &&
-      colorKey(nextColor) === savedColorKey &&
-      nextContentRoots === savedContentRoots &&
-      nextComponentRoots === savedComponentRoots
-    ) {
+    if (nextLabel === savedLabel && colorKey(nextColor) === savedColorKey) {
       return undefined;
     }
 
+    // Only label/colour: the Project selection is persisted by its own change
+    // handler, and roots no longer live on the host.
     const changes = {
       label: nextLabel,
       color: nextColor,
-      // Roots are sent only when they differ, so a rename or recolour stays a
-      // label/colour request. Sending an empty string clears the root.
-      ...(nextContentRoots !== savedContentRoots ? { contentRoots: nextContentRoots } : {}),
-      ...(nextComponentRoots !== savedComponentRoots ? { componentRoots: nextComponentRoots } : {}),
     };
     const outcome: Promise<SaveOutcome> = window.daisy.settings
       .updateServerPresentation({ serverId: id, changes })
@@ -481,8 +501,6 @@ function buildHostItem(
       if (result.ok) {
         savedLabel = nextLabel;
         savedColorKey = colorKey(nextColor);
-        savedContentRoots = nextContentRoots;
-        savedComponentRoots = nextComponentRoots;
       }
     });
     return outcome;
@@ -523,8 +541,7 @@ function buildHostItem(
         addressResult.origin !== savedOrigin ||
         !labelNow.ok ||
         labelNow.label !== savedLabel ||
-        contentRootsField.value.trim() !== savedContentRoots ||
-        componentRootsField.value.trim() !== savedComponentRoots ||
+        hostProjectIdFromSelection(projectPicker.read()) !== savedProjectId ||
         !colorNow.ok ||
         colorNow.color === undefined ||
         colorKey(colorNow.color) !== savedColorKey;
@@ -570,7 +587,7 @@ function buildHostItem(
     armCommit();
   }
 
-  for (const field of [addressField, labelField, contentRootsField, componentRootsField]) {
+  for (const field of [addressField, labelField]) {
     field.addEventListener('input', onFieldInput);
     field.addEventListener('change', onFieldCommit);
   }
@@ -675,6 +692,9 @@ function buildHostItem(
     setProxyOptions(proxies): void {
       proxyPicker.setOptions(proxies);
     },
+    setProjectOptions(projects): void {
+      projectPicker.setOptions(projects);
+    },
     requestRemoval,
     isInProgress(): boolean {
       // A draft is unsaved work by definition - it must not be clobbered by a
@@ -707,8 +727,16 @@ export interface HostsSectionOptions {
 
 export interface HostsSection {
   readonly element: HTMLElement;
-  /** `proxies` defaults to none, i.e. the Proxy combobox offers "(Default)" and "(No proxy)" but no entries. */
-  update(servers: readonly ServerSnapshot[], proxies?: readonly ProxySnapshot[]): void;
+  /**
+   * `proxies`/`projects` default to none, i.e. the Proxy combobox offers
+   * "(Default)" and "(No proxy)" but no entries, and the Project combobox offers
+   * only "(Default)".
+   */
+  update(
+    servers: readonly ServerSnapshot[],
+    proxies?: readonly ProxySnapshot[],
+    projects?: readonly ProjectSnapshot[],
+  ): void;
   flushNow(): Promise<void>;
   hasPendingEdits(): boolean;
   dispose(): void;
@@ -725,7 +753,7 @@ export interface HostsSection {
  * order of the *persisted* hosts to `settings:reorder-servers` (a draft has no
  * id yet, and the first valid commit creates it at the end of the list).
  *
- * The item's fifth field, "Proxy", is a combobox with three kinds of choice:
+ * The item's "Proxy" field is a combobox with three kinds of choice:
  * "(Default)" (stored by omitting `proxyId`, so the host inherits
  * `browser.proxy`), "No proxy" (stored as the `HOST_PROXY_NONE` sentinel, an
  * explicit direct connection), and one option per entry of the settings
@@ -734,11 +762,21 @@ export interface HostsSection {
  * selection whose entry was removed falls back to "(Default)" (main also
  * clears the dangling reference in the same write - see `removeProxy` in
  * `settingsStore.ts`).
+ *
+ * The item's "Project" field is a combobox with two kinds of choice:
+ * "(Default)" (stored by omitting `projectId`: no project, so the agent is told
+ * only the `/content`/`/apps` defaults) and one option per entry of the settings
+ * "Projects" library (stored as that entry's id). It draws from the live
+ * library exactly as the Proxy field does; a selection whose entry was removed
+ * falls back to "(Default)" (main clears the dangling reference in the same
+ * write - see `removeProject`). A project is presentation, not targeting: its
+ * change never bumps the host revision.
  */
 export function createHostsSection(options: HostsSectionOptions): HostsSection {
   let items = new Map<string, HostItemHandle>();
   let lastPersistedOrder: readonly ServerId[] = [];
   let currentProxies: readonly ProxySnapshot[] = [];
+  let currentProjects: readonly ProjectSnapshot[] = [];
   let draftSeq = 0;
   let fieldSeq = 0;
 
@@ -748,6 +786,7 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
     onSettingsChanged: () => options.onSettingsChanged(),
     removeRow,
     proxies: () => currentProxies,
+    projects: () => currentProjects,
   };
 
   const multifield = createMultifield({
@@ -842,14 +881,22 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
 
   return {
     element,
-    update(servers: readonly ServerSnapshot[], proxies: readonly ProxySnapshot[] = []): void {
+    update(
+      servers: readonly ServerSnapshot[],
+      proxies: readonly ProxySnapshot[] = [],
+      projects: readonly ProjectSnapshot[] = [],
+    ): void {
       currentProxies = proxies;
+      currentProjects = projects;
       lastPersistedOrder = servers.map((server) => server.id);
-      // Refresh the Proxy combobox options on every item even when edits are
-      // pending elsewhere, so a proxy added/renamed/removed on the Proxies tab
-      // is reflected here in parallel (a rebuild below would clobber pending
-      // input, so it is skipped in that case).
-      for (const item of items.values()) item.setProxyOptions(proxies);
+      // Refresh the Proxy and Project combobox options on every item even when
+      // edits are pending elsewhere, so an entry added/renamed/removed on the
+      // Proxies/Projects tab is reflected here in parallel (a rebuild below
+      // would clobber pending input, so it is skipped in that case).
+      for (const item of items.values()) {
+        item.setProxyOptions(proxies);
+        item.setProjectOptions(projects);
+      }
       if (hasPendingEdits()) return;
       // A confirmation is anchored to a row (its action closure reads that
       // row's `removeArmed`/`pendingOrigin`). Rebuilding the rows while it is

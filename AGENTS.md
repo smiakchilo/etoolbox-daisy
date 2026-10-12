@@ -89,7 +89,7 @@ commit unless the user asks.**
 │ src/renderer/  — Adobe Spectrum Web Components only                  │
 │    shell/ ........ two-pane layout, toolbars, panes                  │
 │    chat/ ......... transcript, composer, markdown, query table       │
-│    settings/ ..... settings panel sections (servers, proxy, models)  │
+│    settings/ ..... settings panel sections (hosts/projects/agents)   │
 └──────────────────────────────────────────────────────────────────────┘
 
            src/shared/  — imported by ALL of the above
@@ -131,7 +131,8 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/ids.ts` | Branded ID primitives (`RequestId`, `ChatId`, `TurnId`, `ServerId`) |
 | `contracts/errors.ts` | The error taxonomy and `requiredAction` values |
 | `contracts/origin.ts` | Origin normalization and comparison |
-| `contracts/serverConfig.ts` | An AEM server entry (id, label, colour, address, revision) |
+| `contracts/serverConfig.ts` | An AEM server entry (id, label, colour, address, optional `projectId`, revision) |
+| `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component roots, content priority paths) shared by several hosts, referenced by a host's optional `projectId` |
 | `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
 | `contracts/chatMetadata.ts` | Chat list entries (title, date, server, selection) |
@@ -150,7 +151,13 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > settings contracts `appSettings.ts` /
 > `settingsSnapshot.ts` (the latter gained the `browser` object with
 > `disableNativeWebAuthn`, the Settings "Browser" tab's WebAuthn-suppression
-> flag), and `settings-ipc.ts`. `userInput.ts` gained an optional
+> flag), and `settings-ipc.ts`. The host-structure settings most recently moved
+> off the host: `serverConfig.ts` lost `contentRoots`/`componentRoots` (now a new
+> `projectConfig.ts` library plus a host's optional `projectId`), which
+> `appSettings.ts`/`settingsSnapshot.ts`/`settings-ipc.ts` all follow — the
+> Settings "Projects" tab, see `docs/verification.md` "Settings \"Projects\": host
+> structure facts move off the host, and a host picks one (2026-10-13)".
+> `userInput.ts` gained an optional
 > `actions` list (1–4 one-click labels) and made `question` optional — the
 > `ask_user` actions mode (see §5 tools). Most recently `contracts/agentEvents.ts`
 > gained a sixteenth variant, `tool.call.progress` (a transient, never-journaled
@@ -429,6 +436,15 @@ src/tools/<name>/
   structured `rows`/`pagination`/`selection` so the model can hand the result on
   (and so a diagnostic sees it), but the transcript shows only the billet. Its
   instructions point the model at `aem_query_format_ask` to show results.
+  **Priority paths:** when the pane's host selects a project with *Priority
+  paths* (`contentPriorityPaths`, read at execution time from
+  `host.environmentFacts()`, never from the model), a `roots` or plain-`path`
+  query runs as ordered *segments* (`planPrioritySegments`, `executePrioritizedQuery`
+  in `aemQuery.ts`): each priority path first, in written order, then the rest
+  of each scope root with the priorities excluded through a `N_group.p.not` path
+  group. Paging is a stateless offset mapping across the segments, so **Load more**
+  shows no seam; an unprovable segment end degrades to `hasMore: 'unknown'`. Not
+  yet verified against real AEM: see `docs/backlog.md` "Priority search paths".
 - `format_table` is the **only** table renderer, and it is **internal**
   (`InternalToolModule`: `internal: true`, no descriptor/allowlist/instructions):
   the registry keeps it out of the
@@ -454,11 +470,15 @@ src/tools/<name>/
   zero-argument tool summarise the call with the current host's URL and show the
   hosts as collapsible rows. It deliberately carries no `aem_` prefix: "environment
   facts" is a question any environment could answer (see the naming rule below). A
-  host's roots live on `ServerConfig` as optional free text (`contentRoots`/
-  `componentRoots`); `src/shared/tools/core/environment.ts` owns the one
-  interpretation of that text (comma-or-semicolon split, comma wins, trimming, the
-  `/content`/`/apps` defaults) and the nesting-aware `effectiveRoots`, shared
-  by the tool, the per-turn context block and `aem_query`'s `roots` fan-out.
+  host's roots now live on the **project** it selects: `ServerConfig` carries only
+  an optional `projectId`, and a project (`projectConfig.ts`) holds the free text
+  (`contentRoots`/`componentRoots`); `src/shared/tools/core/environment.ts` owns the
+  one interpretation of that text (comma-or-semicolon split, comma wins, trimming,
+  the `/content`/`/apps` defaults), the nesting-aware `effectiveRoots`, and
+  `resolveHostEnvironmentRoots(host, projects)` — the one place a host is resolved
+  to its roots (defaulting when it selects no project). Shared by the tool, the
+  per-turn context block and `aem_query`'s `roots` fan-out. The model never sees
+  the project: only the resolved roots, as before.
 - `browser_navigate` opens a page in the browser pane. It takes a host **label**
   (or none, for the pane's current host) and a **verbatim browser path**
   (`/content/site/page.html`, `/editor.html/content/site/page.html`, `/crx/de`);
@@ -721,7 +741,29 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2922 passed / 14 skipped** (+3 against the
+Current baseline: **`npm run test` → 2999 passed / 14 skipped** (+33 against the
+2966 of the previous entry - **priority search paths**: a project gains
+`contentPriorityPaths` (Settings "Projects" → "Priority paths"), `environment_facts`
+reports `priorityPaths` per host, and `aem_query` returns results from those paths
+first with seamless Load-more paging; contract changes in `projectConfig.ts`,
+`settingsSnapshot.ts`, `settings-ipc.ts`, `navigation.ts` and the
+`EnvironmentFacts`/`ResolvedEnvironmentRoots` types - see `docs/verification.md`
+"Priority search paths (2026-10-13)"). Before that it was 2966 (+44 against the
+2922 of the previous entry - **the Settings "Projects" tab**: the host's
+`contentRoots`/`componentRoots` moved into a new `projects` library (`id`+`label`
+required, roots optional) with a **Projects** tab after **Hosts**, and each host
+gains an optional **Project** combobox whose "(Default)" applies the
+`/content`/`/apps` defaults. A contract change (`serverConfig.ts` loses the roots
+and gains `projectId`; new `projectConfig.ts`; `appSettings.ts`/
+`settingsSnapshot.ts`/`settings-ipc.ts` follow), a new
+`resolveHostEnvironmentRoots(host, projects)` in `tools/core/environment.ts`, a
+new `projectPicker.ts` + `projectsSection.ts`, and the `environment_facts` output
+unchanged (the project stays Settings-side). New: `settingsStore` project
+mutations (9), `projectsSection` (12), `projectPicker` (4), the `appSettings`
+project-integrity cases (3), `resolveHostEnvironmentRoots` (4), a
+`createConfiguredHosts` case, and 6 `ipc/settings` project cases; see
+`docs/verification.md` "Settings \"Projects\": host structure facts move off the
+host, and a host picks one (2026-10-13)"). Before that it was 2922 (+3 against the
 2919 of the previous entry - **the semantic-search continue call is no longer a
 blank billet**: `describeCall` keys on the call's own `terms`, so a continue call
 (`{ searchId, matches }`) reads `judging N match(es)` (no `Semantic search:`

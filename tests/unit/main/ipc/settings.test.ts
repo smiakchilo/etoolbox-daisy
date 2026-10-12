@@ -2,30 +2,34 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { newProxyId, newServerId } from '../../../../src/shared';
+import { newProjectId, newProxyId, newServerId } from '../../../../src/shared';
 import {
   defaultAppSettings,
   type AgentDefinition,
   type AgentId,
   type AppSettings,
 } from '../../../../src/shared';
-import { serverConfigSchema } from '../../../../src/shared';
+import { type ServerConfig, projectConfigSchema, serverConfigSchema } from '../../../../src/shared';
 import { toAppSettingsSnapshot } from '../../../../src/shared';
 import { saveSettings } from '../../../../src/main/settingsStore';
 import { createSecretStore, type SecretCipher } from '../../../../src/main/secretStore';
 import {
+  addProject,
   addProxy,
   addServer,
   clearPassword,
   getSettingsSnapshot,
   isTrustedLocalSettingsSender,
+  removeProject,
   removeProxy,
   removeServer,
+  reorderProjects,
   reorderProxies,
   reorderServers,
   resolvePasswordSecretRef,
   setPassword,
   updateBrowserSettings,
+  updateProject,
   updateProxy,
   updateServerPresentation,
   updateServerTargeting,
@@ -83,6 +87,7 @@ const PROXY_SECRET_REF = 'proxy:proxy-a';
 function settingsWithProxy(secretRef: string, options: { username?: string } = {}): AppSettings {
   return {
     hosts: [],
+    projects: [],
     proxies: [
       {
         id: PROXY_ID,
@@ -471,6 +476,7 @@ describe('reorderServers', () => {
     });
     return {
       hosts: [a, b],
+      projects: [],
       proxies: [],
       agents: { [TEST_AGENT_ID]: { active: true } },
       browser: { disableNativeWebAuthn: true },
@@ -1287,5 +1293,157 @@ describe('clearing a token switches off a provider whose only credential it was'
 
     expect(result).toEqual({ ok: true });
     expect(await activeFlagOf(settingsDir, secretStore, OPENROUTER)).toBe(false);
+  });
+});
+
+describe('project library ipc', () => {
+  const PROJECT_ID = newProjectId(() => 'project-a');
+  const OTHER_PROJECT_ID = newProjectId(() => 'project-b');
+
+  function serverWithProject(): ServerConfig {
+    return serverConfigSchema.parse({
+      id: SERVER_ID,
+      label: 'A',
+      origin: 'https://a.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      projectId: PROJECT_ID,
+      revision: 0,
+    });
+  }
+
+  it('addProject persists an entry and returns its snapshot', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const result = await addProject(settingsDir, {
+      label: 'HPE',
+      contentRoots: '/content/a; /content/b',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected an ok result');
+    expect(result.project.label).toBe('HPE');
+    expect(result.project.contentRoots).toBe('/content/a; /content/b');
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected ok snapshot result');
+    expect(snapshot.snapshot.projects).toHaveLength(1);
+  });
+
+  it('addServer persists a captured projectId and returns it in the server snapshot', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      projects: [projectConfigSchema.parse({ id: PROJECT_ID, label: 'HPE' })],
+    });
+
+    const result = await addServer(settingsDir, secretStore, {
+      label: 'HPE Dev',
+      origin: 'https://dev.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      projectId: PROJECT_ID,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected an ok result');
+    expect(result.server.projectId).toBe(PROJECT_ID);
+  });
+
+  it('updateServerPresentation sets and clears a projectId', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      hosts: [
+        serverConfigSchema.parse({
+          id: SERVER_ID,
+          label: 'A',
+          origin: 'https://a.example',
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        }),
+      ],
+      projects: [projectConfigSchema.parse({ id: PROJECT_ID, label: 'HPE' })],
+    });
+
+    const set = await updateServerPresentation(settingsDir, secretStore, {
+      serverId: SERVER_ID,
+      changes: { projectId: PROJECT_ID },
+    });
+    expect(set.ok).toBe(true);
+    if (!set.ok) throw new Error('expected an ok result');
+    expect(set.server.projectId).toBe(PROJECT_ID);
+
+    const cleared = await updateServerPresentation(settingsDir, secretStore, {
+      serverId: SERVER_ID,
+      changes: { projectId: null },
+    });
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) throw new Error('expected an ok result');
+    expect(cleared.server.projectId).toBeUndefined();
+  });
+
+  it('removeProject clears the reference from every host in the same write', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      hosts: [serverWithProject()],
+      projects: [projectConfigSchema.parse({ id: PROJECT_ID, label: 'HPE' })],
+    });
+
+    const result = await removeProject(settingsDir, { projectId: PROJECT_ID });
+    expect(result).toEqual({ ok: true });
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected ok snapshot result');
+    expect(snapshot.snapshot.projects).toEqual([]);
+    expect(snapshot.snapshot.hosts[0]?.projectId).toBeUndefined();
+  });
+
+  it('updateProject replaces the entry and reports project_not_found for an unknown id', async () => {
+    const settingsDir = createScratchRoot();
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      projects: [
+        projectConfigSchema.parse({ id: PROJECT_ID, label: 'HPE', contentRoots: '/content/a' }),
+      ],
+    });
+
+    const updated = await updateProject(settingsDir, { projectId: PROJECT_ID, label: 'HPE Dev' });
+    expect(updated.ok).toBe(true);
+
+    const missing = await updateProject(settingsDir, {
+      projectId: newProjectId(() => 'project-ghost'),
+      label: 'X',
+    });
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error.code).toBe('project_not_found');
+  });
+
+  it('reorderProjects persists the requested order', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, {
+      ...defaultAppSettings(),
+      projects: [
+        projectConfigSchema.parse({ id: PROJECT_ID, label: 'A' }),
+        projectConfigSchema.parse({ id: OTHER_PROJECT_ID, label: 'B' }),
+      ],
+    });
+
+    const result = await reorderProjects(settingsDir, {
+      projectIds: [OTHER_PROJECT_ID, PROJECT_ID],
+    });
+    expect(result).toEqual({ ok: true });
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected ok snapshot result');
+    expect(snapshot.snapshot.projects.map((project) => project.id)).toEqual([
+      OTHER_PROJECT_ID,
+      PROJECT_ID,
+    ]);
   });
 });

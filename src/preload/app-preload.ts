@@ -30,28 +30,34 @@ import {
   BROWSER_STOP_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
+  SETTINGS_ADD_PROJECT_CHANNEL,
   SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
   SETTINGS_CLEAR_PASSWORD_CHANNEL,
   SETTINGS_GET_SNAPSHOT_CHANNEL,
   SETTINGS_GET_MODEL_SELECTION_CHANNEL,
+  SETTINGS_REMOVE_PROJECT_CHANNEL,
   SETTINGS_REMOVE_PROXY_CHANNEL,
   SETTINGS_REMOVE_SERVER_CHANNEL,
+  SETTINGS_REORDER_PROJECTS_CHANNEL,
   SETTINGS_REORDER_PROXIES_CHANNEL,
   SETTINGS_REORDER_SERVERS_CHANNEL,
   SETTINGS_SET_AGENT_SETTINGS_CHANNEL,
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
+  SETTINGS_UPDATE_PROJECT_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  addProjectRequestSchema,
   addProxyRequestSchema,
   addServerRequestSchema,
   approveCertificateExceptionRequestSchema,
   clearPasswordRequestSchema,
   navigateRequestSchema,
   openExternalRequestSchema,
+  parseAddProjectResult,
   parseAddProxyResult,
   parseAddServerResult,
   parseAgentChatByIdRequest,
@@ -82,8 +88,10 @@ import {
   parseSettingsIpcVoidResult,
   parseUpdateServerPresentationResult,
   parseUpdateServerTargetingResult,
+  removeProjectRequestSchema,
   removeProxyRequestSchema,
   removeServerRequestSchema,
+  reorderProjectsRequestSchema,
   reorderProxiesRequestSchema,
   reorderServersRequestSchema,
   setAgentSettingsRequestSchema,
@@ -91,10 +99,13 @@ import {
   setPasswordRequestSchema,
   switchServerRequestSchema,
   updateBrowserSettingsRequestSchema,
+  updateProjectRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
   viewBoundsSchema,
+  type AddProjectRequest,
+  type AddProjectResult,
   type AddProxyRequest,
   type AddProxyResult,
   type AddServerRequest,
@@ -127,14 +138,17 @@ import {
   type LogoutResult,
   type OpenExternalRequest,
   type PasswordTarget,
+  type RemoveProjectRequest,
   type RemoveProxyRequest,
   type RemoveServerRequest,
+  type ReorderProjectsRequest,
   type ReorderProxiesRequest,
   type ReorderServersRequest,
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
   type UpdateBrowserSettingsRequest,
+  type UpdateProjectRequest,
   type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
   type UpdateServerPresentationResult,
@@ -257,6 +271,29 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = reorderProxiesRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(
         SETTINGS_REORDER_PROXIES_CHANNEL,
+        parsedRequest,
+      );
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async addProject(request: AddProjectRequest): Promise<AddProjectResult> {
+      const parsedRequest = addProjectRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_ADD_PROJECT_CHANNEL, parsedRequest);
+      return parseAddProjectResult(raw);
+    },
+    async updateProject(request: UpdateProjectRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = updateProjectRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_UPDATE_PROJECT_CHANNEL, parsedRequest);
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async removeProject(request: RemoveProjectRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = removeProjectRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_REMOVE_PROJECT_CHANNEL, parsedRequest);
+      return parseSettingsIpcVoidResult(raw);
+    },
+    async reorderProjects(request: ReorderProjectsRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = reorderProjectsRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        SETTINGS_REORDER_PROJECTS_CHANNEL,
         parsedRequest,
       );
       return parseSettingsIpcVoidResult(raw);

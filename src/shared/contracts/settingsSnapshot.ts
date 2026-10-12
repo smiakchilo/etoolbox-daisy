@@ -7,10 +7,10 @@ import {
   type AppSettings,
   type ProxyConfig,
 } from './appSettings';
-import { agentIdSchema, proxyIdSchema, serverIdSchema } from './ids';
+import { agentIdSchema, projectIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
+import { environmentRootTextSchema, type ProjectConfig } from './projectConfig';
 import {
-  environmentRootTextSchema,
   hostProxyIdSchema,
   serverColorSchema,
   serverLabelSchema,
@@ -69,6 +69,24 @@ export const proxySnapshotSchema = z
 
 export type ProxySnapshot = Readonly<z.infer<typeof proxySnapshotSchema>>;
 
+/**
+ * The renderer-safe projection of one project-library entry. Structurally
+ * identical to the persisted {@link ProjectConfig} (a project carries no secret
+ * material), but kept a separate schema so the renderer's view can diverge from
+ * the persisted shape without silently widening what the document accepts.
+ */
+export const projectSnapshotSchema = z
+  .object({
+    id: projectIdSchema,
+    label: serverLabelSchema,
+    contentRoots: environmentRootTextSchema.optional(),
+    componentRoots: environmentRootTextSchema.optional(),
+    contentPriorityPaths: environmentRootTextSchema.optional(),
+  })
+  .strict();
+
+export type ProjectSnapshot = Readonly<z.infer<typeof projectSnapshotSchema>>;
+
 export const serverSnapshotSchema = z
   .object({
     id: serverIdSchema,
@@ -82,10 +100,12 @@ export const serverSnapshotSchema = z
      */
     proxyId: hostProxyIdSchema.optional(),
     tlsException: tlsExceptionSchema.optional(),
-    /** Free-text content roots; seeds the Settings "Content roots" field. */
-    contentRoots: environmentRootTextSchema.optional(),
-    /** Free-text component roots; seeds the Settings "Component roots" field. */
-    componentRoots: environmentRootTextSchema.optional(),
+    /**
+     * The host's project selection: a project-library entry id, or absent for
+     * "(Default)" (no project, so the agent is told only the `/content`/`/apps`
+     * defaults).
+     */
+    projectId: projectIdSchema.optional(),
     revision: serverRevisionSchema,
   })
   .strict();
@@ -117,6 +137,11 @@ export type AgentSettingsSnapshot = Readonly<z.infer<typeof agentSettingsSnapsho
 export const appSettingsSnapshotSchema = z
   .object({
     hosts: z.array(serverSnapshotSchema),
+    /**
+     * Defaulted to `[]` like the persisted schema, so a snapshot predating
+     * projects (or hand-built in a test) still parses.
+     */
+    projects: z.array(projectSnapshotSchema).default([]),
     proxies: z.array(proxySnapshotSchema),
     agents: z.record(agentIdSchema, agentSettingsSnapshotSchema),
     /**
@@ -129,9 +154,10 @@ export const appSettingsSnapshotSchema = z
   .strict();
 
 export type AppSettingsSnapshot = Readonly<
-  Omit<z.infer<typeof appSettingsSnapshotSchema>, 'hosts'>
+  Omit<z.infer<typeof appSettingsSnapshotSchema>, 'hosts' | 'projects'>
 > & {
   readonly hosts: readonly ServerSnapshot[];
+  readonly projects: readonly ProjectSnapshot[];
 };
 
 export function parseAppSettingsSnapshot(candidate: unknown): AppSettingsSnapshot {
@@ -173,6 +199,24 @@ function toProxySnapshot(proxy: ProxyConfig, hasStoredSecret: HasStoredSecret): 
 }
 
 /**
+ * Maps one persisted project entry to its renderer projection. A project
+ * carries no secret, so this only drops absent optional fields - it exists so
+ * the renderer's view is a named schema rather than an ad-hoc object.
+ */
+function toProjectSnapshot(project: ProjectConfig): ProjectSnapshot {
+  const snapshot: Record<string, unknown> = {
+    id: project.id,
+    label: project.label,
+  };
+  if (project.contentRoots !== undefined) snapshot.contentRoots = project.contentRoots;
+  if (project.componentRoots !== undefined) snapshot.componentRoots = project.componentRoots;
+  if (project.contentPriorityPaths !== undefined) {
+    snapshot.contentPriorityPaths = project.contentPriorityPaths;
+  }
+  return projectSnapshotSchema.parse(snapshot);
+}
+
+/**
  * Maps one persisted agent node to its secret-free snapshot: the `token`
  * pointer is dropped and replaced by `hasToken`, resolved through the same
  * `hasStoredSecret` predicate the proxy credentials use.
@@ -205,10 +249,11 @@ export function toAppSettingsSnapshot(
     };
     if (server.proxyId !== undefined) snapshot.proxyId = server.proxyId;
     if (server.tlsException) snapshot.tlsException = server.tlsException;
-    if (server.contentRoots !== undefined) snapshot.contentRoots = server.contentRoots;
-    if (server.componentRoots !== undefined) snapshot.componentRoots = server.componentRoots;
+    if (server.projectId !== undefined) snapshot.projectId = server.projectId;
     return serverSnapshotSchema.parse(snapshot);
   });
+
+  const projects = settings.projects.map((project) => toProjectSnapshot(project));
 
   const proxies = settings.proxies.map((proxy) => toProxySnapshot(proxy, hasStoredSecret));
 
@@ -219,6 +264,7 @@ export function toAppSettingsSnapshot(
 
   const document: Record<string, unknown> = {
     hosts,
+    projects,
     proxies,
     agents,
     browser: settings.browser,

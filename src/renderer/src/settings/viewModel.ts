@@ -61,6 +61,22 @@ export function resolveHostLabelInput(
   return { ok: true, label: result.data };
 }
 
+/**
+ * Validates a project item's required label, reusing the same
+ * `serverLabelSchema` main re-applies. Unlike a host label there is no address
+ * to default a blank label to: a project is only ever identified by its label,
+ * so a blank one is an error rather than a fallback.
+ */
+export function validateProjectLabelInput(
+  rawLabel: string,
+): { readonly ok: true; readonly label: string } | { readonly ok: false; readonly error: string } {
+  const result = serverLabelSchema.safeParse(rawLabel.trim());
+  if (!result.success) {
+    return { ok: false, error: result.error.issues[0]?.message ?? 'invalid label' };
+  }
+  return { ok: true, label: result.data };
+}
+
 /** The raw shape a colour picker reads back, before validation. */
 export type RawServerColor =
   | { readonly kind: 'swatch'; readonly swatch: string }

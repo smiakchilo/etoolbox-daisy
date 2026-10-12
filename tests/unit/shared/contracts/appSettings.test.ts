@@ -3,9 +3,11 @@ import {
   appSettingsSchema,
   defaultAppSettings,
   HOST_PROXY_NONE,
+  newProjectId,
   newProxyId,
   newServerId,
   parseAppSettings,
+  projectConfigSchema,
   proxyConfigSchema,
   serverConfigSchema,
 } from '../../../../src/shared';
@@ -29,10 +31,18 @@ function proxy(id: string) {
   });
 }
 
+function project(id: string) {
+  return projectConfigSchema.parse({
+    id: newProjectId(() => id),
+    label: `Project ${id}`,
+  });
+}
+
 function validSettings() {
   const serverA = server('server-a', 'https://a.example');
   return {
     hosts: [serverA],
+    projects: [],
     proxies: [],
     agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
@@ -143,6 +153,36 @@ describe('appSettingsSchema', () => {
       });
       const input = { ...validSettings(), hosts: [serverA], proxies: [] };
       expect(appSettingsSchema.parse(input)).toEqual(input);
+    });
+  });
+
+  describe('project references', () => {
+    it('accepts a host whose projectId names a configured project', () => {
+      const projectEntry = project('project-1');
+      const serverA = serverConfigSchema.parse({
+        ...server('server-a', 'https://a.example'),
+        projectId: projectEntry.id,
+      });
+      const input = { ...validSettings(), hosts: [serverA], projects: [projectEntry] };
+      expect(appSettingsSchema.parse(input)).toEqual(input);
+    });
+
+    it('rejects a host whose projectId does not name a configured project', () => {
+      const serverA = serverConfigSchema.parse({
+        ...server('server-a', 'https://a.example'),
+        projectId: newProjectId(() => 'project-ghost'),
+      });
+      expect(() =>
+        appSettingsSchema.parse({ ...validSettings(), hosts: [serverA], projects: [] }),
+      ).toThrow(/does not refer to a configured project/);
+    });
+
+    it('rejects duplicate project ids', () => {
+      const a = project('project-1');
+      const b = project('project-1');
+      expect(() => appSettingsSchema.parse({ ...validSettings(), projects: [a, b] })).toThrow(
+        /duplicate project id/,
+      );
     });
   });
 

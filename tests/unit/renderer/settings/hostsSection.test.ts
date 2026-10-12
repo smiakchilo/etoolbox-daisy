@@ -8,10 +8,13 @@ import type {
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
 import {
+  newProjectId,
   newProxyId,
   newServerId,
+  projectSnapshotSchema,
   proxySnapshotSchema,
   serverSnapshotSchema,
+  type ProjectSnapshot,
   type ProxySnapshot,
   type ServerSnapshot,
 } from '../../../../src/shared';
@@ -19,6 +22,7 @@ import {
   PROXY_DEFAULT_VALUE,
   PROXY_NONE_VALUE,
 } from '../../../../src/renderer/src/settings/proxyPicker';
+import { PROJECT_DEFAULT_VALUE } from '../../../../src/renderer/src/settings/projectPicker';
 
 const previousDocument = Reflect.get(globalThis, 'document') as unknown;
 const previousWindow = Reflect.get(globalThis, 'window') as unknown;
@@ -34,7 +38,7 @@ function snapshot(
   id: string,
   origin: string,
   label: string,
-  options: { swatch?: string; proxyId?: string } = {},
+  options: { swatch?: string; proxyId?: string; projectId?: string } = {},
 ): ServerSnapshot {
   return serverSnapshotSchema.parse({
     id: newServerId(() => id),
@@ -42,12 +46,17 @@ function snapshot(
     origin,
     color: { kind: 'swatch', swatch: options.swatch ?? 'blue' },
     ...(options.proxyId !== undefined ? { proxyId: options.proxyId } : {}),
+    ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
     revision: 0,
   });
 }
 
 function proxySnapshot(id: string, label: string, url: string): ProxySnapshot {
   return proxySnapshotSchema.parse({ id: newProxyId(() => id), label, url });
+}
+
+function projectSnapshot(id: string, label: string): ProjectSnapshot {
+  return projectSnapshotSchema.parse({ id: newProjectId(() => id), label });
 }
 
 function proxyMenuLabels(picker: HTMLElement): string[] {
@@ -82,7 +91,7 @@ function buildSection() {
 
 function field(
   root: ParentNode,
-  ariaLabel: 'Address' | 'Label' | 'Content roots' | 'Component roots' | 'Color tag' | 'Proxy',
+  ariaLabel: 'Address' | 'Label' | 'Color tag' | 'Proxy' | 'Project',
 ) {
   return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
 }
@@ -170,8 +179,8 @@ describe('createHostsSection', () => {
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(2);
     expect(field(section.element, 'Address')?.value).toBe('https://a.example');
     expect(field(section.element, 'Label')?.value).toBe('A');
-    // Address, Color tag, Label, Proxy, Component roots, Content roots per item.
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(12);
+    // Address, Color tag, Label, Proxy, Project per item.
+    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(10);
     expect(section.element.querySelectorAll('.multifield__action--remove')).toHaveLength(2);
   });
 
@@ -275,38 +284,62 @@ describe('createHostsSection', () => {
     });
   });
 
-  it('saves a content-roots change via updateServerPresentation', async () => {
+  it('saves a project change via updateServerPresentation', async () => {
     const section = buildSection();
-    section.update([snapshot('a', 'https://a.example', 'A')]);
+    const hpe = projectSnapshot('project-a', 'HPE');
+    section.update([snapshot('a', 'https://a.example', 'A')], [], [hpe]);
 
-    const roots = field(section.element, 'Content roots');
-    if (!roots) throw new Error('missing content roots field');
-    typeAndCommit(roots, '  /content/a; /content/b  ');
+    const project = field(section.element, 'Project');
+    if (!project) throw new Error('missing project picker');
+    chooseProxy(
+      project,
+      newProjectId(() => 'project-a'),
+    );
     await settle();
 
     expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
       serverId: newServerId(() => 'a'),
-      changes: {
-        label: 'A',
-        color: { kind: 'swatch', swatch: 'blue' },
-        contentRoots: '/content/a; /content/b',
-      },
+      changes: { projectId: newProjectId(() => 'project-a') },
+    });
+    // A project is presentation, never a targeting change.
+    expect(updateServerTargeting).not.toHaveBeenCalled();
+  });
+
+  it('returns a host to "(Default)" by sending projectId: null', async () => {
+    const section = buildSection();
+    const hpe = projectSnapshot('project-a', 'HPE');
+    section.update(
+      [snapshot('a', 'https://a.example', 'A', { projectId: newProjectId(() => 'project-a') })],
+      [],
+      [hpe],
+    );
+
+    const project = field(section.element, 'Project');
+    if (!project) throw new Error('missing project picker');
+    chooseProxy(project, PROJECT_DEFAULT_VALUE);
+    await settle();
+
+    expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
+      serverId: newServerId(() => 'a'),
+      changes: { projectId: null },
     });
   });
 
-  it('carries typed roots into addServer when a draft is created', async () => {
+  it('carries a chosen project into addServer when a draft is created', async () => {
     const section = buildSection();
-    section.update([]);
+    const hpe = projectSnapshot('project-a', 'HPE');
+    section.update([], [], [hpe]);
     section.element
       .querySelector('.multifield__add')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
     const address = field(section.element, 'Address');
-    const contentRoots = field(section.element, 'Content roots');
-    const componentRoots = field(section.element, 'Component roots');
-    if (!address || !contentRoots || !componentRoots) throw new Error('missing fields');
-    typeAndCommit(contentRoots, '/content/a');
-    typeAndCommit(componentRoots, '/apps/a');
+    const project = field(section.element, 'Project');
+    if (!address || !project) throw new Error('missing fields');
+    chooseProxy(
+      project,
+      newProjectId(() => 'project-a'),
+    );
     typeAndCommit(address, 'https://new.example');
     await settle();
 
@@ -314,8 +347,7 @@ describe('createHostsSection', () => {
       label: 'https://new.example',
       origin: 'https://new.example',
       color: { kind: 'swatch', swatch: 'blue' },
-      contentRoots: '/content/a',
-      componentRoots: '/apps/a',
+      projectId: newProjectId(() => 'project-a'),
     });
   });
 

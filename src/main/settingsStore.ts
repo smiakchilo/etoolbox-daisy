@@ -14,12 +14,14 @@ import {
   browserSettingsSchema,
   defaultAppSettings,
   parseAppSettings,
+  projectConfigSchema,
   type AgentToken,
   type AppSettings,
   type BrowserSettings,
+  type ProjectConfig,
   type ProxyConfig,
 } from '../shared';
-import type { ProxyId, ServerId } from '../shared';
+import type { ProjectId, ProxyId, ServerId } from '../shared';
 import { resolveConfiguredAgentId, type AgentDefinition } from '../shared';
 import type { AgentId } from '../shared';
 import {
@@ -28,6 +30,7 @@ import {
   newProxyId,
   originSchema,
   parseOrigin,
+  projectIdSchema,
   proxyIdSchema,
   serverIdSchema,
   serverLabelSchema,
@@ -200,7 +203,7 @@ export function repairProxyEntries(raw: unknown): unknown {
  * introduces an unrecognised key (a typo, a leftover from an older shape) does
  * not fail the whole load.
  */
-const SETTINGS_DOCUMENT_KEYS = ['hosts', 'proxies', 'agents', 'browser'] as const;
+const SETTINGS_DOCUMENT_KEYS = ['hosts', 'projects', 'proxies', 'agents', 'browser'] as const;
 const SERVER_ENTRY_KEYS = [
   'id',
   'label',
@@ -208,9 +211,15 @@ const SERVER_ENTRY_KEYS = [
   'color',
   'proxyId',
   'tlsException',
+  'projectId',
+  'revision',
+] as const;
+const PROJECT_ENTRY_KEYS = [
+  'id',
+  'label',
   'contentRoots',
   'componentRoots',
-  'revision',
+  'contentPriorityPaths',
 ] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
@@ -293,6 +302,56 @@ function normalizeHostProxyId(
 }
 
 /**
+ * Normalizes one host's project selection: a real project id is kept only when
+ * it names a configured project, otherwise the whole reference is dropped -
+ * which reverts the host to "(Default)" rather than failing the load. There is
+ * no sentinel here (unlike `proxyId`): absent is the only "no project" state.
+ */
+function normalizeHostProjectId(
+  value: unknown,
+  projectIds: ReadonlySet<string>,
+): Record<string, unknown> {
+  const projectId = projectIdSchema.safeParse(value);
+  if (projectId.success && projectIds.has(projectId.data)) {
+    return { projectId: projectId.data };
+  }
+  return {};
+}
+
+/** Trims a usable label out of a hand-written value, or `undefined` when there is none. */
+function normalizeTextLabel(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim().slice(0, LABEL_MAX_LENGTH);
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Normalizes one project-library entry. A project has no address to derive a
+ * label from, so an entry with no usable `id` or `label` is dropped entirely
+ * (the caller then clears any host that referenced it). Roots are normalized
+ * like a host's used to be; every other key is stripped.
+ */
+function normalizeProjectEntry(entry: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(entry)) return undefined;
+  const record = pickKnownKeys(entry, PROJECT_ENTRY_KEYS);
+
+  const id = projectIdSchema.safeParse(record['id']);
+  if (!id.success) return undefined;
+
+  const label = normalizeTextLabel(record['label']);
+  if (label === undefined) return undefined;
+
+  const next: Record<string, unknown> = { id: id.data, label };
+  const contentRoots = normalizeRootText(record['contentRoots']);
+  if (contentRoots !== undefined) next['contentRoots'] = contentRoots;
+  const componentRoots = normalizeRootText(record['componentRoots']);
+  if (componentRoots !== undefined) next['componentRoots'] = componentRoots;
+  const contentPriorityPaths = normalizeRootText(record['contentPriorityPaths']);
+  if (contentPriorityPaths !== undefined) next['contentPriorityPaths'] = contentPriorityPaths;
+  return next;
+}
+
+/**
  * Normalizes one host entry, or returns `undefined` when it cannot be made
  * usable (no valid `id` or `origin`) — the caller drops it. Every other field
  * gets a default: a missing colour is blue, a missing revision is 0, a missing
@@ -301,6 +360,7 @@ function normalizeHostProxyId(
 function normalizeServerEntry(
   entry: unknown,
   proxyIds: ReadonlySet<string>,
+  projectIds: ReadonlySet<string>,
 ): Record<string, unknown> | undefined {
   if (!isPlainObject(entry)) return undefined;
   const record = pickKnownKeys(entry, SERVER_ENTRY_KEYS);
@@ -322,15 +382,11 @@ function normalizeServerEntry(
     color: color.success ? color.data : DEFAULT_SERVER_COLOR,
     revision: revision.success ? revision.data : 0,
     ...normalizeHostProxyId(record['proxyId'], proxyIds),
+    ...normalizeHostProjectId(record['projectId'], projectIds),
   };
 
   const tlsException = tlsExceptionSchema.safeParse(record['tlsException']);
   if (tlsException.success) next['tlsException'] = tlsException.data;
-
-  const contentRoots = normalizeRootText(record['contentRoots']);
-  if (contentRoots !== undefined) next['contentRoots'] = contentRoots;
-  const componentRoots = normalizeRootText(record['componentRoots']);
-  if (componentRoots !== undefined) next['componentRoots'] = componentRoots;
 
   return next;
 }
@@ -390,16 +446,19 @@ function normalizeAgentEntry(
  *  - Deletes unrecognised keys at every level it manages, except inside a
  *    `credentials` object — that stays untouched so a plaintext `password`
  *    still fails the strict schema rather than being silently stripped.
- *  - Defaults the top-level `hosts`/`proxies` to `[]` and `agents` to the
- *    default provider when they are missing or the wrong shape.
+ *  - Defaults the top-level `hosts`/`projects`/`proxies` to `[]` and `agents`
+ *    to the default provider when they are missing or the wrong shape.
  *  - Repairs proxy entries (via {@link repairProxyEntries}) and drops entries
  *    with no usable address.
+ *  - Drops a project entry with no usable `id` or `label`.
  *  - Drops a host with no usable `id`/`origin`, and fills its label, colour
  *    and revision.
- *  - Clears a host's or agent's reference to a proxy that does not exist, and
- *    an agent's `reasoningEffort` that has no `model`.
+ *  - Clears a host's reference to a project that does not exist, a host's or
+ *    agent's reference to a proxy that does not exist, and an agent's
+ *    `reasoningEffort` that has no `model`.
  *  - Keeps only the first active agent and the first of any duplicated host id,
- *    host origin, or proxy id, so an integrity slip cannot fail the load.
+ *    host origin, project id or proxy id, so an integrity slip cannot fail the
+ *    load.
  *
  * Never writes anything. A healthy document is reconstructed (key order is not
  * preserved), but its values are unchanged.
@@ -421,12 +480,23 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
     proxies.push(normalized);
   }
 
+  const projects: Record<string, unknown>[] = [];
+  const projectIds = new Set<string>();
+  const projectsRaw = Array.isArray(document['projects']) ? document['projects'] : [];
+  for (const entry of projectsRaw) {
+    const normalized = normalizeProjectEntry(entry);
+    const id = normalized?.['id'];
+    if (!normalized || typeof id !== 'string' || projectIds.has(id)) continue;
+    projectIds.add(id);
+    projects.push(normalized);
+  }
+
   const hosts: Record<string, unknown>[] = [];
   const serverIds = new Set<string>();
   const serverOrigins = new Set<string>();
   const hostsRaw = Array.isArray(document['hosts']) ? document['hosts'] : [];
   for (const entry of hostsRaw) {
-    const normalized = normalizeServerEntry(entry, proxyIds);
+    const normalized = normalizeServerEntry(entry, proxyIds, projectIds);
     const id = normalized?.['id'];
     const origin = normalized?.['origin'];
     if (
@@ -479,6 +549,7 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
 
   return {
     hosts,
+    projects,
     proxies,
     agents,
     browser,
@@ -735,6 +806,8 @@ export const SERVER_MUTATION_ERROR_KINDS = [
   'invalid_change',
   /** No proxy-library entry with the given id exists in these settings. */
   'proxy_not_found',
+  /** No project-library entry with the given id exists in these settings. */
+  'project_not_found',
 ] as const;
 
 export type ServerMutationErrorKind = (typeof SERVER_MUTATION_ERROR_KINDS)[number];
@@ -888,10 +961,8 @@ export interface NewServerInput {
   readonly label: string;
   readonly origin: string;
   readonly color: ServerColor;
-  /** Optional free-text content roots captured while the row was a draft. */
-  readonly contentRoots?: string;
-  /** Optional free-text component roots captured while the row was a draft. */
-  readonly componentRoots?: string;
+  /** Optional project id captured while the row was a draft ("(Default)" is the absence of this key). */
+  readonly projectId?: ProjectId;
 }
 
 export interface AddServerOutcome {
@@ -927,8 +998,7 @@ export function addServer(
       label: input.label,
       origin: input.origin,
       color: input.color,
-      ...(input.contentRoots !== undefined ? { contentRoots: input.contentRoots } : {}),
-      ...(input.componentRoots !== undefined ? { componentRoots: input.componentRoots } : {}),
+      ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
       revision: 0,
     });
   } catch (error) {
@@ -1299,6 +1369,201 @@ export function reorderProxies(
   }
 
   const parsed = appSettingsSchema.safeParse({ ...settings, proxies: reordered });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
+}
+
+// ---------------------------------------------------------------------------
+// Projects library (the `projects` array)
+// ---------------------------------------------------------------------------
+
+export interface NewProjectInput {
+  readonly label: string;
+  /** Optional free-text content roots (omitted/empty means "no roots written"). */
+  readonly contentRoots?: string;
+  /** Optional free-text component roots. */
+  readonly componentRoots?: string;
+  /** Optional free-text content priority paths. */
+  readonly contentPriorityPaths?: string;
+}
+
+/**
+ * Builds a project entry from `input`, dropping empty root strings (the same as
+ * omitting the field). Shared by {@link addProject}/{@link updateProject} so the
+ * two cannot diverge on what "no roots" looks like.
+ */
+function buildProject(
+  id: ProjectId,
+  input: NewProjectInput,
+): Result<ProjectConfig, ServerMutationError> {
+  const contentRoots = input.contentRoots?.trim();
+  const componentRoots = input.componentRoots?.trim();
+  const contentPriorityPaths = input.contentPriorityPaths?.trim();
+  try {
+    return ok(
+      projectConfigSchema.parse({
+        id,
+        label: input.label,
+        ...(contentRoots !== undefined && contentRoots.length > 0 ? { contentRoots } : {}),
+        ...(componentRoots !== undefined && componentRoots.length > 0 ? { componentRoots } : {}),
+        ...(contentPriorityPaths !== undefined && contentPriorityPaths.length > 0
+          ? { contentPriorityPaths }
+          : {}),
+      }),
+    );
+  } catch (error) {
+    return err({ kind: 'invalid_change', message: describeThrown(error) });
+  }
+}
+
+/** Creates a new project-library entry at the end of the list. */
+export function addProject(
+  settings: AppSettings,
+  newId: ProjectId,
+  input: NewProjectInput,
+): Result<
+  { readonly settings: AppSettings; readonly project: ProjectConfig },
+  ServerMutationError
+> {
+  const built = buildProject(newId, input);
+  if (!built.ok) return built;
+
+  const parsed = appSettingsSchema.safeParse({
+    ...settings,
+    projects: [...settings.projects, built.value],
+  });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+
+  return ok({ settings: parsed.data, project: built.value });
+}
+
+/**
+ * Replaces one project-library entry's label and roots. This is a full
+ * replace, not a partial patch - matching `updateProjectRequestSchema`'s shape,
+ * so omitting a roots key clears it.
+ */
+export function updateProject(
+  settings: AppSettings,
+  projectId: ProjectId,
+  input: NewProjectInput,
+): Result<
+  { readonly settings: AppSettings; readonly project: ProjectConfig },
+  ServerMutationError
+> {
+  if (!settings.projects.some((project) => project.id === projectId)) {
+    return err({ kind: 'project_not_found', message: `no project with id ${projectId}` });
+  }
+
+  const built = buildProject(projectId, input);
+  if (!built.ok) return built;
+
+  const nextProjects = settings.projects.map((project) =>
+    project.id === projectId ? built.value : project,
+  );
+  const parsed = appSettingsSchema.safeParse({ ...settings, projects: nextProjects });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+
+  return ok({ settings: parsed.data, project: built.value });
+}
+
+/**
+ * Removes one project-library entry, clearing the reference from every host
+ * that named it in the same write: `appSettingsSchema` rejects a host whose
+ * `projectId` names a missing project, so removing the entry without this would
+ * make the document invalid. The host reverts to "(Default)" (no project, the
+ * `/content`/`/apps` defaults), which is the documented meaning of an absent
+ * reference.
+ */
+export function removeProject(
+  settings: AppSettings,
+  projectId: ProjectId,
+): Result<AppSettings, ServerMutationError> {
+  if (!settings.projects.some((project) => project.id === projectId)) {
+    return err({ kind: 'project_not_found', message: `no project with id ${projectId}` });
+  }
+
+  const nextHosts: unknown[] = settings.hosts.map((host) => {
+    if (host.projectId !== projectId) return host;
+    const cleared: Record<string, unknown> = { ...host };
+    delete cleared['projectId'];
+    return cleared;
+  });
+
+  const parsed = appSettingsSchema.safeParse({
+    ...settings,
+    hosts: nextHosts,
+    projects: settings.projects.filter((project) => project.id !== projectId),
+  });
+  if (!parsed.success) {
+    return err({
+      kind: 'invalid_change',
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
+}
+
+/**
+ * Reorders the project library to exactly the order given by `orderedIds`.
+ * Mirrors {@link reorderProxies}: the whole desired order, validated as a
+ * permutation (every configured id exactly once, no unknown id, none missing)
+ * so a mismatch is rejected rather than partially applied.
+ */
+export function reorderProjects(
+  settings: AppSettings,
+  orderedIds: readonly ProjectId[],
+): Result<AppSettings, ServerMutationError> {
+  if (orderedIds.length !== settings.projects.length) {
+    return err({
+      kind: 'invalid_change',
+      message:
+        `the requested order lists ${String(orderedIds.length)} project(s), but ` +
+        `${String(settings.projects.length)} are configured; the order must list every project exactly once`,
+    });
+  }
+
+  const byId = new Map(settings.projects.map((project) => [project.id, project]));
+  const seen = new Set<string>();
+  const reordered: ProjectConfig[] = [];
+  for (const id of orderedIds) {
+    if (seen.has(id)) {
+      return err({
+        kind: 'invalid_change',
+        message: `duplicate project id in the requested order: ${id}`,
+      });
+    }
+    seen.add(id);
+    const project = byId.get(id);
+    if (!project) {
+      return err({ kind: 'invalid_change', message: `no project with id ${id}` });
+    }
+    reordered.push(project);
+  }
+
+  const parsed = appSettingsSchema.safeParse({ ...settings, projects: reordered });
   if (!parsed.success) {
     return err({
       kind: 'invalid_change',
