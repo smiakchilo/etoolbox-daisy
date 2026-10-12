@@ -641,7 +641,16 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2852 passed / 14 skipped** (+11 against the
+Current baseline: **`npm run test` → 2858 passed / 14 skipped** (+6 against the
+2852 of the previous entry - **startup-restore presentation**: "New session" now
+start-disabled and derived from `chatId !== undefined && pendingOpen === undefined`
+(`chatPane.ts`'s `updateNewSessionEnabled`), the composer's Send disabled while a
+restored session is still resuming (`ComposerStatus.resuming`), and
+"Restoring conversation..." kept up for the whole resume instead of clearing when
+it begins; 4 `composerViewModel` cases + 2 `chatPane` cases, and the pre-existing
+"New session does nothing before any conversation" case tightened to assert the
+disabled state; see `docs/verification.md` "Startup restore: ... (2026-10-12)").
+Before that it was 2852 (+11 against the
 2841 of the previous entry - **uniform agent diagnostics**: the shared
 `modelObserver`, the shared conformance suite run by both adapters, minus the
 duplicated per-agent cases; see `docs/verification.md` "Session diagnostics: one

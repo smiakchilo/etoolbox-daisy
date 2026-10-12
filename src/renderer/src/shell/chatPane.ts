@@ -277,11 +277,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // reports `'superseded'` rather than a failure. See `ConversationOpen`.
   let pendingOpen:
     { readonly chatId: ChatId; readonly promise: Promise<ConversationOpen> } | undefined;
-  // Set once the toolbar exists (below). `openConversation` disables the
-  // "New session" control for as long as an open is in flight, so the user
-  // cannot start a second conversation while the first is still resolving -
-  // the condition that let an older open finish last and win (see the
-  // controller's `openChain`). A no-op until assigned.
+  // Set once the toolbar exists (below). The pane derives "New session" from
+  // whether it owns a conversation and no open is in flight (see
+  // `updateNewSessionEnabled`), so the control is disabled both before any
+  // conversation exists and while one is still opening - it can never look
+  // actionable while a click would be a no-op. The condition that a second
+  // conversation must not start over a first still resolving is `pendingOpen`
+  // (see the controller's `openChain`). A no-op until assigned.
   let setNewSessionEnabled: (enabled: boolean) => void = () => undefined;
   // A fresh pane is an empty conversation; flipped on the first transcript
   // item (the user's own prompt, or any assistant/tool event).
@@ -304,9 +306,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // two can never race over which one claims the restore.
   let startupConversationPromise: Promise<StartupConversation | undefined> | undefined;
   // A saved conversation whose journal is already painted but whose SDK session
-  // has not been resumed yet (the runtime is still cold-starting). While set,
-  // the banner says "Restoring conversation..." instead of the generic
-  // connecting row, and the resume path knows there is nothing left to paint.
+  // has not been resumed yet (the runtime is still cold-starting, or the open is
+  // in flight). While set, the banner says "Restoring conversation..." (instead
+  // of the generic connecting row) and Send stays disabled. It is cleared only
+  // once the resume open settles - not when the pane adopts the id - so the row
+  // and the disabled Send cover the actual resume work, not just the wait before
+  // it begins.
   let pendingStartup: StartupConversation | undefined;
   // Whether the startup journal has been replayed into the transcript. Guards
   // against replaying it twice when the preload wins the race to paint.
@@ -358,6 +363,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       // before consulting it, so this value is only ever used when true.
       session: { ...sessionStatus, authenticated: agentActive },
       agentActive,
+      // A restored conversation whose session has not resumed yet is not ready
+      // to send to, exactly as while the service is starting - see
+      // `computeComposerButtonState`. Its banner names the resume (below).
+      resuming: pendingStartup !== undefined,
     });
     composer.setButtonState(buttonState);
     // Every composer-generated message goes to the banner's single standing
@@ -543,6 +552,20 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     });
   }
 
+  /**
+   * Derives the toolbar's "New session" enabled state. The control can only do
+   * something once the pane owns a conversation and no open is in flight: with
+   * no `chatId` a click is silently discarded (`startNewSession` early-returns),
+   * and during an open a second conversation must not start over one still
+   * resolving (the single-flight rule, see `pendingOpen`). It therefore starts
+   * disabled - there is no conversation yet - and is re-derived from the one
+   * place that owns those two facts, so it never looks actionable while a click
+   * would be a no-op.
+   */
+  function updateNewSessionEnabled(): void {
+    setNewSessionEnabled(chatId !== undefined && pendingOpen === undefined);
+  }
+
   async function openConversation(id: ChatId, resume?: SdkSessionId): Promise<ConversationOpen> {
     const raw = window.daisy.agentChat.openConversation(
       resume === undefined ? { chatId: id } : { chatId: id, resume: { sdkSessionId: resume } },
@@ -554,7 +577,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       result.ok ? { outcome: 'opened' } : { outcome: 'failed', error: result.error },
     );
     pendingOpen = { chatId: id, promise };
-    setNewSessionEnabled(false);
+    updateNewSessionEnabled();
     try {
       const outcome = await promise;
       // A newer open replaced this one before it settled: the pane has moved to
@@ -580,7 +603,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       // "New session"; a superseded one leaves both to its successor.
       if (pendingOpen?.promise === promise) {
         pendingOpen = undefined;
-        setNewSessionEnabled(true);
+        updateNewSessionEnabled();
       }
     }
   }
@@ -732,11 +755,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           // The journal may already be on screen (the preload won the race to
           // paint it); `paintStartupJournal` is a no-op then. Either way the
           // session is resumed now, and only now does the pane own the chat.
+          // `pendingStartup` deliberately stays set for the whole open: it is
+          // what keeps the "Restoring conversation..." row up (and Send
+          // disabled) while the session is actually being resumed, rather than
+          // clearing the moment the work begins.
           paintStartupJournal(startup);
-          pendingStartup = undefined;
           adoptChatId(startup.chatId);
           latestSdkSessionId = startup.sdkSessionId;
           const opened = await openConversation(startup.chatId, startup.sdkSessionId);
+          // The resume has settled (opened, failed or superseded): the restored
+          // transcript is either backed by a live session now or is about to be
+          // replaced, so the restoring row comes down and Send re-enables.
+          pendingStartup = undefined;
           if (opened.outcome === 'opened') {
             persistActiveConversation();
           } else if (opened.outcome === 'failed') {
@@ -1067,6 +1097,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   function adoptChatId(id: ChatId): void {
     if (chatId !== id) statusBanner.clearError();
     chatId = id;
+    // Owning a conversation is what makes "New session" actionable; re-derive
+    // it here so a conversation adopted without an open of our own (main already
+    // owns it after a renderer reload) enables the control.
+    updateNewSessionEnabled();
   }
 
   const composer = createComposer({ onSend, onStop, onAnswer, onDevCommand });
@@ -1157,7 +1191,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     onNewSession: startNewSession,
   });
   setNewSessionEnabled = (enabled) => chatToolbar.setNewSessionEnabled(enabled);
-
+  // A fresh pane owns no conversation, so "New session" starts disabled - it
+  // has nothing to act on until a `ChatId` is adopted (see
+  // `updateNewSessionEnabled`).
+  updateNewSessionEnabled();
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
     children: [

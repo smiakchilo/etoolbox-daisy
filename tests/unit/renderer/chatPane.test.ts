@@ -553,6 +553,9 @@ describe('createChatPane status push', () => {
     const pane = createChatPane({ onOpenSettings: vi.fn() });
 
     const newSessionButton = pane.element.querySelector('[title="New session"]');
+    // It is genuinely disabled, not merely inert: with nothing to act on, the
+    // control must not look actionable.
+    expect(newSessionButton?.hasAttribute('disabled')).toBe(true);
     newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
     expect(openConversation).not.toHaveBeenCalled();
@@ -1429,6 +1432,79 @@ describe('createChatPane conversation open serialization', () => {
 
     expect(onConversationUnavailable).not.toHaveBeenCalled();
     expect(openConversation).toHaveBeenCalledTimes(2);
+    pane.dispose();
+  });
+
+  it('keeps "Restoring conversation..." up and Send disabled for the whole resume, then clears both', async () => {
+    let release: ((value: AgentChatOpenResult) => void) | undefined;
+    openConversation.mockImplementationOnce(
+      () =>
+        new Promise<AgentChatOpenResult>((resolve) => {
+          release = resolve;
+        }),
+    );
+
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation: vi.fn().mockResolvedValue(rememberedConversation),
+    });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    expect(openConversation).toHaveBeenCalledTimes(1);
+
+    // A concurrent status poll re-derives the presentation while the resume
+    // open is still in flight. It reports main now owning the resumed chat id,
+    // so it takes the ordinary refresh path rather than re-opening.
+    pushStatus(
+      definedStatus({
+        auth: { apiVersion: 1, isAuthenticated: true },
+        activeChatId: rememberedConversation.chatId,
+      }),
+    );
+    await flush();
+
+    // The resume is the work the user is waiting on, so the row names it (not
+    // the generic connecting row) and nothing is sendable yet.
+    const banner = agentBanner(pane);
+    expect(banner?.textContent).toBe('Restoring conversation...');
+    expect(banner?.classList.contains('banner-row--loading')).toBe(true);
+    // Still up, not mid-collapse: the row covers the resume, not just the wait
+    // before it (clearing `pendingStartup` early would start the collapse here).
+    expect(banner?.hasAttribute('open')).toBe(true);
+    expect(banner?.classList.contains('banner-row--closing')).toBe(false);
+    expect(sendButton(pane)?.hasAttribute('disabled')).toBe(true);
+    expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(true);
+
+    release?.({ ok: true, chatId: rememberedConversation.chatId });
+    await flush();
+
+    // Resume settled: the row comes down and both controls are live again.
+    await waitForBannerClosed(pane);
+    expect(sendButton(pane)?.hasAttribute('disabled')).toBe(false);
+    expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(false);
+    pane.dispose();
+  });
+
+  it('enables "New session" once the pane adopts a conversation main already owns', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+
+    // Nothing owned yet: the control has nothing to act on.
+    expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(true);
+
+    // Main already owns a conversation (a recycled runtime or a renderer
+    // reload): the pane adopts it without an open of its own.
+    pushStatus(
+      definedStatus({
+        auth: { apiVersion: 1, isAuthenticated: true },
+        activeChatId: 'chat-owned' as ChatId,
+      }),
+    );
+    await flush();
+
+    expect(openConversation).not.toHaveBeenCalled();
+    expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(false);
     pane.dispose();
   });
 });

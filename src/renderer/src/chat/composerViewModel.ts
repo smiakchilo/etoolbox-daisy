@@ -27,6 +27,14 @@ export interface ComposerStatus {
    * of the composer's inline notice, so this state disables Send silently.
    */
   readonly agentActive: boolean;
+  /**
+   * Whether a restored conversation's session is still being resumed - its
+   * transcript is on screen, but the SDK session that owns it is not open yet.
+   * While true there is nothing to send to, exactly as while the service is
+   * `starting`, so Send is disabled. Optional (defaults false) so callers that
+   * have no concept of a resume need not supply it.
+   */
+  readonly resuming?: boolean;
 }
 
 export type ComposerButtonState =
@@ -73,16 +81,20 @@ export function isTurnInFlight(state: SessionStreamState): boolean {
  *    placeholder values while starting; running `canSendMessage` against
  *    them here would misreport "not authenticated" for a user who is merely
  *    a few seconds early, which is exactly the conflation the plan forbids.
- * 2. A turn in flight - `canSendMessage` has no notion of "Stop" at all (see
+ * 2. `resuming` - a restored conversation's session is still being opened, so
+ *    the transcript is on screen but there is nothing to send to yet. Treated
+ *    as `connecting` (Send disabled, no Stop). Same reasoning as (1): the
+ *    session fields are not yet meaningful, and no turn can be in flight.
+ * 3. A turn in flight - `canSendMessage` has no notion of "Stop" at all (see
  *    below), so this composer-only concept has to be decided before
  *    delegating to it, not folded into its reason codes.
- * 3. No usable agent selected (`agentActive` false) - nothing can be sent at
+ * 4. No usable agent selected (`agentActive` false) - nothing can be sent at
  *    all. This is checked before `canSendMessage` because the chat pane owns
  *    the message for it (its own banner), not the composer's inline notice;
  *    returning a distinct state lets the composer stay silent while still
  *    looking disabled. It still comes *after* the in-flight check so a turn
  *    already running can always be stopped.
- * 4. Otherwise, `src/shared/contracts/sessionState.ts`'s own gate, called
+ * 5. Otherwise, `src/shared/contracts/sessionState.ts`'s own gate, called
  *    verbatim - this is the exact rule `agentChatController.ts`'s
  *    `sendMessage` enforces:
  *
@@ -96,6 +108,13 @@ export function isTurnInFlight(state: SessionStreamState): boolean {
 export function computeComposerButtonState(status: ComposerStatus): ComposerButtonState {
   if (status.serviceState === 'unavailable') return { kind: 'unavailable' };
   if (status.serviceState === 'starting') return { kind: 'connecting' };
+  // A restored conversation whose session is still resuming is the same
+  // "not ready to send yet" condition as the service still starting: the
+  // transcript may already be on screen, but the session that owns it is not
+  // open, so Send stays disabled until the resume settles. Checked before the
+  // in-flight/Stop test because no turn can be running while the session that
+  // would run it is not yet open.
+  if (status.resuming === true) return { kind: 'connecting' };
   if (isTurnInFlight(status.session.state)) return { kind: 'stop' };
   if (!status.agentActive) return { kind: 'agent-inactive' };
 

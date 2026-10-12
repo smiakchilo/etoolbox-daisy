@@ -37,6 +37,38 @@ describe('computeComposerButtonState', () => {
     expect(result).toEqual({ kind: 'connecting' });
   });
 
+  describe("a restored conversation still resuming ('resuming')", () => {
+    it("shows 'connecting' while the session is being resumed", () => {
+      const result = computeComposerButtonState(status({ resuming: true }));
+      expect(result).toEqual({ kind: 'connecting' });
+    });
+
+    it("outranks a would-be 'send-enabled': an idle, authenticated session is not sendable until the resume settles", () => {
+      const result = computeComposerButtonState(
+        status({ resuming: true, session: session({ state: 'idle', authenticated: true }) }),
+      );
+      expect(result).toEqual({ kind: 'connecting' });
+    });
+
+    it("'unavailable' still outranks 'resuming' (no agent at all)", () => {
+      const result = computeComposerButtonState(
+        status({ serviceState: 'unavailable', resuming: true }),
+      );
+      expect(result).toEqual({ kind: 'unavailable' });
+    });
+
+    it("an absent/false 'resuming' leaves the ordinary gate in charge", () => {
+      expect(computeComposerButtonState(status({ session: session({ state: 'idle' }) }))).toEqual({
+        kind: 'send-enabled',
+      });
+      expect(
+        computeComposerButtonState(
+          status({ resuming: false, session: session({ state: 'idle' }) }),
+        ),
+      ).toEqual({ kind: 'send-enabled' });
+    });
+  });
+
   describe('a turn in flight always shows Stop once the service is ready', () => {
     for (const state of ['sending', 'streaming', 'runningTool', 'cancelling'] as const) {
       it(`shows 'stop' for session state "${state}"`, () => {
