@@ -267,7 +267,23 @@ if (!gotSingleInstanceLock) {
     // Lines file per chat under `<home>/etoolbox-daisy/chats`. Owned here for
     // the app's lifetime, not by a controller - an agent runtime recycles
     // (replacing the controller) while the same journal keeps appending.
-    const chatJournal = createChatJournal(appPaths.chats);
+    const chatJournal = createChatJournal(appPaths.chats, {
+      // The journal holds the detail; app.log gets one typed line per turn so a
+      // slow or failed turn is visible without opening the chat file. Only
+      // durations, a count and an outcome - the logger carries no free text.
+      onTurnSummary: (summary) =>
+        logger.info('AGENT_TURN_SUMMARY', {
+          durationMs: summary.durationMs,
+          count: summary.toolCallCount,
+          outcome:
+            summary.outcome === 'completed'
+              ? 'success'
+              : summary.outcome === 'interrupted'
+                ? 'cancelled'
+                : 'failure',
+          ids: { chatId: summary.chatId, turnId: summary.turnId },
+        }),
+    });
     const secretsDir = path.join(appPaths.settings, 'secrets');
     const secretStore = createSecretStore(secretsDir, safeStorage);
 

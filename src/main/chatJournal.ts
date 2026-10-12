@@ -5,6 +5,7 @@ import {
   type ChatId,
   type ChatJournalHeaderRecord,
   type ChatJournalRecord,
+  type ChatJournalTurnSummaryRecord,
   CHAT_JOURNAL_SCHEMA_VERSION,
   chatJournalRecordSchema,
   createDeltaFoldState,
@@ -17,6 +18,7 @@ import {
   type ServerId,
   type ToolCallId,
   type TurnId,
+  type TurnOutcome,
 } from '../shared';
 
 /**
@@ -109,6 +111,8 @@ export interface ChatJournal {
 export interface ChatJournalOptions {
   /** Injectable clock so tests get deterministic `at`/`startedAt` values. */
   readonly now?: () => number;
+  /** Called with every `turn.summary` the journal writes (also when the write itself failed), so the application log can carry the same timings. */
+  readonly onTurnSummary?: (record: ChatJournalTurnSummaryRecord) => void;
 }
 
 interface MessageFold {
@@ -120,6 +124,33 @@ interface MessageFold {
 interface OutstandingToolCall {
   readonly toolName: string;
   readonly turnId?: TurnId;
+}
+
+/**
+ * What the journal has observed of the turn in flight, folded into one
+ * `turn.summary` record when the turn ends. Timestamps are the journal's own
+ * clock, so the summary needs nothing from an adapter.
+ */
+interface TurnAccumulator {
+  readonly turnId: TurnId;
+  readonly startedAt: number;
+  firstActivityAt?: number;
+  firstTextAt?: number;
+  /** When each unresolved tool call was requested; an `ask_user` call therefore counts the user's thinking time. */
+  readonly toolStartedAt: Map<ToolCallId, number>;
+  toolCallCount: number;
+  toolDurationMs: number;
+  modelCallCount: number;
+  modelCallFailureCount: number;
+  model?: string;
+  reasoningEffort?: string;
+  finishReason?: string;
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  cacheReadTokens?: number | undefined;
+  reasoningTokens?: number | undefined;
+  cost?: number | undefined;
+  cancelled: boolean;
 }
 
 interface OpenChat {
@@ -142,8 +173,10 @@ interface OpenChat {
    * read from the preceding `session.state.changed`/message event.
    */
   currentTurnId?: TurnId;
-  /** At most one prompt is staged: main owns one active turn per chat. */
-  pendingPrompt?: { readonly turnId: TurnId; readonly prompt: string };
+  /** At most one prompt is staged: main owns one active turn per chat. `at` is when it was staged, the start of the turn's timings. */
+  pendingPrompt?: { readonly turnId: TurnId; readonly prompt: string; readonly at: number };
+  /** The turn being timed, from its first event until its terminal one. */
+  turn?: TurnAccumulator;
 }
 
 /**
@@ -201,6 +234,22 @@ function isTurnEnd(event: AgentEvent): boolean {
   );
 }
 
+/** Sums an optional metric: absent stays absent until something reports it. */
+function addMetric(total: number | undefined, value: number | undefined): number | undefined {
+  if (value === undefined) return total;
+  return (total ?? 0) + value;
+}
+
+/** How a turn-ending event ended the turn: `error` is an error, a cancelled turn that went idle was interrupted, a closed chat interrupted its turn. */
+function outcomeFor(event: AgentEvent, cancelled: boolean): TurnOutcome {
+  if (event.type === 'error') return 'error';
+  if (event.type === 'session.state.changed') {
+    if (event.state === 'error') return 'error';
+    if (event.state === 'closed') return 'interrupted';
+  }
+  return cancelled ? 'interrupted' : 'completed';
+}
+
 export function createChatJournal(chatsDir: string, options: ChatJournalOptions = {}): ChatJournal {
   const now = options.now ?? Date.now;
   const openChats = new Map<ChatId, OpenChat>();
@@ -253,6 +302,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
   function flushPendingPrompt(state: OpenChat, chatId: ChatId, turnId: TurnId): void {
     const pending = state.pendingPrompt;
     if (pending === undefined || pending.turnId !== turnId) return;
+    beginTurn(state, chatId, turnId);
     delete state.pendingPrompt;
     appendRecord(state, {
       recordType: 'user.prompt',
@@ -261,6 +311,119 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       turnId: pending.turnId,
       prompt: pending.prompt,
     });
+  }
+
+  /**
+   * Starts timing `turnId` from the moment its prompt was staged. A turn still
+   * open from before (it never reached a terminal event) is closed out as
+   * interrupted first, so no turn is ever silently dropped from the summaries.
+   * Does nothing when the turn is already being timed or has no staged prompt.
+   */
+  function beginTurn(state: OpenChat, chatId: ChatId, turnId: TurnId): void {
+    if (state.turn?.turnId === turnId) return;
+    const pending = state.pendingPrompt;
+    if (pending === undefined || pending.turnId !== turnId) return;
+    if (state.turn !== undefined) finishTurn(state, chatId, 'interrupted');
+    state.turn = {
+      turnId,
+      startedAt: pending.at,
+      toolStartedAt: new Map(),
+      toolCallCount: 0,
+      toolDurationMs: 0,
+      modelCallCount: 0,
+      modelCallFailureCount: 0,
+      cancelled: false,
+    };
+  }
+
+  /** Folds one event into the turn being timed; events of another turn are ignored. */
+  function accumulateTurnEvent(turn: TurnAccumulator, event: AgentEvent): void {
+    const eventTurnId = 'turnId' in event ? event.turnId : undefined;
+    if (eventTurnId !== undefined && eventTurnId !== turn.turnId) return;
+    const at = now();
+    // A state change or a model switch is bookkeeping, not a sign the agent is
+    // working on the turn; counting `sending` would make the first-activity
+    // time always zero.
+    if (event.type !== 'session.state.changed' && event.type !== 'model.changed') {
+      turn.firstActivityAt ??= at;
+    }
+    switch (event.type) {
+      case 'session.state.changed':
+        if (event.state === 'cancelling') turn.cancelled = true;
+        return;
+      case 'assistant.text.delta':
+      case 'assistant.message.completed':
+        turn.firstTextAt ??= at;
+        return;
+      case 'tool.call.requested':
+        turn.toolCallCount += 1;
+        turn.toolStartedAt.set(event.toolCallId, at);
+        return;
+      case 'tool.result':
+      case 'tool.call.rejected': {
+        const startedAt = turn.toolStartedAt.get(event.toolCallId);
+        if (startedAt === undefined) return;
+        turn.toolStartedAt.delete(event.toolCallId);
+        turn.toolDurationMs += Math.max(0, at - startedAt);
+        return;
+      }
+      case 'model.usage':
+        turn.modelCallCount += 1;
+        if (event.model !== undefined) turn.model = event.model;
+        if (event.reasoningEffort !== undefined) turn.reasoningEffort = event.reasoningEffort;
+        if (event.finishReason !== undefined) turn.finishReason = event.finishReason;
+        turn.inputTokens = addMetric(turn.inputTokens, event.inputTokens);
+        turn.outputTokens = addMetric(turn.outputTokens, event.outputTokens);
+        turn.cacheReadTokens = addMetric(turn.cacheReadTokens, event.cacheReadTokens);
+        turn.reasoningTokens = addMetric(turn.reasoningTokens, event.reasoningTokens);
+        turn.cost = addMetric(turn.cost, event.cost);
+        return;
+      case 'model.call.failed':
+        turn.modelCallFailureCount += 1;
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** Writes the `turn.summary` for the turn being timed, if any, and stops timing it. */
+  function finishTurn(state: OpenChat, chatId: ChatId, outcome: TurnOutcome): void {
+    const turn = state.turn;
+    if (turn === undefined) return;
+    delete state.turn;
+    const at = now();
+    const record: ChatJournalTurnSummaryRecord = {
+      recordType: 'turn.summary',
+      at,
+      chatId,
+      turnId: turn.turnId,
+      outcome,
+      durationMs: Math.max(0, at - turn.startedAt),
+      ...(turn.firstActivityAt !== undefined
+        ? { firstActivityMs: Math.max(0, turn.firstActivityAt - turn.startedAt) }
+        : {}),
+      ...(turn.firstTextAt !== undefined
+        ? { firstTextMs: Math.max(0, turn.firstTextAt - turn.startedAt) }
+        : {}),
+      toolCallCount: turn.toolCallCount,
+      toolDurationMs: turn.toolDurationMs,
+      modelCallCount: turn.modelCallCount,
+      modelCallFailureCount: turn.modelCallFailureCount,
+      ...(turn.model !== undefined ? { model: turn.model } : {}),
+      ...(turn.reasoningEffort !== undefined ? { reasoningEffort: turn.reasoningEffort } : {}),
+      ...(turn.inputTokens !== undefined ? { inputTokens: turn.inputTokens } : {}),
+      ...(turn.outputTokens !== undefined ? { outputTokens: turn.outputTokens } : {}),
+      ...(turn.cacheReadTokens !== undefined ? { cacheReadTokens: turn.cacheReadTokens } : {}),
+      ...(turn.reasoningTokens !== undefined ? { reasoningTokens: turn.reasoningTokens } : {}),
+      ...(turn.cost !== undefined ? { cost: turn.cost } : {}),
+      ...(turn.finishReason !== undefined ? { finishReason: turn.finishReason } : {}),
+    };
+    appendRecord(state, record);
+    try {
+      options.onTurnSummary?.(record);
+    } catch {
+      // A logging hook must never take the journal down with it.
+    }
   }
 
   function finalizePendingMessages(state: OpenChat, chatId: ChatId): void {
@@ -338,7 +501,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         droppedRecordCount += 1;
         return;
       }
-      state.pendingPrompt = { turnId: params.turnId, prompt: params.prompt };
+      state.pendingPrompt = { turnId: params.turnId, prompt: params.prompt, at: now() };
     },
 
     discardUserPrompt(chatId, turnId) {
@@ -352,6 +515,12 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         droppedRecordCount += 1;
         return;
       }
+      const turnId = 'turnId' in event ? event.turnId : undefined;
+      // Timings are taken before anything below returns: a turn that only ever
+      // reasons still has a first-activity time, and the stream's deltas (which
+      // return early) still mark the first text.
+      if (turnId !== undefined) beginTurn(state, event.chatId, turnId);
+      if (state.turn !== undefined) accumulateTurnEvent(state.turn, event);
       // Reasoning is transient by contract: it is shown in the moment and then
       // discarded, never accumulated as durable history (see `agentEvents.ts`'s
       // reasoning variants and docs/compatibility.md section 6 - the SDK marks
@@ -364,7 +533,6 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       ) {
         return;
       }
-      const turnId = 'turnId' in event ? event.turnId : undefined;
       if (turnId !== undefined) {
         state.currentTurnId = turnId;
         flushPendingPrompt(state, event.chatId, turnId);
@@ -399,6 +567,9 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       if (isTurnEnd(event)) {
         finalizePendingMessages(state, event.chatId);
         finalizeOutstandingToolCalls(state, event.chatId);
+        if (state.turn !== undefined) {
+          finishTurn(state, event.chatId, outcomeFor(event, state.turn.cancelled));
+        }
       }
     },
 
@@ -423,10 +594,14 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       // An opened-but-unused chat has written nothing and has nothing to
       // finalize, so closing it must not create a file either.
       const hasPendingContent =
-        state.foldsByMessageId.size > 0 || state.outstandingToolCalls.size > 0;
+        state.foldsByMessageId.size > 0 ||
+        state.outstandingToolCalls.size > 0 ||
+        state.turn !== undefined;
       if (state.pendingHeader !== undefined && !hasPendingContent) return;
+      if (state.turn !== undefined) flushPendingPrompt(state, chatId, state.turn.turnId);
       finalizePendingMessages(state, chatId);
       finalizeOutstandingToolCalls(state, chatId);
+      finishTurn(state, chatId, 'interrupted');
       appendRecord(state, { recordType: 'chat.closed', at: now(), chatId });
     },
 

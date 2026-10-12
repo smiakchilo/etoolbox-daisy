@@ -167,3 +167,49 @@ describe('chatJournalRecordSchema - other record kinds', () => {
     );
   });
 });
+
+describe('chatJournalRecordSchema - turn.summary', () => {
+  const summary = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    recordType: 'turn.summary',
+    at: 1_700_000_000_000,
+    chatId: CHAT_ID,
+    turnId: TURN_ID,
+    outcome: 'completed',
+    durationMs: 1200,
+    toolCallCount: 2,
+    toolDurationMs: 300,
+    modelCallCount: 1,
+    modelCallFailureCount: 0,
+    ...overrides,
+  });
+
+  it('accepts a minimal summary and one carrying every optional field', () => {
+    expect(parseChatJournalRecord(summary())).toMatchObject({ recordType: 'turn.summary' });
+    expect(
+      chatJournalRecordSchema.safeParse(
+        summary({
+          firstActivityMs: 10,
+          firstTextMs: 20,
+          model: 'gpt-x',
+          reasoningEffort: 'high',
+          inputTokens: 1,
+          outputTokens: 2,
+          cacheReadTokens: 3,
+          reasoningTokens: 4,
+          cost: 0.5,
+          finishReason: 'stop',
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it.each(['completed', 'error', 'interrupted'])('accepts the %s outcome', (outcome) => {
+    expect(chatJournalRecordSchema.safeParse(summary({ outcome })).success).toBe(true);
+  });
+
+  it('rejects an unknown outcome, a negative duration and an extra key', () => {
+    expect(chatJournalRecordSchema.safeParse(summary({ outcome: 'weird' })).success).toBe(false);
+    expect(chatJournalRecordSchema.safeParse(summary({ durationMs: -1 })).success).toBe(false);
+    expect(chatJournalRecordSchema.safeParse(summary({ prompt: 'leak' })).success).toBe(false);
+  });
+});

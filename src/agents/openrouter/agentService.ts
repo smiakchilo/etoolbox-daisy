@@ -30,6 +30,7 @@ import {
   applyAgentEvent,
   canSendMessage,
   createAgentServiceError,
+  createModelObserver,
   createToolError,
   err,
   jsonValueSchema,
@@ -44,6 +45,7 @@ import {
   toolCallIdSchema,
 } from '../../shared';
 import type { OpenRouterCall, OpenRouterClient, RunTool, ToolCallContext, ToolSpec } from './types';
+import { mapOpenRouterUsage } from './usageDiagnostics';
 
 /**
  * The OpenRouter-backed `AgentService`.
@@ -170,6 +172,8 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
 
   let openChatId: ChatId | undefined;
   let openState: unknown;
+  /** Decides when a `model.changed` is reported for the open chat; diagnostics only. */
+  const modelObserver = createModelObserver();
   let openSessionId: SdkSessionId | undefined;
   let streamState: SessionStreamState = 'idle';
   let currentTurn: CurrentTurn | undefined;
@@ -458,6 +462,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
     }
     applyAndEmit(makeSessionStateEvent(chatId, 'closed'));
     openState = undefined;
+    modelObserver.reset();
     openSessionId = undefined;
     currentAbort = undefined;
     if (openChatId === chatId) openChatId = undefined;
@@ -476,6 +481,8 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
     turnId: TurnId,
     call: OpenRouterCall,
     myGeneration: number,
+    startedAt: number,
+    reasoningEffort: string | null,
   ): Promise<void> {
     const settled = await Promise.allSettled([
       // `getResponse` drives the run to completion (and rejects on failure or
@@ -540,6 +547,20 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         content: reasoning.content,
       });
     }
+    const usage = mapOpenRouterUsage(
+      settled[0]?.status === 'fulfilled' ? settled[0].value : undefined,
+      {
+        durationMs: Date.now() - startedAt,
+        reasoningEffort,
+      },
+    );
+    if (usage !== undefined) {
+      try {
+        applyAndEmit({ ...usage, chatId, sequence: nextSequence(chatId), turnId });
+      } catch (error) {
+        console.error('openrouter: could not report model usage', error);
+      }
+    }
     applyAndEmit(makeSessionStateEvent(chatId, 'idle', turnId));
   }
 
@@ -577,6 +598,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         // SDK's own in-memory state carries history across turns within this
         // open conversation.
         openState = client.createConversationState();
+        modelObserver.reset();
         openSessionId = sdkSessionIdSchema.parse(idGenerator());
         openChatId = request.chatId;
         streamState = 'idle';
@@ -642,6 +664,27 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       // sees "turn_in_progress", mirroring the other adapters.
       applyAndEmit(makeSessionStateEvent(request.chatId, 'sending', turnId));
 
+      // Diagnostics: report the model/effort this turn runs on when it is the
+      // first prompt of the open chat or differs from the last one reported.
+      const modelBody = modelObserver.observe({
+        model,
+        ...(preference.reasoningEffort !== null
+          ? { reasoningEffort: preference.reasoningEffort }
+          : {}),
+      });
+      if (modelBody !== undefined) {
+        try {
+          applyAndEmit({
+            ...modelBody,
+            chatId: request.chatId,
+            sequence: nextSequence(request.chatId),
+            turnId,
+          });
+        } catch (error) {
+          console.error('openrouter: could not report the model change', error);
+        }
+      }
+
       let call: OpenRouterCall;
       try {
         call = client.callModel({
@@ -670,7 +713,15 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       // awaiting it here would hold the renderer's `sendMessage` reply until
       // the model finished, so the user's own prompt would not appear in the
       // transcript until the answer did.
-      void runTurn(request.chatId, turnId, call, myGeneration).catch((error: unknown) => {
+      const startedAt = Date.now();
+      void runTurn(
+        request.chatId,
+        turnId,
+        call,
+        myGeneration,
+        startedAt,
+        preference.reasoningEffort,
+      ).catch((error: unknown) => {
         console.error('openrouter: detached turn failed unexpectedly', error);
       });
       return Promise.resolve(ok(undefined));

@@ -215,6 +215,13 @@ src/agents/<name>/
   `agentSettingsSchema` (`active`, `proxy`, `model`, `reasoningEffort`,
   `token`); an agent that needs other settings would have to extend that shared
   contract - **say so and ask**.
+- **Diagnostics contract (every agent, incl. a future Claude).** Journal-only
+  `model.changed` / `model.usage` / `model.call.failed` events. An adapter
+  reports its model through `createModelObserver`
+  (`src/shared/agents/modelObserver.ts`) in `sendPrompt` and must pass
+  `describeAgentDiagnosticsConformance`
+  (`tests/support/agentDiagnosticsConformance.ts`) via its own harness. Semantics
+  are documented in `src/shared/contracts/agentEvents.ts`.
 - Copilot's files: `copilotClient.ts` (`createHardenedCopilotClient`),
   `runtimePaths.ts` (+ `findProjectRoot`), `copilotHome.ts`, `toolPolicy.ts`
   (**the hardening core**), `aemToolPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
@@ -634,7 +641,20 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2796 passed / 14 skipped** (+25 against the
+Current baseline: **`npm run test` → 2852 passed / 14 skipped** (+11 against the
+2841 of the previous entry - **uniform agent diagnostics**: the shared
+`modelObserver`, the shared conformance suite run by both adapters, minus the
+duplicated per-agent cases; see `docs/verification.md` "Session diagnostics: one
+uniform contract across agents (2026-10-11)"). Before that it was 2841 (+45 against the
+2796 of the previous entry - **session diagnostics, Phase 1**: the journal-only
+`model.changed` / `model.usage` / `model.call.failed` events (emitted by both
+agents via `src/agents/copilot/sessionDiagnostics.ts` and
+`src/agents/openrouter/usageDiagnostics.ts`, journaled but never forwarded to the
+renderer), a `turn.summary` journal record folded by `chatJournal.ts`, and the
+`AGENT_TURN_SUMMARY` log code. Contract changes: `agentEvents.ts`,
+`chatJournal.ts`, `sessionState.ts`. See `docs/verification.md` "Session
+diagnostics, Phase 1 ... (2026-10-11)"; Phase 2 is in `docs/backlog.md`). Before
+that it was 2796 (+25 against the
 2771 of the previous entry - **"Navigate to page": a `browser_navigate` tool, a
 `navigate` skill, and cause-aware navigation cancellation**. `browser_navigate`
 opens a page on a configured host (label -> origin resolved by the application;

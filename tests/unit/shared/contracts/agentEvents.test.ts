@@ -461,3 +461,69 @@ describe('delta folding', () => {
     expect(() => foldTextDelta(state, otherMessageDelta)).toThrow(/does not belong/);
   });
 });
+
+describe('model diagnostics events', () => {
+  const changed = {
+    type: 'model.changed',
+    chatId: 'chat-1',
+    sequence: 0,
+    model: 'gpt-x',
+    cause: 'session-open',
+  };
+
+  it('accepts model.changed with and without the optional fields', () => {
+    expect(agentEventSchema.safeParse(changed).success).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        ...changed,
+        turnId: 'turn-1',
+        reasoningEffort: 'high',
+        previousModel: 'gpt-y',
+        previousReasoningEffort: 'low',
+        cause: 'preference-change',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects model.changed with an unknown cause, an empty model, an oversized model or an extra key', () => {
+    expect(agentEventSchema.safeParse({ ...changed, cause: 'because' }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...changed, model: '' }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...changed, model: 'm'.repeat(201) }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...changed, extra: 1 }).success).toBe(false);
+  });
+
+  it('accepts model.usage with every metric optional, and rejects negative or non-finite metrics', () => {
+    const usage = { type: 'model.usage', chatId: 'chat-1', sequence: 0 };
+    expect(agentEventSchema.safeParse(usage).success).toBe(true);
+    expect(
+      agentEventSchema.safeParse({
+        ...usage,
+        inputTokens: 10,
+        outputTokens: 2,
+        cost: 0.1,
+        timeToFirstTokenMs: 5,
+        finishReason: 'stop',
+      }).success,
+    ).toBe(true);
+    expect(agentEventSchema.safeParse({ ...usage, inputTokens: -1 }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...usage, cost: Number.POSITIVE_INFINITY }).success).toBe(
+      false,
+    );
+    expect(agentEventSchema.safeParse({ ...usage, finishReason: '' }).success).toBe(false);
+  });
+
+  it('accepts model.call.failed diagnostics only, and rejects a raw error message', () => {
+    const failed = {
+      type: 'model.call.failed',
+      chatId: 'chat-1',
+      sequence: 0,
+      failureKind: 'api',
+      transport: 'http',
+      statusCode: 503,
+      errorCode: 'overloaded',
+    };
+    expect(agentEventSchema.safeParse(failed).success).toBe(true);
+    expect(agentEventSchema.safeParse({ ...failed, failureKind: 'other' }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...failed, message: 'secret' }).success).toBe(false);
+  });
+});

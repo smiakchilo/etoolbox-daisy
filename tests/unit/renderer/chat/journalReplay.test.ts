@@ -74,6 +74,35 @@ describe('replayJournalIntoTranscript', () => {
     expect(store.textForMessage('msg-1' as MessageId)).toBe('hi there');
   });
 
+  it('skips turn.summary records and journaled model diagnostics events', () => {
+    const store = createTranscriptStore();
+    const summary: ChatJournalRecord = {
+      recordType: 'turn.summary',
+      at: 6,
+      chatId: CHAT,
+      turnId: 'turn-1' as TurnId,
+      outcome: 'completed',
+      durationMs: 5,
+      toolCallCount: 0,
+      toolDurationMs: 0,
+      modelCallCount: 1,
+      modelCallFailureCount: 0,
+    };
+    const usage: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 5,
+      event: { type: 'model.usage', chatId: CHAT, sequence: 3, inputTokens: 1 },
+    };
+    replayJournalIntoTranscript(
+      [userPrompt('turn-1', 'hello'), usage, completedMessage('turn-1', 'msg-1', 'hi'), summary],
+      store,
+    );
+    expect(store.items()).toEqual([
+      { kind: 'userPrompt', turnId: 'turn-1' },
+      { kind: 'message', messageId: 'msg-1', turnId: 'turn-1' },
+    ]);
+  });
+
   it('replays tool calls through the same store the live stream uses', () => {
     const store = createTranscriptStore();
     const requested: ChatJournalAgentEventRecord = {

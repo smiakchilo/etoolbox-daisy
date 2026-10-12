@@ -966,6 +966,40 @@ describe('agentChatController chat journal', () => {
       args: { chatId, reason: 'navigation' },
     });
   });
+
+  it('journals the model diagnostics events of the live turn but never forwards them to the renderer', async () => {
+    const leaky = createLeakyAgentService();
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(leaky, { chatJournal: journal });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    const sent = await controller.sendMessage({ chatId, prompt: 'hi' });
+    if (!sent.ok) throw new Error('unreachable');
+    received.length = 0;
+
+    const diagnostics = [
+      { type: 'model.changed', model: 'gpt-x', cause: 'session-open' },
+      { type: 'model.usage', inputTokens: 5 },
+      { type: 'model.call.failed', statusCode: 503 },
+    ];
+    diagnostics.forEach((diagnostic, index) => {
+      leaky.emit({
+        ...diagnostic,
+        chatId,
+        sequence: 10 + index,
+        turnId: sent.turnId,
+      } as AgentEvent);
+    });
+
+    expect(received).toEqual([]);
+    const journaled = calls
+      .filter((call) => call.method === 'recordEvent')
+      .map((call) => (call.args as AgentEvent).type);
+    expect(journaled).toEqual(expect.arrayContaining(diagnostics.map((d) => d.type)));
+  });
 });
 
 describe('agentChatController AEM-request cancellation', () => {

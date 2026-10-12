@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { agentEventSchema } from './agentEvents';
+import { modelIdSchema, reasoningEffortSchema } from './appSettings';
 import { epochMillisecondsSchema } from './chatMetadata';
 import {
   chatIdSchema,
@@ -48,11 +49,12 @@ const PROMPT_MAX_LENGTH = 100_000;
  * `startedAt` is the journal's own clock reading at open time, not a value the
  * SDK supplies.
  *
- * There is deliberately no `model`/`reasoningEffort` field. The application
- * only knows the *configured preference*, which for a resumed session can
- * differ from the model the SDK session actually runs - recording a value that
- * may be wrong would be worse than recording none. The live model is owned by
- * the SDK and is not carried by any `AgentEvent`.
+ * There is deliberately no `model`/`reasoningEffort` field here. The application
+ * only knows the *configured preference* at open time, which for a resumed
+ * session can differ from the model the SDK session actually runs - a value
+ * written here could be wrong. The model the agent is *observed* to use is
+ * journaled instead, as `model.changed` / `model.usage` agent events (and
+ * summarised per turn in `turn.summary`), each at the moment it is known.
  */
 export const chatJournalHeaderRecordSchema = z
   .object({
@@ -192,6 +194,59 @@ export type ChatJournalInterruptionRecord = Readonly<
 >;
 
 /**
+ * How a turn ended, as the journal observed it: `completed` (the session went
+ * idle), `error` (an `error` event), or `interrupted` (the turn was cancelled
+ * or the chat closed under it).
+ */
+export const turnOutcomeSchema = z.enum(['completed', 'error', 'interrupted']);
+
+export type TurnOutcome = z.infer<typeof turnOutcomeSchema>;
+
+const summaryMetricSchema = z.number().nonnegative();
+
+/**
+ * One line per turn, written by the journal itself when the turn ends, from the
+ * timestamps of the records it already writes - no adapter involvement. It is
+ * what makes a slow or stuck turn diagnosable after the fact: where the time
+ * went (waiting for the first sign of activity, for the first text, in tools)
+ * and what the model calls cost. All durations are milliseconds measured from
+ * the moment the user's prompt was handed to the journal. `firstActivityMs` is
+ * the first event of the turn other than a session-state change (reasoning
+ * counts); `firstTextMs` is the first assistant text. A missing field means
+ * the turn never got there - a turn that errored before any text has no
+ * `firstTextMs`. `model`/`reasoningEffort` are the last values a `model.usage`
+ * event reported for the turn.
+ */
+export const chatJournalTurnSummaryRecordSchema = z
+  .object({
+    recordType: z.literal('turn.summary'),
+    at: epochMillisecondsSchema,
+    chatId: chatIdSchema,
+    turnId: turnIdSchema,
+    outcome: turnOutcomeSchema,
+    durationMs: summaryMetricSchema,
+    firstActivityMs: summaryMetricSchema.optional(),
+    firstTextMs: summaryMetricSchema.optional(),
+    toolCallCount: z.number().int().nonnegative(),
+    toolDurationMs: summaryMetricSchema,
+    modelCallCount: z.number().int().nonnegative(),
+    modelCallFailureCount: z.number().int().nonnegative(),
+    model: modelIdSchema.optional(),
+    reasoningEffort: reasoningEffortSchema.optional(),
+    inputTokens: summaryMetricSchema.optional(),
+    outputTokens: summaryMetricSchema.optional(),
+    cacheReadTokens: summaryMetricSchema.optional(),
+    reasoningTokens: summaryMetricSchema.optional(),
+    cost: summaryMetricSchema.optional(),
+    finishReason: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+
+export type ChatJournalTurnSummaryRecord = Readonly<
+  z.infer<typeof chatJournalTurnSummaryRecordSchema>
+>;
+
+/**
  * The last line written for a chat that the application closed. A synthetic
  * marker, not an `AgentEvent`: the SDK adapter's own `closed`
  * `session.state.changed` may or may not precede it, and a reader should treat
@@ -214,6 +269,7 @@ export const chatJournalRecordSchema = z.discriminatedUnion('recordType', [
   chatJournalPartialMessageRecordSchema,
   chatJournalAbandonedToolCallRecordSchema,
   chatJournalInterruptionRecordSchema,
+  chatJournalTurnSummaryRecordSchema,
   chatJournalClosedRecordSchema,
 ]);
 

@@ -18,6 +18,7 @@ import {
   type IdGenerator,
   type JsonValue,
   type MessageId,
+  type ModelChangedBody,
   type ModelPreference,
   type Result,
   type SdkSessionId,
@@ -35,6 +36,7 @@ import {
   applyAgentEvent,
   canSendMessage,
   createDeltaFoldState,
+  createModelObserver,
   createToolError,
   err,
   foldTextDelta,
@@ -59,6 +61,7 @@ import {
   type SendPromptRequest,
   type Unsubscribe,
 } from '../../shared';
+import { mapModelCallFailure, mapModelChange, mapModelUsage } from './sessionDiagnostics';
 import {
   createHardenedSession,
   type HardenedSessionClient,
@@ -454,6 +457,11 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
    * resumed session's own model untouched.
    */
   let appliedModelPreference: ModelPreference | undefined;
+  /**
+   * Decides when a `model.changed` is reported for the open conversation (an
+   * unchanged preference stays silent). Diagnostics only.
+   */
+  const modelObserver = createModelObserver();
   const pendingPermissionsByRequestId = new Map<string, PendingPermission>();
   const pendingUserInputByRequestId = new Map<UserInputRequestId, PendingUserInput>();
   const deltaFoldByMessageId = new Map<MessageId, DeltaFoldState>();
@@ -462,6 +470,15 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     const sequence = sequenceByChatId.get(chatId) ?? 0;
     sequenceByChatId.set(chatId, sequence + 1);
     return sequence;
+  }
+
+  /** Diagnostic: reports a model/effort the session is now known to run on. Never throws into the turn. */
+  function emitModelChanged(chatId: ChatId, turnId: TurnId, body: ModelChangedBody): void {
+    try {
+      applyAndEmit({ ...body, chatId, sequence: nextSequence(chatId), turnId });
+    } catch (caught) {
+      reportInternalMappingFailure(chatId, 'model.changed', caught);
+    }
   }
 
   /** See this module's doc comment, "SELF-CHECKING COHERENCE". */
@@ -734,6 +751,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
     openUnsubscribe = undefined;
     if (openChatId === chatId) openChatId = undefined;
     appliedModelPreference = undefined;
+    modelObserver.reset();
     pendingPermissionsByRequestId.clear();
     rejectPendingUserInputs();
     deltaFoldByMessageId.clear();
@@ -1016,6 +1034,43 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           );
           return;
         }
+        case 'assistant.usage': {
+          applyAndEmit({
+            ...mapModelUsage(event.data),
+            chatId,
+            sequence: nextSequence(chatId),
+            ...(currentTurn !== undefined ? { turnId: currentTurn.turnId } : {}),
+          });
+          return;
+        }
+        case 'model.call_failure': {
+          const body = mapModelCallFailure(event.data);
+          if (body === undefined) return;
+          applyAndEmit({
+            ...body,
+            chatId,
+            sequence: nextSequence(chatId),
+            ...(currentTurn !== undefined ? { turnId: currentTurn.turnId } : {}),
+          });
+          return;
+        }
+        case 'session.model_change': {
+          const body = mapModelChange(event.data);
+          if (body === undefined) return;
+          modelObserver.record({
+            model: body.model,
+            ...(body.reasoningEffort !== undefined
+              ? { reasoningEffort: body.reasoningEffort }
+              : {}),
+          });
+          applyAndEmit({
+            ...body,
+            chatId,
+            sequence: nextSequence(chatId),
+            ...(currentTurn !== undefined ? { turnId: currentTurn.turnId } : {}),
+          });
+          return;
+        }
         default:
           return;
       }
@@ -1103,6 +1158,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         streamState = 'idle';
         currentTurn = undefined;
         appliedModelPreference = request.resume ? undefined : preference;
+        modelObserver.reset();
         pendingPermissionsByRequestId.clear();
         deltaFoldByMessageId.clear();
         return ok(request.chatId);
@@ -1192,6 +1248,20 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       // second sendPrompt() called before any SDK event arrives must already
       // see "turn_in_progress" - mirrors fakeAgentService.ts exactly.
       applyAndEmit(makeSessionStateEvent(request.chatId, 'sending', request.turnId));
+
+      // Reported here, with the turn, and not when the conversation opens: the
+      // journal writes nothing for a chat that has never been prompted, and an
+      // event emitted during `openConversation` would also precede the
+      // journal's own `openChat`. Unchanged since the last report -> silent.
+      if (preference.model !== null) {
+        const body = modelObserver.observe({
+          model: preference.model,
+          ...(preference.reasoningEffort !== null
+            ? { reasoningEffort: preference.reasoningEffort }
+            : {}),
+        });
+        if (body !== undefined) emitModelChanged(request.chatId, request.turnId, body);
+      }
 
       try {
         await session.send({

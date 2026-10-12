@@ -159,6 +159,21 @@ describe('createTranscriptStore', () => {
     expect(store.takeDirty()).toBe(false);
   });
 
+  it('ignores the model diagnostics events and leaves the store clean', () => {
+    const store = createTranscriptStore();
+    store.applyEvent({
+      type: 'model.changed',
+      chatId,
+      sequence: 0,
+      model: 'gpt-x',
+      cause: 'session-open',
+    });
+    store.applyEvent({ type: 'model.usage', chatId, sequence: 1, inputTokens: 3 });
+    store.applyEvent({ type: 'model.call.failed', chatId, sequence: 2, statusCode: 500 });
+    expect(store.items()).toEqual([]);
+    expect(store.takeDirty()).toBe(false);
+  });
+
   describe('assistant messages', () => {
     it("adds one 'message' item on the first event for a messageId, not again on later events for it", () => {
       const store = createTranscriptStore();

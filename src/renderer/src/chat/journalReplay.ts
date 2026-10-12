@@ -19,7 +19,8 @@ import type { TranscriptStore } from './transcriptStore';
  *    chat shows it without offering the Resume action the live pane does.
  *
  * Deliberately ignored:
- *  - `header` and `chat.closed` - journal bookkeeping, no visual;
+ *  - `header`, `chat.closed` and `turn.summary` - journal bookkeeping /
+ *    diagnostics, no visual;
  *  - `assistant.message.partial` and `tool.call.abandoned` - a stopped turn's
  *    salvaged text / an unresolved tool call. Neither has a `TranscriptStore`
  *    representation, and inventing one (e.g. rendering salvaged partial text as
@@ -53,6 +54,7 @@ export function replayJournalIntoTranscript(
       case 'assistant.message.partial':
       case 'tool.call.abandoned':
       case 'chat.closed':
+      case 'turn.summary':
         break;
     }
   }

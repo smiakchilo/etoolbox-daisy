@@ -21,6 +21,7 @@ import {
 import { applyAgentEvent, type SessionStatus } from '../../../../src/shared';
 import { err, ok } from '../../../../src/shared';
 import type { AuthStatus } from '../../../../src/shared';
+import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
 
 /** Mints reproducible `ChatId`/`TurnId` values - never SDK-facing ids, which the adapter adopts instead. */
 function counterIdGenerator(): IdGenerator {
@@ -1202,4 +1203,118 @@ describe('sdkAgentService - interactive questions', () => {
     await pending;
     sessionHandle.emit({ type: 'session.idle', data: {} });
   });
+});
+
+describe('sdkAgentService - model diagnostics events', () => {
+  async function setUp(modelPreferences: () => ModelPreference) {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const { client } = makeFakeClient(sessionHandle.session);
+    const { source: authSource } = makeAuthSource();
+    const service = createSdkAgentService({
+      client,
+      policy: POLICY,
+      authSource,
+      idGenerator: ids,
+      modelPreferences,
+    });
+    const events: AgentEvent[] = [];
+    service.onEvent((event) => events.push(event));
+    expect((await service.initialize()).ok).toBe(true);
+    const chatId = newChatId(ids);
+    expect((await service.openConversation({ chatId })).ok).toBe(true);
+    return { service, sessionHandle, events, chatId, ids };
+  }
+
+  it('emits no model.changed when there is no model preference', async () => {
+    const { service, events, chatId, ids } = await setUp(() => ({
+      model: null,
+      reasoningEffort: null,
+    }));
+    await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
+    expect(events.some((event) => event.type === 'model.changed')).toBe(false);
+  });
+
+  it('maps a top-level model.call_failure and ignores a sub-agent one', async () => {
+    const { service, sessionHandle, events, chatId, ids } = await setUp(() => ({
+      model: null,
+      reasoningEffort: null,
+    }));
+    await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
+    sessionHandle.emit({
+      type: 'model.call_failure',
+      data: { source: 'sub_agent', statusCode: 500 },
+    });
+    sessionHandle.emit({
+      type: 'model.call_failure',
+      data: { source: 'top_level', statusCode: 503, errorMessage: 'echoed prompt text' },
+    });
+
+    const failures = events.filter((event) => event.type === 'model.call.failed');
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ statusCode: 503 });
+    expect(JSON.stringify(failures[0])).not.toContain('echoed prompt text');
+  });
+
+  it('maps session.model_change as runtime-reported and remembers it, so the same preference is not re-announced', async () => {
+    const { service, sessionHandle, events, chatId, ids } = await setUp(() => ({
+      model: 'model-b',
+      reasoningEffort: null,
+    }));
+    sessionHandle.emit({
+      type: 'session.model_change',
+      data: { newModel: 'model-b', previousModel: 'model-a' },
+    });
+    await service.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
+
+    const changes = events.filter((event) => event.type === 'model.changed');
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ model: 'model-b', cause: 'runtime-reported' });
+  });
+});
+
+describeAgentDiagnosticsConformance('copilot', async (initial) => {
+  let preference: ModelPreference = initial;
+  const ids = counterIdGenerator();
+  const sessionHandle = makeFakeSession();
+  const { client } = makeFakeClient(sessionHandle.session);
+  const { source: authSource } = makeAuthSource();
+  const service = createSdkAgentService({
+    client,
+    policy: POLICY,
+    authSource,
+    idGenerator: ids,
+    modelPreferences: () => preference,
+  });
+  const events: AgentEvent[] = [];
+  service.onEvent((event) => events.push(event));
+  expect((await service.initialize()).ok).toBe(true);
+  const chatId = newChatId(ids);
+  expect((await service.openConversation({ chatId })).ok).toBe(true);
+  return {
+    events,
+    chatId,
+    setPreference: (next) => {
+      preference = next;
+    },
+    runTurn: async (turnId, usage) => {
+      await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+      if (usage !== undefined) {
+        sessionHandle.emit({
+          type: 'assistant.usage',
+          data: {
+            model: usage.model,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+          },
+        });
+      }
+      sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: `m-${turnId}` } });
+      sessionHandle.emit({
+        type: 'assistant.message',
+        data: { messageId: `m-${turnId}`, content: 'ok' },
+      });
+      sessionHandle.emit({ type: 'session.idle', data: {} });
+    },
+  };
 });

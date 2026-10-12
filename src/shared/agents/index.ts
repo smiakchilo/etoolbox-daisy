@@ -8,3 +8,4 @@
 export * from './agentService';
 export * from './agentModule';
 export * from './agentCatalog';
+export * from './modelObserver';

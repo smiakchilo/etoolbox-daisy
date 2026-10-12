@@ -376,6 +376,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
           event.turnId === undefined ||
           (activeTurn !== undefined && event.turnId === activeTurn.turnId)
         );
+      case 'model.changed':
+      case 'model.usage':
+      case 'model.call.failed':
+        // Diagnostics for the journal only (recorded before this guard runs);
+        // nothing in the renderer consumes them, so they are never forwarded.
+        return false;
       default: {
         return event;
       }

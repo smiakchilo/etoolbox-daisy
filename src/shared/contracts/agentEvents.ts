@@ -9,6 +9,7 @@ import {
   type ChatId,
   type MessageId,
 } from './ids';
+import { modelIdSchema, reasoningEffortSchema } from './appSettings';
 import { toolErrorSchema, type ToolError } from './errors';
 import {
   userInputActionsSchema,
@@ -28,7 +29,7 @@ import {
  * requirements-decisions.md section 2 forbids for anything beyond content
  * the user already has access to, and (b) couple every consumer to an SDK
  * version instead of to this module. So every event below is a deliberately
- * narrow, hand-picked projection: twelve variants, each a `.strict()` object of
+ * narrow, hand-picked projection: fifteen variants, each a `.strict()` object of
  * named fields, with no `unknown`/`Record<string, unknown>` escape hatch
  * anywhere in the tree. If a caller wants something this module does not
  * expose, that is a decision to revisit here, not a reason to reach past it.
@@ -318,7 +319,94 @@ const sessionStateChangedEventSchema = z
   })
   .strict();
 
+const metricSchema = z.number().nonnegative();
+const diagnosticTextSchema = z.string().min(1).max(100);
+
+/**
+ * The model/reasoning effort the agent is *observed* to run on, emitted when it
+ * is first known for an open chat and whenever it changes afterwards. A
+ * diagnostics signal: no consumer derives state from it. `cause` says where the
+ * value came from - the conversation was opened/resumed (`session-open`), the
+ * adapter applied a Settings change at the start of a turn
+ * (`preference-change`), or the agent runtime itself switched (`runtime-reported`,
+ * e.g. an automatic rate-limit fallback). `turnId` is set when the change
+ * happened while a turn was being prepared or ran.
+ *
+ * Contract for every agent: emit it at the start of a turn whenever the model or
+ * effort differs from the last report (`createModelObserver`,
+ * `src/shared/agents/modelObserver.ts`, implements that rule - adapters must not
+ * re-derive it). An agent that cannot know its model yet stays silent.
+ */
+const modelChangedEventSchema = z
+  .object({
+    type: z.literal('model.changed'),
+    ...baseEventFields,
+    turnId: turnIdSchema.optional(),
+    model: modelIdSchema,
+    reasoningEffort: reasoningEffortSchema.optional(),
+    previousModel: modelIdSchema.optional(),
+    previousReasoningEffort: reasoningEffortSchema.optional(),
+    cause: z.enum(['session-open', 'preference-change', 'runtime-reported']),
+  })
+  .strict();
+
+/**
+ * One finished model call of a turn: how long it took, when the first token
+ * arrived, how many tokens it used. A turn with tool calls makes several. Every
+ * metric is optional because neither agent reports all of them; absent means
+ * "not reported", never zero.
+ *
+ * Contract for every agent: report per model call where the SDK exposes calls;
+ * an SDK that only gives per-turn totals reports one aggregate event for the
+ * turn (the journal sums events into the turn summary either way).
+ */
+const modelUsageEventSchema = z
+  .object({
+    type: z.literal('model.usage'),
+    ...baseEventFields,
+    turnId: turnIdSchema.optional(),
+    model: modelIdSchema.optional(),
+    reasoningEffort: reasoningEffortSchema.optional(),
+    inputTokens: metricSchema.optional(),
+    outputTokens: metricSchema.optional(),
+    cacheReadTokens: metricSchema.optional(),
+    cacheWriteTokens: metricSchema.optional(),
+    reasoningTokens: metricSchema.optional(),
+    cost: metricSchema.optional(),
+    durationMs: metricSchema.optional(),
+    timeToFirstTokenMs: metricSchema.optional(),
+    finishReason: diagnosticTextSchema.optional(),
+  })
+  .strict();
+
+/**
+ * A model call that failed. Carries the structured facts only (which boundary
+ * failed, the HTTP status, the provider's short error code) - never the
+ * provider's free-text message, which can echo request content.
+ *
+ * Optional per agent: an SDK that reports a failed call only through the turn's
+ * terminal `error` event (OpenRouter) need not emit this; the journal's turn
+ * summary still records the turn as failed.
+ */
+const modelCallFailedEventSchema = z
+  .object({
+    type: z.literal('model.call.failed'),
+    ...baseEventFields,
+    turnId: turnIdSchema.optional(),
+    model: modelIdSchema.optional(),
+    failureKind: z.enum(['api', 'transport']).optional(),
+    transport: z.enum(['http', 'websocket']).optional(),
+    statusCode: z.number().int().min(100).max(599).optional(),
+    errorCode: diagnosticTextSchema.optional(),
+    errorType: diagnosticTextSchema.optional(),
+    durationMs: metricSchema.optional(),
+  })
+  .strict();
+
 export const agentEventSchema = z.discriminatedUnion('type', [
+  modelChangedEventSchema,
+  modelUsageEventSchema,
+  modelCallFailedEventSchema,
   assistantMessageStartedEventSchema,
   assistantTextDeltaEventSchema,
   assistantMessageCompletedEventSchema,
@@ -348,6 +436,9 @@ export type ToolResultEvent = z.infer<typeof toolResultEventSchema>;
 export type ErrorEvent = z.infer<typeof errorEventSchema>;
 export type SessionStateChangedEvent = z.infer<typeof sessionStateChangedEventSchema>;
 export type UserInputRequestedEvent = z.infer<typeof userInputRequestedEventSchema>;
+export type ModelChangedEvent = z.infer<typeof modelChangedEventSchema>;
+export type ModelUsageEvent = z.infer<typeof modelUsageEventSchema>;
+export type ModelCallFailedEvent = z.infer<typeof modelCallFailedEventSchema>;
 
 /** Re-exported so a caller building a failure event does not need a second import. */
 export type { ToolError };

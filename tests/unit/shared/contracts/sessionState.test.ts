@@ -385,3 +385,27 @@ describe('canRunAemTool', () => {
     expect(result).toEqual({ canRun: true });
   });
 });
+
+describe('model diagnostics events are state no-ops', () => {
+  const events = [
+    event({ type: 'model.changed', model: 'gpt-x', cause: 'session-open' }),
+    event({ type: 'model.usage', inputTokens: 1 }),
+    event({ type: 'model.call.failed', statusCode: 500 }),
+  ];
+
+  it.each([
+    'idle',
+    'sending',
+    'streaming',
+    'runningTool',
+    'cancelling',
+    'error',
+    'closed',
+  ] as const)('leaves the %s state unchanged, with the same status reference', (state) => {
+    const status = idleStatus({ state });
+    for (const diagnostic of events) {
+      const result = applyAgentEvent(status, diagnostic);
+      expect(result.ok && result.value).toBe(status);
+    }
+  });
+});

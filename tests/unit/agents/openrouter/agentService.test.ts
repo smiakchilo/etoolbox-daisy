@@ -19,7 +19,9 @@ import {
   turnIdSchema,
   type AgentEvent,
   type AuthStatus,
+  type ModelPreference,
 } from '../../../../src/shared';
+import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
 
 /**
  * Event-mapping tests for the OpenRouter adapter, driven by a fake
@@ -47,6 +49,8 @@ interface FakeScript {
   readonly fail?: boolean;
   /** Keep `getResponse` pending until `signal` aborts, mirroring a live request. */
   readonly hangUntilAbort?: boolean;
+  /** The resolved `getResponse` value; defaults to an empty response. */
+  readonly response?: unknown;
 }
 
 function createFakeClient(script: FakeScript, hasApiKey = true): OpenRouterClient {
@@ -72,7 +76,8 @@ function createFakeClient(script: FakeScript, hasApiKey = true): OpenRouterClien
               return;
             }
             Promise.resolve(script.duringResponse?.()).then(
-              () => (script.fail === true ? reject(new Error('boom')) : resolve({})),
+              () =>
+                script.fail === true ? reject(new Error('boom')) : resolve(script.response ?? {}),
               reject,
             );
           }),
@@ -170,10 +175,12 @@ describe('createOpenRouterAgentService', () => {
     await awaitTurnEnd(events);
     expect(eventTypes(events)).toEqual([
       'session.state.changed',
+      'model.changed',
       'assistant.message.started',
       'assistant.text.delta',
       'assistant.text.delta',
       'assistant.message.completed',
+      'model.usage',
       'session.state.changed',
     ]);
     const completed = events.find((e) => e.type === 'assistant.message.completed');
@@ -204,9 +211,11 @@ describe('createOpenRouterAgentService', () => {
     await awaitTurnEnd(events);
     expect(eventTypes(events)).toEqual([
       'session.state.changed',
+      'model.changed',
       'tool.call.requested',
       'tool.call.approved',
       'tool.result',
+      'model.usage',
       'session.state.changed',
     ]);
     const requested = events.find((e) => e.type === 'tool.call.requested');
@@ -268,7 +277,12 @@ describe('createOpenRouterAgentService', () => {
     expect(result.ok).toBe(true);
     await awaitTurnEnd(events);
 
-    expect(eventTypes(events)).toEqual(['session.state.changed', 'error', 'session.state.changed']);
+    expect(eventTypes(events)).toEqual([
+      'session.state.changed',
+      'model.changed',
+      'error',
+      'session.state.changed',
+    ]);
     const error = events.find((event) => event.type === 'error');
     expect(error?.type === 'error' ? error.error.code : undefined).toBe('AGENT_UNAVAILABLE');
     // The adapter recovers the session so the composer is never left disabled.
@@ -291,7 +305,12 @@ describe('createOpenRouterAgentService', () => {
 
     const result = await service.sendPrompt({ chatId: CHAT, turnId: TURN, prompt: 'hi' });
     expect(result.ok).toBe(false);
-    expect(eventTypes(events)).toEqual(['session.state.changed', 'error', 'session.state.changed']);
+    expect(eventTypes(events)).toEqual([
+      'session.state.changed',
+      'model.changed',
+      'error',
+      'session.state.changed',
+    ]);
     expect(finalState(events)).toBe('idle');
   });
 
@@ -329,6 +348,45 @@ describe('createOpenRouterAgentService', () => {
     expect(returned).toMatchObject({ resultType: 'failure' });
   });
 
+  it('reports usage from the final response without reading its output', async () => {
+    const service = build({
+      client: createFakeClient({
+        response: {
+          model: 'openai/gpt-x-2025',
+          output: [{ secret: 'conversation content' }],
+          usage: {
+            inputTokens: 120,
+            outputTokens: 30,
+            inputTokensDetails: { cachedTokens: 100 },
+            outputTokensDetails: { reasoningTokens: 12 },
+            cost: 0.0042,
+          },
+        },
+      }),
+      buildTools: () => [],
+      modelPreferences: () => ({ model: 'openai/gpt-x', reasoningEffort: 'high' }),
+    });
+    const events = collect(service);
+    await service.initialize();
+    await service.openConversation({ chatId: CHAT });
+    await service.sendPrompt({ chatId: CHAT, turnId: TURN, prompt: 'hi' });
+    await awaitTurnEnd(events);
+
+    const usage = events.find((e) => e.type === 'model.usage');
+    expect(usage).toMatchObject({
+      type: 'model.usage',
+      turnId: TURN,
+      model: 'openai/gpt-x-2025',
+      reasoningEffort: 'high',
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 100,
+      reasoningTokens: 12,
+      cost: 0.0042,
+    });
+    expect(JSON.stringify(usage)).not.toContain('conversation content');
+  });
+
   it('abort emits cancelling then idle and suppresses the failed completion', async () => {
     const service = build({
       client: createFakeClient({ hangUntilAbort: true }),
@@ -346,6 +404,7 @@ describe('createOpenRouterAgentService', () => {
     expect(result.ok).toBe(true);
     expect(events.map((e) => (e.type === 'session.state.changed' ? e.state : ''))).toEqual([
       'sending',
+      '',
       'cancelling',
       'idle',
     ]);
@@ -415,4 +474,39 @@ describe('createOpenRouterAgentService', () => {
     await expect(service.dispose()).resolves.toBeUndefined();
     await pending;
   });
+});
+
+describeAgentDiagnosticsConformance('openrouter', async (initial) => {
+  let preference: ModelPreference = initial;
+  let response: unknown = {};
+  const service = build({
+    client: createFakeClient({
+      get response() {
+        return response;
+      },
+    }),
+    buildTools: () => [],
+    modelPreferences: () => preference,
+  });
+  const events = collect(service);
+  await service.initialize();
+  await service.openConversation({ chatId: CHAT });
+  return {
+    events,
+    chatId: CHAT,
+    setPreference: (next) => {
+      preference = next;
+    },
+    runTurn: async (turnId, usage) => {
+      response =
+        usage === undefined
+          ? {}
+          : {
+              model: usage.model,
+              usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
+            };
+      await service.sendPrompt({ chatId: CHAT, turnId, prompt: 'hi' });
+      await awaitTurnEnd(events);
+    },
+  };
 });

@@ -349,7 +349,10 @@ export function createTranscriptStore(
         case 'error':
         case 'session.state.changed':
         case 'user.input.requested':
-          // Chat/turn-level signals with no transcript item of their own:
+        case 'model.changed':
+        case 'model.usage':
+        case 'model.call.failed':
+          // Signals with no transcript item of their own:
           // `error` surfaces via the composer's disabled-reason notice
           // (`composerViewModel.ts`, driven by `SessionStatus.state`), and
           // `session.state.changed` only ever drives that same
