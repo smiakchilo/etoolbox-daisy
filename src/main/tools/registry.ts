@@ -38,13 +38,16 @@ export interface ToolLoadFailure {
 }
 
 export interface ToolRegistry {
-  /** Enabled tools' executors, keyed by tool name. */
+  /** The model-callable tools' executors, keyed by tool name (no `internal` tool). */
   readonly toolHandlers: Readonly<Record<string, AemToolExecutor>>;
   readonly descriptors: readonly ToolDescriptor[];
   readonly allowlistEntries: readonly string[];
-  /** The composed session instructions for exactly the enabled tools. */
+  /** The composed session instructions for exactly the model-callable tools. */
   readonly instructions: string;
+  /** The model-callable tools. */
   readonly enabledNames: readonly string[];
+  /** Enabled `internal` tools: reachable only through another tool's `invokeTool`. */
+  readonly internalNames: readonly string[];
   readonly disabledNames: readonly string[];
   readonly failures: readonly ToolLoadFailure[];
 }
@@ -92,6 +95,7 @@ function isToolModule(value: unknown): value is ToolModule {
     descriptor !== null &&
     descriptor.name === name &&
     v['allowlistEntry'] === `custom:${name}` &&
+    (v['internal'] === undefined || typeof v['internal'] === 'boolean') &&
     (uses === undefined ||
       (Array.isArray(uses) && uses.every((entry) => typeof entry === 'string')))
   );
@@ -186,7 +190,11 @@ export async function buildToolRegistry(params: {
     params.onFailure?.(failure);
   };
 
+  // Every enabled tool, internal ones included: the `invokeTool` lookup table.
   const handlers: Record<string, AemToolExecutor> = {};
+  // Only what the model may call: handed to the agent.
+  const modelHandlers: Record<string, AemToolExecutor> = {};
+  const internalNames: string[] = [];
   const descriptors: ToolDescriptor[] = [];
   const allowlistEntries: string[] = [];
   const instructions: string[] = [];
@@ -219,6 +227,7 @@ export async function buildToolRegistry(params: {
       fail(source, `Duplicate tool name '${tool.name}'`);
       continue;
     }
+    let executor: AemToolExecutor;
     try {
       const uses = tool.uses ?? [];
       const host: ToolHost = {
@@ -232,12 +241,18 @@ export async function buildToolRegistry(params: {
           observer: params.nestedCalls,
         }),
       };
-      handlers[tool.name] = tool.createExecutor(host);
+      executor = tool.createExecutor(host);
+      handlers[tool.name] = executor;
       usesByTool.set(tool.name, uses);
     } catch (caught) {
       fail(source, `createExecutor threw: ${describe(caught)}`);
       continue;
     }
+    if (tool.internal === true) {
+      internalNames.push(tool.name);
+      continue;
+    }
+    modelHandlers[tool.name] = executor;
     descriptors.push(tool.descriptor);
     allowlistEntries.push(tool.allowlistEntry);
     instructions.push(tool.instructions);
@@ -255,11 +270,12 @@ export async function buildToolRegistry(params: {
   }
 
   return {
-    toolHandlers: handlers,
+    toolHandlers: modelHandlers,
     descriptors,
     allowlistEntries,
     instructions: composeAssistantInstructions(instructions),
-    enabledNames: Object.keys(handlers),
+    enabledNames: Object.keys(modelHandlers),
+    internalNames,
     disabledNames,
     failures,
   };

@@ -14,10 +14,10 @@ export const tool: ToolModule = {
   allowlistEntry: AEM_QUERY_FORMAT_ASK_ALLOWLIST_ENTRY,
   uses: AEM_QUERY_FORMAT_ASK_USES,
   instructions:
-    "The 'aem_query_format_ask' tool is the complete full-text search: one call queries, shows " +
-    "the table, and offers 'Load more' until the user is done. Use it for a plain full-text " +
-    "search such as `/search <terms>`, instead of chaining 'aem_query', 'format_table' and " +
-    "'ask_user' yourself. Chain those yourself only when the search needs predicates beyond " +
-    'full text (a type, a property, a date range, an ordering).',
+    "The 'aem_query_format_ask' tool is the complete AEM search the user sees: one call " +
+    "queries, shows the table, and offers 'Load more' until the user is done. Use it for every " +
+    'search whose results the user should see - `terms` for a plain full-text search such as ' +
+    '`/search <terms>`, `predicates` for a hand-built QueryBuilder search (a type, a property, ' +
+    "a date range, an ordering). Never chain 'aem_query' and 'ask_user' yourself to show results.",
   createExecutor: (host) => createAemQueryFormatAskExecutor(host),
 };

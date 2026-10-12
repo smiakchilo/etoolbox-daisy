@@ -620,6 +620,35 @@ describe('createTranscriptView - format_table message table', () => {
     );
   });
 
+  it('shows a totalLine in the total slot, and a later totalLine replaces it', () => {
+    const empty = {
+      data: { rows: [], pagination: { total: { accuracy: 'exact', value: 9 } } },
+      totalLine: 'Did not find any relevant results so far',
+    };
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, empty));
+    store.applyEvent(result(1, 1, 0, 'new'));
+    view.repaint(store);
+    expect(view.element.querySelector('.chat-table-message__total')?.textContent).toBe(
+      'Did not find any relevant results so far',
+    );
+    expect(view.element.querySelector('sp-table')).toBeNull();
+
+    store.applyEvent(
+      requested(2, 2, {
+        data: page,
+        mode: 'append',
+        totalLine: 'Total: 2 relevant results so far',
+      }),
+    );
+    store.applyEvent(result(3, 2, 2, 'append'));
+    view.repaint(store);
+    expect(view.element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(2);
+    expect(view.element.querySelector('.chat-table-message__total')?.textContent).toBe(
+      'Total: 2 relevant results so far',
+    );
+  });
   it('reuses the table node across repaints instead of rebuilding it', () => {
     const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
     const store = createTranscriptStore();

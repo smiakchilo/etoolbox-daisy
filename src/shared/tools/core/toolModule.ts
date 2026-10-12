@@ -127,6 +127,13 @@ export interface ToolModule {
    * model.
    */
   readonly disabled?: boolean;
+  /**
+   * A building block for other tools, not a tool for the model: it is callable
+   * only through {@link ToolHost.invokeTool} by a tool that lists it in `uses`,
+   * and is never handed to the agent, allowlisted, or described to the model.
+   * Its calls are still journaled and rendered like any other tool call.
+   */
+  readonly internal?: boolean;
   /** One paragraph telling the model when to use this tool; joined into the session instructions. */
   readonly instructions: string;
   /**

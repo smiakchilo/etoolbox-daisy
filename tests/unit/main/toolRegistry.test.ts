@@ -94,6 +94,58 @@ describe('buildToolRegistry', () => {
     expect(registry.failures).toEqual([]);
   });
 
+  it('keeps an internal tool away from the model but invokable through uses', async () => {
+    let captured: ToolHost | undefined;
+    const registry = await buildToolRegistry({
+      host,
+      loaders: loaders({
+        '/tools/a/tool.ts': () =>
+          Promise.resolve({
+            tool: fakeTool('tool_a', {
+              uses: ['tool_hidden'],
+              createExecutor: (toolHost) => {
+                captured = toolHost;
+                return () => Promise.resolve({ ok: true, value: {} });
+              },
+            }),
+          }),
+        '/tools/hidden/tool.ts': () =>
+          Promise.resolve({
+            tool: fakeTool('tool_hidden', {
+              internal: true,
+              createExecutor: () => () => Promise.resolve({ ok: true, value: { hidden: true } }),
+            }),
+          }),
+      }),
+    });
+
+    expect(registry.enabledNames).toEqual(['tool_a']);
+    expect(registry.internalNames).toEqual(['tool_hidden']);
+    expect(Object.keys(registry.toolHandlers)).toEqual(['tool_a']);
+    expect(registry.descriptors.map((d) => d.name)).toEqual(['tool_a']);
+    expect(registry.allowlistEntries).toEqual(['custom:tool_a']);
+    expect(registry.instructions).not.toContain('tool_hidden');
+    expect(registry.failures).toEqual([]);
+    const result = await captured?.invokeTool(
+      'tool_hidden',
+      {},
+      { toolCallId: newToolCallId(ids), signal: undefined },
+    );
+    expect(result).toEqual({ ok: true, value: { hidden: true } });
+  });
+
+  it('rejects a manifest whose internal flag is not a boolean', async () => {
+    const registry = await buildToolRegistry({
+      host,
+      loaders: loaders({
+        '/tools/a/tool.ts': () =>
+          Promise.resolve({ tool: { ...fakeTool('tool_a'), internal: 'yes' } }),
+      }),
+    });
+    expect(registry.enabledNames).toEqual([]);
+    expect(registry.failures).toHaveLength(1);
+  });
+
   it('never calls createExecutor for a disabled tool', async () => {
     const createExecutor = vi.fn(() => () => Promise.resolve({ ok: true as const, value: {} }));
     await buildToolRegistry({
@@ -386,7 +438,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
 });
 
 describe('discovered tools (the real src/tools folders)', () => {
-  it('enables exactly the shipped read tools and leaves aem_create_page disabled', async () => {
+  it('enables exactly the shipped tools, keeps format_table internal and aem_create_page disabled', async () => {
     const registry = await buildToolRegistry({ host, loaders: discoverToolLoaders() });
 
     expect(registry.failures).toEqual([]);
@@ -394,20 +446,21 @@ describe('discovered tools (the real src/tools folders)', () => {
       'aem_get_json',
       'aem_query',
       'aem_query_format_ask',
+      'aem_semantic_search',
       'ask_user',
       'browser_navigate',
       'environment_facts',
-      'format_table',
     ]);
+    expect(registry.internalNames).toEqual(['format_table']);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
     expect([...registry.allowlistEntries].sort()).toEqual([
       'custom:aem_get_json',
       'custom:aem_query',
       'custom:aem_query_format_ask',
+      'custom:aem_semantic_search',
       'custom:ask_user',
       'custom:browser_navigate',
       'custom:environment_facts',
-      'custom:format_table',
     ]);
   });
 });

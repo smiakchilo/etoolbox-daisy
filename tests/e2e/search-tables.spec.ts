@@ -15,8 +15,11 @@ import {
  *
  * A `/search` turn and a `/semantic-search` turn each produce exactly one
  * application-rendered table: `/search` a `# | Path` table with a total line,
- * driven by `format_table` and continued with a one-click "Load more";
- * `/semantic-search` a `# | Path | Property | Citation` table with no total.
+ * driven by `aem_query_format_ask` (its nested `format_table` call) and continued
+ * with a one-click "Load more";
+ * `/semantic-search` a `# | Path | Property | Citation` table with the same
+ * total slot, driven by `aem_semantic_search`, counting the relevant matches (or
+ * saying none were found so far).
  * The application suppresses the model's own prose for these turns.
  *
  * The deterministic fake scripts the tool calls and the `ask_user` action, so
@@ -125,12 +128,12 @@ function queryStep(
 }
 
 /** A scripted `format_table` tool call carrying `data` verbatim. */
-function formatTableStep(data: unknown, mode: 'new' | 'append'): ScriptedStep {
+function formatTableStep(data: unknown, mode: 'new' | 'append', totalLine?: string): ScriptedStep {
   return {
     kind: 'toolCall',
     call: {
       toolName: 'format_table',
-      arguments: { data: data as never, mode },
+      arguments: { data: data as never, mode, ...(totalLine !== undefined ? { totalLine } : {}) },
       decision: {
         kind: 'approved',
         outcome: {
@@ -157,6 +160,39 @@ const PAGE_2 = {
   pagination: { hasMore: false, total: { accuracy: 'exact', value: 3 } },
 };
 
+/**
+ * A scripted `aem_semantic_search` call. In the real app the tool's nested
+ * `format_table` / `ask_user` calls are journaled flat, as if the model made
+ * them, so the fake scripts them as their own steps.
+ */
+function semanticStep(args: Record<string, unknown>): ScriptedStep {
+  return {
+    kind: 'toolCall',
+    call: {
+      toolName: 'aem_semantic_search',
+      arguments: args as never,
+      decision: {
+        kind: 'approved',
+        outcome: {
+          ok: true,
+          data: {
+            operation: 'aem_semantic_search',
+            terms: 'waldo',
+            textResultForLlm: 'ok',
+            resultType: 'success',
+          } as never,
+        },
+      },
+    },
+  };
+}
+
+const NO_MATCHES = 'Did not find any relevant results so far';
+const ONE_MATCH = 'Total: 1 relevant result';
+const SEMANTIC_EMPTY = {
+  rows: [],
+  pagination: { hasMore: true, total: { accuracy: 'estimated', value: 60 } },
+};
 const SEMANTIC = {
   rows: [
     {
@@ -165,6 +201,7 @@ const SEMANTIC = {
       citation: 'Waldo is a good guy and a generous donor.',
     },
   ],
+  pagination: { hasMore: false, total: { accuracy: 'exact', value: 4 } },
 };
 
 test.describe('deterministic search tables', () => {
@@ -231,28 +268,55 @@ test.describe('deterministic search tables', () => {
     );
   });
 
-  test('a /semantic-search run shows a # | Path | Property | Citation table with no total line', async () => {
+  test('a /semantic-search run says no matches so far in the total slot, then appends matches and counts them', async () => {
+    const tablesBefore = await shell.locator('.chat-table-message').count();
     await scriptTurn(app, {
-      steps: [queryStep(SEMANTIC, { fulltext: 'waldo' }), formatTableStep(SEMANTIC, 'new')],
+      steps: [
+        semanticStep({ terms: 'waldo', context: 'Waldo is good' }),
+        formatTableStep(SEMANTIC_EMPTY, 'new', NO_MATCHES),
+        { kind: 'inputRequest', actions: ['Load more'] },
+        semanticStep({ searchId: 'sem-1', matches: [] }),
+        formatTableStep(SEMANTIC, 'append', ONE_MATCH),
+      ],
     });
     await sendViaComposer(shell, '/semantic-search good waldo');
     await flushFake(app);
 
-    const tables = shell.locator('.chat-table-message sp-table');
-    await expect(tables.last()).toBeVisible({ timeout: 30_000 });
-    // Retrying matcher rather than a one-shot read: the semantic run's table
-    // repaints after `flushFake`, and under load `.last()` can still be the
-    // previous run's two-column table for a frame.
+    // The tool call itself is a billet; the run's table message starts empty,
+    // with "no relevant results so far" in the total slot instead of a table.
     await expect(
-      shell.locator('.chat-table-message').last().locator('sp-table-head-cell'),
-    ).toHaveText(['#', 'Path', 'Property', 'Citation']);
-    // No total line for the semantic run (the search table's line, if present,
-    // belongs to a different message).
-    await expect(
-      shell.locator('.chat-table-message').last().locator('.chat-table-message__total'),
-    ).toHaveCount(0);
-  });
+      shell.locator('.chat-tool-call').filter({ hasText: 'Semantic search: waldo' }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
+    const message = shell.locator('.chat-table-message').last();
+    await expect(message.locator('.chat-table-message__total')).toHaveText(NO_MATCHES);
+    await expect(message.locator('sp-table')).toHaveCount(0);
 
+    await expect(shell.locator('.chat-ask__action')).toHaveText('Load more');
+    await shell.locator('.chat-ask__action').click();
+    await flushFake(app);
+
+    // The next page's match is appended to the SAME message; the total slot now
+    // counts the relevant matches and still reads beneath the table.
+    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
+    await expect(message.locator('sp-table-head-cell')).toHaveText([
+      '#',
+      'Path',
+      'Property',
+      'Citation',
+    ]);
+    await expect(message.locator('sp-table-body sp-table-row')).toHaveCount(1);
+    await expect(message.locator('.chat-table-message__total')).toHaveText(ONE_MATCH);
+    const totalBelowTable = await message.evaluate((element) => {
+      const total = element.querySelector('.chat-table-message__total');
+      const table = element.querySelector('sp-table');
+      if (total === null || table === null) return false;
+      // 4 = Node.DOCUMENT_POSITION_FOLLOWING.
+      return (table.compareDocumentPosition(total) & 4) !== 0;
+    });
+    expect(totalBelowTable).toBe(true);
+    await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
+  });
   test('a skill the model chose on its own (no /name) hides its prose and keeps the table', async () => {
     // A natural-language prompt: `isDeterministicTablePrompt` is false at send,
     // so the prose can only be suppressed retroactively, by the turn's own

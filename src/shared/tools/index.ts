@@ -22,5 +22,6 @@ export * from './core/navigation';
 export * from './core/currentPage';
 export * from './core/types';
 export * from './core/jcrPath';
+export * from './core/search';
 export * from './core/toolModule';
 export * from './core/toolRenderer';

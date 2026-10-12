@@ -404,13 +404,17 @@ src/tools/<name>/
 - `aem_query` is **JSON-only**: it renders no table. Its `toPayload` keeps the
   structured `rows`/`pagination`/`selection` so the model can hand the result on
   (and so a diagnostic sees it), but the transcript shows only the billet. Its
-  instructions tell the model to present results with `format_table`.
-- `format_table` is the **only** table renderer. It takes the JSON the model
-  already holds as `data` (an array of rows, or an object with a `rows` array -
-  typically the whole `aem_query` result) plus `mode: 'new' | 'append'`, and its
+  instructions point the model at `aem_query_format_ask` to show results.
+- `format_table` is the **only** table renderer, and it is **internal**
+  (`internal: true` on its `ToolModule`): the registry keeps it out of the
+  model's handlers, descriptors, allowlist and instructions (it is listed in
+  `ToolRegistry.internalNames`), but the composites still reach it through
+  `invokeTool`. It takes `data` (an array of rows, or an object with a `rows`
+  array - typically the whole `aem_query` result), `mode: 'new' | 'append'` and
+  an optional `totalLine` that replaces the derived total text. Its
   renderer sets `presentation: 'message'` + `readTableMessage`, so the transcript
-  paints an assistant message - an optional `Total: ...` line above a
-  `#`-prefixed Spectrum table, the Path cell clickable, every cell via
+  paints an assistant message - a `#`-prefixed Spectrum table with the total
+  line beneath it (only the total line when the run has no rows), the Path cell clickable, every cell via
   `textContent` - instead of a billet. `transcriptView.ts` groups
   `format_table` calls into **runs** (new starts one, append adds to it), unions
   the columns, and paints one table at the run's last call; the call lines are
@@ -452,6 +456,9 @@ src/tools/<name>/
   (AEM's QueryBuilder), `aem_get_json` (AEM's Sling/JSON rendering),
   `aem_create_page` (`cq:Page`). A generic action takes no prefix —
   `environment_facts`, `browser_navigate`, `ask_user`, `format_table`.
+- **The search page size is one constant**: `SEARCH_PAGE_SIZE` (50) in
+  `src/shared/tools/core/search.ts` is the default `limit` of both search
+  composites; change it there.
 - Tests live in `tests/unit/tools/` (manifests, executors),
   `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
   snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
@@ -472,14 +479,31 @@ src/tools/<name>/
 - **Composite tools are named "base tool + mixins", in run order**:
   `aem_query_format_ask` = `aem_query`, then `format_table`, then `ask_user`. Its
   folder is the kebab-case of the same name.
-- `aem_query_format_ask` is the first composite: given `terms` (and optional
-  `roots` — default the host content roots — and `limit`, default 50) it runs a
-  full-text `aem_query`, shows the page with `format_table` (`new`, then
+- `aem_query_format_ask` is the first composite: given `terms` **or** hand-built
+  QueryBuilder `predicates` (exactly one; plus optional `roots` — default the
+  host content roots, skipped when the predicates carry their own `path` —
+  `properties`, and `limit`, default `SEARCH_PAGE_SIZE`) it runs `aem_query`, shows the page with `format_table` (`new`, then
   `append`), and while `hasMore` is not `false` offers `ask_user`
   `{ actions: ["Load more"] }`, looping on each click. The model gets only a
   short summary (`textResultForLlm`), never the rows to relay — the point is
   that weak models no longer have to copy JSON between tools. Its billet reads
-  `Search: <terms>` with rows Terms, Roots, Page size, then Pages, Rows, Total.
+  `Search: <terms or predicates>` with rows Terms or Predicates, Roots, Page size,
+  then Pages, Rows, Total.
+- `aem_semantic_search` is the second composite, and the first **stateful**
+  one: the model must judge, so the tool runs in two kinds of call keyed by a
+  `searchId` (state held in the executor's closure, at most 8 searches).
+  Call A `{ terms, context, roots?, limit? }` runs `aem_query` (via `invokeTool`)
+  for one page (default `SEARCH_PAGE_SIZE`), reads **every** hit in code (QueryBuilder
+  `path.self` + `fulltext` + `p.hits=full` through `host.bridge`, a pool of 4,
+  falling back to the hit itself), and returns a numbered candidate list in
+  `textResultForLlm`. Call B `{ searchId, matches }` shows the judged matches
+  with `format_table` (`new`, then `append`), always passing a `totalLine`
+  that counts the **relevant** matches (`describeRelevantTotal`: "Total: N
+  relevant results so far", or "Did not find any relevant results so far"; no
+  "so far" once AEM is exhausted), so an empty run still shows a message, then, unless `hasMore === false`, offers
+  `ask_user` `["Load more"]`: a click returns the next page's candidates, a
+  cancel ends the search. The model never decides how many hits to read or when
+  to stop. Billet: `Semantic search: <terms>`; its `AEM hits` row is the raw query total.
 
 #### Recipe: add a new tool
 
@@ -596,10 +620,11 @@ model loaded the skill on its own.
 Both search skills now answer with **exactly one application-rendered table**:
 `/search` makes a single `aem_query_format_ask` call (`{ "terms": ... }`), which
 runs `aem_query`, `format_table` and the `ask_user` `["Load more"]` loop itself
-through the tool-to-tool bridge (hand-built predicate queries still chain the
-three tools by hand, as the skill describes); `/semantic-search` recalls with `aem_query`, reads candidates with
-`aem_get_json`, judges by meaning, and `format_table`s the passing
-`{ jcr:path, property, citation }` rows. The application suppresses the model's
+through the tool-to-tool bridge (a hand-built predicate query is the same single
+call with `predicates` instead of `terms`); `/semantic-search` calls
+`aem_semantic_search` `{ terms, context }`, judges every candidate it returns by
+meaning, and calls it back `{ searchId, matches }`, which tables the passing
+`{ jcr:path, property, citation }` rows and runs the Load-more loop. The application suppresses the model's
 own prose for a search turn two ways: at send for a turn whose prompt invokes
 either skill (`isDeterministicTablePrompt` in
 `src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model
@@ -650,7 +675,21 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2872 passed / 14 skipped** (+6 against the
+Current baseline: **`npm run test` → 2899 passed / 14 skipped** (+6 against the
+2893 of the previous entry - **relevant-match totals, an internal `format_table`
+and one page-size constant**: `format_table`'s `notice` became `totalLine`,
+`aem_semantic_search`'s total counts relevant matches, `format_table` is
+`internal` (a new optional `ToolModule.internal` flag - a shared contract
+change - and `ToolRegistry.internalNames`), `aem_query_format_ask` accepts
+`predicates`, and `SEARCH_PAGE_SIZE` is the one default page size; see
+`docs/verification.md` "Relevant-match totals, internal format_table, one page
+size (2026-10-12)"). Before that it was 2893 (+21 against the
+2872 of the previous entry - **`aem_semantic_search`, a stateful composite tool
+that reads and offers EVERY hit for judging**, plus a `format_table` `notice`
+for an empty run: 17 tool cases, 2 `format_table` notice cases, 1 transcriptView
+notice case, 1 `toolCallDetails` case; see `docs/verification.md`
+"`/semantic-search` runs on the `aem_semantic_search` composite (2026-10-12)").
+Before that it was 2872 (+6 against the
 2866 of the previous entry - **the ask-user question flash and the dropdown
 strip styling**: every `ask_user` mode now flashes the composer frame blue once
 (the `chat-composer__frame--attention` overlay, removed on `animationend` so a
@@ -880,6 +919,9 @@ case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after th
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
 **Playwright → 124 tests; a full run is typically 118 passed / 6 failed.** The
+`/semantic-search` case in `search-tables.spec.ts` was rewritten (count
+unchanged) to the `aem_semantic_search` flow: "Did not find any relevant results
+so far" in the total slot, then an appended row with "Total: 1 relevant result". Before that, the
 +1 since 123 is the `ask-user.spec.ts` case proving, against the built app, that
 a >5-option dropdown wears the action strip (gray frame, transparent border) with
 a white, dark-text free-answer control and Submit, and that a new question flashes

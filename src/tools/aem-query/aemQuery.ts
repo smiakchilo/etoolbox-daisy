@@ -210,8 +210,8 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     "typically this host's content roots from the current-page context block) to run the same " +
     'query once per root and merge the rows; `limit` and `offset` then apply to each root, and ' +
     'the effective roots are reported back. Do not combine `roots` with a `path` predicate. ' +
-    'This tool returns data only and renders no table: after it succeeds, present the results ' +
-    "with the 'format_table' tool, passing this result's JSON verbatim.",
+    'This tool returns data only and renders no table: to show search results to the user, ' +
+    "call 'aem_query_format_ask' with the same `predicates` instead.",
   parameters: z.toJSONSchema(aemQueryArgsSchema, { io: 'input' }),
 };
 

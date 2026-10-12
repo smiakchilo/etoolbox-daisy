@@ -48,14 +48,14 @@ export interface ToolResultTable {
 
 /**
  * A whole table the transcript paints as an assistant **message** (in place of
- * a billet), optionally under a one-line total. This is what a
+ * a billet), optionally over a one-line total. This is what a
  * `presentation: 'message'` tool returns: `format_table` accumulates its rows
  * across a search run and the transcript renders one such message for the run.
  */
 export interface ToolTableMessage {
   /** Whether this call starts a new run or appends to the current one. */
   readonly mode: 'new' | 'append';
-  /** The total line shown above the table, or `undefined` for no total. */
+  /** The total line shown beneath the table, or `undefined` for no total. */
   readonly total: string | undefined;
   readonly table: ToolResultTable;
 }

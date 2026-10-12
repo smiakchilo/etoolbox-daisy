@@ -209,6 +209,39 @@ describe('describeToolCall - aem_query_format_ask', () => {
   });
 });
 
+describe('describeToolCall - aem_semantic_search', () => {
+  it('summarises the terms and the page, and reads the progress from the result', () => {
+    const details = describeToolCall(
+      'aem_semantic_search',
+      { searchId: 's-1', matches: [1] },
+      {
+        operation: 'aem_semantic_search',
+        terms: 'waldo',
+        context: 'Waldo is good',
+        roots: ['/content/a'],
+        pageSize: 50,
+        page: 2,
+        candidatesRead: 100,
+        matchesShown: 3,
+        total: { accuracy: 'estimated', value: 140 },
+        hasMore: true,
+      },
+    );
+
+    expect(details.summary).toBe('Semantic search: waldo (page 2)');
+    expect(details.parameters.map((row) => row.label)).toEqual([
+      'Terms',
+      'Context',
+      'Roots',
+      'Page size',
+      'Page',
+      'Candidates read',
+      'Matches shown',
+      'AEM hits',
+    ]);
+  });
+});
+
 describe('describeToolCall - unknown tools', () => {
   it('falls back to the full argument object so no tool is ever invisible', () => {
     const details = describeToolCall('aem_unknown_tool', {

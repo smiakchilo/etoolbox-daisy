@@ -17,16 +17,18 @@ import {
 /**
  * The `format_table` tool, self-contained.
  *
- * The one place the chat renders a table. The model hands it the JSON it
- * already holds - an array of rows, or an object with a `rows` array (the
- * `aem_query` result) - and the application paints it as an **assistant
- * message**: an optional total line above a Spectrum table, the identifying
+ * The one place the chat renders a table. It is **internal**: the model never
+ * sees it; the search composites (`aem_query_format_ask`, `aem_semantic_search`)
+ * call it through the tool-to-tool bridge with the JSON they hold - an array of
+ * rows, or an object with a `rows` array (the `aem_query` result) - and the
+ * application paints it as an **assistant message**: a Spectrum table over an
+ * optional total line, the identifying
  * path made clickable, every cell escaped. The model never authors markup, and
  * the transcript never uses `innerHTML` for a cell.
  *
  * Like `ask_user` it does **not** go through `createToolExecutor`: it needs no
- * AEM server (it only reformats data the model already has), and the search
- * skills call it with no AEM request of its own. It is hand-rolled, but still
+ * AEM server (it only reformats data it is handed), and the search composites
+ * call it with no AEM request of its own. It is hand-rolled, but still
  * validates its arguments and returns the same `Result<JsonValue, ToolError>`
  * shape every executor does.
  *
@@ -56,6 +58,12 @@ export const formatTableArgsSchema = z
      */
     data: jsonValueSchema,
     mode: formatTableModeSchema.default('new'),
+    /**
+     * Replaces the total line verbatim (e.g. "Total: 3 relevant results so far",
+     * or "Did not find any relevant results so far"). Without it the line is
+     * derived from the data's `pagination.total` / `total`.
+     */
+    totalLine: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
 
@@ -64,13 +72,11 @@ export type FormatTableArgs = z.infer<typeof formatTableArgsSchema>;
 export const FORMAT_TABLE_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: FORMAT_TABLE_TOOL_NAME,
   description:
-    'Presents results as the chat\u2019s own table. Pass the `aem_query` result exactly as you ' +
-    'received it as `data` - the whole result object, or its text with the `Rows: [...]` line - ' +
-    'or an array of row objects. Do not extract, reformat, rename, or pre-render anything: the ' +
-    'application finds the rows itself, builds the table, keeps the identifying path clickable, ' +
-    'and escapes every cell. Set `mode: "new"` for the first page of a table and `mode: "append"` ' +
-    'to add a later page to it. This tool does not read AEM itself; it only displays data you ' +
-    'already have.',
+    'Presents rows as the chat\u2019s own table. Internal: called only by the search tools ' +
+    '(`aem_query_format_ask`, `aem_semantic_search`) through the tool-to-tool bridge, never by ' +
+    'the model. `data` is the `aem_query` result or an array of row objects; `mode: "new"` ' +
+    'starts a table and `mode: "append"` adds a later page to it; `totalLine` replaces the ' +
+    'derived total line verbatim.',
   // Hand-written rather than `z.toJSONSchema(jsonValueSchema)`: `data` is
   // arbitrary JSON (a recursive schema), and a plain, readable description
   // teaches the model the shape better than a `$ref` graph would.
@@ -87,6 +93,11 @@ export const FORMAT_TABLE_TOOL_DESCRIPTOR: ToolDescriptor = {
         default: 'new',
         description:
           '"new" (default) starts a fresh table; "append" adds this page\'s rows to the current one.',
+      },
+      totalLine: {
+        type: 'string',
+        description:
+          'Optional text that replaces the derived total line verbatim, e.g. "Did not find any relevant results so far".',
       },
     },
     required: ['data'],
@@ -286,6 +297,7 @@ export interface NormalizedTable {
 export function normalizeFormatTable(
   data: JsonValue,
   mode: FormatTableMode,
+  totalOverride?: string,
 ): NormalizedTable | undefined {
   const resolved = resolveTable(data);
   if (resolved === undefined) return undefined;
@@ -321,7 +333,10 @@ export function normalizeFormatTable(
   return {
     columns,
     rows: rows.map((row) => columnKeys.map((key) => renderCell(row[key]))),
-    total: totalLine(container),
+    total:
+      totalOverride !== undefined && totalOverride.trim().length > 0
+        ? totalOverride.trim()
+        : totalLine(container),
     mode,
   };
 }
@@ -357,7 +372,11 @@ export function createFormatTableExecutor(host: ToolHost): AemToolExecutor {
       return Promise.resolve(invalidArgument(message, requestId));
     }
 
-    const normalized = normalizeFormatTable(parsed.data.data, parsed.data.mode);
+    const normalized = normalizeFormatTable(
+      parsed.data.data,
+      parsed.data.mode,
+      parsed.data.totalLine,
+    );
     if (normalized === undefined) {
       return Promise.resolve(
         invalidArgument(

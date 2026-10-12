@@ -82,6 +82,7 @@ describe('discovered renderers (the real src/tools folders)', () => {
       'aem_get_json',
       'aem_query',
       'aem_query_format_ask',
+      'aem_semantic_search',
       'ask_user',
       'browser_navigate',
       'environment_facts',

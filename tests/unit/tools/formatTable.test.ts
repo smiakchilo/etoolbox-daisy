@@ -158,6 +158,14 @@ describe('formatTableArgsSchema', () => {
     expect(formatTableArgsSchema.parse({ data: [] }).mode).toBe('new');
   });
 
+  it('accepts an optional totalLine of 1-200 characters', () => {
+    expect(formatTableArgsSchema.parse({ data: [], totalLine: ' None ' }).totalLine).toBe('None');
+    expect(formatTableArgsSchema.safeParse({ data: [], totalLine: ' ' }).success).toBe(false);
+    expect(formatTableArgsSchema.safeParse({ data: [], totalLine: 'x'.repeat(201) }).success).toBe(
+      false,
+    );
+  });
+
   it('rejects an unknown key (strict)', () => {
     expect(formatTableArgsSchema.safeParse({ data: [], extra: 1 }).success).toBe(false);
   });
@@ -217,6 +225,23 @@ describe('format_table transcript composition', () => {
     });
     expect(message?.mode).toBe('append');
     expect(message?.total).toBe('Total: 1 result');
+  });
+
+  it('lets totalLine replace the derived total, and ignores a blank one', () => {
+    const data = {
+      rows: [{ 'jcr:path': '/a' }],
+      pagination: { total: { accuracy: 'exact', value: 9 } },
+    };
+    expect(
+      renderer.readTableMessage?.({ data, totalLine: '  Total: 1 relevant result so far ' })?.total,
+    ).toBe('Total: 1 relevant result so far');
+    expect(renderer.readTableMessage?.({ data, totalLine: ' ' })?.total).toBe('Total: 9 results');
+    expect(
+      renderer.readTableMessage?.({
+        data: { rows: [] },
+        totalLine: 'Did not find any relevant results so far',
+      })?.total,
+    ).toBe('Did not find any relevant results so far');
   });
 
   it('describes the call as N rows (the collapsed safety net)', () => {

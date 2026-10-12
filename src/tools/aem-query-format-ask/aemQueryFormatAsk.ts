@@ -8,6 +8,7 @@ import {
   type ToolError,
   type ToolHost,
   CONTENT_ROOT_DEFAULT,
+  SEARCH_PAGE_SIZE,
   createToolError,
   err,
   jsonValueSchema,
@@ -24,7 +25,9 @@ import {
  * runs through `aem_query`; the page goes to `format_table` (`new`, then
  * `append`); while more results may exist, `ask_user` offers one "Load more"
  * button, and a click repeats the loop at the next offset. The model makes one
- * call and never relays JSON between tools, and never forgets the button.
+ * call and never relays JSON between tools, and never forgets the button. A
+ * hand-built search passes its QueryBuilder predicates instead of 	erms;
+ * the loop is the same.
  *
  * It owns no AEM access of its own: every step is the real tool, run through
  * {@link ToolHost.invokeTool} (the tool-to-tool bridge), so each step shows in
@@ -39,7 +42,6 @@ export const AEM_QUERY_FORMAT_ASK_ALLOWLIST_ENTRY = 'custom:aem_query_format_ask
 /** The tools this one runs, in order; the manifest's `uses` list. */
 export const AEM_QUERY_FORMAT_ASK_USES = ['aem_query', 'format_table', 'ask_user'] as const;
 
-export const DEFAULT_SEARCH_PAGE_SIZE = 50;
 const MAX_SEARCH_PAGE_SIZE = 200;
 const MAX_SEARCH_ROOTS = 8;
 const LOAD_MORE = 'Load more';
@@ -47,26 +49,46 @@ const LOAD_MORE = 'Load more';
 export const aemQueryFormatAskArgsSchema = z
   .object({
     /** The full-text search string, sent as QueryBuilder's `fulltext` predicate. */
-    terms: z.string().trim().min(1),
-    /** Where to search. Omitted means the current host's content roots. */
+    terms: z.string().trim().min(1).optional(),
+    /**
+     * A hand-built QueryBuilder predicate map, instead of `terms`. Validated by
+     * `aem_query` itself, exactly as if the model had passed it there.
+     */
+    predicates: z.record(z.string(), z.string()).optional(),
+    /** Where to search. Omitted means the current host's content roots (or the `path` predicate). */
     roots: z.array(z.string().min(1)).min(1).max(MAX_SEARCH_ROOTS).optional(),
+    /** Which result fields come back per hit, as `aem_query`'s `properties`. */
+    properties: z.array(z.string().min(1)).optional(),
     /** Rows per page (per root, as with `aem_query`). */
-    limit: z.number().int().min(1).max(MAX_SEARCH_PAGE_SIZE).default(DEFAULT_SEARCH_PAGE_SIZE),
+    limit: z.number().int().min(1).max(MAX_SEARCH_PAGE_SIZE).default(SEARCH_PAGE_SIZE),
   })
-  .strict();
+  .strict()
+  .refine((args) => (args.terms === undefined) !== (args.predicates === undefined), {
+    message: 'Pass exactly one of `terms` or `predicates`',
+  });
 
 export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: AEM_QUERY_FORMAT_ASK_TOOL_NAME,
   description:
-    'Runs a full-text AEM search and presents it completely, in one call: it queries ' +
-    "(aem_query), shows the page as the chat's table (format_table), and, while more results " +
-    "may exist, offers the user a 'Load more' button (ask_user) and loads the next page when it " +
-    "is clicked. Pass the search string as `terms`. `roots` defaults to the current host's " +
-    'content roots; `limit` (rows per page) defaults to 50. When it returns, the table is already ' +
-    'on screen and the user has finished loading pages: do not call aem_query, format_table or ' +
-    'ask_user again for the same search, and do not repeat the results.',
+    'Runs an AEM search and presents it completely, in one call: it queries, shows the page as ' +
+    "the chat's table, and, while more results may exist, offers the user a 'Load more' button " +
+    'and loads the next page when it is clicked. Pass either `terms` (a plain full-text search ' +
+    'string) or `predicates` (a hand-built QueryBuilder predicate map, exactly as for ' +
+    "aem_query) - never both. `roots` defaults to the current host's content roots (none when " +
+    '`predicates` has a `path`; never combine `roots` with a `path` predicate); `properties` ' +
+    `optionally selects the fields per hit; \`limit\` (rows per page) defaults to ${String(SEARCH_PAGE_SIZE)}. ` +
+    'When it returns, the table is already on screen and the user has finished loading pages: ' +
+    'do not call aem_query, ask_user or this tool again for the same search, and do not repeat ' +
+    'the results.',
   parameters: z.toJSONSchema(aemQueryFormatAskArgsSchema, { io: 'input' }),
 };
+
+/** A predicate map as one readable line: `key=value; key=value`. */
+export function describePredicates(predicates: Readonly<Record<string, JsonValue>>): string {
+  return Object.entries(predicates)
+    .map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`)
+    .join('; ');
+}
 
 /** Why the loop ended: no further results, or the user did not ask for more. */
 export type SearchEnd = 'exhausted' | 'stopped';
@@ -119,9 +141,15 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
       return err(createToolError('INVALID_ARGUMENT', message, requestId));
     }
     const { terms, limit } = parsed.data;
-    const roots = [
-      ...(parsed.data.roots ?? host.environmentFacts()?.contentRoots ?? [CONTENT_ROOT_DEFAULT]),
-    ];
+    const predicates = parsed.data.predicates ?? { fulltext: terms ?? '' };
+    const scopedByPath = Object.prototype.hasOwnProperty.call(predicates, 'path');
+    const roots =
+      parsed.data.roots ??
+      (scopedByPath
+        ? undefined
+        : (host.environmentFacts()?.contentRoots ?? [CONTENT_ROOT_DEFAULT]));
+    const scope = roots === undefined ? predicates['path'] : roots.join(', ');
+    const subject = terms === undefined ? describePredicates(predicates) : `"${terms}"`;
 
     let offset = 0;
     let pages = 0;
@@ -136,7 +164,13 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
       }
       const query = await host.invokeTool(
         'aem_query',
-        { predicates: { fulltext: terms }, roots, properties: [], limit, offset },
+        {
+          predicates,
+          ...(roots === undefined ? {} : { roots: [...roots] }),
+          properties: [...(parsed.data.properties ?? [])],
+          limit,
+          offset,
+        },
         context,
       );
       if (!query.ok) return query;
@@ -187,8 +221,8 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
     return ok({
       operation: AEM_QUERY_FORMAT_ASK_TOOL_NAME,
       requestId,
-      terms,
-      roots,
+      ...(terms === undefined ? { predicates } : { terms }),
+      ...(roots === undefined ? {} : { roots: [...roots] }),
       pageSize: limit,
       pages,
       rows: rowCount,
@@ -196,7 +230,7 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
       hasMore,
       ended,
       textResultForLlm:
-        `Searched for "${terms}" in ${roots.join(', ')}: ${String(rowCount)} row(s) over ` +
+        `Searched for ${subject} in ${scope ?? 'the whole repository'}: ${String(rowCount)} row(s) over ` +
         `${String(pages)} page(s) are on screen in the chat's table (total matches: ` +
         `${totalText}). The search is finished because ${reason}. Do not repeat the results ` +
         'or call the search tools again for this search.',

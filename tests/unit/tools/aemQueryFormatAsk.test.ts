@@ -12,6 +12,7 @@ import {
   type Result,
   type ToolError,
   type ToolHost,
+  SEARCH_PAGE_SIZE,
   createToolError,
   err,
   ok,
@@ -103,7 +104,7 @@ describe('aem_query_format_ask executor', () => {
       predicates: { fulltext: 'waldo' },
       roots: ['/content/site'],
       properties: [],
-      limit: 50,
+      limit: SEARCH_PAGE_SIZE,
       offset: 0,
     });
     const tableArgs = calls[1]?.args;
@@ -113,7 +114,7 @@ describe('aem_query_format_ask executor', () => {
       operation: 'aem_query_format_ask',
       terms: 'waldo',
       roots: ['/content/site'],
-      pageSize: 50,
+      pageSize: SEARCH_PAGE_SIZE,
       pages: 1,
       rows: 2,
       hasMore: false,
@@ -171,6 +172,42 @@ describe('aem_query_format_ask executor', () => {
     expect(calls[0]?.args['roots']).toEqual(['/content']);
   });
 
+  it('runs hand-built predicates, scoped to the content roots, with chosen properties', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { predicates: { type: 'cq:Page', fulltext: 'waldo' }, properties: ['jcr:content/jcr:title'] },
+      callContext,
+    );
+
+    expect(calls[0]?.args).toEqual({
+      predicates: { type: 'cq:Page', fulltext: 'waldo' },
+      roots: ['/content/site'],
+      properties: ['jcr:content/jcr:title'],
+      limit: SEARCH_PAGE_SIZE,
+      offset: 0,
+    });
+    const summary = payload(result);
+    expect(summary).toMatchObject({ predicates: { type: 'cq:Page', fulltext: 'waldo' } });
+    expect(summary).not.toHaveProperty('terms');
+  });
+
+  it('passes no roots when the predicates carry their own path', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { predicates: { path: '/content/other', type: 'cq:Page' } },
+      callContext,
+    );
+
+    expect(calls[0]?.args).not.toHaveProperty('roots');
+    expect(payload(result)).not.toHaveProperty('roots');
+  });
+
   it('returns the query error unchanged and shows no table', async () => {
     const failure = createToolError('NETWORK_ERROR', 'down', 'r' as never);
     const { host, calls } = makeHost(() => err(failure));
@@ -189,7 +226,13 @@ describe('aem_query_format_ask executor', () => {
   it('rejects invalid arguments without calling anything', async () => {
     const { host, calls } = makeHost(() => ok(tableOk));
     const execute = createAemQueryFormatAskExecutor(host);
-    for (const args of [{}, { terms: '  ' }, { terms: 'x', limit: 0 }, { terms: 'x', extra: 1 }]) {
+    for (const args of [
+      {},
+      { terms: '  ' },
+      { terms: 'x', limit: 0 },
+      { terms: 'x', extra: 1 },
+      { terms: 'x', predicates: { type: 'cq:Page' } },
+    ]) {
       const result = await execute(args, callContext);
       expect(!result.ok && result.error.code).toBe('INVALID_ARGUMENT');
     }
@@ -222,6 +265,13 @@ describe('describeSearchTotal', () => {
 });
 
 describe('aem_query_format_ask renderer', () => {
+  it('summarises a hand-built search from its predicates', () => {
+    expect(renderer.describeCall({ predicates: { type: 'cq:Page', fulltext: 'waldo' } })).toEqual({
+      summary: 'Search: type=cq:Page; fulltext=waldo',
+      parameters: [{ label: 'Predicates', value: 'type=cq:Page; fulltext=waldo' }],
+    });
+  });
+
   it('summarises a pending call from its arguments', () => {
     expect(renderer.describeCall({ terms: 'waldo', limit: 20 })).toEqual({
       summary: 'Search: waldo',

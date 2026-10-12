@@ -1,6 +1,6 @@
 ---
 name: search
-description: How to run an AEM search against a conventional AEM Author instance - construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return, or run an immediate full-text search with the aem_query_format_ask tool. Use whenever the user asks to find, search for, look up, or list AEM content (pages, assets, components) - including when they invoke `/search <terms>`. Do not load it merely to explain a result that already came back; that is the query-results skill.
+description: How to run an AEM search against a conventional AEM Author instance - construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return, and run the search (full text or hand-built) with the aem_query_format_ask tool. Use whenever the user asks to find, search for, look up, or list AEM content (pages, assets, components) - including when they invoke `/search <terms>`. Do not load it merely to explain a result that already came back; that is the query-results skill.
 metadata:
   user-description: Find pages and assets by their content.
 ---
@@ -39,13 +39,12 @@ turn, so any explanation you write is discarded.
 ```
 
 That one tool does the whole search: it runs `aem_query` (full text, the host's
-content roots, 50 rows per page), shows the page with `format_table`, and while
-more results may exist offers the user a **Load more** button through
-`ask_user`, loading and appending the next page on each click. When it returns,
-the table is on screen and the user is done. Do **not** call `aem_query`,
-`format_table` or `ask_user` yourself for a plain search, and do not repeat
-the results. Pass `roots` only when the user named a scope; never pass `limit`
-unless the user asked for a page size.
+content roots, one page at a time), shows the page as the chat's table, and while
+more results may exist offers the user a **Load more** button, loading and
+appending the next page on each click. When it returns, the table is on screen
+and the user is done. Do **not** call `aem_query` or `ask_user` yourself to show
+results, and do not repeat the results. Pass `roots` only when the user named a
+scope; never pass `limit` unless the user asked for a page size.
 
 If the request has no searchable terms at all, then - and only then - ask what
 to search for with a normal `ask_user` question (options or free input), not
@@ -53,21 +52,19 @@ with `actions`.
 
 ### Hand-built queries
 
-A plain term uses the `/search` shortcut above. For anything more specific - a
-concrete path, a property value, a type, a date or numeric range, an ordering -
-build the predicate map yourself as the rest of this skill describes and run the
-three steps in order, all in this same turn:
+A plain term uses `terms` above. For anything more specific - a concrete path,
+a property value, a type, a date or numeric range, an ordering - build the
+predicate map yourself as the rest of this skill describes, and make the same
+one call with it as `predicates` instead of `terms`:
 
-1. **Query.** Call `aem_query` with your predicates, the content roots as
-   `roots` (unless you used a `path`), `limit: 50`, and `offset` starting at `0`.
-2. **Present.** Call `format_table` with that result's JSON **verbatim** as
-   `data`, and `mode: "new"` on the first page, `"append"` on every later page.
-3. **Offer more.** If the result's `pagination.hasMore` is `true` or
-   `"unknown"`, you **must** call `ask_user` with exactly
-   `{ "actions": ["Load more"] }` - a written question is not a substitute,
-   since the application discards your prose. On **Load more**, repeat from
-   step 1 with `offset` increased by `50` and `mode: "append"`. Only when
-   `hasMore` is `false` is there nothing to offer.
+```json
+{ "predicates": { "type": "cq:Page", "fulltext": "<search string>" } }
+```
+
+`aem_query_format_ask` validates the map exactly as `aem_query` does, scopes it
+to the content roots (unless it has a `path` predicate), and runs the same table
+and **Load more** loop. Pass `properties` to choose the columns. Never pass both
+`terms` and `predicates`.
 
 ## Always scope
 
@@ -76,19 +73,18 @@ Start every query from a scope unless the user has explicitly asked for a
 repository-wide search.
 
 The current page context block names the host's **content roots** (default
-`/content`). Pass them to `aem_query` as `roots`. The tool runs one query per
-root and merges the rows, so a host with several content roots is covered in a
-single call:
+`/content`). `aem_query_format_ask` uses them as `roots` by default; pass `roots`
+only to search a different scope. The query runs once per root and the rows are
+merged, so a host with several content roots is covered in a single call:
 
 ```json
 {
   "predicates": { "type": "cq:Page" },
-  "roots": ["/content/wknd", "/content/shared"],
-  "limit": 50
+  "roots": ["/content/wknd", "/content/shared"]
 }
 ```
 
-- `limit` and `offset` apply to each root, and the effective roots are reported
+- The page size applies to each root, and the effective roots are reported
   back. Never combine `roots` with a `path` predicate — that is rejected.
 - Use `roots` whenever the user names no path, or asks about the environment as
   a whole. Widen the roots only when the request clearly reaches beyond them,
@@ -181,7 +177,7 @@ ordinary predicate keys and are always accepted.
 `p.limit`, `p.offset`, `p.hits`, `p.properties`, `p.nodedepth`, `p.guessTotal`
 and `p.facets` are reserved by the application. Putting one in `predicates` is
 rejected with an error telling you which real field to use instead. Use the
-`limit`, `offset` and `properties` arguments of the tool.
+tool's `properties` argument; paging is done by the application.
 
 ## Ask for the properties you need
 
@@ -192,8 +188,7 @@ compact identifying fields — enough to tell hits apart and to follow up with
 ```json
 {
   "predicates": { "path": "/content/wknd", "type": "cq:Page" },
-  "properties": ["jcr:content/jcr:title", "jcr:content/cq:lastModified"],
-  "limit": 50
+  "properties": ["jcr:content/jcr:title", "jcr:content/cq:lastModified"]
 }
 ```
 

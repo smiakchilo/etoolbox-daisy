@@ -26,7 +26,8 @@ function modeFromArgs(args: Readonly<Record<string, JsonValue>>): FormatTableMod
 function readTableMessage(args: Readonly<Record<string, JsonValue>>): ToolTableMessage | undefined {
   const data = args['data'];
   if (data === undefined) return undefined;
-  const normalized = normalizeFormatTable(data, modeFromArgs(args));
+  const totalLine = typeof args['totalLine'] === 'string' ? args['totalLine'] : undefined;
+  const normalized = normalizeFormatTable(data, modeFromArgs(args), totalLine);
   if (normalized === undefined) return undefined;
   return {
     mode: normalized.mode,
