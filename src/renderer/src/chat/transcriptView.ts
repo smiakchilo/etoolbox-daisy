@@ -224,6 +224,37 @@ function isEmptyMessage(store: TranscriptStore, item: TranscriptItem): boolean {
   return item.kind === 'message' && store.textForMessage(item.messageId).trim() === '';
 }
 
+/**
+ * Whether `item` is a `presentation: 'conversation'` tool call (`ask_user`) with
+ * nothing to paint. Three shapes paint nothing: an `actions`-mode prompt (its
+ * buttons are self-explanatory and live in the composer), a question still
+ * awaiting its answer (a pending question lives in the composer, not the
+ * transcript - see `renderConversationShell`), and a call this build does not
+ * recognise.
+ *
+ * Like an empty assistant message (see `isEmptyMessage`), such a call must
+ * leave no empty `.chat-ask-user` shell in the transcript - so a search's
+ * `Load more` prompt (an `actions` call with no question) no longer sits as a
+ * blank div between two billets. The call stays in the store and the journal;
+ * only the painting is skipped.
+ */
+function isEmptyConversation(store: TranscriptStore, item: TranscriptItem): boolean {
+  if (item.kind !== 'toolCall') return false;
+  const view = store.toolCallFor(item.toolCallId);
+  if (view === undefined) return false;
+  if (toolRendererRegistry.presentationOf(view.toolName) !== 'conversation') return false;
+  const conversation = toolRendererRegistry.readConversation(
+    view.toolName,
+    view.args,
+    succeededData(view),
+  );
+  if (conversation === undefined) return true;
+  if (conversation.answer !== undefined) return false;
+  // No answer yet: only a failed/rejected call still paints the question (with
+  // the reason); a pending question has nothing to show.
+  return view.status.kind !== 'failed' && view.status.kind !== 'rejected';
+}
+
 function renderToolCallToggle(
   view: ToolCallView,
   toolCallId: string,
@@ -244,6 +275,10 @@ function renderToolCallToggle(
   // semantic search reading every hit's content) is visibly working rather than
   // apparently stalled.
   const running = view.status.kind === 'requested' || view.status.kind === 'approved';
+  // A status may deliberately carry no word (a replayed call the turn was
+  // waiting on the user for - see `describeToolCallStatus`): then the header is
+  // the tool name alone, with no ` - status` suffix.
+  const statusLabel = describeToolCallStatus(view.status);
   toggle.append(
     running
       ? el('sp-progress-circle', {
@@ -252,7 +287,7 @@ function renderToolCallToggle(
       : el('sp-icon-actions', { attrs: { class: 'chat-tool-call__icon', size: 's' } }),
     el('span', {
       attrs: { class: 'chat-tool-call__header' },
-      text: `${view.toolName} \u2014 ${describeToolCallStatus(view.status)}`,
+      text: statusLabel === undefined ? view.toolName : `${view.toolName} \u2014 ${statusLabel}`,
     }),
   );
   if (summary !== undefined && summary !== '') {
@@ -1248,6 +1283,9 @@ export function createTranscriptView(
         if (hiddenWhileAwaitingInput(store, item)) continue;
         // An assistant message with no text paints nothing - see `isEmptyMessage`.
         if (isEmptyMessage(store, item)) continue;
+        // A `conversation` tool call that paints nothing (an `actions` prompt,
+        // a pending question) leaves no empty shell - see `isEmptyConversation`.
+        if (isEmptyConversation(store, item)) continue;
         const tableMessage = messages.get(key);
         // A table run's shell is cached under the run's **stable start** key
         // (`runIds`), not the call that happens to render it now: a `Load more`

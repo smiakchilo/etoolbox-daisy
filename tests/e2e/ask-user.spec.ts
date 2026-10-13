@@ -328,6 +328,9 @@ test.describe('ask-user interactive question', () => {
   });
 
   test('an actions prompt fits its buttons and Cancel on one line, and paints nothing in the transcript', async () => {
+    // The shell count before this turn: the earlier questions in this shared
+    // app left their own `.chat-ask-user` shells behind.
+    const shellsBefore = await shell.locator('.chat-ask-user').count();
     await scriptTurn(app, {
       steps: [{ kind: 'inputRequest', actions: ['Refine', 'Show more'] }],
     });
@@ -390,9 +393,10 @@ test.describe('ask-user interactive question', () => {
           .evaluate((element) => getComputedStyle(element).backgroundColor),
       )
       .toBe('rgb(255, 255, 255)');
-    // The actions call renders nothing in the transcript: the (empty)
-    // `.chat-ask-user` shell it owns carries no message at all.
-    await expect(shell.locator('.chat-ask-user').last().locator('.chat-message')).toHaveCount(0);
+    // The actions call renders nothing in the transcript at all: no empty
+    // `.chat-ask-user` shell is left behind either (see `isEmptyConversation`),
+    // so the shell count is exactly what it was before this turn.
+    await expect(shell.locator('.chat-ask-user')).toHaveCount(shellsBefore);
   });
 
   test('Cancel on a pending question dismisses it without ending the turn', async () => {

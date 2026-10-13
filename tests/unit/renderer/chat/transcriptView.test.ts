@@ -402,6 +402,25 @@ describe('createTranscriptView', () => {
       expect(node?.querySelector<HTMLElement>('.chat-tool-call__progress')?.hidden).toBe(true);
     });
 
+    it('renders a replayed call that was waiting on the user with no status word', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      // The app closed while a question was on screen (Load more): nothing was
+      // in flight, so the call must not read "Interrupted".
+      store.abandonRunningToolCalls(true);
+      view.repaint(store);
+
+      const node = view.element.querySelector('.chat-tool-call');
+      expect(node?.querySelector('.chat-tool-call__header')?.textContent).toBe('aem_get_json');
+      expect(node?.textContent).not.toContain('Interrupted');
+      // The settled icon, exactly as a completed call shows: no spinner.
+      expect(node?.querySelector('.chat-tool-call__icon')?.tagName.toLowerCase()).toBe(
+        'sp-icon-actions',
+      );
+    });
+
     it('updates the progress line in place instead of rebuilding the running billet', () => {
       const view = createTranscriptView(markdownRenderer);
       const store = createTranscriptStore();
@@ -1501,15 +1520,45 @@ describe('ask_user conversation presentation', () => {
     freeInput: false,
   };
 
-  it('shows nothing while the question is still pending', () => {
+  it('paints no shell at all while the question is still pending', () => {
     const view = createTranscriptView(markdownRenderer);
     const store = createTranscriptStore();
     store.applyEvent(toolRequestedWithArgs(0, 'ask_user', askArgs));
     view.repaint(store);
 
+    // A pending question lives in the composer, not the transcript: no billet
+    // and no empty `.chat-ask-user` shell either (the same "paint nothing" rule
+    // an empty assistant message follows).
     expect(view.element.querySelector('.chat-tool-call')).toBeNull();
-    const shell = view.element.querySelector('.chat-ask-user');
-    expect(shell?.childElementCount).toBe(0);
+    expect(view.element.querySelector('.chat-ask-user')).toBeNull();
+  });
+
+  it('paints no shell for an actions prompt that renders nothing', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(
+      toolRequestedWithArgs(0, 'ask_user', {
+        actions: ['Load more'],
+        multiple: false,
+        freeInput: false,
+      }),
+    );
+    store.applyEvent(
+      agentEventSchema.parse({
+        type: 'tool.result',
+        chatId,
+        sequence: 1,
+        toolCallId,
+        outcome: {
+          ok: true,
+          data: { operation: 'ask_user', selections: ['Load more'], freeform: null },
+        },
+      }),
+    );
+    view.repaint(store);
+
+    // An actions call never paints, answered or not: no empty `.chat-ask-user`.
+    expect(view.element.querySelector('.chat-ask-user')).toBeNull();
   });
 
   it('renders the question as an assistant message and the answer as a user message', () => {

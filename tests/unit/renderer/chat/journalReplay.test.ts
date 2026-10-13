@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { replayJournalIntoTranscript } from '../../../../src/renderer/src/chat/journalReplay';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
+import { agentEventSchema } from '../../../../src/shared';
 import type {
   ChatId,
   ChatJournalAbandonedToolCallRecord,
@@ -167,6 +168,61 @@ describe('replayJournalIntoTranscript', () => {
     replayJournalIntoTranscript([userPrompt('turn-1', 'search'), requested, approved], store);
 
     expect(store.toolCallFor('tool-open' as ToolCallId)?.status).toEqual({ kind: 'abandoned' });
+  });
+
+  it('settles unfinished calls with no status word when the turn ended waiting on the user', () => {
+    // The app closed while a "Load more" question was on screen. Nothing was in
+    // flight, so neither the composite that owns the question nor the ask_user
+    // call itself is "Interrupted" - the transcript shows no status word for
+    // either (see `abandonRunningToolCalls`' `awaitingInput`).
+    const store = createTranscriptStore();
+    const composite: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 4,
+      event: agentEventSchema.parse({
+        type: 'tool.call.requested',
+        chatId: CHAT,
+        sequence: 1,
+        toolCallId: 'composite',
+        toolName: 'aem_query_format_ask',
+        arguments: { terms: 'waldo' },
+      }),
+    };
+    const ask: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 5,
+      event: agentEventSchema.parse({
+        type: 'tool.call.requested',
+        chatId: CHAT,
+        sequence: 2,
+        toolCallId: 'ask-1',
+        toolName: 'ask_user',
+        arguments: { actions: ['Load more'], multiple: false, freeInput: false },
+      }),
+    };
+    const question: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 6,
+      event: agentEventSchema.parse({
+        type: 'user.input.requested',
+        chatId: CHAT,
+        sequence: 3,
+        turnId: 'turn-1',
+        requestId: 'req-1',
+        actions: ['Load more'],
+        multiple: false,
+        freeInput: false,
+      }),
+    };
+
+    replayJournalIntoTranscript([userPrompt('turn-1', 'search'), composite, ask, question], store);
+
+    expect(store.toolCallFor('composite' as ToolCallId)?.status).toEqual({
+      kind: 'abandonedAwaitingInput',
+    });
+    expect(store.toolCallFor('ask-1' as ToolCallId)?.status).toEqual({
+      kind: 'abandonedAwaitingInput',
+    });
   });
 
   it('settles a pending total flag the replay left on a format_table call', () => {

@@ -1,4 +1,5 @@
 import type { ChatJournalRecord } from '../../../shared';
+import { toolRendererRegistry } from './toolRegistry';
 import type { TranscriptStore } from './transcriptStore';
 
 /**
@@ -28,7 +29,9 @@ import type { TranscriptStore } from './transcriptStore';
  *    directly: the final {@link TranscriptStore.abandonRunningToolCalls} settles
  *    *every* call the replay left running, which is the same set (and also
  *    covers a hard exit that never wrote the record), so the record needs no
- *    handler of its own.
+ *    handler of its own. A turn that ended while a question was on screen is the
+ *    one exception: its unfinished calls were not interrupted, so they settle
+ *    with no status word (see that method's `awaitingInput`).
  */
 export function replayJournalIntoTranscript(
   records: readonly ChatJournalRecord[],
@@ -64,7 +67,23 @@ export function replayJournalIntoTranscript(
   // A rebuilt transcript has no live turn, so nothing can still be running: a
   // call the journal left without a result renders as an honest non-spinning
   // "Interrupted" billet instead of a spinner that will never stop.
-  transcriptStore.abandonRunningToolCalls();
+  //
+  // The one exception is a turn that ended **waiting on the user**: a still-
+  // running call whose tool renders as a conversation (`ask_user`) means a
+  // question was on screen when the app closed. Nothing was in flight and
+  // nothing was interrupted, so those calls settle as `abandonedAwaitingInput` -
+  // no status word at all - rather than "Interrupted" (see
+  // `transcriptStore.ts`'s `abandonRunningToolCalls`).
+  const awaitingInput = transcriptStore.items().some((item) => {
+    if (item.kind !== 'toolCall') return false;
+    const view = transcriptStore.toolCallFor(item.toolCallId);
+    return (
+      view !== undefined &&
+      (view.status.kind === 'requested' || view.status.kind === 'approved') &&
+      toolRendererRegistry.presentationOf(view.toolName) === 'conversation'
+    );
+  });
+  transcriptStore.abandonRunningToolCalls(awaitingInput);
   // Likewise, a `format_table` call the journal left mid-count (`totalPending`)
   // shows its fallback total with no spinner - the count died with the process.
   transcriptStore.settlePendingTotals();

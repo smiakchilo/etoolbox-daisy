@@ -6,12 +6,13 @@ import {
 import type { ToolCallStatus } from './transcriptStore';
 
 /**
- * Short label for a tool call's current lifecycle status. `"FAILED"` is
- * deliberately upper-case: implementation-plan.md step 07 calls for a failed
- * tool call to be "visually and structurally distinguishable" from a
- * completed one, and this is the literal text a failed call renders.
+ * Short label for a tool call's current lifecycle status, or `undefined` for a
+ * status that deliberately shows no status word. `"FAILED"` is deliberately
+ * upper-case: implementation-plan.md step 07 calls for a failed tool call to be
+ * "visually and structurally distinguishable" from a completed one, and this is
+ * the literal text a failed call renders.
  */
-export function describeToolCallStatus(status: ToolCallStatus): string {
+export function describeToolCallStatus(status: ToolCallStatus): string | undefined {
   switch (status.kind) {
     case 'requested':
       return 'Requested';
@@ -28,6 +29,11 @@ export function describeToolCallStatus(status: ToolCallStatus): string {
       // It is not running and never will be, so the spinner is gone; the word
       // says why, rather than implying a completion that never happened.
       return 'Interrupted';
+    case 'abandonedAwaitingInput':
+      // The turn was paused on the user's answer, not interrupted - nothing was
+      // in flight. The billet shows the tool name and the settled icon with no
+      // status word at all (see `transcriptView.ts`'s header composition).
+      return undefined;
     default: {
       return status;
     }

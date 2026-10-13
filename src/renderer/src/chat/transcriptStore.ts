@@ -58,7 +58,17 @@ export type ToolCallStatus =
    * the executor's state died with the app, so the call can never resume, and
    * rendering it as a spinner forever would be a lie.
    */
-  | { readonly kind: 'abandoned' };
+  | { readonly kind: 'abandoned' }
+  /*
+   * A call the journal left unresolved because the turn was **waiting on the
+   * user** - an unanswered `ask_user` question - when the app closed. Nothing
+   * was in flight and nothing was interrupted, so it is deliberately distinct
+   * from `abandoned`: the transcript shows no status word for it at all, only
+   * the tool name and the settled icon (the same as a finished call, minus the
+   * label). Only ever set while rebuilding a transcript from the journal
+   * (`abandonRunningToolCalls(true)`).
+   */
+  | { readonly kind: 'abandonedAwaitingInput' };
 
 export interface ToolCallView {
   readonly toolCallId: ToolCallId;
@@ -114,8 +124,14 @@ export interface TranscriptStore {
    * journal's own `tool.call.abandoned` record exists for exactly this
    * distinction; this is what makes the transcript honour it (and covers a hard
    * exit that never wrote the record). A no-op when nothing is running.
+   *
+   * `awaitingInput` distinguishes the one case where "abandoned" would be a lie:
+   * the turn was blocked on an unanswered `ask_user` when the journal ended, so
+   * nothing was in flight. Those calls settle as `abandonedAwaitingInput`, which
+   * paints no status word - the call was not interrupted. Defaults to `false`
+   * (the ordinary "the app closed while this was working" case).
    */
-  abandonRunningToolCalls(): void;
+  abandonRunningToolCalls(awaitingInput?: boolean): void;
   /**
    * Clears the "counting" flag on every `format_table` call a journal replay
    * left mid-count, so a rebuilt transcript shows the fallback total with no
@@ -527,13 +543,16 @@ export function createTranscriptStore(
     toolCallFor(toolCallId) {
       return toolCalls.get(toolCallId);
     },
-    abandonRunningToolCalls() {
+    abandonRunningToolCalls(awaitingInput = false) {
       if (runningToolCalls.size === 0) return;
       // `updateToolCallStatus` drops each call's running-only progress and
       // removes it from `runningToolCalls`; the explicit clear then covers a
       // running id with no view (which would otherwise linger).
+      const status: ToolCallStatus = awaitingInput
+        ? { kind: 'abandonedAwaitingInput' }
+        : { kind: 'abandoned' };
       for (const toolCallId of [...runningToolCalls]) {
-        updateToolCallStatus(toolCallId, { kind: 'abandoned' });
+        updateToolCallStatus(toolCallId, status);
       }
       runningToolCalls.clear();
       dirty = true;

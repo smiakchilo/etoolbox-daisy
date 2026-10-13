@@ -354,7 +354,12 @@ rebuilt only when its non-progress content changes), so a spinner never restarts
 on a tick. A transcript rebuilt from the journal settles every still-running call
 (`TranscriptStore.abandonRunningToolCalls`, called by `journalReplay.ts`), so a
 call the journal never resolved — the app closed mid-turn — shows `Interrupted`
-with the static icon, never a spinner that can never stop.
+with the static icon, never a spinner that can never stop. The one exception is a
+turn that ended **waiting on the user** (an unanswered `ask_user`): nothing was in
+flight, so its calls settle as `abandonedAwaitingInput` and show **no status word
+at all** — just the tool name and the settled icon (`journalReplay.ts` spots the
+still-running conversation call and passes `awaitingInput`; a call the app died
+under while it was *working* still reads `Interrupted`).
 
 **An assistant message with no text paints nothing.** A tool-only turn (the
 model ends it with `assistant.message.completed`, `content: ""`) still has a
@@ -363,7 +368,11 @@ only the *painting* that is skipped, so no empty gray bubble appears
 (`transcriptView.ts`'s `isEmptyMessage`; whitespace-only counts as empty, since
 `marked` renders it to nothing). A message that has *started* but has no text yet
 is skipped the same way, so it appears the moment its first delta arrives rather
-than flashing an empty frame.
+than flashing an empty frame. A `presentation: 'conversation'` tool call (`ask_user`)
+that paints nothing — an `actions` prompt, or a question still pending in the
+composer — is skipped by the same rule (`transcriptView.ts`'s `isEmptyConversation`),
+so no empty `.chat-ask-user` shell is left between billets either; the call stays
+in the store and the journal.
 
 **The application owns the transcript's scroll position.** `chat.css` pins
 `overflow-anchor: none` on `.chat-transcript` so the browser's own scroll
@@ -441,7 +450,9 @@ src/tools/<name>/
   per action (no text field, no Send) and a single click answers immediately -
   the search skills use one, `["Load more"]`, with the composer's Stop as the
   cancel. An actions-only call has no `question`, so the transcript paints
-  nothing for it. The SDK has a built-in `ask_user`; this app leaves it
+  nothing for it - no empty `.chat-ask-user` shell is left either (see the
+  "no text paints nothing" rule above; a pending question is skipped the same
+  way). The SDK has a built-in `ask_user`; this app leaves it
   un-allowlisted and ships its own (see docs/compatibility.md 4.3). A dev-only
   `!!ask ...` composer trigger previews the UI locally (see section 9).
   Presentation: every mode washes the composer frame accent-blue once and fades
@@ -804,7 +815,18 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3029 passed / 14 skipped** (+2 against the
+Current baseline: **`npm run test` → 3034 passed / 14 skipped** (+5 against the
+3029 of the previous entry - **no empty conversation shells, and a turn paused on
+a question is not "Interrupted"**: a `presentation: 'conversation'` tool call that
+paints nothing (an `ask_user` `actions` prompt, a pending question) is now skipped
+by `transcriptView.ts`'s new `isEmptyConversation`, so no empty `.chat-ask-user`
+shell is left between billets; and a call the journal left running because the turn
+was blocked on the user settles as a new `abandonedAwaitingInput` status that shows
+**no status word** (just the tool name, settled icon) instead of "Interrupted" -
+`journalReplay.ts` detects the pending `ask_user` and passes `awaitingInput` to
+`abandonRunningToolCalls` - see `docs/verification.md` "No empty conversation
+shells, and a turn paused on a question is not \"Interrupted\" (2026-10-14)").
+Before that it was 3029 (+2 against the
 3027 of the previous entry - **the component search's table adds a `Node` column
 and blanks a repeated page path**: `aem_query_format_ask` splits each hit at
 `/jcr:content/` (the standard `Path` column keeps the owning page, a `node` key

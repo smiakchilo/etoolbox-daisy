@@ -24,7 +24,7 @@ function toolError(overrides: Partial<ToolError> = {}): ToolError {
 }
 
 describe('describeToolCallStatus', () => {
-  it('describes every status with distinct, non-empty text', () => {
+  it('describes every labelled status with distinct, non-empty text', () => {
     const statuses: readonly ToolCallStatus[] = [
       { kind: 'requested' },
       { kind: 'approved' },
@@ -35,12 +35,18 @@ describe('describeToolCallStatus', () => {
     ];
     const descriptions = statuses.map((status) => describeToolCallStatus(status));
     for (const description of descriptions) {
-      expect(description.length).toBeGreaterThan(0);
+      expect(description ?? '').not.toBe('');
     }
     expect(new Set(descriptions).size).toBe(statuses.length);
     // A replayed unresolved call reads as "Interrupted", not as running.
     expect(describeToolCallStatus({ kind: 'abandoned' })).toBe('Interrupted');
     expect(describeToolCallStatus({ kind: 'abandoned' })).not.toBe('Running');
+  });
+
+  it('shows no status word for a call the turn was waiting on the user for', () => {
+    // Nothing was in flight while the question was on screen, so calling it
+    // "Interrupted" would be a lie; the billet shows only the tool name.
+    expect(describeToolCallStatus({ kind: 'abandonedAwaitingInput' })).toBeUndefined();
   });
 
   it("labels a failed status literally 'FAILED', distinct from a succeeded 'Completed'", () => {

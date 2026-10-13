@@ -392,6 +392,20 @@ describe('createTranscriptStore', () => {
       expect(store.items()).toEqual([{ kind: 'toolCall', toolCallId }]);
     });
 
+    it('settles running calls with no status word when the turn was waiting on the user', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+
+      store.abandonRunningToolCalls(true);
+
+      // A turn paused on a question was not interrupted: the call settles as
+      // `abandonedAwaitingInput`, which paints no status word (see
+      // `describeToolCallStatus`).
+      expect(store.toolCallFor(toolCallId)?.status).toEqual({ kind: 'abandonedAwaitingInput' });
+      expect(store.items()).toEqual([{ kind: 'toolCall', toolCallId }]);
+    });
+
     it('leaves a settled call untouched when nothing is running', () => {
       const store = createTranscriptStore();
       store.applyEvent(toolRequested(0));
