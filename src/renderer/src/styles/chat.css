@@ -18,6 +18,17 @@
   min-height: 0;
   overflow-y: auto;
   padding: 0 8px 8px 0;
+  /* The application owns this scroll position (see `transcriptFollower.ts`),
+     and the browser must keep out of it. Chromium's scroll anchoring adjusts
+     `scrollTop` when content above the viewport changes size, to keep that
+     content where it was; a settling `sp-table` does exactly that, drastically
+     (its height before it upgrades is many times its final one), and when a
+     restored transcript is pinned to the bottom of its *unsettled* layout the
+     adjusted position is no longer the bottom - which the follower reads as the
+     reader scrolling away, switching the follow intent off for good. With
+     anchoring off, the browser only ever clamps `scrollTop` to the maximum (a
+     position that still reads as "at the bottom"). */
+  overflow-anchor: none;
 }
 
 /* Fully replaced on every repaint (see transcriptView.ts). */

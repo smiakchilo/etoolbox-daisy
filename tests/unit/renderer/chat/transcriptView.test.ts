@@ -49,6 +49,16 @@ function delta(sequence: number, text: string): AgentEvent {
   });
 }
 
+function messageStarted(sequence: number): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'assistant.message.started',
+    chatId,
+    sequence,
+    turnId,
+    messageId,
+  });
+}
+
 function completed(sequence: number, content: string): AgentEvent {
   return agentEventSchema.parse({
     type: 'assistant.message.completed',
@@ -222,6 +232,52 @@ describe('createTranscriptView', () => {
         (td) => td.textContent,
       );
       expect(cells).toEqual(['Ada', '36']);
+    });
+
+    it('paints nothing for a completed message with empty text, and keeps its item in the store', () => {
+      // The model can end a turn with `assistant.message.completed` carrying
+      // `content: ""` (a tool-only answer, e.g. a search turn whose whole answer
+      // is the table). The message item is real and stays for debugging, but an
+      // empty assistant bubble is just a gray box, so nothing is painted.
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(messageStarted(0));
+      store.applyEvent(completed(1, ''));
+
+      view.repaint(store);
+
+      expect(view.element.querySelector('.chat-message--assistant')).toBeNull();
+      expect(view.element.childElementCount).toBe(0);
+      const messageItems = store.items().filter((item) => item.kind === 'message');
+      expect(messageItems).toHaveLength(1);
+      expect(store.textForMessage(messageId)).toBe('');
+    });
+
+    it('paints nothing for a whitespace-only message, which renders to nothing too', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(completed(0, '  \n '));
+
+      view.repaint(store);
+
+      expect(view.element.querySelector('.chat-message--assistant')).toBeNull();
+    });
+
+    it('paints a message as soon as it has text, so a streaming answer is not delayed', () => {
+      // An empty message is skipped, but only while it is empty: the first delta
+      // makes it appear, so the skip can never swallow a real answer.
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(messageStarted(0));
+      view.repaint(store);
+      expect(view.element.querySelector('.chat-message--assistant')).toBeNull();
+
+      store.applyEvent(delta(1, 'The component is on 59 pages.'));
+      view.repaint(store);
+
+      expect(view.element.querySelector('.chat-message--assistant')?.textContent?.trim()).toBe(
+        'The component is on 59 pages.',
+      );
     });
   });
 

@@ -205,6 +205,25 @@ function hiddenWhileAwaitingInput(store: TranscriptStore, item: TranscriptItem):
   return toolRendererRegistry.presentationOf(view.toolName) === 'billet';
 }
 
+/**
+ * Whether `item` is an assistant message with nothing to show. Such a message
+ * paints nothing rather than an empty bubble: a `.chat-message--assistant` is a
+ * gray box, and with no text it is an empty one. A turn whose whole answer is a
+ * tool call (a search turn, whose answer is the `format_table` message; the model
+ * itself ends with `content: ""`) is the case that produces one.
+ *
+ * The item is deliberately NOT dropped from the store (or the journal): it stays
+ * in `items()` for debugging and for the record, and only the painting is
+ * skipped. That is also why a message which has *started* but has not produced
+ * its first delta yet is skipped here - it appears the moment it has text.
+ *
+ * Text that is only whitespace renders to nothing too (`marked` emits no element
+ * for it), so it counts as empty.
+ */
+function isEmptyMessage(store: TranscriptStore, item: TranscriptItem): boolean {
+  return item.kind === 'message' && store.textForMessage(item.messageId).trim() === '';
+}
+
 function renderToolCallToggle(
   view: ToolCallView,
   toolCallId: string,
@@ -1225,6 +1244,8 @@ export function createTranscriptView(
         // A running billet is hidden while the turn waits on a question, so at
         // most one "unfinished process" indicator is ever on screen.
         if (hiddenWhileAwaitingInput(store, item)) continue;
+        // An assistant message with no text paints nothing - see `isEmptyMessage`.
+        if (isEmptyMessage(store, item)) continue;
         const tableMessage = messages.get(key);
         // A table run's shell is cached under the run's **stable start** key
         // (`runIds`), not the call that happens to render it now: a `Load more`

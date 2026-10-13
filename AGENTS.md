@@ -356,6 +356,26 @@ on a tick. A transcript rebuilt from the journal settles every still-running cal
 call the journal never resolved — the app closed mid-turn — shows `Interrupted`
 with the static icon, never a spinner that can never stop.
 
+**An assistant message with no text paints nothing.** A tool-only turn (the
+model ends it with `assistant.message.completed`, `content: ""`) still has a
+message item, and it stays in the store and the journal for debugging — it is
+only the *painting* that is skipped, so no empty gray bubble appears
+(`transcriptView.ts`'s `isEmptyMessage`; whitespace-only counts as empty, since
+`marked` renders it to nothing). A message that has *started* but has no text yet
+is skipped the same way, so it appears the moment its first delta arrives rather
+than flashing an empty frame.
+
+**The application owns the transcript's scroll position.** `chat.css` pins
+`overflow-anchor: none` on `.chat-transcript` so the browser's own scroll
+anchoring cannot move `scrollTop` behind `transcriptFollower.ts`'s back: the
+follower reads *any* `scroll` event at a position it did not set as the reader
+scrolling away, and a restored transcript whose `sp-table`s are still measuring
+many times their final height is exactly where anchoring would do that (see
+`docs/verification.md` "The restored transcript was not scrolled to the bottom
+(2026-10-13)"). With anchoring off, the only position the browser picks by itself
+is a clamp to the maximum — which still reads as "at the bottom". Do not remove
+that rule as a tidy-up.
+
 `dev/` holds **dev-only modules** — manual previews/mocks that are never
 business logic and are unreachable in a packaged build (gated by
 `window.daisy.devTools`; see §9). The first is the ask-user preview: the pure
@@ -782,8 +802,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3024 passed / 14 skipped** (+2 against the
-3022 of the previous entry - **the `search-component` skill and a component-path
+Current baseline: **`npm run test` → 3027 passed / 14 skipped** (+3 against the
+3024 of the previous entry - **an empty assistant message paints nothing**: a
+message whose text is empty (a tool-only turn whose model ends with
+`assistant.message.completed`, `content: ""`) no longer renders as an empty gray
+bubble - `transcriptView.ts`'s `isEmptyMessage` skips painting it, leaving the
+item in the store and the journal for debugging, and it also removes the empty
+frame that used to flash before a streaming message's first delta. 3
+`transcriptView` cases, one of which asserts the item is still in the store; see
+`docs/verification.md` "An empty assistant message paints nothing, but stays in
+the journal (2026-10-13)"). Before that it was 3024 (+2 against the 3022 of the
+previous entry - **the `search-component` skill and a component-path
 split**: a new bundled, user-invocable skill
 (`resources/skills/search-component/SKILL.md`) finds the pages that use a
 component - resolving a title to a `sling:resourceType` from `cq:Component` nodes
@@ -1129,8 +1158,24 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 124 tests; a full run is typically 118 passed / 6 failed.** The
-`/semantic-search` case in `search-tables.spec.ts` was rewritten (count
+**Playwright → 125 tests; a full run is typically 119 passed / 6 failed.** Before
+that, the +1 since 124 is
+`chat-restored-scroll.spec.ts`: a restored conversation whose journal holds six
+search tables must sit at the transcript's bottom, and a new turn's answer must
+be followed - the first spec where a *restored* transcript's stick-to-bottom is
+driven against the built app (every sibling case runs its turns live). It pins
+Chromium's **scroll anchoring**: a restored `sp-table` measures many times its
+final height before it upgrades, and with the pinned viewport at the bottom of
+that unsettled layout the browser's anchoring moved `scrollTop` to keep the
+content stable instead - which `transcriptFollower.ts` read as the reader
+scrolling away, switching the follow intent off for good, since the
+`ResizeObserver` re-pins only *while* following. The fix is `overflow-anchor: none`
+on `.chat-transcript` (`chat.css`). Six turns is load-bearing: with fewer the
+pre-layout content fits, the adjustment lands at the bottom anyway, and the
+spec passes without the fix (verified both ways). See
+`docs/verification.md` "The restored transcript was not scrolled to the bottom
+(2026-10-13)". Before that, the 124 was the
+`/semantic-search` case in `search-tables.spec.ts` rewritten (count
 unchanged) to the `aem_semantic_search` flow: "Did not find any relevant results
 so far" in the total slot, then an appended row with "Total: 1 relevant result";
 it now also asserts, against the built app, that the row's `Path` cell is the
