@@ -277,6 +277,83 @@ describe('aem_query_format_ask executor', () => {
     expect(summary).not.toHaveProperty('terms');
   });
 
+  it('shows a component instance against its page and its path within it (detected from the query)', async () => {
+    const { host, calls } = makeHost(
+      (name) =>
+        name === 'aem_query'
+          ? ok({
+              ok: true,
+              operation: 'aem_query',
+              rows: [
+                { 'jcr:path': '/content/site/a/jcr:content/root/text' },
+                { 'jcr:path': '/content/site/a/jcr:content/root/text_2' },
+                { 'jcr:path': '/content/site/b/jcr:content/root/text' },
+                // No `/jcr:content/`: left exactly as it came back.
+                { 'jcr:path': '/content/site/c' },
+              ],
+              pagination: {
+                offset: 0,
+                limit: 50,
+                returned: 4,
+                hasMore: false,
+                total: { accuracy: 'exact', value: 4 },
+              },
+              textResultForLlm: 'rows',
+              resultType: 'success',
+            })
+          : ok(tableOk),
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { predicates: { type: 'nt:unstructured', property: 'sling:resourceType' } },
+      callContext,
+    );
+
+    const tableData = calls[1]?.args['data'] as Record<string, JsonValue>;
+    expect(tableData['rows']).toEqual([
+      { 'jcr:path': '/content/site/a', Component: 'jcr:content/root/text' },
+      { 'jcr:path': '/content/site/a', Component: 'jcr:content/root/text_2' },
+      { 'jcr:path': '/content/site/b', Component: 'jcr:content/root/text' },
+      { 'jcr:path': '/content/site/c' },
+    ]);
+    // The query is forwarded unchanged - the split is derived, never an argument.
+    expect(calls[0]?.args['predicates']).toEqual({
+      type: 'nt:unstructured',
+      property: 'sling:resourceType',
+    });
+    expect(payload(result)).toMatchObject({ pages: 1, rows: 4, ended: 'exhausted' });
+  });
+
+  it('leaves a path alone when the query is not a component search', async () => {
+    const { host, calls } = makeHost(
+      (name) =>
+        name === 'aem_query'
+          ? ok({
+              ok: true,
+              operation: 'aem_query',
+              rows: [{ 'jcr:path': '/content/site/a/jcr:content/root/text' }],
+              pagination: {
+                offset: 0,
+                limit: 50,
+                returned: 1,
+                hasMore: false,
+                total: { accuracy: 'exact', value: 1 },
+              },
+              textResultForLlm: 'rows',
+              resultType: 'success',
+            })
+          : ok(tableOk),
+      ['/content/site'],
+    );
+    await createAemQueryFormatAskExecutor(host)(
+      { predicates: { type: 'cq:Page', property: 'jcr:content/cq:template' } },
+      callContext,
+    );
+
+    const tableData = calls[1]?.args['data'] as Record<string, JsonValue>;
+    expect(tableData['rows']).toEqual([{ 'jcr:path': '/content/site/a/jcr:content/root/text' }]);
+  });
+
   it('passes no roots when the predicates carry their own path', async () => {
     const { host, calls } = makeHost(
       (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),

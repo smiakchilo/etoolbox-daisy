@@ -710,9 +710,9 @@ export function createTranscriptView(
     // than letting one long quote grow its row without bound (see chat.css).
     if (header === 'Value' || header === 'Citation') {
       span.className = 'chat-table-message__clamp';
-    } else if (header === 'Property') {
-      // A property name wraps at any character, exactly like the Path column's
-      // link, so a long name cannot widen the table.
+    } else if (header === 'Property' || header === 'Component') {
+      // A property name or a component's path wraps at any character, exactly
+      // like the Path column's link, so a long value cannot widen the table.
       span.className = 'chat-table-message__wrap';
     }
     return span;

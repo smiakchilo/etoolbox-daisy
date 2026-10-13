@@ -717,11 +717,12 @@ describe('createTranscriptView - format_table message table', () => {
     expect(headers).toEqual(['#', 'Path']);
   });
 
-  it('wraps the Property column at any character, like the Path column', () => {
+  it('wraps the Property and Component columns at any character, like the Path column', () => {
     const data = {
       rows: [
         {
           'jcr:path': '/content/site/a/jcr:content/text',
+          Component: 'jcr:content/parsys/aVeryLongComponentPathThatCannotBreakOnItsOwn',
           property: 'aVeryLongPropertyNameThatCannotBreakOnItsOwn',
           citation: 'x',
         },
@@ -730,9 +731,16 @@ describe('createTranscriptView - format_table message table', () => {
     };
     const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
     const headers = [...element.querySelectorAll('sp-table-head-cell')].map((c) => c.textContent);
-    expect(headers).toEqual(['#', 'Path', 'Property', 'Citation']);
-    const propertyCell = element.querySelector(
+    expect(headers).toEqual(['#', 'Path', 'Component', 'Property', 'Citation']);
+    const componentCell = element.querySelector(
       'sp-table-body sp-table-row sp-table-cell:nth-child(3) > span',
+    );
+    expect(componentCell?.textContent).toBe(
+      'jcr:content/parsys/aVeryLongComponentPathThatCannotBreakOnItsOwn',
+    );
+    expect(componentCell?.className).toBe('chat-table-message__wrap');
+    const propertyCell = element.querySelector(
+      'sp-table-body sp-table-row sp-table-cell:nth-child(4) > span',
     );
     expect(propertyCell?.textContent).toBe('aVeryLongPropertyNameThatCannotBreakOnItsOwn');
     expect(propertyCell?.className).toBe('chat-table-message__wrap');

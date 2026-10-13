@@ -141,10 +141,11 @@ describe('splitLeadingSkill', () => {
 });
 
 describe('isDeterministicTablePrompt', () => {
-  it('recognises the two search skills, with or without trailing text', () => {
+  it('recognises the search skills, with or without trailing text', () => {
     expect(isDeterministicTablePrompt('/search waldo')).toBe(true);
     expect(isDeterministicTablePrompt('/search')).toBe(true);
     expect(isDeterministicTablePrompt('/semantic-search good waldo')).toBe(true);
+    expect(isDeterministicTablePrompt('/search-component LM Content Block')).toBe(true);
   });
 
   it('does not suppress any other prompt', () => {

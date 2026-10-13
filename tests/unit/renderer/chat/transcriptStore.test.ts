@@ -246,16 +246,18 @@ describe('createTranscriptStore', () => {
     });
 
     it('removes prose that arrived before the skill was loaded', () => {
-      const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, 'text about Waldo, ranked by meaning');
-      store.applyEvent(messageStarted(0));
-      store.applyEvent(completed(1, 'Let me think about that.'));
-      expect(store.items().some((item) => item.kind === 'message')).toBe(true);
+      for (const skillName of ['semantic-search', 'search-component']) {
+        const store = createTranscriptStore();
+        store.applyUserPrompt(turnId, 'text about Waldo, ranked by meaning');
+        store.applyEvent(messageStarted(0));
+        store.applyEvent(completed(1, 'Let me think about that.'));
+        expect(store.items().some((item) => item.kind === 'message')).toBe(true);
 
-      store.applyEvent(skillRequested(2, 'semantic-search'));
+        store.applyEvent(skillRequested(2, skillName));
 
-      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
-      expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+        expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+        expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+      }
     });
 
     it('hides an auxiliary skill call but keeps the turn prose', () => {

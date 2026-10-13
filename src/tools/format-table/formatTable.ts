@@ -183,14 +183,17 @@ function resolveTable(data: JsonValue, depth = 0): ResolvedTable | undefined {
 
 /**
  * The header for a source key. `jcr:path`/`path` is the identifying column; the
- * semantic-search keys get their agreed names (`Property`, `Citation`); any
- * other key is title-cased.
+ * semantic-search keys get their agreed names (`Property`, `Citation`); the
+ * common page/asset title property reads as `Title`; any other key is
+ * title-cased.
  */
 function headerFor(key: string): string {
   switch (key) {
     case 'jcr:path':
     case 'path':
       return 'Path';
+    case 'jcr:title':
+      return 'Title';
     case 'property':
       return 'Property';
     case 'citation':

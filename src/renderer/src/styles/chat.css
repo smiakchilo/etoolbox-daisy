@@ -455,8 +455,9 @@
   overflow-wrap: anywhere;
 }
 
-/* The Property column: a bare property name, wrapped at any character exactly
-   like the Path column's link, so a long name cannot widen the table. */
+/* The Property column (a bare property name) and the Component column (a
+   component's path within a page): wrapped at any character exactly like the
+   Path column's link, so a long value cannot widen the table. */
 .chat-table-message__wrap {
   overflow-wrap: anywhere;
 }

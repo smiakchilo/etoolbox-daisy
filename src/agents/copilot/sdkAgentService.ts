@@ -20,6 +20,7 @@ import {
   type MessageId,
   type ModelChangedBody,
   type ModelPreference,
+  type ReasoningId,
   type Result,
   type SdkSessionId,
   type SessionStatus,
@@ -42,13 +43,13 @@ import {
   foldTextDelta,
   jsonValueSchema,
   messageIdSchema,
+  newReasoningId,
   newRequestId,
   newUserInputRequestId,
   ok,
   parseAuthStatus,
   renderFoldedText,
   renderToolFailureForModel,
-  reasoningIdSchema,
   sdkSessionIdSchema,
   toolCallIdSchema,
 } from '../../shared';
@@ -457,6 +458,28 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   const eventListeners = new Set<(event: AgentEvent) => void>();
   const authListeners = new Set<(state: AgentAuthState) => void>();
   const sequenceByChatId = new Map<ChatId, number>();
+  /**
+   * Maps the runtime's opaque reasoning-block id onto the id this application
+   * mints for it, for the block's lifetime (cleared at each turn's start).
+   *
+   * The runtime's block id is not something this application may assume is a
+   * valid identifier: observed live, it exceeded the 200-character bound, and a
+   * direct `reasoningIdSchema.parse` then threw and failed the whole event
+   * stream (an `UNEXPECTED_RESPONSE` that reaches the user as an error). Minting
+   * keeps the id bounded while staying stable for the block, so its deltas and
+   * its completion still group together.
+   */
+  const reasoningIdByRuntimeId = new Map<string, ReasoningId>();
+
+  /** This application's `ReasoningId` for one runtime reasoning block. */
+  function appReasoningId(runtimeReasoningId: string): ReasoningId {
+    let id = reasoningIdByRuntimeId.get(runtimeReasoningId);
+    if (id === undefined) {
+      id = newReasoningId(idGenerator);
+      reasoningIdByRuntimeId.set(runtimeReasoningId, id);
+    }
+    return id;
+  }
 
   let openChatId: ChatId | undefined;
   let openSession: Awaited<ReturnType<HardenedSessionClient['createSession']>> | undefined;
@@ -984,7 +1007,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
             chatId,
             sequence: nextSequence(chatId),
             turnId: currentTurn.turnId,
-            reasoningId: reasoningIdSchema.parse(event.data.reasoningId),
+            reasoningId: appReasoningId(event.data.reasoningId),
             delta: event.data.deltaContent,
           });
           return;
@@ -996,7 +1019,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
             chatId,
             sequence: nextSequence(chatId),
             turnId: currentTurn.turnId,
-            reasoningId: reasoningIdSchema.parse(event.data.reasoningId),
+            reasoningId: appReasoningId(event.data.reasoningId),
             content: event.data.content,
           });
           return;
@@ -1359,6 +1382,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       }
 
       currentTurn = { turnId: request.turnId, messageIds: new Set(), toolCallIds: new Set() };
+      reasoningIdByRuntimeId.clear();
       // Applied synchronously, before the SDK send call even starts: a
       // second sendPrompt() called before any SDK event arrives must already
       // see "turn_in_progress" - mirrors fakeAgentService.ts exactly.

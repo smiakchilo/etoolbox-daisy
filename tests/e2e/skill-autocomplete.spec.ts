@@ -110,9 +110,10 @@ test.describe('composer skill autocomplete', () => {
     // user-invocable skills appear - `query-results` (and `daisy-conventions`)
     // are auxiliary (`user-invocable: false`) and must not be offered.
     await expect.poll(() => skillOverlayOpen(shell)).toBe(true);
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(3);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(4);
     await expect(shell.locator(SKILL_NAME, { hasText: /^navigate$/ })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: /^search$/ })).toHaveCount(1);
+    await expect(shell.locator(SKILL_NAME, { hasText: /^search-component$/ })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: 'semantic-search' })).toHaveCount(1);
     await expect(shell.locator(SKILL_NAME, { hasText: 'query-results' })).toHaveCount(0);
 
@@ -146,12 +147,14 @@ test.describe('composer skill autocomplete', () => {
     );
     expect(hoverColor).not.toBe(restingColor);
 
-    // `/s` matches both; the first (sorted) is highlighted.
+    // `/s` matches the three s-skills; the first (sorted) is highlighted.
     await field.fill('/s');
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(3);
     await expect(shell.locator(SELECTED_NAME)).toHaveText('search');
 
     // Down moves the highlight; Tab accepts it, inserting the name and a space.
+    await field.press('ArrowDown');
+    await expect(shell.locator(SELECTED_NAME)).toHaveText('search-component');
     await field.press('ArrowDown');
     await expect(shell.locator(SELECTED_NAME)).toHaveText('semantic-search');
     await field.press('Tab');
@@ -168,14 +171,14 @@ test.describe('composer skill autocomplete', () => {
 
     // Escape dismisses without editing the text.
     await field.fill('/search');
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(1);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
     await field.press('Escape');
     await expect(field).toHaveValue('/search');
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Clicking a suggestion inserts it and closes the popup.
     await field.fill('/search');
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(1);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
     await shell.locator(SKILL_ROW).first().click();
     await expect(field).toHaveValue('/search ');
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);

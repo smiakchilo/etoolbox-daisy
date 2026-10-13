@@ -273,23 +273,29 @@ describe('sdkAgentService - reasoning projection', () => {
     const turnId = newTurnId(ids);
     await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
 
+    // The runtime's block id is opaque and may exceed this application's id
+    // bound - observed live at >200 characters, which used to make a direct
+    // `reasoningIdSchema.parse` throw and fail the whole event stream. It must be
+    // accepted and mapped, never parsed as one of our ids.
+    const runtimeReasoningId = `reason-${'x'.repeat(300)}`;
+
     sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: 'msg-1' } });
     sessionHandle.emit({
       type: 'assistant.reasoning_delta',
-      data: { reasoningId: 'reason-1', deltaContent: 'Let me think' },
+      data: { reasoningId: runtimeReasoningId, deltaContent: 'Let me think' },
     });
     // An empty chunk carries nothing and must not be forwarded.
     sessionHandle.emit({
       type: 'assistant.reasoning_delta',
-      data: { reasoningId: 'reason-1', deltaContent: '' },
+      data: { reasoningId: runtimeReasoningId, deltaContent: '' },
     });
     sessionHandle.emit({
       type: 'assistant.reasoning_delta',
-      data: { reasoningId: 'reason-1', deltaContent: ' about it.' },
+      data: { reasoningId: runtimeReasoningId, deltaContent: ' about it.' },
     });
     sessionHandle.emit({
       type: 'assistant.reasoning',
-      data: { reasoningId: 'reason-1', content: 'Let me think about it.' },
+      data: { reasoningId: runtimeReasoningId, content: 'Let me think about it.' },
     });
     sessionHandle.emit({
       type: 'assistant.message',
@@ -301,11 +307,16 @@ describe('sdkAgentService - reasoning projection', () => {
       'Let me think',
       ' about it.',
     ]);
-    expect(deltas[0]).toMatchObject({ reasoningId: 'reason-1', turnId });
+    // One minted id, stable for the block, within this application's bound.
+    const reasoningId = (deltas[0] as { reasoningId: string }).reasoningId;
+    expect(reasoningId.length).toBeGreaterThan(0);
+    expect(reasoningId.length).toBeLessThanOrEqual(200);
+    expect((deltas[1] as { reasoningId: string }).reasoningId).toBe(reasoningId);
+    expect(deltas[0]).toMatchObject({ turnId });
 
     const completed = events.find((event) => event.type === 'assistant.reasoning.completed');
     expect(completed).toMatchObject({
-      reasoningId: 'reason-1',
+      reasoningId,
       content: 'Let me think about it.',
       turnId,
     });

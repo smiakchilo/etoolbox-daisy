@@ -679,32 +679,36 @@ function resolvePriorityScope(
 }
 
 /**
- * The smallest `N_group` name the model's own predicates do not already use, so
- * the application's exclusion group can never merge with, or overwrite, one of
- * the model's.
+ * The model's predicates narrowed to one segment: its path, minus the excluded
+ * paths.
+ *
+ * The exclusions are one `excludepaths` regex, **not** a negated path group.
+ * QueryBuilder's `p.not` does not negate a `path` predicate - verified live
+ * against AEM 6.5: a negated group of `N_path`s returned the subtree itself
+ * rather than its complement, so the "rest" segment silently overlapped the
+ * priority segments and also lost 82 of 160 matches. `excludepaths` filters the
+ * result paths by regex and excludes them correctly.
  */
-function pickExclusionGroupName(predicates: Readonly<Record<string, string>>): string {
-  const keys = Object.keys(predicates);
-  for (let index = 1; ; index += 1) {
-    const name = `${String(index)}_group`;
-    if (!keys.some((key) => key === name || key.startsWith(`${name}.`))) return name;
-  }
-}
-
-/** The model's predicates narrowed to one segment: its path, minus the excluded paths. */
 function segmentPredicates(
   predicates: Readonly<Record<string, string>>,
   segment: PrioritySegment,
-  groupName: string,
 ): Record<string, string> {
   const scoped: Record<string, string> = { ...predicates, path: segment.path };
   if (segment.exclude.length === 0) return scoped;
-  scoped[`${groupName}.p.not`] = 'true';
-  scoped[`${groupName}.p.or`] = 'true';
-  segment.exclude.forEach((path, index) => {
-    scoped[`${groupName}.${String(index + 1)}_path`] = path;
-  });
+  const alternatives = segment.exclude.map(escapeRegExpPath).join('|');
+  // A `path` predicate matches a node's **descendants** but not the node itself
+  // (exact=false), so the exclusion must match descendants only - `X/...`, not
+  // `X` - or a priority path's own node would fall through both segments.
+  const exclusion = `^(${alternatives})/.*$`;
+  // The model may have supplied its own exclusion: keep both, never drop one.
+  const existing = predicates['excludepaths'];
+  scoped['excludepaths'] = existing === undefined ? exclusion : `(?:${existing})|(?:${exclusion})`;
   return scoped;
+}
+
+/** A JCR path escaped for use inside a regex alternation. */
+function escapeRegExpPath(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -729,7 +733,6 @@ async function executePrioritizedQuery(
   roots: readonly string[] | undefined,
 ): Promise<AemQueryResult> {
   const { args, requestId } = envelope;
-  const groupName = pickExclusionGroupName(args.predicates);
 
   const hits: JsonValue[] = [];
   const totals: TotalMatches[] = [];
@@ -752,7 +755,7 @@ async function executePrioritizedQuery(
     });
 
   for (const segment of segments) {
-    const predicates = segmentPredicates(args.predicates, segment, groupName);
+    const predicates = segmentPredicates(args.predicates, segment);
 
     if (need === 0) {
       const probe = await runSingleQuery(deps, requestId, predicates, 0, 1, args.properties);

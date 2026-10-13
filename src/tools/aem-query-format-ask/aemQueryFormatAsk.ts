@@ -94,6 +94,8 @@ export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
     "aem_query) - never both. `roots` defaults to the current host's content roots (none when " +
     '`predicates` has a `path`; never combine `roots` with a `path` predicate); `properties` ' +
     `optionally selects the fields per hit; \`limit\` (rows per page) defaults to ${String(SEARCH_PAGE_SIZE)}. ` +
+    'A search that matches a component by `sling:resourceType` shows each hit against its ' +
+    'owning page, with the path within the page beside it. ' +
     'When it returns, the table is already on screen and the user has finished loading pages: ' +
     'do not call aem_query, ask_user or this tool again for the same search, and do not repeat ' +
     'the results.',
@@ -123,6 +125,41 @@ const askAnswerSchema = z.looseObject({ selections: z.array(z.string()) });
 
 function isRecord(value: JsonValue | undefined): value is Readonly<Record<string, JsonValue>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The separator inside a page path that marks where the page ends and its content begins. */
+const JCR_CONTENT_SEGMENT = '/jcr:content/';
+
+/** A `property` predicate key: `property`, `1_property`, `group.1_property`, ... */
+const PROPERTY_PREDICATE_KEY = /(?:^|[._])property$/;
+
+/**
+ * Whether the predicates match on a component's `sling:resourceType` - i.e. the
+ * hits are component instances, which the table shows against their owning page.
+ */
+function isComponentSearch(predicates: Readonly<Record<string, string>>): boolean {
+  return Object.entries(predicates).some(
+    ([key, value]) => PROPERTY_PREDICATE_KEY.test(key) && value === 'sling:resourceType',
+  );
+}
+
+/**
+ * Splits a component hit's path into the owning page and the component's path
+ * within it. The row is copied, never mutated; a row that carries no path, or
+ * whose path holds no `/jcr:content/`, is returned unchanged.
+ */
+function splitComponentPathRow(row: JsonValue): JsonValue {
+  if (!isRecord(row)) return row;
+  for (const key of ['jcr:path', 'path'] as const) {
+    const value = row[key];
+    if (typeof value === 'string') {
+      const at = value.indexOf(JCR_CONTENT_SEGMENT);
+      if (at > 0) {
+        return { ...row, [key]: value.slice(0, at), Component: value.slice(at + 1) };
+      }
+    }
+  }
+  return row;
 }
 
 /** A total as words, never a bare number: a lower bound stays a lower bound. */
@@ -159,6 +196,11 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
     }
     const { terms, limit } = parsed.data;
     const predicates = parsed.data.predicates ?? { fulltext: terms ?? '' };
+    // A search that matches a component by `sling:resourceType` returns the
+    // component instances; the table shows each against its owning page. Read
+    // from the query - never asked of the model - so the page path cannot go
+    // missing when a call forgets a display flag.
+    const splitComponentPath = isComponentSearch(predicates);
     const scopedByPath = Object.prototype.hasOwnProperty.call(predicates, 'path');
     const roots =
       parsed.data.roots ??
@@ -318,8 +360,11 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
         // call already carries `totalPending: true`.
         if (pages === 0) maybeStartCount(pagination.total);
 
+        // Display only: the query's hits keep their real paths; a component
+        // instance is shown against its owning page, with its own path beside it.
+        const displayedRows = splitComponentPath ? rows.map(splitComponentPathRow) : rows;
         const shown = await showTable({
-          data: { rows, pagination: pagination as unknown as JsonValue },
+          data: { rows: displayedRows, pagination: pagination as unknown as JsonValue },
           mode: pages === 0 ? 'new' : 'append',
           totalPending: countStarted && !countSettled,
           ...(exactTotal === undefined ? {} : { totalLine: exactTotalLine(exactTotal) }),

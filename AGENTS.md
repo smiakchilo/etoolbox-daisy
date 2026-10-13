@@ -36,7 +36,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/implementation-plan.md` | The **contract**. 12 numbered steps, each with explicit success criteria. | **Read-only.** Never edit. Never mark several steps done on a general impression. |
 | `docs/requirements-decisions.md` | The reasoning and agreed decisions behind the plan. | Read when a plan bullet seems arbitrary — the justification is here. |
 | `docs/compatibility.md` | Verified-API fact table (**U1–U12**, ~lines 801–810) plus SDK behaviour notes. | **Authoritative.** If it says an API behaves a certain way, that was proven by running it. Don't re-test; don't contradict it from intuition. |
-| `docs/verification.md` | The **evidence log**, one section per completed step. | Append a section per step. Record what was *executed*, not what was written. |
+| `docs/verification.md` | The **evidence log** — an index over per-era section files in `docs/verification/` (one dated section per completed piece of work). | Append a section to the current archive (`docs/verification/followons-2026-10.md`). Record what was *executed*, not what was written. |
 | `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits. | Read before adding, removing or restructuring an agent/SDK. |
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained. | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
@@ -53,8 +53,8 @@ Target: Windows 10 x64, internal, unsigned build.
 - 12 — real AEM verification (**Milestone C**, needs an authorized environment)
 
 Milestone A (steps 00–07) is functionally complete, **except that the 15-row
-manual smoke checklist at the end of `docs/verification.md` has never been run
-by a human.** It needs a real Copilot sign-in and a real AEM instance.
+manual smoke checklist (in `docs/verification/milestone-a-steps-00-08.md`) has
+never been run by a human.** It needs a real Copilot sign-in and a real AEM instance.
 
 **The repository has commits** (`git log`/`git diff` work), but the agent- and
 tool-plugin refactors may still be uncommitted in the working tree. **Do not
@@ -295,7 +295,8 @@ src/agents/<name>/
    pass, run `npm run typecheck`, `npm run build`, launch the built app, and run
    the Playwright suite. If SDK is Node-heavy, verify the packaged/`out/`
    layout in real (non-fake) mode — unit tests cannot see chunk-path bugs.
-10. Record evidence in `docs/verification.md`; update this section and
+10. Record evidence in the current archive under `docs/verification/` (indexed by
+    `docs/verification.md`); update this section and
     `docs/agent-plugin-architecture.md`.
 
 **Disable temporarily:** `disabled: true` in `meta.ts` (agent.ts is never
@@ -445,10 +446,13 @@ src/tools/<name>/
   `host.environmentFacts()`, never from the model), a `roots` or plain-`path`
   query runs as ordered *segments* (`planPrioritySegments`, `executePrioritizedQuery`
   in `aemQuery.ts`): each priority path first, in written order, then the rest
-  of each scope root with the priorities excluded through a `N_group.p.not` path
-  group. Paging is a stateless offset mapping across the segments, so **Load more**
-  shows no seam; an unprovable segment end degrades to `hasMore: 'unknown'`. Not
-  yet verified against real AEM: see `docs/backlog.md` "Priority search paths".
+  of each scope root with the priorities excluded through an `excludepaths`
+  regex. (A `N_group.p.not` path group does **not** negate a `path` predicate -
+  verified live 2026-10-13 - so the earlier group silently excluded nothing and
+  the "rest" segment lost matches.) Paging is a stateless offset mapping across
+  the segments, so **Load more** shows no seam; an unprovable segment end
+  degrades to `hasMore: 'unknown'`. See `docs/compatibility.md` §11.4 and
+  `docs/backlog.md` "Priority search paths".
 - `format_table` is the **only** table renderer, and it is **internal**
   (`InternalToolModule`: `internal: true`, no descriptor/allowlist/instructions):
   the registry keeps it out of the
@@ -538,7 +542,11 @@ src/tools/<name>/
   `append`), and while `hasMore` is not `false` offers `ask_user`
   `{ actions: ["Load more"] }`, looping on each click. The model gets only a
   short summary (`textResultForLlm`), never the rows to relay — the point is
-  that weak models no longer have to copy JSON between tools. Its billet reads
+  that weak models no longer have to copy JSON between tools. When the predicates
+  match a component by `sling:resourceType`, each hit is shown against its owning
+  page: `Path` is the page and a `Component` column is the node's path within it
+  (wrapped at any character, like `Path`; derived from the query, never asked of
+  the model). Its billet reads
   `Search: <terms or predicates>` with rows Terms or Predicates, Roots, Page size,
   then Pages, Rows, Total. **The honest total:** when page 1's total is an
   `atLeast` lower bound the composite starts one background count (an un-guessed
@@ -622,7 +630,8 @@ src/tools/<name>/
 9. Consider whether a bundled skill in `resources/skills/` should mention it
    (skills are global and are not hidden when a tool is disabled).
 10. `npm run typecheck`, `npm run build`, launch the app, run Playwright; record
-    evidence in `docs/verification.md`.
+    evidence in the current archive under `docs/verification/` (indexed by
+    `docs/verification.md`).
 
 **Disable temporarily:** `disabled: true` in `tool.ts`. **Remove:** delete the
 folder and its `tests/unit/tools/*` cases (and any registry-set assertion).
@@ -660,11 +669,12 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 
 ### `resources/skills/`
 
-Five bundled skills, each a `SKILL.md`: `search`, `semantic-search` and
-`navigate` (all user-invocable — they appear in the composer's `/`
-autocomplete), plus `daisy-conventions` and `query-results` (auxiliary —
-`user-invocable: false`, so the runtime still loads them for the model but the
-`/` menu does not list them; see `src/main/skills/skillCatalog.ts`).
+Six bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
+`search-component` and `navigate` (all user-invocable — they appear in the
+composer's `/` autocomplete), plus `daisy-conventions` and `query-results`
+(auxiliary — `user-invocable: false`, so the runtime still loads them for the
+model but the `/` menu does not list them; see
+`src/main/skills/skillCatalog.ts`).
 Application-owned only — never loaded from the user's home, a project
 directory, or an AEM response.
 
@@ -699,21 +709,36 @@ model loads the skill and asks what to search for (observed live). The bodies
 are written for **both** paths: an explicit `/name` turn and a turn where the
 model loaded the skill on its own.
 
-Both search skills now answer with **exactly one application-rendered table**:
+All three search skills answer with **exactly one application-rendered table**:
 `/search` makes a single `aem_query_format_ask` call (`{ "terms": ... }`), which
 runs `aem_query`, `format_table` and the `ask_user` `["Load more"]` loop itself
 through the tool-to-tool bridge (a hand-built predicate query is the same single
 call with `predicates` instead of `terms`); `/semantic-search` calls
 `aem_semantic_search` `{ terms, context }`, judges every candidate it returns by
 meaning, and calls it back `{ searchId, matches }`, which tables the passing
-`{ jcr:path, property, citation }` rows and runs the Load-more loop. The application suppresses the model's
-own prose for a search turn two ways: at send for a turn whose prompt invokes
-either skill (`isDeterministicTablePrompt` in
-`src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model
-loads `search`/`semantic-search` on its own (`transcriptStore.ts`'s `skill`
-handling), so the table is the whole answer either way. See the `format_table`
-bullet in the tools section above and `docs/verification.md` "Skills are
-auto-inferred from their descriptions ... (2026-10-11)".
+`{ jcr:path, property, citation }` rows and runs the Load-more loop; and
+`/search-component <component>` resolves a title or name to a resource type from
+`cq:Component` nodes under the component roots (`aem_query`), then makes one
+`aem_query_format_ask` call over the component **instances**
+(`type=nt:unstructured` + `property=sling:resourceType`). Its step 1 is a strict,
+ordered procedure (like `navigate`'s): a resource type is path-like - it contains
+a `/` - and anything else is a title that **must** be resolved, never invented
+from the phrase (a live run turned "Media Library" into `media-library` and found
+nothing). The table then shows
+each hit against its owning page (`Path`) with the node's path within it
+(`Component`) — one row per placement, so the instance shape stays index-served
+and its background honest count proves an exact total (see
+`docs/compatibility.md` §11.3). Its `description` is written to win the
+auto-inference race against `search`: a request that pairs looking/searching with
+a component belongs here, and `search`'s own description now defers such a
+request. The application suppresses the model's own prose for a `/search`,
+`/semantic-search` or `/search-component` turn two ways: at send for a turn whose
+prompt invokes one of them (`isDeterministicTablePrompt` in
+`src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model loads
+one on its own (`transcriptStore.ts`'s `skill` handling), so the table is the
+whole answer. See the `format_table` bullet in the tools section above and
+`docs/verification.md` "Skills are auto-inferred from their descriptions ...
+(2026-10-11)" and "`search-component`: the component-instance shape ... (2026-10-13)".
 
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**
@@ -757,7 +782,39 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3022 passed / 14 skipped** (+23 against the
+Current baseline: **`npm run test` → 3024 passed / 14 skipped** (+2 against the
+3022 of the previous entry - **the `search-component` skill and a component-path
+split**: a new bundled, user-invocable skill
+(`resources/skills/search-component/SKILL.md`) finds the pages that use a
+component - resolving a title to a `sling:resourceType` from `cq:Component` nodes
+under the component roots, then one `aem_query_format_ask` call over the
+component **instances** (`type=nt:unstructured` + `property=sling:resourceType`).
+When the predicates match a component by `sling:resourceType`,
+`aem_query_format_ask` splits each hit at `/jcr:content/` into the owning page
+(`Path`) and the component's path within it (`Component`) - derived from the
+query, never asked of the model, so the page path cannot go missing - and
+`format_table` maps a `jcr:title` column to `Title`. `/search-component` also joins
+`DETERMINISTIC_TABLE_SKILLS`, so its assistant prose is suppressed like
+`/search`, and both it and `search` carry descriptions that route a
+component-usage request to it. Later live runs tightened it (skill prose only):
+step 1 is a strict ordered procedure that must resolve a slashless phrase to a
+real `sling:resourceType` (never inventing one), the table is exactly
+`Path` + `Component` (no `properties`), and the description carries the no-prose
+rule; and one Copilot adapter crash was fixed - the runtime's `reasoningId` can
+exceed this application's 200-character id bound, so the adapter now mints its
+own (`appReasoningId`). A live fulltext run then exposed a real paging bug - the
+priority-path "rest" segment's `N_group.p.not` exclusion does not negate a `path`
+predicate, so it overlapped the priority segments and lost 82 of 160 matches
+while the honest count still said 160; the segment now excludes with an
+`excludepaths` regex (verified live). The instance shape is
+index-served, so the background honest count now proves an exact total (the
+earlier `property.depth` shape's un-guessed count was aborted by Oak). 2
+`aemQueryFormatAsk` executor cases (the split, and its non-component
+counterpart), a `formatTable` header expectation, and the `resources/skills`
+count in `skill-autocomplete.spec.ts` moved from 3 to 4. See
+`docs/verification.md` "`search-component`: the component-instance shape ...
+(2026-10-13)").
+Before that it was 3022 (+23 against the
 2999 of the previous entry - **an accurate search total**: `aem_query` sends a
 numeric `p.guessTotal=100` and reports an `exact`/`atLeast`/`unknown` total with a
 derived `hasMore` (`totalMatchesSchema.estimated` → `atLeast`), and
@@ -1363,8 +1420,9 @@ trip, so the fake-backed `tests/e2e/ask-user.spec.ts` is what proves the plumbin
 A preview that looks perfect while the answer goes nowhere is exactly the false
 confidence this section exists to prevent.
 
-Record every step's evidence in `docs/verification.md`: what was executed, the
-actual numbers, and what would have been missed without it.
+Record every step's evidence in the current archive under `docs/verification/`
+(indexed by `docs/verification.md`): what was executed, the actual numbers, and
+what would have been missed without it.
 
 ---
 

@@ -38,8 +38,8 @@ const inside = (node: string, root: string): boolean =>
 
 /**
  * A repository that answers the QueryBuilder parameters the application sends:
- * `path`, a negated `N_group` of `k_path` exclusions, `p.offset` and `p.limit`.
- * Hits come back in path order, like a real traversal; `total` is exact.
+ * `path`, an `excludepaths` regex, `p.offset` and `p.limit`. Hits come back in
+ * path order, like a real traversal; `total` is exact.
  */
 function repository(nodes: readonly string[]): {
   readonly fetch: (url: string) => Promise<BrokerOutcome>;
@@ -52,12 +52,10 @@ function repository(nodes: readonly string[]): {
     urls.push(url);
     const params = url.searchParams;
     const root = params.get('path') ?? '/';
-    const excluded: string[] = [];
-    for (const [key, value] of params) {
-      if (/^\d+_group\.\d+_path$/.test(key)) excluded.push(value);
-    }
+    const exclusion = params.get('excludepaths');
+    const excluded = exclusion === null ? undefined : new RegExp(exclusion);
     const matching = sorted.filter(
-      (node) => inside(node, root) && !excluded.some((path) => inside(node, path)),
+      (node) => inside(node, root) && !(excluded?.test(node) ?? false),
     );
     const offset = Number(params.get('p.offset') ?? '0');
     const limit = Number(params.get('p.limit') ?? '10');
@@ -262,34 +260,34 @@ describe('executeAemQuery priority paths', () => {
     expect(result.pagination.total).toEqual({ accuracy: 'atLeast', value: 2 });
   });
 
-  it('excludes the priority paths from the rest of the scope with a negated group', async () => {
+  it('excludes the priority paths from the rest of the scope with excludepaths', async () => {
     const { fetch, urls } = repository(NODES);
     await executeAemQuery(
       envelope({ predicates: {}, roots: ['/content/a'], limit: 50 }),
       deps(fetch, PRIORITIES),
     );
-    const remainder = urls.find((url) => url.searchParams.has('1_group.p.not'));
+    const remainder = urls.find((url) => url.searchParams.has('excludepaths'));
     expect(remainder?.searchParams.get('path')).toBe('/content/a');
-    expect(remainder?.searchParams.get('1_group.p.not')).toBe('true');
-    expect(remainder?.searchParams.get('1_group.p.or')).toBe('true');
-    expect(remainder?.searchParams.get('1_group.1_path')).toBe('/content/a/blueprint');
-    expect(remainder?.searchParams.get('1_group.2_path')).toBe('/content/a/language/en');
+    expect(remainder?.searchParams.get('excludepaths')).toBe(
+      '^(/content/a/blueprint|/content/a/language/en)/.*$',
+    );
   });
 
-  it("never reuses a group name the model's own predicates already use", async () => {
+  it("keeps the model's own excludepaths alongside the priority exclusion", async () => {
     const { fetch, urls } = repository(NODES);
     await executeAemQuery(
       envelope({
-        predicates: { '1_group.p.or': 'true', '1_group.1_property': 'jcr:title' },
+        predicates: { excludepaths: '^/content/a/other/.*$' },
         roots: ['/content/a'],
         limit: 50,
       }),
       deps(fetch, PRIORITIES),
     );
-    const remainder = urls.find((url) => url.searchParams.has('2_group.p.not'));
+    const remainder = urls.find((url) => url.searchParams.get('path') === '/content/a');
     expect(remainder).toBeDefined();
-    expect(remainder?.searchParams.get('1_group.1_property')).toBe('jcr:title');
-    expect(remainder?.searchParams.has('1_group.1_path')).toBe(false);
+    expect(remainder?.searchParams.get('excludepaths')).toBe(
+      '(?:^/content/a/other/.*$)|(?:^(/content/a/blueprint|/content/a/language/en)/.*$)',
+    );
   });
 
   it('orders a plain path predicate too', async () => {
@@ -319,7 +317,7 @@ describe('executeAemQuery priority paths', () => {
     if (!result.ok) return;
     expect(result.priorityPaths).toBeUndefined();
     expect(urls).toHaveLength(1);
-    expect(urls[0]?.searchParams.has('1_group.p.not')).toBe(false);
+    expect(urls[0]?.searchParams.has('excludepaths')).toBe(false);
   });
 
   it.each([

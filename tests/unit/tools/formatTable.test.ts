@@ -35,7 +35,7 @@ describe('normalizeFormatTable', () => {
       [{ 'jcr:title': 'A', 'jcr:path': '/content/a' }],
       'new',
     );
-    expect(normalized?.columns).toEqual(['Path', 'Jcr Title']);
+    expect(normalized?.columns).toEqual(['Path', 'Title']);
     expect(normalized?.rows).toEqual([['/content/a', 'A']]);
     expect(normalized?.total).toBeUndefined();
   });
