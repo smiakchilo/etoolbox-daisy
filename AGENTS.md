@@ -564,9 +564,10 @@ src/tools/<name>/
   short summary (`textResultForLlm`), never the rows to relay — the point is
   that weak models no longer have to copy JSON between tools. When the predicates
   match a component by `sling:resourceType`, each hit is shown against its owning
-  page: `Path` is the page and a `Component` column is the node's path within it
-  (wrapped at any character, like `Path`; derived from the query, never asked of
-  the model). Its billet reads
+  page: `Path` is the page and a `Node` column is the component node's path
+  within it (wrapped at any character, like `Path`; derived from the query,
+  never asked of the model), with a repeated page path blanked - one numbered row
+  per placement, the page written only on the first. Its billet reads
   `Search: <terms or predicates>` with rows Terms or Predicates, Roots, Page size,
   then Pages, Rows, Total. **The honest total:** when page 1's total is an
   `atLeast` lower bound the composite starts one background count (an un-guessed
@@ -593,8 +594,8 @@ src/tools/<name>/
   the spinner's animation never restarts on a tick). Call B
   `{ searchId, matches }` shows the judged matches
   with `format_table` (`new`, then `append`), always passing a `totalLine`
-  that counts the **relevant** matches (`describeRelevantTotal`: "Total: N
-  relevant results so far", or "Did not find any relevant results so far"; no
+  that counts the **relevant** matches (`describeRelevantTotal`: "Total: N so
+  far", or "Did not find any relevant results so far"; no
   "so far" once AEM is exhausted), so an empty run still shows a message, then, unless `hasMore === false`, offers
   `ask_user` `["Load more"]`: a click returns the next page's candidates, a
   cancel ends the search. The model never decides how many hits to read or when
@@ -745,8 +746,9 @@ ordered procedure (like `navigate`'s): a resource type is path-like - it contain
 a `/` - and anything else is a title that **must** be resolved, never invented
 from the phrase (a live run turned "Media Library" into `media-library` and found
 nothing). The table then shows
-each hit against its owning page (`Path`) with the node's path within it
-(`Component`) — one row per placement, so the instance shape stays index-served
+each hit against its owning page (`Path`) with the component node's path within
+it (`Node`) — one numbered row per placement, with a repeated page path
+blanked — so the instance shape stays index-served
 and its background honest count proves an exact total (see
 `docs/compatibility.md` §11.3). Its `description` is written to win the
 auto-inference race against `search`: a request that pairs looking/searching with
@@ -802,7 +804,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3027 passed / 14 skipped** (+3 against the
+Current baseline: **`npm run test` → 3029 passed / 14 skipped** (+2 against the
+3027 of the previous entry - **the component search's table adds a `Node` column
+and blanks a repeated page path**: `aem_query_format_ask` splits each hit at
+`/jcr:content/` (the standard `Path` column keeps the owning page, a `node` key
+carries the component node's path within it), and a page path identical to the
+row above is left empty (the `#` numbering still counts every row) - see
+`docs/verification.md` "the columns read `Path` / `Node`, and a repeated page path
+is blanked (2026-10-14)"). Before that it was 3027 (+3 against the
 3024 of the previous entry - **an empty assistant message paints nothing**: a
 message whose text is empty (a tool-only turn whose model ends with
 `assistant.message.completed`, `content: ""`) no longer renders as an empty gray
@@ -820,15 +829,17 @@ under the component roots, then one `aem_query_format_ask` call over the
 component **instances** (`type=nt:unstructured` + `property=sling:resourceType`).
 When the predicates match a component by `sling:resourceType`,
 `aem_query_format_ask` splits each hit at `/jcr:content/` into the owning page
-(`Path`) and the component's path within it (`Component`) - derived from the
-query, never asked of the model, so the page path cannot go missing - and
+(`Path`) and the component node's path within it (`Node`) - derived
+from the query, never asked of the model, so the page path cannot go missing,
+and a page path repeating the row above is blanked (the numbering still counts
+every placement) - and
 `format_table` maps a `jcr:title` column to `Title`. `/search-component` also joins
 `DETERMINISTIC_TABLE_SKILLS`, so its assistant prose is suppressed like
 `/search`, and both it and `search` carry descriptions that route a
 component-usage request to it. Later live runs tightened it (skill prose only):
 step 1 is a strict ordered procedure that must resolve a slashless phrase to a
 real `sling:resourceType` (never inventing one), the table is exactly
-`Path` + `Component` (no `properties`), and the description carries the no-prose
+`Path` + `Node` (no `properties`), and the description carries the no-prose
 rule; and one Copilot adapter crash was fixed - the runtime's `reasoningId` can
 exceed this application's 200-character id bound, so the adapter now mints its
 own (`appReasoningId`). A live fulltext run then exposed a real paging bug - the
@@ -1158,7 +1169,10 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 125 tests; a full run is typically 119 passed / 6 failed.** Before
+**Playwright → 126 tests; a full run is typically 119 passed / 6 failed.** The
++1 since 125 is the `message-links.spec.ts` case proving, against the built app,
+that an in-message table's path link computes to `text-decoration: none` (a
+removal mutation rebuilt the app and failed with `underline`). Before
 that, the +1 since 124 is
 `chat-restored-scroll.spec.ts`: a restored conversation whose journal holds six
 search tables must sit at the transcript's bottom, and a new turn's answer must
@@ -1177,7 +1191,7 @@ spec passes without the fix (verified both ways). See
 (2026-10-13)". Before that, the 124 was the
 `/semantic-search` case in `search-tables.spec.ts` rewritten (count
 unchanged) to the `aem_semantic_search` flow: "Did not find any relevant results
-so far" in the total slot, then an appended row with "Total: 1 relevant result";
+so far" in the total slot, then an appended row with "Total: 1";
 it now also asserts, against the built app, that the row's `Path` cell is the
 concrete node path and its `Property` cell is the bare `jcr:description` wearing
 the wrap-at-any-character class — see `docs/verification.md` "Semantic search: a

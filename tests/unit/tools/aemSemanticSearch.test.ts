@@ -187,7 +187,7 @@ describe('aem_semantic_search executor', () => {
     ]);
     const firstTable = calls[1];
     expect(firstTable?.args['mode']).toBe('new');
-    expect(firstTable?.args['totalLine']).toBe('Total: 2 relevant results so far');
+    expect(firstTable?.args['totalLine']).toBe('Total: 2 so far');
     expect(tableData(firstTable)['rows']).toEqual([
       {
         'jcr:path': '/content/site/p2',
@@ -209,7 +209,7 @@ describe('aem_semantic_search executor', () => {
     expect(calls[4]?.name).toBe('format_table');
     expect(calls[4]?.args['mode']).toBe('append');
     expect(tableData(calls[4])['rows']).toEqual([]);
-    expect(calls[4]?.args['totalLine']).toBe('Total: 2 relevant results');
+    expect(calls[4]?.args['totalLine']).toBe('Total: 2');
     expect(calls).toHaveLength(5);
     expect(finished).toMatchObject({ ended: 'exhausted', matchesShown: 2, candidatesRead: 6 });
     expect(finished['textResultForLlm']).toContain('End your turn');
@@ -462,8 +462,8 @@ describe('describeRelevantTotal', () => {
   it('counts relevant matches, with "so far" until AEM is exhausted', () => {
     expect(describeRelevantTotal(0, false)).toBe('Did not find any relevant results so far');
     expect(describeRelevantTotal(0, true)).toBe('Did not find any relevant results');
-    expect(describeRelevantTotal(1, false)).toBe('Total: 1 relevant result so far');
-    expect(describeRelevantTotal(3, true)).toBe('Total: 3 relevant results');
+    expect(describeRelevantTotal(1, false)).toBe('Total: 1 so far');
+    expect(describeRelevantTotal(3, true)).toBe('Total: 3');
   });
 });
 

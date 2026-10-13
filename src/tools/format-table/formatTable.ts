@@ -57,9 +57,9 @@ export const formatTableArgsSchema = z
     data: jsonValueSchema,
     mode: formatTableModeSchema.default('new'),
     /**
-     * Replaces the total line verbatim (e.g. "Total: 3 relevant results so far",
-     * or "Did not find any relevant results so far"). Without it the line is
-     * derived from the data's `pagination.total` / `total`.
+     * Replaces the total line verbatim (e.g. "Total: 3 so far", or "Did not
+     * find any relevant results so far"). Without it the line is derived from
+     * the data's `pagination.total` / `total`.
      */
     totalLine: z.string().trim().min(1).max(200).optional(),
     /**
@@ -222,16 +222,16 @@ function headerFor(key: string): string {
  * bound.
  */
 function describeTotal(total: JsonValue, hasMore: JsonValue | undefined): string | undefined {
-  if (typeof total === 'number') return `${String(total)} result${total === 1 ? '' : 's'}`;
+  if (typeof total === 'number') return String(total);
   if (typeof total === 'string') return total;
   if (!isRecord(total)) return undefined;
   const accuracy = total['accuracy'];
   const value = total['value'];
   if (accuracy === 'unknown') return 'an unknown number of results';
   if (typeof value !== 'number') return undefined;
-  if (accuracy === 'exact') return `${String(value)} result${value === 1 ? '' : 's'}`;
+  if (accuracy === 'exact') return String(value);
   if (accuracy === 'atLeast' || accuracy === 'estimated') {
-    return hasMore === true ? `${String(value)}+ results` : `at least ${String(value)} results`;
+    return hasMore === true ? `${String(value)}+` : `at least ${String(value)}`;
   }
   return undefined;
 }
@@ -239,7 +239,7 @@ function describeTotal(total: JsonValue, hasMore: JsonValue | undefined): string
 /**
  * The total line, from `aem_query`'s `pagination.total` or a top-level `total`.
  * An estimate is never presented as a fact - and, when `pagination.hasMore` is
- * true, it is shown as an open-ended lower bound ("900+ results") rather than a
+ * true, it is shown as an open-ended lower bound ("900+") rather than a
  * count.
  */
 function totalLine(data: JsonValue): string | undefined {

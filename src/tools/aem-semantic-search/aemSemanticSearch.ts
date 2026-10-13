@@ -180,7 +180,7 @@ export function describeSemanticTotal(
 export function describeRelevantTotal(matches: number, exhausted: boolean): string {
   const soFar = exhausted ? '' : ' so far';
   if (matches === 0) return `Did not find any relevant results${soFar}`;
-  return `Total: ${String(matches)} relevant result${matches === 1 ? '' : 's'}${soFar}`;
+  return `Total: ${String(matches)}${soFar}`;
 }
 
 // ---------------------------------------------------------------------------

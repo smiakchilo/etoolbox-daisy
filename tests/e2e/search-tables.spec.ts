@@ -211,7 +211,7 @@ function semanticStep(args: Record<string, unknown>): ScriptedStep {
 }
 
 const NO_MATCHES = 'Did not find any relevant results so far';
-const ONE_MATCH = 'Total: 1 relevant result';
+const ONE_MATCH = 'Total: 1';
 const SEMANTIC_EMPTY = {
   rows: [],
   pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 60 } },
@@ -259,9 +259,7 @@ test.describe('deterministic search tables', () => {
     await flushFake(app);
 
     await expect(shell.locator(TABLE)).toBeVisible({ timeout: 30_000 });
-    await expect(shell.locator('.chat-table-message__total').last()).toContainText(
-      'Total: 5+ results',
-    );
+    await expect(shell.locator('.chat-table-message__total').last()).toContainText('Total: 5+');
     // The owner's fix: the total line reads BELOW the table, not above it.
     const totalBelowTable = await shell
       .locator('.chat-table-message')
@@ -288,9 +286,7 @@ test.describe('deterministic search tables', () => {
     // The append grew the SAME table; the total line now reflects the last page.
     await expect(shell.locator(TABLE)).toHaveCount(1);
     await expect(shell.locator('.chat-table-message sp-table-body sp-table-row')).toHaveCount(3);
-    await expect(shell.locator('.chat-table-message__total').last()).toContainText(
-      'Total: 3 results',
-    );
+    await expect(shell.locator('.chat-table-message__total').last()).toContainText('Total: 3');
   });
 
   test('a /semantic-search run says no matches so far in the total slot, then appends matches and counts them', async () => {
@@ -423,7 +419,7 @@ test.describe('deterministic search tables', () => {
     await scriptTurn(app, {
       steps: [
         formatTableStep(PAGE_1, 'new', undefined, true),
-        formatTableStep({ rows: [] }, 'append', 'Total: 12,345 results', false),
+        formatTableStep({ rows: [] }, 'append', 'Total: 12,345', false),
       ],
     });
     await sendViaComposer(shell, '/search waldo');
@@ -431,7 +427,7 @@ test.describe('deterministic search tables', () => {
     await advanceFake(app, 4);
 
     const message = shell.locator('.chat-table-message').last();
-    await expect(message.locator('.chat-table-message__total')).toContainText('Total: 5+ results');
+    await expect(message.locator('.chat-table-message__total')).toContainText('Total: 5+');
     const spinner = message.locator('.chat-table-message__total sp-progress-circle');
     await expect(spinner).toHaveCount(1);
     // jsdom cannot prove a custom element is registered or shadow-rendered; the
@@ -453,9 +449,7 @@ test.describe('deterministic search tables', () => {
 
     // The settle call arrives: the total updates and the spinner goes, in place.
     await advanceFake(app, 1);
-    await expect(message.locator('.chat-table-message__total')).toContainText(
-      'Total: 12,345 results',
-    );
+    await expect(message.locator('.chat-table-message__total')).toContainText('Total: 12,345');
     await expect(message.locator('.chat-table-message__total sp-progress-circle')).toHaveCount(0);
     expect(
       await shell.evaluate(() =>

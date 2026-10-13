@@ -69,12 +69,28 @@ describe('normalizeFormatTable', () => {
     expect(normalized?.rows).toEqual([['/a', 'T']]);
   });
 
+  it('maps the component-search display key to Node, with the page under Path', () => {
+    const normalized = normalizeFormatTable(
+      [
+        { 'jcr:path': '/content/site/a', node: 'jcr:content/root/text' },
+        // A blanked repeat keeps its row and its empty cell.
+        { 'jcr:path': '', node: 'jcr:content/root/text_2' },
+      ],
+      'new',
+    );
+    expect(normalized?.columns).toEqual(['Path', 'Node']);
+    expect(normalized?.rows).toEqual([
+      ['/content/site/a', 'jcr:content/root/text'],
+      ['', 'jcr:content/root/text_2'],
+    ]);
+  });
+
   it('renders a lower-bound total as an at-least line, never a bare number', () => {
     const normalized = normalizeFormatTable(
       { rows: [], pagination: { total: { accuracy: 'atLeast', value: 900 } } },
       'new',
     );
-    expect(normalized?.total).toBe('Total: at least 900 results');
+    expect(normalized?.total).toBe('Total: at least 900');
   });
 
   it('reads a legacy `estimated` total as the same lower bound', () => {
@@ -82,7 +98,7 @@ describe('normalizeFormatTable', () => {
       { rows: [], pagination: { total: { accuracy: 'estimated', value: 900 } } },
       'new',
     );
-    expect(normalized?.total).toBe('Total: at least 900 results');
+    expect(normalized?.total).toBe('Total: at least 900');
   });
 
   it('renders a lower-bound total with hasMore:true as an open-ended lower bound', () => {
@@ -93,7 +109,7 @@ describe('normalizeFormatTable', () => {
       },
       'new',
     );
-    expect(normalized?.total).toBe('Total: 20+ results');
+    expect(normalized?.total).toBe('Total: 20+');
   });
 
   it('marks the table as counting when totalPending is set', () => {
@@ -107,8 +123,8 @@ describe('normalizeFormatTable', () => {
         { rows: [], pagination: { total: { accuracy: 'exact', value: 0 } } },
         'new',
       )?.total,
-    ).toBe('Total: 0 results');
-    expect(normalizeFormatTable({ rows: [], total: 3 }, 'new')?.total).toBe('Total: 3 results');
+    ).toBe('Total: 0');
+    expect(normalizeFormatTable({ rows: [], total: 3 }, 'new')?.total).toBe('Total: 3');
   });
 
   it('filters non-record rows', () => {
@@ -129,7 +145,7 @@ describe('normalizeFormatTable', () => {
     for (const text of [json, '```json\n' + json + '\n```']) {
       const normalized = normalizeFormatTable(text, 'new');
       expect(normalized?.rows).toEqual([['/content/a']]);
-      expect(normalized?.total).toBe('Total: 1 result');
+      expect(normalized?.total).toBe('Total: 1');
     }
   });
 
@@ -144,7 +160,7 @@ describe('normalizeFormatTable', () => {
     ].join('\n');
     const normalized = normalizeFormatTable(text, 'new');
     expect(normalized?.rows).toEqual([['/content/a'], ['/content/b']]);
-    expect(normalized?.total).toBe('Total: 2+ results');
+    expect(normalized?.total).toBe('Total: 2+');
   });
 
   it('unwraps a result nested under a wrapper key and a stringified rows array', () => {
@@ -242,7 +258,7 @@ describe('format_table transcript composition', () => {
       mode: 'append',
     });
     expect(message?.mode).toBe('append');
-    expect(message?.total).toBe('Total: 1 result');
+    expect(message?.total).toBe('Total: 1');
   });
 
   it('reads the totalPending flag off the call arguments', () => {
@@ -257,10 +273,10 @@ describe('format_table transcript composition', () => {
       rows: [{ 'jcr:path': '/a' }],
       pagination: { total: { accuracy: 'exact', value: 9 } },
     };
-    expect(
-      renderer.readTableMessage?.({ data, totalLine: '  Total: 1 relevant result so far ' })?.total,
-    ).toBe('Total: 1 relevant result so far');
-    expect(renderer.readTableMessage?.({ data, totalLine: ' ' })?.total).toBe('Total: 9 results');
+    expect(renderer.readTableMessage?.({ data, totalLine: '  Total: 1 so far ' })?.total).toBe(
+      'Total: 1 so far',
+    );
+    expect(renderer.readTableMessage?.({ data, totalLine: ' ' })?.total).toBe('Total: 9');
     expect(
       renderer.readTableMessage?.({
         data: { rows: [] },

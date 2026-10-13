@@ -47,8 +47,8 @@ import {
  * `host.bridge.request` with no `p.guessTotal`, run sequentially per effective
  * root - and passes `totalPending: true` on every `format_table` call while it
  * runs (so the total line wears a spinner). When it settles the executor makes
- * one extra `append` call carrying either the exact total ("Total: 12,345
- * results") or, on failure, no total line at all (the fallback stays). The
+ * one extra `append` call carrying either the exact total ("Total: 12,345")
+ * or, on failure, no total line at all (the fallback stays). The
  * count has no billet and no journal entry of its own; only the `format_table`
  * calls it drives do.
  */
@@ -143,23 +143,55 @@ function isComponentSearch(predicates: Readonly<Record<string, string>>): boolea
   );
 }
 
+/** The keys a component hit's page path lives under - the standard identifying keys. */
+const PAGE_PATH_KEYS = ['jcr:path', 'path'] as const;
+
 /**
- * Splits a component hit's path into the owning page and the component's path
- * within it. The row is copied, never mutated; a row that carries no path, or
- * whose path holds no `/jcr:content/`, is returned unchanged.
+ * Splits a component hit's path for display: the identifying `jcr:path`/`path`
+ * key keeps the owning page (so the column reads the shared `Path` header), and
+ * a `node` key is added with the component node's path within it (so the column
+ * reads the plain title-cased `Node`, with no bespoke header). The row is
+ * copied, never mutated; a path with no `/jcr:content/`, or a row carrying no
+ * path at all, is returned unchanged.
  */
-function splitComponentPathRow(row: JsonValue): JsonValue {
+function toComponentNodeRow(row: JsonValue): JsonValue {
   if (!isRecord(row)) return row;
-  for (const key of ['jcr:path', 'path'] as const) {
+  for (const key of PAGE_PATH_KEYS) {
     const value = row[key];
     if (typeof value === 'string') {
       const at = value.indexOf(JCR_CONTENT_SEGMENT);
       if (at > 0) {
-        return { ...row, [key]: value.slice(0, at), Component: value.slice(at + 1) };
+        return { ...row, [key]: value.slice(0, at), node: value.slice(at + 1) };
       }
     }
   }
   return row;
+}
+
+/**
+ * A stateful display mapper for a component search's rows. It rewrites each
+ * hit with {@link toComponentNodeRow}, then **blanks a page path that repeats
+ * the row above** - a page with several placements shows its path once, and the
+ * empty cell means "the same page as the row above". The blanking runs across
+ * pages (the state outlives one `format_table` page), so a Load more page whose
+ * first hit belongs to the previous page's last row has no seam. The row itself
+ * is kept, so the `#` numbering still counts every placement.
+ */
+function createComponentNodeDisplay(): (rows: readonly JsonValue[]) => JsonValue[] {
+  let lastPagePath: string | undefined;
+  return (rows) =>
+    rows.map((row) => {
+      const mapped = toComponentNodeRow(row);
+      if (!isRecord(mapped)) return mapped;
+      for (const key of PAGE_PATH_KEYS) {
+        const pagePath = mapped[key];
+        if (typeof pagePath !== 'string') continue;
+        const repeated = pagePath === lastPagePath;
+        lastPagePath = pagePath;
+        return repeated ? { ...mapped, [key]: '' } : mapped;
+      }
+      return mapped;
+    });
 }
 
 /** A total as words, never a bare number: a lower bound stays a lower bound. */
@@ -172,7 +204,7 @@ export function describeSearchTotal(
 
 /** The table's total line for a proved exact count. */
 function exactTotalLine(value: number): string {
-  return `Total: ${String(value)} result${value === 1 ? '' : 's'}`;
+  return `Total: ${String(value)}`;
 }
 
 function unexpected(message: string, requestId: RequestId): Result<JsonValue, ToolError> {
@@ -200,7 +232,9 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
     // component instances; the table shows each against its owning page. Read
     // from the query - never asked of the model - so the page path cannot go
     // missing when a call forgets a display flag.
-    const splitComponentPath = isComponentSearch(predicates);
+    const componentNodeDisplay = isComponentSearch(predicates)
+      ? createComponentNodeDisplay()
+      : undefined;
     const scopedByPath = Object.prototype.hasOwnProperty.call(predicates, 'path');
     const roots =
       parsed.data.roots ??
@@ -361,8 +395,9 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
         if (pages === 0) maybeStartCount(pagination.total);
 
         // Display only: the query's hits keep their real paths; a component
-        // instance is shown against its owning page, with its own path beside it.
-        const displayedRows = splitComponentPath ? rows.map(splitComponentPathRow) : rows;
+        // instance is shown against its owning page, with its node beside it.
+        const displayedRows =
+          componentNodeDisplay === undefined ? rows : componentNodeDisplay(rows);
         const shown = await showTable({
           data: { rows: displayedRows, pagination: pagination as unknown as JsonValue },
           mode: pages === 0 ? 'new' : 'append',

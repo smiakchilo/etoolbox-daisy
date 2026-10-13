@@ -464,6 +464,9 @@
 
 .chat-table-message a {
   overflow-wrap: anywhere;
+  /* The in-message table's links carry no underline: the accent colour alone
+     marks them, keeping a dense table calm. */
+  text-decoration: none;
 }
 
 /* The Property column (a bare property name) and the Component column (a

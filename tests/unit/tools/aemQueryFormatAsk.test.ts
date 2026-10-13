@@ -311,9 +311,11 @@ describe('aem_query_format_ask executor', () => {
 
     const tableData = calls[1]?.args['data'] as Record<string, JsonValue>;
     expect(tableData['rows']).toEqual([
-      { 'jcr:path': '/content/site/a', Component: 'jcr:content/root/text' },
-      { 'jcr:path': '/content/site/a', Component: 'jcr:content/root/text_2' },
-      { 'jcr:path': '/content/site/b', Component: 'jcr:content/root/text' },
+      { 'jcr:path': '/content/site/a', node: 'jcr:content/root/text' },
+      // The same page as the row above: its page path is blanked, the row kept.
+      { 'jcr:path': '', node: 'jcr:content/root/text_2' },
+      { 'jcr:path': '/content/site/b', node: 'jcr:content/root/text' },
+      // No `/jcr:content/`: the page path alone, no node.
       { 'jcr:path': '/content/site/c' },
     ]);
     // The query is forwarded unchanged - the split is derived, never an argument.
@@ -322,6 +324,51 @@ describe('aem_query_format_ask executor', () => {
       property: 'sling:resourceType',
     });
     expect(payload(result)).toMatchObject({ pages: 1, rows: 4, ended: 'exhausted' });
+  });
+
+  it('blanks a repeated page path across a Load more page boundary', async () => {
+    // Page 1 ends on /content/site/a and page 2 opens on it again: the seam must
+    // not repeat the page path (the blanking state outlives one page), and every
+    // row is still present and numbered.
+    let queries = 0;
+    const { host, calls } = makeHost((name) => {
+      if (name === 'aem_query') {
+        queries += 1;
+        const firstPage = queries === 1;
+        return ok({
+          ok: true,
+          operation: 'aem_query',
+          rows: firstPage
+            ? [
+                { 'jcr:path': '/content/site/a/jcr:content/root/text' },
+                { 'jcr:path': '/content/site/a/jcr:content/root/text_2' },
+              ]
+            : [{ 'jcr:path': '/content/site/a/jcr:content/root/text_3' }],
+          pagination: {
+            offset: firstPage ? 0 : 2,
+            limit: 2,
+            returned: firstPage ? 2 : 1,
+            hasMore: firstPage,
+            total: { accuracy: 'exact', value: 3 },
+          },
+          textResultForLlm: 'rows',
+          resultType: 'success',
+        });
+      }
+      return ok(name === 'ask_user' ? loadMore : tableOk);
+    });
+    await createAemQueryFormatAskExecutor(host)(
+      { predicates: { type: 'nt:unstructured', property: 'sling:resourceType' }, limit: 2 },
+      callContext,
+    );
+
+    const first = calls[1]?.args['data'] as Record<string, JsonValue>;
+    const second = calls[4]?.args['data'] as Record<string, JsonValue>;
+    expect(first['rows']).toEqual([
+      { 'jcr:path': '/content/site/a', node: 'jcr:content/root/text' },
+      { 'jcr:path': '', node: 'jcr:content/root/text_2' },
+    ]);
+    expect(second['rows']).toEqual([{ 'jcr:path': '', node: 'jcr:content/root/text_3' }]);
   });
 
   it('leaves a path alone when the query is not a component search', async () => {
@@ -466,7 +513,7 @@ describe('aem_query_format_ask background count', () => {
     expect(settle?.args['mode']).toBe('append');
     expect(settle?.args['totalPending']).toBe(false);
     expect((settleData['rows'] as readonly JsonValue[]).length).toBe(0);
-    expect(settle?.args['totalLine']).toBe('Total: 1234 results');
+    expect(settle?.args['totalLine']).toBe('Total: 1234');
 
     // A later page keeps the exact total and shows no spinner.
     ask.resolve(ok(loadMore));
@@ -477,7 +524,7 @@ describe('aem_query_format_ask background count', () => {
       ended: 'exhausted',
     });
     const lastPage = calls.filter((call) => call.name === 'format_table').at(-1);
-    expect(lastPage?.args['totalLine']).toBe('Total: 1234 results');
+    expect(lastPage?.args['totalLine']).toBe('Total: 1234');
     expect(lastPage?.args['totalPending']).toBe(false);
   });
 

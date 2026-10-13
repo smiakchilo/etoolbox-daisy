@@ -773,33 +773,41 @@ describe('createTranscriptView - format_table message table', () => {
     expect(headers).toEqual(['#', 'Path']);
   });
 
-  it('wraps the Property and Component columns at any character, like the Path column', () => {
+  it('adds a Node column beside the standard Path, links the page, and wraps the node', () => {
     const data = {
       rows: [
         {
-          'jcr:path': '/content/site/a/jcr:content/text',
-          Component: 'jcr:content/parsys/aVeryLongComponentPathThatCannotBreakOnItsOwn',
+          'jcr:path': '/content/site/a',
+          node: 'jcr:content/parsys/aVeryLongComponentPathThatCannotBreakOnItsOwn',
           property: 'aVeryLongPropertyNameThatCannotBreakOnItsOwn',
           citation: 'x',
         },
+        // A repeated page path is already blanked by the executor; the renderer
+        // keeps the row and its number and paints an empty cell.
+        { 'jcr:path': '', node: 'jcr:content/parsys/second' },
       ],
-      pagination: { total: { accuracy: 'exact', value: 1 } },
+      pagination: { total: { accuracy: 'exact', value: 2 } },
     };
-    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 2, 'new')]);
     const headers = [...element.querySelectorAll('sp-table-head-cell')].map((c) => c.textContent);
-    expect(headers).toEqual(['#', 'Path', 'Component', 'Property', 'Citation']);
-    const componentCell = element.querySelector(
-      'sp-table-body sp-table-row sp-table-cell:nth-child(3) > span',
-    );
-    expect(componentCell?.textContent).toBe(
+    expect(headers).toEqual(['#', 'Path', 'Node', 'Property', 'Citation']);
+    const firstRow = element.querySelectorAll('sp-table-body sp-table-row')[0]!;
+    const pageCell = firstRow.querySelector('sp-table-cell:nth-child(2)');
+    expect(pageCell?.textContent).toBe('/content/site/a');
+    expect(pageCell?.querySelector('a[data-daisy-link]')).not.toBeNull();
+    const nodeCell = firstRow.querySelector('sp-table-cell:nth-child(3) > span');
+    expect(nodeCell?.textContent).toBe(
       'jcr:content/parsys/aVeryLongComponentPathThatCannotBreakOnItsOwn',
     );
-    expect(componentCell?.className).toBe('chat-table-message__wrap');
-    const propertyCell = element.querySelector(
-      'sp-table-body sp-table-row sp-table-cell:nth-child(4) > span',
-    );
+    expect(nodeCell?.className).toBe('chat-table-message__wrap');
+    const propertyCell = firstRow.querySelector('sp-table-cell:nth-child(4) > span');
     expect(propertyCell?.textContent).toBe('aVeryLongPropertyNameThatCannotBreakOnItsOwn');
     expect(propertyCell?.className).toBe('chat-table-message__wrap');
+    // The second row keeps its number; its blank page path paints nothing.
+    const secondRow = element.querySelectorAll('sp-table-body sp-table-row')[1]!;
+    const cells = [...secondRow.querySelectorAll('sp-table-cell')].map((c) => c.textContent);
+    expect(cells[0]).toBe('2');
+    expect(cells[1]).toBe('');
   });
 
   it('makes the Path cell a clickable, stamped link against the active host', () => {
@@ -812,7 +820,7 @@ describe('createTranscriptView - format_table message table', () => {
   it('renders the total line below the table', () => {
     const element = renderTable([requested(0, 1, { data: page }), result(1, 1, 2, 'new')]);
     const total = element.querySelector('.chat-table-message__total');
-    expect(total?.textContent).toBe('Total: at least 900 results');
+    expect(total?.textContent).toBe('Total: at least 900');
     // The owner's fix: the total reads under the table, not above it.
     const table = element.querySelector('sp-table');
     expect(table).not.toBeNull();
@@ -827,9 +835,7 @@ describe('createTranscriptView - format_table message table', () => {
       result(1, 1, 0, 'new'),
     ]);
     expect(element.querySelector('sp-table')).toBeNull();
-    expect(element.querySelector('.chat-table-message__total')?.textContent).toBe(
-      'Total: 0 results',
-    );
+    expect(element.querySelector('.chat-table-message__total')?.textContent).toBe('Total: 0');
   });
 
   it('wears a counting spinner in front of the total, and removes it in place', () => {
@@ -841,7 +847,7 @@ describe('createTranscriptView - format_table message table', () => {
 
     const total = view.element.querySelector('.chat-table-message__total');
     expect(total?.querySelector('sp-progress-circle')).not.toBeNull();
-    expect(total?.textContent).toBe('Total: at least 900 results');
+    expect(total?.textContent).toBe('Total: at least 900');
     const table = view.element.querySelector('sp-table');
     expect(table).not.toBeNull();
 
@@ -850,7 +856,7 @@ describe('createTranscriptView - format_table message table', () => {
       requested(2, 2, {
         data: { rows: [] },
         mode: 'append',
-        totalLine: 'Total: 1234 results',
+        totalLine: 'Total: 1234',
         totalPending: false,
       }),
     );
@@ -860,7 +866,7 @@ describe('createTranscriptView - format_table message table', () => {
     // The spinner is gone and the total rewritten - on the very same <sp-table>.
     expect(view.element.querySelector('.chat-table-message__total sp-progress-circle')).toBeNull();
     expect(view.element.querySelector('.chat-table-message__total')?.textContent).toBe(
-      'Total: 1234 results',
+      'Total: 1234',
     );
     expect(view.element.querySelector('sp-table')).toBe(table);
     expect(view.element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(2);
@@ -879,7 +885,7 @@ describe('createTranscriptView - format_table message table', () => {
       requested(2, 2, {
         data: { rows: [] },
         mode: 'append',
-        totalLine: 'Total: 1234 results',
+        totalLine: 'Total: 1234',
         totalPending: false,
       }),
     );
@@ -911,14 +917,14 @@ describe('createTranscriptView - format_table message table', () => {
       requested(2, 2, {
         data: page,
         mode: 'append',
-        totalLine: 'Total: 2 relevant results so far',
+        totalLine: 'Total: 2 so far',
       }),
     );
     store.applyEvent(result(3, 2, 2, 'append'));
     view.repaint(store);
     expect(view.element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(2);
     expect(view.element.querySelector('.chat-table-message__total')?.textContent).toBe(
-      'Total: 2 relevant results so far',
+      'Total: 2 so far',
     );
   });
   it('reuses the table node across repaints instead of rebuilding it', () => {

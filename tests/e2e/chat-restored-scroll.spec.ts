@@ -101,18 +101,15 @@ function formatTableStep(data: unknown, mode: 'new' | 'append'): ScriptedStep {
 }
 
 /**
- * Shaped like a real component-instance search: a long `Component path` (the
- * full node path) per row, which is what makes the not-yet-upgraded `sp-table`
- * measure so far above its final height.
+ * Shaped like a real component-instance search: a long `Node` path per row,
+ * which is what makes the not-yet-upgraded `sp-table` measure so far above its
+ * final height.
  */
 const tallTable = {
-  rows: Array.from({ length: 60 }, (_, i) => {
-    const page = `/content/hpe/base/blueprint/regression/components/polaris/generic-page-v3/media_library/${String(i + 1)}`;
-    return {
-      pagePath: page,
-      componentPath: `${page}/jcr:content/polaris-body-zone/backgroundwrapper_26_1651025805/components/cardgrid/cards/contentblock_copy_${String(i)}`,
-    };
-  }),
+  rows: Array.from({ length: 60 }, (_, i) => ({
+    'jcr:path': `/content/hpe/base/blueprint/regression/components/polaris/generic-page-v3/media_library/${String(i + 1)}`,
+    node: `jcr:content/polaris-body-zone/backgroundwrapper_26_1651025805/components/cardgrid/cards/contentblock_copy_${String(i)}`,
+  })),
   pagination: { hasMore: true, total: { accuracy: 'exact', value: 60 } },
 };
 

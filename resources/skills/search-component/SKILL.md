@@ -152,9 +152,13 @@ call:
 ```
 
 Pass **no** `properties`, and no other output argument. The table is exactly two
-columns - `Path` (the owning page) and `Component` (the node's path within it) -
-and a `properties` list merely adds columns (such as an unwanted
-`sling:resourceType` column). Do not add one.
+columns - **`Path`** (the owning page) and **`Node`** (the component node's path
+within it) - and a `properties` list merely adds columns (such as an unwanted
+`sling:resourceType` column). Do not add one. A page with several placements of
+the component is listed once per placement, but its page path is written only on
+the first of its rows: the empty cells below mean "the same page as the row
+above" (the application does this - never repeat a page path yourself, and never
+drop or renumber a row).
 
 Why it is shaped this way:
 
@@ -168,10 +172,11 @@ Why it is shaped this way:
   step 1 (all ORed).
 - **The table shows each hit against its owning page.** Because the query matches
   a component by `sling:resourceType`, the table splits every hit at
-  `/jcr:content/`: `Path` is the **page** that owns the component, and `Component`
-  is the node's path within that page (e.g. `jcr:content/root/text`). It is one
-  row per component *placement*, so a page with several appears once per
-  placement. This is automatic - there is no option to set.
+  `/jcr:content/`: `Path` is the **page** that owns the component, and `Node` is
+  the component node's path within that page (e.g. `jcr:content/root/text`). It
+  is one row per component *placement*, so a page with several appears once per
+  placement - its `Path` written only on the first of them and left blank below
+  (still one numbered row each). This is automatic - there is no option to set.
 - **`roots`** default to the host's content roots when omitted; pass `roots` only
   when the user named a different scope. Never combine `roots` with a `path`
   predicate.

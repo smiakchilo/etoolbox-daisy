@@ -584,4 +584,69 @@ test.describe('Message links open the AEM pane in edit mode', () => {
 
     await app.close();
   });
+
+  test("an in-message table's path link carries no underline", async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    // Put the pane on the host so the table's bare AEM path resolves to a link
+    // (the load fails; the attempt is what makes the origin active).
+    const addressInput = shell.locator('#browser-address-bar input');
+    await addressInput.fill(HOST);
+    await addressInput.press('Enter');
+    await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
+      'open',
+      '',
+      { timeout: 60_000 },
+    );
+
+    const turn: ScriptedTurn = {
+      steps: [
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'format_table',
+            arguments: {
+              data: {
+                rows: [{ 'jcr:path': '/content/site/alpha' }],
+                pagination: { total: { accuracy: 'exact', value: 1 } },
+              },
+              mode: 'new',
+            },
+            decision: {
+              kind: 'approved',
+              outcome: {
+                ok: true,
+                data: {
+                  operation: 'format_table',
+                  rowCount: 1,
+                  mode: 'new',
+                  textResultForLlm: 'ok',
+                  resultType: 'success',
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+    await scriptTurn(app, turn);
+    await shell.locator(COMPOSER_FIELD).fill('table please');
+    await shell.locator(COMPOSER_SEND).click();
+    await flushFake(app);
+
+    const link = shell.locator('.chat-table-message a[data-daisy-link]');
+    await expect(link).toHaveCount(1, { timeout: 30_000 });
+    await expect(link).toHaveAttribute('href', `${HOST}/content/site/alpha.html`);
+    // Owner request (2026-10-14): an in-message table's links carry no
+    // underline - the accent colour alone marks them. The author rule overrides
+    // the user agent's default for `a`.
+    expect(await link.evaluate((element) => getComputedStyle(element).textDecorationLine)).toBe(
+      'none',
+    );
+
+    await app.close();
+  });
 });

@@ -260,9 +260,7 @@ test.describe('Step 08: query results render as a real table', () => {
   });
 
   test('states the lower-bound total above the table', async () => {
-    await expect(shell.locator('.chat-table-message__total').last()).toContainText(
-      'Total: 900+ results',
-    );
+    await expect(shell.locator('.chat-table-message__total').last()).toContainText('Total: 900+');
   });
 
   test('does not execute an author-controlled value as markup', async () => {
