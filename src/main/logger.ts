@@ -96,6 +96,7 @@ export const DIAGNOSTIC_CODES = [
   'TOOL_REGISTRATION_FAILED',
   'AGENT_REGISTRATION_FAILED',
   'AGENT_TURN_SUMMARY',
+  'AEM_COUNT_FAILED',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];

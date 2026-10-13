@@ -91,8 +91,8 @@ describe('executeAemQuery root fan-out', () => {
       { 'jcr:path': '/content/b/2' },
     ]);
     expect(result.pagination.hasMore).toBe(true);
-    // root a is exact (1), root b is estimated (2) -> the sum stays an estimate.
-    expect(result.pagination.total).toEqual({ accuracy: 'estimated', value: 3 });
+    // root a is exact (1), root b is a lower bound (2+) -> the sum is a lower bound.
+    expect(result.pagination.total).toEqual({ accuracy: 'atLeast', value: 3 });
   });
 
   it('collapses a root nested inside another before querying', async () => {

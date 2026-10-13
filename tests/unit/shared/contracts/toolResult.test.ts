@@ -236,7 +236,7 @@ describe('pagination metadata', () => {
 });
 
 describe('total matches accuracy', () => {
-  it.each(['exact', 'estimated'] as const)('accepts a counted %s total', (accuracy) => {
+  it.each(['exact', 'atLeast'] as const)('accepts a counted %s total', (accuracy) => {
     const result = querySuccess({
       pagination: {
         offset: 0,
@@ -262,24 +262,21 @@ describe('total matches accuracy', () => {
     expect(result.ok && result.pagination.total).toEqual({ accuracy: 'unknown' });
   });
 
-  it.each(['exact', 'estimated'] as const)(
-    'rejects a %s total that carries no count',
-    (accuracy) => {
-      const parsed = toolResultSchema.safeParse({
-        ok: true,
-        operation: 'aem_query',
-        requestId: REQUEST_ID,
-        sourceOrigin: 'https://author.example',
-        serverRevision: 1,
-        predicates: {},
-        fetchedAt: 1_000,
-        rows: [],
-        selection: { kind: 'all' },
-        pagination: { offset: 0, limit: 50, returned: 0, hasMore: false, total: { accuracy } },
-      });
-      expect(parsed.success).toBe(false);
-    },
-  );
+  it.each(['exact', 'atLeast'] as const)('rejects a %s total that carries no count', (accuracy) => {
+    const parsed = toolResultSchema.safeParse({
+      ok: true,
+      operation: 'aem_query',
+      requestId: REQUEST_ID,
+      sourceOrigin: 'https://author.example',
+      serverRevision: 1,
+      predicates: {},
+      fetchedAt: 1_000,
+      rows: [],
+      selection: { kind: 'all' },
+      pagination: { offset: 0, limit: 50, returned: 0, hasMore: false, total: { accuracy } },
+    });
+    expect(parsed.success).toBe(false);
+  });
 
   it('rejects an unknown total that smuggles a count in anyway', () => {
     const parsed = toolResultSchema.safeParse({
@@ -319,7 +316,7 @@ describe('total matches accuracy', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('qualifies an estimated total in the model-facing text', () => {
+  it('qualifies a lower-bound total in the model-facing text', () => {
     const text = renderToolResultForModel(
       querySuccess({
         pagination: {
@@ -327,12 +324,12 @@ describe('total matches accuracy', () => {
           limit: 50,
           returned: 50,
           hasMore: true,
-          total: { accuracy: 'estimated', value: 1234 },
+          total: { accuracy: 'atLeast', value: 1234 },
         },
       }),
     );
-    expect(text).toMatch(/approximately 1234/);
-    expect(text).toMatch(/estimated, not an exact count/);
+    expect(text).toMatch(/at least 1234/);
+    expect(text).toMatch(/lower bound, not an exact count/);
   });
 
   it('states an unknown total plainly rather than omitting it', () => {

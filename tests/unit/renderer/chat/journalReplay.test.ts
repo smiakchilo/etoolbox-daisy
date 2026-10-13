@@ -169,6 +169,40 @@ describe('replayJournalIntoTranscript', () => {
     expect(store.toolCallFor('tool-open' as ToolCallId)?.status).toEqual({ kind: 'abandoned' });
   });
 
+  it('settles a pending total flag the replay left on a format_table call', () => {
+    // The turn stopped while a background count was in flight: the journal's
+    // last `format_table` call still carries `totalPending: true`. A restored
+    // transcript must show the fallback total with no spinner, not spin forever.
+    const store = createTranscriptStore();
+    const requested: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 4,
+      event: {
+        type: 'tool.call.requested',
+        chatId: CHAT,
+        sequence: 1,
+        toolCallId: 'table-open' as ToolCallId,
+        toolName: 'format_table',
+        arguments: { data: { rows: [] }, mode: 'new', totalPending: true },
+      },
+    };
+    const result: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 5,
+      event: {
+        type: 'tool.result',
+        chatId: CHAT,
+        sequence: 2,
+        toolCallId: 'table-open' as ToolCallId,
+        outcome: { ok: true, data: { operation: 'format_table', resultType: 'success' } },
+      },
+    };
+
+    replayJournalIntoTranscript([userPrompt('turn-1', 'search'), requested, result], store);
+
+    expect(store.toolCallFor('table-open' as ToolCallId)?.args['totalPending']).toBe(false);
+  });
+
   it('replays a durable interruption record as a historical, non-resumable notice', () => {
     const interruption: ChatJournalInterruptionRecord = {
       recordType: 'interruption',

@@ -93,6 +93,19 @@ async function flushFake(app: ElectronApp): Promise<void> {
   throw new Error('flushFake exceeded its guard - the fake never drained.');
 }
 
+/** Delivers exactly `count` scripted events, so a test can observe the turn mid-flight. */
+async function advanceFake(app: ElectronApp, count: number): Promise<void> {
+  for (let i = 0; i < count; i += 1) {
+    const delivered = await app.evaluate((_electronNamespace, key: string) => {
+      const fake = (globalThis as Record<string, unknown>)[key] as {
+        readonly advance: () => boolean;
+      };
+      return fake.advance();
+    }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
+    if (!delivered) throw new Error('advanceFake ran out of scripted events early.');
+  }
+}
+
 const COMPOSER_SEND = '.chat-composer__send';
 const CHAT_STATUS_BANNER = '.chat-status-banner';
 const COMPOSER_FIELD = '.chat-composer textarea';
@@ -128,12 +141,22 @@ function queryStep(
 }
 
 /** A scripted `format_table` tool call carrying `data` verbatim. */
-function formatTableStep(data: unknown, mode: 'new' | 'append', totalLine?: string): ScriptedStep {
+function formatTableStep(
+  data: unknown,
+  mode: 'new' | 'append',
+  totalLine?: string,
+  totalPending?: boolean,
+): ScriptedStep {
   return {
     kind: 'toolCall',
     call: {
       toolName: 'format_table',
-      arguments: { data: data as never, mode, ...(totalLine !== undefined ? { totalLine } : {}) },
+      arguments: {
+        data: data as never,
+        mode,
+        ...(totalLine !== undefined ? { totalLine } : {}),
+        ...(totalPending !== undefined ? { totalPending } : {}),
+      },
       decision: {
         kind: 'approved',
         outcome: {
@@ -153,7 +176,7 @@ function formatTableStep(data: unknown, mode: 'new' | 'append', totalLine?: stri
 
 const PAGE_1 = {
   rows: [{ 'jcr:path': '/content/site/a' }, { 'jcr:path': '/content/site/b' }],
-  pagination: { hasMore: true, total: { accuracy: 'estimated', value: 5 } },
+  pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 5 } },
 };
 const PAGE_2 = {
   rows: [{ 'jcr:path': '/content/site/c' }],
@@ -191,7 +214,7 @@ const NO_MATCHES = 'Did not find any relevant results so far';
 const ONE_MATCH = 'Total: 1 relevant result';
 const SEMANTIC_EMPTY = {
   rows: [],
-  pagination: { hasMore: true, total: { accuracy: 'estimated', value: 60 } },
+  pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 60 } },
 };
 const SEMANTIC = {
   rows: [
@@ -388,5 +411,57 @@ test.describe('deterministic search tables', () => {
     // is not rendered as a billet.
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
     await expect(shell.locator('.chat-tool-call').filter({ hasText: 'skill' })).toHaveCount(0);
+  });
+
+  test('a counting total shows a spinner, then updates in place without rebuilding the table', async () => {
+    // The application runs a background honest count when page 1's total is a
+    // lower bound; while it runs every `format_table` call carries
+    // `totalPending: true`, and the settle call carries the exact total. The
+    // fake scripts those calls directly (it does not run the composite), so
+    // this proves the renderer: a real `sp-progress-circle`, the total updating
+    // in place, the spinner gone, and the same `<sp-table>` node kept.
+    await scriptTurn(app, {
+      steps: [
+        formatTableStep(PAGE_1, 'new', undefined, true),
+        formatTableStep({ rows: [] }, 'append', 'Total: 12,345 results', false),
+      ],
+    });
+    await sendViaComposer(shell, '/search waldo');
+    // Deliver up to and including the first format_table's own result.
+    await advanceFake(app, 4);
+
+    const message = shell.locator('.chat-table-message').last();
+    await expect(message.locator('.chat-table-message__total')).toContainText('Total: 5+ results');
+    const spinner = message.locator('.chat-table-message__total sp-progress-circle');
+    await expect(spinner).toHaveCount(1);
+    // jsdom cannot prove a custom element is registered or shadow-rendered; the
+    // built app can. A real spinner with a real shadow root, not an unknown tag.
+    const registered = await shell.evaluate(() => {
+      const element = document.querySelector('.chat-table-message__total sp-progress-circle');
+      return {
+        hasDefinition: customElements.get('sp-progress-circle') !== undefined,
+        hasShadowRoot: element !== null && element.shadowRoot !== null,
+      };
+    });
+    expect(registered.hasDefinition).toBe(true);
+    expect(registered.hasShadowRoot).toBe(true);
+    await expect(message.locator('sp-table-body sp-table-row')).toHaveCount(2);
+    // Tag the table so the next assertion can prove it was not rebuilt.
+    await shell.evaluate(() => {
+      document.querySelector('.chat-table-message sp-table')?.setAttribute('data-identity', 'kept');
+    });
+
+    // The settle call arrives: the total updates and the spinner goes, in place.
+    await advanceFake(app, 1);
+    await expect(message.locator('.chat-table-message__total')).toContainText(
+      'Total: 12,345 results',
+    );
+    await expect(message.locator('.chat-table-message__total sp-progress-circle')).toHaveCount(0);
+    expect(
+      await shell.evaluate(() =>
+        document.querySelector('.chat-table-message sp-table')?.getAttribute('data-identity'),
+      ),
+    ).toBe('kept');
+    await flushFake(app);
   });
 });

@@ -23,5 +23,6 @@ export * from './core/currentPage';
 export * from './core/types';
 export * from './core/jcrPath';
 export * from './core/search';
+export * from './core/queryBuilder';
 export * from './core/toolModule';
 export * from './core/toolRenderer';

@@ -693,7 +693,7 @@ describe('createTranscriptView - format_table message table', () => {
   // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute
   const page = {
     rows: [{ 'jcr:path': '/content/site/a' }, { 'jcr:path': '/content/site/b' }],
-    pagination: { total: { accuracy: 'estimated', value: 900 } },
+    pagination: { total: { accuracy: 'atLeast', value: 900 } },
   };
 
   function renderTable(
@@ -748,7 +748,7 @@ describe('createTranscriptView - format_table message table', () => {
   it('renders the total line below the table', () => {
     const element = renderTable([requested(0, 1, { data: page }), result(1, 1, 2, 'new')]);
     const total = element.querySelector('.chat-table-message__total');
-    expect(total?.textContent).toBe('Total: approximately 900 results');
+    expect(total?.textContent).toBe('Total: at least 900 results');
     // The owner's fix: the total reads under the table, not above it.
     const table = element.querySelector('sp-table');
     expect(table).not.toBeNull();
@@ -766,6 +766,66 @@ describe('createTranscriptView - format_table message table', () => {
     expect(element.querySelector('.chat-table-message__total')?.textContent).toBe(
       'Total: 0 results',
     );
+  });
+
+  it('wears a counting spinner in front of the total, and removes it in place', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page, totalPending: true }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    view.repaint(store);
+
+    const total = view.element.querySelector('.chat-table-message__total');
+    expect(total?.querySelector('sp-progress-circle')).not.toBeNull();
+    expect(total?.textContent).toBe('Total: at least 900 results');
+    const table = view.element.querySelector('sp-table');
+    expect(table).not.toBeNull();
+
+    // The settle call: the same rows, an exact total, no spinner.
+    store.applyEvent(
+      requested(2, 2, {
+        data: { rows: [] },
+        mode: 'append',
+        totalLine: 'Total: 1234 results',
+        totalPending: false,
+      }),
+    );
+    store.applyEvent(result(3, 2, 0, 'append'));
+    view.repaint(store);
+
+    // The spinner is gone and the total rewritten - on the very same <sp-table>.
+    expect(view.element.querySelector('.chat-table-message__total sp-progress-circle')).toBeNull();
+    expect(view.element.querySelector('.chat-table-message__total')?.textContent).toBe(
+      'Total: 1234 results',
+    );
+    expect(view.element.querySelector('sp-table')).toBe(table);
+    expect(view.element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(2);
+  });
+
+  it('does not report a total-only change as an update, but does report a page growth', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page, totalPending: true }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    view.repaint(store);
+
+    // A late count: rows unchanged, so nothing is reported for reveal (a reader
+    // who scrolled up must not be yanked).
+    store.applyEvent(
+      requested(2, 2, {
+        data: { rows: [] },
+        mode: 'append',
+        totalLine: 'Total: 1234 results',
+        totalPending: false,
+      }),
+    );
+    store.applyEvent(result(3, 2, 0, 'append'));
+    expect(view.repaint(store)).toEqual([]);
+
+    // A real page growth is reported, so it is revealed as before.
+    store.applyEvent(requested(4, 3, { data: page, mode: 'append' }));
+    store.applyEvent(result(5, 3, 2, 'append'));
+    expect(view.repaint(store)).toHaveLength(1);
   });
 
   it('shows a totalLine in the total slot, and a later totalLine replaces it', () => {

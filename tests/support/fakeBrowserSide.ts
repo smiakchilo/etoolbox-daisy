@@ -4,8 +4,10 @@ import type { ToolRequestEnvelope } from './toolUnions';
 import type { ToolErrorCode } from '../../src/shared';
 import { toolRequestEnvelopeSchema } from './toolUnions';
 import type { HasMore } from '../../src/shared';
+import { TOTAL_GUESS_CAP } from '../../src/shared';
 import type { ChildrenMetadata } from '../../src/tools/aem-get-json/aemGetJson';
-import type { PaginationMetadata, TotalMatches } from '../../src/tools/aem-query/aemQuery';
+import type { PaginationMetadata } from '../../src/tools/aem-query/aemQuery';
+import type { TotalMatches } from '../../src/shared';
 import type { ToolSuccess } from './toolUnions';
 import type { JsonValue } from '../../src/shared';
 import { FixtureRepository } from './fakeAemFixtures';
@@ -121,7 +123,21 @@ export class FakeBrowserSide {
     );
     const { offset, limit } = envelope.args;
     const page = matched.slice(offset, offset + limit);
-    const hasMore: HasMore = forceUnknownHasMore ? 'unknown' : offset + limit < matched.length;
+
+    // Mirrors the real QueryBuilder's numeric-guess semantics (and
+    // `queryBuilder.ts`'s classification): `total` is exact below the cap and
+    // the cap with `more: true` at or above it, `more` means "more matches than
+    // `total`", and a page exists exactly when this page did not reach the
+    // total. Reporting the true figure as exact regardless would make this fake
+    // easier to satisfy than the production path it stands in for.
+    const reportedTotal = Math.min(matched.length, TOTAL_GUESS_CAP);
+    const capped = matched.length > reportedTotal;
+    const hasMore: HasMore = forceUnknownHasMore
+      ? 'unknown'
+      : capped || offset + page.length < reportedTotal;
+    const total: TotalMatches = capped
+      ? { accuracy: 'atLeast', value: reportedTotal }
+      : { accuracy: 'exact', value: reportedTotal };
 
     const rows: JsonValue[] = [];
     let selection: SelectionMetadata = { kind: 'all' };
@@ -130,16 +146,6 @@ export class FakeBrowserSide {
       selection = selected.selection;
       rows.push({ path: row.path, ...selected.data });
     }
-
-    // Mirrors the real `classifyTotal` rule (queryResponse.ts): a count is
-    // only `"exact"` when the server said there is nothing further AND this
-    // page accounts for the whole total. The fixture knows the true figure,
-    // but reporting it as exact regardless would make this fake easier to
-    // satisfy than the production path it stands in for.
-    const total: TotalMatches =
-      hasMore === false && offset + page.length === matched.length
-        ? { accuracy: 'exact', value: matched.length }
-        : { accuracy: 'estimated', value: matched.length };
 
     const pagination: PaginationMetadata = {
       offset,

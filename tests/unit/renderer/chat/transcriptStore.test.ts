@@ -401,6 +401,37 @@ describe('createTranscriptStore', () => {
       expect(store.toolCallFor(toolCallId)?.status.kind).toBe('succeeded');
       expect(store.takeDirty()).toBe(false);
     });
+
+    it('settles a pending total flag on a format_table call', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(
+        agentEventSchema.parse({
+          type: 'tool.call.requested',
+          chatId,
+          sequence: 0,
+          toolCallId,
+          toolName: 'format_table',
+          arguments: { data: { rows: [] }, mode: 'new', totalPending: true },
+        }),
+      );
+      store.takeDirty();
+
+      store.settlePendingTotals();
+
+      expect(store.toolCallFor(toolCallId)?.args['totalPending']).toBe(false);
+      expect(store.takeDirty()).toBe(true);
+    });
+
+    it('settlePendingTotals is a no-op when no call is counting', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.takeDirty();
+
+      store.settlePendingTotals();
+
+      expect(store.toolCallFor(toolCallId)?.args).toEqual({ path: '/content' });
+      expect(store.takeDirty()).toBe(false);
+    });
   });
 
   describe('events with no transcript item of their own', () => {

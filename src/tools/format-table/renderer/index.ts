@@ -27,11 +27,13 @@ function readTableMessage(args: Readonly<Record<string, JsonValue>>): ToolTableM
   const data = args['data'];
   if (data === undefined) return undefined;
   const totalLine = typeof args['totalLine'] === 'string' ? args['totalLine'] : undefined;
-  const normalized = normalizeFormatTable(data, modeFromArgs(args), totalLine);
+  const totalPending = args['totalPending'] === true;
+  const normalized = normalizeFormatTable(data, modeFromArgs(args), totalLine, totalPending);
   if (normalized === undefined) return undefined;
   return {
     mode: normalized.mode,
     total: normalized.total,
+    totalPending: normalized.totalPending,
     // The status line is not used for a message table - the total line replaces
     // it - so it is left empty rather than invented.
     table: {

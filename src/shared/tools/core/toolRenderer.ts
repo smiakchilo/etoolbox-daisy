@@ -57,6 +57,13 @@ export interface ToolTableMessage {
   readonly mode: 'new' | 'append';
   /** The total line shown beneath the table, or `undefined` for no total. */
   readonly total: string | undefined;
+  /**
+   * Whether an exact total is still being counted for this run, so the total
+   * line wears a spinner. The run's **last** call decides it, exactly as it
+   * decides `total` - so a page appended while a count is in flight keeps the
+   * spinner, and the run's settle call clears it.
+   */
+  readonly totalPending: boolean;
   readonly table: ToolResultTable;
 }
 
@@ -173,6 +180,29 @@ export function asCount(value: JsonValue | undefined): string | undefined {
 /** A `JsonValue` as display text only when it is a non-empty string; otherwise `undefined`. */
 export function asText(value: JsonValue | undefined): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Words a `{ accuracy, value }` total, never a bare number: a lower bound stays
+ * a lower bound. `hasMore: true` opens it up ("9+"), otherwise it reads "at
+ * least 9"; `"estimated"` is a pre-change journal value read as the same lower
+ * bound. Shared by the two search tools' billet renderers so they cannot drift.
+ */
+export function describeTotalValues(
+  total: JsonValue | undefined,
+  hasMore: JsonValue | undefined,
+): string {
+  const record = asRecord(total);
+  if (record === undefined) return 'unknown';
+  const value = record['value'];
+  if (record['accuracy'] === 'exact' && typeof value === 'number') return String(value);
+  if (
+    (record['accuracy'] === 'atLeast' || record['accuracy'] === 'estimated') &&
+    typeof value === 'number'
+  ) {
+    return hasMore === true ? `${String(value)}+` : `at least ${String(value)}`;
+  }
+  return 'unknown';
 }
 
 /** One argument value as display text; objects and arrays are JSON-stringified rather than dropped. */

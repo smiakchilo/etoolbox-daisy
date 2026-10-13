@@ -203,43 +203,59 @@ describe('executeAemQuery - pagination is reported honestly', () => {
     expect(expectSuccess(result).pagination.hasMore).toBe('unknown');
   });
 
-  it('marks a total as estimated when more results exist beyond the page', async () => {
+  it('marks a total as a lower bound when more results exist than the reported total', async () => {
+    // With a numeric `p.guessTotal`, `more: true` means "there are more
+    // matches than `total`" - the reported figure is a lower bound.
     const result = await run(
       jsonResponse(queryBody([{ 'jcr:path': '/a' }], { more: true, total: 900 })),
     );
     expect(expectSuccess(result).pagination.total).toEqual({
-      accuracy: 'estimated',
+      accuracy: 'atLeast',
       value: 900,
     });
+    expect(expectSuccess(result).pagination.hasMore).toBe(true);
   });
 
-  it('marks a total as exact only when the page provably accounts for all of it', async () => {
+  it('marks a total as exact when more:false, even if the page does not reach it', async () => {
+    // The numeric-guess trap: a 43-match result reports `more: false` on page 1
+    // with 20 rows - the total is exact AND a further page exists.
+    const result = await run(
+      jsonResponse(queryBody([{ 'jcr:path': '/a' }], { more: false, total: 43 })),
+    );
+    const { pagination } = expectSuccess(result);
+    expect(pagination.total).toEqual({ accuracy: 'exact', value: 43 });
+    expect(pagination.hasMore).toBe(true);
+  });
+
+  it('marks a total as exact when the page proves the whole result set', async () => {
     const result = await run(
       jsonResponse(
         queryBody([{ 'jcr:path': '/a' }, { 'jcr:path': '/b' }], { more: false, total: 2 }),
       ),
     );
     expect(expectSuccess(result).pagination.total).toEqual({ accuracy: 'exact', value: 2 });
+    expect(expectSuccess(result).pagination.hasMore).toBe(false);
   });
 
-  it('does not claim an exact total when more:false disagrees with the arithmetic', async () => {
-    // `more: false` with a total larger than offset+returned is internally
-    // inconsistent; the estimate is the only honest reading.
+  it('trusts a more:false total as exact regardless of how many rows this page carries', async () => {
+    // `more: false` is a statement about the *count*, not about pages: the total
+    // is complete, and a further page exists because this page did not reach it.
     const result = await run(
       jsonResponse(queryBody([{ 'jcr:path': '/a' }], { more: false, total: 900 })),
     );
-    expect(expectSuccess(result).pagination.total).toEqual({
-      accuracy: 'estimated',
-      value: 900,
-    });
+    const { pagination } = expectSuccess(result);
+    expect(pagination.total).toEqual({ accuracy: 'exact', value: 900 });
+    expect(pagination.hasMore).toBe(true);
   });
 
-  it('accounts for the offset when judging whether a total is exact', async () => {
+  it('accounts for the offset when judging whether a further page exists', async () => {
     const result = await run(
       jsonResponse(queryBody([{ 'jcr:path': '/c' }], { more: false, total: 3 })),
       { offset: 2 },
     );
-    expect(expectSuccess(result).pagination.total).toEqual({ accuracy: 'exact', value: 3 });
+    const { pagination } = expectSuccess(result);
+    expect(pagination.total).toEqual({ accuracy: 'exact', value: 3 });
+    expect(pagination.hasMore).toBe(false);
   });
 
   it('reports an unknown total rather than inventing a number', async () => {
@@ -281,7 +297,7 @@ describe('executeAemQuery - two pages are never presented as a complete result',
     expect(success.pagination.returned).toBe(1);
   });
 
-  it('tells the model in prose that more results exist and that the total is estimated', async () => {
+  it('tells the model in prose that more results exist and that the total is a lower bound', async () => {
     const result = await run(
       jsonResponse(queryBody([{ 'jcr:path': '/a' }], { more: true, total: 5000 })),
       { limit: 1 },
@@ -289,17 +305,17 @@ describe('executeAemQuery - two pages are never presented as a complete result',
     const rendered = renderToolResultForModel(result);
     expect(rendered).toMatch(/more results exist/i);
     expect(rendered).toMatch(/higher offset/i);
-    expect(rendered).toMatch(/approximately 5000/i);
-    expect(rendered).toMatch(/estimated/i);
+    expect(rendered).toMatch(/at least 5000/i);
+    expect(rendered).toMatch(/lower bound/i);
   });
 
-  it('does not describe an estimated total as an exact count', async () => {
+  it('does not describe a lower-bound total as an exact count', async () => {
     const rendered = renderToolResultForModel(
       await run(jsonResponse(queryBody([{ 'jcr:path': '/a' }], { more: true, total: 5000 }))),
     );
     // The count may only ever appear qualified. A bare "5000 match(es) in
     // total" is the exact-form rendering and must not be reachable here.
-    expect(rendered).not.toMatch(/(?<!approximately )5000 match\(es\) in total/);
+    expect(rendered).not.toMatch(/(?<!at least )5000 match\(es\) in total/);
   });
 });
 

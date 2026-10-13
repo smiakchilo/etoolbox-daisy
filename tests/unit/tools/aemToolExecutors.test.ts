@@ -305,7 +305,7 @@ describe('aemTool - createAemQueryExecutor', () => {
         limit: 50,
         returned: 1,
         hasMore: true,
-        total: { accuracy: 'estimated', value: 900 },
+        total: { accuracy: 'atLeast', value: 900 },
       },
     };
   }
@@ -460,7 +460,7 @@ describe('aemTool - createAemQueryExecutor', () => {
     const result = await executor({ predicates: { path: '/content/site' } }, toolCallContext());
     if (!result.ok) throw new Error('expected success');
     expect(JSON.stringify(result.value)).toMatch(/more results exist/i);
-    expect(JSON.stringify(result.value)).toMatch(/estimated/i);
+    expect(JSON.stringify(result.value)).toMatch(/lower bound/i);
   });
 
   it('returns a domain failure as an error, never as an empty row set', async () => {

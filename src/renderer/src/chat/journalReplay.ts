@@ -65,4 +65,7 @@ export function replayJournalIntoTranscript(
   // call the journal left without a result renders as an honest non-spinning
   // "Interrupted" billet instead of a spinner that will never stop.
   transcriptStore.abandonRunningToolCalls();
+  // Likewise, a `format_table` call the journal left mid-count (`totalPending`)
+  // shows its fallback total with no spinner - the count died with the process.
+  transcriptStore.settlePendingTotals();
 }

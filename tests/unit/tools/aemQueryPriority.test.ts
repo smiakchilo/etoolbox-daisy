@@ -259,7 +259,7 @@ describe('executeAemQuery priority paths', () => {
     if (!result.ok) return;
     expect(result.rows).toHaveLength(2);
     expect(result.pagination.hasMore).toBe(true);
-    expect(result.pagination.total).toEqual({ accuracy: 'estimated', value: 2 });
+    expect(result.pagination.total).toEqual({ accuracy: 'atLeast', value: 2 });
   });
 
   it('excludes the priority paths from the rest of the scope with a negated group', async () => {

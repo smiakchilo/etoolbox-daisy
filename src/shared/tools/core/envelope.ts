@@ -19,6 +19,16 @@ import type { ChatId, RequestId, ServerId, TurnId } from '../../contracts';
 export const AEM_REQUEST_TIMEOUT_MS = 90_000;
 
 /**
+ * The budget for the one **honest count** a search may run in the background
+ * (`aem_query_format_ask`): a full, un-guessed QueryBuilder count, which is
+ * proportional to the result size and can legitimately take minutes. Longer
+ * than {@link AEM_REQUEST_TIMEOUT_MS} on purpose - a count is not a page read,
+ * and giving it the page deadline would time out the very request the total
+ * line is waiting for. See docs/accurate-search-total.md.
+ */
+export const AEM_COUNT_TIMEOUT_MS = 300_000;
+
+/**
  * Supplies the current time as epoch milliseconds. Kept as an injected
  * function rather than a call to `Date.now()` so deadline arithmetic stays
  * deterministic under test and so `src/shared` never reaches for an ambient
@@ -34,9 +44,13 @@ export type Clock = () => number;
  * for the agent's answer blew past the intended 90 seconds. Computing the
  * deadline once, here, against a single clock reading is what makes
  * "90 seconds total" actually mean 90 seconds total.
+ *
+ * `timeoutMs` defaults to {@link AEM_REQUEST_TIMEOUT_MS}; the one caller that
+ * passes a different value is the background count, which grants
+ * {@link AEM_COUNT_TIMEOUT_MS} to a request that is expected to run long.
  */
-export function computeDeadline(clock: Clock): number {
-  return clock() + AEM_REQUEST_TIMEOUT_MS;
+export function computeDeadline(clock: Clock, timeoutMs: number = AEM_REQUEST_TIMEOUT_MS): number {
+  return clock() + timeoutMs;
 }
 
 export function isDeadlineExpired(deadlineMs: number, clock: Clock): boolean {

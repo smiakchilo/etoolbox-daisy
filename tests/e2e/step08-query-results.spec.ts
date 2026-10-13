@@ -136,7 +136,7 @@ const FIRST_PAGE = {
     limit: 20,
     returned: 2,
     hasMore: true,
-    total: { accuracy: 'estimated', value: 900 },
+    total: { accuracy: 'atLeast', value: 900 },
   },
 };
 
@@ -259,7 +259,7 @@ test.describe('Step 08: query results render as a real table', () => {
     expect(firstRow.join(' ')).toContain('/content/site/alpha');
   });
 
-  test('states the estimated total above the table', async () => {
+  test('states the lower-bound total above the table', async () => {
     await expect(shell.locator('.chat-table-message__total').last()).toContainText(
       'Total: 900+ results',
     );

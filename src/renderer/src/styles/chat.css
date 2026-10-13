@@ -416,8 +416,18 @@
 }
 
 .chat-table-message__total {
+  /* The total line, with the "counting" spinner (if any) sitting in front of
+     the text: inline-flex keeps the spinner on the text's first line and
+     vertically centred against it, and nothing else moves when it disappears. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
   color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+.chat-table-message__total-spinner {
+  flex: 0 0 auto;
 }
 
 /* The table spans the message and grows with its content. Its cells are set to

@@ -62,6 +62,14 @@ export const formatTableArgsSchema = z
      * derived from the data's `pagination.total` / `total`.
      */
     totalLine: z.string().trim().min(1).max(200).optional(),
+    /**
+     * Whether an exact total is still being counted for this run, so the
+     * transcript shows a spinner before the total line. The run's last call
+     * decides it (see `transcriptView.ts`'s `planTableRuns`); a search composite
+     * passes `true` on every page while its background count is in flight and
+     * `false` on the settle call.
+     */
+    totalPending: z.boolean().optional(),
   })
   .strict();
 
@@ -95,10 +103,12 @@ function paginationFromText(text: string): JsonValue | undefined {
   const pagination: Record<string, JsonValue> = {};
   if (text.includes('more results exist beyond this page')) pagination['hasMore'] = true;
   else if (text.includes('no further results exist')) pagination['hasMore'] = false;
-  const estimated = /approximately (\d+) match\(es\) in total/.exec(text);
+  // `at least N` is the current form; `approximately N` is a pre-change
+  // rendered-text fallback, read as the same lower bound.
+  const atLeast = /(?:at least|approximately) (\d+) match\(es\) in total/.exec(text);
   const exact = /(\d+) match\(es\) in total/.exec(text);
-  if (estimated?.[1] !== undefined) {
-    pagination['total'] = { accuracy: 'estimated', value: Number(estimated[1]) };
+  if (atLeast?.[1] !== undefined) {
+    pagination['total'] = { accuracy: 'atLeast', value: Number(atLeast[1]) };
   } else if (exact?.[1] !== undefined) {
     pagination['total'] = { accuracy: 'exact', value: Number(exact[1]) };
   }
@@ -202,10 +212,11 @@ function headerFor(key: string): string {
  * `{accuracy, value}`) as text.
  *
  * `hasMore` - the sibling of the total under `pagination` - refines the
- * estimated case. With `p.guessTotal` the server stops counting at the page
- * size, so an estimate reported beside `hasMore: true` is a **lower bound**, not
- * a near-total: "20+" is honest where "approximately 20" would read as a
- * finished count ("there are twenty, and that's all").
+ * `atLeast` case. QueryBuilder is told to stop counting at the numeric
+ * `p.guessTotal` cap, so a lower bound reported beside `hasMore: true` is shown
+ * open-ended: "20+" is honest where "at least 20" would read as a finished
+ * count. `"estimated"` is a pre-change journal value, read as the same lower
+ * bound.
  */
 function describeTotal(total: JsonValue, hasMore: JsonValue | undefined): string | undefined {
   if (typeof total === 'number') return `${String(total)} result${total === 1 ? '' : 's'}`;
@@ -216,10 +227,8 @@ function describeTotal(total: JsonValue, hasMore: JsonValue | undefined): string
   if (accuracy === 'unknown') return 'an unknown number of results';
   if (typeof value !== 'number') return undefined;
   if (accuracy === 'exact') return `${String(value)} result${value === 1 ? '' : 's'}`;
-  if (accuracy === 'estimated') {
-    return hasMore === true
-      ? `${String(value)}+ results`
-      : `approximately ${String(value)} results`;
+  if (accuracy === 'atLeast' || accuracy === 'estimated') {
+    return hasMore === true ? `${String(value)}+ results` : `at least ${String(value)} results`;
   }
   return undefined;
 }
@@ -244,6 +253,7 @@ export interface NormalizedTable {
   readonly columns: readonly string[];
   readonly rows: readonly (readonly string[])[];
   readonly total: string | undefined;
+  readonly totalPending: boolean;
   readonly mode: FormatTableMode;
 }
 
@@ -260,6 +270,7 @@ export function normalizeFormatTable(
   data: JsonValue,
   mode: FormatTableMode,
   totalOverride?: string,
+  totalPending = false,
 ): NormalizedTable | undefined {
   const resolved = resolveTable(data);
   if (resolved === undefined) return undefined;
@@ -299,6 +310,7 @@ export function normalizeFormatTable(
       totalOverride !== undefined && totalOverride.trim().length > 0
         ? totalOverride.trim()
         : totalLine(container),
+    totalPending,
     mode,
   };
 }

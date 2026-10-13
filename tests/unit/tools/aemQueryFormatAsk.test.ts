@@ -8,8 +8,11 @@ import {
 import { renderer } from '../../../src/tools/aem-query-format-ask/renderer';
 import { tool } from '../../../src/tools/aem-query-format-ask/tool';
 import {
+  type BrokerOutcome,
+  type CurrentAemToolContext,
   type JsonValue,
   type Result,
+  type ToolDiagnosticCode,
   type ToolError,
   type ToolHost,
   SEARCH_PAGE_SIZE,
@@ -27,9 +30,21 @@ interface Invocation {
 type Responder = (
   name: string,
   args: Readonly<Record<string, JsonValue>>,
-) => Result<JsonValue, ToolError>;
+) => Result<JsonValue, ToolError> | Promise<Result<JsonValue, ToolError>>;
 
-function queryPage(rows: number, hasMore: boolean | 'unknown', offset = 0): JsonValue {
+/**
+ * A page fixture. Its total defaults to **exact**, so no background count is
+ * started unless a test explicitly passes an `atLeast` total - which keeps the
+ * pre-count scenarios focused on the loop itself. `hasMore: true` with an exact
+ * total is a legitimate state (the guess cap was not reached but a later page
+ * still exists).
+ */
+function queryPage(
+  rows: number,
+  hasMore: boolean | 'unknown',
+  offset = 0,
+  total?: JsonValue,
+): JsonValue {
   return {
     ok: true,
     operation: 'aem_query',
@@ -41,23 +56,68 @@ function queryPage(rows: number, hasMore: boolean | 'unknown', offset = 0): Json
       limit: 2,
       returned: rows,
       hasMore,
-      total: { accuracy: 'estimated', value: 5 },
+      total: total ?? { accuracy: 'exact', value: offset + rows + (hasMore === false ? 0 : 10) },
     },
     textResultForLlm: 'rows',
     resultType: 'success',
   };
 }
 
+/** A page whose total is a lower bound (the guess cap was reached). */
+function lowerBoundPage(rows: number, hasMore: boolean | 'unknown', offset = 0): JsonValue {
+  return queryPage(rows, hasMore, offset, { accuracy: 'atLeast', value: 100 });
+}
+
 const tableOk: JsonValue = { operation: 'format_table', resultType: 'success' };
 const loadMore: JsonValue = { selections: ['Load more'], freeform: null };
 
-function makeHost(responder: Responder, contentRoots?: readonly string[]) {
+const COUNT_CONTEXT: CurrentAemToolContext = {
+  origin: 'https://aem.example',
+  serverId: 'server-1' as never,
+  serverRevision: 1,
+  navigationEpoch: 0,
+  chatId: 'chat-1' as never,
+  turnId: 'turn-1' as never,
+};
+
+function countResponse(total: number): BrokerOutcome {
+  return {
+    kind: 'response',
+    status: 200,
+    contentType: 'application/json',
+    bodyText: JSON.stringify({ success: true, hits: [], total }),
+  };
+}
+
+interface HostOptions {
+  /** Supplied only in count tests; the default throws to prove no count ran. */
+  readonly currentContext?: () => CurrentAemToolContext;
+  readonly count?: (url: string) => BrokerOutcome | Promise<BrokerOutcome>;
+  readonly onDiagnostic?: (code: ToolDiagnosticCode) => void;
+}
+
+function makeHost(
+  responder: Responder,
+  contentRoots?: readonly string[],
+  options: HostOptions = {},
+) {
   const calls: Invocation[] = [];
+  const countUrls: string[] = [];
+  const diagnostics: ToolDiagnosticCode[] = [];
   const host: ToolHost = {
-    bridge: { request: () => Promise.resolve({ kind: 'cancelled' }) },
-    currentContext: () => {
-      throw new Error('the composite must reach AEM only through aem_query');
+    bridge: {
+      request: (_envelope, url) => {
+        countUrls.push(url);
+        return Promise.resolve(
+          options.count?.(url) ?? ({ kind: 'cancelled' } satisfies BrokerOutcome),
+        );
+      },
     },
+    currentContext:
+      options.currentContext ??
+      (() => {
+        throw new Error('the composite must reach AEM only through aem_query');
+      }),
     environmentFacts: () =>
       contentRoots === undefined
         ? undefined
@@ -72,12 +132,30 @@ function makeHost(responder: Responder, contentRoots?: readonly string[]) {
     requestUserInput: () => Promise.reject(new Error('the composite asks only through ask_user')),
     clock: () => 1,
     idGenerator: createCountingIdGenerator('qfa'),
+    reportToolDiagnostic: (code) => {
+      diagnostics.push(code);
+      options.onDiagnostic?.(code);
+    },
     invokeTool: (name, args) => {
       calls.push({ name, args });
       return Promise.resolve(responder(name, args));
     },
   };
-  return { host, calls };
+  return { host, calls, countUrls, diagnostics };
+}
+
+/** A promise whose resolution the test controls. */
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Lets pending microtasks/promise chains run. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 12; i += 1) await Promise.resolve();
 }
 
 const callContext = { toolCallId: 'call-1' as never, signal: undefined };
@@ -257,13 +335,200 @@ describe('aem_query_format_ask executor', () => {
   });
 });
 
-describe('describeSearchTotal', () => {
-  it('words exact, estimated and unknown totals', () => {
-    expect(describeSearchTotal({ accuracy: 'exact', value: 3 }, false)).toBe('3');
-    expect(describeSearchTotal({ accuracy: 'estimated', value: 9 }, true)).toBe('9+');
-    expect(describeSearchTotal({ accuracy: 'estimated', value: 9 }, 'unknown')).toBe(
-      'approximately 9',
+describe('aem_query_format_ask background count', () => {
+  it('starts no count when page 1 is exact (never even reaches for a context)', async () => {
+    const { host, calls, countUrls } = makeHost((name) =>
+      name === 'aem_query' ? ok(queryPage(2, false)) : ok(tableOk),
     );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'x' }, callContext);
+    expect(countUrls).toEqual([]);
+    // The default host throws from `currentContext`, so a count would reject
+    // rather than silently pass; the call list proves none ran.
+    expect(
+      calls.every((call) => call.name !== 'format_table' || call.args['totalPending'] !== true),
+    ).toBe(true);
+  });
+
+  it('runs one count when page 1 is a lower bound, and settles the total in place during the ask', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const ask = deferred<Result<JsonValue, ToolError>>();
+    const { host, calls, countUrls, diagnostics } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(offset === 0 ? lowerBoundPage(2, true) : queryPage(2, false, 2));
+        }
+        if (name === 'ask_user') return ask.promise;
+        return ok(tableOk);
+      },
+      ['/content/site'],
+      { currentContext: () => COUNT_CONTEXT, count: () => gate.promise },
+    );
+    const running = createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+    await flush();
+
+    // Page 1 is on screen with the spinner flag, and exactly one count request
+    // (no guessTotal) reached the bridge.
+    const page1 = calls.find((call) => call.name === 'format_table');
+    expect(page1?.args['totalPending']).toBe(true);
+    expect(page1?.args['mode']).toBe('new');
+    expect(countUrls).toHaveLength(1);
+    expect(new URL(countUrls[0] ?? '').searchParams.getAll('p.guessTotal')).toEqual([]);
+    expect(new URL(countUrls[0] ?? '').searchParams.get('path')).toBe('/content/site');
+    expect(diagnostics).toEqual([]);
+
+    // The count settles while the turn waits on the question: an extra append
+    // carries the exact total and clears the spinner.
+    gate.resolve(countResponse(1234));
+    await flush();
+    const settle = calls.filter((call) => call.name === 'format_table').at(-1);
+    const settleData = settle?.args['data'] as Record<string, JsonValue>;
+    expect(settle?.args['mode']).toBe('append');
+    expect(settle?.args['totalPending']).toBe(false);
+    expect((settleData['rows'] as readonly JsonValue[]).length).toBe(0);
+    expect(settle?.args['totalLine']).toBe('Total: 1234 results');
+
+    // A later page keeps the exact total and shows no spinner.
+    ask.resolve(ok(loadMore));
+    const result = await running;
+    expect(payload(result)).toMatchObject({
+      pages: 2,
+      total: { accuracy: 'exact', value: 1234 },
+      ended: 'exhausted',
+    });
+    const lastPage = calls.filter((call) => call.name === 'format_table').at(-1);
+    expect(lastPage?.args['totalLine']).toBe('Total: 1234 results');
+    expect(lastPage?.args['totalPending']).toBe(false);
+  });
+
+  it('keeps the fallback and logs AEM_COUNT_FAILED when the count request fails', async () => {
+    const { host, calls, countUrls, diagnostics } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          return ok(
+            (args['offset'] as number) === 0
+              ? lowerBoundPage(2, true)
+              : lowerBoundPage(2, false, 2),
+          );
+        }
+        return ok(name === 'ask_user' ? loadMore : tableOk);
+      },
+      ['/content/site'],
+      {
+        currentContext: () => COUNT_CONTEXT,
+        count: () => ({ kind: 'network_error', message: 'x' }),
+      },
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+
+    expect(countUrls).toHaveLength(1);
+    expect(diagnostics).toEqual(['AEM_COUNT_FAILED']);
+    // The table keeps page 2's fallback line; the settle call carried none.
+    const settle = calls.filter((call) => call.name === 'format_table').at(-1);
+    expect(settle?.args['totalPending']).toBe(false);
+    expect(settle?.args).not.toHaveProperty('totalLine');
+    expect(payload(result)['total']).toMatchObject({ accuracy: 'atLeast', value: 100 });
+  });
+
+  it('aborts a never-resolving count when the search ends, and leaves no spinner', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const { host, calls } = makeHost(
+      (name) => {
+        if (name === 'aem_query') return ok(lowerBoundPage(2, 'unknown'));
+        // The user declines the question: the loop ends "stopped".
+        if (name === 'ask_user') return ok({ selections: [], freeform: null });
+        return ok(tableOk);
+      },
+      ['/content/site'],
+      { currentContext: () => COUNT_CONTEXT, count: () => gate.promise },
+    );
+    const result = await createAemQueryFormatAskExecutor(host)({ terms: 'waldo' }, callContext);
+
+    const settle = calls.filter((call) => call.name === 'format_table').at(-1);
+    expect(settle?.args['totalPending']).toBe(false);
+    expect(payload(result)).toMatchObject({ ended: 'stopped' });
+    // Resolving the abandoned count afterwards must not enqueue a second settle.
+    const before = calls.length;
+    gate.resolve(countResponse(7));
+    await flush();
+    expect(calls.length).toBe(before);
+  });
+
+  it('starts at most one count across several lower-bound pages', async () => {
+    let queries = 0;
+    const { host, countUrls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          queries += 1;
+          // Two lower-bound pages, then an exhausted exact page.
+          return ok(
+            queries < 3
+              ? lowerBoundPage(2, true, args['offset'] as number)
+              : queryPage(1, false, args['offset'] as number),
+          );
+        }
+        return ok(name === 'ask_user' ? loadMore : tableOk);
+      },
+      ['/content/site'],
+      { currentContext: () => COUNT_CONTEXT, count: () => countResponse(500) },
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', limit: 2 }, callContext);
+    expect(countUrls).toHaveLength(1);
+  });
+
+  it('sums one count request per effective root, sequentially', async () => {
+    const { host, countUrls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(lowerBoundPage(2, false)) : ok(tableOk)),
+      ['/content/a', '/content/b'],
+      { currentContext: () => COUNT_CONTEXT, count: () => countResponse(10) },
+    );
+    const result = await createAemQueryFormatAskExecutor(host)({ terms: 'waldo' }, callContext);
+    expect(countUrls).toHaveLength(2);
+    expect(new URL(countUrls[0] ?? '').searchParams.get('path')).toBe('/content/a');
+    expect(new URL(countUrls[1] ?? '').searchParams.get('path')).toBe('/content/b');
+    expect(payload(result)['total']).toMatchObject({ accuracy: 'exact', value: 20 });
+  });
+
+  it('does not enqueue a settle for a count that resolves after an early error', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const failure = createToolError('NETWORK_ERROR', 'down', 'r' as never);
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          return (args['offset'] as number) === 0 ? ok(lowerBoundPage(2, true)) : err(failure);
+        }
+        return ok(name === 'ask_user' ? loadMore : tableOk);
+      },
+      ['/content/site'],
+      { currentContext: () => COUNT_CONTEXT, count: () => gate.promise },
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+    expect(result).toEqual({ ok: false, error: failure });
+
+    // The count resolves after the executor returned: it must not append a
+    // second settle table into a run that is already over.
+    const before = calls.length;
+    gate.resolve(countResponse(999));
+    await flush();
+    expect(calls.length).toBe(before);
+  });
+});
+
+describe('describeSearchTotal', () => {
+  it('words exact, at-least and unknown totals', () => {
+    expect(describeSearchTotal({ accuracy: 'exact', value: 3 }, false)).toBe('3');
+    expect(describeSearchTotal({ accuracy: 'atLeast', value: 9 }, true)).toBe('9+');
+    expect(describeSearchTotal({ accuracy: 'atLeast', value: 9 }, 'unknown')).toBe('at least 9');
+    expect(describeSearchTotal({ accuracy: 'estimated', value: 9 }, true)).toBe('9+');
     expect(describeSearchTotal({ accuracy: 'unknown' }, true)).toBe('unknown');
     expect(describeSearchTotal(undefined, undefined)).toBe('unknown');
   });

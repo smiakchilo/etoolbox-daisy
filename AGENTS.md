@@ -436,6 +436,10 @@ src/tools/<name>/
   structured `rows`/`pagination`/`selection` so the model can hand the result on
   (and so a diagnostic sees it), but the transcript shows only the billet. Its
   instructions point the model at `aem_query_format_ask` to show results.
+  **The capped total:** every page request sends a numeric `p.guessTotal=100`
+  (`TOTAL_GUESS_CAP`), so the total is `exact` below 100 and an `atLeast` lower
+  bound at it (never the old, false `estimated`); `hasMore` is derived, not copied
+  from `more`. See §8's QueryBuilder fact.
   **Priority paths:** when the pane's host selects a project with *Priority
   paths* (`contentPriorityPaths`, read at execution time from
   `host.environmentFacts()`, never from the model), a `roots` or plain-`path`
@@ -451,8 +455,11 @@ src/tools/<name>/
   model's handlers, descriptors, allowlist and instructions (it is listed in
   `ToolRegistry.internalNames`), but the composites still reach it through
   `invokeTool`. It takes `data` (an array of rows, or an object with a `rows`
-  array - typically the whole `aem_query` result), `mode: 'new' | 'append'` and
-  an optional `totalLine` that replaces the derived total text. Its
+  array - typically the whole `aem_query` result), `mode: 'new' | 'append'`, an
+  optional `totalLine` that replaces the derived total text, and an optional
+  `totalPending: boolean` that draws a small spinner before the total while an
+  exact count is still being fetched (the run's **last** call decides it, exactly
+  as it decides `total`). Its
   renderer sets `presentation: 'message'` + `readTableMessage`, so the transcript
   paints an assistant message - a `#`-prefixed Spectrum table with the total
   line beneath it (only the total line when the run has no rows), the Path cell clickable, every cell via
@@ -533,7 +540,16 @@ src/tools/<name>/
   short summary (`textResultForLlm`), never the rows to relay — the point is
   that weak models no longer have to copy JSON between tools. Its billet reads
   `Search: <terms or predicates>` with rows Terms or Predicates, Roots, Page size,
-  then Pages, Rows, Total.
+  then Pages, Rows, Total. **The honest total:** when page 1's total is an
+  `atLeast` lower bound the composite starts one background count (an un-guessed
+  `host.bridge.request` per effective root, sequentially, 5-minute deadline) and
+  passes `totalPending: true` on every `format_table` call while it runs; on
+  settle it makes one extra `append` carrying the exact `totalLine` (or, on
+  failure, nothing - the capped fallback stays, and `AEM_COUNT_FAILED` is logged).
+  The count is not a nested call: no billet, no journal entry of its own. It is
+  aborted on loop end, on turn cancel, and on `hasMore: false`; a replayed
+  transcript settles a leftover `totalPending` (`TranscriptStore.settlePendingTotals`).
+  See `docs/verification.md` "An accurate search total (2026-10-13)".
 - `aem_semantic_search` is the second composite, and the first **stateful**
   one: the model must judge, so the tool runs in two kinds of call keyed by a
   `searchId` (state held in the executor's closure, at most 8 searches).
@@ -741,7 +757,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 2999 passed / 14 skipped** (+33 against the
+Current baseline: **`npm run test` → 3022 passed / 14 skipped** (+23 against the
+2999 of the previous entry - **an accurate search total**: `aem_query` sends a
+numeric `p.guessTotal=100` and reports an `exact`/`atLeast`/`unknown` total with a
+derived `hasMore` (`totalMatchesSchema.estimated` → `atLeast`), and
+`aem_query_format_ask` runs one background un-guessed count whose result updates
+the table's total line in place behind a spinner (`format_table` gained an optional
+`totalPending`), with a new `src/shared/tools/core/queryBuilder.ts`, a new logger
+code `AEM_COUNT_FAILED`, an optional `ToolHost.reportToolDiagnostic`, and a
+multi-flight AEM bridge broker (owner override of `requirements-decisions.md` §6 /
+`implementation-plan.md` Step 06 - see `docs/verification.md` "An accurate search
+total (2026-10-13)"). Before that it was 2999 (+33 against the
 2966 of the previous entry - **priority search paths**: a project gains
 `contentPriorityPaths` (Settings "Projects" → "Priority paths"), `environment_facts`
 reports `priorityPaths` per host, and `aem_query` returns results from those paths
@@ -1240,13 +1266,20 @@ not `kind: "ok"`, and the body is **not** parsed for you.
 serverRevision, navigationEpoch, deadlineMs` — `deadlineMs`, not
 `issuedAt`/`deadlineAt`.
 
-**QueryBuilder.** `p.guessTotal=true` returns no "this is a guess" field, so
-totals are `estimated` by default; the only provable exact case is
-`more === false && offset + returned === total`. `p.properties` is
-**space**-separated. `group.p.or`-style keys round-trip because `queryUrl.ts`
-never inspects key shape. **HTTP 200 + valid JSON + `success: false` means the
-query was rejected, not that it matched nothing**; a *missing* `success` flag is
-treated as rejection.
+**QueryBuilder.** `aem_query` sends a numeric `p.guessTotal=TOTAL_GUESS_CAP`
+(100), not `p.guessTotal=true`. With a numeric cap: below the cap QueryBuilder
+enumerates everything and the reported `total` is **exact**; at or above it,
+`total` is the cap and `more` is `true`. Crucially, with a numeric guess **`more`
+means "there are more matches than `total`"**, not "there is a page after this
+one" - so a 43-match result reports `total: 43, more: false` and still has further
+pages. `readQueryEnvelope` (`src/shared/tools/core/queryBuilder.ts`) therefore
+derives `hasMore` (`offset + returned < total` when `more` is `false`) and
+classifies the total `exact` / `atLeast` / `unknown`. `p.properties` is
+**space**-separated. `group.p.or`-style keys round-trip because the builder never
+inspects key shape. **HTTP 200 + valid JSON + `success: false` means the query was
+rejected, not that it matched nothing**; a *missing* `success` flag is treated as
+rejection. *(Documented, not yet verified against a real AEM here - see
+`docs/compatibility.md` §11.0.)*
 
 **HTTP 414** maps to `url_too_long` — an explicit error, never a reason to
 switch to POST.

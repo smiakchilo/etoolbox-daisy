@@ -6,34 +6,36 @@ import {
   type CurrentAemToolContext,
   type HasMore,
   type IdGenerator,
-  type JsonObject,
   type JsonValue,
   type PrioritySegment,
   type PropertySelection,
+  type QueryEnvelope,
   type RequestId,
   type RequiredAction,
-  type Result,
   type ToolDescriptor,
   type ToolErrorCode,
   type ToolOutcome,
+  type TotalMatches,
   brokerErrorKey,
+  buildQueryUrl,
   classifyAemResponse,
   createToolExecutor,
+  DEFAULT_PROJECTION,
   effectiveRoots,
   envelopeCommonShape,
-  err,
   hasMoreSchema,
   jcrPathSchema,
   jsonValueSchema,
-  ok,
   originSchema,
-  parseOrigin,
+  PATH_PROPERTY,
   planPrioritySegments,
   propertiesSelectionSchema,
   propertySelectionSchema,
+  readQueryEnvelope,
   renderHasMore,
   renderSelection,
   requestIdSchema,
+  totalMatchesSchema,
 } from '../../shared';
 
 /**
@@ -241,22 +243,6 @@ export type AemQueryRequest = z.infer<typeof aemQueryRequestSchema>;
 // Success result and model rendering
 // ---------------------------------------------------------------------------
 
-/**
- * The total number of matches, together with how much that number can be
- * trusted. Modelled as a discriminated union rather than a `total: number`
- * beside a separate `totalIsEstimate: boolean`, because those two fields can
- * disagree. `"estimated"` is the normal case: the application always sends
- * `p.guessTotal=true`, so QueryBuilder is explicitly permitted to stop counting
- * early.
- */
-export const totalMatchesSchema = z.discriminatedUnion('accuracy', [
-  z.object({ accuracy: z.literal('exact'), value: z.number().int().nonnegative() }).strict(),
-  z.object({ accuracy: z.literal('estimated'), value: z.number().int().nonnegative() }).strict(),
-  z.object({ accuracy: z.literal('unknown') }).strict(),
-]);
-
-export type TotalMatches = z.infer<typeof totalMatchesSchema>;
-
 export const paginationMetadataSchema = z
   .object({
     offset: z.number().int().nonnegative(),
@@ -311,8 +297,8 @@ function renderTotal(total: TotalMatches): string {
   switch (total.accuracy) {
     case 'exact':
       return `${String(total.value)} match(es) in total`;
-    case 'estimated':
-      return `approximately ${String(total.value)} match(es) in total (estimated, not an exact count)`;
+    case 'atLeast':
+      return `at least ${String(total.value)} match(es) in total (a lower bound, not an exact count)`;
     case 'unknown':
       return 'the total number of matches is unknown';
   }
@@ -347,219 +333,6 @@ export function renderQuerySuccess(result: AemQuerySuccess): string {
     `Rows: ${JSON.stringify(result.rows)}`,
   );
   return lines.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// QueryBuilder request URL
-// ---------------------------------------------------------------------------
-
-const QUERYBUILDER_ENDPOINT_PATH = '/bin/querybuilder.json';
-
-const APPLICATION_OWNED_PARAMETERS = [
-  'p.limit',
-  'p.offset',
-  'p.hits',
-  'p.properties',
-  'p.nodedepth',
-  'p.guessTotal',
-  'p.facets',
-] as const;
-
-const DEFAULT_PROJECTION = ['jcr:path', 'jcr:primaryType', 'jcr:title'] as const;
-const PATH_PROPERTY = 'jcr:path';
-
-export type BuildQueryUrlError =
-  | { readonly kind: 'invalid_origin' }
-  | { readonly kind: 'reserved_parameter'; readonly parameter: string }
-  | { readonly kind: 'unencodable_predicate' }
-  | { readonly kind: 'query_not_preserved' };
-
-export interface BuildQueryUrlOptions {
-  readonly origin: string;
-  readonly predicates: Readonly<Record<string, string>>;
-  readonly offset: number;
-  readonly limit: number;
-  readonly properties?: readonly string[] | undefined;
-}
-
-export interface BuiltQueryUrl {
-  readonly url: string;
-  readonly projectedProperties: readonly string[];
-}
-
-function resolveProjection(requested: readonly string[] | undefined): readonly string[] {
-  if (requested === undefined) {
-    return [...DEFAULT_PROJECTION];
-  }
-  const resolved = [PATH_PROPERTY];
-  for (const name of requested) {
-    if (!resolved.includes(name)) {
-      resolved.push(name);
-    }
-  }
-  return resolved;
-}
-
-/**
- * Composes the QueryBuilder request URL. Serialization goes through
- * `URLSearchParams` rather than string concatenation, so a predicate value
- * containing `&`, `=`, `#`, or a newline cannot introduce a parameter,
- * terminate the query, or start a fragment. The composed URL is re-parsed and
- * every application-owned parameter required to appear exactly once with
- * exactly the intended value.
- */
-export function buildQueryUrl(
-  options: BuildQueryUrlOptions,
-): Result<BuiltQueryUrl, BuildQueryUrlError> {
-  const originResult = parseOrigin(options.origin);
-  if (!originResult.ok) {
-    return err({ kind: 'invalid_origin' });
-  }
-
-  for (const reserved of APPLICATION_OWNED_PARAMETERS) {
-    if (Object.prototype.hasOwnProperty.call(options.predicates, reserved)) {
-      return err({ kind: 'reserved_parameter', parameter: reserved });
-    }
-  }
-
-  const projectedProperties = resolveProjection(options.properties);
-
-  const params = new URLSearchParams();
-  try {
-    for (const [key, value] of Object.entries(options.predicates)) {
-      // Ordinary scoped predicates - `group.p.or`, `1_group.p.or`,
-      // `group.1_property`, `daterange.lowerBound` - are just keys here.
-      // Nothing inspects a key's shape, so dotted and numeric group syntax
-      // round-trips unchanged by construction.
-      params.append(key, value);
-    }
-    params.append('p.offset', String(options.offset));
-    params.append('p.limit', String(options.limit));
-    params.append('p.hits', 'selective');
-    params.append('p.properties', projectedProperties.join(' '));
-    params.append('p.nodedepth', '0');
-    params.append('p.guessTotal', 'true');
-    params.append('p.facets', 'false');
-  } catch {
-    return err({ kind: 'unencodable_predicate' });
-  }
-
-  const search = params.toString();
-  const candidate = `${originResult.origin}${QUERYBUILDER_ENDPOINT_PATH}?${search}`;
-
-  let url: URL;
-  try {
-    url = new URL(candidate);
-  } catch {
-    return err({ kind: 'query_not_preserved' });
-  }
-
-  if (
-    url.origin !== originResult.origin ||
-    url.pathname !== QUERYBUILDER_ENDPOINT_PATH ||
-    url.hash !== ''
-  ) {
-    return err({ kind: 'query_not_preserved' });
-  }
-
-  const parsed = url.searchParams;
-  const expected: ReadonlyArray<readonly [string, string]> = [
-    ['p.offset', String(options.offset)],
-    ['p.limit', String(options.limit)],
-    ['p.hits', 'selective'],
-    ['p.properties', projectedProperties.join(' ')],
-    ['p.nodedepth', '0'],
-    ['p.guessTotal', 'true'],
-    ['p.facets', 'false'],
-  ];
-  for (const [name, value] of expected) {
-    const values = parsed.getAll(name);
-    if (values.length !== 1 || values[0] !== value) {
-      return err({ kind: 'query_not_preserved' });
-    }
-  }
-
-  return ok({ url: url.toString(), projectedProperties });
-}
-
-// ---------------------------------------------------------------------------
-// QueryBuilder response envelope
-// ---------------------------------------------------------------------------
-
-export type QueryEnvelopeOutcome =
-  | { readonly kind: 'ok'; readonly value: QueryEnvelope }
-  | { readonly kind: 'query_rejected' }
-  | { readonly kind: 'malformed_envelope' };
-
-export interface QueryEnvelope {
-  readonly hits: readonly JsonValue[];
-  /** `"unknown"` when QueryBuilder sent no `more` flag - never defaulted to `false`. */
-  readonly hasMore: HasMore;
-  readonly total: TotalMatches;
-}
-
-function readNonNegativeInteger(value: JsonValue | undefined): number | undefined {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
-}
-
-/**
- * Decides how much the reported total can be trusted. The single provable
- * exception to `"estimated"`: when the server says there are no further results
- * (`more: false`) and the rows on this page account for the whole reported
- * total, the count has been enumerated end to end.
- */
-function classifyTotal(
-  reportedTotal: number | undefined,
-  hasMore: HasMore,
-  offset: number,
-  returned: number,
-): TotalMatches {
-  if (reportedTotal === undefined) {
-    return { accuracy: 'unknown' };
-  }
-  if (hasMore === false && offset + returned === reportedTotal) {
-    return { accuracy: 'exact', value: reportedTotal };
-  }
-  return { accuracy: 'estimated', value: reportedTotal };
-}
-
-export interface ReadQueryEnvelopeInput {
-  readonly body: JsonObject;
-  readonly offset: number;
-}
-
-/**
- * Reads a QueryBuilder body into a {@link QueryEnvelope}, or names why it is
- * not usable.
- *
- * This module exists because QueryBuilder does not use HTTP to report query
- * failures: a rejected predicate comes back as HTTP 200 with well-formed JSON
- * whose `success` field is `false` and whose `hits` array is absent or empty.
- * `success` is required to be the literal boolean `true`; a missing flag is
- * treated as a rejection, not an optimistic success.
- */
-export function readQueryEnvelope(input: ReadQueryEnvelopeInput): QueryEnvelopeOutcome {
-  const { body } = input;
-
-  if (body['success'] !== true) {
-    return { kind: 'query_rejected' };
-  }
-
-  const hits = body['hits'];
-  if (!Array.isArray(hits)) {
-    return { kind: 'malformed_envelope' };
-  }
-
-  const more = body['more'];
-  const hasMore: HasMore = typeof more === 'boolean' ? more : 'unknown';
-  const total = classifyTotal(
-    readNonNegativeInteger(body['total']),
-    hasMore,
-    input.offset,
-    hits.length,
-  );
-
-  return { kind: 'ok', value: { hits, hasMore, total } };
 }
 
 // ---------------------------------------------------------------------------
@@ -858,7 +631,7 @@ function mergeTotals(values: readonly TotalMatches[]): TotalMatches {
     if (total.accuracy !== 'exact') allExact = false;
   }
   if (!anyKnown) return { accuracy: 'unknown' };
-  return allExact ? { accuracy: 'exact', value: sum } : { accuracy: 'estimated', value: sum };
+  return allExact ? { accuracy: 'exact', value: sum } : { accuracy: 'atLeast', value: sum };
 }
 
 /**
@@ -986,10 +759,10 @@ async function executePrioritizedQuery(
       if (!probe.ok) return toolError(probe.key, requestId);
       const found = probe.value.envelope;
       if (found.hits.length > 0) {
-        // The probe's own total is a one-row guess; counting it would inflate the
-        // total past what was read ("22+" after a 20-row page). It only makes the
-        // total a lower bound.
-        totals.push({ accuracy: 'estimated', value: 0 });
+        // The probe's own total is a one-row lower bound; counting it would
+        // inflate the total past what was read ("22+" after a 20-row page). It
+        // only makes the total a lower bound.
+        totals.push({ accuracy: 'atLeast', value: 0 });
         hasMores.push(true);
       } else {
         totals.push(found.total);

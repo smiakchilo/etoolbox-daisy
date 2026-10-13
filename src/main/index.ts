@@ -583,6 +583,11 @@ if (!gotSingleInstanceLock) {
           toolLogger.classification({ requestId, kind });
         },
         reportToolProgress: (toolCallId, text) => lateBoundToolProgress.report(toolCallId, text),
+        // Diagnostics only: a search's background honest count that did not
+        // prove an exact total - the table silently keeps its capped fallback.
+        reportToolDiagnostic: (code) => {
+          logger.info(code);
+        },
       },
       onFailure: (failure) => {
         // The logger has no free-text field by design, so the reason goes to stderr.

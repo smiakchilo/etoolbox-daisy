@@ -40,7 +40,7 @@ function queryPage(paths: readonly string[], hasMore: boolean | 'unknown'): Json
     ok: true,
     operation: 'aem_query',
     rows: paths.map((path) => ({ 'jcr:path': path })),
-    pagination: { hasMore, total: { accuracy: 'estimated', value: 7 } },
+    pagination: { hasMore, total: { accuracy: 'atLeast', value: 7 } },
     textResultForLlm: 'rows',
     resultType: 'success',
   };
@@ -450,9 +450,10 @@ describe('extractExcerpts', () => {
 });
 
 describe('describeSemanticTotal', () => {
-  it('words exact, estimated and unknown totals', () => {
+  it('words exact, at-least and unknown totals', () => {
     expect(describeSemanticTotal({ accuracy: 'exact', value: 3 }, false)).toBe('3');
-    expect(describeSemanticTotal({ accuracy: 'estimated', value: 9 }, true)).toBe('9+');
+    expect(describeSemanticTotal({ accuracy: 'atLeast', value: 9 }, true)).toBe('9+');
+    expect(describeSemanticTotal({ accuracy: 'atLeast', value: 9 }, false)).toBe('at least 9');
     expect(describeSemanticTotal(undefined, undefined)).toBe('unknown');
   });
 });

@@ -14,6 +14,7 @@ import {
   classifyAemResponse,
   computeDeadline,
   createToolError,
+  describeTotalValues,
   err,
   jsonValueSchema,
   newRequestId,
@@ -164,18 +165,12 @@ function isRecord(value: unknown): value is Readonly<Record<string, JsonValue>> 
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A total as words, never a bare number: an estimate stays an estimate. */
+/** A total as words, never a bare number: a lower bound stays a lower bound. */
 export function describeSemanticTotal(
   total: JsonValue | undefined,
   hasMore: JsonValue | undefined,
 ): string {
-  if (!isRecord(total)) return 'unknown';
-  const value = total['value'];
-  if (total['accuracy'] === 'exact' && typeof value === 'number') return String(value);
-  if (total['accuracy'] === 'estimated' && typeof value === 'number') {
-    return hasMore === true ? `${String(value)}+` : `approximately ${String(value)}`;
-  }
-  return 'unknown';
+  return describeTotalValues(total, hasMore);
 }
 
 /**

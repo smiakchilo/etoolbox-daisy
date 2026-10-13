@@ -57,6 +57,13 @@ export interface BrokerDeps {
   /** The live serverRevision + navigationEpoch, read fresh at every decision point. */
   readonly currentContext: () => CurrentAemContext;
   /**
+   * How many requests may be in flight at once. Defaults to
+   * {@link DEFAULT_MAX_CONCURRENT_AEM_REQUESTS}. Requests beyond the limit wait
+   * in FIFO order. Exposed so a test can pin a single slot and exercise the
+   * per-slot rules deterministically.
+   */
+  readonly maxConcurrentRequests?: number;
+  /**
    * Optional diagnostics sink. When supplied, every request logs
    * `AEM_REQUEST_STARTED` when it reaches the view and `AEM_REQUEST_COMPLETED`
    * when it settles, with its duration, HTTP status (when there is one) and a
@@ -140,12 +147,28 @@ function replyToOutcome(reply: AemBridgeReply): BrokerOutcome {
   }
 }
 
+/**
+ * How many AEM requests may be in flight at once by default.
+ *
+ * This **supersedes** requirements-decisions.md section 6's "allow one
+ * application AEM request at a time", by owner decision (see
+ * docs/accurate-search-total.md and docs/verification.md): a search's background
+ * honest count must run without blocking the "Load more" page it races. A
+ * small bound - not unbounded concurrency - keeps author load predictable;
+ * requests beyond it still wait in FIFO order.
+ */
+export const DEFAULT_MAX_CONCURRENT_AEM_REQUESTS = 4;
+
 export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
-  // requirements-decisions.md section 6: exactly one AEM request in flight,
-  // application-wide. `inFlight` is the single request currently sent to the
-  // view; everything else waits here in arrival order.
+  const maxConcurrent = Math.max(
+    1,
+    deps.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_AEM_REQUESTS,
+  );
+  // Up to `maxConcurrent` requests are sent to the view at once; everything
+  // else waits here in arrival order, and a slot freeing always dispatches the
+  // head of the queue, so dispatch stays FIFO.
   const queue: PendingRequest[] = [];
-  let inFlight: PendingRequest | undefined;
+  const inFlight = new Set<PendingRequest>();
 
   /**
    * The only place a pending request's promise is ever resolved.
@@ -170,7 +193,7 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
     entry.settled = true;
     entry.cancelTimer?.();
     entry.cancelTimer = undefined;
-    if (inFlight === entry) inFlight = undefined;
+    inFlight.delete(entry);
     const durationMs = Math.max(0, deps.clock() - entry.queuedAt);
     deps.logger?.info('AEM_REQUEST_COMPLETED', {
       durationMs,
@@ -196,16 +219,15 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
   }
 
   /**
-   * Drives the queue forward. Only ever sends the head of the queue once
-   * nothing is in flight, so "concurrency exactly 1" is a property of this
-   * loop rather than something every caller has to remember to preserve.
-   * Every exit from a request's pending state - reply, timeout, cancel,
-   * no-view - calls back into this function so the next queued request (if
-   * any) gets its turn.
+   * Drives the queue forward: dispatches the head of the queue while fewer than
+   * `maxConcurrent` requests are in flight, so dispatch stays FIFO and the
+   * bound is a property of this loop rather than something every caller
+   * preserves. Every exit from a request's pending state - reply, timeout,
+   * cancel, no-view - calls back into this function so the freed slot is
+   * refilled.
    */
   function pump(): void {
-    if (inFlight !== undefined) return;
-    while (queue.length > 0) {
+    while (inFlight.size < maxConcurrent && queue.length > 0) {
       const entry = queue.shift();
       if (entry === undefined) break;
 
@@ -234,7 +256,7 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
         continue;
       }
 
-      inFlight = entry;
+      inFlight.add(entry);
       const remainingMs = entry.envelope.deadlineMs - deps.clock();
       entry.cancelTimer = deps.setTimer(() => {
         // `settle` below is idempotent regardless, but guarding here too means
@@ -268,25 +290,23 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
           value,
         })),
       });
-      return;
     }
   }
 
   function cancelPending(): void {
-    if (inFlight !== undefined) {
-      const current = inFlight;
+    // Every in-flight request is sent a cancel command; the ones still queued
+    // were never sent, so they need no cancel command - only the resolution the
+    // caller (stop / chat switch / server switch) needs.
+    for (const current of [...inFlight]) {
       deps.transport.sendCancel({ requestId: current.envelope.requestId });
       settle(current, { kind: 'cancelled' });
     }
-    // Queued requests were never sent, so they need no cancel command - only
-    // the resolution the caller (stop / chat switch / server switch) needs.
     const stranded = queue.splice(0, queue.length);
     for (const entry of stranded) settle(entry, { kind: 'cancelled' });
   }
 
   const unsubscribe = deps.transport.onReply((rawReply, origin) => {
-    if (inFlight === undefined) return;
-    const current = inFlight;
+    if (inFlight.size === 0) return;
 
     // Evaluated per reply, not captured at subscription time - see the
     // history on `BridgeReplyOrigin`. A forged or misrouted reply leaves the
@@ -297,7 +317,13 @@ export function createAemBridgeBroker(deps: BrokerDeps): AemBridgeBroker {
 
     const parsed = aemBridgeReplySchema.safeParse(rawReply);
     if (!parsed.success) return;
-    if (parsed.data.requestId !== current.envelope.requestId) return;
+    // The reply is matched to *its own* in-flight request by id, not to a
+    // single slot: with more than one request in flight, a reply for one must
+    // never settle another.
+    const current = [...inFlight].find(
+      (entry) => entry.envelope.requestId === parsed.data.requestId,
+    );
+    if (current === undefined) return;
 
     // Checked again on arrival, not only before sending: the view may have
     // navigated away or the server may have switched while the fetch was in

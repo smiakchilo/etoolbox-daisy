@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createAemBridgeBroker,
+  DEFAULT_MAX_CONCURRENT_AEM_REQUESTS,
   type BridgeReplyOrigin,
   type BridgeTransport,
   type BrokerDeps,
@@ -75,7 +76,7 @@ interface FakeTimer {
  * that matter here are call order and call counts, both of which a plain
  * array shows plainly.
  */
-function createHarness() {
+function createHarness(options: { readonly maxConcurrentRequests?: number } = {}) {
   const sendFetchCalls: string[] = [];
   const sendCancelCalls: string[] = [];
   const timers: FakeTimer[] = [];
@@ -113,6 +114,10 @@ function createHarness() {
       };
     },
     currentContext: () => context,
+    // The per-slot rule tests (FIFO, staleness, cancel) pin a single slot so
+    // their orderings are deterministic. The multi-flight behaviour of the
+    // production default is proved by the dedicated test below.
+    maxConcurrentRequests: options.maxConcurrentRequests ?? 1,
   };
 
   return {
@@ -496,6 +501,59 @@ describe('createAemBridgeBroker', () => {
     });
     // The stale timer callback must not have sent a second, pointless cancel.
     expect(harness.sendCancelCalls).toEqual([]);
+  });
+});
+
+describe('createAemBridgeBroker - concurrency', () => {
+  /** A two-slot broker with three requests issued, so the third waits in the queue. */
+  function twoSlotBroker() {
+    const harness = createHarness({ maxConcurrentRequests: 2 });
+    const broker = createAemBridgeBroker(harness.deps);
+    const a = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
+    const b = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
+    const c = trackOutcome(broker.request(makeEnvelope('req-c'), 'https://c.example'));
+    return { harness, broker, a, b, c };
+  }
+
+  it('sends up to the concurrency limit at once, and dispatches the next as a slot frees', async () => {
+    const { harness, a, b, c } = twoSlotBroker();
+
+    // Two requests in flight at once; the third waits, so dispatch stays FIFO.
+    expect(harness.sendFetchCalls).toEqual(['req-a', 'req-b']);
+
+    harness.fireReply(okReply('req-a'));
+    await flushMicrotasks();
+    expect(a.value()?.kind).toBe('response');
+    // A slot freed: the queued request is sent while req-b is still in flight.
+    expect(harness.sendFetchCalls).toEqual(['req-a', 'req-b', 'req-c']);
+    expect(b.isSettled()).toBe(false);
+
+    // A reply for one in-flight request never settles another.
+    harness.fireReply(okReply('req-b'));
+    await flushMicrotasks();
+    expect(b.value()?.kind).toBe('response');
+    expect(c.isSettled()).toBe(false);
+
+    harness.fireReply(okReply('req-c'));
+    await flushMicrotasks();
+    expect(c.value()?.kind).toBe('response');
+  });
+
+  it('defaults to more than one concurrent request', () => {
+    expect(DEFAULT_MAX_CONCURRENT_AEM_REQUESTS).toBeGreaterThan(1);
+  });
+
+  it('cancelAll cancels every in-flight request and every queued one', async () => {
+    const { harness, broker, a, b, c } = twoSlotBroker();
+
+    broker.cancelAll();
+    await flushMicrotasks();
+
+    expect(a.value()).toEqual({ kind: 'cancelled' });
+    expect(b.value()).toEqual({ kind: 'cancelled' });
+    expect(c.value()).toEqual({ kind: 'cancelled' });
+    // A cancel command for each in-flight request; none for the queued one.
+    expect(harness.sendCancelCalls).toEqual(['req-a', 'req-b']);
   });
 });
 

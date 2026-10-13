@@ -223,7 +223,7 @@ describe('describeToolCall - aem_semantic_search', () => {
         page: 2,
         candidatesRead: 100,
         matchesShown: 3,
-        total: { accuracy: 'estimated', value: 140 },
+        total: { accuracy: 'atLeast', value: 140 },
         hasMore: true,
       },
     );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildQueryUrl } from '../../../../src/tools/aem-query/aemQuery';
-import { aemQueryArgsSchema } from '../../../../src/tools/aem-query/aemQuery';
+import { buildQueryUrl } from '../../../../../src/shared';
+import { aemQueryArgsSchema } from '../../../../../src/tools/aem-query/aemQuery';
 
 const ORIGIN = 'https://author.example';
 
@@ -19,6 +19,10 @@ function build(
     limit: args.limit,
     properties: args.properties,
   });
+}
+
+function buildCount(predicates: Record<string, string>) {
+  return buildQueryUrl({ mode: 'count', origin: ORIGIN, predicates });
 }
 
 function urlOf(result: ReturnType<typeof build>): URL {
@@ -132,9 +136,9 @@ describe('buildQueryUrl - application-owned output parameters', () => {
     }
   });
 
-  it('sets guessTotal, disables facets, and pins nodedepth to 0', () => {
+  it('sends the capped numeric guessTotal, disables facets, and pins nodedepth to 0', () => {
     const url = urlOf(build({ path: '/content/site' }));
-    expect(url.searchParams.get('p.guessTotal')).toBe('true');
+    expect(url.searchParams.get('p.guessTotal')).toBe('100');
     expect(url.searchParams.get('p.facets')).toBe('false');
     expect(url.searchParams.get('p.nodedepth')).toBe('0');
     expect(url.searchParams.get('p.hits')).toBe('selective');
@@ -144,6 +148,34 @@ describe('buildQueryUrl - application-owned output parameters', () => {
     const url = urlOf(build({ path: '/content/site', 'p.limit ': '9' }));
     expect(url.searchParams.getAll('p.limit')).toEqual(['50']);
     expect(url.searchParams.getAll('p.offset')).toEqual(['0']);
+  });
+});
+
+describe('buildQueryUrl - count mode', () => {
+  it('sends no guessTotal, offset 0, limit 1 and only jcr:path', () => {
+    const result = buildCount({ path: '/content/site', type: 'cq:Page' });
+    const url = urlOf(result);
+    expect(url.searchParams.getAll('p.guessTotal')).toEqual([]);
+    expect(url.searchParams.get('p.offset')).toBe('0');
+    expect(url.searchParams.get('p.limit')).toBe('1');
+    expect(url.searchParams.get('p.properties')).toBe('jcr:path');
+    expect(url.searchParams.get('p.hits')).toBe('selective');
+    expect(url.searchParams.get('p.nodedepth')).toBe('0');
+    expect(url.searchParams.get('p.facets')).toBe('false');
+    // The predicates themselves are untouched.
+    expect(url.searchParams.get('path')).toBe('/content/site');
+    expect(url.searchParams.get('type')).toBe('cq:Page');
+    if (result.ok) expect(result.value.projectedProperties).toEqual(['jcr:path']);
+  });
+
+  it('still refuses a predicate that names an application-owned parameter', () => {
+    const result = buildQueryUrl({
+      mode: 'count',
+      origin: ORIGIN,
+      predicates: { 'p.guessTotal': '1' },
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe('reserved_parameter');
   });
 });
 

@@ -69,23 +69,36 @@ describe('normalizeFormatTable', () => {
     expect(normalized?.rows).toEqual([['/a', 'T']]);
   });
 
-  it('renders the query total as a Total line, never a bare number', () => {
+  it('renders a lower-bound total as an at-least line, never a bare number', () => {
+    const normalized = normalizeFormatTable(
+      { rows: [], pagination: { total: { accuracy: 'atLeast', value: 900 } } },
+      'new',
+    );
+    expect(normalized?.total).toBe('Total: at least 900 results');
+  });
+
+  it('reads a legacy `estimated` total as the same lower bound', () => {
     const normalized = normalizeFormatTable(
       { rows: [], pagination: { total: { accuracy: 'estimated', value: 900 } } },
       'new',
     );
-    expect(normalized?.total).toBe('Total: approximately 900 results');
+    expect(normalized?.total).toBe('Total: at least 900 results');
   });
 
-  it('renders an estimated total with hasMore:true as an open-ended lower bound', () => {
+  it('renders a lower-bound total with hasMore:true as an open-ended lower bound', () => {
     const normalized = normalizeFormatTable(
       {
         rows: [],
-        pagination: { hasMore: true, total: { accuracy: 'estimated', value: 20 } },
+        pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 20 } },
       },
       'new',
     );
     expect(normalized?.total).toBe('Total: 20+ results');
+  });
+
+  it('marks the table as counting when totalPending is set', () => {
+    const normalized = normalizeFormatTable({ rows: [] }, 'new', undefined, true);
+    expect(normalized?.totalPending).toBe(true);
   });
 
   it('accepts an exact, a zero, and a top-level total', () => {
@@ -124,8 +137,8 @@ describe('normalizeFormatTable', () => {
     const text = [
       'AEM query against https://x (revision 1, fetched at 5)',
       'Returned 2 row(s) at offset 0 with limit 2; more results exist beyond this page - ' +
-        'request the next page at a higher offset; approximately 2 match(es) in total ' +
-        '(estimated, not an exact count)',
+        'request the next page at a higher offset; at least 2 match(es) in total ' +
+        '(a lower bound, not an exact count)',
       'Selection: none',
       'Rows: [{"jcr:path":"/content/a"},{"jcr:path":"/content/b"}]',
     ].join('\n');
@@ -164,6 +177,11 @@ describe('formatTableArgsSchema', () => {
     expect(formatTableArgsSchema.safeParse({ data: [], totalLine: 'x'.repeat(201) }).success).toBe(
       false,
     );
+  });
+
+  it('accepts an optional totalPending flag', () => {
+    expect(formatTableArgsSchema.parse({ data: [] }).totalPending).toBeUndefined();
+    expect(formatTableArgsSchema.parse({ data: [], totalPending: true }).totalPending).toBe(true);
   });
 
   it('rejects an unknown key (strict)', () => {
@@ -225,6 +243,13 @@ describe('format_table transcript composition', () => {
     });
     expect(message?.mode).toBe('append');
     expect(message?.total).toBe('Total: 1 result');
+  });
+
+  it('reads the totalPending flag off the call arguments', () => {
+    expect(renderer.readTableMessage?.({ data: { rows: [] } })?.totalPending).toBe(false);
+    expect(
+      renderer.readTableMessage?.({ data: { rows: [] }, totalPending: true })?.totalPending,
+    ).toBe(true);
   });
 
   it('lets totalLine replace the derived total, and ignores a blank one', () => {

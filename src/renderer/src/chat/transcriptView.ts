@@ -143,6 +143,8 @@ interface RenderedTable {
   readonly columns: readonly string[];
   readonly rows: readonly (readonly string[])[];
   readonly total: string | undefined;
+  /** Whether the total line currently wears its "counting" spinner. */
+  readonly totalPending: boolean;
   /** `linkContextSignature` of the context the current hrefs resolved against. */
   readonly context: string;
   /** The rendered `<sp-table>`, when the run has at least one row. */
@@ -173,16 +175,15 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * The *content* of a rendered table run - mode, total, columns and rows - with
- * no link context. This is the signature `repaint` compares across repaints to
- * decide a run was **updated by code** (a `Load more` page appended to it): a
- * `Path` cell whose href merely re-resolved against a new host is a re-render,
- * not an update, and must not force the transcript to reveal the table.
+ * The *rows* of a rendered run - its columns and rows, with neither the total
+ * line nor the spinner. This is the signature `repaint` compares to decide a
+ * run was grown by a `Load more` page, and so must be **revealed** to a reader.
+ * A late count only changes the total line/`totalPending`; that must not yank a
+ * reader who has scrolled up (a UX decision recorded in docs/accurate-search-total.md
+ * section 3.4).
  */
-function tableRunContentSignature(message: ToolTableMessage): string {
+function tableRunRowsSignature(message: ToolTableMessage): string {
   return [
-    message.mode,
-    message.total ?? '',
     message.table.columns.join('\u0001'),
     message.table.rows.map((row) => row.join('\u0001')).join('\u0002'),
   ].join('\u0000');
@@ -742,11 +743,38 @@ export function createTranscriptView(
     return rowEl;
   }
 
+  /** The `sp-progress-circle` a counting total line wears in front of its text. */
+  function createTotalSpinner(): HTMLElement {
+    return el('sp-progress-circle', {
+      attrs: {
+        class: 'chat-table-message__total-spinner',
+        size: 's',
+        indeterminate: '',
+        label: 'Counting all results',
+      },
+    });
+  }
+
+  /** The total line as first rendered: an optional spinner, then the optional text. */
+  function createTotalLine(
+    total: string | undefined,
+    totalPending: boolean,
+  ): HTMLElement | undefined {
+    if (total === undefined && !totalPending) return undefined;
+    const node = el('p', { attrs: { class: 'chat-table-message__total' } });
+    if (totalPending) node.append(createTotalSpinner());
+    if (total !== undefined) {
+      node.append(el('span', { attrs: { class: 'chat-table-message__total-text' }, text: total }));
+    }
+    return node;
+  }
+
   /**
    * Renders one run's table as the assistant **message**: a Spectrum `<sp-table>`
-   * with a leading `#` row-number column and, beneath it, an optional total line.
-   * The columns come from the accumulated `format_table` calls; a zero-row run
-   * renders only its total line (no empty table).
+   * with a leading `#` row-number column and, beneath it, an optional total line
+   * (with a spinner while an exact total is still being counted). The columns
+   * come from the accumulated `format_table` calls; a zero-row run renders only
+   * its total line (no empty table).
    */
   function renderTableMessage(message: ToolTableMessage): readonly HTMLElement[] {
     const nodes: HTMLElement[] = [];
@@ -769,32 +797,48 @@ export function createTranscriptView(
       tableEl.append(head, body);
       nodes.push(tableEl);
     }
-    if (message.total !== undefined) {
-      nodes.push(el('p', { attrs: { class: 'chat-table-message__total' }, text: message.total }));
-    }
+    const totalLine = createTotalLine(message.total, message.totalPending);
+    if (totalLine !== undefined) nodes.push(totalLine);
     return nodes;
   }
 
   /**
    * Writes a table message's total line into `shell`, reusing `existing` when
    * there is one and creating or removing the node as the message gains or
-   * loses a total. Returns the node now in place, for the next call to reuse.
+   * loses a total. The spinner is added or removed **in place** - the `<p>` and
+   * its text node are never recreated, so the spinner's animation does not
+   * restart on a repaint (the same rule as a running billet's progress line).
+   * Returns the node now in place, for the next call to reuse.
    */
   function applyTableTotal(
     shell: HTMLElement,
     existing: HTMLElement | undefined,
     total: string | undefined,
+    totalPending: boolean,
   ): HTMLElement | undefined {
-    if (total === undefined) {
+    if (total === undefined && !totalPending) {
       existing?.remove();
       return undefined;
     }
-    if (existing !== undefined) {
-      if (existing.textContent !== total) existing.textContent = total;
-      return existing;
+    let node = existing;
+    if (node === undefined) {
+      node = el('p', { attrs: { class: 'chat-table-message__total' } });
+      shell.append(node);
     }
-    const node = el('p', { attrs: { class: 'chat-table-message__total' }, text: total });
-    shell.append(node);
+    const spinner = node.querySelector<HTMLElement>('.chat-table-message__total-spinner');
+    if (totalPending && spinner === null) {
+      node.prepend(createTotalSpinner());
+    } else if (!totalPending && spinner !== null) {
+      spinner.remove();
+    }
+    const text = node.querySelector<HTMLElement>('.chat-table-message__total-text');
+    if (total === undefined) {
+      text?.remove();
+    } else if (text === null) {
+      node.append(el('span', { attrs: { class: 'chat-table-message__total-text' }, text: total }));
+    } else if (text.textContent !== total) {
+      text.textContent = total;
+    }
     return node;
   }
 
@@ -818,6 +862,7 @@ export function createTranscriptView(
       previous !== undefined &&
       previous.context === context &&
       previous.total === message.total &&
+      previous.totalPending === message.totalPending &&
       sameStrings(previous.columns, columns) &&
       previous.rows.length === rows.length &&
       previous.rows.every((row, index) => sameStrings(row, rows[index] ?? []))
@@ -836,8 +881,14 @@ export function createTranscriptView(
       for (let index = previous.rows.length; index < rows.length; index += 1) {
         previous.body.append(renderTableRow(rows[index] ?? [], columns, index));
       }
-      const totalEl = applyTableTotal(shell, previous.totalEl, message.total);
-      renderedTables.set(shell, { ...previous, rows, total: message.total, totalEl });
+      const totalEl = applyTableTotal(shell, previous.totalEl, message.total, message.totalPending);
+      renderedTables.set(shell, {
+        ...previous,
+        rows,
+        total: message.total,
+        totalPending: message.totalPending,
+        totalEl,
+      });
       return;
     }
     shell.replaceChildren(...renderTableMessage(message));
@@ -845,6 +896,7 @@ export function createTranscriptView(
       columns,
       rows,
       total: message.total,
+      totalPending: message.totalPending,
       context,
       table: shell.querySelector<HTMLElement>('sp-table') ?? undefined,
       body: shell.querySelector<HTMLElement>('sp-table-body') ?? undefined,
@@ -885,6 +937,7 @@ export function createTranscriptView(
         readonly rows: readonly (readonly string[])[];
       }[];
       total: string | undefined;
+      totalPending: boolean;
     }
     let current: Run | undefined;
 
@@ -906,6 +959,7 @@ export function createTranscriptView(
         messages.set(lastKey, {
           mode: 'new',
           total: run.total,
+          totalPending: run.totalPending,
           table: { columns: run.columns, rows, status: '', mayHaveMore: false },
         });
         runIds.set(lastKey, firstKey);
@@ -933,7 +987,7 @@ export function createTranscriptView(
       }
       if (message.mode === 'new' || current === undefined) {
         flush();
-        current = { keys: [key], columns: [], pages: [], total: undefined };
+        current = { keys: [key], columns: [], pages: [], total: undefined, totalPending: false };
       } else {
         current.keys.push(key);
       }
@@ -942,6 +996,10 @@ export function createTranscriptView(
       }
       current.pages.push({ columns: message.table.columns, rows: message.table.rows });
       current.total = message.total ?? current.total;
+      // The run's **last** call decides the flag, exactly as it decides the
+      // total - so a page appended mid-count keeps the spinner and the settle
+      // call clears it.
+      current.totalPending = message.totalPending;
     }
     flush();
     return { skip, messages, runIds };
@@ -1183,7 +1241,10 @@ export function createTranscriptView(
         if (tableMessage !== undefined) {
           const runId = runIds.get(key);
           if (runId !== undefined) {
-            const signature = tableRunContentSignature(tableMessage);
+            // Reveal only when the run gained *rows* (a Load more page): a
+            // count's late total-line update must not move a reader who
+            // scrolled up.
+            const signature = tableRunRowsSignature(tableMessage);
             const previous = renderedRunSignatures.get(runId);
             if (previous !== undefined && previous !== signature) updatedMessages.push(shell);
             nextRunSignatures.set(runId, signature);

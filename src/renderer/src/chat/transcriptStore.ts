@@ -117,6 +117,15 @@ export interface TranscriptStore {
    */
   abandonRunningToolCalls(): void;
   /**
+   * Clears the "counting" flag on every `format_table` call a journal replay
+   * left mid-count, so a rebuilt transcript shows the fallback total with no
+   * spinner. Called once a replay finishes (see `journalReplay.ts`). This is the
+   * journal analogue of the composite's own settle call: a transcript reloaded
+   * after a crash, or after a turn stopped while its background count was in
+   * flight, must never spin forever. A no-op when no call is counting.
+   */
+  settlePendingTotals(): void;
+  /**
    * The reasoning text of the transient "Thinking" billet, or `""` when none
    * is being shown. Reasoning never becomes a transcript item of its own - the
    * `thinking` item carries no text - so this is the view's only way to read
@@ -528,6 +537,19 @@ export function createTranscriptStore(
       }
       runningToolCalls.clear();
       dirty = true;
+    },
+    settlePendingTotals() {
+      let changed = false;
+      for (const [toolCallId, view] of toolCalls) {
+        if (view.args['totalPending'] !== true) continue;
+        // A replayed `format_table` whose result never arrived is rewritten as
+        // a settled one: the table keeps its last total line and loses the
+        // spinner. The args are the renderer's only source of the flag (see
+        // `format-table/renderer`'s `readTableMessage`).
+        toolCalls.set(toolCallId, { ...view, args: { ...view.args, totalPending: false } });
+        changed = true;
+      }
+      if (changed) dirty = true;
     },
     thinkingReasoning() {
       return thinkingVisible() ? reasoningText : '';

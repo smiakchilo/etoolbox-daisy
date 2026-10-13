@@ -32,6 +32,15 @@ import { firstIssueMessage } from './validationIssue';
 export type ToolExecutionContext = Parameters<AemToolExecutor>[1];
 
 /**
+ * A closed vocabulary of semantic diagnostics a tool may report beyond a
+ * response classification - outcomes the application wants in its log but
+ * never shows the user. Kept in `src/shared` (a tool folder may import only
+ * the shared barrel) and deliberately tiny: the one code today is a failed
+ * background count.
+ */
+export type ToolDiagnosticCode = 'AEM_COUNT_FAILED';
+
+/**
  * What a tool may ask of the application at run time. Deliberately small: a
  * tool cannot reach the session, the settings or the window, and it reaches
  * another tool only through {@link ToolHost.invokeTool}, and only a tool it
@@ -101,6 +110,14 @@ export interface ToolHost {
    * it is never journaled, and a tool that omits it simply shows no progress.
    */
   readonly reportToolProgress?: (toolCallId: ToolCallId, text: string) => void;
+  /**
+   * Optional diagnostics sink for a semantic outcome a tool reaches that is
+   * not a response classification and never reaches the user. Today its one
+   * code is `AEM_COUNT_FAILED`: the background honest-count a search may run
+   * did not prove an exact total, so the table silently keeps its capped
+   * fallback. Diagnostics only - it never affects a tool's result.
+   */
+  readonly reportToolDiagnostic?: (code: ToolDiagnosticCode) => void;
   /**
    * Runs another enabled tool's executor directly - the tool-to-tool bridge. A
    * composite tool uses it to chain tools deterministically instead of relying
