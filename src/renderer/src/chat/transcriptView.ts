@@ -1,15 +1,18 @@
 import type { JsonValue, ToolTableMessage } from '../../../shared';
 import { el } from '../lib/dom';
 import {
+  EMPTY_AEM_LINKIFY_STATE,
   EMPTY_LINK_CONTEXT,
   MESSAGE_ACTIONS_ATTRIBUTE,
   MESSAGE_EXTERNAL_ATTRIBUTE,
   MESSAGE_LINK_ATTRIBUTE,
   parseLinkActions,
-  resolveMessageLink,
-  serializeLinkActions,
+  splitAemPathLinks,
+  type AemLinkifyState,
   type LinkContext,
+  type MessageSegment,
 } from './linkTargets';
+import { renderLinkSegment } from './linkSegmentDom';
 import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import {
@@ -153,6 +156,12 @@ interface RenderedTable {
   readonly body: HTMLElement | undefined;
   /** The total line, when one is shown, so a growth can rewrite its text. */
   readonly totalEl: HTMLElement | undefined;
+  /**
+   * The linkifier state the rows ended on (the last full AEM path), so a growth
+   * (a `Load more` page) continues the same carry-over the previous rows left -
+   * see `renderTableRow` and `splitAemPathLinks`.
+   */
+  readonly linkState: AemLinkifyState;
 }
 
 /**
@@ -559,7 +568,8 @@ export function createTranscriptView(
   // read as the same run changing rather than a new one appearing.
   let renderedRunSignatures = new Map<string, string>();
 
-  // The one travelling hover popover for pane links that offer actions. It is
+  // The one travelling hover popover for pane links (and the "partly linkified"
+  // page-relative table cells) that offer actions. It is
   // undefined in a jsdom unit test (the Spectrum overlay is not registered
   // there) and in any environment where it is; `show`/`scheduleHide` below are
   // then simply inert.
@@ -567,12 +577,21 @@ export function createTranscriptView(
     onOpenLink: (url) => options.onOpenLink?.(url),
     getContainer: () => element.closest('sp-theme') ?? document.body,
   });
-  // The link the popover is currently shown for, so repeated `pointerover`
-  // events over one link do not rebuild its buttons.
+  // The element the popover is currently shown for, so repeated `pointerover`
+  // events over one of them do not rebuild its buttons.
   let hoveredLink: HTMLElement | undefined;
 
-  function paneLinkFrom(target: EventTarget | null): HTMLAnchorElement | null {
-    return (target as Element | null)?.closest?.(`a[${MESSAGE_LINK_ATTRIBUTE}]`) ?? null;
+  /**
+   * The element under the pointer that carries a hover popover: a pane link, or
+   * a page-relative table cell (a non-anchored span stamped with
+   * `data-daisy-actions` but no `data-daisy-link`, so a click never navigates).
+   */
+  function paneLinkFrom(target: EventTarget | null): HTMLElement | null {
+    return (
+      (target as Element | null)?.closest?.(
+        `a[${MESSAGE_LINK_ATTRIBUTE}], [${MESSAGE_ACTIONS_ATTRIBUTE}]`,
+      ) ?? null
+    );
   }
 
   element.addEventListener('pointerover', (event) => {
@@ -736,54 +755,53 @@ export function createTranscriptView(
   }
 
   /**
-   * One table cell. A `Path` cell that resolves against the active host becomes
-   * an anchor carrying the same link stamps the markdown renderer uses, so the
-   * transcript's existing click/hover handling treats it exactly like a bare
-   * path in a message. Every other cell is plain text (`textContent`), never
-   * parsed as markup: these strings came from AEM and an author can put
-   * anything in a `jcr:title`.
+   * Fills a table cell from the linkifier's segments for its value. A cell with
+   * no link is plain text (`textContent`), wrapped in its column's presentation
+   * class - clamped for `Value`/`Citation`, wrapped-at-any-character for
+   * `Property`/`Node`/`Component`. A cell that is (or contains) a path renders
+   * its segments through the shared `renderLinkSegment`, so the anchor or the
+   * partial span is the cell's own content: the **value** decides whether it
+   * links, never the column header - exactly as in prose.
    */
-  function renderMessageCell(value: string, header: string): HTMLElement {
-    if (header === 'Path') {
-      const resolved = resolveMessageLink(value, getLinkContext());
-      if (resolved !== undefined) {
-        const anchor = el('a', { attrs: { href: resolved.href }, text: value });
-        anchor.setAttribute(
-          resolved.openIn === 'external' ? MESSAGE_EXTERNAL_ATTRIBUTE : MESSAGE_LINK_ATTRIBUTE,
-          '',
-        );
-        if (resolved.openIn === 'external') anchor.setAttribute('title', 'Opens in your browser');
-        if (resolved.actions.length > 0) {
-          anchor.setAttribute(MESSAGE_ACTIONS_ATTRIBUTE, serializeLinkActions(resolved.actions));
-        }
-        return anchor;
+  function appendCellContent(
+    cell: HTMLElement,
+    value: string,
+    header: string,
+    segments: readonly MessageSegment[],
+  ): void {
+    if (!segments.some((segment) => segment.kind === 'link')) {
+      const span = el('span', { text: value });
+      if (header === 'Value' || header === 'Citation') {
+        span.className = 'chat-table-message__clamp';
+      } else if (header === 'Property' || header === 'Node' || header === 'Component') {
+        span.className = 'chat-table-message__wrap';
       }
+      cell.append(span);
+      return;
     }
-    const span = el('span', { text: value });
-    // The Value/Citation column is clamped to a readable number of lines rather
-    // than letting one long quote grow its row without bound (see chat.css).
-    if (header === 'Value' || header === 'Citation') {
-      span.className = 'chat-table-message__clamp';
-    } else if (header === 'Property' || header === 'Node' || header === 'Component') {
-      // A property name or a component node's path wraps at any character,
-      // exactly like the Path column's link, so a long value cannot widen the
-      // table. `Component` is the pre-rename header, kept so an older journal
-      // replays.
-      span.className = 'chat-table-message__wrap';
-    }
-    return span;
+    for (const segment of segments) cell.append(renderLinkSegment(cell.ownerDocument, segment));
   }
 
   /**
    * One row of a run's table: the leading `#` index cell and one cell per
-   * column. Extracted so a `Load more` growth can append a row to the existing
-   * table without recreating it (see `applyTableMessage`).
+   * column. Cells are visited left to right and the linkifier's state (the last
+   * full path) is threaded from one to the next, so a page-relative
+   * `jcr:content/...` cell resolves against the page that precedes it -
+   * including when a repeated page path was blanked out of the cell above (see
+   * `createComponentNodeDisplay` in `aemQueryFormatAsk.ts`). The state is
+   * returned so the caller can thread it to the next row, or hold it for a later
+   * `Load more` append.
+   *
+   * Extracted so a `Load more` growth can append a row to the existing table
+   * without recreating it (see `applyTableMessage`).
    */
   function renderTableRow(
     row: readonly string[],
     columns: readonly string[],
     rowIndex: number,
-  ): HTMLElement {
+    state: AemLinkifyState,
+    context: LinkContext,
+  ): { readonly element: HTMLElement; readonly linkState: AemLinkifyState } {
     const rowEl = el('sp-table-row', {});
     rowEl.append(
       el('sp-table-cell', {
@@ -791,12 +809,16 @@ export function createTranscriptView(
         text: String(rowIndex + 1),
       }),
     );
+    let currentState = state;
     columns.forEach((column, columnIndex) => {
+      const value = row[columnIndex] ?? '';
       const cell = el('sp-table-cell', {});
-      cell.append(renderMessageCell(row[columnIndex] ?? '', column));
+      const linked = splitAemPathLinks(value, context, currentState);
+      currentState = linked.state;
+      appendCellContent(cell, value, column, linked.segments);
       rowEl.append(cell);
     });
-    return rowEl;
+    return { element: rowEl, linkState: currentState };
   }
 
   /** The `sp-progress-circle` a counting total line wears in front of its text. */
@@ -830,11 +852,16 @@ export function createTranscriptView(
    * with a leading `#` row-number column and, beneath it, an optional total line
    * (with a spinner while an exact total is still being counted). The columns
    * come from the accumulated `format_table` calls; a zero-row run renders only
-   * its total line (no empty table).
+   * its total line (no empty table). Returns the linkifier state the rows ended
+   * on, so an append continues the same carry-over.
    */
-  function renderTableMessage(message: ToolTableMessage): readonly HTMLElement[] {
+  function renderTableMessage(
+    message: ToolTableMessage,
+    context: LinkContext,
+  ): { readonly nodes: readonly HTMLElement[]; readonly linkState: AemLinkifyState } {
     const nodes: HTMLElement[] = [];
     const { columns, rows } = message.table;
+    let linkState = EMPTY_AEM_LINKIFY_STATE;
     if (rows.length > 0) {
       const head = el('sp-table-head', {});
       head.append(el('sp-table-head-cell', { attrs: {}, text: '#' }));
@@ -843,9 +870,11 @@ export function createTranscriptView(
       }
 
       const body = el('sp-table-body', {});
-      rows.forEach((row, index) => {
-        body.append(renderTableRow(row, columns, index));
-      });
+      for (let index = 0; index < rows.length; index += 1) {
+        const rendered = renderTableRow(rows[index] ?? [], columns, index, linkState, context);
+        body.append(rendered.element);
+        linkState = rendered.linkState;
+      }
 
       const tableEl = el('sp-table', {
         attrs: { class: 'chat-table-message__table', size: 's' },
@@ -855,7 +884,7 @@ export function createTranscriptView(
     }
     const totalLine = createTotalLine(message.total, message.totalPending);
     if (totalLine !== undefined) nodes.push(totalLine);
-    return nodes;
+    return { nodes, linkState };
   }
 
   /**
@@ -911,7 +940,8 @@ export function createTranscriptView(
    *   link-context switch that makes every href stale).
    */
   function applyTableMessage(shell: HTMLElement, message: ToolTableMessage): void {
-    const context = linkContextSignature(getLinkContext());
+    const linkContext = getLinkContext();
+    const context = linkContextSignature(linkContext);
     const { columns, rows } = message.table;
     const previous = renderedTables.get(shell);
     if (
@@ -934,23 +964,32 @@ export function createTranscriptView(
       rows.length >= previous.rows.length &&
       previous.rows.every((row, index) => sameStrings(row, rows[index] ?? []))
     ) {
+      // Continue the linkifier's carry-over from the state the already rendered
+      // rows left, so a `Load more` page's first relative path still hangs off
+      // the page above it.
+      let linkState = previous.linkState;
       for (let index = previous.rows.length; index < rows.length; index += 1) {
-        previous.body.append(renderTableRow(rows[index] ?? [], columns, index));
+        const rendered = renderTableRow(rows[index] ?? [], columns, index, linkState, linkContext);
+        previous.body.append(rendered.element);
+        linkState = rendered.linkState;
       }
       const totalEl = applyTableTotal(shell, previous.totalEl, message.total, message.totalPending);
       renderedTables.set(shell, {
         ...previous,
         rows,
+        linkState,
         total: message.total,
         totalPending: message.totalPending,
         totalEl,
       });
       return;
     }
-    shell.replaceChildren(...renderTableMessage(message));
+    const rendered = renderTableMessage(message, linkContext);
+    shell.replaceChildren(...rendered.nodes);
     renderedTables.set(shell, {
       columns,
       rows,
+      linkState: rendered.linkState,
       total: message.total,
       totalPending: message.totalPending,
       context,

@@ -501,7 +501,17 @@ src/tools/<name>/
   `textContent` - instead of a billet. `transcriptView.ts` groups
   `format_table` calls into **runs** (new starts one, append adds to it), unions
   the columns, and paints one table at the run's last call; the call lines are
-  hidden. `getDetails()` is the safety net only: `N rows` / `Rows: N`.
+  hidden. `getDetails()` is the safety net only: `N rows` / `Rows: N`. Cells go
+  through the one AEM linkifier (`splitAemPathLinks` in `linkTargets.ts`), the
+  same core the markdown surface uses - so an absolute `http(s)` URL (a
+  configured host -> pane, any other -> system browser) and a full AEM path are
+  links in any column, not only `Path`, and a **page-relative** `jcr:content/...`
+  value is a plain, non-navigating hover target offering only its node's **CRX**
+  (no Edit, no cursor, no hover styling), resolved against the last full path the
+  run rendered - carried cell-by-cell, row by row, so a blanked repeated page path
+  still resolves and a `Load more` append continues it. The segment-to-DOM
+  rendering is shared in `linkSegmentDom.ts`; a column header only picks a
+  presentation class (clamp/wrap), never linkification.
 - `environment_facts` reports **every configured host** as a label, an origin and
   its effective content/component roots, flagging the one the browser pane is
   currently on. It takes no arguments: the application resolves the facts from
@@ -815,7 +825,21 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3034 passed / 14 skipped** (+5 against the
+Current baseline: **`npm run test` → 3055 passed / 14 skipped** (+21 against the
+3034 of the previous entry - **one AEM linkifier, absolute URLs, and the "partly
+linkified" page-relative path**: `splitAemPathLinks` (`linkTargets.ts`) is now one
+stateful, value-driven pass - it links an absolute `http(s)` URL (a configured
+host opens in the pane, any other in the system browser), a full AEM path, and a
+page-relative `jcr:content/...` path against the last full path it saw - and both
+surfaces thread its `AemLinkifyState` through that one core: `renderMarkdown.ts`
+over a message's text nodes, `transcriptView.ts` over a `format_table` run's
+cells, with the segment-to-DOM rendering shared in `linkSegmentDom.ts`. The
+partial is plain, non-navigating text whose hover offers only its node's CRX (no
+Edit, no cursor, no hover styling) - so a blanked repeated page path still
+resolves, across a `Load more` append and in prose alike; 12 `linkTargets` + 5
+`transcriptView` + 4 `renderMarkdown` cases, and one `message-links` E2E case; see
+`docs/verification.md` "One AEM linkifier: absolute URLs and the partly linkified
+path (2026-10-14)"). Before that it was 3034 (+5 against the
 3029 of the previous entry - **no empty conversation shells, and a turn paused on
 a question is not "Interrupted"**: a `presentation: 'conversation'` tool call that
 paints nothing (an `ask_user` `actions` prompt, a pending question) is now skipped
@@ -1191,8 +1215,13 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 126 tests; a full run is typically 119 passed / 6 failed.** The
-+1 since 125 is the `message-links.spec.ts` case proving, against the built app,
+**Playwright → 127 tests; a full run is typically 120 passed / 6 failed.** The
++1 since 126 is the `message-links.spec.ts` case proving, against the built app,
+that a page-relative table cell is a non-anchor hover target whose popover offers
+only its node's CRX (and resolves it against the page above when the repeat was
+blanked) - run `--repeat-each=4`, four green, and a selector mutation made it
+fail. Before that, the +1 since 125 is the `message-links.spec.ts` case proving,
+against the built app,
 that an in-message table's path link computes to `text-decoration: none` (a
 removal mutation rebuilt the app and failed with `underline`). Before
 that, the +1 since 124 is

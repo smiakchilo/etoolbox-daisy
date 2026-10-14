@@ -96,6 +96,50 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(doc.body.textContent?.trim()).toBe('See /content/site/en/page for details.');
   });
 
+  it('turns a page-relative jcr:content path into a CRX-only hover target after a page link', () => {
+    // The same linkifier the table renderer uses: one full path, then a
+    // page-relative node, in one message. The relative path is not an anchor -
+    // it is a plain span whose only affordance is the node's CRX.
+    const doc = parse(
+      renderer.render('Pages: /content/site/alpha then jcr:content/parsys/text.', ACTIVE_CONTEXT),
+    );
+    const anchors = doc.querySelectorAll('a[data-daisy-link]');
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]?.getAttribute('href')).toBe(`${AUTHOR}/content/site/alpha.html`);
+    const partial = doc.querySelector('span.chat-partial-link');
+    expect(partial?.textContent).toBe('jcr:content/parsys/text');
+    expect(partial?.hasAttribute('data-daisy-link')).toBe(false);
+    expect(partial?.hasAttribute('href')).toBe(false);
+    expect(parseLinkActions(partial?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      {
+        id: 'crx',
+        title: 'CRX',
+        href: `${AUTHOR}/crx/de/index.jsp#/content/site/alpha/jcr%3Acontent/parsys/text`,
+      },
+    ]);
+  });
+
+  it('leaves a page-relative path as plain text when no page precedes it', () => {
+    const doc = parse(renderer.render('Node: jcr:content/parsys/text.', ACTIVE_CONTEXT));
+    expect(doc.querySelector('a[data-daisy-link]')).toBeNull();
+    expect(doc.querySelector('span.chat-partial-link')).toBeNull();
+    expect(doc.body.textContent).toContain('jcr:content/parsys/text');
+  });
+
+  it('linkifies an absolute URL in inline code (the core, not only marked autolinks)', () => {
+    const doc = parse(renderer.render('See `https://example.com/x` now.', ACTIVE_CONTEXT));
+    const link = doc.querySelector('a[data-daisy-external]');
+    expect(link?.getAttribute('href')).toBe('https://example.com/x');
+    expect(link?.textContent).toBe('https://example.com/x');
+  });
+
+  it('linkifies an absolute URL in inline code even with no active host', () => {
+    const doc = parse(renderer.render('See `https://example.com/x`.', HOSTS_ONLY_CONTEXT));
+    expect(doc.querySelector('a[data-daisy-external]')?.getAttribute('href')).toBe(
+      'https://example.com/x',
+    );
+  });
+
   it('linkifies a bare AEM path that starts a paragraph', () => {
     // Regression: a path at the start of an HTML block is preceded by `>` (the
     // opening tag), so a fast-path probe requiring a whitespace/bracket

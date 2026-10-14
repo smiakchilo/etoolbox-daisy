@@ -2,17 +2,14 @@ import { Marked } from 'marked';
 import createDOMPurify from 'dompurify';
 import type { Config as DomPurifyConfig } from 'dompurify';
 import {
+  EMPTY_AEM_LINKIFY_STATE,
   EMPTY_LINK_CONTEXT,
-  MESSAGE_ACTIONS_ATTRIBUTE,
-  MESSAGE_EXTERNAL_ATTRIBUTE,
-  MESSAGE_LINK_ATTRIBUTE,
   absoluteMessageHref,
   resolveMessageLink,
-  serializeLinkActions,
   splitAemPathLinks,
   type LinkContext,
-  type ResolvedLink,
 } from './linkTargets';
+import { renderLinkSegment, stampResolvedLink } from './linkSegmentDom';
 
 /**
  * Turns assistant Markdown into safe HTML for direct insertion into the
@@ -284,10 +281,17 @@ const markdown = new Marked({ gfm: true, breaks: false, pedantic: false, async: 
  * the text-node start, an `&nbsp;`-style entity hides a decoded whitespace
  * boundary, and a root at the end of a text node is followed by `<` rather than
  * `$`. So this probe drops its boundaries entirely and matches any `/`-rooted
- * AEM path anywhere in the markup. Deliberately non-global so repeated `.test`
- * calls are stateless.
+ * AEM path or a page-relative `jcr:content/...` path anywhere in the markup.
+ * Deliberately non-global so repeated `.test` calls are stateless.
  */
-const AEM_PATH_HINT = /\/(?:content|apps|libs|conf|var|etc|home)/;
+const AEM_PATH_HINT = /\/(?:content|apps|libs|conf|var|etc|home)|jcr:content\//;
+
+/**
+ * A cheap probe for "does this rendered HTML mention an absolute URL?" - the
+ * linkifier's other token (a configured host opens in the pane, any other
+ * origin in the system browser), which unlike an AEM path needs no active host.
+ */
+const URL_HINT = /https?:\/\//;
 
 /**
  * Creates a renderer bound to `windowRef`.
@@ -334,22 +338,17 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
     }
   }
 
-  /** Stamps a resolved link with the marker for where it opens, and its actions. */
-  function mark(anchor: HTMLAnchorElement, resolved: ResolvedLink): void {
-    anchor.setAttribute(
-      resolved.openIn === 'external' ? MESSAGE_EXTERNAL_ATTRIBUTE : MESSAGE_LINK_ATTRIBUTE,
-      '',
-    );
-    if (resolved.openIn === 'external') {
-      anchor.setAttribute('title', 'Opens in your browser');
-    }
-    if (resolved.actions.length > 0) {
-      anchor.setAttribute(MESSAGE_ACTIONS_ATTRIBUTE, serializeLinkActions(resolved.actions));
-    }
-  }
-
   /**
-   * Wraps every bare AEM-native path in a text node as a clickable anchor.
+   * Wraps every bare AEM path in a text node as a clickable anchor - and every
+   * page-relative `jcr:content/...` path as a non-navigating hover target
+   * offering its node's CRX.
+   *
+   * This is the markdown surface of the one linkifier (`splitAemPathLinks`):
+   * text nodes are visited in document order and the linkifier's carry-over
+   * (the last full path) is threaded from one to the next, so a relative path in
+   * a later cell or paragraph hangs off the page before it. `transcriptView.ts`
+   * threads the same state across a table's cells, and both turn the segments
+   * into nodes through `linkSegmentDom.ts`.
    *
    * Inline code and fenced code blocks are linkified too (owner decision,
    * 2026-10-08): the model habitually writes a JCR path as `` `/content/...` ``
@@ -358,8 +357,6 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
    * nested `<a>` is invalid and the outer anchor already carries its target.
    */
   function linkifyTextNodes(doc: Document, context: LinkContext): void {
-    if (context.activeOrigin === undefined) return;
-
     const filter = {
       acceptNode(node: Node): number {
         const parent = node.parentElement;
@@ -376,21 +373,15 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
       textNodes.push(node as Text);
     }
 
+    let state = EMPTY_AEM_LINKIFY_STATE;
     for (const text of textNodes) {
-      const segments = splitAemPathLinks(text.data, context.activeOrigin);
-      if (!segments.some((segment) => segment.kind === 'link')) continue;
+      const linked = splitAemPathLinks(text.data, context, state);
+      state = linked.state;
+      if (!linked.segments.some((segment) => segment.kind === 'link')) continue;
 
       const fragment = doc.createDocumentFragment();
-      for (const segment of segments) {
-        if (segment.kind === 'text') {
-          fragment.append(doc.createTextNode(segment.value));
-          continue;
-        }
-        const anchor = doc.createElement('a');
-        anchor.setAttribute('href', segment.resolved.href);
-        mark(anchor, segment.resolved);
-        anchor.textContent = segment.value;
-        fragment.append(anchor);
+      for (const segment of linked.segments) {
+        fragment.append(renderLinkSegment(doc, segment));
       }
       text.replaceWith(fragment);
     }
@@ -416,7 +407,7 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
       const resolved = resolveMessageLink(href, context);
       if (resolved === undefined) continue;
       if (resolved.href !== href) anchor.setAttribute('href', resolved.href);
-      mark(anchor, resolved);
+      stampResolvedLink(anchor, resolved);
     }
 
     linkifyTextNodes(doc, context);
@@ -426,13 +417,14 @@ export function createMarkdownRenderer(windowRef: Window & typeof globalThis): M
     render(markdownSource: string, context: LinkContext = EMPTY_LINK_CONTEXT): string {
       const html: string = markdown.parse(markdownSource, { async: false });
 
-      // Fast path: with no anchor to resolve and (nothing to linkify, or no
-      // active host to linkify against) the two DOM passes cannot change the
-      // output, so skip them and sanitize directly. An absolute external link
-      // is always resolvable, so any anchor forces the slow path.
+      // Fast path: with no anchor to resolve and nothing to linkify the two DOM
+      // passes cannot change the output, so skip them and sanitize directly. A
+      // bare AEM path needs the active host; an absolute URL does not, so a
+      // message with either (or any anchor) forces the slow path.
       const hasAnchor = /<a[\s>]/i.test(html);
-      const hasBarePath = context.activeOrigin !== undefined && AEM_PATH_HINT.test(html);
-      if (!hasAnchor && !hasBarePath) {
+      const hasLinkable =
+        URL_HINT.test(html) || (context.activeOrigin !== undefined && AEM_PATH_HINT.test(html));
+      if (!hasAnchor && !hasLinkable) {
         return purify.sanitize(html, SANITIZER_CONFIG);
       }
 

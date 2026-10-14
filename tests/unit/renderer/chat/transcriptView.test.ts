@@ -818,7 +818,9 @@ describe('createTranscriptView - format_table message table', () => {
     expect(nodeCell?.textContent).toBe(
       'jcr:content/parsys/aVeryLongComponentPathThatCannotBreakOnItsOwn',
     );
-    expect(nodeCell?.className).toBe('chat-table-message__wrap');
+    // The Node path is page-relative, so it is now the "partly linkified" hover
+    // target (see the dedicated cases below), not a plain wrapped span.
+    expect(nodeCell?.className).toBe('chat-partial-link');
     const propertyCell = firstRow.querySelector('sp-table-cell:nth-child(4) > span');
     expect(propertyCell?.textContent).toBe('aVeryLongPropertyNameThatCannotBreakOnItsOwn');
     expect(propertyCell?.className).toBe('chat-table-message__wrap');
@@ -834,6 +836,117 @@ describe('createTranscriptView - format_table message table', () => {
     const anchor = element.querySelector('sp-table-body a[data-daisy-link]');
     expect(anchor).not.toBeNull();
     expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/site/a.html`);
+  });
+
+  it('linkifies an absolute external URL in any cell, opening it outside the pane', () => {
+    const data = { rows: [{ 'jcr:path': 'https://example.com/docs' }] };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
+    const link = element.querySelector('sp-table-body a[data-daisy-external]');
+    expect(link).not.toBeNull();
+    expect(link?.getAttribute('href')).toBe('https://example.com/docs');
+    expect(link?.textContent).toBe('https://example.com/docs');
+    // An external link offers no popover actions and never opens in the pane.
+    expect(link?.hasAttribute('data-daisy-actions')).toBe(false);
+    expect(link?.hasAttribute('data-daisy-link')).toBe(false);
+  });
+
+  it('hangs a page-relative Node cell off the last full path, offering only its CRX', () => {
+    const data = {
+      rows: [
+        { 'jcr:path': '/content/site/a', node: 'jcr:content/parsys/mine' },
+        // A repeated page path was blanked by the executor; the node must still
+        // resolve against the last full path the table rendered.
+        { 'jcr:path': '', node: 'jcr:content/parsys/second' },
+      ],
+    };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 2, 'new')]);
+    const rows = element.querySelectorAll('sp-table-body sp-table-row');
+
+    const first = rows[0]!.querySelector('sp-table-cell:nth-child(3) > span');
+    // It is a hover target, never a second navigable link.
+    expect(first?.hasAttribute('data-daisy-link')).toBe(false);
+    expect(first?.hasAttribute('href')).toBe(false);
+    // ...and only CRX - no Edit, which would repeat the row's page action.
+    expect(parseLinkActions(first?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      {
+        id: 'crx',
+        title: 'CRX',
+        href: `${AUTHOR}/crx/de/index.jsp#/content/site/a/jcr%3Acontent/parsys/mine`,
+      },
+    ]);
+
+    const second = rows[1]!.querySelector('sp-table-cell:nth-child(3) > span');
+    expect(parseLinkActions(second?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      {
+        id: 'crx',
+        title: 'CRX',
+        href: `${AUTHOR}/crx/de/index.jsp#/content/site/a/jcr%3Acontent/parsys/second`,
+      },
+    ]);
+  });
+
+  it('resolves a page-relative value in any column, not only the Node column', () => {
+    const data = {
+      rows: [{ 'jcr:path': '/content/site/a', other: 'jcr:content/parsys/other' }],
+    };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
+    const cell = element.querySelector('sp-table-body sp-table-cell:nth-child(3) > span');
+    expect(cell?.className).toBe('chat-partial-link');
+    expect(parseLinkActions(cell?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      {
+        id: 'crx',
+        title: 'CRX',
+        href: `${AUTHOR}/crx/de/index.jsp#/content/site/a/jcr%3Acontent/parsys/other`,
+      },
+    ]);
+  });
+
+  it('leaves a page-relative cell as plain wrapped text when no host is active', () => {
+    const data = { rows: [{ 'jcr:path': '/content/site/a', node: 'jcr:content/parsys/mine' }] };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')], {
+      hostOrigins: [AUTHOR],
+      activeOrigin: undefined,
+    });
+    // No active host means nothing is linkified, so there is no base and the
+    // node stays ordinary wrapped text.
+    expect(element.querySelector('sp-table-body a[data-daisy-link]')).toBeNull();
+    const nodeCell = element.querySelector('sp-table-body sp-table-cell:nth-child(3) > span');
+    expect(nodeCell?.className).toBe('chat-table-message__wrap');
+    expect(nodeCell?.hasAttribute('data-daisy-actions')).toBe(false);
+  });
+
+  it('carries the base across a Load more append, so a later page still resolves', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(
+      requested(0, 1, {
+        data: { rows: [{ 'jcr:path': '/content/site/a', node: 'jcr:content/parsys/first' }] },
+      }),
+    );
+    store.applyEvent(result(1, 1, 1, 'new'));
+    view.repaint(store);
+
+    // The next page's first page path is blanked (it repeats page 1's last), so
+    // the appended row's node must hang off the base row 1 left behind.
+    store.applyEvent(
+      requested(2, 2, {
+        data: { rows: [{ 'jcr:path': '', node: 'jcr:content/parsys/appended' }] },
+        mode: 'append',
+      }),
+    );
+    store.applyEvent(result(3, 2, 1, 'append'));
+    view.repaint(store);
+
+    const rows = view.element.querySelectorAll('sp-table-body sp-table-row');
+    expect(rows).toHaveLength(2);
+    const appended = rows[1]!.querySelector('sp-table-cell:nth-child(3) > span');
+    expect(parseLinkActions(appended?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+      {
+        id: 'crx',
+        title: 'CRX',
+        href: `${AUTHOR}/crx/de/index.jsp#/content/site/a/jcr%3Acontent/parsys/appended`,
+      },
+    ]);
   });
 
   it('renders the total line below the table', () => {

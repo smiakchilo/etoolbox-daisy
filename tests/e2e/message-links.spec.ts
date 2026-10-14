@@ -376,6 +376,99 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await app.close();
   });
 
+  test('a page-relative table cell offers only its node CRX in the hover popover', async () => {
+    test.setTimeout(120_000);
+    const app = await launchWithHost();
+    const shell = await app.firstWindow();
+    await waitForComposerReady(shell);
+
+    // Put the pane on the host, so the table's full paths (and the page-relative
+    // node hanging off them) resolve.
+    const addressInput = shell.locator('#browser-address-bar input');
+    await addressInput.fill(HOST);
+    await addressInput.press('Enter');
+    await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
+      'open',
+      '',
+      { timeout: 60_000 },
+    );
+
+    // A component-instance search shape: the owning page, a repeated page path
+    // the executor blanked, and each node's path within its page.
+    const data = {
+      rows: [
+        { 'jcr:path': '/content/site/alpha', node: 'jcr:content/parsys/mine' },
+        { 'jcr:path': '', node: 'jcr:content/parsys/second' },
+      ],
+    };
+    await scriptTurn(app, {
+      steps: [
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'format_table',
+            arguments: { data, mode: 'new' },
+            decision: {
+              kind: 'approved',
+              outcome: {
+                ok: true,
+                data: {
+                  operation: 'format_table',
+                  rowCount: 2,
+                  mode: 'new',
+                  textResultForLlm: 'ok',
+                  resultType: 'success',
+                } as never,
+              },
+            },
+          },
+        },
+      ],
+    });
+    await shell.locator(COMPOSER_FIELD).fill('list the component instances');
+    await shell.locator(COMPOSER_SEND).click();
+    await flushFake(app);
+
+    const nodeCells = shell.locator('.chat-partial-link');
+    await expect(nodeCells).toHaveCount(2, { timeout: 30_000 });
+    // Plain text, not a second navigable link (the row's Path cell is the link).
+    expect(await nodeCells.first().evaluate((element) => element.tagName)).toBe('SPAN');
+
+    // Hover the blanked-path row: its node hangs off the page the row above
+    // rendered, and the popover offers the node's CRX and nothing else.
+    await nodeCells.nth(1).hover();
+    const crx = shell.locator('sp-overlay sp-action-button[title="CRX"]');
+    await expect(crx).toBeVisible({ timeout: 30_000 });
+    await expect(shell.locator('sp-overlay sp-action-button[title="Edit"]')).toHaveCount(0);
+    // Spectrum positions the overlay a frame or two after it opens, so a click
+    // fired the instant it appears can land on the table cell underneath it.
+    // Wait until the button is the hit-test target before clicking.
+    await expect
+      .poll(() =>
+        shell.evaluate(() => {
+          const button = document.querySelector('sp-overlay sp-action-button[title="CRX"]');
+          if (button === null) return false;
+          const rect = button.getBoundingClientRect();
+          return (
+            document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === button
+          );
+        }),
+      )
+      .toBe(true);
+
+    // The button drives the node's own CRX in the pane (the unresolvable host
+    // makes the resulting error banner the proof the URL reached navigation).
+    await crx.click();
+    const banner = shell.locator(BROWSER_MESSAGE);
+    await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
+    await expect(banner).toContainText(
+      `${HOST}/crx/de/index.jsp#/content/site/alpha/jcr%3Acontent/parsys/second`,
+      { timeout: 60_000 },
+    );
+
+    await app.close();
+  });
+
   test('moving the pointer swiftly from one link to another keeps the popover open', async () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();

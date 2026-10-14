@@ -476,6 +476,15 @@
   overflow-wrap: anywhere;
 }
 
+/* A page-relative `jcr:content/...` path, in a message or a `format_table` cell:
+   plain text (its owning page is the full path before it), but hovering it
+   offers only that node's CRX action. Deliberately no hover styling and no
+   `cursor` change - it is not a link; the reader discovers the popover by
+   hovering, and the path keeps reading as ordinary wrapped text. */
+.chat-partial-link {
+  overflow-wrap: anywhere;
+}
+
 /* A long citation is clamped to ten lines rather than growing its row without
    bound; the full text stays in the DOM (and is selectable) behind the clamp. */
 .chat-table-message__clamp {

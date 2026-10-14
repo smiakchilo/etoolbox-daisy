@@ -8,6 +8,7 @@ import {
   parseLinkActions,
   resolveAbsoluteLink,
   resolveMessageLink,
+  resolvePartialPathActions,
   resolveRelativePath,
   serializeLinkActions,
   splitAemPathLinks,
@@ -29,6 +30,14 @@ function crxAction(href: string): { id: 'crx'; title: string; href: string } {
 }
 function pane(href: string, actions: ResolvedLink['actions']): ResolvedLink {
   return { openIn: 'pane', href, actions };
+}
+/** The segments of one string, linkified in the active-host context. */
+function segments(text: string, context: LinkContext = activeContext) {
+  return splitAemPathLinks(text, context).segments;
+}
+/** A full-path link segment, with the `navigable` flag the union now carries. */
+function fullLink(value: string, resolved: ResolvedLink) {
+  return { kind: 'link', value, resolved, navigable: true };
 }
 
 describe('linkTargets - path classification', () => {
@@ -299,56 +308,49 @@ describe('linkTargets - link action serialization', () => {
 
 describe('linkTargets - bare path linkification', () => {
   it('does nothing with no active host', () => {
-    expect(splitAemPathLinks('See /content/x now', undefined)).toEqual([
+    expect(splitAemPathLinks('See /content/x now', emptyContext).segments).toEqual([
       { kind: 'text', value: 'See /content/x now' },
     ]);
   });
 
   it('wraps a bare path in prose, keeping the surrounding text', () => {
-    expect(splitAemPathLinks('See /content/site/en/page now', AUTHOR)).toEqual([
+    expect(segments('See /content/site/en/page now')).toEqual([
       { kind: 'text', value: 'See ' },
-      {
-        kind: 'link',
-        value: '/content/site/en/page',
-        resolved: pane(`${AUTHOR}/content/site/en/page.html`, [
+      fullLink(
+        '/content/site/en/page',
+        pane(`${AUTHOR}/content/site/en/page.html`, [
           editAction(`${AUTHOR}/editor.html/content/site/en/page.html`),
           crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page`),
         ]),
-      },
+      ),
       { kind: 'text', value: ' now' },
     ]);
   });
 
   it('keeps the bracket and trims a trailing sentence period', () => {
-    expect(splitAemPathLinks('(/content/x).', AUTHOR)).toEqual([
+    expect(segments('(/content/x).')).toEqual([
       { kind: 'text', value: '(' },
-      {
-        kind: 'link',
-        value: '/content/x',
-        resolved: pane(`${AUTHOR}/content/x.html`, [
+      fullLink(
+        '/content/x',
+        pane(`${AUTHOR}/content/x.html`, [
           editAction(`${AUTHOR}/editor.html/content/x.html`),
           crxAction(`${AUTHOR}/crx/de/index.jsp#/content/x`),
         ]),
-      },
+      ),
       { kind: 'text', value: ').' },
     ]);
   });
 
   it('does not linkify a root-like segment inside a word', () => {
-    expect(splitAemPathLinks('not/contentx here', AUTHOR)).toEqual([
-      { kind: 'text', value: 'not/contentx here' },
-    ]);
+    expect(segments('not/contentx here')).toEqual([{ kind: 'text', value: 'not/contentx here' }]);
   });
 
   it('classifies a /content/dam path as a CRX-only non-page', () => {
-    expect(splitAemPathLinks('/content/dam/x', AUTHOR)).toEqual([
-      {
-        kind: 'link',
-        value: '/content/dam/x',
-        resolved: pane(`${AUTHOR}/content/dam/x`, [
-          crxAction(`${AUTHOR}/crx/de/index.jsp#/content/dam/x`),
-        ]),
-      },
+    expect(segments('/content/dam/x')).toEqual([
+      fullLink(
+        '/content/dam/x',
+        pane(`${AUTHOR}/content/dam/x`, [crxAction(`${AUTHOR}/crx/de/index.jsp#/content/dam/x`)]),
+      ),
     ]);
   });
 
@@ -357,15 +359,149 @@ describe('linkTargets - bare path linkification', () => {
     // only as far as `templates/custom`, so the anchor covered half the path and
     // its href pointed at the wrong node. The displayed text keeps the original
     // U+2011; the resolved link folds it to ASCII `-`.
-    expect(splitAemPathLinks('/content/site/custom\u2011skeleton/1', AUTHOR)).toEqual([
-      {
-        kind: 'link',
-        value: '/content/site/custom\u2011skeleton/1',
-        resolved: pane(`${AUTHOR}/content/site/custom-skeleton/1.html`, [
+    expect(segments('/content/site/custom\u2011skeleton/1')).toEqual([
+      fullLink(
+        '/content/site/custom\u2011skeleton/1',
+        pane(`${AUTHOR}/content/site/custom-skeleton/1.html`, [
           editAction(`${AUTHOR}/editor.html/content/site/custom-skeleton/1.html`),
           crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/custom-skeleton/1`),
         ]),
+      ),
+    ]);
+  });
+
+  it('returns the last full path as the state to thread into the next string', () => {
+    const result = splitAemPathLinks('See /content/site/a now', activeContext);
+    expect(result.state).toEqual({ lastFullPath: '/content/site/a' });
+    expect(result.segments).toEqual([
+      { kind: 'text', value: 'See ' },
+      fullLink(
+        '/content/site/a',
+        pane(`${AUTHOR}/content/site/a.html`, [
+          editAction(`${AUTHOR}/editor.html/content/site/a.html`),
+          crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/a`),
+        ]),
+      ),
+      { kind: 'text', value: ' now' },
+    ]);
+  });
+});
+
+describe('linkTargets - partly linkified page-relative paths', () => {
+  it('resolves a jcr:content/... value against the remembered page, CRX only', () => {
+    expect(
+      resolvePartialPathActions('/content/site/en/page', 'jcr:content/parsys/text', AUTHOR),
+    ).toEqual([
+      crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr%3Acontent/parsys/text`),
+    ]);
+  });
+
+  it('trims a remembered resource back to its owning page before prepending', () => {
+    expect(
+      resolvePartialPathActions(
+        '/content/site/en/page/jcr:content/parsys',
+        'jcr:content/other',
+        AUTHOR,
+      ),
+    ).toEqual([crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr%3Acontent/other`)]);
+  });
+
+  it('returns nothing without an active host or without a remembered path', () => {
+    expect(resolvePartialPathActions('/content/site/a', 'jcr:content/x', undefined)).toEqual([]);
+    expect(resolvePartialPathActions(undefined, 'jcr:content/x', AUTHOR)).toEqual([]);
+  });
+
+  it('ignores a value that is not page-relative', () => {
+    expect(resolvePartialPathActions('/content/site/a', '/content/site/b', AUTHOR)).toEqual([]);
+    expect(resolvePartialPathActions('/content/site/a', 'parsys/x', AUTHOR)).toEqual([]);
+  });
+
+  it('makes a page-relative path a non-navigable CRX link when a full path precedes it', () => {
+    const result = splitAemPathLinks('jcr:content/parsys/text', activeContext, {
+      lastFullPath: '/content/site/en/page',
+    });
+    expect(result.segments).toEqual([
+      {
+        kind: 'link',
+        value: 'jcr:content/parsys/text',
+        resolved: pane(
+          `${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr%3Acontent/parsys/text`,
+          [crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page/jcr%3Acontent/parsys/text`)],
+        ),
+        navigable: false,
       },
     ]);
+    // A partial is not a full path: it never becomes the next carry-over.
+    expect(result.state).toEqual({ lastFullPath: '/content/site/en/page' });
+  });
+
+  it('leaves a page-relative path as text when no full path precedes it', () => {
+    expect(splitAemPathLinks('jcr:content/parsys/text', activeContext).segments).toEqual([
+      { kind: 'text', value: 'jcr:content/parsys/text' },
+    ]);
+  });
+
+  it('linkifies a full path and a following relative path in one string, in order', () => {
+    const result = splitAemPathLinks('/content/site/a jcr:content/x', activeContext);
+    expect(result.segments[0]).toMatchObject({
+      kind: 'link',
+      navigable: true,
+      value: '/content/site/a',
+    });
+    expect(result.segments[1]).toEqual({ kind: 'text', value: ' ' });
+    expect(result.segments[2]).toMatchObject({
+      kind: 'link',
+      navigable: false,
+      value: 'jcr:content/x',
+    });
+  });
+});
+
+describe('linkTargets - absolute URLs', () => {
+  it('resolves a URL on a configured host as a pane link', () => {
+    expect(segments(`See ${AUTHOR}/content/site/en/page now`)).toEqual([
+      { kind: 'text', value: 'See ' },
+      fullLink(
+        `${AUTHOR}/content/site/en/page`,
+        pane(`${AUTHOR}/content/site/en/page.html`, [
+          editAction(`${AUTHOR}/editor.html/content/site/en/page.html`),
+          crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page`),
+        ]),
+      ),
+      { kind: 'text', value: ' now' },
+    ]);
+  });
+
+  it('resolves a URL on another origin as an external link, even with no active host', () => {
+    expect(segments('See https://example.com/x now', hostsOnlyContext)).toEqual([
+      { kind: 'text', value: 'See ' },
+      {
+        kind: 'link',
+        value: 'https://example.com/x',
+        resolved: { openIn: 'external', href: 'https://example.com/x', actions: [] },
+        navigable: true,
+      },
+      { kind: 'text', value: ' now' },
+    ]);
+  });
+
+  it('trims a trailing sentence period from a URL', () => {
+    expect(segments('See https://example.com/x.')).toEqual([
+      { kind: 'text', value: 'See ' },
+      {
+        kind: 'link',
+        value: 'https://example.com/x',
+        resolved: { openIn: 'external', href: 'https://example.com/x', actions: [] },
+        navigable: true,
+      },
+      { kind: 'text', value: '.' },
+    ]);
+  });
+
+  it('does not make a URL the carry-over for a later page-relative path', () => {
+    const result = splitAemPathLinks('https://example.com/x jcr:content/y', activeContext);
+    expect(result.state).toEqual({ lastFullPath: undefined });
+    // The relative path has no page to hang off, so it stays text.
+    expect(result.segments[1]).toEqual({ kind: 'text', value: ' jcr:content/y' });
   });
 });

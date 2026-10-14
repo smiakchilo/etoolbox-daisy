@@ -95,6 +95,14 @@ export const MESSAGE_EXTERNAL_ATTRIBUTE = 'data-daisy-external';
  */
 export const MESSAGE_ACTIONS_ATTRIBUTE = 'data-daisy-actions';
 
+/**
+ * The class both renderers put on the hover-only element a page-relative
+ * partial path renders as. It exists only so CSS can wrap the path at any
+ * character; it is deliberately **not** the link marker, so the element never
+ * navigates and carries no link styling or cursor change.
+ */
+export const MESSAGE_PARTIAL_CLASS = 'chat-partial-link';
+
 const LINK_ACTION_IDS: readonly LinkAction['id'][] = ['edit', 'crx'];
 
 /** Serializes a link's popover actions for {@link MESSAGE_ACTIONS_ATTRIBUTE}. */
@@ -286,6 +294,44 @@ export function classifyAemPath(origin: string, rawPathname: string): ResolvedLi
 }
 
 /**
+ * The prefix a **page-relative** node path carries: a path inside a page's
+ * `jcr:content` subtree, written relative to the owning page. A component
+ * search's `Node` column is exactly this (`jcr:content/parsys/...`), as is any
+ * other cell a tool or the model fills with a node path inside a page.
+ */
+export const PAGE_RELATIVE_PREFIX = 'jcr:content/';
+
+/**
+ * Resolves a page-relative path (`jcr:content/...`) against the last full AEM
+ * path a table rendered - the "partly linkified" facility.
+ *
+ * The value is not a path the pane can open on its own: it names a node *inside*
+ * the page the remembered path pointed at, so the full path is
+ * `page + '/' + value`. The remembered path is trimmed at its own first
+ * `jcr:content` segment first, so a base that was itself a resource still yields
+ * the owning page. The result is classified like any other path, but only the
+ * **CRX** action is kept: the row already links its owning page, so a second
+ * navigable link would only repeat it, and **Edit** would retarget the page the
+ * row already offers. The caller leaves the cell as plain text and hangs this
+ * action off a non-anchored hover target.
+ *
+ * Empty when there is no active host, no remembered path, or `value` is not
+ * page-relative.
+ */
+export function resolvePartialPathActions(
+  basePath: string | undefined,
+  value: string,
+  activeOrigin: string | undefined,
+): readonly LinkAction[] {
+  if (activeOrigin === undefined || basePath === undefined) return [];
+  if (!value.startsWith(PAGE_RELATIVE_PREFIX)) return [];
+  const page = beforeJcrContent(withoutTrailingSlash(basePath));
+  if (page.length <= 1) return [];
+  const resolved = classifyAemPath(activeOrigin, `${page}/${value}`);
+  return resolved.actions.filter((action) => action.id === 'crx');
+}
+
+/**
  * Resolves one absolute `http(s)` href. A configured host is opened in the pane
  * (classified as AEM-native when its path is one); any other origin is opened
  * in the system browser. `undefined` for a non-http(s) value.
@@ -371,8 +417,34 @@ export interface MessageLinkSegment {
   readonly kind: 'link';
   readonly value: string;
   readonly resolved: ResolvedLink;
+  /**
+   * `true` for a full AEM-native path (a real, navigable link to its classified
+   * target); `false` for a **page-relative** `jcr:content/...` partial, a
+   * hover-only target offering the node's CRX (see
+   * {@link resolvePartialPathActions}).
+   */
+  readonly navigable: boolean;
 }
 export type MessageSegment = MessageTextSegment | MessageLinkSegment;
+
+/**
+ * The AEM linkifier's carry-over: the last full AEM path it linked. Both
+ * callers - the markdown renderer, over a message's text nodes, and the table
+ * renderer, over a run's cells - thread this in reading order, so a later
+ * page-relative `jcr:content/...` path is prefixed with the page that precedes
+ * it. One state type, one linkifier, both surfaces.
+ */
+export interface AemLinkifyState {
+  readonly lastFullPath: string | undefined;
+}
+
+export const EMPTY_AEM_LINKIFY_STATE: AemLinkifyState = { lastFullPath: undefined };
+
+/** What {@link splitAemPathLinks} returns: this string's segments and the state to thread into the next. */
+export interface AemLinkifyResult {
+  readonly segments: readonly MessageSegment[];
+  readonly state: AemLinkifyState;
+}
 
 /**
  * Hyphen characters that look like an ASCII `-` but are not one. A model
@@ -397,16 +469,28 @@ function normalizePathDashes(value: string): string {
 }
 
 /**
- * Matches a bare AEM-native path inside prose. The leading boundary group is
- * kept so the character before the path (`<p>/content/x` starts the node, but
- * `(/content/x)` and `see /content/x` do not lose their space or bracket) is
- * re-emitted as text. The segment character class deliberately omits `()`, `,`,
- * `;` and `/`, so a parenthesised or comma-terminated path does not swallow its
- * own punctuation. It includes the dash variants in {@link PATH_DASH_PATTERN},
- * so `custom‑skeleton` (U+2011) is one segment, not two.
+ * Matches the linkable tokens the linkifier recognises inside text. The leading
+ * boundary group is kept so the character before the token (`<p>/content/x`
+ * starts the node, but `(/content/x)` and `see /content/x` do not lose their
+ * space or bracket) is re-emitted as text. The path character class deliberately
+ * omits `()`, `,`, `;`, so a parenthesised or comma-terminated path does not
+ * swallow its own punctuation; it includes the dash variants in
+ * {@link PATH_DASH_PATTERN} so `custom‑skeleton` (U+2011) is one segment.
+ *
+ * The three alternatives are the three kinds of link the linkifier produces:
+ *
+ *  - an absolute `http(s)` **URL** - a configured host opens in the pane, any
+ *    other origin in the system browser;
+ *  - a **full** AEM-native path - a `/`-rooted path (`/content/...`);
+ *  - a **page-relative** path - a `jcr:content/...` node inside the page the
+ *    last full path named.
+ *
+ * A full path is tried before a partial, so `/content/a/jcr:content/x` is one
+ * full match rather than a full match followed by a partial; the branch is
+ * decided by the matched text's own leading character.
  */
 const AEM_PATH_PATTERN =
-  /(^|[\s([{])(\/(?:content|apps|libs|conf|var|etc|home)(?:\/[A-Za-z0-9._~%:@!$&'*+=\u2010-\u2012\uFE63\uFF0D-]+)*\/?)/g;
+  /(^|[\s([{])(https?:\/\/[^\s<>()[\]"']+|\/(?:content|apps|libs|conf|var|etc|home)(?:\/[A-Za-z0-9._~%:@!$&'*+=\u2010-\u2012\uFE63\uFF0D-]+)*\/?|jcr:content(?:\/[A-Za-z0-9._~%:@!$&'*+=\u2010-\u2012\uFE63\uFF0D-]+)+)/g;
 
 /** Punctuation a sentence may append directly to a path; trimmed from the end. */
 const TRAILING_SENTENCE_PUNCTUATION = new Set(['.', ':', ',', ';', '!', '?']);
@@ -428,36 +512,85 @@ function pushText(segments: MessageSegment[], value: string): void {
 }
 
 /**
- * Splits a text node into text and link segments, wrapping every bare
- * AEM-native path as a link to its classified target. With no `activeOrigin`
- * there is nothing to resolve against, so the whole string is returned as one
- * text segment - a bare path is never made clickable without a host.
+ * The single AEM linkifier. Splits `text` into text and link segments, in
+ * reading order, and returns the state to hand to the next string:
+ *
+ *  - an absolute `http(s)` URL becomes a navigable link - a configured host
+ *    opens in the pane, any other origin in the system browser - and does **not**
+ *    become the carry-over (a page-relative node hangs off a page path, not a
+ *    URL);
+ *  - a full AEM-native path becomes a navigable link to its classified target,
+ *    and becomes the new carry-over;
+ *  - a page-relative `jcr:content/...` path becomes a non-navigable link whose
+ *    only action is its node's CRX, resolved against the carry-over.
+ *
+ * Both surfaces call this: `renderMarkdown.ts` over an assistant message's text
+ * nodes (in DOM order), and `transcriptView.ts` over a `format_table` run's
+ * cells (left to right, row to row). There is no header or column vocabulary
+ * here - what a piece of text is decides whether it links, exactly as in prose.
+ *
+ * A bare AEM path resolves only against `context.activeOrigin` (the pane's
+ * current host), and a page-relative path additionally needs a carry-over; with
+ * neither, they stay text. An absolute URL needs no active host, so it links
+ * whenever its origin resolves.
  */
 export function splitAemPathLinks(
   text: string,
-  activeOrigin: string | undefined,
-): readonly MessageSegment[] {
-  if (activeOrigin === undefined || text.length === 0) {
-    return [{ kind: 'text', value: text }];
+  context: LinkContext,
+  state: AemLinkifyState = EMPTY_AEM_LINKIFY_STATE,
+): AemLinkifyResult {
+  if (text.length === 0) {
+    return { segments: [{ kind: 'text', value: text }], state };
   }
 
   const pattern = new RegExp(AEM_PATH_PATTERN.source, 'g');
   const segments: MessageSegment[] = [];
+  let lastFullPath = state.lastFullPath;
   let consumed = 0;
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(text)) !== null) {
     const boundary = match[1]!;
-    const rawPath = match[2]!;
-    const pathStart = match.index + boundary.length;
-    const path = trimTrailingSentencePunctuation(rawPath);
-    if (path.length <= 1) continue;
+    const raw = match[2]!;
+    const valueStart = match.index + boundary.length;
 
-    pushText(segments, text.slice(consumed, pathStart));
-    segments.push({ kind: 'link', value: path, resolved: classifyAemPath(activeOrigin, path) });
-    consumed = pathStart + path.length;
+    let value: string;
+    let resolved: ResolvedLink;
+    let navigable: boolean;
+    if (raw.startsWith('/')) {
+      // A full AEM path: needs the active host, and becomes the carry-over.
+      if (context.activeOrigin === undefined) continue;
+      const path = trimTrailingSentencePunctuation(raw);
+      if (path.length <= 1) continue;
+      value = path;
+      resolved = classifyAemPath(context.activeOrigin, path);
+      navigable = true;
+      lastFullPath = path;
+    } else if (raw.startsWith(PAGE_RELATIVE_PREFIX)) {
+      // A page-relative node against the last full path (and the active host).
+      if (context.activeOrigin === undefined || lastFullPath === undefined) continue;
+      const path = trimTrailingSentencePunctuation(raw);
+      const actions = resolvePartialPathActions(lastFullPath, path, context.activeOrigin);
+      if (actions.length === 0) continue;
+      value = path;
+      resolved = { openIn: 'pane', href: actions[0]!.href, actions };
+      navigable = false;
+    } else {
+      // An absolute http(s) URL: a configured host opens in the pane, any other
+      // origin in the system browser. Never the carry-over.
+      const url = trimTrailingSentencePunctuation(raw);
+      const absolute = resolveAbsoluteLink(url, context);
+      if (absolute === undefined) continue;
+      value = url;
+      resolved = absolute;
+      navigable = true;
+    }
+
+    pushText(segments, text.slice(consumed, valueStart));
+    segments.push({ kind: 'link', value, resolved, navigable });
+    consumed = valueStart + value.length;
   }
 
   pushText(segments, text.slice(consumed));
-  return segments;
+  return { segments, state: { lastFullPath } };
 }
