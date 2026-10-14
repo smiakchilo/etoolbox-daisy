@@ -13,6 +13,7 @@ import {
   resolveAddressChipHost,
   resolveAddressHost,
   resolveAddressSubmission,
+  resolveEditModeTarget,
   resolveHostLabelForeground,
   shouldInferAddressCompletion,
 } from '../../../src/renderer/src/shell/viewModel';
@@ -355,6 +356,100 @@ describe('canOpenInExternalBrowser', () => {
     expect(canOpenInExternalBrowser('file:///C:/page.html')).toBe(false);
     expect(canOpenInExternalBrowser('javascript:alert(1)')).toBe(false);
     expect(canOpenInExternalBrowser('https://user:pass@author.example/')).toBe(false);
+  });
+});
+
+describe('resolveEditModeTarget', () => {
+  it('offers the editor URL for a /content .html page in the web-content view', () => {
+    expect(resolveEditModeTarget('https://author.example/content/site/page.html')).toEqual({
+      enabled: true,
+      editing: false,
+      toggledUrl: 'https://author.example/editor.html/content/site/page.html',
+    });
+  });
+
+  it('offers the web-content visitor view for a page already open in the editor', () => {
+    expect(
+      resolveEditModeTarget('https://author.example/editor.html/content/site/page.html'),
+    ).toEqual({
+      enabled: true,
+      editing: true,
+      toggledUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
+    });
+  });
+
+  it('keeps the origin, other query params and fragment across the switch', () => {
+    expect(
+      resolveEditModeTarget('http://staging.internal:4502/content/site/page.html?a=1#frag')
+        ?.toggledUrl,
+    ).toBe('http://staging.internal:4502/editor.html/content/site/page.html?a=1#frag');
+    expect(
+      resolveEditModeTarget(
+        'http://staging.internal:4502/editor.html/content/site/page.html?a=1#frag',
+      )?.toggledUrl,
+    ).toBe('http://staging.internal:4502/content/site/page.html?a=1&wcmmode=disabled#frag');
+  });
+
+  it('sets wcmmode=disabled when untoggling, replacing any other wcmmode', () => {
+    expect(
+      resolveEditModeTarget(
+        'https://author.example/editor.html/content/site/page.html?wcmmode=edit',
+      )?.toggledUrl,
+    ).toBe('https://author.example/content/site/page.html?wcmmode=disabled');
+  });
+
+  it('removes wcmmode when toggling into the editor', () => {
+    expect(
+      resolveEditModeTarget('https://author.example/content/site/page.html?wcmmode=disabled')
+        ?.toggledUrl,
+    ).toBe('https://author.example/editor.html/content/site/page.html');
+    // A different wcmmode value is dropped too - the editor implies authoring.
+    expect(
+      resolveEditModeTarget('https://author.example/content/site/page.html?wcmmode=edit&a=1')
+        ?.toggledUrl,
+    ).toBe('https://author.example/editor.html/content/site/page.html?a=1');
+  });
+
+  it('disables the control for a DAM asset, even a .html one', () => {
+    expect(resolveEditModeTarget('https://author.example/content/dam/site/page.html').enabled).toBe(
+      false,
+    );
+  });
+
+  it('disables the control for a non-.html resource', () => {
+    expect(resolveEditModeTarget('https://author.example/content/dam/a.jpg').enabled).toBe(false);
+    expect(resolveEditModeTarget('https://author.example/content/site/page.json').enabled).toBe(
+      false,
+    );
+    expect(resolveEditModeTarget('https://author.example/content/site/page').enabled).toBe(false);
+  });
+
+  it('disables the control outside /content', () => {
+    expect(
+      resolveEditModeTarget('https://author.example/libs/granite/core/page.html').enabled,
+    ).toBe(false);
+    expect(resolveEditModeTarget('https://author.example/apps/site/page.html').enabled).toBe(false);
+  });
+
+  it('disables the control when the editor wraps a non-/content path', () => {
+    expect(resolveEditModeTarget('https://author.example/editor.html/libs/x.html').enabled).toBe(
+      false,
+    );
+  });
+
+  it('recognises the editor prefix only at the start of the pathname', () => {
+    // A page merely named .../editor.html/... is still a content page, not the
+    // editor, so the toggle stays off.
+    const target = resolveEditModeTarget('https://author.example/content/editor.html/page.html');
+    expect(target.enabled).toBe(true);
+    expect(target.editing).toBe(false);
+  });
+
+  it('disables the control for a non-http(s) URL, an unparseable value, or no URL at all', () => {
+    expect(resolveEditModeTarget('file:///content/page.html').enabled).toBe(false);
+    expect(resolveEditModeTarget('javascript:alert(1)').enabled).toBe(false);
+    expect(resolveEditModeTarget('not a url').enabled).toBe(false);
+    expect(resolveEditModeTarget('').enabled).toBe(false);
   });
 });
 

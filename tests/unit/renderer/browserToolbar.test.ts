@@ -1879,3 +1879,172 @@ describe('createBrowserToolbar open-in-external-browser button', () => {
     expect(message.hasAttribute('dismissible')).toBe(true);
   });
 });
+
+describe('createBrowserToolbar edit-mode toggle', () => {
+  function editButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
+    const button = toolbar.element.querySelector<HTMLElement>('.browser-toolbar__edit-toggle');
+    if (!button) throw new Error('edit-mode toggle button not found');
+    return button;
+  }
+
+  function addressValue(toolbar: ReturnType<typeof createBrowserToolbar>): string {
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+    return address.value;
+  }
+
+  /** Reports the page the view is showing, which is what the toggle derives from. */
+  function pushPage(url: string): void {
+    stateListeners[0]?.({
+      url,
+      canGoBack: true,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument: true,
+    });
+  }
+
+  it('renders icon-led and hidden by default, right after the address bar', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+
+    // Labelless, like the rest of the toolbar buttons: icon only.
+    expect(button.textContent).toBe('');
+    // The `sp-icon-edit` glyph in the icon slot (queried by slot, not tag, so
+    // the assertion does not depend on the element being registered in jsdom).
+    expect(button.querySelector('[slot="icon"]')?.tagName.toLowerCase()).toBe('sp-icon-edit');
+    expect(button.getAttribute('title')).toBe('Edit mode');
+    expect(button.getAttribute('aria-label')).toBe('Edit mode');
+    // Hidden (not merely disabled) until an editable page loads.
+    expect(button.hasAttribute('hidden')).toBe(true);
+    expect(button.hasAttribute('selected')).toBe(false);
+
+    // Immediately after the address group, before "Open in external browser".
+    const addressGroup = toolbar.element.querySelector('.browser-toolbar__address-group');
+    expect(button.previousElementSibling).toBe(addressGroup);
+    expect(button.nextElementSibling?.getAttribute('title')).toBe('Open in external browser');
+  });
+
+  it('shows and stays off for a /content .html page in the web-content view', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+
+    pushPage('https://author.example/content/site/page.html');
+
+    expect(button.hasAttribute('hidden')).toBe(false);
+    expect(button.hasAttribute('selected')).toBe(false);
+    expect(button.getAttribute('title')).toBe('Edit mode');
+  });
+
+  it('turns on for a page already open in the editor', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+
+    pushPage('https://author.example/editor.html/content/site/page.html');
+
+    expect(button.hasAttribute('hidden')).toBe(false);
+    expect(button.hasAttribute('selected')).toBe(true);
+    expect(button.getAttribute('title')).toBe('Exit edit mode');
+    expect(button.getAttribute('aria-label')).toBe('Exit edit mode');
+  });
+
+  it('navigates to the editor URL when clicked from the web-content view', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html');
+
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledWith(
+        'https://author.example/editor.html/content/site/page.html',
+      );
+    });
+    expect(addressValue(toolbar)).toBe('https://author.example/editor.html/content/site/page.html');
+  });
+
+  it('navigates back to the web-content visitor URL when clicked from the editor', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/editor.html/content/site/page.html');
+
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledWith(
+        'https://author.example/content/site/page.html?wcmmode=disabled',
+      );
+    });
+    expect(addressValue(toolbar)).toBe(
+      'https://author.example/content/site/page.html?wcmmode=disabled',
+    );
+  });
+
+  it('drops wcmmode=disabled when toggling into the editor', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html?wcmmode=disabled');
+
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledWith(
+        'https://author.example/editor.html/content/site/page.html',
+      );
+    });
+    expect(addressValue(toolbar)).toBe('https://author.example/editor.html/content/site/page.html');
+  });
+
+  it('hides for a DAM asset, a non-.html resource, or no page at all', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+
+    pushPage('https://author.example/content/dam/site/page.html');
+    expect(button.hasAttribute('hidden')).toBe(true);
+
+    pushPage('https://author.example/content/site/page.json');
+    expect(button.hasAttribute('hidden')).toBe(true);
+
+    pushPage('https://author.example/');
+    expect(button.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('does nothing when clicked while hidden', () => {
+    const toolbar = build();
+    editButton(toolbar).click();
+    expect(browser.navigate).not.toHaveBeenCalled();
+  });
+
+  it('follows the loaded page, not the address field text', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/');
+    const address = toolbar.element.querySelector('.address-bar') as HTMLElement & {
+      value: string;
+    };
+
+    // Typing a content URL without navigating must not reveal the toggle: it
+    // describes the page that is open, not a target the user is considering.
+    address.value = 'https://author.example/content/site/page.html';
+    address.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+
+    expect(button.hasAttribute('hidden')).toBe(true);
+    expect(button.hasAttribute('selected')).toBe(false);
+  });
+
+  it('hides while the forced home veil covers the page, and restores on dismiss', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html');
+    expect(button.hasAttribute('hidden')).toBe(false);
+
+    // The veil is not the page: like Back/Forward, the toggle acts on the
+    // covered page rather than what is on screen, so it goes hidden.
+    toolbar.setHomeShown(true);
+    expect(button.hasAttribute('hidden')).toBe(true);
+
+    toolbar.setHomeShown(false);
+    expect(button.hasAttribute('hidden')).toBe(false);
+  });
+});

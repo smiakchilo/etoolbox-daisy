@@ -1,4 +1,5 @@
 import { parseNavigationTarget, type ServerId, type ServerSnapshot } from '../../../shared';
+import { isDamPath } from '../chat/linkTargets';
 import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
 import { resolveServerColorCss } from '../lib/serverColor';
 
@@ -352,6 +353,93 @@ export function resolveAddressSubmission(value: string, hosts: readonly HostOpti
  */
 export function canOpenInExternalBrowser(address: string): boolean {
   return parseNavigationTarget(address).ok;
+}
+
+/**
+ * AEM's page-editor path prefix. The editor renders a page at
+ * `<origin>/editor.html/content/site/page.html`, where the web-content view
+ * uses `<origin>/content/site/page.html` - the same page, one wrapper prefix
+ * apart (the same URL the "Edit" action of a transcript link builds; see
+ * `linkTargets.ts`).
+ */
+const EDITOR_PATH_PREFIX = '/editor.html';
+
+/**
+ * AEM's edit-mode query parameter. `wcmmode=disabled` asks AEM to render the
+ * page as a visitor - no authoring UI - which is the web-content view the
+ * toggle lands on; it must never survive into the editor.
+ */
+const WCMMODE_PARAM = 'wcmmode';
+
+/**
+ * True for a pathname naming an editable page: `/content/...` **other than the
+ * DAM** (which holds assets, not pages - the same `/content/dam` split
+ * `linkTargets.ts` classifies with) ending in `.html`.
+ */
+function isEditablePagePath(pathname: string): boolean {
+  const underContent = pathname === '/content' || pathname.startsWith('/content/');
+  return underContent && !isDamPath(pathname) && /\.html$/i.test(pathname);
+}
+
+/**
+ * The edit-mode toggle's state for the page open in the browser pane.
+ *
+ * AEM renders one page two ways: the web-content view
+ * (`<origin>/content/site/page.html?wcmmode=disabled`) and the page editor
+ * (`<origin>/editor.html/content/site/page.html`). The toggle applies only to
+ * an *editable page* - a `/content` path (never `/content/dam`) ending in
+ * `.html` - and is "on" exactly while the URL carries the `/editor.html`
+ * prefix; a click flips between the two forms.
+ */
+export interface EditModeTarget {
+  /** True when the open page is an editable `/content` page - the control applies at all. */
+  readonly enabled: boolean;
+  /** True when the page is open in the editor (`/editor.html/...`) rather than the web-content view. */
+  readonly editing: boolean;
+  /** The URL a click navigates to; `undefined` when {@link EditModeTarget.enabled} is false. */
+  readonly toggledUrl: string | undefined;
+}
+
+/**
+ * Derives {@link EditModeTarget} from a URL - the pane's live page URL, or `''`
+ * for none.
+ *
+ * The `/editor.html` prefix is recognised only at the start of the pathname
+ * (where AEM puts it), so a page merely *named* something/editor.html is never
+ * mistaken for the editor. The origin and fragment are preserved across the
+ * switch, and so are the query parameters **except** for `wcmmode`, which the
+ * two renditions need in opposite ways: untoggling (editor -> web-content view)
+ * sets `wcmmode=disabled` so AEM renders the page without its authoring UI, and
+ * toggling on (web-content view -> editor) removes any `wcmmode` so a lingering
+ * `wcmmode=disabled` cannot fight the editor. Anything else - a DAM asset, a
+ * non-`.html` resource, a `/libs`/`/apps` UI route, a non-http(s) URL, or no URL
+ * at all - leaves the control disabled.
+ */
+export function resolveEditModeTarget(url: string): EditModeTarget {
+  const disabled: EditModeTarget = { enabled: false, editing: false, toggledUrl: undefined };
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return disabled;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return disabled;
+
+  const editing =
+    parsed.pathname === EDITOR_PATH_PREFIX || parsed.pathname.startsWith(`${EDITOR_PATH_PREFIX}/`);
+  const pagePath = editing ? parsed.pathname.slice(EDITOR_PATH_PREFIX.length) : parsed.pathname;
+  if (!isEditablePagePath(pagePath)) return disabled;
+
+  if (editing) {
+    // Un-toggle: drop the editor prefix and ask for the visitor view.
+    parsed.pathname = pagePath;
+    parsed.searchParams.set(WCMMODE_PARAM, 'disabled');
+  } else {
+    // Toggle on: the editor implies authoring, so no `wcmmode` may survive.
+    parsed.pathname = `${EDITOR_PATH_PREFIX}${pagePath}`;
+    parsed.searchParams.delete(WCMMODE_PARAM);
+  }
+  return { enabled: true, editing, toggledUrl: parsed.toString() };
 }
 
 /**

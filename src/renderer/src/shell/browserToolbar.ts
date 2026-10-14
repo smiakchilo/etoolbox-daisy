@@ -30,6 +30,7 @@ import {
   findHostAutocomplete,
   resolveAddressChipHost,
   resolveAddressSubmission,
+  resolveEditModeTarget,
   resolveHostLabelForeground,
   shouldInferAddressCompletion,
 } from './viewModel';
@@ -655,6 +656,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     } else {
       hostsButton.removeAttribute('disabled');
     }
+    // Edit mode: a property of the page the pane is showing (not the address
+    // text), so it is re-derived from `lastNavigationState` - and, like
+    // Back/Forward, from the forced home veil, which hides it because it acts
+    // on the covered page rather than what is on screen.
+    refreshEditMode();
   }
 
   /**
@@ -772,6 +778,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   /** The URL of the page currently on screen, or `''` when the view is blank. */
   function currentDisplayedUrl(): string {
     return lastNavigationState?.url ?? '';
+  }
+
+  /**
+   * Writes `url` into the address field and issues the navigation - the single
+   * body shared by the public `navigateTo` (hosts picker, transcript links) and
+   * the edit-mode toggle, so both do the identical thing: update the field and
+   * its paired chip/external state, then navigate exactly like a typed address.
+   */
+  function navigateToUrl(url: string): void {
+    addressField.value = url;
+    refreshAddressLabel();
+    refreshExternalButton();
+    performNavigate(url);
   }
 
   function performNavigate(target: string): void {
@@ -1136,6 +1155,30 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     children: [addressField, addressLabel, hostsButton],
   });
 
+  // The edit-mode toggle: switches the open page between AEM's web-content view
+  // (`/content/site/page.html`) and its page editor
+  // (`/editor.html/content/site/page.html`). It sits immediately after the
+  // address bar and is a real toggle - one fixed `sp-icon-edit` glyph, the
+  // `selected` state (styled by browser.css) showing the page is open in the
+  // editor. It is **hidden** unless the pane is showing an editable `/content`
+  // page (see `resolveEditModeTarget`), so it never offers a switch AEM would
+  // refuse; `title`/`aria-label` name the action, like the agent-pane toggle.
+  const editModeButton = el('sp-action-button', {
+    attrs: {
+      quiet: '',
+      class: 'browser-toolbar__edit-toggle',
+      title: 'Edit mode',
+      'aria-label': 'Edit mode',
+      hidden: '',
+    },
+  });
+  const editModeIcon = document.createElement('sp-icon-edit');
+  editModeIcon.setAttribute('slot', 'icon');
+  editModeButton.append(editModeIcon);
+  editModeButton.addEventListener('click', () => {
+    performEditModeToggle();
+  });
+
   // "Open in external browser": hands the address bar's current URL to the OS
   // default browser via `browser:openExternal`. Labelless like the nav
   // controls; it is enabled only while the address field holds an absolute
@@ -1178,6 +1221,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     forwardButton,
     refreshButton,
     addressGroup,
+    editModeButton,
     externalButton,
     agentToggleButton,
   );
@@ -1330,6 +1374,36 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     }
   }
 
+  /**
+   * Re-derives the edit-mode toggle from the page the pane is showing (see the
+   * interface doc). **Hidden** (not merely disabled) unless the page is an
+   * editable `/content` page, `selected` while it is open in the editor, and
+   * always labelled with the action a click performs. The forced home veil
+   * reads as "no page": it acts on the covered page rather than what is on
+   * screen, so it hides the control the way it disables Back/Forward.
+   */
+  function refreshEditMode(): void {
+    const target = resolveEditModeTarget(homeShown ? '' : currentDisplayedUrl());
+    // Hidden, not disabled: the control has no meaning for a DAM asset, a
+    // non-`.html` resource or a UI route, so it is simply not offered.
+    editModeButton.toggleAttribute('hidden', !target.enabled);
+    editModeButton.toggleAttribute('selected', target.editing);
+    const label = target.editing ? 'Exit edit mode' : 'Edit mode';
+    editModeButton.setAttribute('title', label);
+    editModeButton.setAttribute('aria-label', label);
+  }
+
+  /**
+   * Runs the toggle: navigates the open page to its other rendering (editor or
+   * web-content view). A no-op when the control is hidden, so a stray click can
+   * never invent a navigation.
+   */
+  function performEditModeToggle(): void {
+    const target = resolveEditModeTarget(homeShown ? '' : currentDisplayedUrl());
+    if (!target.enabled || target.toggledUrl === undefined) return;
+    navigateToUrl(target.toggledUrl);
+  }
+
   // The chip's width clamp depends on the field's live width, which changes
   // with the window and the pane splitter, so recompute it whenever the field
   // resizes. Guarded because jsdom has no `ResizeObserver`; the clamp itself
@@ -1393,10 +1467,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       renderAgentToggle(open);
     },
     navigateTo(url: string): void {
-      addressField.value = url;
-      refreshAddressLabel();
-      refreshExternalButton();
-      performNavigate(url);
+      navigateToUrl(url);
     },
     dispose(): void {
       cancelLoadingBanner();

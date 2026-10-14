@@ -864,8 +864,21 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3091 passed / 14 skipped** (+11 against the
-3080 of the previous entry - **DAM roots**: a `damRoots` free-text field joined
+Current baseline: **`npm run test` → 3112 passed / 14 skipped** (+21 against the
+3091 of the previous entry - **the edit-mode toggle**: a new browser-toolbar
+button (`sp-icon-edit`, immediately after the address bar) that flips the open
+page between its web-content visitor view and AEM's page editor
+(`/editor.html/...`). It is hidden unless an editable `/content` `.html` resource
+is open (`/content/dam` excluded, reusing `linkTargets.ts`'s `isDamPath`), and
+"on" (labels **Edit mode** / **Exit edit mode**) only while the URL carries
+`/editor.html/`; untoggling adds `wcmmode=disabled`, toggling on strips
+`wcmmode`. A pure `resolveEditModeTarget` in `renderer/src/shell/viewModel.ts`,
+the toolbar wiring, a hidden-state rule and a shared selected-state CSS rule
+(now covering both `__agent-toggle` and `__edit-toggle`); 11 view-model + 10
+toolbar cases (21 new) and 6 mutations caught - see `docs/verification.md`
+"The edit-mode toggle: switch a page between the web-content view and the editor
+(2026-10-14)"). Before that it was 3091 (+11 against the 3080 of the previous
+entry - **DAM roots**: a `damRoots` free-text field joined
 the project group (Settings "Projects" tab, placed last, and the tab's "Content
 priority paths" and "Content roots" swapped), `environment_facts` reports it
 (default `/content/dam`), and the two search composites default their roots to
@@ -1288,7 +1301,13 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 131 tests; a full run is typically 124 passed / 6 failed.** The
+**Playwright → 132 tests; a full run is typically 124 passed / 6 failed.** The
++1 since 131 is the new `edit-mode-toggle.spec.ts`, proving against the built app
+that the browser toolbar's edit-mode toggle exists (`sp-icon-edit` registered
+with a real shadow root, immediately after the address bar), is hidden unless an
+editable `/content` `.html` page is open, and flips the open page between
+`/content/site/page.html` and `/editor.html/content/site/page.html` (asserting
+the address bar follows and a non-`.html` URL hides it again). Before that, the
 +4 since 127 is the new `table-export.spec.ts`, proving against the built app
 that hovering a `format_table` message's header row opens the Copy/Export popover
 right-aligned to the table (and hovering a data row does not), that Copy writes

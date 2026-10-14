@@ -149,15 +149,27 @@
 }
 
 /*
- * The agent-pane toggle's "selected" (pane open) state. Spectrum's selected
- * action-button defaults to a dark fill with white content; every other
- * toolbar control is quiet, so the selected state is re-tinted to a light
- * gray with dark content instead. These are the component's documented
+ * The edit-mode toggle is hidden entirely (not merely disabled) unless the open
+ * page is editable. Spectrum's `:host` display rule would beat the UA `[hidden]`
+ * rule, so the hidden state needs an explicit override - the same shape as
+ * `.address-bar__host-label[hidden]` / `.browser-view-host[hidden]` above.
+ */
+.browser-toolbar__edit-toggle[hidden] {
+  display: none;
+}
+
+/*
+ * The toolbar toggles' "selected" (on) state - the agent-pane toggle (pane
+ * open) and the edit-mode toggle (page open in the editor). Spectrum's
+ * selected action-button defaults to a dark fill with white content; every
+ * other toolbar control is quiet, so the selected state is re-tinted to a
+ * light gray with dark content instead. These are the component's documented
  * `--mod-*` hooks: its `:host([selected])` rule reads the `-selected`
  * variants first, so setting them here wins. `--mod-actionbutton-*` is the
  * override layer the component consumes, not a private token.
  */
-.browser-toolbar__agent-toggle[selected] {
+.browser-toolbar__agent-toggle[selected],
+.browser-toolbar__edit-toggle[selected] {
   --mod-actionbutton-background-color-default-selected: var(--spectrum-gray-200, #eaeaea);
   --mod-actionbutton-background-color-hover-selected: var(--spectrum-gray-300, #d3d3d3);
   --mod-actionbutton-background-color-down-selected: var(--spectrum-gray-300, #d3d3d3);
