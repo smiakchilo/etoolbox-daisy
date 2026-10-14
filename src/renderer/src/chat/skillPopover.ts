@@ -4,7 +4,7 @@ import type { AgentChatSkill } from '../../../shared';
 /**
  * The composer's `/` autocomplete popup, drawn with Spectrum's own overlay and
  * popover so it matches the transcript's link-action popover
- * (`linkActionPopover.ts`): Spectrum's rounded, shadowed chrome, the overlay's
+ * (`hoverActionPopover.ts`): Spectrum's rounded, shadowed chrome, the overlay's
  * own placement/flip rather than hand-rolled positioning, and a portal above
  * the pane so the composer can never clip it.
  *

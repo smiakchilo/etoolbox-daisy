@@ -23,11 +23,17 @@ import { el } from './dom';
  *
  * One row per surface is the invariant that keeps two banners from stacking: a
  * later message *suppresses* the former by taking that single row. Within
- * `statusBanner.ts` this is the priority slot (`prompt > error > status`) plus
- * a persistent lowest-priority "standing" floor the chat pane uses for its
- * "no usable agent" prompt; `browserToolbar.ts` applies its own priority
+ * `statusBanner.ts` this is the priority slot (`prompt > error > notice >
+ * status`) plus a persistent lowest-priority "standing" floor the chat pane uses
+ * for its "no usable agent" prompt; `browserToolbar.ts` applies its own priority
  * (loading > certificate prompt > unknown-origin prompt > error) to the one
  * row it owns.
+ *
+ * **Copy is a label, never a sentence: no message row ends with a period.**
+ * "Settings saved", "No agent available. Browsing AEM still works", "Exported to
+ * table-20261014-101530.csv". A period inside is fine where two statements need
+ * separating; a trailing one is never added (a real E2E failed once for exactly
+ * that mismatch - see AGENTS.md §11).
  *
  * The row height is pinned by `.banner-row` in banner.css: the component's
  * `.text` slot margins (`--mod-alert-banner-*-text`) are neutralized and the
@@ -215,16 +221,50 @@ export function createBannerActionButton(label: string): HTMLElement {
 }
 
 /**
+ * Normalises the text/control boundaries of a composed row so a control is
+ * never glued to a word. A prompt copy that marks the button's place with
+ * {@link BANNER_ACTION_MARKER} almost always already spaces it ("Press
+ * {action} to allow"), but a copy that names no place at all - "Timed out.
+ * Check the address" - has its button appended straight onto the end, which
+ * rendered as "addressReload": no visual gap, and the row's own text copied as
+ * one word. Every boundary is therefore spaced here, in the one place parts
+ * become nodes, instead of at each call site.
+ */
+function withControlSpacing(parts: readonly (string | Node)[]): (string | Node)[] {
+  const spaced: (string | Node)[] = [];
+  for (const part of parts) {
+    const previous = spaced[spaced.length - 1];
+    const isText = typeof part === 'string';
+    const previousIsText = typeof previous === 'string';
+    if (!isText && previousIsText && previous !== '' && !/\s$/.test(previous)) {
+      spaced.push(' ');
+    } else if (
+      isText &&
+      previous !== undefined &&
+      !previousIsText &&
+      part !== '' &&
+      !/^\s/.test(part)
+    ) {
+      spaced.push(' ');
+    }
+    spaced.push(part);
+  }
+  return spaced;
+}
+
+/**
  * Builds the `_copy` span for a row whose sentence embeds controls inline (the
  * chat pane's "Activate an agent in <Settings> to send messages" row, and every
- * prompt row via {@link buildBannerPrompt}). `parts` are appended in order;
- * strings become text nodes. The controls are ordinary inline parts of the
- * sentence, so they flow beside the text and wrap with it rather than landing
- * on their own line.
+ * prompt/notice row via {@link buildBannerPrompt}). `parts` are appended in
+ * order; strings become text nodes. The controls are ordinary inline parts of
+ * the sentence, so they flow beside the text and wrap with it rather than
+ * landing on their own line - and a missing space between a control and the
+ * text beside it is supplied by {@link withControlSpacing}, so no call site has
+ * to remember it.
  */
 export function buildBannerCopy(parts: readonly (string | Node)[]): HTMLElement {
   const span = el('span', { attrs: { class: BANNER_ROW_COPY_CLASS } });
-  for (const part of parts) {
+  for (const part of withControlSpacing(parts)) {
     span.append(typeof part === 'string' ? document.createTextNode(part) : part);
   }
   return span;

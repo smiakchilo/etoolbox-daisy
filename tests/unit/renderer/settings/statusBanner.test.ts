@@ -28,6 +28,10 @@ import {
  * - `showPrompt` is sticky, dismissible, replaces anything, and renders its
  *   one `sp-action-button` (the browser banner's action-button idiom, not an
  *   accent `sp-button`) which invokes `onActivate`.
+ * - `showNotice` is the same sticky, dismissible row with one action button,
+ *   but ranks *below* an error and above a transient status: the chat pane's
+ *   "Exported to table-….csv <Open in folder>" acknowledgement. Acting on it
+ *   also dismisses it.
  * - the banner's own close control dispatches a cancelable `close` event that
  *   is prevented and turned into `hide()`.
  * - closing collapses: the row keeps `open` under the shared
@@ -163,6 +167,65 @@ describe('createStatusBanner single slot', () => {
 
     (button as HTMLElement).click();
     expect(onActivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('a notice renders its one action button, is sticky and dismissible, and invokes onActivate', () => {
+    vi.useFakeTimers();
+    try {
+      const onActivate = vi.fn();
+      const banner = createStatusBanner();
+      // The real notice copy: no marker, so the button is appended - and the
+      // builder must put a space between it and the file name.
+      banner.showNotice('Exported to table-20261014-101530.csv', {
+        label: 'Open in folder',
+        onActivate,
+      });
+
+      expect(banner.element.hasAttribute('open')).toBe(true);
+      expect(banner.element.hasAttribute('dismissible')).toBe(true);
+      expect(banner.element.textContent).toBe(
+        'Exported to table-20261014-101530.csv Open in folder',
+      );
+      // A notice is not a confirm: it must never be treated as a live prompt.
+      expect(banner.isPromptShowing()).toBe(false);
+      const button = banner.element.querySelector('sp-action-button');
+      expect(button?.textContent).toBe('Open in folder');
+      expect(button?.getAttribute('size')).toBe('s');
+
+      // Sticky: it never auto-clears the way a status does.
+      vi.advanceTimersByTime(STATUS_AUTO_CLEAR_MS * 10);
+      expect(banner.element.hasAttribute('open')).toBe(true);
+
+      (button as HTMLElement).click();
+      expect(onActivate).toHaveBeenCalledTimes(1);
+      // Acting on the notice also dismisses it: it is a one-shot
+      // acknowledgement, so the row collapses and its action cannot be pressed
+      // twice.
+      expect(banner.element.classList.contains('banner-row--closing')).toBe(true);
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+      expect(banner.element.textContent).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a notice outranks a status but yields to an error', () => {
+    const action: StatusBannerAction = { label: 'Open in folder', onActivate: () => undefined };
+    const banner = createStatusBanner();
+
+    // A transient status must not displace the notice.
+    banner.showNotice('Exported. {action}', action);
+    banner.showStatus('Saving\u2026');
+    expect(banner.element.textContent).toContain('Exported.');
+
+    // An error does displace it (the failure is the more important message).
+    banner.showError('Send failed');
+    expect(banner.element.textContent).toBe('Send failed');
+
+    // ... and a notice never displaces a live error.
+    banner.showNotice('Exported. {action}', action);
+    expect(banner.element.textContent).toBe('Send failed');
   });
 
   it('a prompt is superseded by a newer prompt, and the old action never fires', () => {

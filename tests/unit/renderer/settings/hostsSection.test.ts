@@ -142,6 +142,7 @@ beforeEach(() => {
     showStatus: vi.fn(),
     showError: vi.fn(),
     showPrompt,
+    showNotice: vi.fn(),
     clear: vi.fn(),
   };
   reportSave = vi.fn<(outcome: Promise<SaveOutcome>) => void>();

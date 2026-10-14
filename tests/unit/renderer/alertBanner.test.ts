@@ -51,13 +51,31 @@ describe('buildBannerPrompt', () => {
     expect(copy?.lastChild?.textContent).toBe(' to continue');
   });
 
-  it('appends buttons inline after the copy when it names no action', () => {
+  it('appends buttons inline after the copy when it names no action, with a space', () => {
     const button = createBannerActionButton('Reload');
     const [copy] = buildBannerPrompt('Timed out. Check the address', [button]);
 
     expect(copy?.classList.contains(BANNER_ROW_COPY_CLASS)).toBe(true);
-    expect(copy?.textContent).toBe('Timed out. Check the addressReload');
+    // The separator is part of the row's own text, so the control is never glued
+    // to the last word and the whole row still copies/reads as a sentence.
+    expect(copy?.textContent).toBe('Timed out. Check the address Reload');
     expect(copy?.lastChild).toBe(button);
+  });
+
+  it('separates a control placed flush against the text by the marker', () => {
+    const button = createBannerActionButton('Open in folder');
+    const [copy] = buildBannerPrompt('Exported to table.csv{action}', [button]);
+
+    expect(copy?.textContent).toBe('Exported to table.csv Open in folder');
+  });
+
+  it('does not double the space a copy already carries around the marker', () => {
+    const button = createBannerActionButton('OK');
+    const [copy] = buildBannerPrompt(`Press ${BANNER_ACTION_MARKER} to continue`, [button]);
+
+    expect(copy?.textContent).toBe('Press OK to continue');
+    expect(copy?.firstChild?.textContent).toBe('Press ');
+    expect(copy?.lastChild?.textContent).toBe(' to continue');
   });
 
   it('returns a single copy span, never a separate actions sibling', () => {
@@ -77,6 +95,14 @@ describe('buildBannerCopy', () => {
     expect(span.classList.contains(BANNER_ROW_COPY_CLASS)).toBe(true);
     expect(span.textContent).toBe('Activate an agent in Settings to send messages');
     expect(span.querySelector('sp-action-button')).toBe(button);
+  });
+
+  it('supplies the space a caller forgot between text and a control', () => {
+    const button = createBannerActionButton('Reload');
+    const span = buildBannerCopy(['Timed out. Check the address', button]);
+
+    // Never "addressReload": one word, and no visual gap.
+    expect(span.textContent).toBe('Timed out. Check the address Reload');
   });
 });
 

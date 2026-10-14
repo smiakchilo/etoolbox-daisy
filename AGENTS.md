@@ -335,6 +335,15 @@ pinned to `1.12.2` (including `alert-banner`, which renders the browser pane's
 status/message row); add new ones at that same version. Elements are registered
 by side-effect import in `src/renderer/src/main.ts`.
 
+**Banner copy never ends with a period.** Every message row
+(`lib/alertBanner.ts`'s `sp-alert-banner` surfaces) reads as a label, not a
+sentence: "Settings saved", "No agent available. Browsing AEM still works",
+"Exported to table-20261014-101530.csv". A trailing period is never added, and
+in-text sentences are joined with a period only where they need it. An E2E once
+failed precisely because a helper text had no period while its assertion
+expected one (AGENTS.md §11) - that asymmetry is the rule, applied to the app's
+own copy.
+
 `chat/` separates view-model from view on purpose: `transcriptViewModel.ts`,
 `composerViewModel.ts` and the query tool's `queryResultViewModel.ts` (now in
 `src/tools/aem-query/renderer/`) are pure and heavily tested; `transcriptView.ts` and `composer.ts` only render. `renderMarkdown.ts`
@@ -511,7 +520,27 @@ src/tools/<name>/
   run rendered - carried cell-by-cell, row by row, so a blanked repeated page path
   still resolves and a `Load more` append continues it. The segment-to-DOM
   rendering is shared in `linkSegmentDom.ts`; a column header only picks a
-  presentation class (clamp/wrap), never linkification.
+  presentation class (clamp/wrap), never linkification. **Its gutter - the
+  column-header row and the total line, never an ordinary data row - offers
+  Copy and Export**, in the same travelling hover popover the Edit/CRX link
+  actions use (the region + actions are `tableHover.ts`'s
+  `tableGutterFrom`/`tableHoverActions`; the popover itself is the now-generic
+  `hoverActionPopover.ts`, `HoverAction[]` instead of link actions only). Copy
+  writes tab-separated `text/plain` plus an HTML `<table>` to the clipboard so a
+  paste into Excel/Google Sheets keeps the grid; Export hands a CSV
+  (comma/CRLF/UTF-8-BOM) to main, which shows the OS save dialog and writes the
+  file (`table-export:save-csv`, `src/main/ipc/tableExport.ts`). Both serialize
+  the displayed table - header, data rows, and the total line as a trailing row,
+  without the `#` index column (`tableExport.ts`); a run with no columns offers
+  neither, and a cancelled dialog is not an error. The buttons wear
+  `sp-icon-copy` / `sp-icon-export`, and a successful export raises the chat
+  pane's sticky notice - "Exported to table-20261014-101530.csv <Open in
+  folder>" (`StatusBanner.showNotice`; banner copy never ends with a period)
+  - whose action reveals the written file in the OS file manager through
+  `table-export:reveal-last` (no payload: main remembers the path it wrote, so
+  the renderer can never steer the reveal) and dismisses the notice. The gutter
+  popover is **right-aligned to the table**, not centred on it (a link's stays
+  centred).
 - `environment_facts` reports **every configured host** as a label, an origin and
   its effective content/component roots, flagging the one the browser pane is
   currently on. It takes no arguments: the application resolves the facts from
@@ -825,7 +854,28 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3055 passed / 14 skipped** (+21 against the
+Current baseline: **`npm run test` → 3080 passed / 14 skipped** (+25 against the
+3055 of the previous entry - **Copy/Export from a `format_table` message's
+gutter**: the column-header row and the total line - never an ordinary data row -
+offer **Copy** and **Export** in the same travelling hover popover the Edit/CRX
+link actions use. Copy writes tab-separated `text/plain` *and* an HTML `<table>`
+to the clipboard so a paste into Excel/Google Sheets keeps the grid; Export sends
+a CSV (comma/CRLF/UTF-8-BOM) through a new `table-export:save-csv` IPC, where main
+shows the OS save dialog and writes the chosen file, then raises a sticky notice
+with an **Open in folder** action (`StatusBanner.showNotice`, ranking between an
+error and a transient status) whose click reveals the written file in the OS file
+manager through a second channel, `table-export:reveal-last` - which takes no
+payload, because main remembers the path it wrote. Both serialize the displayed
+table - header, data rows, and the total line as a trailing row, without the `#`
+index column - and a run with no columns offers neither. The link-only
+`linkActionPopover.ts` became the generic `hoverActionPopover.ts` (`HoverAction`),
+the gutter region + its two actions live in a new `tableHover.ts`, and the pure
+serializers in a new `tableExport.ts`; 12 `tableExport` + 8 `tableHover` cases,
+2 `statusBanner` cases for the new notice slot, 3 `alertBanner` cases pinning the
+builder's control/text spacing, and a built-app `table-export.spec.ts` (4 cases)
+- see `docs/verification.md`
+"Copy and Export from a `format_table` message's gutter (2026-10-14)").
+Before that it was 3055 (+21 against the
 3034 of the previous entry - **one AEM linkifier, absolute URLs, and the "partly
 linkified" page-relative path**: `splitAemPathLinks` (`linkTargets.ts`) is now one
 stateful, value-driven pass - it links an absolute `http(s)` URL (a configured
@@ -1215,7 +1265,15 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 127 tests; a full run is typically 120 passed / 6 failed.** The
+**Playwright → 131 tests; a full run is typically 124 passed / 6 failed.** The
++4 since 127 is the new `table-export.spec.ts`, proving against the built app
+that hovering a `format_table` message's header row opens the Copy/Export popover
+right-aligned to the table (and hovering a data row does not), that Copy writes
+tab-separated text *and* an HTML table to the real OS clipboard (read back in
+main), and that Export writes the CSV to the path the save dialog (stubbed in
+main) names and then shows an "Exported to <file>.csv" notice whose **Open in
+folder** action reveals that path (recorder in main) and dismisses the notice.
+Before that, the
 +1 since 126 is the `message-links.spec.ts` case proving, against the built app,
 that a page-relative table cell is a non-anchor hover target whose popover offers
 only its node's CRX (and resolves it against the page above when the repeat was

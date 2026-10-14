@@ -18,6 +18,13 @@ import { isDeterministicTablePrompt } from '../chat/transcriptViewModel';
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { createTranscriptFollower } from '../chat/transcriptFollower';
 import {
+  suggestTableExportFileName,
+  tableToClipboardHtml,
+  tableToCsv,
+  tableToTsv,
+  type TableExportData,
+} from '../chat/tableExport';
+import {
   applyAgentEvent,
   type AgentChatError,
   type AgentChatSkill,
@@ -194,6 +201,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     onOpenLink: (url) => openLink(url),
     onOpenExternal: (url) => openExternal(url),
     onResume: () => resumeStoppedSession(),
+    onCopyTable: (data) => copyTable(data),
+    onExportTable: (data) => exportTable(data),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -1035,6 +1044,70 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    */
   function openExternal(url: string): void {
     void window.daisy.browser.openExternal({ url }).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
+  }
+
+  /**
+   * Copies a `format_table` run's table to the clipboard as both tab-separated
+   * text and an HTML table, so a paste into Excel or Google Sheets keeps the
+   * grid (and the header row). The renderer writes it directly - it is the app's
+   * own trusted surface - and the action is silent: a copy either lands, or the
+   * clipboard is unavailable, and a hover affordance has nothing useful to say
+   * about the latter.
+   */
+  function copyTable(data: TableExportData): void {
+    const clipboard: Clipboard | undefined = navigator.clipboard;
+    if (clipboard === undefined) return;
+    const text = tableToTsv(data);
+    const html = tableToClipboardHtml(data);
+    if (typeof ClipboardItem === 'undefined') {
+      void clipboard.writeText(text).catch(() => undefined);
+      return;
+    }
+    const item = new ClipboardItem({
+      'text/plain': new Blob([text], { type: 'text/plain' }),
+      'text/html': new Blob([html], { type: 'text/html' }),
+    });
+    void clipboard.write([item]).catch(() => {
+      // A rich write can be refused (a permission the OS denies); the plain text
+      // is the fallback a spreadsheet still splits into cells.
+      void clipboard.writeText(text).catch(() => undefined);
+    });
+  }
+
+  /**
+   * Exports a `format_table` run's table as a CSV file. Main shows the OS save
+   * dialog and writes the path the user picks; a cancelled dialog is a no-op,
+   * not an error (and a write failure is reported by main, not here). A
+   * successful write raises a sticky notice naming the file, with an **Open in
+   * folder** action (which also dismisses the notice) - so the reader learns the
+   * file landed and can jump straight to it. Banner copy carries no trailing
+   * period.
+   */
+  function exportTable(data: TableExportData): void {
+    void window.daisy.tableExport
+      .saveCsv({
+        suggestedFileName: suggestTableExportFileName(new Date()),
+        content: tableToCsv(data),
+      })
+      .then((result) => {
+        if (!result.ok || !result.saved) return;
+        statusBanner.showNotice(`Exported to ${result.fileName}`, {
+          label: 'Open in folder',
+          onActivate: () => revealLastExport(),
+        });
+      })
+      .catch(() => undefined);
+  }
+
+  /**
+   * Reveals the file the last export wrote in the OS file manager. The path is
+   * main's, never the renderer's; a failure (no export yet, or a refused
+   * reveal) is reported in the pane's banner.
+   */
+  function revealLastExport(): void {
+    void window.daisy.tableExport.revealLast().then((result) => {
       if (!result.ok) statusBanner.showError(result.error.message);
     });
   }

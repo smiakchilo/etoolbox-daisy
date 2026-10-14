@@ -84,6 +84,19 @@ export const SETTINGS_SET_AGENT_SETTINGS_CHANNEL = 'settings:set-agent-settings'
  */
 export const SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL = 'settings:update-browser-settings' as const;
 
+/**
+ * Exports a transcript table as a CSV file (the `format_table` message's
+ * gutter **Export** action). The renderer owns the serialization; main owns the
+ * OS save dialog and the file write. See src/shared/table-export-ipc.ts.
+ */
+export const TABLE_EXPORT_SAVE_CSV_CHANNEL = 'table-export:save-csv' as const;
+/**
+ * Reveals the file the last successful `table-export:save-csv` wrote, in the
+ * OS file manager. No request payload: main owns the path (see
+ * `src/shared/table-export-ipc.ts`).
+ */
+export const TABLE_EXPORT_REVEAL_LAST_CHANNEL = 'table-export:reveal-last' as const;
+
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.
 export const BROWSER_GO_BACK_CHANNEL = 'browser:go-back' as const;

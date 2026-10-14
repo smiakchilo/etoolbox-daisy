@@ -15,9 +15,12 @@
  * (see the step-09/10 handoff): auto-save feedback, validation errors,
  * two-click confirmations, and password set/clear results.
  *
- * Single-slot priority, `prompt > error > status > standing`:
- * - `showStatus` is transient (auto-clears) and never displaces an error or
- *   a prompt - the actionable thing stays on screen.
+ * Single-slot priority, `prompt > error > notice > status > standing`:
+ * - `showStatus` is transient (auto-clears) and never displaces an error, a
+ *   notice or a prompt - the actionable thing stays on screen.
+ * - `showNotice` is sticky, dismissible, and carries one inline action (the
+ *   chat pane's "Table exported to CSV. <Open in folder>" row). It outranks a
+ *   transient status but yields to an error, so a failure still wins the row.
  * - `showError` is sticky and dismissible; it never displaces a prompt.
  *   `clearError` drops only the error row (restoring the floor beneath it),
  *   which is how the chat pane discards an error the user has moved on from -
@@ -78,6 +81,14 @@ export interface StatusBannerSink {
   showError(message: string): void;
   /** Sticky, dismissible confirm prompt with one action; highest priority. */
   showPrompt(copy: string, action: StatusBannerAction): void;
+  /**
+   * Sticky, dismissible notice with one inline action - the chat pane's
+   * "Exported to table-….csv <Open in folder>" row after a successful export.
+   * Ranks below an error and above a transient status, so a failure still wins
+   * the single row. Activating the action also dismisses the notice (a one-shot
+   * acknowledgement the reader has just acted on).
+   */
+  showNotice(copy: string, action: StatusBannerAction): void;
   /** Hides whatever is showing. */
   clear(): void;
   /**
@@ -131,9 +142,14 @@ export interface StatusBanner extends StatusBannerSink {
 /** The standing floor's two presentations: an ordinary row, or the loading one. */
 export type StatusBannerStandingPresentation = 'plain' | 'loading';
 
-type BannerSlot = 'status' | 'error' | 'prompt';
+type BannerSlot = 'status' | 'notice' | 'error' | 'prompt';
 
-const SLOT_RANK: Readonly<Record<BannerSlot, number>> = { status: 1, error: 2, prompt: 3 };
+const SLOT_RANK: Readonly<Record<BannerSlot, number>> = {
+  status: 1,
+  notice: 2,
+  error: 3,
+  prompt: 4,
+};
 
 /**
  * How long a transient status ("Settings saved", "Host added", ...) stays
@@ -294,7 +310,7 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     slot = next;
     banner.replaceChildren(...content);
     // The shared close-control rule: a transient status (auto-clearing, nothing
-    // to wave away) has no close control; error/prompt rows do, like the
+    // to wave away) has no close control; error/notice/prompt rows do, like the
     // browser row. This also drops the standing floor's loading fill - only
     // `showStanding` applies it.
     applyBannerPresentation(banner, next === 'status' ? 'transient' : 'default');
@@ -307,10 +323,11 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     return true;
   }
 
-  function promptContent(copy: string, action: StatusBannerAction): readonly Node[] {
+  function inlineActionContent(copy: string, action: StatusBannerAction): readonly Node[] {
     // A size-s `sp-action-button`, exactly like the browser banner's OK
     // buttons (browserToolbar.ts) - deliberately NOT an accent `sp-button`,
-    // so the confirm reads as a status-strip action, not a blocking dialog.
+    // so the confirm/notice reads as a status-strip action, not a blocking
+    // dialog.
     const actionButton = createBannerActionButton(action.label);
     actionButton.addEventListener('click', () => action.onActivate());
     return buildBannerPrompt(copy, [actionButton]);
@@ -354,8 +371,25 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     showError(message: string): void {
       present('error', [buildBannerCopy([message])], `error:${message}`);
     },
+    showNotice(copy: string, action: StatusBannerAction): void {
+      // Activating a notice's action also dismisses the notice: it is a one-shot
+      // acknowledgement, and the reader has just acted on it. Only the notice
+      // slot is dropped (so a newer error that took the row meanwhile is left
+      // alone), falling back to the standing floor.
+      present(
+        'notice',
+        inlineActionContent(copy, {
+          label: action.label,
+          onActivate: () => {
+            if (slot === 'notice') dismissSlot();
+            action.onActivate();
+          },
+        }),
+        `notice:${copy}:${action.label}`,
+      );
+    },
     showPrompt(copy: string, action: StatusBannerAction): void {
-      present('prompt', promptContent(copy, action), `prompt:${copy}:${action.label}`);
+      present('prompt', inlineActionContent(copy, action), `prompt:${copy}:${action.label}`);
     },
     setStanding(
       content: readonly Node[] | null,

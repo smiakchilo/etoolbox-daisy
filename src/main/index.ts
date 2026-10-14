@@ -51,6 +51,7 @@ import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
+import { registerTableExportIpcHandlers } from './ipc/tableExport';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
@@ -505,6 +506,13 @@ if (!gotSingleInstanceLock) {
 
     registerBrowserIpcHandlers({
       controller: browserController,
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
+    });
+
+    registerTableExportIpcHandlers({
+      parentWindow: mainWindow,
       logger,
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,

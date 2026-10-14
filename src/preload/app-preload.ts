@@ -50,6 +50,8 @@ import {
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  TABLE_EXPORT_REVEAL_LAST_CHANNEL,
+  TABLE_EXPORT_SAVE_CSV_CHANNEL,
   addProjectRequestSchema,
   addProxyRequestSchema,
   addServerRequestSchema,
@@ -86,6 +88,8 @@ import {
   parseLogoutResult,
   parseReorderServersResult,
   parseSettingsIpcVoidResult,
+  parseTableExportRevealResult,
+  parseTableExportSaveCsvResult,
   parseUpdateServerPresentationResult,
   parseUpdateServerTargetingResult,
   removeProjectRequestSchema,
@@ -98,6 +102,7 @@ import {
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
   switchServerRequestSchema,
+  tableExportSaveCsvRequestSchema,
   updateBrowserSettingsRequestSchema,
   updateProjectRequestSchema,
   updateProxyRequestSchema,
@@ -147,6 +152,9 @@ import {
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
+  type TableExportRevealResult,
+  type TableExportSaveCsvRequest,
+  type TableExportSaveCsvResult,
   type UpdateBrowserSettingsRequest,
   type UpdateProjectRequest,
   type UpdateProxyRequest,
@@ -404,6 +412,17 @@ const daisyApi: DaisyAppApi = {
       return () => {
         ipcRenderer.removeListener(AGENT_CHAT_STATUS_CHANGED_CHANNEL, handler);
       };
+    },
+  },
+  tableExport: {
+    async saveCsv(request: TableExportSaveCsvRequest): Promise<TableExportSaveCsvResult> {
+      const parsedRequest = tableExportSaveCsvRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(TABLE_EXPORT_SAVE_CSV_CHANNEL, parsedRequest);
+      return parseTableExportSaveCsvResult(raw);
+    },
+    async revealLast(): Promise<TableExportRevealResult> {
+      const raw: unknown = await ipcRenderer.invoke(TABLE_EXPORT_REVEAL_LAST_CHANNEL);
+      return parseTableExportRevealResult(raw);
     },
   },
   browser: {

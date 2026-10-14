@@ -37,6 +37,11 @@ import type {
   ViewBounds,
 } from './browser-ipc';
 import type {
+  TableExportRevealResult,
+  TableExportSaveCsvRequest,
+  TableExportSaveCsvResult,
+} from './table-export-ipc';
+import type {
   AgentChatByIdRequest,
   AgentChatOpenConversationRequest,
   AgentChatOpenResult,
@@ -97,6 +102,26 @@ export interface DaisyAppApi {
    * later task; this surface only needs to exist and behave correctly.
    */
   readonly agentChat: DaisyAgentChatApi;
+  /**
+   * The transcript table Export surface: main shows the OS save dialog and
+   * writes the CSV the user names (`format_table`'s gutter Export action).
+   */
+  readonly tableExport: DaisyTableExportApi;
+}
+
+export interface DaisyTableExportApi {
+  /**
+   * Writes `content` to a file the user picks in the OS save dialog, defaulting
+   * to `suggestedFileName`. A cancelled dialog resolves to `{ ok: true, saved:
+   * false }`; only a validation or write failure is an error.
+   */
+  saveCsv(request: TableExportSaveCsvRequest): Promise<TableExportSaveCsvResult>;
+  /**
+   * Reveals the file the last successful {@link saveCsv} wrote, in the OS file
+   * manager. Takes no argument - main owns the path - so the renderer can never
+   * point the OS at an arbitrary file.
+   */
+  revealLast(): Promise<TableExportRevealResult>;
 }
 
 export interface DaisyAgentChatApi {

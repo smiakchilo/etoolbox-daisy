@@ -13,7 +13,14 @@ import {
   type MessageSegment,
 } from './linkTargets';
 import { renderLinkSegment } from './linkSegmentDom';
-import { createLinkActionPopover, type LinkActionPopover } from './linkActionPopover';
+import {
+  createHoverActionPopover,
+  type HoverAction,
+  type HoverActionAlignment,
+  type HoverActionPopover,
+} from './hoverActionPopover';
+import { tableGutterFrom, tableHoverActions } from './tableHover';
+import { type TableExportData } from './tableExport';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import {
   describeInterruption,
@@ -87,6 +94,19 @@ export interface TranscriptViewOptions {
    * shows no action. Absent (a unit test) means no notice offers an action.
    */
   readonly onResume?: () => void;
+  /**
+   * Invoked with a `format_table` run's table when the reader activates the
+   * gutter's **Copy** action. The host turns it into clipboard content (see
+   * `tableExport.ts`). Absent (a unit test) means the Copy button is inert.
+   */
+  readonly onCopyTable?: (data: TableExportData) => void;
+  /**
+   * Invoked with a `format_table` run's table when the reader activates the
+   * gutter's **Export** action. The host turns it into a CSV file and asks the
+   * user where to save it. Absent (a unit test) means the Export button is
+   * inert.
+   */
+  readonly onExportTable?: (data: TableExportData) => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -568,18 +588,22 @@ export function createTranscriptView(
   // read as the same run changing rather than a new one appearing.
   let renderedRunSignatures = new Map<string, string>();
 
-  // The one travelling hover popover for pane links (and the "partly linkified"
-  // page-relative table cells) that offer actions. It is
-  // undefined in a jsdom unit test (the Spectrum overlay is not registered
-  // there) and in any environment where it is; `show`/`scheduleHide` below are
-  // then simply inert.
-  const popover: LinkActionPopover | undefined = createLinkActionPopover({
-    onOpenLink: (url) => options.onOpenLink?.(url),
+  // The one travelling hover popover for transcript affordances that offer icon
+  // actions: a pane link (Edit/CRX) or a `format_table` run's gutter
+  // (Copy/Export). It is undefined in a jsdom unit test (the Spectrum overlay is
+  // not registered there) and in any environment where it is;
+  // `show`/`scheduleHide`/`hideNow` below are then simply inert.
+  const popover: HoverActionPopover | undefined = createHoverActionPopover({
     getContainer: () => element.closest('sp-theme') ?? document.body,
   });
   // The element the popover is currently shown for, so repeated `pointerover`
   // events over one of them do not rebuild its buttons.
-  let hoveredLink: HTMLElement | undefined;
+  let hoveredAnchor: HTMLElement | undefined;
+
+  /** The icon a pane link's popover action wears - Edit or CRX. */
+  function linkActionIcon(id: 'edit' | 'crx'): keyof HTMLElementTagNameMap {
+    return id === 'edit' ? 'sp-icon-edit' : 'sp-icon-journey-voyager';
+  }
 
   /**
    * The element under the pointer that carries a hover popover: a pane link, or
@@ -594,26 +618,69 @@ export function createTranscriptView(
     );
   }
 
+  /**
+   * Every pointer-reactive affordance: a pane link/partial, or a
+   * `format_table` gutter - the header row or the total line, never an ordinary
+   * data row (`tableHover.ts`). The two can never be the same element. The
+   * alignment differs: a link keeps the popover centred above it, while the
+   * gutter (whose anchor spans the table) right-aligns it to the table's edge.
+   */
+  function hoverTargetFrom(
+    target: EventTarget | null,
+  ): { anchor: HTMLElement; align: HoverActionAlignment } | undefined {
+    const link = paneLinkFrom(target);
+    if (link !== null) return { anchor: link, align: 'center' };
+    const gutter = tableGutterFrom(target);
+    return gutter === undefined ? undefined : { anchor: gutter.anchor, align: 'end' };
+  }
+
+  /**
+   * The actions the popover should show for `anchor`: a link's own Edit/CRX, or
+   * a table gutter's Copy/Export. A link's actions are read from the element,
+   * never re-derived from its href: a `jcr:content` link's href is trimmed to
+   * the owning page, so re-classifying it would retarget CRX at that page (see
+   * `MESSAGE_ACTIONS_ATTRIBUTE`). Empty when there is nothing to offer, so the
+   * caller shows nothing.
+   */
+  function hoverActionsFor(anchor: HTMLElement): readonly HoverAction[] {
+    const linkActions = parseLinkActions(anchor.getAttribute(MESSAGE_ACTIONS_ATTRIBUTE));
+    if (linkActions.length > 0) {
+      return linkActions.map((action) => ({
+        id: action.id,
+        title: action.title,
+        icon: linkActionIcon(action.id),
+        onActivate: () => options.onOpenLink?.(action.href),
+      }));
+    }
+    const shell = anchor.closest<HTMLElement>('.chat-table-message');
+    const table = shell === null ? undefined : renderedTables.get(shell);
+    if (table === undefined) return [];
+    return tableHoverActions(
+      { columns: table.columns, rows: table.rows, total: table.total },
+      {
+        onCopy: (data) => options.onCopyTable?.(data),
+        onExport: (data) => options.onExportTable?.(data),
+      },
+    );
+  }
+
   element.addEventListener('pointerover', (event) => {
     if (popover === undefined) return;
-    const anchor = paneLinkFrom(event.target);
-    if (anchor === null || anchor === hoveredLink) return;
-    // The actions are read from the anchor, not re-derived from its href: a
-    // `jcr:content` link's href is trimmed to the owning page, so re-classifying
-    // it would retarget CRX at that page (see `MESSAGE_ACTIONS_ATTRIBUTE`).
-    const actions = parseLinkActions(anchor.getAttribute(MESSAGE_ACTIONS_ATTRIBUTE));
+    const target = hoverTargetFrom(event.target);
+    if (target === undefined || target.anchor === hoveredAnchor) return;
+    const actions = hoverActionsFor(target.anchor);
     if (actions.length === 0) return;
-    hoveredLink = anchor;
-    popover.show(anchor, actions);
+    hoveredAnchor = target.anchor;
+    popover.show(target.anchor, actions, target.align);
   });
 
   element.addEventListener('pointerout', (event) => {
-    if (popover === undefined || hoveredLink === undefined) return;
-    if (paneLinkFrom(event.target) !== hoveredLink) return;
+    if (popover === undefined || hoveredAnchor === undefined) return;
+    if (hoverTargetFrom(event.target)?.anchor !== hoveredAnchor) return;
     const related = event.relatedTarget as Node | null;
-    // Moving to a child of the same link (or into the popover) must not hide it.
-    if (related !== null && hoveredLink.contains(related)) return;
-    hoveredLink = undefined;
+    // Moving to a child of the same anchor (or into the popover) must not hide it.
+    if (related !== null && hoveredAnchor.contains(related)) return;
+    hoveredAnchor = undefined;
     popover.scheduleHide();
   });
 
@@ -701,7 +768,7 @@ export function createTranscriptView(
     if (anchor === null || href === null) return;
     event.preventDefault();
     popover?.hideNow();
-    hoveredLink = undefined;
+    hoveredAnchor = undefined;
     if (anchor.hasAttribute(MESSAGE_EXTERNAL_ATTRIBUTE)) {
       options.onOpenExternal?.(href);
     } else {
@@ -1298,7 +1365,7 @@ export function createTranscriptView(
       // A repaint replaces the message nodes, so any open popover is now
       // anchored to a detached element - close it rather than leave it floating.
       popover?.hideNow();
-      hoveredLink = undefined;
+      hoveredAnchor = undefined;
       const items = store.items();
       const { skip, messages, runIds } = planTableRuns(store, items);
       const lastItem = items[items.length - 1];
