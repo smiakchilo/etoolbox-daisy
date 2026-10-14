@@ -179,6 +179,47 @@ describe('aem_semantic_search executor', () => {
     expect(payload(result)['roots']).toEqual(['/content/site', '/content/dam/site']);
   });
 
+  it('resolves a path fragment in roots before the query, here from a content root', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(2), false)), contentFor, [
+      '/content/site/us/en',
+      '/content/site/de',
+    ]);
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'Waldo', context: 'Waldo is good', roots: ['us/en'] },
+      callContext,
+    );
+
+    expect(calls.map((call) => call.name)).toEqual(['aem_query']);
+    expect(calls[0]?.args['roots']).toEqual(['/content/site/us/en']);
+    expect(payload(result)['roots']).toEqual(['/content/site/us/en']);
+  });
+
+  it('asks the user, before the search, when a fragment resolves to nothing, and ends if dismissed', async () => {
+    const { host, calls } = makeHost((name, args) =>
+      name === 'ask_user'
+        ? err(createToolError('CANCELLED', 'dismissed', 'r' as never))
+        : ok(queryPage(args['limit'] === 200 ? [] : paths(2), false)),
+    );
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'Waldo', context: 'Waldo is good', roots: ['us/en'] },
+      callContext,
+    );
+
+    expect(!result.ok && result.error.code).toBe('CANCELLED');
+    expect(calls.map((call) => call.name)).toEqual(['aem_query', 'ask_user']);
+  });
+
+  it('refuses a description in words as a root, without calling anything', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)));
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'Waldo', context: 'Waldo is good', roots: ['the US site'] },
+      callContext,
+    );
+
+    expect(!result.ok && result.error.code).toBe('INVALID_ARGUMENT');
+    expect(calls).toEqual([]);
+  });
+
   it('shows the judged matches, offers Load more, and returns the next page to judge', async () => {
     let queries = 0;
     const { host, calls } = makeHost((name) => {

@@ -18,6 +18,7 @@ import { tool as formatTableTool } from '../../../src/tools/format-table/tool';
 import { tool as browserNavigateTool } from '../../../src/tools/browser-navigate/tool';
 import { tool as askUserTool } from '../../../src/tools/ask-user/tool';
 import { createCountingIdGenerator } from '../../support/testIds';
+import { REAL_SESSION_TEMPLATE } from '../../support/instructionResources';
 
 function makeHost(outcome: BrokerOutcome): {
   host: ToolHost;
@@ -139,7 +140,9 @@ describe('aem_create_page module', () => {
 });
 
 describe('composed session instructions', () => {
-  const composed = composeAssistantInstructions([getJsonTool.instructions, queryTool.instructions]);
+  const compose = (fragments: readonly string[]): string =>
+    composeAssistantInstructions(REAL_SESSION_TEMPLATE, fragments);
+  const composed = compose([getJsonTool.instructions, queryTool.instructions]);
 
   it('states that the session is read-only and forbids side-channel routes', () => {
     expect(composed).toMatch(/strictly read-only against AEM/i);
@@ -159,8 +162,25 @@ describe('composed session instructions', () => {
   });
 
   it('with no tools still frames the session and closes on error handling', () => {
-    const empty = composeAssistantInstructions([]);
+    const empty = compose([]);
     expect(empty).toMatch(/read-only assistant/);
     expect(empty).toMatch(/If a tool reports an error/);
+  });
+
+  it('puts the tool paragraphs between the policy and the error handling, none left behind', () => {
+    expect(composed).not.toContain('{{tools}}');
+    const policy = composed.indexOf('strictly read-only against AEM');
+    const tools = composed.indexOf("'aem_get_json'");
+    const errors = composed.indexOf('If a tool reports an error');
+    expect(policy).toBeGreaterThan(-1);
+    expect(tools).toBeGreaterThan(policy);
+    expect(errors).toBeGreaterThan(tools);
+  });
+
+  it.each([
+    ['no placeholder', 'Policy only.'],
+    ['two placeholders', '{{tools}} and {{tools}}'],
+  ])('throws for a template with %s', (_name, template) => {
+    expect(() => composeAssistantInstructions(template, [])).toThrow(/exactly one \{\{tools}}/);
   });
 });

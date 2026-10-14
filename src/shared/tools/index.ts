@@ -26,3 +26,4 @@ export * from './core/search';
 export * from './core/queryBuilder';
 export * from './core/toolModule';
 export * from './core/toolRenderer';
+export * from './core/scope';

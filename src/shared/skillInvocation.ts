@@ -100,11 +100,23 @@ export function renderSkillInvocationDirective(name: string, rest: string): stri
   );
 }
 
+/** Where the skill list goes inside the catalogue template (`resources/instructions/skills.md`). */
+export const SKILL_CATALOGUE_PLACEHOLDER = '{{catalogue}}';
+
+/** Replaced, wherever it appears, with {@link SKILL_TOOL_NAME}, so the tool's name has one source. */
+export const SKILL_TOOL_PLACEHOLDER = '{{skillTool}}';
+
 /**
  * The block appended to the session instructions that tells the model the
  * bundled skills exist, what each is for, and how to load one - so a request
  * that matches a skill's description is answered with that skill even when the
  * user never typed `/name`.
+ *
+ * The prose is the markdown resource `resources/instructions/skills.md`, handed
+ * in as `template` (this module is shared code and reads no files). It must
+ * contain exactly one {@link SKILL_CATALOGUE_PLACEHOLDER}, replaced by the list
+ * of skills; a template without one throws. {@link SKILL_TOOL_PLACEHOLDER} may
+ * appear any number of times.
  *
  * Returns `""` for an empty catalogue, so an install with no skills adds
  * nothing rather than an empty "Available skills:" heading. The entries are
@@ -116,18 +128,21 @@ export function renderSkillInvocationDirective(name: string, rest: string): stri
  * of loading the skill (the same failure `renderSkillInvocationDirective`
  * exists to prevent for the explicit `/name` path).
  */
-export function renderSkillCatalogue(skills: readonly SkillCatalogueEntry[]): string {
+export function renderSkillCatalogue(
+  template: string,
+  skills: readonly SkillCatalogueEntry[],
+): string {
+  if (template.split(SKILL_CATALOGUE_PLACEHOLDER).length !== 2) {
+    throw new Error(
+      `The skill catalogue template must contain exactly one ${SKILL_CATALOGUE_PLACEHOLDER}`,
+    );
+  }
   if (skills.length === 0) return '';
   const lines = skills.map((skill) => `- ${skill.name}: ${skill.description}`);
-  return (
-    'The application ships the following skills - short, task-specific guides that you load ' +
-    'on demand. When a request matches a skill, load it **before acting** by calling the ' +
-    `\`${SKILL_TOOL_NAME}\` tool with {"${SKILL_TOOL_NAME}":"<name>"}, then follow the guidance ` +
-    'it returns. A skill you choose to load is as binding as one the user invoked by name. ' +
-    'Do not answer such a request from memory, and do not ask the user to confirm - just ' +
-    'load the matching skill.\n\nAvailable skills:\n' +
-    lines.join('\n')
-  );
+  return template
+    .replaceAll(SKILL_TOOL_PLACEHOLDER, SKILL_TOOL_NAME)
+    .replace(SKILL_CATALOGUE_PLACEHOLDER, () => lines.join('\n'))
+    .trim();
 }
 
 /**

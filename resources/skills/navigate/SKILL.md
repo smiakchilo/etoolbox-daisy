@@ -7,14 +7,7 @@ metadata:
 
 # Opening a page, asset, or place in the browser pane
 
-This skill is reached two ways, and the target is the same in both:
-
-- **The user typed `/navigate <what>`.** The text after the directive is **your
-  input for the turn** - the page, asset or place to open. Do not ask the user
-  to restate it.
-- **You loaded this skill yourself** because the request is to open something.
-
-Either way, open it. The whole job is: work out **which host**, **which page,
+Open what the user asked for. The whole job is: work out **which host**, **which page,
 asset or place**, and **which display mode**, then call `browser_navigate`
 **once**. If you cannot determine one of them, say so and ask for a clearer
 instruction - never guess a path or a host.
@@ -367,6 +360,4 @@ Call `browser_navigate` **once** with `host` (the configured **label**, never a 
 opened. If it reports a failure, relay the reason to the user rather than
 retrying the identical call.
 
-Do not open a page the user did not ask for, and do not use this to reach
-AEM by any route other than a normal page load - the session remains
-read-only.
+Do not open a page the user did not ask for.

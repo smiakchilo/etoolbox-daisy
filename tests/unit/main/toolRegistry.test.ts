@@ -20,6 +20,10 @@ import {
   newTurnId,
 } from '../../../src/shared';
 import { createCountingIdGenerator } from '../../support/testIds';
+import {
+  MINIMAL_SESSION_TEMPLATE,
+  REAL_SESSION_TEMPLATE,
+} from '../../support/instructionResources';
 
 const ids = createCountingIdGenerator('reg');
 const host: ToolHostServices = {
@@ -62,6 +66,7 @@ function loaders(entries: Record<string, () => Promise<unknown>>): ToolModuleLoa
 describe('buildToolRegistry', () => {
   it('registers every enabled tool, in a deterministic order', async () => {
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/b/tool.ts': () => Promise.resolve({ tool: fakeTool('tool_b') }),
@@ -80,6 +85,7 @@ describe('buildToolRegistry', () => {
 
   it('leaves a disabled tool out of the handlers, allowlist, descriptors and instructions', async () => {
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/a/tool.ts': () => Promise.resolve({ tool: fakeTool('tool_a') }),
@@ -98,6 +104,7 @@ describe('buildToolRegistry', () => {
   it('keeps an internal tool away from the model but invokable through uses', async () => {
     let captured: ToolHost | undefined;
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/a/tool.ts': () =>
@@ -140,6 +147,7 @@ describe('buildToolRegistry', () => {
 
   it('rejects a manifest whose internal flag is not a boolean', async () => {
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/a/tool.ts': () =>
@@ -153,6 +161,7 @@ describe('buildToolRegistry', () => {
   it('never calls createExecutor for a disabled tool', async () => {
     const createExecutor = vi.fn(() => () => Promise.resolve({ ok: true as const, value: {} }));
     await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/off/tool.ts': () =>
@@ -165,6 +174,7 @@ describe('buildToolRegistry', () => {
   it('isolates each failure kind and keeps the healthy tool', async () => {
     const seen: ToolLoadFailure[] = [];
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       onFailure: (f) => seen.push(f),
       loaders: loaders({
@@ -202,6 +212,7 @@ describe('buildToolRegistry', () => {
 
   it('rejects the second of two tools claiming the same name', async () => {
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/a/tool.ts': () => Promise.resolve({ tool: fakeTool('same') }),
@@ -215,7 +226,11 @@ describe('buildToolRegistry', () => {
   });
 
   it('with no tools still yields a valid, tool-free registry', async () => {
-    const registry = await buildToolRegistry({ host, loaders: {} });
+    const registry = await buildToolRegistry({
+      instructionsTemplate: REAL_SESSION_TEMPLATE,
+      host,
+      loaders: {},
+    });
     expect(registry.enabledNames).toEqual([]);
     expect(registry.allowlistEntries).toEqual([]);
     expect(registry.instructions).toMatch(/read-only assistant/);
@@ -223,6 +238,7 @@ describe('buildToolRegistry', () => {
 
   it('rejects a manifest whose uses is not a string list', async () => {
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/a/tool.ts': () => Promise.resolve({ tool: { ...fakeTool('tool_a'), uses: [1] } }),
@@ -234,6 +250,7 @@ describe('buildToolRegistry', () => {
 
   it('reports a declared dependency that is not enabled, but keeps the tool', async () => {
     const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/a/tool.ts': () =>
@@ -282,6 +299,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
         });
     }
     await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders(entries),
       ...(params.nestedCalls === undefined ? {} : { nestedCalls: params.nestedCalls }),
@@ -383,6 +401,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
         return result.ok ? result : { ok: true, value: { stoppedBy: result.error.code } };
       };
     await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
       loaders: loaders({
         '/tools/ping/tool.ts': () =>
@@ -443,7 +462,11 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
 
 describe('discovered tools (the real src/tools folders)', () => {
   it('enables exactly the shipped tools, keeps format_table internal and aem_create_page disabled', async () => {
-    const registry = await buildToolRegistry({ host, loaders: discoverToolLoaders() });
+    const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
+      host,
+      loaders: discoverToolLoaders(),
+    });
 
     expect(registry.failures).toEqual([]);
     expect([...registry.enabledNames].sort()).toEqual([
@@ -466,5 +489,68 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:browser_navigate',
       'custom:environment_facts',
     ]);
+  });
+});
+
+describe('buildToolRegistry session instructions template', () => {
+  const build = (template: string) =>
+    buildToolRegistry({
+      instructionsTemplate: template,
+      host,
+      loaders: loaders({ '/tools/a/tool.ts': () => Promise.resolve({ tool: fakeTool('tool_a') }) }),
+    });
+
+  it('splices the tool paragraphs into the template at the placeholder', async () => {
+    const registry = await build(MINIMAL_SESSION_TEMPLATE);
+    expect(registry.instructions).toBe("Before.\n\nUse 'tool_a' for its purpose.\n\nAfter.");
+  });
+
+  it('rejects a template without exactly one placeholder, so no session starts without its policy', async () => {
+    await expect(build('No placeholder')).rejects.toThrow(/exactly one \{\{tools}}/);
+  });
+});
+
+describe('the shipped search tools describe their scope arguments themselves', () => {
+  type Properties = Record<string, { description?: string }>;
+
+  const build = () =>
+    buildToolRegistry({
+      instructionsTemplate: REAL_SESSION_TEMPLATE,
+      host,
+      loaders: discoverToolLoaders(),
+    });
+
+  const propertiesOf = (registry: Awaited<ReturnType<typeof build>>, tool: string): Properties => {
+    const descriptor = registry.descriptors.find((entry) => entry.name === tool);
+    return (descriptor?.parameters as { properties: Properties }).properties;
+  };
+
+  it.each(['aem_query_format_ask', 'aem_semantic_search'])(
+    'describes %s roots and limit in its model-facing schema',
+    async (tool) => {
+      const properties = propertiesOf(await build(), tool);
+      expect(properties['roots']?.description).toContain('exactly as the user wrote them');
+      expect(properties['roots']?.description).toContain('See Scope in your instructions');
+      expect(properties['limit']?.description).toBe(
+        'Rows per page. Omit it unless the user asked for a page size.',
+      );
+    },
+  );
+
+  it('describes aem_query roots as its own, saying the query is otherwise unscoped', async () => {
+    const roots = propertiesOf(await build(), 'aem_query')['roots']?.description;
+    expect(roots).toContain('Full JCR paths');
+    expect(roots).toContain('unscoped');
+  });
+
+  it('tells the model, for exactly the two table composites, that the table is the whole answer', async () => {
+    const { instructions } = await build();
+    const rule = 'The table this tool puts on screen is the whole answer';
+    expect(instructions.split(rule).length - 1).toBe(2);
+    for (const tool of ['aem_query_format_ask', 'aem_semantic_search']) {
+      const start = instructions.indexOf(`The '${tool}' tool`);
+      expect(start).toBeGreaterThan(-1);
+      expect(instructions.indexOf(rule, start)).toBeGreaterThan(start);
+    }
   });
 });

@@ -7,7 +7,7 @@
  * landing under `process.resourcesPath`. Deliberately Electron-free (the
  * `(platform, isPackaged, resourcesPath, mainDir)` tuple plus `join`/`exists`
  * are injected) so this stays unit-testable without a running Electron
- * process - the same shape as `resolveBundledSkillsDirectory` in
+ * process - the same shape as `resolveBundledResourcesDirectory` in
  * `agentComposition.ts`.
  *
  * macOS gets `icon.png`: Electron's `nativeImage` there loads neither `.ico`

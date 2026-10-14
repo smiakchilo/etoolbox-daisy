@@ -257,6 +257,37 @@ describe('createChatJournal - events and prompts', () => {
     });
   });
 
+  it('writes the current-page block the model read on the prompt record, and only when there was one', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordUserPrompt({
+      chatId: CHAT_ID,
+      turnId: TURN_ID,
+      prompt: 'Find X',
+      pageContext: 'Host origin: https://a.example\nContent path: /content/a',
+    });
+    journal.recordEvent(stateChanged('sending'));
+
+    expect(readRecords(dir)[1]).toEqual({
+      recordType: 'user.prompt',
+      at: expect.any(Number) as unknown,
+      chatId: CHAT_ID,
+      turnId: TURN_ID,
+      prompt: 'Find X',
+      pageContext: 'Host origin: https://a.example\nContent path: /content/a',
+    });
+  });
+
+  it('leaves pageContext out of the prompt record when the turn had no block', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'Find X' });
+    journal.recordEvent(stateChanged('sending'));
+
+    expect(readRecords(dir)[1]).not.toHaveProperty('pageContext');
+  });
   it('never writes a discarded prompt whose turn never started', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });

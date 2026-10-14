@@ -28,7 +28,7 @@ import {
   createModelPreferenceCache,
   installAgentService,
   isAgentTurnInFlight,
-  resolveBundledSkillsDirectory,
+  resolveBundledResourcesDirectory,
   runAfterFrameLoad,
   shouldUseFakeAgentService,
   startAppRuntime,
@@ -46,6 +46,7 @@ import { createChatJournal, toChatFileName } from './chatJournal';
 import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
 import { installContentSecurityPolicy } from './csp';
 import { mergeDisabledFeatures } from './disabledFeatures';
+import { loadInstructionResources } from './instructions/instructionResources';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
@@ -571,10 +572,24 @@ if (!gotSingleInstanceLock) {
       () => loadSettingsSync(appPaths.settings).hosts,
       () => loadSettingsSync(appPaths.settings).projects,
     );
+    // The application's own markdown resources: the model-facing instructions
+    // and the bundled skills. Resolved from the install location only. The
+    // instruction templates carry the read-only policy, so a missing file
+    // rejects here and the application does not start without them.
+    const bundledResourcesDirectory = resolveBundledResourcesDirectory({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      mainDir: currentDir,
+      join: (...segments) => path.join(...segments),
+    });
+    const instructionResources = await loadInstructionResources(
+      path.join(bundledResourcesDirectory, 'instructions'),
+    );
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
       loaders: discoverToolLoaders(),
+      instructionsTemplate: instructionResources.sessionTemplate,
       host: {
         bridge: aemBridgeBroker,
         currentContext: lateBoundAemToolContext.currentContext,
@@ -618,12 +633,7 @@ if (!gotSingleInstanceLock) {
         },
       },
     });
-    const bundledSkillsDirectory = resolveBundledSkillsDirectory({
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      mainDir: currentDir,
-      join: (...segments) => path.join(...segments),
-    });
+    const bundledSkillsDirectory = path.join(bundledResourcesDirectory, 'skills');
     // The composer's `/` autocomplete reads this lazily, only once the renderer
     // asks (after the pane reports ready), so its filesystem read never sits on
     // the window's startup path. The send path consults `current()` - empty
@@ -771,7 +781,10 @@ if (!gotSingleInstanceLock) {
             // this - which is what makes the model able to load a skill from its
             // description, not only from an explicit `/name` (see
             // `renderSkillCatalogue`).
-            const skillCatalogue = renderSkillCatalogue(skillCatalog.modelCatalogue());
+            const skillCatalogue = renderSkillCatalogue(
+              instructionResources.skillsTemplate,
+              skillCatalog.modelCatalogue(),
+            );
             return {
               allowlistEntries: toolRegistry.allowlistEntries,
               instructions:

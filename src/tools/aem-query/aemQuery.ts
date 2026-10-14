@@ -24,13 +24,13 @@ import {
   effectiveRoots,
   envelopeCommonShape,
   hasMoreSchema,
-  jcrPathSchema,
   jsonValueSchema,
   originSchema,
   PATH_PROPERTY,
   planPrioritySegments,
   propertiesSelectionSchema,
   propertySelectionSchema,
+  queryRootsSchema,
   readQueryEnvelope,
   renderHasMore,
   renderSelection,
@@ -59,14 +59,6 @@ import {
 export const DEFAULT_QUERY_LIMIT = 50;
 export const MAX_QUERY_LIMIT = 200;
 export const MIN_QUERY_LIMIT = 1;
-
-/**
- * The most roots one fan-out call may expand to. Each root is a separate AEM
- * request through the concurrency-1 bridge, so this bounds a single tool call's
- * cost; a host with more roots is simply scoped by the first ones, and the
- * effective roots are reported back.
- */
-export const MAX_QUERY_ROOTS = 8;
 
 /**
  * `p.limit=-1` (unbounded) must be impossible to express - `min(1)` alone
@@ -189,7 +181,14 @@ export const aemQueryArgsSchema = z
      * duplicate roots are collapsed, and a `path` predicate may not be combined
      * with `roots` (they would disagree about the scope).
      */
-    roots: z.array(jcrPathSchema).min(1).max(MAX_QUERY_ROOTS).optional(),
+    roots: queryRootsSchema
+      .describe(
+        "Full JCR paths to run one query over, one query per root, rows merged: the host's " +
+          'content roots for content, its component roots for components, or a full path the ' +
+          'user wrote. A path fragment such as "us/en" is not accepted here. Without `roots` ' +
+          'and without a `path` predicate the query is unscoped. See Scope in your instructions.',
+      )
+      .optional(),
   })
   .strict();
 
@@ -210,8 +209,7 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     '`offset`/`properties` fields instead. Every value in `predicates` must be a ' +
     'string: `limit` and `offset` are top-level siblings of `predicates`, never ' +
     'keys inside it. `properties` optionally restricts which ' +
-    'result fields are returned. Alternatively, pass `roots` (a list of JCR paths - ' +
-    "typically this host's content roots from the current-page context block) to run the same " +
+    'result fields are returned. Alternatively, pass `roots` to run the same ' +
     'query once per root and merge the rows; `limit` and `offset` then apply to each root, and ' +
     'the effective roots are reported back. Do not combine `roots` with a `path` predicate. ' +
     'When the host configures priority paths and the search scope contains them, the ' +

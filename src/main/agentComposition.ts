@@ -198,7 +198,9 @@ export function createBridgeCurrentContext(
 }
 
 /**
- * Resolves the one directory the bundled AEM skills may be loaded from.
+ * Resolves the one directory the application's own bundled resources may be
+ * loaded from: the skills (`skills/`) and the model-facing instructions
+ * (`instructions/`).
  *
  * `toolPolicy.ts` only honours `bundledSkillDirectories` for *absolute*,
  * application-owned paths, so this must return an absolute path and must
@@ -211,15 +213,15 @@ export function createBridgeCurrentContext(
  * which lands under `process.resourcesPath`. Unpackaged runs execute from
  * `out/main`, two levels below the repository root where `resources/` lives.
  */
-export function resolveBundledSkillsDirectory(params: {
+export function resolveBundledResourcesDirectory(params: {
   readonly isPackaged: boolean;
   readonly resourcesPath: string;
   readonly mainDir: string;
   readonly join: (...segments: readonly string[]) => string;
 }): string {
   return params.isPackaged
-    ? params.join(params.resourcesPath, 'resources', 'skills')
-    : params.join(params.mainDir, '..', '..', 'resources', 'skills');
+    ? params.join(params.resourcesPath, 'resources')
+    : params.join(params.mainDir, '..', '..', 'resources');
 }
 
 // ---------------------------------------------------------------------------

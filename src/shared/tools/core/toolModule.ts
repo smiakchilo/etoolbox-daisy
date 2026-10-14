@@ -316,56 +316,34 @@ export function renderToolFailureForModel(error: ToolError): string {
   );
 }
 
-/** The shared, read-only framing that opens every session's instructions. */
-export const AEM_ASSISTANT_INSTRUCTIONS_PREFIX =
-  'You are a read-only assistant for Adobe Experience Manager (AEM) content authors. ' +
-  'Each user prompt begins with a current-page context block the application supplies: it ' +
-  "names the AEM host, that host's content roots and component roots, and, when available, " +
-  'the JCR content path of the page currently open in the browser pane. Treat references ' +
-  "such as 'this page', 'here', 'this host', and 'this instance' as that context, and a " +
-  'request that names no path or server as targeting it - do not ask the user to restate ' +
-  'where they are. Scope content searches to the content roots and component searches to the ' +
-  'component roots named above. The only external capabilities available to you are the tools ' +
-  'described next. Most act on the AEM instance the user currently has open; a tool may also ' +
-  'open a page on another configured host in the browser pane. Never invent an AEM path from a ' +
-  "page's name: resolve a named page with a search and open only the path it returns, or a path " +
-  'the user gave.';
+/**
+ * Where the enabled tools' paragraphs go inside the session-instructions
+ * template (`resources/instructions/session.md`): everything before it is the
+ * shared framing and policy, everything after it the shared closing.
+ */
+export const SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER = '{{tools}}';
 
 /**
- * The read-only, no-side-channel policy every session carries, whether or not
- * any skill is loaded. This used to live in the on-demand `aem-tool-selection`
- * skill; it moved here because a skill is only read when the model chooses to
- * load it, so it could never *guarantee* an invariant that must always hold.
+ * Session instructions for a real AEM session. The shared prose lives in a
+ * markdown resource the application reads (`resources/instructions/session.md`)
+ * and hands in as `template`; this function only splices the enabled tools'
+ * paragraphs (their instructions) in at the one {@link SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER}.
+ * With no enabled tool the middle is empty and the template still states
+ * plainly that no capability exists.
+ *
+ * A template without exactly one placeholder is a broken install: it throws, so
+ * the session can never run without the read-only policy the template carries.
  */
-export const AEM_ASSISTANT_INSTRUCTIONS_POLICY =
-  'This session is strictly read-only against AEM: there is no tool to create, update, ' +
-  'delete, move, copy, reorder, version, replicate, activate, deactivate, publish, unpublish, ' +
-  'roll out, package, or change users or permissions. Never attempt to reach AEM by any other ' +
-  'route - not /crx or CRXDE, Package Manager, the Sling POST servlet, curl, shell commands, ' +
-  'files, or any external tool or server - and do not suggest them. If the user asks for a ' +
-  'change, say that the application is read-only against AEM and offer to gather the ' +
-  'information that would support the change. The application binds every AEM request to the ' +
-  'instance open in the browser pane: never put a scheme, port, origin, or full URL into a tool ' +
-  'argument. A configured host may be named by its label, which the application resolves to ' +
-  "that host's own origin.";
-
-/** The shared closing on error handling. */
-export const AEM_ASSISTANT_INSTRUCTIONS_SUFFIX =
-  'If a tool reports an error, read its message and ' +
-  "'requiredAction' and explain them to the user rather than retrying the identical request " +
-  'blindly.';
-
-/**
- * Session instructions for a real AEM session: the shared, read-only framing,
- * then one paragraph per enabled tool (its instructions), then the shared
- * closing on error handling. With no enabled tool the middle is empty and the
- * text still states plainly that no capability exists.
- */
-export function composeAssistantInstructions(fragments: readonly string[]): string {
-  return [
-    AEM_ASSISTANT_INSTRUCTIONS_PREFIX,
-    AEM_ASSISTANT_INSTRUCTIONS_POLICY,
-    ...fragments,
-    AEM_ASSISTANT_INSTRUCTIONS_SUFFIX,
-  ].join(' ');
+export function composeAssistantInstructions(
+  template: string,
+  fragments: readonly string[],
+): string {
+  const parts = template.split(SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER);
+  const [before, after] = parts;
+  if (parts.length !== 2 || before === undefined || after === undefined) {
+    throw new Error(
+      `The session instructions template must contain exactly one ${SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER}`,
+    );
+  }
+  return [before.trim(), ...fragments, after.trim()].join('\n\n');
 }

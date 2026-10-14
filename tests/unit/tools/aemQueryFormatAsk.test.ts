@@ -246,6 +246,63 @@ describe('aem_query_format_ask executor', () => {
     expect(calls[0]?.args['roots']).toEqual(['/content/other']);
   });
 
+  it('resolves a path fragment in roots before the query, here from a content root', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content/site/us/en', '/content/site/de'],
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', roots: ['us/en'] }, callContext);
+
+    expect(calls.map((call) => call.name)).toEqual(['aem_query', 'format_table']);
+    expect(calls[0]?.args['roots']).toEqual(['/content/site/us/en']);
+  });
+
+  it('asks the user, before any query, when a fragment resolves to nothing', async () => {
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'ask_user') return ok({ selections: [], freeform: '/content/typed/us/en' });
+        if (name === 'aem_query' && args['limit'] === 200) return ok(queryPage(0, false));
+        return name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk);
+      },
+      ['/content/site'],
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', roots: ['us/en'] }, callContext);
+
+    expect(calls.map((call) => call.name)).toEqual([
+      'aem_query',
+      'ask_user',
+      'aem_query',
+      'format_table',
+    ]);
+    expect(calls[2]?.args['roots']).toEqual(['/content/typed/us/en']);
+  });
+
+  it('runs no search and shows no table when the user dismisses the scope question', async () => {
+    const { host, calls } = makeHost((name) =>
+      name === 'ask_user'
+        ? err(createToolError('CANCELLED', 'dismissed', 'r' as never))
+        : ok(queryPage(0, false)),
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', roots: ['us/en'] },
+      callContext,
+    );
+
+    expect(!result.ok && result.error.code).toBe('CANCELLED');
+    expect(calls.map((call) => call.name)).toEqual(['aem_query', 'ask_user']);
+  });
+
+  it('refuses a description in words as a root, without calling anything', async () => {
+    const { host, calls } = makeHost(() => ok(tableOk));
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', roots: ['the US site'] },
+      callContext,
+    );
+
+    expect(!result.ok && result.error.code).toBe('INVALID_ARGUMENT');
+    expect(calls).toEqual([]);
+  });
+
   it('loads the next page on "Load more" and appends it', async () => {
     let queries = 0;
     const { host, calls } = makeHost((name, args) => {

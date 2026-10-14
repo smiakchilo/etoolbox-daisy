@@ -628,7 +628,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // synchronously inside `sendPrompt`), so the prompt precedes the turn's
     // events on disk - and a prompt whose turn never starts is discarded below
     // and never written at all.
-    chatJournal?.recordUserPrompt({ chatId: request.chatId, turnId, prompt: request.prompt });
+    chatJournal?.recordUserPrompt({
+      chatId: request.chatId,
+      turnId,
+      prompt: request.prompt,
+      ...(pageContext !== undefined && pageContext.length > 0 ? { pageContext } : {}),
+    });
     const result = await agentService.sendPrompt({
       chatId: request.chatId,
       turnId,

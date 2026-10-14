@@ -174,7 +174,11 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > lost `changesLocked` and `settings-ipc.ts` lost `turn_in_flight`, when Step
 > 09's "disable changes during an active turn" lock was replaced by "apply the
 > change on the next turn" — see `docs/verification.md` "Settings changes apply
-> on the next turn (2026-10-09)". **There is deliberately no `schemaVersion` field and no
+> on the next turn (2026-10-09)". The journal contract `chatJournal.ts` gained an
+> optional `pageContext` on its `user.prompt` record - the current-page block the
+> model read besides the typed prompt, for diagnostics only (the renderer never
+> paints it) - see `docs/verification.md` "Search scope and instruction resources
+> (2026-10-15)". **There is deliberately no `schemaVersion` field and no
 > migration code anywhere**: the project has no deployed users and no
 > backward-compatibility obligation, so the persisted shape may change freely.
 > Do not add a version field or a migration. Loading a hand-edited
@@ -313,7 +317,7 @@ active agent falls back to the first definition; with none the chat pane says
 
 `index.ts` is the composition root — read it first to see how the pieces meet.
 `agentComposition.ts` holds the wiring helpers (`createBrokeredExecute`,
-`createBrokeredQueryExecute`, `resolveBundledSkillsDirectory`,
+`createBrokeredQueryExecute`, `resolveBundledResourcesDirectory`,
 `startAppRuntime`, `exposeFakeAgentServiceForTests`).
 
 `main/aem/` splits deliberately: `resourceUrl.ts` and `queryUrl.ts` build URLs,
@@ -824,12 +828,55 @@ whole answer. See the `format_table` bullet in the tools section above and
 
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**
-session instructions (`AEM_ASSISTANT_INSTRUCTIONS_POLICY`, composed by
+session instructions (`resources/instructions/session.md`, composed by
 `composeAssistantInstructions` in `src/shared/tools/core/toolModule.ts`): a
 skill is only read when the model chooses to load it, so it can never
 *guarantee* an invariant. Per-tool "when to use me" guidance stays in each
 tool's own `instructions` and descriptor — never a central, tool-enumerating
 skill — which is what scales as the public-AEM-REST-API tool count grows.
+
+**A skill states only its own procedure.** What holds for every search or every
+skill is written once, in `resources/instructions/`: the scope rules, the
+current-page rules, ambiguity, read-only, and "a skill's input is the user's whole
+request". Do not repeat them in a skill (the old "reached two ways", "write no
+prose", "Pass `roots` only when...", "Never call `aem_query` yourself" and
+`## Read-only` paragraphs were each copied across three or four skills and are
+gone).
+
+### `resources/instructions/`
+
+The model-facing prose that is not a skill, as markdown so it reads as text in the
+repository. Application-owned, shipped with `resources/` (`extraResources`), read
+by main from the install location only (`resolveBundledResourcesDirectory`).
+
+| File | Holds | Placeholders |
+| --- | --- | --- |
+| `session.md` | The always-on session instructions: current-page context, **Scope**, **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
+| `skills.md` | The skill-catalogue preamble, incl. "a skill's input is the whole request" | `{{skillTool}}` (any number), `{{catalogue}}` - exactly once (`renderSkillCatalogue`) |
+
+`session.md` and `skills.md` carry the read-only policy, so `loadInstructionResources`
+(`src/main/instructions/`) rejects at startup when either is missing and a template
+without its placeholder throws: **the application does not start without them**.
+`src/shared` reads no files, so the compose functions take the
+template as a parameter. Tests read the real files (`tests/support/instructionResources.ts`).
+
+**The roots are a convenience, not a boundary.** A user may search any path; the
+tools never refuse or question a full path outside the host's roots. What the model
+must not do is *build* a path for a phrase the user wrote. A search's `roots`
+(`searchRootsSchema`, `src/shared/tools/core/scope.ts`) therefore accepts a full
+path, passed through as written, or a path **fragment** (`us/en`) exactly as the
+user wrote it, which `resolveSearchScope` turns into a full path: the host's
+priority paths that end with it, then its content roots that do, then one
+`aem_query` for `cq:Page`s named like its last segment, filtered by the whole
+fragment. One proved match is used; several, none, or a lookup that could not see
+every page make the **application** ask the user (`ask_user`, options plus free
+input), never the model. A description in words ("the US site") is rejected with a
+corrective message. `aem_query` itself still takes full paths only
+(`queryRootsSchema`). `MAX_SEARCH_ROOTS` (10) is the one shared cap; the default
+(content, then DAM) fan-out is silently cut to it - `docs/backlog.md`.
+
+The per-turn current-page block (`renderCurrentPageContextForModel`) is **facts
+only**: how to read it is in `session.md`, once.
 
 ### `tests/`
 
@@ -864,7 +911,22 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3112 passed / 14 skipped** (+21 against the
+Current baseline: **`npm run test` → 3227 passed / 14 skipped** (+85 against the
+3142 measured at the start of this work; the 3112 below is the older logged
+figure - **search scope and instruction resources**: the model-facing prose moved
+out of TypeScript into `resources/instructions/` (`session.md`, `skills.md`)
+(the small per-tool search prose stays inline in each tool), a search's `roots`
+accepts a path fragment that
+`resolveSearchScope` resolves (config, then one `cq:Page` lookup, then a question
+to the user), `MAX_SEARCH_ROOTS` is one shared 10, the current-page block is
+facts only, and the journal's `user.prompt` carries an optional `pageContext`;
+the search skills lost their duplicated prose. mutations caught - see
+`docs/verification.md` "Search scope and instruction resources (2026-10-15)".
+A full Playwright run was 126 passed / 9 failed: the 5 known environment-bound
+cases (`settings-tabs.spec.ts:30`, four `step05-network-error`), two
+`step07-agent-chat` cases (520, 637) that fail identically on a clean HEAD, and
+the load-correlated `host-proxy-selection` / `step05-address-deep-link` flakes).
+Before that it was 3112 (+21 against the
 3091 of the previous entry - **the edit-mode toggle**: a new browser-toolbar
 button (`sp-icon-edit`, immediately after the address bar) that flips the open
 page between its web-content visitor view and AEM's page editor

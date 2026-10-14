@@ -15,7 +15,7 @@ import type { AgentChatSkill, SkillCatalogueEntry } from '../../shared';
  * fake).
  *
  * The directory is resolved by the composition root from the application's own
- * install location (`agentComposition.ts`'s `resolveBundledSkillsDirectory`) and
+ * install location (`agentComposition.ts`'s `resolveBundledResourcesDirectory`) and
  * is never sourced from settings, the user's home, or an AEM response, so this
  * reads a fixed, application-owned tree. A missing or unreadable entry is
  * skipped: the catalogue is a convenience and must never fail the app.

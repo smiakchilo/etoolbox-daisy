@@ -17,20 +17,10 @@ All predicate values are strings, including numbers and booleans.
 
 ## A plain-term search
 
-This skill is reached two ways, and the search string is the same in both:
-
-- **The user typed `/search <terms>`.** The term(s) follow the directive that
-  names this skill, and they are **your input for the turn**. That input is the
-  search string.
-- **You loaded this skill yourself** because the request is a search. The user's
-  request is the search string - **do not ask them to restate it, and do not
-  answer by explaining this skill.**
-
-Either way, run the search immediately. Do not ask the user what to search for.
-
-A plain-term search produces **exactly one application-rendered table**. Write
-no prose of your own: the application hides your assistant text for a search
-turn, so any explanation you write is discarded.
+The search string is the user's request, or the text after `/search`. If the
+request has no searchable terms at all, then - and only then - ask what to
+search for with a normal `ask_user` question (options or free input), not with
+`actions`.
 
 **Make exactly one call: `aem_query_format_ask`, with the search string as `terms`.**
 
@@ -38,17 +28,15 @@ turn, so any explanation you write is discarded.
 { "terms": "<search string>" }
 ```
 
-That one tool does the whole search: it runs `aem_query` (full text, the host's
-content and DAM roots, one page at a time), shows the page as the chat's table, and while
-more results may exist offers the user a **Load more** button, loading and
-appending the next page on each click. When it returns, the table is on screen
-and the user is done. Do **not** call `aem_query` or `ask_user` yourself to show
-results, and do not repeat the results. Pass `roots` only when the user named a
-scope; never pass `limit` unless the user asked for a page size.
+If the request names a scope ("... under us/en"), keep it out of the search string and
+add it as `roots`, exactly as the user wrote it:
+`{ "terms": "<search string>", "roots": ["us/en"] }`. The Scope rules in your
+instructions cover the rest.
 
-If the request has no searchable terms at all, then - and only then - ask what
-to search for with a normal `ask_user` question (options or free input), not
-with `actions`.
+That one tool does the whole search: it runs `aem_query` (full text, one page at
+a time), shows the page as the chat's table, and while more results may exist
+offers the user a **Load more** button, loading and appending the next page on
+each click. When it returns, the table is on screen and the user is done.
 
 ### Hand-built queries
 
@@ -61,23 +49,17 @@ one call with it as `predicates` instead of `terms`:
 { "predicates": { "type": "cq:Page", "fulltext": "<search string>" } }
 ```
 
-`aem_query_format_ask` validates the map exactly as `aem_query` does, scopes it
-to the content and DAM roots (unless it has a `path` predicate), and runs the same table
-and **Load more** loop. Pass `properties` to choose the columns. Never pass both
-`terms` and `predicates`.
+`aem_query_format_ask` validates the map exactly as `aem_query` does and runs the
+same table and **Load more** loop. Pass `properties` to choose the columns. Never
+pass both `terms` and `predicates`.
 
 ## Always scope
 
 An unscoped query scans the whole repository and is slow enough to time out.
-Start every query from a scope unless the user has explicitly asked for a
-repository-wide search.
+`aem_query_format_ask` applies the default scope itself, and the Scope rules in
+your instructions decide when to pass `roots` or a `path` yourself.
 
-The current page context block names the host's **content roots** (default
-`/content`). By default `aem_query_format_ask` searches those roots **and the
-host's DAM roots** (default `/content/dam`), so assets are found alongside
-pages; pass `roots` only to search a different scope. The query runs once per
-root and the rows are merged, so a host with several roots is covered in a
-single call:
+Several roots are covered in one call - one query per root, rows merged:
 
 ```json
 {
@@ -86,14 +68,11 @@ single call:
 }
 ```
 
-- The page size applies to each root, and the effective roots are reported
-  back. Never combine `roots` with a `path` predicate — that is rejected.
-- Use `roots` whenever the user names no path, or asks about the environment as
-  a whole. Widen the roots only when the request clearly reaches beyond them,
-  and say what scope you used.
+- The page size applies to each root.
+- Never combine `roots` with a `path` predicate - that is rejected.
 
-When the user names a concrete path (or you want the single page from the
-current page context), a `path` predicate is still correct and is one request:
+When the user names a concrete path (or says "here" or "this page", meaning the page
+in the current page context), a `path` predicate is correct and is one request:
 
 ```json
 {

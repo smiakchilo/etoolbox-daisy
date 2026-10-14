@@ -116,22 +116,26 @@ describe('deriveCurrentPageContext', () => {
 });
 
 describe('renderCurrentPageContextForModel', () => {
-  it('names the host and content path and tells the model how to read "this page"/"this host"', () => {
-    const rendered = renderCurrentPageContextForModel({
-      origin: AUTHOR,
-      url: `${AUTHOR}/content/wknd/us/en.html`,
-      jcrPath: '/content/wknd/us/en',
-      contentRoots: ['/content'],
-      componentRoots: ['/apps'],
-    });
-    expect(rendered).toContain(`Host origin: ${AUTHOR}`);
-    expect(rendered).toContain('Content path: /content/wknd/us/en');
-    expect(rendered).toContain('Content roots: /content');
-    expect(rendered).toContain('Component roots: /apps');
-    expect(rendered).toContain('"this page"');
+  const withPath = {
+    origin: AUTHOR,
+    url: `${AUTHOR}/content/wknd/us/en.html`,
+    jcrPath: '/content/wknd/us/en',
+    contentRoots: ['/content'],
+    componentRoots: ['/apps'],
+  };
+
+  it('lists the host, URL, roots and content path as labelled facts', () => {
+    expect(renderCurrentPageContextForModel(withPath).split('\n')).toEqual([
+      'Current AEM page (supplied by the application from the browser pane, not typed by the user):',
+      `Host origin: ${AUTHOR} (an origin, not a host label - labels come from environment_facts)`,
+      `URL: ${AUTHOR}/content/wknd/us/en.html`,
+      'Content roots: /content',
+      'Component roots: /apps',
+      'Content path: /content/wknd/us/en',
+    ]);
   });
 
-  it('names the host but withholds a content path, and says so, when none was derived', () => {
+  it('states that there is no content path, as a fact, when none was derived', () => {
     const rendered = renderCurrentPageContextForModel({
       origin: AUTHOR,
       url: `${AUTHOR}/`,
@@ -140,8 +144,19 @@ describe('renderCurrentPageContextForModel', () => {
       componentRoots: ['/apps'],
     });
     expect(rendered).toContain(`Host origin: ${AUTHOR}`);
-    expect(rendered).not.toContain('Content path:');
-    expect(rendered).toContain('No content path is available');
+    expect(rendered).toContain('Content path: none (the open page is not under /content)');
     expect(rendered).toContain('Content roots: /content/a, /content/b');
+  });
+
+  it('carries no instruction about how to read the context: that lives in session.md alone', () => {
+    for (const jcrPath of ['/content/wknd/us/en', undefined]) {
+      const rendered = renderCurrentPageContextForModel({ ...withPath, jcrPath });
+      expect(rendered).not.toMatch(
+        /"this page"|"here"|targets this|find the path|rather than guessing/i,
+      );
+      for (const line of rendered.split('\n').slice(1)) {
+        expect(line).toMatch(/^(Host origin|URL|Content roots|Component roots|Content path): /);
+      }
+    }
   });
 });

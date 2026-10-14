@@ -7,6 +7,7 @@ import {
   renderSkillInvocationDirective,
   resolveSkillPrompt,
 } from '../../../src/shared';
+import { REAL_SKILLS_TEMPLATE } from '../../support/instructionResources';
 
 describe('readLeadingSkillToken', () => {
   it('reads the name and the trimmed remainder', () => {
@@ -86,12 +87,14 @@ describe('renderSkillInvocationDirective', () => {
 });
 
 describe('renderSkillCatalogue', () => {
+  const skill = { name: 'search', description: 'Find pages.' };
+
   it('returns an empty string for an empty catalogue, so no heading is added', () => {
-    expect(renderSkillCatalogue([])).toBe('');
+    expect(renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [])).toBe('');
   });
 
   it('lists every skill name and its model-facing description', () => {
-    const block = renderSkillCatalogue([
+    const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [
       { name: 'search', description: 'Find pages by content.' },
       { name: 'query-results', description: 'Read a query result correctly.' },
     ]);
@@ -100,13 +103,38 @@ describe('renderSkillCatalogue', () => {
   });
 
   it('tells the model to load a matching skill before acting, via the skill tool', () => {
-    const block = renderSkillCatalogue([{ name: 'search', description: 'Find pages.' }]);
+    const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [skill]);
     expect(block).toContain('before acting');
     expect(block).toContain(`\`${SKILL_TOOL_NAME}\` tool`);
     expect(block).toContain(`{"${SKILL_TOOL_NAME}":"<name>"}`);
     expect(block).toContain('Available skills:');
     // The model must not be invited to ask the user whether to load it.
     expect(block).toContain('do not ask the user to confirm');
+  });
+
+  it("states that a skill's input is the whole request, which is never asked to be restated", () => {
+    const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [skill]);
+    expect(block).toContain("A skill's input is the user's whole request");
+    expect(block).toContain('never ask the user to restate it');
+  });
+
+  it('leaves no placeholder behind and puts the skills last', () => {
+    const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [skill]);
+    expect(block).not.toContain('{{');
+    expect(block.endsWith('- search: Find pages.')).toBe(true);
+  });
+
+  it('replaces the skill-tool placeholder everywhere it appears', () => {
+    const block = renderSkillCatalogue('{{skillTool}} and {{skillTool}}\n{{catalogue}}', [skill]);
+    expect(block).toBe(`${SKILL_TOOL_NAME} and ${SKILL_TOOL_NAME}\n- search: Find pages.`);
+  });
+
+  it.each([
+    ['no catalogue placeholder', 'Just prose'],
+    ['two catalogue placeholders', '{{catalogue}} and {{catalogue}}'],
+  ])('throws for a template with %s, even for an empty catalogue', (_name, template) => {
+    expect(() => renderSkillCatalogue(template, [skill])).toThrow(/exactly one \{\{catalogue}}/);
+    expect(() => renderSkillCatalogue(template, [])).toThrow(/exactly one \{\{catalogue}}/);
   });
 });
 

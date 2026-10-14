@@ -16,22 +16,9 @@ differs between them:
 - a **title or name** (`Content Block`, `contentBlock`) - which must first be
   resolved to the real resource type.
 
-This skill is reached two ways, and the component is the same in both:
-
-- **The user typed `/search-component <what>`.** The text after the directive is
-  **your input for the turn**. Do not ask the user to restate it.
-- **You loaded this skill yourself** because the request is to find where a
-  component is used.
-
 The search runs through `aem_query_format_ask`, the same routine as `/search`:
 one call queries, shows the table, and offers **Load more** until the user is
-done. Do not call `aem_query` or `ask_user` yourself to show the result, and do
-not repeat the rows.
-
-**Write no prose of your own.** The application hides your assistant text for
-this turn - the table is the whole answer - so any summary, component
-explanation, or list of paths you write is discarded. Resolve the component,
-make the one search call, and stop.
+done. Resolve the component, make the one search call, and stop.
 
 ## Step 1 - resolve the component to its resource type
 
@@ -146,10 +133,13 @@ call:
     "property": "sling:resourceType",
     "property.1_value": "myproject/components/content/content-block",
     "property.2_value": "/apps/myproject/components/content/content-block"
-  },
-  "roots": ["<the host's content roots, or the root the user named>"]
+  }
 }
 ```
+
+If the request names a scope ("... under us/en"), add it as `roots`, exactly as the
+user wrote it: `"roots": ["us/en"]`. The Scope rules in your instructions cover the
+rest.
 
 Pass **no** `properties`, and no other output argument. The table is exactly two
 columns - **`Path`** (the owning page) and **`Node`** (the component node's path
@@ -177,9 +167,6 @@ Why it is shaped this way:
   is one row per component *placement*, so a page with several appears once per
   placement - its `Path` written only on the first of them and left blank below
   (still one numbered row each). This is automatic - there is no option to set.
-- **`roots`** default to the host's content roots followed by its DAM roots when
-  omitted; pass `roots` only when the user named a different scope. Never combine
-  `roots` with a `path` predicate.
 
 A `property` predicate is served by an index or, failing that, by an Oak
 traversal; on a large instance that does not index `sling:resourceType` the
@@ -192,17 +179,8 @@ the rows.
 
 ## Reporting
 
-The table is the answer, and the application hides your assistant text for this
-turn - so write nothing around it: no summary, no explanation of the component,
-no paths of your own. If the user must choose something (which component, or
-which resource type when nothing matched), ask with `ask_user`; a plain sentence
-of yours is invisible.
+If the user must choose something (which component, or which resource type when
+nothing matched), ask with `ask_user`; a plain sentence of yours is invisible.
 
 When the search leaves an empty table, its total line says so. End the turn
 there rather than explaining the search.
-
-## Read-only
-
-You cannot change AEM. Never propose or attempt `/crx`, CRXDE, Package Manager,
-the Sling POST servlet, `curl`, shell commands, files, or external tools. If the
-user asks you to change content, say EToolbox Daisy is read-only.

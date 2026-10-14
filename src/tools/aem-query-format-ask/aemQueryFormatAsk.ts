@@ -9,6 +9,7 @@ import {
   type ToolHost,
   AEM_COUNT_TIMEOUT_MS,
   CONTENT_ROOT_DEFAULT,
+  MAX_SEARCH_ROOTS,
   SEARCH_PAGE_SIZE,
   buildQueryUrl,
   classifyAemResponse,
@@ -22,6 +23,8 @@ import {
   ok,
   readCountTotal,
   resolveSearchRoots,
+  resolveSearchScope,
+  searchRootsSchema,
 } from '../../shared';
 
 /**
@@ -61,7 +64,6 @@ export const AEM_QUERY_FORMAT_ASK_ALLOWLIST_ENTRY = 'custom:aem_query_format_ask
 export const AEM_QUERY_FORMAT_ASK_USES = ['aem_query', 'format_table', 'ask_user'] as const;
 
 const MAX_SEARCH_PAGE_SIZE = 200;
-const MAX_SEARCH_ROOTS = 8;
 const LOAD_MORE = 'Load more';
 
 export const aemQueryFormatAskArgsSchema = z
@@ -73,12 +75,31 @@ export const aemQueryFormatAskArgsSchema = z
      * `aem_query` itself, exactly as if the model had passed it there.
      */
     predicates: z.record(z.string(), z.string()).optional(),
-    /** Where to search. Omitted means the current host's content roots (or the `path` predicate). */
-    roots: z.array(z.string().min(1)).min(1).max(MAX_SEARCH_ROOTS).optional(),
+    /**
+     * Where to search: full paths as the user wrote them, or path fragments the
+     * application resolves (`resolveSearchScope`). Omitted means the current host's
+     * content roots (or the `path` predicate).
+     */
+    roots: searchRootsSchema
+      .describe(
+        'JCR paths or path fragments to search under, exactly as the user wrote them: a full ' +
+          'path ("/content/site/us/en") or a fragment ("us/en"). The application resolves a ' +
+          'fragment to a full path. Never build or complete a path yourself - not from the ' +
+          'current page, not from another path you have seen. Omit this argument for the ' +
+          "default scope (the host's content roots, then its DAM roots). See Scope in your " +
+          'instructions.',
+      )
+      .optional(),
     /** Which result fields come back per hit, as `aem_query`'s `properties`. */
     properties: z.array(z.string().min(1)).optional(),
     /** Rows per page (per root, as with `aem_query`). */
-    limit: z.number().int().min(1).max(MAX_SEARCH_PAGE_SIZE).default(SEARCH_PAGE_SIZE),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_SEARCH_PAGE_SIZE)
+      .default(SEARCH_PAGE_SIZE)
+      .describe('Rows per page. Omit it unless the user asked for a page size.'),
   })
   .strict()
   .refine((args) => (args.terms === undefined) !== (args.predicates === undefined), {
@@ -92,10 +113,9 @@ export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
     "the chat's table, and, while more results may exist, offers the user a 'Load more' button " +
     'and loads the next page when it is clicked. Pass either `terms` (a plain full-text search ' +
     'string) or `predicates` (a hand-built QueryBuilder predicate map, exactly as for ' +
-    "aem_query) - never both. `roots` defaults to the current host's content roots followed by " +
-    'its DAM roots (none when `predicates` has a `path`; never combine `roots` with a `path` ' +
-    'predicate); `properties` ' +
-    `optionally selects the fields per hit; \`limit\` (rows per page) defaults to ${String(SEARCH_PAGE_SIZE)}. ` +
+    'aem_query) - never both. A `predicates` search that carries its own `path` scopes itself: ' +
+    'never combine `roots` with a `path` predicate. `properties` ' +
+    'optionally selects the fields per hit. ' +
     'A search that matches a component by `sling:resourceType` shows each hit against its ' +
     'owning page, with the path within the page beside it. ' +
     'When it returns, the table is already on screen and the user has finished loading pages: ' +
@@ -238,8 +258,22 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
       ? createComponentNodeDisplay()
       : undefined;
     const scopedByPath = Object.prototype.hasOwnProperty.call(predicates, 'path');
+    // A fragment (`us/en`) becomes a full path here - by configuration, a lookup
+    // or a question to the user, never a guess. A `path` predicate is left to
+    // `aem_query`, which rejects the combination with `roots`.
+    let explicitRoots = parsed.data.roots;
+    if (explicitRoots !== undefined && !scopedByPath) {
+      const resolvedScope = await resolveSearchScope({
+        host,
+        context,
+        requestId,
+        roots: explicitRoots,
+      });
+      if (!resolvedScope.ok) return resolvedScope;
+      explicitRoots = resolvedScope.value;
+    }
     const roots =
-      parsed.data.roots ??
+      explicitRoots ??
       (scopedByPath
         ? undefined
         : resolveSearchRoots(host.environmentFacts()).slice(0, MAX_SEARCH_ROOTS));

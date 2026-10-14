@@ -17,3 +17,12 @@ export const SEARCH_PAGE_SIZE = 20;
  * cannot - see docs/compatibility.md's QueryBuilder facts).
  */
 export const TOTAL_GUESS_CAP = 100;
+
+/**
+ * The most roots one search call may name or fan out over: each root is a
+ * separate AEM request through the concurrency-1 bridge, so this bounds a single
+ * tool call's cost. A tuning value, not a protocol limit. A host whose default
+ * (content, then DAM) roots exceed it is simply searched through the first
+ * ones - see `docs/backlog.md` "Default root fan-out is silently capped".
+ */
+export const MAX_SEARCH_ROOTS = 10;

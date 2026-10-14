@@ -13,20 +13,9 @@ queries AEM one page of hits at a time, reads the content of **every** hit, show
 the table (with its **Total** line counting the relevant matches), and offers the user a **Load more** button.
 **Your only job is to judge which candidates match.**
 
-Write no prose of your own: the application hides your assistant text for this
-turn, so any explanation you write is discarded.
-
 ## 1. Split the request into terms and a context
 
-This skill is reached two ways, and the request is the same in both:
-
-- **The user typed `/semantic-search <text>`.** The `<text>` is handed to you as
-  **your input for the turn**.
-- **You loaded this skill yourself** because the request is for content by
-  meaning, quality, topic, or description.
-
-Either way, the whole request is the input. Do not ask the user to restate it.
-From it take:
+From the user's request take:
 
 - **`terms`** - the search phrase AEM's full-text index looks for: the shortest
   distinctive term or two (names, nouns, product terms), **without** the meaning
@@ -50,8 +39,9 @@ Make one call:
 { "terms": "Waldo", "context": "Waldo is good, benevolent, upstanding" }
 ```
 
-Pass `roots` only when the user named a scope; never pass `limit` unless the
-user asked for a page size.
+If the request names a scope ("... under us/en"), it belongs in neither `terms` nor
+`context`: add it as `roots`, exactly as the user wrote it (`{ ..., "roots": ["us/en"] }`).
+The Scope rules in your instructions cover the rest.
 
 ## 3. Judge every candidate, and call back
 
@@ -101,13 +91,3 @@ exactly as in section 3. Keep going for as long as candidates come back.
 or because you think the user has seen enough. The search ends only when the
 result says it is **finished** (AEM has no more results, or the user did not
 load more). Then end your turn without writing anything.
-
-Never call `aem_query`, `aem_get_json` or `ask_user` yourself
-for a semantic search, and never write the results as text.
-
-## Read-only
-
-You cannot change AEM. Never propose or attempt `/crx`, CRXDE, Package Manager,
-the Sling POST servlet, `curl`, shell commands, files, or external tools. If the
-user asks you to change content, say EToolbox Daisy is read-only and offer the
-information that would support the change.

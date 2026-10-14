@@ -187,6 +187,13 @@ function createInvokeTool(params: {
 export async function buildToolRegistry(params: {
   readonly loaders: ToolModuleLoaders;
   readonly host: ToolHostServices;
+  /**
+   * The session-instructions template (`resources/instructions/session.md`),
+   * read by the composition root. A template without exactly one
+   * `{{tools}}` placeholder makes this reject: the session must never start
+   * without the policy the template carries.
+   */
+  readonly instructionsTemplate: string;
   readonly onFailure?: (failure: ToolLoadFailure) => void;
   /** Told about every call a tool makes through `invokeTool`; see {@link NestedToolCallObserver}. */
   readonly nestedCalls?: NestedToolCallObserver;
@@ -281,7 +288,7 @@ export async function buildToolRegistry(params: {
     toolHandlers: modelHandlers,
     descriptors,
     allowlistEntries,
-    instructions: composeAssistantInstructions(instructions),
+    instructions: composeAssistantInstructions(params.instructionsTemplate, instructions),
     enabledNames: Object.keys(modelHandlers),
     internalNames,
     disabledNames,

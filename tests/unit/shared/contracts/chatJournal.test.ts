@@ -66,6 +66,51 @@ describe('chatJournalRecordSchema - other record kinds', () => {
     ).toBe(true);
   });
 
+  it('accepts an optional pageContext on a user.prompt, and still reads one without it', () => {
+    const prompt = {
+      recordType: 'user.prompt',
+      at: 5,
+      chatId: CHAT_ID,
+      turnId: TURN_ID,
+      prompt: 'Find X',
+    };
+    expect(
+      chatJournalRecordSchema.safeParse({
+        ...prompt,
+        pageContext: 'Host origin: https://a.example',
+      }).success,
+    ).toBe(true);
+    expect(chatJournalRecordSchema.safeParse(prompt).success).toBe(true);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['over its bound', 'x'.repeat(8_001)],
+  ])('rejects a pageContext that is %s', (_name, pageContext) => {
+    expect(
+      chatJournalRecordSchema.safeParse({
+        recordType: 'user.prompt',
+        at: 5,
+        chatId: CHAT_ID,
+        turnId: TURN_ID,
+        prompt: 'Find X',
+        pageContext,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('keeps user.prompt strict: another unknown key is still refused', () => {
+    expect(
+      chatJournalRecordSchema.safeParse({
+        recordType: 'user.prompt',
+        at: 5,
+        chatId: CHAT_ID,
+        turnId: TURN_ID,
+        prompt: 'Find X',
+        pageContxt: 'typo',
+      }).success,
+    ).toBe(false);
+  });
   it('rejects an empty user.prompt', () => {
     expect(
       chatJournalRecordSchema.safeParse({

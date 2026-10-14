@@ -44,6 +44,9 @@ export const CHAT_JOURNAL_SCHEMA_VERSION = 1;
  */
 const PROMPT_MAX_LENGTH = 100_000;
 
+/** The rendered current-page block: a handful of short lines, the URL being the longest. */
+const PAGE_CONTEXT_MAX_LENGTH = 8_000;
+
 /**
  * The first line of every journal file, exactly once, before any event record.
  * `startedAt` is the journal's own clock reading at open time, not a value the
@@ -73,9 +76,15 @@ export type ChatJournalHeaderRecord = Readonly<z.infer<typeof chatJournalHeaderR
  * The user's own prompt. There is no `AgentEvent` variant for a user message
  * (the renderer is the only other place that knows the exact text - see
  * `transcriptStore.ts`'s `applyUserPrompt`), so the journal synthesizes this
- * record from the `sendMessage` call. `prompt` is what the user typed; the
- * application-prepared page context that the model additionally reads is
- * deliberately not duplicated here.
+ * record from the `sendMessage` call. `prompt` is what the user typed.
+ *
+ * `pageContext` is the application-prepared current-page block the model read
+ * *in addition* to the prompt, exactly as sent (host origin, URL without query,
+ * roots, content path). It is diagnostics, not transcript: the renderer never
+ * paints it, but without it a reader cannot tell what the model knew on this
+ * turn - which host, which roots, which page - except by asking the model, whose
+ * own account can be wrong. Absent when the pane was on no AEM page of the
+ * active server (so there was no block).
  */
 export const chatJournalUserPromptRecordSchema = z
   .object({
@@ -84,6 +93,7 @@ export const chatJournalUserPromptRecordSchema = z
     chatId: chatIdSchema,
     turnId: turnIdSchema,
     prompt: z.string().min(1).max(PROMPT_MAX_LENGTH),
+    pageContext: z.string().min(1).max(PAGE_CONTEXT_MAX_LENGTH).optional(),
   })
   .strict();
 

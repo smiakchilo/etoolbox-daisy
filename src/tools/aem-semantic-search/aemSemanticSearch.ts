@@ -9,6 +9,7 @@ import {
   type ToolError,
   type ToolExecutionContext,
   type ToolHost,
+  MAX_SEARCH_ROOTS,
   SEARCH_PAGE_SIZE,
   classifyAemResponse,
   computeDeadline,
@@ -21,6 +22,8 @@ import {
   parseJcrPath,
   parseOrigin,
   resolveSearchRoots,
+  resolveSearchScope,
+  searchRootsSchema,
 } from '../../shared';
 
 /**
@@ -53,7 +56,6 @@ export const AEM_SEMANTIC_SEARCH_ALLOWLIST_ENTRY = 'custom:aem_semantic_search';
 export const AEM_SEMANTIC_SEARCH_USES = ['aem_query', 'format_table', 'ask_user'] as const;
 
 const MAX_SEMANTIC_PAGE_SIZE = 100;
-const MAX_ROOTS = 8;
 const LOAD_MORE = 'Load more';
 
 /** Concurrent content reads per page; the broker serialises them, this keeps its queue fed. */
@@ -80,10 +82,29 @@ export const aemSemanticSearchArgsSchema = z
     terms: z.string().trim().min(1).optional(),
     /** Call A: what a result must be about to count as relevant. */
     context: z.string().trim().min(1).optional(),
-    /** Call A: where to search. Omitted means the current host's content roots, then its DAM roots. */
-    roots: z.array(z.string().min(1)).min(1).max(MAX_ROOTS).optional(),
+    /**
+     * Call A: where to search - full paths as the user wrote them, or path fragments
+     * the application resolves (`resolveSearchScope`). Omitted means the current
+     * host's content roots, then its DAM roots.
+     */
+    roots: searchRootsSchema
+      .describe(
+        'JCR paths or path fragments to search under, exactly as the user wrote them: a full ' +
+          'path ("/content/site/us/en") or a fragment ("us/en"). The application resolves a ' +
+          'fragment to a full path. Never build or complete a path yourself - not from the ' +
+          'current page, not from another path you have seen. Omit this argument for the ' +
+          "default scope (the host's content roots, then its DAM roots). See Scope in your " +
+          'instructions.',
+      )
+      .optional(),
     /** Call A: hits per page. */
-    limit: z.number().int().min(1).max(MAX_SEMANTIC_PAGE_SIZE).optional(),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAX_SEMANTIC_PAGE_SIZE)
+      .describe('Rows per page. Omit it unless the user asked for a page size.')
+      .optional(),
     /** Call B: the id call A returned. */
     searchId: z.string().trim().min(1).optional(),
     /** Call B: the candidates that match the context (numbers, or `{ candidate, excerpt }`). */
@@ -99,9 +120,8 @@ export const AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR: ToolDescriptor = {
     'must be about to count. It returns a `searchId` and numbered candidates (every hit of the ' +
     'page, with excerpts of its content). Judge EVERY candidate against the context, then call ' +
     'this tool again with `{ searchId, matches }` - the numbers of the matching candidates ' +
-    '(`[]` if none), optionally `{ candidate, excerpt }` to choose the excerpt cited. The ' +
-    "application searches the current host's content roots followed by its DAM roots unless " +
-    '`roots` is given. The application shows the table and the "Load more" button itself; when the user loads more you ' +
+    '(`[]` if none), optionally `{ candidate, excerpt }` to choose the excerpt cited. ' +
+    'The application shows the table and the "Load more" button itself; when the user loads more you ' +
     'receive the next candidates and judge again. Stop only when the result says the search is ' +
     'finished; never write the results yourself.',
   parameters: z.toJSONSchema(aemSemanticSearchArgsSchema, { io: 'input' }),
@@ -600,11 +620,27 @@ export function createAemSemanticSearchExecutor(host: ToolHost): AemToolExecutor
     context: ToolExecutionContext,
     requestId: RequestId,
   ): Promise<Result<JsonValue, ToolError>> => {
+    // A fragment (`us/en`) becomes a full path before anything is searched - by
+    // configuration, a lookup or a question to the user, never a guess.
+    let explicitRoots = args.roots;
+    if (explicitRoots !== undefined) {
+      const resolvedScope = await resolveSearchScope({
+        host,
+        context,
+        requestId,
+        roots: explicitRoots,
+      });
+      if (!resolvedScope.ok) return resolvedScope;
+      explicitRoots = resolvedScope.value;
+    }
     const searchId = host.idGenerator();
     const state: SearchState = {
       terms,
       context: semanticContext,
-      roots: [...(args.roots ?? resolveSearchRoots(host.environmentFacts()).slice(0, MAX_ROOTS))],
+      roots: [
+        ...(explicitRoots ??
+          resolveSearchRoots(host.environmentFacts()).slice(0, MAX_SEARCH_ROOTS)),
+      ],
       limit: args.limit ?? SEARCH_PAGE_SIZE,
       offset: 0,
       pages: 0,

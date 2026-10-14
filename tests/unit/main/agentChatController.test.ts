@@ -858,6 +858,46 @@ describe('agentChatController chat journal', () => {
     agentService.flush();
     expect(methods(calls).filter((method) => method === 'recordEvent').length).toBeGreaterThan(1);
   });
+  it('journals the current-page block the model reads, exactly as given, beside the typed prompt', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const block =
+      'Current AEM page (...):\nHost origin: https://author.example\nContent path: /content/a';
+    const { controller } = buildController(agentService, {
+      chatJournal: journal,
+      currentPageContext: () => block,
+    });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    const sent = await controller.sendMessage({ chatId, prompt: 'hello' });
+    if (!sent.ok) throw new Error('unreachable');
+
+    expect(calls[1]?.args).toEqual({
+      chatId,
+      turnId: sent.turnId,
+      prompt: 'hello',
+      pageContext: block,
+    });
+  });
+
+  it.each([
+    ['no block', undefined],
+    ['an empty block', ''],
+  ])('journals no pageContext when there is %s', async (_name, block) => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, {
+      chatJournal: journal,
+      currentPageContext: () => block,
+    });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    await controller.sendMessage({ chatId, prompt: 'hello' });
+
+    expect(calls[1]?.args).not.toHaveProperty('pageContext');
+  });
 
   it('discards a staged prompt when sendPrompt fails', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });

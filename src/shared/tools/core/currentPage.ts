@@ -158,29 +158,21 @@ export function deriveCurrentPageContext(
 /**
  * Renders one {@link deriveCurrentPageContext} result into the text block
  * prepended to a user's prompt. Kept here - beside the derivation - so the
- * wording the model is given and the values it is given cannot drift.
+ * labels the model is given and the values it is given cannot drift.
+ *
+ * The block is **facts only**. How the model should read "this page", "here" or
+ * "this host" - and that the page is never a search scope - is said once, in
+ * the always-on session instructions (`resources/instructions/session.md`,
+ * "Current page context"), not repeated here. A page that is not content says
+ * so as a fact (`Content path: none`).
  */
 export function renderCurrentPageContextForModel(context: CurrentPageContext): string {
-  const lines = [
+  return [
     'Current AEM page (supplied by the application from the browser pane, not typed by the user):',
     `Host origin: ${context.origin} (an origin, not a host label - labels come from environment_facts)`,
     `URL: ${context.url}`,
     `Content roots: ${context.contentRoots.join(', ')}`,
     `Component roots: ${context.componentRoots.join(', ')}`,
-  ];
-  if (context.jcrPath !== undefined) {
-    lines.push(`Content path: ${context.jcrPath}`);
-    lines.push(
-      'References such as "this page", "here", or "this content" mean the content path above; ' +
-        '"this host", "this server", or "this instance" mean the host above. A request that ' +
-        'names no path or server targets this page and this host',
-    );
-  } else {
-    lines.push(
-      'No content path is available for the current page. "This host", "this server", and ' +
-        '"this instance" mean the host above; for a page-specific request, find the path (for ' +
-        'example with aem_query) rather than guessing one',
-    );
-  }
-  return lines.join('\n');
+    `Content path: ${context.jcrPath ?? 'none (the open page is not under /content)'}`,
+  ].join('\n');
 }

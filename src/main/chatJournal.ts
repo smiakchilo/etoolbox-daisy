@@ -59,6 +59,8 @@ export interface ChatJournalUserPromptParams {
   readonly chatId: ChatId;
   readonly turnId: TurnId;
   readonly prompt: string;
+  /** The current-page block the model read besides the prompt, when there was one. */
+  readonly pageContext?: string | undefined;
 }
 
 export interface ChatJournalInterruptionParams {
@@ -174,7 +176,12 @@ interface OpenChat {
    */
   currentTurnId?: TurnId;
   /** At most one prompt is staged: main owns one active turn per chat. `at` is when it was staged, the start of the turn's timings. */
-  pendingPrompt?: { readonly turnId: TurnId; readonly prompt: string; readonly at: number };
+  pendingPrompt?: {
+    readonly turnId: TurnId;
+    readonly prompt: string;
+    readonly pageContext?: string;
+    readonly at: number;
+  };
   /** The turn being timed, from its first event until its terminal one. */
   turn?: TurnAccumulator;
 }
@@ -310,6 +317,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       chatId,
       turnId: pending.turnId,
       prompt: pending.prompt,
+      ...(pending.pageContext !== undefined ? { pageContext: pending.pageContext } : {}),
     });
   }
 
@@ -501,7 +509,12 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         droppedRecordCount += 1;
         return;
       }
-      state.pendingPrompt = { turnId: params.turnId, prompt: params.prompt, at: now() };
+      state.pendingPrompt = {
+        turnId: params.turnId,
+        prompt: params.prompt,
+        ...(params.pageContext !== undefined ? { pageContext: params.pageContext } : {}),
+        at: now(),
+      };
     },
 
     discardUserPrompt(chatId, turnId) {

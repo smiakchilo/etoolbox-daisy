@@ -13,7 +13,7 @@ import {
   createLateBoundAemToolContext,
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
-  resolveBundledSkillsDirectory,
+  resolveBundledResourcesDirectory,
   runAfterFrameLoad,
   shouldUseFakeAgentService,
   startAppRuntime,
@@ -718,42 +718,42 @@ describe('runAfterFrameLoad', () => {
   });
 });
 
-describe('resolveBundledSkillsDirectory', () => {
+describe('resolveBundledResourcesDirectory', () => {
   const join = (...segments: readonly string[]): string => segments.join('/');
 
   it('reads from the packaged resources directory when packaged', () => {
     expect(
-      resolveBundledSkillsDirectory({
+      resolveBundledResourcesDirectory({
         isPackaged: true,
         resourcesPath: 'C:/Program Files/EToolbox Daisy/resources',
         mainDir: 'C:/Program Files/EToolbox Daisy/resources/app.asar/out/main',
         join,
       }),
-    ).toBe('C:/Program Files/EToolbox Daisy/resources/resources/skills');
+    ).toBe('C:/Program Files/EToolbox Daisy/resources/resources');
   });
 
   it('reads from the repository resources directory when unpackaged', () => {
     expect(
-      resolveBundledSkillsDirectory({
+      resolveBundledResourcesDirectory({
         isPackaged: false,
         resourcesPath: 'C:/ignored',
         mainDir: 'E:/repo/out/main',
         join,
       }),
-    ).toBe('E:/repo/out/main/../../resources/skills');
+    ).toBe('E:/repo/out/main/../../resources');
   });
 
   it('never derives the directory from the user home or the project directory', () => {
     // The only inputs are the app's own install location and a path joiner;
     // there is no parameter through which settings, an AEM response, or the
     // user's environment could redirect where skills are loaded from.
-    const packaged = resolveBundledSkillsDirectory({
+    const packaged = resolveBundledResourcesDirectory({
       isPackaged: true,
       resourcesPath: 'C:/app/resources',
       mainDir: 'C:/app/resources/app.asar/out/main',
       join,
     });
     expect(packaged).not.toMatch(/Users|home|AppData/i);
-    expect(packaged.endsWith('resources/skills')).toBe(true);
+    expect(packaged.endsWith('resources/resources')).toBe(true);
   });
 });
