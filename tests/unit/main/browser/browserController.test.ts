@@ -555,6 +555,103 @@ describe('browserController.reload / goBack / goForward', () => {
   });
 });
 
+describe('browserController active server follows the pane', () => {
+  const server = makeServer({ origin: 'https://a.example' });
+
+  it('adopts a configured host the pane committed on its own (an SSO login returning to it)', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    expect(harness.controller.activeServer()).toBeUndefined();
+
+    harness.aemViewControls.setNavigationUrl('https://a.example/content/page.html');
+    harness.aemViewControls.webContents.emit(
+      'did-navigate',
+      {},
+      'https://a.example/content/page.html',
+    );
+
+    await vi.waitFor(() => {
+      expect(harness.controller.activeServer()).toEqual({
+        serverId: server.id,
+        origin: 'https://a.example',
+        revision: server.revision,
+      });
+    });
+  });
+
+  it('clears the active server when the pane commits on a non-host origin', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+    expect(harness.controller.activeServer()).toBeDefined();
+
+    harness.aemViewControls.setNavigationUrl('https://ims.example/oauth');
+    harness.aemViewControls.webContents.emit('did-navigate', {}, 'https://ims.example/oauth');
+
+    await vi.waitFor(() => {
+      expect(harness.controller.activeServer()).toBeUndefined();
+    });
+  });
+
+  it('does not adopt the error page a failed main-frame load left behind', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    const { webContents } = harness.aemViewControls;
+
+    webContents.emit('did-start-navigation', {
+      url: 'https://a.example/',
+      isMainFrame: true,
+      isSameDocument: false,
+    });
+    webContents.emit(
+      'did-fail-load',
+      {},
+      -102,
+      'ERR_CONNECTION_REFUSED',
+      'https://a.example/',
+      true,
+    );
+    harness.aemViewControls.setNavigationUrl('https://a.example/');
+    webContents.emit('did-navigate', {}, 'https://a.example/');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(harness.controller.activeServer()).toBeUndefined();
+  });
+
+  it('reads the server back from the pane when a switch load is cancelled by a redirect', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    harness.aemViewControls.loadURLImpl = () => {
+      harness.aemViewControls.setNavigationUrl('https://a.example/content/page.html');
+      return Promise.reject(new Error("ERR_ABORTED (-3) loading 'https://a.example/'"));
+    };
+
+    const result = await harness.controller.switchServer(server.id);
+
+    expect(result.ok).toBe(false);
+    expect(harness.controller.activeServer()).toEqual({
+      serverId: server.id,
+      origin: 'https://a.example',
+      revision: server.revision,
+    });
+  });
+
+  it('still reports no active server when a switch load really failed', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    harness.aemViewControls.loadURLImpl = () => {
+      harness.aemViewControls.setNavigationUrl('https://a.example/');
+      return Promise.reject(
+        new Error("ERR_CONNECTION_REFUSED (-102) loading 'https://a.example/'"),
+      );
+    };
+
+    await harness.controller.switchServer(server.id);
+
+    expect(harness.controller.activeServer()).toBeUndefined();
+  });
+});
+
 describe('browserController.switchServer', () => {
   it('fails with server_not_found for an id with no matching configured server', async () => {
     const harness = makeControllerHarness();

@@ -529,7 +529,20 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // guessed one in place. Mirrors the epoch bump just above: the same
       // event that makes in-flight requests untrustworthy makes the "which
       // server is this" answer untrustworthy too.
-      activeServerState = undefined;
+      //
+      // The one exception is a *cancelled* load (`ERR_ABORTED`/`ERR_FAILED`:
+      // an SSO redirect or a page-initiated navigation took over). The pane is
+      // then showing a real document, the renderer treats it as no error at
+      // all, and nothing would ever re-derive the server - so read it back
+      // from the view instead of leaving every tool call without a host.
+      if (
+        outcome.reason === 'network_error' &&
+        (outcome.errorCode === 'ERR_ABORTED' || outcome.errorCode === 'ERR_FAILED')
+      ) {
+        await refreshActiveServerFromView();
+      } else {
+        activeServerState = undefined;
+      }
       // The proxy may or may not have been applied before the failure, so
       // forget what is in effect and let the next navigation reconcile it.
       appliedProxyKey = undefined;
@@ -758,12 +771,6 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    * does.
    */
   async function refreshActiveServerFromView(): Promise<void> {
-    const url = currentDocumentUrl();
-    const target = url === undefined ? undefined : parseNavigationTarget(url);
-    if (target === undefined || !target.ok) {
-      activeServerState = undefined;
-      return;
-    }
     let settings: AppSettings;
     try {
       settings = await loadSettingsOrThrow();
@@ -772,9 +779,58 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // previous answer rather than guessing.
       return;
     }
+    // Read after the settings I/O, not before: overlapping refreshes (a commit
+    // event racing a switch's own settle) must all judge the page the view is
+    // on *now*, so whichever finishes last cannot write an older answer.
+    const url = currentDocumentUrl();
+    const target = url === undefined ? undefined : parseNavigationTarget(url);
+    if (target === undefined || !target.ok) {
+      activeServerState = undefined;
+      return;
+    }
     const host = settings.hosts.find((candidate) => candidate.origin === target.origin);
     activeServerState = host === undefined ? undefined : toActiveServer(host);
   }
+
+  // A main-frame load that failed leaves Chromium's error page committed under
+  // the failed URL. That page is not "the server", so `did-navigate` must not
+  // adopt it. Set by `did-fail-load`, cleared when the next main-frame
+  // navigation starts.
+  let mainFrameLoadFailed = false;
+
+  const onMainFrameNavigationStart = (
+    details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+  ): void => {
+    if (details.isMainFrame && !details.isSameDocument) mainFrameLoadFailed = false;
+  };
+  const onMainFrameLoadFailed = (
+    _event: unknown,
+    errorCode: number,
+    _errorDescription: string,
+    _validatedUrl: string,
+    isMainFrame: boolean,
+  ): void => {
+    // -3 is Chromium's ERR_ABORTED: a cancelled load (an SSO redirect, a newer
+    // navigation) that leaves a real document behind, not an error page.
+    if (isMainFrame && errorCode !== -3) mainFrameLoadFailed = true;
+  };
+
+  /**
+   * Keeps the active server in step with what the pane really shows. Without
+   * this the active server only changed through `switchServer` and history
+   * commands, so a host switch whose load was cancelled by an SSO redirect, or
+   * a login that returned to the host on its own, left it unset while the page
+   * was plainly an AEM host - and every tool call then failed with "no AEM
+   * server is currently selected". A commit during a switch is skipped: the
+   * switch writes the result itself when it settles.
+   */
+  const onMainFrameCommitted = (): void => {
+    if (mainFrameLoadFailed || switchController.getState() === 'switching') return;
+    void refreshActiveServerFromView();
+  };
+  aemView.webContents.on('did-start-navigation', onMainFrameNavigationStart);
+  aemView.webContents.on('did-fail-load', onMainFrameLoadFailed);
+  aemView.webContents.on('did-navigate', onMainFrameCommitted);
 
   /** A chrome history command that also re-derives the active server on success. */
   async function settleHistoryCommand(
@@ -810,6 +866,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     detachNavigationEpoch();
     detachNavigationLog();
     detachProxyReconciliation();
+    if (!aemView.webContents.isDestroyed()) {
+      aemView.webContents.off('did-start-navigation', onMainFrameNavigationStart);
+      aemView.webContents.off('did-fail-load', onMainFrameLoadFailed);
+      aemView.webContents.off('did-navigate', onMainFrameCommitted);
+    }
     aemView.destroy();
   }
 
