@@ -568,7 +568,7 @@ src/tools/<name>/
   one exception that adds DAM roots — content then DAM, collapsed — and only the
   two search composites use it, so a plain `aem_query` never traverses DAM by
   default.
-- `browser_navigate` opens a page in the browser pane. It takes a host **label**
+- `browser_navigate` opens a page in the browser pane. It also takes an optional `mode` (`view`/`edit`/`sites`/`assets`/`crxde`/`asset_details`/`properties`): with a mode `path` is a raw repository path and the application builds the URL (`shapeModeBrowserPath`; consoles carry no `.html`); without one a verbatim path is completed only by `completeBrowserPath` (extensionless `/content` page gets `.html`). Also a `place` (standard AEM places, application-owned paths), the `admin` mode alias, a repository-root check on modes, and a tolerant `host` (label, origin, host:port). Billet rows: URL / Mode / Place / Result. It takes a host **label**
   (or none, for the pane's current host) and a **verbatim browser path**
   (`/content/site/page.html`, `/editor.html/content/site/page.html`, `/crx/de`);
   the application resolves the label to a configured host and builds the URL from

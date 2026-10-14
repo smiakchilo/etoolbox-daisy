@@ -163,7 +163,7 @@ export function deriveCurrentPageContext(
 export function renderCurrentPageContextForModel(context: CurrentPageContext): string {
   const lines = [
     'Current AEM page (supplied by the application from the browser pane, not typed by the user):',
-    `Host: ${context.origin}`,
+    `Host origin: ${context.origin} (an origin, not a host label - labels come from environment_facts)`,
     `URL: ${context.url}`,
     `Content roots: ${context.contentRoots.join(', ')}`,
     `Component roots: ${context.componentRoots.join(', ')}`,

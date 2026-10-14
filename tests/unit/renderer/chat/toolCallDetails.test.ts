@@ -144,7 +144,7 @@ describe('describeToolCall - environment_facts', () => {
 });
 
 describe('describeToolCall - browser_navigate', () => {
-  it('summarises the host and path, and reads the outcome from the result', () => {
+  it('summarises the host and path, and reads the full URL and outcome from the result', () => {
     const details = describeToolCall(
       'browser_navigate',
       { host: 'HPE DEV', path: '/content/wknd.html' },
@@ -160,24 +160,55 @@ describe('describeToolCall - browser_navigate', () => {
 
     expect(details.summary).toBe('Open HPE DEV: /content/wknd.html');
     expect(details.parameters).toEqual([
-      { label: 'Host', value: 'HPE DEV' },
-      { label: 'Origin', value: 'https://author.example' },
-      { label: 'Path', value: '/content/wknd.html' },
+      { label: 'URL', value: 'https://author.example/content/wknd.html' },
       { label: 'Result', value: 'Opened' },
     ]);
   });
 
-  it('reads the host from the arguments while the call is pending', () => {
+  it('shows the mode from the arguments and the URL the application built', () => {
+    const details = describeToolCall(
+      'browser_navigate',
+      { host: 'HPE DEV', path: '/content/hpe/languages/jp-apj/home', mode: 'sites' },
+      {
+        operation: 'browser_navigate',
+        hostLabel: 'HPE DEV',
+        origin: 'https://author.example',
+        path: '/sites.html/content/hpe/languages/jp-apj/home',
+        url: 'https://author.example/sites.html/content/hpe/languages/jp-apj/home',
+        switched: false,
+        mode: 'sites',
+      },
+    );
+
+    expect(details.summary).toBe('Open HPE DEV: /content/hpe/languages/jp-apj/home');
+    expect(details.parameters).toEqual([
+      {
+        label: 'URL',
+        value: 'https://author.example/sites.html/content/hpe/languages/jp-apj/home',
+      },
+      { label: 'Mode', value: 'Sites console' },
+      { label: 'Result', value: 'Opened' },
+    ]);
+  });
+
+  it('names a standard place in the summary and a Place row', () => {
+    const details = describeToolCall('browser_navigate', {
+      host: 'HPE DEV',
+      place: 'package_manager',
+    });
+
+    expect(details.summary).toBe('Open HPE DEV: Package Manager');
+    expect(details.parameters).toEqual([{ label: 'Place', value: 'Package Manager' }]);
+  });
+
+  it('shows only the mode while the call is pending', () => {
     const details = describeToolCall('browser_navigate', {
       host: 'HPE DEV',
       path: '/crx/de',
     });
 
     expect(details.summary).toBe('Open HPE DEV: /crx/de');
-    expect(details.parameters).toEqual([
-      { label: 'Host', value: 'HPE DEV' },
-      { label: 'Path', value: '/crx/de' },
-    ]);
+    expect(details.parameters).toEqual([]);
   });
 });
 

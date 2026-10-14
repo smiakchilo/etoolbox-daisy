@@ -1,4 +1,4 @@
-import { parseNavigationTarget } from '../../../shared';
+import { encodeAemPathname, normalizePathDashes, parseNavigationTarget } from '../../../shared';
 
 /**
  * Turns the links an assistant message contains into the target the AEM pane
@@ -216,35 +216,9 @@ function withoutHtmlExtension(pathname: string): string {
   return pathname.replace(TRAILING_HTML_EXTENSION, '');
 }
 
-/**
- * Percent-encodes a JCR path for use in a URL, segment by segment.
- *
- * JCR names routinely carry characters that are not URL-safe in a path - most
- * visibly the `:` of `jcr:content`, but also spaces, `[`/`]`, unicode, ... -
- * so every segment is `encodeURIComponent`-ed. The path is decoded once first
- * because it may already be percent-encoded (an absolute link's pathname
- * arrives that way from `new URL`), and encoding it again would double-escape
- * it; this mirrors `buildResourceUrl`'s "decode once, re-encode per segment"
- * rule.
- *
- * Every pane URL - the content-view URLs (page, editor, asset preview,
- * `assetdetails`) and the **CRX** action's `#fragment` alike - is built from
- * this. CRXDE Lite resolves the fragment by decoding it back to a JCR path, so
- * a raw `:` there makes the tree view fail to select the node (reported
- * 2026-10-11); `jcr:content` must reach CRX as `jcr%3Acontent`.
- */
-function encodeAemPathname(pathname: string): string {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(pathname);
-  } catch {
-    decoded = pathname;
-  }
-  return normalizePathDashes(decoded)
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-}
+// `encodeAemPathname` (percent-encoding a JCR path segment by segment) moved to
+// the shared navigation core: `browser_navigate`'s display modes build their pane
+// URLs from the same encoder, so one interpretation lives in one place.
 
 /**
  * Classifies one AEM-native path and builds its open target plus actions. The
@@ -446,27 +420,13 @@ export interface AemLinkifyResult {
   readonly state: AemLinkifyState;
 }
 
-/**
- * Hyphen characters that look like an ASCII `-` but are not one. A model
- * writing prose routinely emits a non-breaking hyphen (U+2011) inside what it
- * means as a path - `templates/custom‑skeleton` - while the AEM repository
- * stores the plain ASCII `-`. Two things follow: the path matcher must treat
- * these as segment characters (otherwise the match stops dead at `custom`, the
- * bug this fixes), and the URL builder must fold them back to `-` so the link
- * targets the node that actually exists.
- *
- * En dash / em dash (U+2013/U+2014) are deliberately excluded: in prose they
- * separate clauses, and admitting one would pull the following words into the
- * path. The accepted set is the hyphen family - U+2010 HYPHEN, U+2011
- * NON-BREAKING HYPHEN, U+2012 FIGURE DASH, U+FE63 SMALL HYPHEN-MINUS, U+FF0D
- * FULLWIDTH HYPHEN-MINUS.
- */
-const PATH_DASH_PATTERN = /[\u2010-\u2012\uFE63\uFF0D]/g;
-
-/** Folds every {@link PATH_DASH_PATTERN} character to ASCII `-`. */
-function normalizePathDashes(value: string): string {
-  return value.replace(PATH_DASH_PATTERN, '-');
-}
+// The hyphen-lookalike family (U+2010-U+2012, U+FE63, U+FF0D) and the folding
+// to ASCII `-` live in the shared navigation core (`normalizePathDashes`); the
+// same variants are written inline in `AEM_PATH_PATTERN`'s character class below
+// so the path *matcher* treats them as segment characters (otherwise the match
+// stops dead at `custom`, the bug the folding fixed). En dash / em dash are
+// deliberately excluded: in prose they separate clauses, and admitting one
+// would pull the following words into the path.
 
 /**
  * Matches the linkable tokens the linkifier recognises inside text. The leading
@@ -474,9 +434,6 @@ function normalizePathDashes(value: string): string {
  * starts the node, but `(/content/x)` and `see /content/x` do not lose their
  * space or bracket) is re-emitted as text. The path character class deliberately
  * omits `()`, `,`, `;`, so a parenthesised or comma-terminated path does not
- * swallow its own punctuation; it includes the dash variants in
- * {@link PATH_DASH_PATTERN} so `custom‑skeleton` (U+2011) is one segment.
- *
  * The three alternatives are the three kinds of link the linkifier produces:
  *
  *  - an absolute `http(s)` **URL** - a configured host opens in the pane, any

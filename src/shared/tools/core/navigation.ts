@@ -103,6 +103,57 @@ function hasUnsafeCharacters(value: string): boolean {
   return false;
 }
 
+/**
+ * Hyphen characters that look like an ASCII `-` but are not one. A model
+ * writing prose routinely emits a non-breaking hyphen (U+2011) inside what it
+ * means as a path - `templates/custom‑skeleton` - while the AEM repository
+ * stores the plain ASCII `-`. The URL builder must fold them back to `-` so a
+ * built URL targets the node that actually exists.
+ *
+ * En dash / em dash (U+2013/U+2014) are deliberately excluded: in prose they
+ * separate clauses, and admitting one would pull the following words into the
+ * path. The accepted set is the hyphen family - U+2010 HYPHEN, U+2011
+ * NON-BREAKING HYPHEN, U+2012 FIGURE DASH, U+FE63 SMALL HYPHEN-MINUS, U+FF0D
+ * FULLWIDTH HYPHEN-MINUS.
+ */
+const PATH_DASH_PATTERN = /[\u2010-\u2012\uFE63\uFF0D]/g;
+
+/** Folds every {@link PATH_DASH_PATTERN} character to ASCII `-`. */
+export function normalizePathDashes(value: string): string {
+  return value.replace(PATH_DASH_PATTERN, '-');
+}
+
+/**
+ * Percent-encodes a JCR path for use in a URL, segment by segment.
+ *
+ * JCR names routinely carry characters that are not URL-safe in a path - most
+ * visibly the `:` of `jcr:content`, but also spaces, `[`/`]`, unicode, ... - so
+ * every segment is `encodeURIComponent`-ed. The path is decoded once first
+ * because it may already be percent-encoded (an absolute link's pathname
+ * arrives that way from `new URL`), and encoding it again would double-escape
+ * it; this mirrors `buildResourceUrl`'s "decode once, re-encode per segment"
+ * rule.
+ *
+ * Shared by the renderer's linkifier and the `browser_navigate` tool's display
+ * modes, so every pane URL - a content view, an editor or console prefix, and
+ * the **CRX** fragment alike - is built from one encoder. CRXDE Lite resolves
+ * the fragment by decoding it back to a JCR path, so a raw `:` there makes the
+ * tree view fail to select the node (reported 2026-10-11); `jcr:content` must
+ * reach CRX as `jcr%3Acontent`.
+ */
+export function encodeAemPathname(pathname: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    decoded = pathname;
+  }
+  return normalizePathDashes(decoded)
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
 export type BuildNavigationUrlError = 'invalid_origin' | 'path_not_preserved';
 
 /**

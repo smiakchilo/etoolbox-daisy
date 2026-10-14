@@ -157,7 +157,7 @@ test.describe('navigate: the browser_navigate and environment_facts billets', ()
     server.close();
   });
 
-  test('renders the browser_navigate billet with its host, path and outcome', async () => {
+  test('renders the browser_navigate billet with its URL and outcome', async () => {
     await scriptTurn(app, {
       steps: [
         {
@@ -198,13 +198,70 @@ test.describe('navigate: the browser_navigate and environment_facts billets', ()
       'Open HPE DEV: /content/wknd.html',
     );
 
-    // Expanded: the deliberate label/value rows.
+    // Expanded: the deliberate label/value rows - the full URL (which replaced
+    // the earlier host/origin/path rows) and the outcome.
     await billet.locator('.chat-tool-call__toggle').click();
     const params = billet.locator('.chat-tool-call__params');
-    await expect(params).toContainText('Host');
-    await expect(params).toContainText('HPE DEV');
-    await expect(params).toContainText('Path');
-    await expect(params).toContainText('/content/wknd.html');
+    await expect(params).toContainText('URL');
+    await expect(params).toContainText(`${server.origin}/content/wknd.html`);
+    await expect(params).toContainText('Result');
+    await expect(params).toContainText('Opened');
+  });
+
+  test('renders the browser_navigate billet with its mode and the application-built URL', async () => {
+    await scriptTurn(app, {
+      steps: [
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'browser_navigate',
+            arguments: {
+              host: 'HPE DEV',
+              path: '/content/hpe/languages/jp-apj/home',
+              mode: 'sites',
+            },
+            decision: {
+              kind: 'approved',
+              outcome: {
+                ok: true,
+                data: {
+                  ok: true,
+                  operation: 'browser_navigate',
+                  requestId: 'r3',
+                  hostLabel: 'HPE DEV',
+                  origin: server.origin,
+                  path: '/sites.html/content/hpe/languages/jp-apj/home',
+                  url: `${server.origin}/sites.html/content/hpe/languages/jp-apj/home`,
+                  switched: false,
+                  mode: 'sites',
+                  textResultForLlm: 'opened',
+                  resultType: 'success',
+                } as never,
+              },
+            },
+          },
+        },
+      ],
+    });
+    await sendViaComposer(shell, 'open qa-space-ai in HPE DEV in sites console');
+    await flushFake(app);
+
+    const billet = shell.locator('.chat-tool-call').last();
+    await expect(billet.locator('.chat-tool-call__header')).toContainText('browser_navigate', {
+      timeout: 30_000,
+    });
+    await expect(billet.locator('.chat-tool-call__summary')).toHaveText(
+      'Open HPE DEV: /content/hpe/languages/jp-apj/home',
+    );
+
+    await billet.locator('.chat-tool-call__toggle').click();
+    const params = billet.locator('.chat-tool-call__params');
+    await expect(params).toContainText('URL');
+    await expect(params).toContainText(
+      `${server.origin}/sites.html/content/hpe/languages/jp-apj/home`,
+    );
+    await expect(params).toContainText('Mode');
+    await expect(params).toContainText('Sites console');
     await expect(params).toContainText('Result');
     await expect(params).toContainText('Opened');
   });

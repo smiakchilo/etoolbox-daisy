@@ -129,7 +129,7 @@ describe('createCurrentPageContext', () => {
       () => undefined,
     );
     const context = provider();
-    expect(context).toContain('Host: https://author.example');
+    expect(context).toContain('Host origin: https://author.example');
     expect(context).toContain('Content path: /content/wknd/us/en');
     expect(context).toContain('Content roots: /content');
     expect(context).toContain('Component roots: /apps');

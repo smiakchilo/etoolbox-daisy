@@ -124,7 +124,7 @@ describe('renderCurrentPageContextForModel', () => {
       contentRoots: ['/content'],
       componentRoots: ['/apps'],
     });
-    expect(rendered).toContain(`Host: ${AUTHOR}`);
+    expect(rendered).toContain(`Host origin: ${AUTHOR}`);
     expect(rendered).toContain('Content path: /content/wknd/us/en');
     expect(rendered).toContain('Content roots: /content');
     expect(rendered).toContain('Component roots: /apps');
@@ -139,7 +139,7 @@ describe('renderCurrentPageContextForModel', () => {
       contentRoots: ['/content/a', '/content/b'],
       componentRoots: ['/apps'],
     });
-    expect(rendered).toContain(`Host: ${AUTHOR}`);
+    expect(rendered).toContain(`Host origin: ${AUTHOR}`);
     expect(rendered).not.toContain('Content path:');
     expect(rendered).toContain('No content path is available');
     expect(rendered).toContain('Content roots: /content/a, /content/b');
