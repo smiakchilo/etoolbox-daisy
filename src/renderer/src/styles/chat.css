@@ -96,7 +96,6 @@
 .chat-agent-summary:hover,
 .chat-agent-summary:focus-visible {
   color: var(--spectrum-accent-background-color-default, #0265dc);
-  text-decoration: underline;
 }
 
 /* The chat-log reveal icon: pushed to the right, muted like the summary text,

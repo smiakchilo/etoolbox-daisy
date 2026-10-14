@@ -24,6 +24,7 @@ const HOSTS: readonly ConfiguredHostInfo[] = [
     origin: 'https://author.example',
     contentRoots: ['/content/a', '/content/b'],
     componentRoots: ['/apps/a'],
+    damRoots: ['/content/dam/a'],
     contentPriorityPaths: ['/content/a/blueprint'],
   },
   {
@@ -32,6 +33,7 @@ const HOSTS: readonly ConfiguredHostInfo[] = [
     origin: 'https://stage.example',
     contentRoots: ['/content'],
     componentRoots: ['/apps'],
+    damRoots: ['/content/dam'],
     contentPriorityPaths: [],
   },
 ];
@@ -117,6 +119,7 @@ describe('createEnvironmentFactsExecutor', () => {
           origin: 'https://author.example',
           contentRoots: ['/content/a', '/content/b'],
           componentRoots: ['/apps/a'],
+          damRoots: ['/content/dam/a'],
           contentPriorityPaths: [],
         }),
       }),
@@ -152,6 +155,7 @@ describe('environment_facts transcript composition', () => {
         origin: 'https://author.example',
         contentRoots: ['/content/a', '/content/b'],
         componentRoots: ['/apps/a'],
+        damRoots: ['/content/dam/a'],
         current: true,
       },
       {
@@ -159,6 +163,7 @@ describe('environment_facts transcript composition', () => {
         origin: 'https://stage.example',
         contentRoots: ['/content'],
         componentRoots: ['/apps'],
+        damRoots: ['/content/dam'],
         current: false,
       },
     ],
@@ -174,6 +179,7 @@ describe('environment_facts transcript composition', () => {
       { label: 'Current host', value: 'https://author.example' },
       { label: 'Content roots', value: '/content/a, /content/b' },
       { label: 'Component roots', value: '/apps/a' },
+      { label: 'DAM roots', value: '/content/dam/a' },
       {
         label: 'Hosts',
         value: 'HPE DEV (current): https://author.example; Staging: https://stage.example',

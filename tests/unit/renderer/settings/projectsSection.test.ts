@@ -21,7 +21,12 @@ const reorderProjects = vi.fn();
 function snapshot(
   id: string,
   label: string,
-  roots: { contentRoots?: string; componentRoots?: string; contentPriorityPaths?: string } = {},
+  roots: {
+    contentRoots?: string;
+    componentRoots?: string;
+    contentPriorityPaths?: string;
+    damRoots?: string;
+  } = {},
 ): ProjectSnapshot {
   return projectSnapshotSchema.parse({ id: newProjectId(() => id), label, ...roots });
 }
@@ -43,7 +48,7 @@ function buildSection() {
 
 function field(
   root: ParentNode,
-  ariaLabel: 'Label' | 'Content roots' | 'Component roots' | 'Content priority paths',
+  ariaLabel: 'Label' | 'Content roots' | 'Component roots' | 'Content priority paths' | 'DAM roots',
 ) {
   return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
 }
@@ -119,13 +124,14 @@ afterEach(() => {
 });
 
 describe('createProjectsSection', () => {
-  it('renders one labelled item per project with its four field labels', () => {
+  it('renders one labelled item per project with its five field labels', () => {
     const section = buildSection();
     section.update([
       snapshot('a', 'HPE', {
         contentRoots: '/content/a',
         componentRoots: '/apps/a',
         contentPriorityPaths: '/content/a/blueprint',
+        damRoots: '/content/dam/a',
       }),
       snapshot('b', 'Acme'),
     ]);
@@ -135,7 +141,24 @@ describe('createProjectsSection', () => {
     expect(field(section.element, 'Content roots')?.value).toBe('/content/a');
     expect(field(section.element, 'Component roots')?.value).toBe('/apps/a');
     expect(field(section.element, 'Content priority paths')?.value).toBe('/content/a/blueprint');
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(8);
+    expect(field(section.element, 'DAM roots')?.value).toBe('/content/dam/a');
+    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(10);
+  });
+
+  it('orders the fields Component roots, Content roots, Content priority paths, DAM roots', () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'HPE')]);
+
+    const labels = [...section.element.querySelectorAll('sp-field-label')].map(
+      (label) => label.textContent,
+    );
+    expect(labels).toEqual([
+      'Label (required)',
+      'Component roots',
+      'Content roots',
+      'Content priority paths',
+      'DAM roots',
+    ]);
   });
 
   it('adds an empty draft only when "Add item" is clicked', () => {
@@ -237,6 +260,32 @@ describe('createProjectsSection', () => {
     });
 
     typeAndCommit(priority, '');
+    await settle();
+
+    expect(updateProject).toHaveBeenLastCalledWith({
+      projectId: newProjectId(() => 'a'),
+      label: 'HPE',
+      contentRoots: '/content/a',
+    });
+  });
+
+  it('saves a DAM-roots change via updateProject, and clears it when emptied', async () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'HPE', { contentRoots: '/content/a' })]);
+
+    const dam = field(section.element, 'DAM roots');
+    if (!dam) throw new Error('missing DAM roots field');
+    typeAndCommit(dam, '  /content/dam/a, /content/dam/b  ');
+    await settle();
+
+    expect(updateProject).toHaveBeenLastCalledWith({
+      projectId: newProjectId(() => 'a'),
+      label: 'HPE',
+      contentRoots: '/content/a',
+      damRoots: '/content/dam/a, /content/dam/b',
+    });
+
+    typeAndCommit(dam, '');
     await settle();
 
     expect(updateProject).toHaveBeenLastCalledWith({

@@ -231,6 +231,7 @@ test.describe('navigate: the browser_navigate and environment_facts billets', ()
                       origin: server.origin,
                       contentRoots: ['/content'],
                       componentRoots: ['/apps'],
+                      damRoots: ['/content/dam'],
                       current: true,
                     },
                   ],
@@ -255,5 +256,7 @@ test.describe('navigate: the browser_navigate and environment_facts billets', ()
     const params = billet.locator('.chat-tool-call__params');
     await expect(params).toContainText('HPE DEV');
     await expect(params).toContainText(server.origin);
+    await expect(params).toContainText('DAM roots');
+    await expect(params).toContainText('/content/dam');
   });
 });

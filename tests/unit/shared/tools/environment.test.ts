@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   COMPONENT_ROOT_DEFAULT,
   CONTENT_ROOT_DEFAULT,
+  DAM_ROOT_DEFAULT,
   effectiveRoots,
   parseRootText,
   parsePriorityPathText,
   planPrioritySegments,
   resolveEnvironmentRoots,
   resolveHostEnvironmentRoots,
+  resolveSearchRoots,
 } from '../../../../src/shared';
 
 describe('parsePriorityPathText', () => {
@@ -120,24 +122,52 @@ describe('effectiveRoots', () => {
 
 describe('resolveEnvironmentRoots', () => {
   it('defaults each family independently', () => {
-    expect(resolveEnvironmentRoots(undefined, undefined)).toEqual({
+    expect(resolveEnvironmentRoots({})).toEqual({
       contentRoots: [CONTENT_ROOT_DEFAULT],
       componentRoots: [COMPONENT_ROOT_DEFAULT],
+      damRoots: [DAM_ROOT_DEFAULT],
       contentPriorityPaths: [],
     });
-    expect(resolveEnvironmentRoots('/content/site', undefined)).toEqual({
+    expect(
+      resolveEnvironmentRoots({ contentRoots: '/content/site', damRoots: '/content/dam/site' }),
+    ).toEqual({
       contentRoots: ['/content/site'],
       componentRoots: [COMPONENT_ROOT_DEFAULT],
+      damRoots: ['/content/dam/site'],
       contentPriorityPaths: [],
     });
   });
 
   it('normalizes and collapses configured roots', () => {
-    expect(resolveEnvironmentRoots('/content/a; /content/a/b', '/apps/x, /apps/y')).toEqual({
+    expect(
+      resolveEnvironmentRoots({
+        contentRoots: '/content/a; /content/a/b',
+        componentRoots: '/apps/x, /apps/y',
+      }),
+    ).toEqual({
       contentRoots: ['/content/a'],
       componentRoots: ['/apps/x', '/apps/y'],
+      damRoots: [DAM_ROOT_DEFAULT],
       contentPriorityPaths: [],
     });
+  });
+});
+
+describe('resolveSearchRoots', () => {
+  it('reads content roots then DAM roots, collapsing a DAM root nested in a content root', () => {
+    expect(
+      resolveSearchRoots({ contentRoots: ['/content/site'], damRoots: ['/content/dam/site'] }),
+    ).toEqual(['/content/site', '/content/dam/site']);
+  });
+
+  it('collapses the overlapping defaults to just `/content`', () => {
+    expect(
+      resolveSearchRoots({ contentRoots: [CONTENT_ROOT_DEFAULT], damRoots: [DAM_ROOT_DEFAULT] }),
+    ).toEqual([CONTENT_ROOT_DEFAULT]);
+  });
+
+  it('falls back to `/content` when the host has no facts', () => {
+    expect(resolveSearchRoots(undefined)).toEqual([CONTENT_ROOT_DEFAULT]);
   });
 });
 
@@ -155,10 +185,18 @@ describe('resolveHostEnvironmentRoots', () => {
     ).toEqual(['/content/z', '/content/a']);
   });
 
+  it('resolves DAM roots through the selected project', () => {
+    const project = { id: 'project-dam', damRoots: '/content/dam/a; /content/dam/a/b' };
+    expect(resolveHostEnvironmentRoots({ projectId: 'project-dam' }, [project]).damRoots).toEqual([
+      '/content/dam/a',
+    ]);
+  });
+
   it('resolves a host’s roots through its selected project', () => {
     expect(resolveHostEnvironmentRoots({ projectId: 'project-hpe' }, [hpe])).toEqual({
       contentRoots: ['/content/a'],
       componentRoots: ['/apps/a'],
+      damRoots: [DAM_ROOT_DEFAULT],
       contentPriorityPaths: [],
     });
   });
@@ -167,6 +205,7 @@ describe('resolveHostEnvironmentRoots', () => {
     expect(resolveHostEnvironmentRoots({}, [hpe])).toEqual({
       contentRoots: [CONTENT_ROOT_DEFAULT],
       componentRoots: [COMPONENT_ROOT_DEFAULT],
+      damRoots: [DAM_ROOT_DEFAULT],
       contentPriorityPaths: [],
     });
   });
@@ -175,6 +214,7 @@ describe('resolveHostEnvironmentRoots', () => {
     expect(resolveHostEnvironmentRoots({ projectId: 'project-gone' }, [hpe])).toEqual({
       contentRoots: [CONTENT_ROOT_DEFAULT],
       componentRoots: [COMPONENT_ROOT_DEFAULT],
+      damRoots: [DAM_ROOT_DEFAULT],
       contentPriorityPaths: [],
     });
   });
@@ -185,6 +225,7 @@ describe('resolveHostEnvironmentRoots', () => {
     ).toEqual({
       contentRoots: [CONTENT_ROOT_DEFAULT],
       componentRoots: [COMPONENT_ROOT_DEFAULT],
+      damRoots: [DAM_ROOT_DEFAULT],
       contentPriorityPaths: [],
     });
   });

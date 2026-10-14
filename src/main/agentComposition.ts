@@ -135,6 +135,7 @@ export function createEnvironmentFacts(
       origin: target.origin,
       contentRoots: roots.contentRoots,
       componentRoots: roots.componentRoots,
+      damRoots: roots.damRoots,
       contentPriorityPaths: roots.contentPriorityPaths,
     };
   };
@@ -163,6 +164,7 @@ export function createConfiguredHosts(
         origin: host.origin,
         contentRoots: roots.contentRoots,
         componentRoots: roots.componentRoots,
+        damRoots: roots.damRoots,
         contentPriorityPaths: roots.contentPriorityPaths,
       };
     });

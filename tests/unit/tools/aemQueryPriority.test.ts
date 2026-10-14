@@ -167,6 +167,7 @@ describe('aem_query tool priority wiring', () => {
           origin: ORIGIN,
           contentRoots: ['/content/a'],
           componentRoots: ['/apps'],
+          damRoots: ['/content/dam'],
           contentPriorityPaths: PRIORITIES,
         }),
         fetch,

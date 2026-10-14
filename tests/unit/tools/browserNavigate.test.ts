@@ -23,6 +23,7 @@ const HPE_DEV: ConfiguredHostInfo = {
   origin: 'https://author.example',
   contentRoots: ['/content'],
   componentRoots: ['/apps'],
+  damRoots: ['/content/dam'],
   contentPriorityPaths: [],
 };
 const STAGING: ConfiguredHostInfo = {
@@ -31,6 +32,7 @@ const STAGING: ConfiguredHostInfo = {
   origin: 'https://stage.example',
   contentRoots: ['/content'],
   componentRoots: ['/apps'],
+  damRoots: ['/content/dam'],
   contentPriorityPaths: [],
 };
 const DUP: ConfiguredHostInfo = { ...STAGING, serverId: newServerId(ids), label: 'HPE DEV' };
@@ -53,6 +55,7 @@ function makeHost(options: {
             origin: options.currentOrigin,
             contentRoots: ['/content'],
             componentRoots: ['/apps'],
+            damRoots: ['/content/dam'],
             contentPriorityPaths: [],
           },
     configuredHosts: () => options.hosts ?? [HPE_DEV, STAGING],

@@ -1718,7 +1718,7 @@ describe('createBrowserToolbar forced home screen', () => {
 describe('createBrowserToolbar agent-pane toggle', () => {
   function toggleButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
     const button = toolbar.element.querySelector<HTMLElement>(
-      '[title="Close Agent"], [title="Open Agent"]',
+      '[title="Close chat"], [title="Open chat"]',
     );
     if (!button) throw new Error('agent-pane toggle button not found');
     return button;
@@ -1739,14 +1739,14 @@ describe('createBrowserToolbar agent-pane toggle', () => {
     };
   }
 
-  it('renders the toggle as the toolbar\'s right-most control, starting selected ("Close Agent")', () => {
+  it('renders the toggle as the toolbar\'s right-most control, starting selected ("Close chat")', () => {
     const { toolbar } = buildWithToggle();
     const button = toggleButton(toolbar);
 
     // Right-most: nothing else follows it in the toolbar.
     expect(toolbar.element.lastElementChild).toBe(button);
-    expect(button.getAttribute('title')).toBe('Close Agent');
-    expect(button.getAttribute('aria-label')).toBe('Close Agent');
+    expect(button.getAttribute('title')).toBe('Close chat');
+    expect(button.getAttribute('aria-label')).toBe('Close chat');
     expect(button.hasAttribute('selected')).toBe(true);
     expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
     // Icon-only: no text content of its own.
@@ -1759,20 +1759,20 @@ describe('createBrowserToolbar agent-pane toggle', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it('drops `selected` and renames to "Open Agent" when the pane is hidden, and back', () => {
+  it('drops `selected` and renames to "Open chat" when the pane is hidden, and back', () => {
     const { toolbar } = buildWithToggle();
     const button = toggleButton(toolbar);
 
     toolbar.setAgentPaneOpen(false);
-    expect(button.getAttribute('title')).toBe('Open Agent');
-    expect(button.getAttribute('aria-label')).toBe('Open Agent');
+    expect(button.getAttribute('title')).toBe('Open chat');
+    expect(button.getAttribute('aria-label')).toBe('Open chat');
     expect(button.hasAttribute('selected')).toBe(false);
     // One fixed glyph: the state is carried by `selected`, not an icon swap.
     expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
 
     toolbar.setAgentPaneOpen(true);
-    expect(button.getAttribute('title')).toBe('Close Agent');
-    expect(button.getAttribute('aria-label')).toBe('Close Agent');
+    expect(button.getAttribute('title')).toBe('Close chat');
+    expect(button.getAttribute('aria-label')).toBe('Close chat');
     expect(button.hasAttribute('selected')).toBe(true);
     expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
   });
@@ -1811,7 +1811,7 @@ describe('createBrowserToolbar open-in-external-browser button', () => {
 
     // Placed after the address group, before the last control (agent toggle).
     const last = toolbar.element.lastElementChild;
-    expect(last?.getAttribute('title')).toBe('Close Agent');
+    expect(last?.getAttribute('title')).toBe('Close chat');
     expect(button.nextElementSibling).toBe(last);
   });
 

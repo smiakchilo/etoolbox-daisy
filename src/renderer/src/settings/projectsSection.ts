@@ -71,6 +71,7 @@ function buildProjectItem(
   const contentRootsFieldId = `${fieldIdBase}-content-roots`;
   const componentRootsFieldId = `${fieldIdBase}-component-roots`;
   const priorityPathsFieldId = `${fieldIdBase}-priority-paths`;
+  const damRootsFieldId = `${fieldIdBase}-dam-roots`;
 
   const labelField = el('sp-textfield', {
     attrs: {
@@ -85,7 +86,7 @@ function buildProjectItem(
   labelField.append(labelHelp);
 
   // Free-text root lists. Presentation, not targeting: they describe the hosts'
-  // content/component layout for the agent and never bump a host revision.
+  // content/component/DAM layout for the agent and never bump a host revision.
   const contentRootsField = el('sp-textfield', {
     attrs: {
       id: contentRootsFieldId,
@@ -116,13 +117,26 @@ function buildProjectItem(
   }) as TextField;
   priorityPathsField.value = project?.contentPriorityPaths ?? '';
 
+  // Where DAM assets live. A search composite (`/search`, `/semantic-search`)
+  // also covers these roots, after the content roots.
+  const damRootsField = el('sp-textfield', {
+    attrs: {
+      id: damRootsFieldId,
+      class: 'host-field__input',
+      placeholder: 'E.g.: /content/dam/a, /content/dam/b',
+      'aria-label': 'DAM roots',
+    },
+  }) as TextField;
+  damRootsField.value = project?.damRoots ?? '';
+
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
       labelledField(labelFieldId, 'Label (required)', labelField),
       labelledField(componentRootsFieldId, 'Component roots', componentRootsField),
-      labelledField(priorityPathsFieldId, 'Content priority paths', priorityPathsField),
       labelledField(contentRootsFieldId, 'Content roots', contentRootsField),
+      labelledField(priorityPathsFieldId, 'Content priority paths', priorityPathsField),
+      labelledField(damRootsFieldId, 'DAM roots', damRootsField),
     ],
   });
 
@@ -133,6 +147,7 @@ function buildProjectItem(
   let savedContentRoots = project?.contentRoots ?? '';
   let savedComponentRoots = project?.componentRoots ?? '';
   let savedPriorityPaths = project?.contentPriorityPaths ?? '';
+  let savedDamRoots = project?.damRoots ?? '';
   /** Whether the remove warning is showing and the OK button is live. */
   let removeArmed = false;
   let busy = false;
@@ -169,6 +184,7 @@ function buildProjectItem(
     const contentRoots = contentRootsField.value.trim();
     const componentRoots = componentRootsField.value.trim();
     const contentPriorityPaths = priorityPathsField.value.trim();
+    const damRoots = damRootsField.value.trim();
 
     if (projectId === undefined) {
       return window.daisy.settings
@@ -177,6 +193,7 @@ function buildProjectItem(
           ...(contentRoots.length > 0 ? { contentRoots } : {}),
           ...(componentRoots.length > 0 ? { componentRoots } : {}),
           ...(contentPriorityPaths.length > 0 ? { contentPriorityPaths } : {}),
+          ...(damRoots.length > 0 ? { damRoots } : {}),
         })
         .then(
           (result) => {
@@ -186,6 +203,7 @@ function buildProjectItem(
             savedContentRoots = result.project.contentRoots ?? '';
             savedComponentRoots = result.project.componentRoots ?? '';
             savedPriorityPaths = result.project.contentPriorityPaths ?? '';
+            savedDamRoots = result.project.damRoots ?? '';
             return { ok: true };
           },
           (error: unknown) => ({
@@ -203,7 +221,8 @@ function buildProjectItem(
       label.label === savedLabel &&
       contentRoots === savedContentRoots &&
       componentRoots === savedComponentRoots &&
-      contentPriorityPaths === savedPriorityPaths
+      contentPriorityPaths === savedPriorityPaths &&
+      damRoots === savedDamRoots
     ) {
       return undefined;
     }
@@ -217,6 +236,7 @@ function buildProjectItem(
         ...(contentRoots.length > 0 ? { contentRoots } : {}),
         ...(componentRoots.length > 0 ? { componentRoots } : {}),
         ...(contentPriorityPaths.length > 0 ? { contentPriorityPaths } : {}),
+        ...(damRoots.length > 0 ? { damRoots } : {}),
       })
       .then(
         (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
@@ -231,6 +251,7 @@ function buildProjectItem(
         savedContentRoots = contentRoots;
         savedComponentRoots = componentRoots;
         savedPriorityPaths = contentPriorityPaths;
+        savedDamRoots = damRoots;
       }
     });
     return outcome;
@@ -275,7 +296,13 @@ function buildProjectItem(
     armCommit();
   }
 
-  for (const field of [labelField, contentRootsField, componentRootsField, priorityPathsField]) {
+  for (const field of [
+    labelField,
+    contentRootsField,
+    componentRootsField,
+    priorityPathsField,
+    damRootsField,
+  ]) {
     field.addEventListener('input', onFieldInput);
     field.addEventListener('change', onFieldCommit);
   }

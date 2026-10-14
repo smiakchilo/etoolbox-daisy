@@ -1,13 +1,13 @@
 /**
  * The "environment facts" of one AEM host: its origin plus the JCR roots the
- * application should scope content and component work to.
+ * application should scope content, component and DAM work to.
  *
- * These are per-host settings the user maintains in the Settings "Hosts"
- * section ("Content roots" / "Component roots"). They are free text - several
- * roots may be written on one line, separated by commas or semicolons -
- * so this module owns the one interpretation of that text every consumer
- * shares: the query tool's root fan-out, the model-facing current-page context
- * block, and the `environment_facts` tool.
+ * These are per-host settings the user maintains in the Settings "Projects"
+ * section ("Content roots" / "Component roots" / "DAM roots"). They are free
+ * text - several roots may be written on one line, separated by commas or
+ * semicolons - so this module owns the one interpretation of that text every
+ * consumer shares: the query tool's root fan-out, the model-facing current-page
+ * context block, and the `environment_facts` tool.
  *
  * Pure and dependency-free (no Electron, no Node built-ins, no browser
  * globals), so it runs unchanged in main, preload and renderer.
@@ -19,6 +19,9 @@ export const CONTENT_ROOT_DEFAULT = '/content';
 /** Where components live when a host configures no component roots. */
 export const COMPONENT_ROOT_DEFAULT = '/apps';
 
+/** Where DAM assets live when a host configures no DAM roots. */
+export const DAM_ROOT_DEFAULT = '/content/dam';
+
 export interface EnvironmentFacts {
   /** The canonical origin of the host that matched the live pane URL. */
   readonly origin: string;
@@ -26,6 +29,8 @@ export interface EnvironmentFacts {
   readonly contentRoots: readonly string[];
   /** Effective component roots, in written order, never empty (defaults to `/apps`). */
   readonly componentRoots: readonly string[];
+  /** Effective DAM roots, in written order, never empty (defaults to `/content/dam`). */
+  readonly damRoots: readonly string[];
   /** Content priority paths, in written order; empty when the project names none. */
   readonly contentPriorityPaths: readonly string[];
 }
@@ -147,26 +152,56 @@ export function planPrioritySegments(
 export interface ResolvedEnvironmentRoots {
   readonly contentRoots: readonly string[];
   readonly componentRoots: readonly string[];
+  readonly damRoots: readonly string[];
   readonly contentPriorityPaths: readonly string[];
 }
 
 /**
- * Applies the defaults: a host that writes no content roots is scoped to
- * `/content`, and one that writes no component roots to `/apps`. The result is
- * always non-empty, so a consumer never has to special-case "no roots".
+ * The free-text root families a project may write, as one bag. Named rather
+ * than positional because all four are optional strings: position alone would
+ * make them trivially interchangeable at a call site.
  */
-export function resolveEnvironmentRoots(
-  contentRootText: string | undefined,
-  componentRootText: string | undefined,
-  priorityPathText?: string,
-): ResolvedEnvironmentRoots {
-  const content = effectiveRoots(parseRootText(contentRootText));
-  const component = effectiveRoots(parseRootText(componentRootText));
+export interface EnvironmentRootTexts {
+  readonly contentRoots?: string | undefined;
+  readonly componentRoots?: string | undefined;
+  readonly damRoots?: string | undefined;
+  readonly contentPriorityPaths?: string | undefined;
+}
+
+/**
+ * Applies the defaults: a host that writes no content roots is scoped to
+ * `/content`, one that writes no component roots to `/apps`, and one that
+ * writes no DAM roots to `/content/dam`. The result is always non-empty, so a
+ * consumer never has to special-case "no roots". Priority paths have no
+ * default.
+ */
+export function resolveEnvironmentRoots(texts: EnvironmentRootTexts): ResolvedEnvironmentRoots {
+  const content = effectiveRoots(parseRootText(texts.contentRoots));
+  const component = effectiveRoots(parseRootText(texts.componentRoots));
+  const dam = effectiveRoots(parseRootText(texts.damRoots));
   return {
     contentRoots: content.length > 0 ? content : [CONTENT_ROOT_DEFAULT],
     componentRoots: component.length > 0 ? component : [COMPONENT_ROOT_DEFAULT],
-    contentPriorityPaths: parsePriorityPathText(priorityPathText),
+    damRoots: dam.length > 0 ? dam : [DAM_ROOT_DEFAULT],
+    contentPriorityPaths: parsePriorityPathText(texts.contentPriorityPaths),
   };
+}
+
+/**
+ * The roots a *search* composite (`aem_query_format_ask`,
+ * `aem_semantic_search`) defaults to: the host's content roots followed by its
+ * DAM roots, in written order, collapsed (a DAM root nested inside a content
+ * root adds nothing, so the `/content`/`/content/dam` defaults overlap to just
+ * `/content`). Only a search covers DAM this way; a plain `aem_query` keeps to
+ * the roots the model passes, so DAM is not traversed on every query. Falls
+ * back to the `/content` default when the host's facts are unavailable.
+ */
+export function resolveSearchRoots(
+  facts: Pick<EnvironmentFacts, 'contentRoots' | 'damRoots'> | undefined,
+): string[] {
+  if (facts === undefined) return [CONTENT_ROOT_DEFAULT];
+  const roots = effectiveRoots([...facts.contentRoots, ...facts.damRoots]);
+  return roots.length > 0 ? roots : [CONTENT_ROOT_DEFAULT];
 }
 
 /**
@@ -188,13 +223,15 @@ export interface ProjectRoots {
   readonly contentRoots?: string | undefined;
   readonly componentRoots?: string | undefined;
   readonly contentPriorityPaths?: string | undefined;
+  readonly damRoots?: string | undefined;
 }
 
 /**
- * Resolves a host's effective content/component roots from its selected
+ * Resolves a host's effective content/component/DAM roots from its selected
  * project. A host with no project - or one naming a project that no longer
- * exists - falls back to the `/content`/`/apps` defaults (the same as a project
- * that writes no roots), which is exactly what "(Default)" means in Settings.
+ * exists - falls back to the `/content`/`/apps`/`/content/dam` defaults (the
+ * same as a project that writes no roots), which is exactly what "(Default)"
+ * means in Settings.
  */
 export function resolveHostEnvironmentRoots(
   host: HostProjectRef,
@@ -204,9 +241,10 @@ export function resolveHostEnvironmentRoots(
     host.projectId === undefined
       ? undefined
       : projects.find((candidate) => candidate.id === host.projectId);
-  return resolveEnvironmentRoots(
-    project?.contentRoots,
-    project?.componentRoots,
-    project?.contentPriorityPaths,
-  );
+  return resolveEnvironmentRoots({
+    contentRoots: project?.contentRoots,
+    componentRoots: project?.componentRoots,
+    damRoots: project?.damRoots,
+    contentPriorityPaths: project?.contentPriorityPaths,
+  });
 }

@@ -121,7 +121,7 @@ export interface BrowserToolbar {
    * that leaves the veil.
    */
   setHomeShown(shown: boolean): void;
-  /** Swaps the agent-pane toggle's icon/title between "Close Agent" and "Open Agent". */
+  /** Swaps the agent-pane toggle's icon/title between "Close chat" and "Open chat". */
   setAgentPaneOpen(open: boolean): void;
   /**
    * Writes `url` into the address field and navigates to it, exactly like a
@@ -1164,7 +1164,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   agentToggleButton.addEventListener('click', () => callbacks.onToggleAgentPane?.());
 
   function renderAgentToggle(open: boolean): void {
-    const label = open ? 'Close Agent' : 'Open Agent';
+    const label = open ? 'Close chat' : 'Open chat';
     agentToggleButton.toggleAttribute('selected', open);
     agentToggleButton.setAttribute('title', label);
     agentToggleButton.setAttribute('aria-label', label);

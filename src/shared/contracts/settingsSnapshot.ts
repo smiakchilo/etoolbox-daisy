@@ -82,6 +82,7 @@ export const projectSnapshotSchema = z
     contentRoots: environmentRootTextSchema.optional(),
     componentRoots: environmentRootTextSchema.optional(),
     contentPriorityPaths: environmentRootTextSchema.optional(),
+    damRoots: environmentRootTextSchema.optional(),
   })
   .strict();
 
@@ -213,6 +214,7 @@ function toProjectSnapshot(project: ProjectConfig): ProjectSnapshot {
   if (project.contentPriorityPaths !== undefined) {
     snapshot.contentPriorityPaths = project.contentPriorityPaths;
   }
+  if (project.damRoots !== undefined) snapshot.damRoots = project.damRoots;
   return projectSnapshotSchema.parse(snapshot);
 }
 

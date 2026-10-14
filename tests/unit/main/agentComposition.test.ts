@@ -143,6 +143,7 @@ describe('createCurrentPageContext', () => {
         origin: 'https://author.example',
         contentRoots: ['/content/a', '/content/b'],
         componentRoots: ['/apps/a'],
+        damRoots: ['/content/dam'],
         contentPriorityPaths: [],
       }),
     );
@@ -180,6 +181,7 @@ describe('createEnvironmentFacts', () => {
     contentRoots: string,
     componentRoots: string,
     contentPriorityPaths?: string,
+    damRoots?: string,
   ): ProjectConfig {
     return projectConfigSchema.parse({
       id: newProjectId(counterIds('project')),
@@ -187,11 +189,17 @@ describe('createEnvironmentFacts', () => {
       contentRoots,
       componentRoots,
       ...(contentPriorityPaths !== undefined ? { contentPriorityPaths } : {}),
+      ...(damRoots !== undefined ? { damRoots } : {}),
     });
   }
 
   it('matches the live URL to a configured host and resolves its project roots', () => {
-    const hpe = project('/content/a; /content/b', '/apps/a, /apps/b', '/content/a/x, /content/b');
+    const hpe = project(
+      '/content/a; /content/b',
+      '/apps/a, /apps/b',
+      '/content/a/x, /content/b',
+      '/content/dam/a; /content/dam/b',
+    );
     const facts = createEnvironmentFacts(
       () => 'https://author.example/editor.html/content/wknd/us/en.html',
       () => [host('https://author.example', hpe.id)],
@@ -201,6 +209,7 @@ describe('createEnvironmentFacts', () => {
       origin: 'https://author.example',
       contentRoots: ['/content/a', '/content/b'],
       componentRoots: ['/apps/a', '/apps/b'],
+      damRoots: ['/content/dam/a', '/content/dam/b'],
       contentPriorityPaths: ['/content/a/x', '/content/b'],
     });
   });
@@ -213,6 +222,7 @@ describe('createEnvironmentFacts', () => {
     )();
     expect(facts?.contentRoots).toEqual(['/content']);
     expect(facts?.componentRoots).toEqual(['/apps']);
+    expect(facts?.damRoots).toEqual(['/content/dam']);
   });
 
   it('returns undefined for an unconfigured origin and when there is no document', () => {
@@ -234,12 +244,18 @@ describe('createEnvironmentFacts', () => {
 });
 
 describe('createConfiguredHosts', () => {
-  function project(id: string, contentRoots: string, componentRoots: string): ProjectConfig {
+  function project(
+    id: string,
+    contentRoots: string,
+    componentRoots: string,
+    damRoots?: string,
+  ): ProjectConfig {
     return projectConfigSchema.parse({
       id: newProjectId(() => id),
       label: `Project ${id}`,
       contentRoots,
       componentRoots,
+      ...(damRoots !== undefined ? { damRoots } : {}),
     });
   }
 
@@ -255,7 +271,7 @@ describe('createConfiguredHosts', () => {
   }
 
   it('resolves each host’s roots through its project, defaulting when it has none', () => {
-    const hpe = project('project-hpe', '/content/hpe', '/apps/hpe');
+    const hpe = project('project-hpe', '/content/hpe', '/apps/hpe', '/content/dam/hpe');
     const configured = createConfiguredHosts(
       () => [host('https://hpe.example', hpe.id), host('https://bare.example')],
       () => [hpe],
@@ -267,6 +283,7 @@ describe('createConfiguredHosts', () => {
         origin: entry.origin,
         contentRoots: entry.contentRoots,
         componentRoots: entry.componentRoots,
+        damRoots: entry.damRoots,
       })),
     ).toEqual([
       {
@@ -274,12 +291,14 @@ describe('createConfiguredHosts', () => {
         origin: 'https://hpe.example',
         contentRoots: ['/content/hpe'],
         componentRoots: ['/apps/hpe'],
+        damRoots: ['/content/dam/hpe'],
       },
       {
         label: 'Host',
         origin: 'https://bare.example',
         contentRoots: ['/content'],
         componentRoots: ['/apps'],
+        damRoots: ['/content/dam'],
       },
     ]);
   });

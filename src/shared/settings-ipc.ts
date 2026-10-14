@@ -352,6 +352,7 @@ export const addProjectRequestSchema = z
     contentRoots: environmentRootTextSchema.optional(),
     componentRoots: environmentRootTextSchema.optional(),
     contentPriorityPaths: environmentRootTextSchema.optional(),
+    damRoots: environmentRootTextSchema.optional(),
   })
   .strict();
 
@@ -382,6 +383,7 @@ export const updateProjectRequestSchema = z
     contentRoots: environmentRootTextSchema.optional(),
     componentRoots: environmentRootTextSchema.optional(),
     contentPriorityPaths: environmentRootTextSchema.optional(),
+    damRoots: environmentRootTextSchema.optional(),
   })
   .strict();
 

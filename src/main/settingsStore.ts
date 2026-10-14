@@ -220,6 +220,7 @@ const PROJECT_ENTRY_KEYS = [
   'contentRoots',
   'componentRoots',
   'contentPriorityPaths',
+  'damRoots',
 ] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
@@ -348,6 +349,8 @@ function normalizeProjectEntry(entry: unknown): Record<string, unknown> | undefi
   if (componentRoots !== undefined) next['componentRoots'] = componentRoots;
   const contentPriorityPaths = normalizeRootText(record['contentPriorityPaths']);
   if (contentPriorityPaths !== undefined) next['contentPriorityPaths'] = contentPriorityPaths;
+  const damRoots = normalizeRootText(record['damRoots']);
+  if (damRoots !== undefined) next['damRoots'] = damRoots;
   return next;
 }
 
@@ -1392,6 +1395,8 @@ export interface NewProjectInput {
   readonly componentRoots?: string;
   /** Optional free-text content priority paths. */
   readonly contentPriorityPaths?: string;
+  /** Optional free-text DAM roots (omitted/empty means "use the `/content/dam` default"). */
+  readonly damRoots?: string;
 }
 
 /**
@@ -1406,6 +1411,7 @@ function buildProject(
   const contentRoots = input.contentRoots?.trim();
   const componentRoots = input.componentRoots?.trim();
   const contentPriorityPaths = input.contentPriorityPaths?.trim();
+  const damRoots = input.damRoots?.trim();
   try {
     return ok(
       projectConfigSchema.parse({
@@ -1416,6 +1422,7 @@ function buildProject(
         ...(contentPriorityPaths !== undefined && contentPriorityPaths.length > 0
           ? { contentPriorityPaths }
           : {}),
+        ...(damRoots !== undefined && damRoots.length > 0 ? { damRoots } : {}),
       }),
     );
   } catch (error) {

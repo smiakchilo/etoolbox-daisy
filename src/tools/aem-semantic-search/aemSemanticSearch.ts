@@ -9,7 +9,6 @@ import {
   type ToolError,
   type ToolExecutionContext,
   type ToolHost,
-  CONTENT_ROOT_DEFAULT,
   SEARCH_PAGE_SIZE,
   classifyAemResponse,
   computeDeadline,
@@ -21,6 +20,7 @@ import {
   ok,
   parseJcrPath,
   parseOrigin,
+  resolveSearchRoots,
 } from '../../shared';
 
 /**
@@ -80,7 +80,7 @@ export const aemSemanticSearchArgsSchema = z
     terms: z.string().trim().min(1).optional(),
     /** Call A: what a result must be about to count as relevant. */
     context: z.string().trim().min(1).optional(),
-    /** Call A: where to search. Omitted means the current host's content roots. */
+    /** Call A: where to search. Omitted means the current host's content roots, then its DAM roots. */
     roots: z.array(z.string().min(1)).min(1).max(MAX_ROOTS).optional(),
     /** Call A: hits per page. */
     limit: z.number().int().min(1).max(MAX_SEMANTIC_PAGE_SIZE).optional(),
@@ -100,7 +100,8 @@ export const AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR: ToolDescriptor = {
     'page, with excerpts of its content). Judge EVERY candidate against the context, then call ' +
     'this tool again with `{ searchId, matches }` - the numbers of the matching candidates ' +
     '(`[]` if none), optionally `{ candidate, excerpt }` to choose the excerpt cited. The ' +
-    'application shows the table and the "Load more" button itself; when the user loads more you ' +
+    "application searches the current host's content roots followed by its DAM roots unless " +
+    '`roots` is given. The application shows the table and the "Load more" button itself; when the user loads more you ' +
     'receive the next candidates and judge again. Stop only when the result says the search is ' +
     'finished; never write the results yourself.',
   parameters: z.toJSONSchema(aemSemanticSearchArgsSchema, { io: 'input' }),
@@ -603,7 +604,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): AemToolExecutor
     const state: SearchState = {
       terms,
       context: semanticContext,
-      roots: [...(args.roots ?? host.environmentFacts()?.contentRoots ?? [CONTENT_ROOT_DEFAULT])],
+      roots: [...(args.roots ?? resolveSearchRoots(host.environmentFacts()).slice(0, MAX_ROOTS))],
       limit: args.limit ?? SEARCH_PAGE_SIZE,
       offset: 0,
       pages: 0,

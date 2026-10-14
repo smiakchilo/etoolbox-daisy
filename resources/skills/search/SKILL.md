@@ -39,7 +39,7 @@ turn, so any explanation you write is discarded.
 ```
 
 That one tool does the whole search: it runs `aem_query` (full text, the host's
-content roots, one page at a time), shows the page as the chat's table, and while
+content and DAM roots, one page at a time), shows the page as the chat's table, and while
 more results may exist offers the user a **Load more** button, loading and
 appending the next page on each click. When it returns, the table is on screen
 and the user is done. Do **not** call `aem_query` or `ask_user` yourself to show
@@ -62,7 +62,7 @@ one call with it as `predicates` instead of `terms`:
 ```
 
 `aem_query_format_ask` validates the map exactly as `aem_query` does, scopes it
-to the content roots (unless it has a `path` predicate), and runs the same table
+to the content and DAM roots (unless it has a `path` predicate), and runs the same table
 and **Load more** loop. Pass `properties` to choose the columns. Never pass both
 `terms` and `predicates`.
 
@@ -73,9 +73,11 @@ Start every query from a scope unless the user has explicitly asked for a
 repository-wide search.
 
 The current page context block names the host's **content roots** (default
-`/content`). `aem_query_format_ask` uses them as `roots` by default; pass `roots`
-only to search a different scope. The query runs once per root and the rows are
-merged, so a host with several content roots is covered in a single call:
+`/content`). By default `aem_query_format_ask` searches those roots **and the
+host's DAM roots** (default `/content/dam`), so assets are found alongside
+pages; pass `roots` only to search a different scope. The query runs once per
+root and the rows are merged, so a host with several roots is covered in a
+single call:
 
 ```json
 {

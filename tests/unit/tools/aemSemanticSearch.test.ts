@@ -68,6 +68,7 @@ function makeHost(
   responder: Responder,
   read: (url: string) => BrokerOutcome = contentFor,
   contentRoots: readonly string[] = ['/content/site'],
+  damRoots: readonly string[] = [],
 ) {
   const calls: Invocation[] = [];
   const reads: string[] = [];
@@ -90,6 +91,7 @@ function makeHost(
       origin: ORIGIN,
       contentRoots,
       componentRoots: ['/apps'],
+      damRoots,
       contentPriorityPaths: [],
     }),
     configuredHosts: () => [],
@@ -159,6 +161,22 @@ describe('aem_semantic_search executor', () => {
     }
     expect(text).toContain('(1) text: "Waldo at /content/site/p0"');
     expect(text).toContain('Judge EVERY candidate');
+  });
+
+  it('defaults to the content roots followed by the DAM roots', async () => {
+    const { host, calls } = makeHost(
+      () => ok(queryPage(paths(2), false)),
+      contentFor,
+      ['/content/site'],
+      ['/content/dam/site'],
+    );
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'Waldo', context: 'Waldo is good' },
+      callContext,
+    );
+
+    expect(calls[0]?.args['roots']).toEqual(['/content/site', '/content/dam/site']);
+    expect(payload(result)['roots']).toEqual(['/content/site', '/content/dam/site']);
   });
 
   it('shows the judged matches, offers Load more, and returns the next page to judge', async () => {

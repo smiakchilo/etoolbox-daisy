@@ -1319,12 +1319,14 @@ describe('project library ipc', () => {
     const result = await addProject(settingsDir, {
       label: 'HPE',
       contentRoots: '/content/a; /content/b',
+      damRoots: '/content/dam/a',
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected an ok result');
     expect(result.project.label).toBe('HPE');
     expect(result.project.contentRoots).toBe('/content/a; /content/b');
+    expect(result.project.damRoots).toBe('/content/dam/a');
 
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');

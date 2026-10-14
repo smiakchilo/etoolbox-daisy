@@ -480,6 +480,7 @@ describe('normalizeSettingsDocument', () => {
           contentRoots: '  /content/a; /content/b  ',
           componentRoots: '   ',
           contentPriorityPaths: '  /content/a/x  ',
+          damRoots: '  /content/dam/a  ',
         },
       ],
       proxies: [],
@@ -491,6 +492,7 @@ describe('normalizeSettingsDocument', () => {
     expect(project?.['label']).toBe('HPE');
     expect(project?.['contentRoots']).toBe('/content/a; /content/b');
     expect(project?.['contentPriorityPaths']).toBe('/content/a/x');
+    expect(project?.['damRoots']).toBe('/content/dam/a');
     expect(project).not.toHaveProperty('componentRoots');
   });
 
@@ -1283,6 +1285,22 @@ describe('project library mutations', () => {
     expect(cleared.ok).toBe(true);
     if (cleared.ok) {
       expect(cleared.value.settings.projects[0]).not.toHaveProperty('contentPriorityPaths');
+    }
+  });
+
+  it('addProject stores DAM roots, and updateProject clears them when omitted', () => {
+    const added = addProject(defaultAppSettings(), projectId, {
+      label: 'HPE',
+      damRoots: '  /content/dam/a, /content/dam/b  ',
+    });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.value.settings.projects[0]?.damRoots).toBe('/content/dam/a, /content/dam/b');
+
+    const cleared = updateProject(added.value.settings, projectId, { label: 'HPE' });
+    expect(cleared.ok).toBe(true);
+    if (cleared.ok) {
+      expect(cleared.value.settings.projects[0]).not.toHaveProperty('damRoots');
     }
   });
 

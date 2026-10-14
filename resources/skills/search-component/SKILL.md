@@ -177,9 +177,9 @@ Why it is shaped this way:
   is one row per component *placement*, so a page with several appears once per
   placement - its `Path` written only on the first of them and left blank below
   (still one numbered row each). This is automatic - there is no option to set.
-- **`roots`** default to the host's content roots when omitted; pass `roots` only
-  when the user named a different scope. Never combine `roots` with a `path`
-  predicate.
+- **`roots`** default to the host's content roots followed by its DAM roots when
+  omitted; pass `roots` only when the user named a different scope. Never combine
+  `roots` with a `path` predicate.
 
 A `property` predicate is served by an index or, failing that, by an Oak
 traversal; on a large instance that does not index `sling:resourceType` the

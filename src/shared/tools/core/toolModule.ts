@@ -59,7 +59,7 @@ export interface ToolHost {
   readonly currentContext: () => CurrentAemToolContext;
   /**
    * The facts of the host the browser pane is currently on - its origin and
-   * its effective content/component roots - or `undefined` when the live URL
+   * its effective content/component/DAM roots - or `undefined` when the live URL
    * does not match a configured host. Read fresh on every call; like
    * {@link currentContext}, the model can never influence it.
    */

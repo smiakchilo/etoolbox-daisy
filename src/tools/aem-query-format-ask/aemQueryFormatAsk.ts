@@ -21,6 +21,7 @@ import {
   newRequestId,
   ok,
   readCountTotal,
+  resolveSearchRoots,
 } from '../../shared';
 
 /**
@@ -91,8 +92,9 @@ export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
     "the chat's table, and, while more results may exist, offers the user a 'Load more' button " +
     'and loads the next page when it is clicked. Pass either `terms` (a plain full-text search ' +
     'string) or `predicates` (a hand-built QueryBuilder predicate map, exactly as for ' +
-    "aem_query) - never both. `roots` defaults to the current host's content roots (none when " +
-    '`predicates` has a `path`; never combine `roots` with a `path` predicate); `properties` ' +
+    "aem_query) - never both. `roots` defaults to the current host's content roots followed by " +
+    'its DAM roots (none when `predicates` has a `path`; never combine `roots` with a `path` ' +
+    'predicate); `properties` ' +
     `optionally selects the fields per hit; \`limit\` (rows per page) defaults to ${String(SEARCH_PAGE_SIZE)}. ` +
     'A search that matches a component by `sling:resourceType` shows each hit against its ' +
     'owning page, with the path within the page beside it. ' +
@@ -240,7 +242,7 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
       parsed.data.roots ??
       (scopedByPath
         ? undefined
-        : (host.environmentFacts()?.contentRoots ?? [CONTENT_ROOT_DEFAULT]));
+        : resolveSearchRoots(host.environmentFacts()).slice(0, MAX_SEARCH_ROOTS));
     const scope = roots === undefined ? predicates['path'] : roots.join(', ');
     const subject = terms === undefined ? describePredicates(predicates) : `"${terms}"`;
 

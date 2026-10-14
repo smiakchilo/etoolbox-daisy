@@ -618,7 +618,7 @@ describe('createBrowserPane home screen', () => {
 describe('createBrowserPane agent-pane toggle', () => {
   function toggleOf(pane: ReturnType<typeof createBrowserPane>): HTMLElement {
     const button = pane.element.querySelector<HTMLElement>(
-      '[title="Close Agent"], [title="Open Agent"]',
+      '[title="Close chat"], [title="Open chat"]',
     );
     if (!button) throw new Error('agent-pane toggle button not found');
     return button;
@@ -635,12 +635,12 @@ describe('createBrowserPane agent-pane toggle', () => {
 
   it('reflects the pane state onto the toolbar button', () => {
     const pane = createBrowserPane();
-    expect(toggleOf(pane).getAttribute('title')).toBe('Close Agent');
+    expect(toggleOf(pane).getAttribute('title')).toBe('Close chat');
 
     pane.setAgentPaneOpen(false);
-    expect(toggleOf(pane).getAttribute('title')).toBe('Open Agent');
+    expect(toggleOf(pane).getAttribute('title')).toBe('Open chat');
 
     pane.setAgentPaneOpen(true);
-    expect(toggleOf(pane).getAttribute('title')).toBe('Close Agent');
+    expect(toggleOf(pane).getAttribute('title')).toBe('Close chat');
   });
 });

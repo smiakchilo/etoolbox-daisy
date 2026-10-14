@@ -56,6 +56,13 @@ export const projectConfigSchema = z
      * optional, with no default: absent means "no priority".
      */
     contentPriorityPaths: environmentRootTextSchema.optional(),
+    /**
+     * Where DAM assets live on the hosts of this project, in the same
+     * free-text form. Optional: absent means "use the `/content/dam` default".
+     * A search composite (`/search`, `/semantic-search`) also covers these
+     * roots, after the content roots; a plain `aem_query` does not.
+     */
+    damRoots: environmentRootTextSchema.optional(),
   })
   .strict();
 

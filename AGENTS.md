@@ -132,7 +132,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/errors.ts` | The error taxonomy and `requiredAction` values |
 | `contracts/origin.ts` | Origin normalization and comparison |
 | `contracts/serverConfig.ts` | An AEM server entry (id, label, colour, address, optional `projectId`, revision) |
-| `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component roots, content priority paths) shared by several hosts, referenced by a host's optional `projectId` |
+| `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component/DAM roots, content priority paths) shared by several hosts, referenced by a host's optional `projectId` |
 | `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
 | `contracts/chatMetadata.ts` | Chat list entries (title, date, server, selection) |
@@ -156,7 +156,12 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `projectConfig.ts` library plus a host's optional `projectId`), which
 > `appSettings.ts`/`settingsSnapshot.ts`/`settings-ipc.ts` all follow — the
 > Settings "Projects" tab, see `docs/verification.md` "Settings \"Projects\": host
-> structure facts move off the host, and a host picks one (2026-10-13)".
+> structure facts move off the host, and a host picks one (2026-10-13)". That
+> tab then gained a fourth field, `projectConfig.ts`'s `damRoots` (DAM roots for
+> `/search` and `/semantic-search`, default `/content/dam`), with
+> `settingsSnapshot.ts`/`settings-ipc.ts`/`settingsStore.ts` following — see
+> `docs/verification.md` "DAM roots: a project field, environment facts, and a
+> search-only root fan-out (2026-10-14)".
 > `userInput.ts` gained an optional
 > `actions` list (1–4 one-click labels) and made `question` optional — the
 > `ask_user` actions mode (see §5 tools). Most recently `contracts/agentEvents.ts`
@@ -542,7 +547,7 @@ src/tools/<name>/
   popover is **right-aligned to the table**, not centred on it (a link's stays
   centred).
 - `environment_facts` reports **every configured host** as a label, an origin and
-  its effective content/component roots, flagging the one the browser pane is
+  its effective content/component/DAM roots, flagging the one the browser pane is
   currently on. It takes no arguments: the application resolves the facts from
   the settings document and the live pane URL, through
   `ToolHost.configuredHosts` / `ToolHost.environmentFacts` — never from model
@@ -553,13 +558,16 @@ src/tools/<name>/
   facts" is a question any environment could answer (see the naming rule below). A
   host's roots now live on the **project** it selects: `ServerConfig` carries only
   an optional `projectId`, and a project (`projectConfig.ts`) holds the free text
-  (`contentRoots`/`componentRoots`); `src/shared/tools/core/environment.ts` owns the
+  (`contentRoots`/`componentRoots`/`damRoots`); `src/shared/tools/core/environment.ts` owns the
   one interpretation of that text (comma-or-semicolon split, comma wins, trimming,
-  the `/content`/`/apps` defaults), the nesting-aware `effectiveRoots`, and
+  the `/content`/`/apps`/`/content/dam` defaults), the nesting-aware `effectiveRoots`, and
   `resolveHostEnvironmentRoots(host, projects)` — the one place a host is resolved
   to its roots (defaulting when it selects no project). Shared by the tool, the
   per-turn context block and `aem_query`'s `roots` fan-out. The model never sees
-  the project: only the resolved roots, as before.
+  the project: only the resolved roots, as before. `resolveSearchRoots` is the
+  one exception that adds DAM roots — content then DAM, collapsed — and only the
+  two search composites use it, so a plain `aem_query` never traverses DAM by
+  default.
 - `browser_navigate` opens a page in the browser pane. It takes a host **label**
   (or none, for the pane's current host) and a **verbatim browser path**
   (`/content/site/page.html`, `/editor.html/content/site/page.html`, `/crx/de`);
@@ -607,7 +615,8 @@ src/tools/<name>/
   folder is the kebab-case of the same name.
 - `aem_query_format_ask` is the first composite: given `terms` **or** hand-built
   QueryBuilder `predicates` (exactly one; plus optional `roots` — default the
-  host content roots, skipped when the predicates carry their own `path` —
+  host's content roots followed by its DAM roots (`resolveSearchRoots`), skipped
+  when the predicates carry their own `path` —
   `properties`, and `limit`, default `SEARCH_PAGE_SIZE`) it runs `aem_query`, shows the page with `format_table` (`new`, then
   `append`), and while `hasMore` is not `false` offers `ask_user`
   `{ actions: ["Load more"] }`, looping on each click. The model gets only a
@@ -633,7 +642,8 @@ src/tools/<name>/
   one: the model must judge, so the tool runs in two kinds of call keyed by a
   `searchId` (state held in the executor's closure, at most 8 searches).
   Call A `{ terms, context, roots?, limit? }` runs `aem_query` (via `invokeTool`)
-  for one page (default `SEARCH_PAGE_SIZE`), reads **every** hit in code (QueryBuilder
+  for one page (default `SEARCH_PAGE_SIZE`; `roots` defaults to the host's
+  content roots then its DAM roots, `resolveSearchRoots`), reads **every** hit in code (QueryBuilder
   `path.self` + `fulltext` + `p.hits=full` through `host.bridge`, a pool of 4,
   falling back to the hit itself), and returns a numbered candidate list in
   `textResultForLlm`. Reading every hit is the slow part and has no transcript
@@ -854,7 +864,20 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3080 passed / 14 skipped** (+25 against the
+Current baseline: **`npm run test` → 3091 passed / 14 skipped** (+11 against the
+3080 of the previous entry - **DAM roots**: a `damRoots` free-text field joined
+the project group (Settings "Projects" tab, placed last, and the tab's "Content
+priority paths" and "Content roots" swapped), `environment_facts` reports it
+(default `/content/dam`), and the two search composites default their roots to
+content-then-DAM through a new `resolveSearchRoots` while a plain `aem_query`
+stays content-only. `resolveEnvironmentRoots` now takes a named
+`EnvironmentRootTexts` bag, `EnvironmentFacts`/`ConfiguredHostInfo` gain
+`damRoots`, and the settings snapshot/IPC/store all carry it; 11 net new cases
+across environment, environmentFacts, the two composites, agentComposition,
+projectsSection, settingsStore and the settings projections; 2 mutations caught -
+see `docs/verification.md`
+"DAM roots: a project field, environment facts, and a search-only root fan-out
+(2026-10-14)"). Before that it was 3080 (+25 against the
 3055 of the previous entry - **Copy/Export from a `format_table` message's
 gutter**: the column-header row and the total line - never an ordinary data row -
 offer **Copy** and **Export** in the same travelling hover popover the Edit/CRX

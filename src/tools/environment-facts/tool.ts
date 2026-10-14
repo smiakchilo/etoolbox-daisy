@@ -19,8 +19,8 @@ export const tool: ModelToolModule = {
   allowlistEntry: ENVIRONMENT_FACTS_ALLOWLIST_ENTRY,
   instructions:
     "The 'environment_facts' tool reports every AEM host the application knows about - each " +
-    "host's label, origin and content/component roots - and marks the one the browser pane is " +
-    'currently on. Use it to turn an environment a user names (for example "HPE DEV", or the ' +
+    "host's label, origin and content/component/DAM roots - and marks the one the browser pane " +
+    'is currently on. Use it to turn an environment a user names (for example "HPE DEV", or the ' +
     'staging instance) into the host to act on, and to learn where content lives on that host.',
   createExecutor: (host) => createEnvironmentFactsExecutor(host),
 };

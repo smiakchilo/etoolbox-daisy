@@ -145,7 +145,7 @@ test('the agent pane collapses to give the page the full width, and restores its
     expect(beforeWidth).toBeLessThan(windowWidth - 50);
 
     // ── Collapse ────────────────────────────────────────────────────────────
-    const closeToggle = page.locator('[title="Close Agent"]');
+    const closeToggle = page.locator('[title="Close chat"]');
     // Open pane = toggle selected, tinted light gray (Spectrum's default
     // selected fill is dark gray with white content; this app re-tints it).
     await expect(closeToggle).toHaveAttribute('selected', '');
@@ -158,7 +158,7 @@ test('the agent pane collapses to give the page the full width, and restores its
     await closeToggle.click();
 
     await expect(chatPane).toBeHidden();
-    const openToggle = page.locator('[title="Open Agent"]');
+    const openToggle = page.locator('[title="Open chat"]');
     await expect(openToggle).toBeVisible();
     await expect(openToggle).not.toHaveAttribute('selected', '');
 
@@ -181,10 +181,10 @@ test('the agent pane collapses to give the page the full width, and restores its
       .toBe(true);
 
     // ── Restore ─────────────────────────────────────────────────────────────
-    await page.locator('[title="Open Agent"]').click();
+    await page.locator('[title="Open chat"]').click();
 
     await expect(chatPane).toBeVisible();
-    const restoredToggle = page.locator('[title="Close Agent"]');
+    const restoredToggle = page.locator('[title="Close chat"]');
     await expect(restoredToggle).toBeVisible();
     await expect(restoredToggle).toHaveAttribute('selected', '');
     await expect

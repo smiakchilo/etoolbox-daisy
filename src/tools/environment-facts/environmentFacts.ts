@@ -40,12 +40,12 @@ export const ENVIRONMENT_FACTS_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: 'environment_facts',
   description:
     'Reports the AEM environments the application knows about: every configured host with its ' +
-    'label, its origin, and the content/component roots to scope searches to, marking the host ' +
-    'the browser pane is currently on. Use it to resolve an environment a user names (for ' +
-    'example "HPE DEV") to the host to act on. Content roots default to `/content` and ' +
-    'component roots to `/apps` when a host configures none. A host may also list priority ' +
-    'paths: content under them is returned first by `aem_query`, in that order. Takes no ' +
-    'arguments - the application supplies the hosts.',
+    'label, its origin, and the content/component/DAM roots to scope searches to, marking the ' +
+    'host the browser pane is currently on. Use it to resolve an environment a user names (for ' +
+    'example "HPE DEV") to the host to act on. Content roots default to `/content`, component ' +
+    'roots to `/apps` and DAM roots to `/content/dam` when a host configures none. A host may ' +
+    'also list priority paths: content under them is returned first by `aem_query`, in that ' +
+    'order. Takes no arguments - the application supplies the hosts.',
   parameters: z.toJSONSchema(environmentFactsArgsSchema, { io: 'input' }),
 };
 
@@ -72,6 +72,7 @@ export const configuredHostFactSchema = z
     origin: originSchema,
     contentRoots: z.array(z.string().min(1)),
     componentRoots: z.array(z.string().min(1)),
+    damRoots: z.array(z.string().min(1)),
     priorityPaths: z.array(z.string().min(1)).optional(),
     current: z.boolean(),
   })
@@ -100,7 +101,8 @@ export function renderEnvironmentFactsSuccess(result: EnvironmentFactsSuccess): 
     lines.push(
       `- ${host.label}${host.current ? ' (current)' : ''}: ${host.origin}; ` +
         `content roots: ${host.contentRoots.join(', ')}; ` +
-        `component roots: ${host.componentRoots.join(', ')}` +
+        `component roots: ${host.componentRoots.join(', ')}; ` +
+        `DAM roots: ${host.damRoots.join(', ')}` +
         (host.priorityPaths === undefined
           ? ''
           : `; priority paths: ${host.priorityPaths.join(', ')}`),
@@ -149,6 +151,7 @@ export interface EnvironmentFactsDeps {
     readonly origin: string;
     readonly contentRoots: readonly string[];
     readonly componentRoots: readonly string[];
+    readonly damRoots: readonly string[];
     readonly contentPriorityPaths: readonly string[];
   }[];
   readonly currentOrigin: () => string | undefined;
@@ -176,6 +179,7 @@ export function executeEnvironmentFacts(
       origin: host.origin,
       contentRoots: [...host.contentRoots],
       componentRoots: [...host.componentRoots],
+      damRoots: [...host.damRoots],
       ...(host.contentPriorityPaths.length > 0
         ? { priorityPaths: [...host.contentPriorityPaths] }
         : {}),

@@ -97,6 +97,7 @@ describe('toAppSettingsSnapshot', () => {
       label: 'HPE',
       contentRoots: '/content/a; /content/b',
       componentRoots: '/apps/a',
+      damRoots: '/content/dam/a',
     });
     const serverA = server('server-a', 'https://a.example', { projectId: project.id });
     const settings = appSettingsSchema.parse({
@@ -110,6 +111,7 @@ describe('toAppSettingsSnapshot', () => {
 
     expect(snapshot.hosts[0]?.projectId).toBe(project.id);
     expect(snapshot.projects[0]?.contentRoots).toBe('/content/a; /content/b');
+    expect(snapshot.projects[0]?.damRoots).toBe('/content/dam/a');
     expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
   });
 

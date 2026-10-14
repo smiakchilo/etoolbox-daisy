@@ -94,6 +94,8 @@ interface HostOptions {
   readonly currentContext?: () => CurrentAemToolContext;
   readonly count?: (url: string) => BrokerOutcome | Promise<BrokerOutcome>;
   readonly onDiagnostic?: (code: ToolDiagnosticCode) => void;
+  /** DAM roots the facts report; omitted means none, so a default-roots test can prove order. */
+  readonly damRoots?: readonly string[];
 }
 
 function makeHost(
@@ -125,6 +127,7 @@ function makeHost(
             origin: 'https://aem.example',
             contentRoots,
             componentRoots: ['/apps'],
+            damRoots: [...(options.damRoots ?? [])],
             contentPriorityPaths: [],
           },
     configuredHosts: () => [],
@@ -204,6 +207,43 @@ describe('aem_query_format_ask executor', () => {
       ended: 'exhausted',
       resultType: 'success',
     });
+  });
+
+  it('defaults to the content roots followed by the DAM roots', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(2, false)) : ok(tableOk)),
+      ['/content/site'],
+      { damRoots: ['/content/dam/site'] },
+    );
+    const result = await createAemQueryFormatAskExecutor(host)({ terms: 'waldo' }, callContext);
+
+    expect(calls[0]?.args['roots']).toEqual(['/content/site', '/content/dam/site']);
+    expect(payload(result)['roots']).toEqual(['/content/site', '/content/dam/site']);
+  });
+
+  it('collapses a DAM root nested inside a content root, so a plain `/content` still covers DAM', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content'],
+      { damRoots: ['/content/dam'] },
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo' }, callContext);
+
+    expect(calls[0]?.args['roots']).toEqual(['/content']);
+  });
+
+  it('uses explicit roots as given, without adding the DAM roots', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content/site'],
+      { damRoots: ['/content/dam/site'] },
+    );
+    await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', roots: ['/content/other'] },
+      callContext,
+    );
+
+    expect(calls[0]?.args['roots']).toEqual(['/content/other']);
   });
 
   it('loads the next page on "Load more" and appends it', async () => {
