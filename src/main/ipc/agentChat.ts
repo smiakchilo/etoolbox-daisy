@@ -2,8 +2,10 @@ import { ipcMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents }
 import {
   AGENT_CHAT_ABORT_CHANNEL,
   AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL,
+  AGENT_CHAT_DELETE_CONVERSATION_CHANNEL,
   AGENT_CHAT_EVENT_CHANNEL,
   AGENT_CHAT_GET_STATUS_CHANNEL,
+  AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL,
   AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
   AGENT_CHAT_READ_JOURNAL_CHANNEL,
@@ -19,6 +21,7 @@ import {
   agentChatRespondToInputRequestSchema,
   agentChatSendMessageRequestSchema,
   type AgentChatByIdRequest,
+  type AgentChatHistoryListResult,
   type AgentChatOpenResult,
   type AgentChatReadJournalRequest,
   type AgentChatReadJournalResult,
@@ -113,6 +116,10 @@ function untrustedSkillsResult(): AgentChatSkillsResult {
   return { ok: false, error: UNTRUSTED_SENDER_ERROR };
 }
 
+function untrustedHistoryListResult(): AgentChatHistoryListResult {
+  return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+}
+
 function invalidPayloadReadJournalResult(message: string): AgentChatReadJournalResult {
   return { ok: false, error: { code: 'INVALID_ARGUMENT', message } };
 }
@@ -156,6 +163,13 @@ export interface AgentChatIpcDependencies {
    * path concerns; a missing catalogue is an `ok: false` result, never a throw.
    */
   readonly listSkills: () => Promise<AgentChatSkillsResult>;
+  /**
+   * Lists the stored conversations for the History panel. Built in the
+   * composition root so this handler stays free of filesystem and path
+   * concerns; an unreadable chats directory is an `ok: false` result, never a
+   * throw.
+   */
+  readonly listConversations: () => AgentChatHistoryListResult;
 }
 
 /**
@@ -226,6 +240,16 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
   );
 
   ipcMain.handle(
+    AGENT_CHAT_DELETE_CONVERSATION_CHANNEL,
+    async (event, rawRequest: unknown): Promise<AgentChatVoidResult> => {
+      if (!checkSender(event)) return untrustedVoidResult();
+      const parsed = agentChatByIdRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadVoidResult(parsed.error.message);
+      return deps.controller.deleteConversation(parsed.data);
+    },
+  );
+
+  ipcMain.handle(
     AGENT_CHAT_RESPOND_TO_INPUT_CHANNEL,
     async (event, rawRequest: unknown): Promise<AgentChatVoidResult> => {
       if (!checkSender(event)) return untrustedVoidResult();
@@ -258,6 +282,11 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
   ipcMain.handle(AGENT_CHAT_LIST_SKILLS_CHANNEL, (event): Promise<AgentChatSkillsResult> => {
     if (!checkSender(event)) return Promise.resolve(untrustedSkillsResult());
     return deps.listSkills();
+  });
+
+  ipcMain.handle(AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL, (event): AgentChatHistoryListResult => {
+    if (!checkSender(event)) return untrustedHistoryListResult();
+    return deps.listConversations();
   });
 
   const unsubscribeEvents = deps.controller.onEvent(

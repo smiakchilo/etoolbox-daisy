@@ -1541,6 +1541,28 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       return ok(undefined);
     },
 
+    async deleteSession(sdkSessionId: SdkSessionId): Promise<Result<void, AgentServiceError>> {
+      // The client that persists no session state has no `deleteSession`; the
+      // request is then already satisfied (there is nothing on disk to remove),
+      // so it succeeds idempotently. `bind` keeps the real SDK method bound to
+      // its client (a detached method reference would fail the unbound-method
+      // lint and could lose `this`).
+      const remove = client.deleteSession?.bind(client);
+      if (remove === undefined) return ok(undefined);
+      try {
+        await remove(sdkSessionId);
+        return ok(undefined);
+      } catch (error) {
+        // The caller (conversation deletion) treats this as a partial failure:
+        // it keeps the chat's journal so the deletion can be retried, rather
+        // than declaring data gone that the SDK still holds.
+        console.error('sdkAgentService: failed to delete the SDK session', error);
+        return err(
+          createAgentServiceError('STORAGE_ERROR', 'Could not delete the stored Copilot session'),
+        );
+      }
+    },
+
     async dispose(): Promise<void> {
       eventListeners.clear();
       authListeners.clear();

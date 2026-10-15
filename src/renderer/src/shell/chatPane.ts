@@ -66,6 +66,22 @@ export interface ChatPane {
    * message text to change.
    */
   setLinkContext(context: LinkContext): void;
+  /**
+   * Opens a stored conversation chosen in History: paints its journal (so it is
+   * readable even if the SDK session cannot be resumed - offline viewing), then
+   * attempts a genuine resume of the session its header recorded. Unlike the
+   * startup restore, a failed resume is *not* silently replaced with a fresh
+   * session: the user asked for this specific conversation, so the failure is
+   * reported and the stored transcript is left on screen. The shell switches
+   * the browser to the chat's host; this method only owns the chat pane.
+   */
+  openConversationFromHistory(chatId: ChatId): Promise<HistoryResumeOutcome>;
+  /**
+   * Forgets a conversation deleted from History. If it is the pane's current
+   * one, the pane starts a fresh conversation, so its own recovery cannot
+   * re-open a chat whose storage is gone.
+   */
+  handleConversationDeleted(chatId: ChatId): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -132,6 +148,14 @@ type ConversationOpen =
   | { readonly outcome: 'failed'; readonly error: AgentChatError };
 
 /**
+ * The pane's outcome for opening a conversation picked in History. Unlike the
+ * startup restore, a failure is reported (not silently retried as a fresh
+ * session): the stored transcript stays on screen for reading either way.
+ */
+export type HistoryResumeOutcome =
+  { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+/**
  * The right-hand chat pane: toolbar, transcript, and composer, wired to the
  * `agent-chat:*` IPC surface (`window.daisy.agentChat`).
  */
@@ -143,6 +167,12 @@ export interface ChatPaneOptions {
    * condition it is reporting.
    */
   readonly onOpenSettings: (tab?: SettingsTab) => void;
+  /**
+   * Opens the in-shell History panel. The shell owns the panel (it is created
+   * alongside Settings and mounted in the browser pane), so the chat pane only
+   * reports the toolbar click. Optional so a unit test need not wire a panel.
+   */
+  readonly onOpenHistory?: () => void;
   /**
    * Opens an AEM-pane message link. The shell routes this to the browser pane
    * so that pane owns the navigation *and its failure* - a failed link load
@@ -911,6 +941,34 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
+   * Replaces the transcript with a stored conversation's journal before its SDK
+   * session is touched: adopts the id, clears the store, replays the records,
+   * re-derives emptiness, drops any pending input, and repaints/pins. Shared by
+   * the dev `!!open` path and History resume, so both paint a stored chat
+   * identically. Returns the SDK session id the journal's header recorded (or
+   * `undefined` when there is no header), which the callers pass to
+   * `openConversation` for a genuine resume.
+   */
+  function paintStoredConversation(
+    id: ChatId,
+    records: readonly ChatJournalRecord[],
+  ): SdkSessionId | undefined {
+    const header = records.find((record) => record.recordType === 'header');
+    adoptChatId(id);
+    transcriptStore.clear();
+    replayJournalIntoTranscript(records, transcriptStore, isDeterministicTablePrompt);
+    conversationHasMessage = records.some(
+      (record) => record.recordType === 'user.prompt' || record.recordType === 'agent.event',
+    );
+    stopRequested = false;
+    resetInputMode();
+    refreshEmptyState();
+    repaintTranscript();
+    transcriptFollower.pin();
+    return header?.sdkSessionId;
+  }
+
+  /**
    * Dev-only: opens a stored conversation by id (the `!!open <chatId>` cheat
    * code). Paints the chat's journal first, so a foreign or unfinished chat is
    * readable even when its SDK session cannot be resumed, then opens it through
@@ -932,22 +990,11 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       statusBanner.showError(`Dev: no readable journal for chat ${id}.`);
       return;
     }
-    const header = journal.records.find((record) => record.recordType === 'header');
-    adoptChatId(id);
-    transcriptStore.clear();
-    replayJournalIntoTranscript(journal.records, transcriptStore, isDeterministicTablePrompt);
-    conversationHasMessage = journal.records.some(
-      (record) => record.recordType === 'user.prompt' || record.recordType === 'agent.event',
-    );
-    stopRequested = false;
-    resetInputMode();
-    refreshEmptyState();
-    repaintTranscript();
-    transcriptFollower.pin();
 
-    latestSdkSessionId = header?.sdkSessionId;
-    let opened = await openConversation(id, header?.sdkSessionId);
-    if (opened.outcome === 'failed' && header !== undefined) {
+    const sessionId = paintStoredConversation(id, journal.records);
+    latestSdkSessionId = sessionId;
+    let opened = await openConversation(id, sessionId);
+    if (opened.outcome === 'failed' && sessionId !== undefined) {
       // The header's session id is stale or foreign: fall back to a fresh
       // session under the same chat id so the pane still owns a usable chat,
       // with the stored transcript left on screen.
@@ -955,6 +1002,45 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     }
     if (opened.outcome === 'failed') statusBanner.showError(opened.error.message);
     refreshSessionPresentation();
+  }
+
+  /**
+   * Opens a stored conversation chosen in History (the non-dev sibling of
+   * `openStoredConversation`). Paints the journal first - so the transcript is
+   * readable even when the session cannot be resumed - then resumes the session
+   * the header recorded. A failed resume is reported, never silently replaced
+   * by a fresh session: the user picked this conversation deliberately.
+   */
+  async function openConversationFromHistory(id: ChatId): Promise<HistoryResumeOutcome> {
+    const journal = await window.daisy.agentChat.readJournal({ chatId: id });
+    if (!journal.ok) {
+      statusBanner.showError(journal.error.message);
+      return { ok: false, message: journal.error.message };
+    }
+
+    const sessionId = paintStoredConversation(id, journal.records);
+    latestSdkSessionId = sessionId;
+    const opened = await openConversation(id, sessionId);
+    if (opened.outcome === 'failed') {
+      statusBanner.showError(opened.error.message);
+      return { ok: false, message: opened.error.message };
+    }
+    if (opened.outcome === 'opened') persistActiveConversation();
+    refreshSessionPresentation();
+    return { ok: true };
+  }
+
+  /**
+   * Handles a conversation deleted from History. Only the pane's *current*
+   * conversation matters: a fresh one is started so the pane's own
+   * runtime-recycle recovery (which re-opens `chatId` when main reports it is
+   * not open) cannot resurrect the deleted chat.
+   */
+  function handleConversationDeleted(deletedChatId: ChatId): void {
+    if (chatId !== deletedChatId) return;
+    pendingStartup = undefined;
+    latestSdkSessionId = undefined;
+    void startFreshConversation();
   }
 
   async function onSend(prompt: string): Promise<ComposerSendOutcome> {
@@ -1290,6 +1376,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   const chatToolbar = createChatToolbar({
     onOpenSettings: () => options.onOpenSettings(),
+    onOpenHistory: () => options.onOpenHistory?.(),
     onNewSession: startNewSession,
   });
   setNewSessionEnabled = (enabled) => chatToolbar.setNewSessionEnabled(enabled);
@@ -1351,6 +1438,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       // did, so the store is not dirty and the timer would not pick it up.
       repaintTranscript();
     },
+    openConversationFromHistory,
+    handleConversationDeleted,
     dispose(): void {
       unsubscribeEvents?.();
       unsubscribeStatus();

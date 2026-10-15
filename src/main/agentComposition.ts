@@ -11,6 +11,7 @@ import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
 import {
   type AgentService,
+  type ChatId,
   type ConfiguredHostInfo,
   type CurrentAemContext,
   type CurrentAemToolContext,
@@ -19,6 +20,7 @@ import {
   type ModelCatalogEntry,
   type ModelPreference,
   type ProjectConfig,
+  type SdkSessionId,
   type ServerConfig,
   type SessionStreamState,
   type ToolCallId,
@@ -430,6 +432,10 @@ export interface InstallAgentServiceDeps {
    * verbatim to `createAgentChatController`; omitted means no rewrite.
    */
   readonly resolveSkillPrompt?: (prompt: string) => string;
+  /** Reads a chat's journal-header SDK session id, for conversation deletion. See `AgentChatControllerDeps`. */
+  readonly readChatSessionId?: (chatId: ChatId) => SdkSessionId | undefined;
+  /** Removes a chat's stored journal file, for conversation deletion. See `AgentChatControllerDeps`. */
+  readonly removeChatJournal?: (chatId: ChatId) => boolean;
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
@@ -463,6 +469,8 @@ export async function installAgentService(
     ...(deps.resolveSkillPrompt !== undefined
       ? { resolveSkillPrompt: deps.resolveSkillPrompt }
       : {}),
+    ...(deps.readChatSessionId !== undefined ? { readChatSessionId: deps.readChatSessionId } : {}),
+    ...(deps.removeChatJournal !== undefined ? { removeChatJournal: deps.removeChatJournal } : {}),
   });
   await deps.gatedController.replaceDelegate(controller);
 }

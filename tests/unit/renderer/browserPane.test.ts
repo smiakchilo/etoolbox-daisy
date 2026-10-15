@@ -529,18 +529,22 @@ describe('createBrowserPane navigation failure recovery', () => {
 });
 
 describe('createBrowserPane home screen', () => {
-  it('routes the home actions to the hosts picker and the shell settings callback', () => {
+  it('routes the home actions to the hosts picker, History, and the shell settings callback', () => {
+    const onOpenHistory = vi.fn();
     const onOpenSettings = vi.fn();
-    const pane = createBrowserPane({ onOpenSettings });
-    const [hostsAction, settingsAction] = Array.from(
+    const pane = createBrowserPane({ onOpenHistory, onOpenSettings });
+    const [hostsAction, historyAction, settingsAction] = Array.from(
       pane.element.querySelectorAll<HTMLElement>('.browser-home__action'),
     );
 
-    hostsAction?.click();
-    expect(pane.element.querySelector<HTMLElement>('.hosts-panel')?.hidden).toBe(false);
+    historyAction?.click();
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
 
     settingsAction?.click();
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+
+    hostsAction?.click();
+    expect(pane.element.querySelector<HTMLElement>('.hosts-panel')?.hidden).toBe(false);
   });
 
   it('reveals the home screen on Home even with a page loaded, and leaves it on navigation', () => {

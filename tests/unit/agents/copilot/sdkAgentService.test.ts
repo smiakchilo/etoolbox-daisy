@@ -21,7 +21,7 @@ import {
 } from '../../../../src/shared';
 import { applyAgentEvent, type SessionStatus } from '../../../../src/shared';
 import { err, ok } from '../../../../src/shared';
-import type { AuthStatus } from '../../../../src/shared';
+import type { AuthStatus, SdkSessionId } from '../../../../src/shared';
 import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
 
 /** Mints reproducible `ChatId`/`TurnId` values - never SDK-facing ids, which the adapter adopts instead. */
@@ -132,6 +132,7 @@ function makeFakeClient(session: FakeSession): {
   client: HardenedSessionClient;
   createSession: ReturnType<typeof vi.fn<HardenedSessionClient['createSession']>>;
   resumeSession: ReturnType<typeof vi.fn<HardenedSessionClient['resumeSession']>>;
+  deleteSession: ReturnType<typeof vi.fn<NonNullable<HardenedSessionClient['deleteSession']>>>;
 } {
   const createSession = vi.fn<HardenedSessionClient['createSession']>(() =>
     Promise.resolve(session),
@@ -139,7 +140,15 @@ function makeFakeClient(session: FakeSession): {
   const resumeSession = vi.fn<HardenedSessionClient['resumeSession']>(() =>
     Promise.resolve(session),
   );
-  return { client: { createSession, resumeSession }, createSession, resumeSession };
+  const deleteSession = vi.fn<NonNullable<HardenedSessionClient['deleteSession']>>(() =>
+    Promise.resolve(),
+  );
+  return {
+    client: { createSession, resumeSession, deleteSession },
+    createSession,
+    resumeSession,
+    deleteSession,
+  };
 }
 
 /**
@@ -1340,6 +1349,56 @@ describe('sdkAgentService - open session id', () => {
     expect((await service.openConversation({ chatId })).ok).toBe(true);
 
     expect(service.getOpenSessionId()).toBe('fake-session-id');
+  });
+});
+
+describe('sdkAgentService - deleteSession', () => {
+  it('calls the client deleteSession with the given session id', async () => {
+    const sessionHandle = makeFakeSession();
+    const { client, deleteSession } = makeFakeClient(sessionHandle.session);
+    const service = createSdkAgentService({
+      client,
+      policy: POLICY,
+      authSource: makeAuthSource().source,
+    });
+
+    const result = await service.deleteSession('sdk-42' as SdkSessionId);
+
+    expect(result.ok).toBe(true);
+    expect(deleteSession).toHaveBeenCalledWith('sdk-42');
+  });
+
+  it('succeeds as a no-op when the client persists no session state', async () => {
+    // A fresh client object without `deleteSession` at all - spreading one off
+    // another object (`{ ...client }`) would trip `unbound-method`.
+    const clientWithoutDelete: HardenedSessionClient = {
+      createSession: vi.fn<HardenedSessionClient['createSession']>(),
+      resumeSession: vi.fn<HardenedSessionClient['resumeSession']>(),
+    };
+    const service = createSdkAgentService({
+      client: clientWithoutDelete,
+      policy: POLICY,
+      authSource: makeAuthSource().source,
+    });
+
+    expect((await service.deleteSession('sdk-42' as SdkSessionId)).ok).toBe(true);
+  });
+
+  it('reports a storage error when the client refuses', async () => {
+    const sessionHandle = makeFakeSession();
+    const { client, deleteSession } = makeFakeClient(sessionHandle.session);
+    deleteSession.mockRejectedValueOnce(new Error('locked'));
+    const service = createSdkAgentService({
+      client,
+      policy: POLICY,
+      authSource: makeAuthSource().source,
+    });
+
+    const result = await service.deleteSession('sdk-42' as SdkSessionId);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('STORAGE_ERROR');
   });
 });
 

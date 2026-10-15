@@ -5,8 +5,11 @@ import {
   agentEventSchema,
   chatIdSchema,
   chatJournalRecordSchema,
+  chatTitleSchema,
+  epochMillisecondsSchema,
   requiredActionSchema,
   sdkSessionIdSchema,
+  serverIdSchema,
   sessionStreamStateSchema,
   toolErrorCodeSchema,
   turnIdSchema,
@@ -270,6 +273,49 @@ export type AgentChatReadJournalResult = Readonly<z.infer<typeof agentChatReadJo
 
 export function parseAgentChatReadJournalResult(candidate: unknown): AgentChatReadJournalResult {
   return agentChatReadJournalResultSchema.parse(candidate);
+}
+
+// ---------------------------------------------------------------------------
+// Conversation history (`agent-chat:list-conversations`, `agent-chat:delete-conversation`)
+// ---------------------------------------------------------------------------
+
+/**
+ * One entry in the chat history list, derived on demand from a chat's journal
+ * (`chatJournal.ts`) rather than from a second metadata store. `title` is the
+ * beginning of the first user message - produced without a model request - and
+ * is absent for a chat whose journal holds no user prompt. `startedAt` and
+ * `updatedAt` are epoch milliseconds; `updatedAt` is the newest record's time,
+ * so the list can order by "most recently used". `sdkSessionId` is the session
+ * the journal's header recorded, offered so a caller can attempt a genuine
+ * resume (a runtime recycle minted a later session the journal does not keep,
+ * so this may be stale - the resume falls back to a fresh session).
+ */
+export const agentChatHistoryEntrySchema = z
+  .object({
+    chatId: chatIdSchema,
+    title: chatTitleSchema.optional(),
+    startedAt: epochMillisecondsSchema,
+    updatedAt: epochMillisecondsSchema,
+    serverId: serverIdSchema.optional(),
+    sdkSessionId: sdkSessionIdSchema.optional(),
+  })
+  .strict();
+
+export type AgentChatHistoryEntry = Readonly<z.infer<typeof agentChatHistoryEntrySchema>>;
+
+export function parseAgentChatHistoryEntry(candidate: unknown): AgentChatHistoryEntry {
+  return agentChatHistoryEntrySchema.parse(candidate);
+}
+
+export const agentChatHistoryListResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), entries: z.array(agentChatHistoryEntrySchema) }).strict(),
+  z.object({ ok: z.literal(false), error: agentChatErrorSchema }).strict(),
+]);
+
+export type AgentChatHistoryListResult = Readonly<z.infer<typeof agentChatHistoryListResultSchema>>;
+
+export function parseAgentChatHistoryListResult(candidate: unknown): AgentChatHistoryListResult {
+  return agentChatHistoryListResultSchema.parse(candidate);
 }
 
 // ---------------------------------------------------------------------------

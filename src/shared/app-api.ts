@@ -43,6 +43,7 @@ import type {
 } from './table-export-ipc';
 import type {
   AgentChatByIdRequest,
+  AgentChatHistoryListResult,
   AgentChatOpenConversationRequest,
   AgentChatOpenResult,
   AgentChatReadJournalRequest,
@@ -156,6 +157,19 @@ export interface DaisyAgentChatApi {
    * which the pane treats as "no autocomplete".
    */
   listSkills(): Promise<AgentChatSkillsResult>;
+  /**
+   * Lists the stored conversations for the History panel, newest first. Main
+   * derives each entry from its journal on demand; never throws - an
+   * unreadable directory comes back as `ok: false`.
+   */
+  listConversations(): Promise<AgentChatHistoryListResult>;
+  /**
+   * Deletes one stored conversation. If it is the open one, its work is
+   * stopped and its handle closed first; then its SDK session (when the agent
+   * persists one) and its journal file are removed. Other conversations and
+   * the chat's server are left untouched.
+   */
+  deleteConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   /** Subscribes to `agent-chat:event`; returns an unsubscribe function. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**

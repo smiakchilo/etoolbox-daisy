@@ -43,6 +43,7 @@ import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './app
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
 import { createChatJournal, toChatFileName } from './chatJournal';
+import { listChatHistory, readChatSessionId, removeChatJournal } from './chatHistory';
 import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
 import { installContentSecurityPolicy } from './csp';
 import { mergeDisabledFeatures } from './disabledFeatures';
@@ -691,6 +692,20 @@ if (!gotSingleInstanceLock) {
           };
         }
       },
+      // The stored conversations, derived from the journals in the app's own
+      // `chats` directory. `listChatHistory` already tolerates a missing
+      // directory and a bad journal; this `ok: false` is a backstop the
+      // renderer shows as "history unavailable".
+      listConversations: () => {
+        try {
+          return { ok: true, entries: [...listChatHistory(appPaths.chats)] };
+        } catch {
+          return {
+            ok: false,
+            error: { code: 'STORAGE_ERROR', message: 'The conversation history could not be read' },
+          };
+        }
+      },
     });
 
     // Milestone A criterion 6: a server switch (or any other navigation-
@@ -829,6 +844,11 @@ if (!gotSingleInstanceLock) {
                   prompt,
                   skillCatalog.current().map((skill) => skill.name),
                 ),
+              // Conversation deletion reads the SDK session id the journal
+              // header recorded and removes the journal file; both are plain
+              // filesystem facts main owns, kept out of the controller.
+              readChatSessionId: (chatId) => readChatSessionId(appPaths.chats, chatId),
+              removeChatJournal: (chatId) => removeChatJournal(appPaths.chats, chatId),
               gatedController: agentChatController,
             },
             service,

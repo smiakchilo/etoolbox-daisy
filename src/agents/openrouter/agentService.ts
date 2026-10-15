@@ -837,6 +837,13 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       return Promise.resolve(ok(undefined));
     },
 
+    deleteSession: (): Promise<Result<void, AgentServiceError>> => {
+      // OpenRouter keeps no cross-restart session data: a resumed chat starts
+      // fresh by design (see `openConversation`). There is nothing on disk to
+      // delete, so this is an idempotent no-op success.
+      return Promise.resolve(ok(undefined));
+    },
+
     dispose: (): Promise<void> => {
       eventListeners.clear();
       authListeners.clear();

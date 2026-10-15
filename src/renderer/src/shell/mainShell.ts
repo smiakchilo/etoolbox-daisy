@@ -2,9 +2,15 @@ import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLay
 import { isHostPageUrl, loadLastPageUrl, saveLastPageUrl } from '../lib/lastPageStore';
 import { clearLastChat, loadLastChat, saveLastChat } from '../lib/lastChatStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
-import { parseNavigationTarget, type AppSettingsSnapshot, type ServerId } from '../../../shared';
+import {
+  parseNavigationTarget,
+  type AppSettingsSnapshot,
+  type AgentChatHistoryEntry,
+  type ServerId,
+} from '../../../shared';
 import { createBrowserPane } from './browserPane';
 import { createChatPane, type StartupConversation } from './chatPane';
+import { createHistoryPanel, type HistoryPanel } from './historyPanel';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
@@ -48,6 +54,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     onOpenSettings(): void {
       browserPane.panelHost.open(settingsPanel);
     },
+    // The home screen's "History" action - the same panel the chat toolbar's
+    // History button opens.
+    onOpenHistory(): void {
+      browserPane.panelHost.open(historyPanel);
+    },
   });
 
   // Settings live in a whole-size panel on the browser pane (superseding the
@@ -69,6 +80,24 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     },
   });
   browserPane.appendPanel(settingsPanel);
+
+  // History: the browsable list of stored conversations, as a whole-size panel
+  // like Settings. It is appended once, hidden, and revealed through the same
+  // single-open host (the chat toolbar's History button opens it). The shell
+  // owns resume (chat pane + browser host switch) and delete (the IPC call),
+  // so the panel only reports what the reader chose.
+  const historyPanel: HistoryPanel = createHistoryPanel({
+    onResume(entry: AgentChatHistoryEntry): void {
+      void resumeHistoryConversation(entry);
+    },
+    onDelete(entry: AgentChatHistoryEntry): Promise<void> {
+      return deleteHistoryConversation(entry);
+    },
+    onDismiss(): void {
+      browserPane.panelHost.close();
+    },
+  });
+  browserPane.appendPanel(historyPanel);
 
   // Fill the home screen's slower data off the first-paint path: the pane
   // builds the screen synchronously with a static name and a "Loading skills…"
@@ -98,6 +127,9 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       // with no first-frame flicker; no tab keeps the last selection.
       if (tab !== undefined) settingsPanel.selectTab(tab);
       browserPane.panelHost.open(settingsPanel);
+    },
+    onOpenHistory() {
+      browserPane.panelHost.open(historyPanel);
     },
     // A chat link is a browser navigation: route it through the browser pane
     // so that pane owns the load and, on failure, its error row (with Reload)
@@ -180,7 +212,52 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       hostOptions: buildHostOptions(snapshot.hosts),
     });
     chatPane.setAgents(snapshot.agents);
+    // History labels each row with its chat's host; the ids are stable across
+    // renames, so the panel re-resolves them from this list on every reload.
+    historyPanel.setServers(buildHostOptions(snapshot.hosts));
     publishLinkContext();
+  }
+
+  /**
+   * Opens a stored conversation chosen in History. The browser is switched to
+   * the chat's host first (so the resumed conversation's AEM reads target the
+   * same server its transcript came from), then the chat pane repaints the
+   * transcript and resumes its session. A chat whose host was deleted (or that
+   * never had one) is opened without a switch - the pane keeps its current page.
+   *
+   * The switch is awaited so its failure (an unreachable/unknown host) is
+   * reported in the pane's status row and the conversation is *not* resumed
+   * against the wrong target.
+   */
+  async function resumeHistoryConversation(entry: AgentChatHistoryEntry): Promise<void> {
+    browserPane.panelHost.close();
+    if (entry.serverId !== undefined && hosts.some((host) => host.id === entry.serverId)) {
+      const switched = await window.daisy.browser.switchServer(entry.serverId);
+      if (!switched.ok) {
+        browserPane.surfaceStatus.showError(switched.error.message);
+        return;
+      }
+    }
+    await chatPane.openConversationFromHistory(entry.chatId);
+  }
+
+  /**
+   * Deletes a stored conversation from History. The IPC call stops the chat's
+   * work first if it is open, deletes its SDK session, and removes its journal.
+   * On success the panel (which awaits this) reloads its list, the chat pane
+   * forgets the chat if it was the open one, and the remembered-chat pointer is
+   * cleared if it named the deleted chat. A failure is reported in the pane's
+   * status row and the row stays in the list.
+   */
+  async function deleteHistoryConversation(entry: AgentChatHistoryEntry): Promise<void> {
+    const result = await window.daisy.agentChat.deleteConversation({ chatId: entry.chatId });
+    if (!result.ok) {
+      browserPane.surfaceStatus.showError(result.error.message);
+      return;
+    }
+    if (loadLastChat()?.chatId === entry.chatId) clearLastChat();
+    chatPane.handleConversationDeleted(entry.chatId);
+    browserPane.surfaceStatus.showStatus('Conversation deleted');
   }
 
   // Remembers the last opened page for the next launch. Subscribing here
@@ -306,6 +383,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     splitView.dispose();
     browserPane.dispose();
     settingsPanel.dispose();
+    historyPanel.dispose();
     chatPane.dispose();
   });
 }

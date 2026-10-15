@@ -49,6 +49,8 @@ export interface HomeScreen {
 
 export interface HomeScreenCallbacks {
   readonly onOpenHosts: () => void;
+  /** Opens the app's History (stored conversations) panel. */
+  readonly onOpenHistory: () => void;
   readonly onOpenSettings: () => void;
   /**
    * Fired by the close control: the user is done with the forced home screen and
@@ -104,31 +106,37 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
   });
   hostsButton.addEventListener('click', () => callbacks.onOpenHosts());
 
+  const historyButton = el('sp-action-button', {
+    attrs: { class: 'browser-home__action', title: 'History', 'aria-label': 'History' },
+    text: 'History',
+  });
+  historyButton.addEventListener('click', () => callbacks.onOpenHistory());
+
   const settingsButton = el('sp-action-button', {
     attrs: {
       class: 'browser-home__action',
-      title: 'Open settings',
-      'aria-label': 'Open settings',
+      title: 'Settings',
+      'aria-label': 'Settings',
     },
-    text: 'Open settings',
+    text: 'Settings',
   });
   settingsButton.addEventListener('click', () => callbacks.onOpenSettings());
 
   const actions = el('div', {
     attrs: { class: 'browser-home__actions' },
-    children: [hostsButton, settingsButton],
+    children: [hostsButton, historyButton, settingsButton],
   });
 
   const toolsHeading = el('h2', {
     attrs: { class: 'browser-home__section-title' },
-    text: 'Useful tools',
+    text: 'Useful commands',
   });
 
   const toolsList = el('ul', { attrs: { class: 'browser-home__skill-list' } });
 
   const toolsStatus = el('p', {
     attrs: { class: 'browser-home__skills-status' },
-    text: 'Loading tools\u2026',
+    text: 'Loading commands\u2026',
   });
 
   const skills = el('div', {
@@ -176,7 +184,7 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
       if (catalogue.length === 0) {
         toolsList.hidden = true;
         toolsStatus.hidden = false;
-        toolsStatus.textContent = 'No user-invocable tools are installed.';
+        toolsStatus.textContent = 'No user-invocable commands are installed.';
       }
     },
     setHostsAvailable(available: boolean): void {

@@ -1,16 +1,16 @@
 import { el } from '../lib/dom';
-import { reportNotWired } from '../lib/notWired';
 
 /**
  * The chat pane's toolbar (requirements-decisions.md section 8). New session
  * starts a fresh conversation - the current one is torn down and the
- * transcript emptied (see `chatPane.ts`'s `startNewSession`); History remains
- * a stub until its window-opening IPC surface exists; Settings opens the
- * in-shell Settings panel provided by the caller (see `chatPane.ts` ->
- * `shell/mainShell.ts`).
+ * transcript emptied (see `chatPane.ts`'s `startNewSession`); History opens the
+ * in-shell History panel (provided by the shell, like Settings); Settings opens
+ * the in-shell Settings panel (see `chatPane.ts` -> `shell/mainShell.ts`).
  */
 export interface ChatToolbarCallbacks {
   readonly onOpenSettings: () => void;
+  /** Opens the in-shell History panel (the shell owns it). */
+  readonly onOpenHistory: () => void;
   /**
    * Starts a brand-new conversation: current conversation context and the
    * on-screen transcript are both discarded.
@@ -52,10 +52,7 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
   historyIcon.setAttribute('slot', 'icon');
   historyButton.append(historyIcon);
   historyButton.addEventListener('click', () => {
-    reportNotWired(
-      'Opening the History child window (no window-opening IPC channel exists yet; ' +
-        'requirements-decisions.md section 8 requires History as a separate local child window)',
-    );
+    callbacks.onOpenHistory();
   });
 
   const settingsButton = el('sp-action-button', {

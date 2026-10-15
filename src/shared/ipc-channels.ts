@@ -138,6 +138,19 @@ export const AGENT_CHAT_READ_JOURNAL_CHANNEL = 'agent-chat:read-journal' as cons
 export const AGENT_CHAT_REVEAL_JOURNAL_CHANNEL = 'agent-chat:reveal-journal' as const;
 /** Reads the bundled skill catalogue for the composer's `/` autocomplete. */
 export const AGENT_CHAT_LIST_SKILLS_CHANNEL = 'agent-chat:list-skills' as const;
+/**
+ * Lists the stored conversations (a browsable History). Main derives each
+ * entry from the chat's journal on demand - title from the first user message,
+ * date and server from the header - so there is no second metadata store.
+ */
+export const AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL = 'agent-chat:list-conversations' as const;
+/**
+ * Deletes one stored conversation: stops its work and closes its SDK handle if
+ * it is the open conversation, deletes its SDK session (when the agent persists
+ * one), and removes its journal file - without touching any other chat or its
+ * server.
+ */
+export const AGENT_CHAT_DELETE_CONVERSATION_CHANNEL = 'agent-chat:delete-conversation' as const;
 /** Push channel: main -> renderer, one `AgentEvent` per event, only for the currently open conversation. */
 export const AGENT_CHAT_EVENT_CHANNEL = 'agent-chat:event' as const;
 /**

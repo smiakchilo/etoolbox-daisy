@@ -7,8 +7,10 @@ import {
   AGENT_LOGOUT_CHANNEL,
   AGENT_CHAT_ABORT_CHANNEL,
   AGENT_CHAT_CLOSE_CONVERSATION_CHANNEL,
+  AGENT_CHAT_DELETE_CONVERSATION_CHANNEL,
   AGENT_CHAT_EVENT_CHANNEL,
   AGENT_CHAT_GET_STATUS_CHANNEL,
+  AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL,
   AGENT_CHAT_LIST_SKILLS_CHANNEL,
   AGENT_CHAT_RESPOND_TO_INPUT_CHANNEL,
   AGENT_CHAT_OPEN_CONVERSATION_CHANNEL,
@@ -64,6 +66,7 @@ import {
   parseAddServerResult,
   parseAgentChatByIdRequest,
   parseAgentChatEvent,
+  parseAgentChatHistoryListResult,
   parseAgentChatOpenConversationRequest,
   parseAgentChatOpenResult,
   parseAgentChatReadJournalRequest,
@@ -116,6 +119,7 @@ import {
   type AddServerRequest,
   type AddServerResult,
   type AgentChatByIdRequest,
+  type AgentChatHistoryListResult,
   type AgentChatOpenConversationRequest,
   type AgentChatOpenResult,
   type AgentChatReadJournalRequest,
@@ -394,6 +398,18 @@ const daisyApi: DaisyAppApi = {
     async listSkills(): Promise<AgentChatSkillsResult> {
       const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_LIST_SKILLS_CHANNEL);
       return parseAgentChatSkillsResult(raw);
+    },
+    async listConversations(): Promise<AgentChatHistoryListResult> {
+      const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL);
+      return parseAgentChatHistoryListResult(raw);
+    },
+    async deleteConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult> {
+      const parsedRequest = parseAgentChatByIdRequest(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        AGENT_CHAT_DELETE_CONVERSATION_CHANNEL,
+        parsedRequest,
+      );
+      return parseAgentChatVoidResult(raw);
     },
     onEvent(listener: (event: AgentEvent) => void): () => void {
       const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {

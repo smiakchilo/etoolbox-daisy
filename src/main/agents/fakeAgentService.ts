@@ -211,6 +211,13 @@ export interface FakeAgentService extends AgentService {
    * dedup-worthy re-observation, so there is no equality check here).
    */
   setAuthState(state: AgentAuthState): void;
+
+  /**
+   * The `sdkSessionId`s `deleteSession` has been called with, in order. This
+   * fake holds no SDK session data, so it records the request rather than
+   * removing anything - enough for a test to assert which session was named.
+   */
+  deletedSessionIds(): readonly SdkSessionId[];
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +347,12 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   /** Only meaningful while `openChatId !== undefined`; reset to `"idle"` each time a new chat opens. */
   let streamState: SessionStreamState = 'idle';
   let pendingTurn: PendingTurn | undefined;
+  /**
+   * Every `sdkSessionId` passed to `deleteSession`, in call order. This fake
+   * has no SDK session data to remove, so it records the request instead -
+   * enough for a test or E2E to assert which session deletion named.
+   */
+  const deletedSessions = new Set<SdkSessionId>();
 
   function nextSequence(chatId: ChatId): number {
     const sequence = sequenceByChatId.get(chatId) ?? 0;
@@ -956,6 +969,13 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       return Promise.resolve(ok(undefined));
     },
 
+    deleteSession(sdkSessionId: SdkSessionId): Promise<Result<void, AgentServiceError>> {
+      // No SDK session data to remove; recording the id is this fake's whole
+      // job here (see `deletedSessionIds`).
+      deletedSessions.add(sdkSessionId);
+      return Promise.resolve(ok(undefined));
+    },
+
     dispose(): Promise<void> {
       eventListeners.clear();
       authListeners.clear();
@@ -977,6 +997,10 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     setAuthState(state: AgentAuthState): void {
       authState = state;
       for (const listener of authListeners) listener(state);
+    },
+
+    deletedSessionIds(): readonly SdkSessionId[] {
+      return [...deletedSessions];
     },
   };
 }

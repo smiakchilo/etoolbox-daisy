@@ -21,6 +21,7 @@ import {
   type MessageId,
   type RequiredAction,
   type Result,
+  type SdkSessionId,
   type ServerId,
   type SessionStatus,
   type ToolCallId,
@@ -143,6 +144,21 @@ export interface AgentChatControllerDeps {
    * journal always keep the user's own text (see `sendMessage` below).
    */
   readonly resolveSkillPrompt?: (prompt: string) => string;
+  /**
+   * Reads the SDK session id a chat's journal header recorded, so conversation
+   * deletion can delete the SDK's stored session data (`deleteSession`). The
+   * controller keeps no historical chat-to-session map - the journal is the
+   * only record. Optional so a unit test can construct a controller without
+   * chat storage; conversation deletion then deletes no SDK session.
+   */
+  readonly readChatSessionId?: (chatId: ChatId) => SdkSessionId | undefined;
+  /**
+   * Removes a chat's stored journal file (the app's own conversation storage).
+   * Returns `false` when it could not be removed, which conversation deletion
+   * reports as a storage error rather than declaring the chat gone. Optional
+   * like `readChatSessionId`.
+   */
+  readonly removeChatJournal?: (chatId: ChatId) => boolean;
 }
 
 export interface AgentChatController {
@@ -151,6 +167,15 @@ export interface AgentChatController {
   sendMessage(request: AgentChatSendMessageRequest): Promise<AgentChatSendResult>;
   abort(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   closeConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
+  /**
+   * Deletes one stored conversation: if it is the open one, its work is stopped
+   * and its handle closed first; then the SDK's stored session data is deleted
+   * (best-effort - the journal is the app's source of truth and a stale SDK
+   * session is inert) and the chat's journal file is removed. Other
+   * conversations and the chat's server are left untouched. Idempotent:
+   * deleting a chat whose journal is already gone succeeds.
+   */
+  deleteConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult>;
   /**
    * Puts an interactive question to the user on the active conversation and
    * resolves with their answer. This is the tool host's `requestUserInput`
@@ -697,6 +722,52 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     return { ok: true };
   }
 
+  /**
+   * Deletes one stored conversation. Order matters:
+   *
+   *  1. If it is the open conversation, stop and close it through
+   *     `closeConversation`, so no turn keeps running against a chat that is
+   *     about to have no stored transcript, and the journal's leftover
+   *     bookkeeping (partial message, abandoned tool calls, `chat.closed`) is
+   *     written before the file is removed.
+   *  2. Delete the SDK's stored session data for the session the journal's
+   *     header recorded. Deliberately non-fatal: the request cannot be proven
+   *     idempotent against a session the SDK has already forgotten, and
+   *     blocking deletion on that would strand a chat whose SDK data is
+   *     already gone. A failure is logged; the chat is still removed below.
+   *  3. Remove the journal file - the app's own record, and what makes the
+   *     chat stop appearing in History. A failure here *is* fatal: the chat
+   *     must not silently stay in the list while claiming to be deleted.
+   */
+  async function deleteConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult> {
+    const { chatId } = request;
+
+    if (activeChatId === chatId) {
+      const closed = await closeConversation({ chatId });
+      if (!closed.ok) return closed;
+    }
+
+    const sdkSessionId = deps.readChatSessionId?.(chatId);
+    if (sdkSessionId !== undefined) {
+      const deleted = await agentService.deleteSession(sdkSessionId);
+      if (!deleted.ok) {
+        logger.warn('AGENT_CHAT_DELETE_SESSION_FAILED', { ids: { chatId, sdkSessionId } });
+      }
+    }
+
+    if (deps.removeChatJournal !== undefined && !deps.removeChatJournal(chatId)) {
+      return {
+        ok: false,
+        error: createAgentChatError(
+          'STORAGE_ERROR',
+          'The stored conversation could not be removed',
+        ),
+      };
+    }
+
+    return { ok: true };
+  }
+
   async function requestUserInput(
     request: UserInputRequest,
   ): Promise<Result<UserInputAnswer, AgentChatError>> {
@@ -788,6 +859,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     sendMessage,
     abort,
     closeConversation,
+    deleteConversation,
     requestUserInput,
     respondToInput,
     recordNestedToolCall,
@@ -964,6 +1036,14 @@ export function createStartupGatedAgentChatController(
     return real.closeConversation(request);
   }
 
+  async function deleteConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult> {
+    // Unlike close/abort, this is not "already in the state you asked for": a
+    // chat whose storage was never removed is still there, so refusing while
+    // the service is starting is the honest answer rather than a false success.
+    if (!real) return { ok: false, error: notReadyError() };
+    return real.deleteConversation(request);
+  }
+
   async function requestUserInput(
     request: UserInputRequest,
   ): Promise<Result<UserInputAnswer, AgentChatError>> {
@@ -1065,6 +1145,7 @@ export function createStartupGatedAgentChatController(
     sendMessage,
     abort,
     closeConversation,
+    deleteConversation,
     requestUserInput,
     respondToInput,
     recordNestedToolCall,

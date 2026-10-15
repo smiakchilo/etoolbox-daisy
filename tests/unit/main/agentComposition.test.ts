@@ -498,6 +498,7 @@ function fakeAgentServiceDouble(): AgentService {
     sendPrompt: () => Promise.reject(new Error('not used in this test')),
     abort: () => Promise.reject(new Error('not used in this test')),
     closeConversation: () => Promise.reject(new Error('not used in this test')),
+    deleteSession: () => Promise.reject(new Error('not used in this test')),
     requestUserInput: () => Promise.reject(new Error('not used in this test')),
     respondToInput: () => Promise.reject(new Error('not used in this test')),
     dispose: () => Promise.resolve(),

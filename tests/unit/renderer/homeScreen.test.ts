@@ -24,23 +24,28 @@ afterEach(() => {
 });
 
 function build(): ReturnType<typeof createHomeScreen> {
-  return createHomeScreen({ onOpenHosts: vi.fn(), onOpenSettings: vi.fn(), onClose: vi.fn() });
+  return createHomeScreen({
+    onOpenHosts: vi.fn(),
+    onOpenHistory: vi.fn(),
+    onOpenSettings: vi.fn(),
+    onClose: vi.fn(),
+  });
 }
 
 describe('createHomeScreen', () => {
-  it('starts with a static name and a loading tools row, before any IPC', () => {
+  it('starts with a static name and a loading commands row, before any IPC', () => {
     const home = build();
     expect(home.element.querySelector('.browser-home__name')?.textContent).toBe('EToolbox Daisy');
     expect(home.element.querySelector<HTMLElement>('.browser-home__version')?.hidden).toBe(true);
     expect(home.element.querySelector('.browser-home__skills-status')?.textContent).toBe(
-      'Loading tools\u2026',
+      'Loading commands\u2026',
     );
   });
 
-  it('has a "Useful tools" heading and no intro paragraph', () => {
+  it('has a "Useful commands" heading and no intro paragraph', () => {
     const home = build();
     expect(home.element.querySelector('.browser-home__section-title')?.textContent).toBe(
-      'Useful tools',
+      'Useful commands',
     );
     expect(home.element.querySelector('.browser-home__intro')).toBeNull();
   });
@@ -71,7 +76,7 @@ describe('createHomeScreen', () => {
     home.setSkills([]);
     const status = home.element.querySelector<HTMLElement>('.browser-home__skills-status');
     expect(status?.hidden).toBe(false);
-    expect(status?.textContent).toBe('No user-invocable tools are installed.');
+    expect(status?.textContent).toBe('No user-invocable commands are installed.');
     expect(home.element.querySelector<HTMLElement>('.browser-home__skill-list')?.hidden).toBe(true);
   });
 
@@ -85,9 +90,36 @@ describe('createHomeScreen', () => {
     expect(hostsAction?.hasAttribute('disabled')).toBe(false);
   });
 
+  it('offers Select a host, History and Settings, firing each action', () => {
+    const onOpenHistory = vi.fn();
+    const onOpenSettings = vi.fn();
+    const home = createHomeScreen({
+      onOpenHosts: vi.fn(),
+      onOpenHistory,
+      onOpenSettings,
+      onClose: vi.fn(),
+    });
+    const actions = [...home.element.querySelectorAll<HTMLElement>('.browser-home__action')];
+    expect(actions.map((button) => button.textContent)).toEqual([
+      'Select a host',
+      'History',
+      'Settings',
+    ]);
+
+    actions[1]?.click();
+    actions[2]?.click();
+    expect(onOpenHistory).toHaveBeenCalledTimes(1);
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
   it('offers the close control only while forced over a page, and fires onClose', () => {
     const onClose = vi.fn();
-    const home = createHomeScreen({ onOpenHosts: vi.fn(), onOpenSettings: vi.fn(), onClose });
+    const home = createHomeScreen({
+      onOpenHosts: vi.fn(),
+      onOpenHistory: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onClose,
+    });
     const close = home.element.querySelector<HTMLElement>('.browser-home__close');
     if (!close) throw new Error('close control not found');
 

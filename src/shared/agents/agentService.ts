@@ -246,6 +246,23 @@ export interface AgentService {
   closeConversation(chatId: ChatId): Promise<Result<void, AgentServiceError>>;
 
   /**
+   * Permanently deletes the SDK's stored session data for `sdkSessionId`
+   * (implementation-plan.md step 10's "use the supported SDK deletion API").
+   * Used by conversation deletion from History, never by ordinary chat
+   * operation.
+   *
+   * Idempotent: deleting a session whose data is already gone succeeds. An
+   * agent whose SDK persists no cross-restart session state (OpenRouter treats
+   * a resumed chat as a fresh one) implements this as a no-op success, because
+   * there is nothing on disk to remove.
+   *
+   * Deliberately takes the session id, not a `ChatId`: the service keeps no
+   * historical chat-to-session mapping - the caller reads it from the chat's
+   * journal header.
+   */
+  deleteSession(sdkSessionId: SdkSessionId): Promise<Result<void, AgentServiceError>>;
+
+  /**
    * Releases everything this service owns (open conversation, subscriptions,
    * underlying runtime). The service must not be used afterward.
    */

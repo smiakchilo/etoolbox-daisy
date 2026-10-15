@@ -20,6 +20,7 @@ import {
   type ChatId,
   type OpenConversationRequest,
   type Result,
+  type SdkSessionId,
   type SendPromptRequest,
   type ServerId,
   type Unsubscribe,
@@ -181,6 +182,9 @@ function createLeakyAgentService(): LeakyAgentService {
     closeConversation(): Promise<Result<void, AgentServiceError>> {
       return Promise.resolve(ok(undefined));
     },
+    deleteSession(): Promise<Result<void, AgentServiceError>> {
+      return Promise.resolve(ok(undefined));
+    },
     requestUserInput(): Promise<Result<UserInputAnswer, AgentServiceError>> {
       return Promise.resolve(ok({ selections: [], freeform: null }));
     },
@@ -248,6 +252,7 @@ function createDeferredOpenService(): DeferredOpenService {
     sendPrompt: () => Promise.resolve(ok(undefined)),
     abort: () => Promise.resolve(ok(undefined)),
     closeConversation: () => Promise.resolve(ok(undefined)),
+    deleteSession: () => Promise.resolve(ok(undefined)),
     requestUserInput: () => Promise.resolve(ok({ selections: [], freeform: null })),
     respondToInput: () => Promise.resolve(ok(undefined)),
     dispose() {
@@ -1114,6 +1119,107 @@ describe('agentChatController AEM-request cancellation', () => {
     await controller.handleAemContextInvalidated();
 
     expect(cancelAemRequests).not.toHaveBeenCalled();
+  });
+});
+
+describe('agentChatController.deleteConversation', () => {
+  it('deletes an unopened chat: its SDK session and its journal', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const removeChatJournal = vi.fn(() => true);
+    const { controller } = buildController(agentService, {
+      readChatSessionId: () => 'sdk-chat-1' as SdkSessionId,
+      removeChatJournal,
+    });
+
+    const result = await controller.deleteConversation({ chatId: newChatId('chat-1') });
+
+    expect(result).toEqual({ ok: true });
+    expect(agentService.deletedSessionIds()).toEqual(['sdk-chat-1']);
+    expect(removeChatJournal).toHaveBeenCalledWith('chat-1');
+  });
+
+  it('stops and closes an open chat before deleting it', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService, {
+      readChatSessionId: () => 'sdk-chat-1' as SdkSessionId,
+      removeChatJournal: () => true,
+    });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+
+    const result = await controller.deleteConversation({ chatId });
+
+    expect(result).toEqual({ ok: true });
+    // The open conversation is no longer owned after deletion.
+    expect(controller.getStatus().activeChatId).toBeNull();
+  });
+
+  it('is non-fatal when the SDK session cannot be deleted, but still removes the journal', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const failing = {
+      ...agentService,
+      deleteSession: () =>
+        Promise.resolve({
+          ok: false as const,
+          error: { code: 'STORAGE_ERROR' as const, message: 'nope' },
+        }),
+    };
+    const removeChatJournal = vi.fn(() => true);
+    // A local spy, not `noopLogger().warn`: reading a method off an object to
+    // hand to `expect` trips `@typescript-eslint/unbound-method`.
+    const warn = vi.fn<(code: string, fields?: unknown) => void>();
+    const logger: Logger = {
+      info: vi.fn(),
+      warn,
+      error: vi.fn(),
+      getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
+    };
+    const { controller } = buildController(failing, {
+      logger,
+      readChatSessionId: () => 'sdk-chat-1' as SdkSessionId,
+      removeChatJournal,
+    });
+
+    const result = await controller.deleteConversation({ chatId: newChatId('chat-1') });
+
+    expect(result).toEqual({ ok: true });
+    expect(removeChatJournal).toHaveBeenCalledWith('chat-1');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toBe('AGENT_CHAT_DELETE_SESSION_FAILED');
+    expect(warn.mock.calls[0]?.[1]).toMatchObject({ ids: { chatId: 'chat-1' } });
+  });
+
+  it('reports a storage error when the journal file cannot be removed', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService, {
+      readChatSessionId: () => undefined,
+      removeChatJournal: () => false,
+    });
+
+    const result = await controller.deleteConversation({ chatId: newChatId('chat-1') });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('STORAGE_ERROR');
+  });
+
+  it('deletes a chat with no journal-storage deps without touching an SDK session', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+
+    const result = await controller.deleteConversation({ chatId: newChatId('chat-1') });
+
+    expect(result).toEqual({ ok: true });
+    expect(agentService.deletedSessionIds()).toEqual([]);
+  });
+
+  it('refuses deletion while no agent service is installed (gated controller)', async () => {
+    const gated = createStartupGatedAgentChatController();
+
+    const result = await gated.deleteConversation({ chatId: newChatId('chat-1') });
+
+    expect(result.ok).toBe(false);
   });
 });
 

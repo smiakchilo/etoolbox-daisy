@@ -358,6 +358,14 @@ async function applyPostCreateHardening(session: CopilotSession): Promise<void> 
 export interface HardenedSessionClient {
   createSession(config: SessionConfig): Promise<CopilotSession>;
   resumeSession(sessionId: string, config: ResumeSessionConfig): Promise<CopilotSession>;
+  /**
+   * Permanently deletes the SDK's stored session data (`CopilotClient`'s own
+   * `deleteSession`). Optional because this is the only member a test fake
+   * never needs and the only one not exercised by create/resume - the real
+   * client always supplies it. Absent means "this client persists no session
+   * state", which the adapter treats as an idempotent no-op.
+   */
+  deleteSession?(sessionId: string): Promise<void>;
 }
 
 /**

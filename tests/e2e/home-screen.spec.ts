@@ -102,10 +102,25 @@ test('a fresh install lands on the home screen, with no panel covering a gap', a
       .locator('.browser-home__skill-name')
       .evaluateAll((nodes) => nodes.map((node) => node.textContent));
     expect(skillNames).toContain('/search');
-    await expect(page.locator('.browser-home__section-title')).toHaveText('Useful tools');
+    await expect(page.locator('.browser-home__section-title')).toHaveText('Useful commands');
 
     // No hosts are configured, so "Choose a host" is not offered.
     await expect(page.locator('.browser-home__action').first()).toBeDisabled();
+
+    // The action row is Select a host / History / Settings; History opens the
+    // stored-conversations panel (the same one the chat toolbar's button opens).
+    const actionLabels = await page
+      .locator('.browser-home__action')
+      .evaluateAll((nodes) => nodes.map((node) => node.textContent));
+    expect(actionLabels).toEqual(['Select a host', 'History', 'Settings']);
+
+    await page.locator('.browser-home__action', { hasText: 'History' }).click();
+    await expect(page.locator('.history-panel')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.history-panel__empty')).toContainText('No stored conversations', {
+      timeout: 10_000,
+    });
+    await page.locator('.history-panel .panel__close').click();
+    await expect(page.locator('.history-panel')).toBeHidden();
   } finally {
     await app.close();
   }
@@ -284,7 +299,7 @@ test('the home close control sits exactly where a panel close control does, so o
     // control must land on the identical screen position, so the cross does not
     // jump when the panel appears (or when it is dismissed and the welcome
     // screen returns).
-    await page.locator('.browser-home__action', { hasText: 'Open settings' }).click();
+    await page.locator('.browser-home__action', { hasText: 'Settings' }).click();
     await expect(page.locator('.settings-panel')).toBeVisible();
     const panelClose = await page.locator('.settings-panel .panel__close').boundingBox();
 

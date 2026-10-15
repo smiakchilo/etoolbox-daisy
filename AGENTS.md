@@ -52,6 +52,13 @@ Target: Windows 10 x64, internal, unsigned build.
 - 11 — NSIS installer, mock-AEM acceptance (**Milestone B**)
 - 12 — real AEM verification (**Milestone C**, needs an authorized environment)
 
+Step 09's **history surface** now exists — a whole-size History panel listing
+stored conversations (title/date/server) with resume and single-chat delete,
+derived from the journals (see `docs/verification.md` "History and conversation
+browsing: a list, resume, and delete (2026-10-15)"). What remains of Step 09/10
+is recorded in `docs/backlog.md` (per-chat SDK-session history, host cascading
+deletion, the cross-agent resume-honesty item).
+
 Milestone A (steps 00–07) is functionally complete, **except that the 15-row
 manual smoke checklist (in `docs/verification/milestone-a-steps-00-08.md`) has
 never been run by a human.** It needs a real Copilot sign-in and a real AEM instance.
@@ -187,6 +194,13 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
+> The most recent contract change is Step 09's history surface (2026-10-15):
+> `contracts/agentService`'s `AgentService` gained `deleteSession(sdkSessionId)`
+> (implemented by both adapters and the fake; `HardenedSessionClient.deleteSession`
+> is optional) and `agent-chat-ipc.ts` / `ipc-channels.ts` gained the
+> `agent-chat:list-conversations` and `agent-chat:delete-conversation` surface —
+> see `docs/verification.md` "History and conversation browsing: a list, resume,
+> and delete (2026-10-15)".
 
 ### Agents are plugins: one folder under `src/agents/<name>/`
 
@@ -320,6 +334,14 @@ active agent falls back to the first definition; with none the chat pane says
 `createBrokeredQueryExecute`, `resolveBundledResourcesDirectory`,
 `startAppRuntime`, `exposeFakeAgentServiceForTests`).
 
+`chatJournal.ts` (the append-only writer) and `chatJournalReader.ts` (a bounded,
+tolerant read) are accompanied by `chatHistory.ts`: `listChatHistory` derives the
+browsable History list on demand from the journals under `chats/` (title from the
+first user prompt, date/server/session from the header) — there is deliberately
+no `ChatMetadata` store — plus `readChatSessionId`/`removeChatJournal` for
+single-chat deletion. `agentChatController.deleteConversation` orchestrates it:
+close the chat if open, delete its SDK session (best-effort), remove the journal.
+
 `main/aem/` splits deliberately: `resourceUrl.ts` and `queryUrl.ts` build URLs,
 `responseValidation.ts` classifies HTTP responses, `queryResponse.ts` reads
 QueryBuilder semantics, `getJsonProjection.ts` / `queryProjection.ts` shrink
@@ -354,11 +376,24 @@ expected one (AGENTS.md §11) - that asymmetry is the rule, applied to the app's
 own copy.
 
 `chat/` separates view-model from view on purpose: `transcriptViewModel.ts`,
-`composerViewModel.ts` and the query tool's `queryResultViewModel.ts` (now in
+`composerViewModel.ts`, `historyViewModel.ts` and the query tool's `queryResultViewModel.ts` (now in
 `src/tools/aem-query/renderer/`) are pure and heavily tested; `transcriptView.ts` and `composer.ts` only render. `renderMarkdown.ts`
 goes through `marked` + `DOMPurify`. **Never set a cell or message with
 `innerHTML`** — the transcript uses `textContent`, and there are mutation tests
 guarding that.
+
+**History is a whole-size panel, like Settings.** `shell/historyPanel.ts` lists
+the stored conversations (`window.daisy.agentChat.listConversations`, derived in
+main); each row is a title, a start date, and (only when the chat names a
+configured host) a host chip, with an icon **Resume** (the `sp-icon-replay`
+glyph) and a two-step **Delete**. The chat toolbar's History button and the
+browser pane's home screen (its "History" action, beside "Select a host" and
+"Settings") both open it through the same
+`BrowserPanelHost`; the shell owns resume (switch the browser to the chat's host
+via `browser.switchServer`, then `chatPane.openConversationFromHistory`, which
+paints the journal first for offline reading and reports a failed resume rather
+than silently starting fresh) and delete (`agentChat.deleteConversation`, then
+`chatPane.handleConversationDeleted` for the open chat and the last-chat pointer).
 
 **At most one "unfinished process" indicator is on screen.** A running tool-call
 billet supersedes the transient "Thinking" item (`transcriptStore.ts`'s
@@ -930,7 +965,29 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3259 passed / 14 skipped** (+27 against the
+Current baseline: **`npm run test` → 3296 passed / 14 skipped** (+37 against the
+3259 of the previous entry - **History and conversation browsing**: the chat
+toolbar's History button now opens a whole-size **History panel** listing the
+stored conversations (title from the first user prompt, start date and host from
+the journal header - derived on demand by the new `src/main/chatHistory.ts`, no
+`ChatMetadata` store), with **Resume** (paint the journal, then genuinely resume
+the header's session; a failure is reported, never silently replaced by a fresh
+session) and a two-step **Delete** (new `agentChat.deleteConversation`: stop and
+close if open, delete the SDK session via the new `AgentService.deleteSession`,
+remove the journal). The shell switches the browser to the chat's host on
+resume. Contract change: `AgentService.deleteSession` plus the
+`agent-chat:list-conversations` / `agent-chat:delete-conversation` channels.
+Owner decisions: History is a panel (not the child window
+`requirements-decisions.md` §8 named), single-chat delete is in scope, the list
+is derived from the journals, and there is no cross-agent resume-capability flag.
++13 `chatHistory`, +6 controller `deleteConversation`, +3 `sdkAgentService`
+`deleteSession`, +1 fake, +6 `historyViewModel`, +7 `agent-chat-ipc` schemas, +1
+home-screen action row, and the gate/e2e; four mutations caught and one built-app
+spec added. The same work also put **History** and **Settings** buttons on the
+browser pane's home screen (before/next to "Select a host") and renamed the home
+screen's "Useful tools" heading to "Useful commands" - see
+`docs/verification.md` "History and conversation browsing: a list, resume, and
+delete (2026-10-15)"). Before that it was 3259 (+27 against the
 3232 of the previous entry - **the hosts picker carries the open page**: picking
 another host while a page is open opens that page (path, query and fragment) on the
 picked host instead of its root, through the new shared
@@ -1400,9 +1457,17 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 133 tests; a full run is typically 124 passed / 6 failed (the
-latest full run predates the 133rd; only the four hosts-picker/address specs were
-re-run since).** The +1 since 132 is the new `host-switch-contextual.spec.ts`,
+**Playwright → 134 tests; a full run is typically 125 passed / 6 failed.** The
+latest +1 is `history.spec.ts`, proving against the built app that the History
+toolbar button opens the panel, that two sent conversations are listed newest
+first with their titles, dates, and host chips (omitted for the chat that named
+no host), that **Resume** reopens one
+(its transcript returns), and that the two-step **Delete** removes the other (3/3
+under `--repeat-each=3`; a mutation making the History button a no-op failed it
+at `expect(.history-panel).toBeVisible()`). The five neighbouring specs named in
+that entry were re-run green, and `step07-agent-chat` shows only its documented
+pre-existing case-637 failure. Before that, the +1 since 133 is the new
+`host-switch-contextual.spec.ts`,
 proving against the built app, with two request-recording servers, that picking a
 host carries the open page to it (and its query), re-picking the open host and a
 login URL fall back to the root, and a typed origin stays the escape hatch - 5/5

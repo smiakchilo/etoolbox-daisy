@@ -9,7 +9,7 @@ import type { HostOption } from './viewModel';
 
 /**
  * The single-open host for whole-size panels over the pane's page-view
- * region (the hosts panel and the Settings panel today; History later).
+ * region (the hosts panel, the Settings panel and the History panel today).
  * Only one panel is visible at a time: opening a second panel first closes
  * whatever is active. The host owns the native-view suspension dance and
  * nothing else - the panels themselves are plain `Panel` instances managed
@@ -36,11 +36,11 @@ export interface BrowserPane {
    */
   readonly home: HomeScreen;
   /**
-   * The pane-owned status slot for the whole-size panels it hosts (Settings
-   * today, History later). It lives in the page panel directly below the view
-   * slot - outside every panel - so a panel's save feedback survives the panel
-   * being dismissed. Handed to a panel through its options rather than created
-   * by it (a panel-owned row was hidden with the panel).
+   * The pane-owned status slot for the whole-size panels it hosts (Settings and
+   * History today). It lives in the page panel directly below the view
+   * slot - outside every panel - so a panel's feedback (a save, a deletion)
+   * survives the panel being dismissed. Handed to a panel through its options
+   * rather than created by it (a panel-owned row was hidden with the panel).
    */
   readonly surfaceStatus: StatusBannerSink;
   /**
@@ -114,10 +114,16 @@ export interface BrowserPaneCallbacks {
   readonly onToggleAgentPane?: () => void;
   /**
    * Opens Settings as the active panel. The shell owns the settings panel, so
-   * it supplies this callback; the pane's home screen's "Open settings" action
+   * it supplies this callback; the pane's home screen's "Settings" action
    * invokes it.
    */
   readonly onOpenSettings?: () => void;
+  /**
+   * Opens the History panel. The shell owns the history panel (created
+   * alongside Settings), so it supplies this callback; the pane's home screen's
+   * "History" action invokes it.
+   */
+  readonly onOpenHistory?: () => void;
 }
 
 export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): BrowserPane {
@@ -184,6 +190,9 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   const home = createHomeScreen({
     onOpenHosts(): void {
       openPanel(picker);
+    },
+    onOpenHistory(): void {
+      callbacks.onOpenHistory?.();
     },
     onOpenSettings(): void {
       callbacks.onOpenSettings?.();

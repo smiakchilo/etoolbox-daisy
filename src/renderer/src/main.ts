@@ -20,6 +20,7 @@ import '@spectrum-web-components/table/sp-table-row.js';
 import '@spectrum-web-components/table/sp-table-cell.js';
 import '@spectrum-web-components/icons-ui/icons/sp-icon-arrow400.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-refresh.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-replay.js';
 import '@spectrum-web-components/icons-ui/icons/sp-icon-cross600.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-chat-add.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-history.js';
@@ -55,6 +56,7 @@ import './styles/browser.css';
 import './styles/home.css';
 import './styles/chat.css';
 import './styles/settings.css';
+import './styles/history.css';
 import { installTextfieldPlaceholderColor } from './lib/textfieldPlaceholder';
 import { mountMainShell } from './shell/mainShell';
 

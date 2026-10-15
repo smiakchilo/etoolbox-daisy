@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AgentEvent,
   type IdGenerator,
+  type SdkSessionId,
   type SessionStatus,
   applyAgentEvent,
   createAgentServiceError,
@@ -561,6 +562,18 @@ describe('FakeAgentService - open session id', () => {
     await fake.openConversation({ chatId });
 
     expect(fake.getOpenSessionId()).toBe('fake-session-test-id-0');
+  });
+});
+
+describe('FakeAgentService - deleteSession', () => {
+  it('records every session id it is asked to delete, in order', async () => {
+    const fake = createFakeAgentService({ idGenerator: counterIdGenerator() });
+
+    expect(fake.deletedSessionIds()).toEqual([]);
+    expect((await fake.deleteSession('sdk-1' as SdkSessionId)).ok).toBe(true);
+    expect((await fake.deleteSession('sdk-2' as SdkSessionId)).ok).toBe(true);
+
+    expect(fake.deletedSessionIds()).toEqual(['sdk-1', 'sdk-2']);
   });
 });
 
