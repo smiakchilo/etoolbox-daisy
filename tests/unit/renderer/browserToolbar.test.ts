@@ -2048,3 +2048,106 @@ describe('createBrowserToolbar edit-mode toggle', () => {
     expect(button.hasAttribute('hidden')).toBe(false);
   });
 });
+
+describe('createBrowserToolbar host picker selection (navigateToHost)', () => {
+  const author = hostOption();
+  const cloud = hostOption({
+    id: newServerId(() => 'server-cloud'),
+    label: 'Acme Cloud',
+    origin: 'https://acme.adobe.com',
+  });
+
+  function pushPage(url: string, hasDocument = true): void {
+    stateListeners[0]?.({
+      url,
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument,
+    });
+  }
+
+  const addressOf = (toolbar: ReturnType<typeof createBrowserToolbar>): { value: string } =>
+    toolbar.element.querySelector('#browser-address-bar') as unknown as { value: string };
+
+  function loaded(url: string): ReturnType<typeof createBrowserToolbar> {
+    const toolbar = build();
+    toolbar.setHostOptions([author, cloud]);
+    pushPage(url);
+    return toolbar;
+  }
+
+  it('carries the open page to the picked host and shows it in the address bar', () => {
+    const toolbar = loaded('https://author.example/content/acme/us/en/home.html?wcmmode=disabled');
+
+    toolbar.navigateToHost(cloud.origin);
+
+    const expected = 'https://acme.adobe.com/content/acme/us/en/home.html?wcmmode=disabled';
+    expect(browser.navigate).toHaveBeenCalledWith(expected);
+    expect(addressOf(toolbar).value).toBe(expected);
+  });
+
+  it('opens the bare origin for a page outside the allowlist', () => {
+    const toolbar = loaded('https://author.example/libs/granite/core/content/login.html');
+
+    toolbar.navigateToHost(cloud.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
+  });
+
+  it('opens the root when the host picked is the one already open', () => {
+    const toolbar = loaded('https://author.example/content/acme/us/en/home.html');
+
+    toolbar.navigateToHost(author.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://author.example');
+  });
+
+  it('opens the bare origin while no page is loaded', () => {
+    const toolbar = build();
+    toolbar.setHostOptions([author, cloud]);
+
+    toolbar.navigateToHost(cloud.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
+
+    browser.navigate.mockClear();
+    pushPage('https://author.example/content/acme/home.html', false);
+    toolbar.navigateToHost(cloud.origin);
+    expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
+  });
+
+  it('opens the bare origin while the home veil covers the page', () => {
+    const toolbar = loaded('https://author.example/content/acme/home.html');
+    toolbar.setHomeShown(true);
+
+    toolbar.navigateToHost(cloud.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
+  });
+
+  it('opens the bare origin while an error row is showing', async () => {
+    const toolbar = loaded('https://author.example/content/acme/home.html');
+    browser.navigate.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'network_error', message: 'Timed out', errorCode: 'ERR_TIMED_OUT' },
+    });
+    toolbar.navigateTo('https://dead.example/');
+    await vi.waitFor(() => {
+      expect(findMessage(toolbar).hasAttribute('open')).toBe(true);
+    });
+    browser.navigate.mockClear();
+
+    toolbar.navigateToHost(cloud.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
+  });
+
+  it('leaves typing an origin in the address bar as the way to open a host root', () => {
+    const toolbar = loaded('https://author.example/content/acme/home.html');
+
+    toolbar.navigateTo(cloud.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
+  });
+});

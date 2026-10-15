@@ -403,6 +403,19 @@ many times their final height is exactly where anchoring would do that (see
 is a clamp to the maximum — which still reads as "at the bottom". Do not remove
 that rule as a tidy-up.
 
+**The hosts picker carries the open page.** `browserPane.ts` routes a panel
+selection to `toolbar.navigateToHost(origin)`, which opens the page on screen on
+the picked host (`resolveContextualHostUrl`, `src/shared/tools/core/navigation.ts`)
+and otherwise the bare origin. It carries path, query and fragment, but only for an
+allowlisted leading segment (`CARRYABLE_PATH_ROOTS`: `/content`, `/editor.html`,
+`/sites.html`, `/assets.html`, `/assetdetails.html`, `/aem`, `/mnt/overlay`,
+`/crx`, `/system`, `/ui` (`/crx` and `/system` are whole subtrees, with one carve-out: a
+`logout` segment under either is never carried)), never with an authentication parameter, never from a page that is
+not on a configured host, and never while the Home veil, an error row or no
+document is up; re-picking the open host loads its root. `navigateTo(origin)` and a
+typed address are unchanged and are the escape hatch. Widening the allowlist is the
+one constant; the origin always comes from the picked host.
+
 `dev/` holds **dev-only modules** — manual previews/mocks that are never
 business logic and are unreachable in a packaged build (gated by
 `window.daisy.devTools`; see §9). The first is the ask-user preview: the pure
@@ -917,7 +930,17 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3232 passed / 14 skipped** (+5 against the
+Current baseline: **`npm run test` → 3259 passed / 14 skipped** (+27 against the
+3232 of the previous entry - **the hosts picker carries the open page**: picking
+another host while a page is open opens that page (path, query and fragment) on the
+picked host instead of its root, through the new shared
+`resolveContextualHostUrl` / `isCarryablePagePath` in
+`src/shared/tools/core/navigation.ts` (an allowlist of leading segments, an
+auth-parameter guard, built on the same `validateBrowserPath` +
+`buildNavigationUrl` as `browser_navigate`) and the toolbar's new
+`navigateToHost`; the address bar is the escape hatch - see
+`docs/verification.md` "The hosts picker carries the open page to the picked host
+(2026-10-15)"). Before that it was 3232 (+5 against the
 3227 of the previous entry - **"Load all"**: the chat's search table gains a
 **Load all** button beside **Load more**, offered only once an exact total is
 known and the remaining matches fit within `LOAD_ALL_PAGE_LIMIT` (100) further
@@ -1377,8 +1400,14 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 132 tests; a full run is typically 124 passed / 6 failed.** The
-+1 since 131 is the new `edit-mode-toggle.spec.ts`, proving against the built app
+**Playwright → 133 tests; a full run is typically 124 passed / 6 failed (the
+latest full run predates the 133rd; only the four hosts-picker/address specs were
+re-run since).** The +1 since 132 is the new `host-switch-contextual.spec.ts`,
+proving against the built app, with two request-recording servers, that picking a
+host carries the open page to it (and its query), re-picking the open host and a
+login URL fall back to the root, and a typed origin stays the escape hatch - 5/5
+under `--repeat-each=5`, and a mutation on the built pane failed it. The +1 since
+131 is the new `edit-mode-toggle.spec.ts`, proving against the built app
 that the browser toolbar's edit-mode toggle exists (`sp-icon-edit` registered
 with a real shadow root, immediately after the address bar), is hidden unless an
 editable `/content` `.html` page is open, and flips the open page between

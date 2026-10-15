@@ -398,6 +398,43 @@ describe('createBrowserPane closeability', () => {
     expect(home?.hidden).toBe(false);
     expect(viewHost?.hidden).toBe(true);
   });
+
+  it('carries the open page to the host picked in the panel', () => {
+    const pane = build();
+    pane.update({
+      addressValue: 'http://localhost:4502/content/acme/us/en/home.html',
+      hostOptions: [
+        {
+          id: newServerId(() => 'srv-local'),
+          label: 'Local',
+          origin: 'http://localhost:4502',
+          colorCss: '#00f',
+        },
+        {
+          id: newServerId(() => 'srv-cloud'),
+          label: 'Acme Cloud',
+          origin: 'https://acme.adobe.com',
+          colorCss: '#0f0',
+        },
+      ],
+    });
+    stateListeners[0]?.({
+      url: 'http://localhost:4502/content/acme/us/en/home.html',
+      canGoBack: false,
+      canGoForward: false,
+      isLoading: false,
+      hasDocument: true,
+    });
+
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+    pane.element
+      .querySelector<HTMLElement>('.hosts-item[data-origin="https://acme.adobe.com"]')
+      ?.click();
+
+    expect(browser.navigate).toHaveBeenCalledWith(
+      'https://acme.adobe.com/content/acme/us/en/home.html',
+    );
+  });
 });
 
 describe('createBrowserPane navigation failure recovery', () => {

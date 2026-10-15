@@ -146,7 +146,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   const picker = createHostsPanel({
     onSelect(origin: string): void {
       closeActivePanel();
-      toolbar.navigateTo(origin);
+      toolbar.navigateToHost(origin);
     },
     onClose(): void {
       closeActivePanel();

@@ -14,13 +14,14 @@ import {
   restoreBannerRow,
   revealBannerRow,
 } from '../lib/alertBanner';
-import type {
-  AddServerResult,
-  BrowserIpcVoidResult,
-  BrowserNavigationState,
-  CertificateBlockedInfo,
+import {
+  type AddServerResult,
+  type BrowserIpcVoidResult,
+  type BrowserNavigationState,
+  type CertificateBlockedInfo,
+  resolveContextualHostUrl,
+  SERVER_SWATCHES,
 } from '../../../shared';
-import { SERVER_SWATCHES } from '../../../shared';
 import type { HostOption } from './viewModel';
 import {
   canOpenInExternalBrowser,
@@ -131,6 +132,15 @@ export interface BrowserToolbar {
    * navigation failure - is owned by this pane, never the chat pane).
    */
   navigateTo(url: string): void;
+  /**
+   * The hosts picker's selection: navigates to `origin`, carrying the open page
+   * along when it is one that can be replayed on another host
+   * (`resolveContextualHostUrl`) - otherwise to the bare origin, exactly like
+   * `navigateTo(origin)`. The Home veil and an unacknowledged error row mean no
+   * page is reliably on screen, so they never carry. The address bar is the
+   * escape hatch: typing an origin there always opens that origin.
+   */
+  navigateToHost(origin: string): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
   dispose(): void;
 }
@@ -1468,6 +1478,19 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     },
     navigateTo(url: string): void {
       navigateToUrl(url);
+    },
+    navigateToHost(origin: string): void {
+      const pageOnScreen =
+        !homeShown && errorText === null && lastNavigationState?.hasDocument === true;
+      navigateToUrl(
+        pageOnScreen
+          ? resolveContextualHostUrl({
+              currentUrl: currentDisplayedUrl(),
+              configuredOrigins: hostOptions.map((host) => host.origin),
+              targetOrigin: origin,
+            })
+          : origin,
+      );
     },
     dispose(): void {
       cancelLoadingBanner();

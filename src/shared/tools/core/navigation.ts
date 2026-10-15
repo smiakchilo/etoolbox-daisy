@@ -1,5 +1,5 @@
 import type { ServerId } from '../../contracts';
-import { parseOrigin } from '../../contracts';
+import { originsMatch, parseOrigin } from '../../contracts';
 import { type Result, err, ok } from '../../result';
 
 /**
@@ -190,4 +190,124 @@ export function buildNavigationUrl(params: {
   }
 
   return ok(url.toString());
+}
+
+/**
+ * The URL shapes a page may be carried to another host in. An **allowlist** of
+ * leading path segments: the replay of a GET on a host the user did not load it
+ * from must never reach a login, callback or other endpoint nobody chose, so
+ * anything not named here is not carried (the host's root opens instead).
+ * `/crx` and `/system` are whole subtrees (package manager, CRXDE, the OSGi
+ * console); the one exception inside them is {@link LOGOUT_PATH}.
+ */
+const CARRYABLE_PATH_ROOTS: readonly string[] = [
+  '/content',
+  '/editor.html',
+  '/sites.html',
+  '/assets.html',
+  '/assetdetails.html',
+  '/aem',
+  '/mnt/overlay',
+  '/crx',
+  '/system',
+  '/ui',
+];
+
+/**
+ * A `logout` segment under `/crx` or `/system` (`/system/sling/logout.html`,
+ * `/crx/de/logout.jsp`). Carried to another host it would sign the user out of
+ * *that* host - a side effect nobody asked for - so it is never carried, even
+ * though those roots are allowlisted. Scoped to them on purpose: a content page
+ * named `logout.html` is an ordinary page.
+ */
+const LOGOUT_PATH = /^\/(?:crx|system)\/(?:.*\/)?logout(?:\.[^/]*)?(?:\/|$)/i;
+
+/** True when the (already URL-normalised) pathname falls under an allowlisted root. */
+export function isCarryablePagePath(pathname: string): boolean {
+  return (
+    CARRYABLE_PATH_ROOTS.some((root) => pathname === root || pathname.startsWith(`${root}/`)) &&
+    !LOGOUT_PATH.test(pathname)
+  );
+}
+
+/**
+ * Query/fragment parameter names that mark a URL as an authentication hop
+ * (an OAuth/SAML callback, a credential-bearing form GET). Such a URL is never
+ * replayed on another host, even under an allowlisted path.
+ */
+const AUTH_PARAMETER_NAMES = new Set([
+  'samlresponse',
+  'samlrequest',
+  'relaystate',
+  'code',
+  'state',
+  'access_token',
+  'id_token',
+  'token',
+  'j_username',
+  'j_password',
+  'password',
+]);
+
+const AUTH_FRAGMENT_PARAMETER = new RegExp(
+  `[#&?;](?:${[...AUTH_PARAMETER_NAMES].join('|')})=`,
+  'i',
+);
+
+function carriesAuthenticationParameters(url: URL): boolean {
+  for (const name of url.searchParams.keys()) {
+    if (AUTH_PARAMETER_NAMES.has(name.toLowerCase())) return true;
+  }
+  return AUTH_FRAGMENT_PARAMETER.test(url.hash);
+}
+
+/**
+ * The address a host picker selection navigates to: the page currently open,
+ * re-targeted at `targetOrigin`, or `targetOrigin` itself.
+ *
+ * The page is carried - path, query and fragment together, because AEM keeps
+ * the content path in all three (`/content/..`, `?item=/content/..`,
+ * `#/content/..` in CRXDE) - only when every one of these holds:
+ *
+ * - the current URL is an http(s) page on a *configured* host, without userinfo
+ *   (an SSO identity-provider page, an error page or `about:blank` is not);
+ * - the target is a *different* origin (re-picking the host you are on opens its
+ *   root, as it always did);
+ * - its path is under an allowlisted root ({@link isCarryablePagePath});
+ * - it carries no authentication parameter;
+ * - the carried path passes {@link validateBrowserPath}, the same check the
+ *   `browser_navigate` tool applies to a model-supplied path.
+ *
+ * The origin always comes from `targetOrigin` (through
+ * {@link buildNavigationUrl}), never from the current URL, so nothing carried
+ * can steer the navigation to another origin. Anything else falls back to the
+ * bare `targetOrigin`, so the carry is only ever an enhancement.
+ */
+export function resolveContextualHostUrl(params: {
+  readonly currentUrl: string;
+  readonly configuredOrigins: readonly string[];
+  readonly targetOrigin: string;
+}): string {
+  const { currentUrl, configuredOrigins, targetOrigin } = params;
+
+  let current: URL;
+  try {
+    current = new URL(currentUrl);
+  } catch {
+    return targetOrigin;
+  }
+  if (current.protocol !== 'http:' && current.protocol !== 'https:') return targetOrigin;
+  if (current.username !== '' || current.password !== '') return targetOrigin;
+  if (!configuredOrigins.some((origin) => originsMatch(origin, current.origin))) {
+    return targetOrigin;
+  }
+  if (originsMatch(current.origin, targetOrigin)) return targetOrigin;
+  if (!isCarryablePagePath(current.pathname) || carriesAuthenticationParameters(current)) {
+    return targetOrigin;
+  }
+
+  const path = validateBrowserPath(`${current.pathname}${current.search}${current.hash}`);
+  if (!path.ok) return targetOrigin;
+  const built = buildNavigationUrl({ origin: targetOrigin, path: path.value });
+  return built.ok ? built.value : targetOrigin;
 }
