@@ -169,17 +169,11 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
     onNavigationStarted(): void {
       // An externally-caused navigation (a transcript link, a typed/selected
-      // address, Back/Forward, Refresh) reveals the page: dismiss whatever
-      // whole-size panel covers the page-view region, so the destination is
-      // never hidden behind it. In-page navigation never reaches here - it only
-      // produces `browser:state-changed` pushes - so a panel the user opened is
-      // left alone while the AEM page navigates itself.
-      const panelWasOpen = activePanel !== undefined;
-      if (!panelWasOpen && !homeForced) return;
-      homeForced = false;
-      if (panelWasOpen) closeActivePanel();
-      else updateViewVisibility();
-      syncHomeChrome();
+      // address, Back/Forward, Refresh) reveals the page. In-page navigation
+      // never reaches here - it only produces `browser:state-changed` pushes -
+      // so a panel the user opened is left alone while the AEM page navigates
+      // itself.
+      revealPageForExternalNavigation();
     },
     onToggleAgentPane(): void {
       callbacks.onToggleAgentPane?.();
@@ -219,6 +213,16 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     hasDocument = state.hasDocument;
     updateViewVisibility();
     syncHomeChrome();
+  });
+
+  // The agent's own navigation (`browser_navigate`) is external to the page -
+  // the application moves the pane on the user's behalf - so it reveals the
+  // destination exactly like a transcript link: any whole-size panel or the
+  // home veil is dismissed before the load begins. An in-page navigation never
+  // produces this push, so a panel the user opened is still left alone while
+  // the AEM page navigates itself.
+  const unsubscribeAgentNavigation = window.daisy.browser.onAgentNavigation(() => {
+    revealPageForExternalNavigation();
   });
 
   // The slot the native view, the home screen and every whole-size panel share,
@@ -271,10 +275,10 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   /**
    * Reveals the home screen: closes any open panel and forces the home layer
-   * even when a document is loaded, until the next user-initiated navigation
-   * (`onNavigationStarted`) or an explicit close (`home.onClose`). The native
-   * view is only collapsed, so the loaded page stays alive and the AEM bridge
-   * keeps working.
+   * even when a document is loaded, until the next application-caused
+   * navigation (`onNavigationStarted`, or the agent's own `browser_navigate`)
+   * or an explicit close (`home.onClose`). The native view is only collapsed,
+   * so the loaded page stays alive and the AEM bridge keeps working.
    */
   function showHome(): void {
     homeForced = true;
@@ -297,6 +301,25 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     const veil = homeForced && hasDocument;
     toolbar.setHomeShown(veil);
     home.setClosable(veil);
+  }
+
+  /**
+   * Reveals the page when a navigation the *application* caused (a transcript
+   * link, a typed/selected address, Back/Forward, Refresh, or the agent's
+   * `browser_navigate`) begins: dismisses whatever whole-size panel covers the
+   * page-view region and clears the home veil, so the destination is never
+   * hidden behind either. In-page navigation never calls this - it surfaces
+   * only as a `browser:state-changed` push - so a panel the user opened is left
+   * alone while the AEM page navigates itself. A no-op when neither a panel nor
+   * the veil is up.
+   */
+  function revealPageForExternalNavigation(): void {
+    const panelWasOpen = activePanel !== undefined;
+    if (!panelWasOpen && !homeForced) return;
+    homeForced = false;
+    if (panelWasOpen) closeActivePanel();
+    else updateViewVisibility();
+    syncHomeChrome();
   }
 
   function openPanel(panel: Panel): void {
@@ -363,6 +386,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
     dispose(): void {
       unsubscribeState();
+      unsubscribeAgentNavigation();
       surfaceStatus.dispose();
       toolbar.dispose();
       picker.dispose();

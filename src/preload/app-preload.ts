@@ -19,6 +19,7 @@ import {
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
   APP_INFO_CHANNEL,
+  BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
@@ -503,6 +504,15 @@ const daisyApi: DaisyAppApi = {
       ipcRenderer.on(BROWSER_SWITCH_STATE_CHANGED_CHANNEL, handler);
       return () => {
         ipcRenderer.removeListener(BROWSER_SWITCH_STATE_CHANGED_CHANNEL, handler);
+      };
+    },
+    onAgentNavigation(listener: () => void): () => void {
+      const handler = (): void => {
+        listener();
+      };
+      ipcRenderer.on(BROWSER_AGENT_NAVIGATION_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(BROWSER_AGENT_NAVIGATION_CHANNEL, handler);
       };
     },
     onCertificateBlocked(listener: (info: CertificateBlockedInfo) => void): () => void {

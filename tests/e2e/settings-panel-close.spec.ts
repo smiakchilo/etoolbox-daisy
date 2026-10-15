@@ -3,7 +3,11 @@ import { createServer, type Server } from 'node:http';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import {
+  appSettingsSchema,
+  BROWSER_AGENT_NAVIGATION_CHANNEL,
+  defaultAppSettings,
+} from '../../src/shared';
 
 /**
  * Regression test for the Settings panel's dismissal bug: loading a URL from
@@ -171,6 +175,77 @@ test('closing Settings with its close button restores the AEM view and Settings 
     await page.keyboard.press('Escape');
     await expect(settingsPanel).toBeHidden();
     expect(await waitForNativeView('full')).toBe(true);
+  } finally {
+    await app.close();
+    server.close();
+  }
+});
+
+/**
+ * An agent-initiated navigation (`browser_navigate`) must reveal the page it
+ * opens, exactly like a transcript link: with a whole-size panel covering the
+ * page-view region, the agent's `browser:agent-navigation` push dismisses the
+ * panel so the destination is visible. The controller-side send is proven in
+ * `browserController.test.ts`; this proves the built app's preload
+ * subscription actually reaches the pane's panel host.
+ */
+test('an agent navigation dismisses an open Settings panel so the page is revealed', async () => {
+  test.setTimeout(120_000);
+
+  const state = { hits: 0 };
+  const server: Server = createServer((_req, res) => {
+    state.hits += 1;
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><title>echo</title><p>ok</p>');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no port');
+  const origin = `http://127.0.0.1:${String(address.port)}`;
+
+  const { home, env } = launchProfile();
+  const base = defaultAppSettings();
+  writeSettings(
+    home,
+    appSettingsSchema.parse({
+      ...base,
+      hosts: [
+        ...base.hosts,
+        {
+          id: randomUUID(),
+          label: 'Echo',
+          origin,
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+      ],
+    }),
+  );
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    const pickerItem = page.locator(`.hosts-item[data-origin="${origin}"]`);
+    await pickerItem.waitFor({ state: 'visible', timeout: 10_000 });
+    await pickerItem.click();
+    await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
+    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    await viewHost.waitFor({ state: 'visible', timeout: 30_000 });
+
+    await page.locator('.chat-toolbar sp-action-button[title="Settings"]').click();
+    const settingsPanel = page.locator('.settings-panel');
+    await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
+    // The panel replaces the page-view region, so the native view is hidden.
+    await expect(viewHost).toBeHidden();
+
+    // Main's agent navigation pushes the channel; the pane must reveal the
+    // destination by dismissing the covering panel, exactly like a chat link.
+    await app.evaluate(({ BrowserWindow }, channel: string) => {
+      BrowserWindow.getAllWindows()[0]?.webContents.send(channel);
+    }, BROWSER_AGENT_NAVIGATION_CHANNEL);
+
+    await expect(settingsPanel).toBeHidden();
+    await expect(viewHost).toBeVisible();
   } finally {
     await app.close();
     server.close();

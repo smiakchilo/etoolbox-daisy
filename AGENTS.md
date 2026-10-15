@@ -474,6 +474,19 @@ document is up; re-picking the open host loads its root. `navigateTo(origin)` an
 typed address are unchanged and are the escape hatch. Widening the allowlist is the
 one constant; the origin always comes from the picked host.
 
+**An application-caused navigation reveals the page over any panel.**
+`browserPane.ts` dismisses its active panel (and clears the Home veil) when a
+navigation *the application* causes begins, so the destination is never hidden
+behind Settings, History or the hosts picker. Two signals reach the one
+`revealPageForExternalNavigation`: the toolbar's `onNavigationStarted` (a
+transcript link, a typed/selected address, Back/Forward, Refresh - all
+renderer-initiated) and the agent's `browser_navigate`, which main announces
+with the `browser:agent-navigation` push (`browserController.openForAgent`, sent
+once the target has validated) that the app preload exposes as
+`window.daisy.browser.onAgentNavigation`. An in-page navigation produces neither
+- it surfaces only as `browser:state-changed` - so a panel the user opened is
+left alone while the AEM page navigates itself.
+
 `dev/` holds **dev-only modules** — manual previews/mocks that are never
 business logic and are unreachable in a packaged build (gated by
 `window.daisy.devTools`; see §9). The first is the ask-user preview: the pure
@@ -663,6 +676,10 @@ src/tools/<name>/
   (`wireNavigationEpochCancellation` skips only `initiator: 'agent'`); after an
   agent switch settles, if the pane did not land on the target host the epoch is
   bumped as a user navigation, so an in-page link click mid-switch still cancels.
+  Because the navigation is the application moving the pane for the user, main
+  also pushes `browser:agent-navigation` (once the target has validated) so the
+  renderer reveals the destination over any whole-size panel or the Home veil
+  (see §5's "An application-caused navigation reveals the page over any panel").
   It is hand-rolled (like `ask_user`), so it works with no active server when the
   host is named explicitly. No `aem_` prefix: navigating a browser pane is not
   AEM-specific.
@@ -1001,7 +1018,24 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3324 passed / 14 skipped** (+6 against the
+Current baseline: **`npm run test` → 3328 passed / 14 skipped** (+4 against the
+3324 of the previous entry - **an agent navigation reveals the page it opens**:
+with a whole-size panel (Settings/History/hosts picker) or the Home veil
+covering the page-view region, the agent's `browser_navigate` left the new page
+hidden underneath. Main now announces the agent's navigation with a new
+`browser:agent-navigation` push (`browserController.openForAgent`, sent once the
+target has validated) and `browserPane.ts` dismisses the active panel / clears
+the veil through the one `revealPageForExternalNavigation` the toolbar's
+`onNavigationStarted` (a transcript link, typed address, Back/Forward, Refresh)
+already used; an in-page navigation still produces only `browser:state-changed`,
+so a panel the user opened is left alone. Shared-surface change (not
+`contracts/`): a new channel constant in `ipc-channels.ts`, the
+`DaisyBrowserApi.onAgentNavigation` subscription, and its `app-preload.ts`
+implementation. +2 `browserPane` (panel dismissed, veil cleared), +2
+`browserController` (the push on a real navigation, and nothing on an invalid
+path/unknown server); both mutations caught (the controller send removed → its
+new case fails; the pane's reveal no-op'd → both pane cases and the new built-app
+case fail). Before that it was 3324 (+6 against the
 3318 of the previous entry - **a search no longer spends a model round after its
 table**: a success payload carrying `TURN_COMPLETE_RESULT_KEY` (`turnComplete`,
 `src/shared/tools/core/turnCompletion.ts`) ends the model's turn at that tool
@@ -1559,8 +1593,18 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 136 tests; a full run is typically 126 passed / 6 failed.** The
-latest +1 is a fifth `search-tables.spec.ts` case, proving against the built app
+**Playwright → 137 tests; a full run is typically 126 passed / 6 failed.** The
+latest +1 is a new case in `settings-panel-close.spec.ts`, proving against the
+built app that an agent navigation (the `browser:agent-navigation` push sent from
+main) dismisses an open Settings panel and restores the native view; a mutation
+no-op'ing the pane's reveal failed it with the panel still open. It clicks the
+chat toolbar's Settings button (`.chat-toolbar sp-action-button[title="Settings"]`)
+rather than the literal `.first()` the two older cases in that spec use: those two
+fail on a clean HEAD in this environment because the Home screen's own
+`browser-home__action` Settings button is earlier in the DOM and hidden while a
+page is loaded (reproduced with this work stashed) - pre-existing, not caused by
+this change. Before that, the +1 since 136 is a fifth `search-tables.spec.ts` case,
+proving against the built app
 that a turn-completing search result (`turnComplete`) ends the turn: the model is
 not resumed, so a scripted closing delta paints no bubble, no "Session stopped"
 notice is raised and the composer is ready (a mutation disabling the fake's rule

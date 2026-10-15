@@ -1,6 +1,7 @@
 import { app, shell } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
 import {
+  BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
@@ -591,6 +592,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    * host - a supersede, or a page-initiated navigation during the window - the
    * epoch is bumped as a *user* navigation, so an in-page link click mid-switch
    * still cancels the turn.
+   *
+   * Before the load begins it pushes `browser:agent-navigation`, so the
+   * renderer reveals the destination: the agent navigated for the user, so a
+   * whole-size panel (Settings, History, the hosts picker) or the home veil
+   * must not be left covering the new page.
    */
   async function openForAgent(target: OpenPageTarget): Promise<OpenPageOutcome> {
     let settings: AppSettings;
@@ -608,6 +614,13 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     if (!built.ok) return { kind: 'invalid_path' };
 
     const switched = !isSameOriginNavigation(built.value);
+    // The agent is moving the pane on the user's behalf, so the destination
+    // must be visible: tell the renderer to dismiss any whole-size panel (or
+    // the home veil) covering the page-view region *before* the load begins,
+    // exactly as an external navigation like a transcript link already does.
+    // Sent only once the target has validated, so an invalid path or an
+    // unknown server reveals nothing.
+    rendererWebContents.send(BROWSER_AGENT_NAVIGATION_CHANNEL);
     agentNavigation = { targetOrigin: server.origin };
     try {
       const result = await switchServer(server.id, built.value, 'agent');

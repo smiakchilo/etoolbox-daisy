@@ -113,6 +113,15 @@ export const BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL =
   'browser:approve-certificate-exception' as const;
 /** Push channel: main -> renderer, whenever the AEM view's navigation state changes. */
 export const BROWSER_STATE_CHANGED_CHANNEL = 'browser:state-changed' as const;
+/**
+ * Push channel: main -> renderer, when the agent's `browser_navigate` tool
+ * starts a navigation. Unlike an in-page navigation, this is the application
+ * moving the pane on the user's behalf, so the renderer reveals the destination
+ * - dismissing whatever whole-size panel (or home veil) would otherwise hide it.
+ * Carries no payload: the pane only needs to know that an external,
+ * application-caused navigation has begun.
+ */
+export const BROWSER_AGENT_NAVIGATION_CHANNEL = 'browser:agent-navigation' as const;
 /** Push channel: main -> renderer, whenever a server switch starts/finishes. */
 export const BROWSER_SWITCH_STATE_CHANGED_CHANNEL = 'browser:switch-state-changed' as const;
 /** Push channel: main -> renderer, whenever a certificate error has no matching exception. */

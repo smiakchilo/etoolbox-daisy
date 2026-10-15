@@ -17,6 +17,7 @@ import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
 import { proxyConfigSchema, serverConfigSchema, type ServerConfig } from '../../../../src/shared';
 import type { BrowserNavigationState } from '../../../../src/shared';
 import {
+  BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../../../src/shared';
@@ -1369,6 +1370,38 @@ describe('browserController.openForAgent', () => {
     expect(harness.aemViewControls.loadURL).toHaveBeenLastCalledWith(
       'https://author.example/content/wknd.html',
     );
+  });
+
+  it('tells the renderer to reveal the destination when an agent navigation begins', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+    harness.rendererSend.mockClear();
+
+    await harness.controller.openForAgent({
+      serverId: server.id,
+      path: '/content/wknd.html',
+    });
+
+    expect(harness.rendererSend).toHaveBeenCalledWith(BROWSER_AGENT_NAVIGATION_CHANNEL);
+  });
+
+  it('reveals nothing when the agent navigation never starts', async () => {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    harness.rendererSend.mockClear();
+
+    // An invalid path and an unknown server are rejected before any navigation,
+    // so nothing is revealed and no page is left half-shown.
+    await harness.controller.openForAgent({ serverId: server.id, path: 'https://evil.example/x' });
+    await harness.controller.openForAgent({
+      serverId: newServerId(() => 'missing'),
+      path: '/content/x.html',
+    });
+
+    expect(harness.rendererSend).not.toHaveBeenCalledWith(BROWSER_AGENT_NAVIGATION_CHANNEL);
   });
 
   it('attributes a cross-host agent switch to the agent', async () => {

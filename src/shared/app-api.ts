@@ -202,6 +202,13 @@ export interface DaisyBrowserApi {
   onStateChanged(listener: (state: BrowserNavigationState) => void): () => void;
   /** Subscribes to `browser:switch-state-changed`; returns an unsubscribe function. */
   onSwitchStateChanged(listener: (state: BrowserSwitchState) => void): () => void;
+  /**
+   * Subscribes to `browser:agent-navigation`, pushed when the agent's
+   * `browser_navigate` tool starts a navigation, so the pane can reveal the
+   * destination over any whole-size panel or the home veil. Returns an
+   * unsubscribe function.
+   */
+  onAgentNavigation(listener: () => void): () => void;
   /** Subscribes to `browser:certificate-blocked`; returns an unsubscribe function. */
   onCertificateBlocked(listener: (info: CertificateBlockedInfo) => void): () => void;
 }

@@ -30,6 +30,7 @@ interface FakeDaisyBrowser {
   navigate: ReturnType<typeof vi.fn>;
   onStateChanged: ReturnType<typeof vi.fn>;
   onSwitchStateChanged: ReturnType<typeof vi.fn>;
+  onAgentNavigation: ReturnType<typeof vi.fn>;
   onCertificateBlocked: ReturnType<typeof vi.fn>;
 }
 
@@ -37,6 +38,7 @@ let dom: JSDOM;
 let browser: FakeDaisyBrowser;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
 let switchListeners: Array<(state: BrowserSwitchState) => void>;
+let agentNavigationListeners: Array<() => void>;
 
 const previousDocument = Reflect.get(globalThis, 'document') as unknown;
 const previousWindow = Reflect.get(globalThis, 'window') as unknown;
@@ -46,6 +48,7 @@ beforeEach(() => {
   dom = new JSDOM();
   stateListeners = [];
   switchListeners = [];
+  agentNavigationListeners = [];
   browser = {
     setViewBounds: vi.fn(),
     goBack: vi.fn(() => Promise.resolve({ ok: true })),
@@ -63,6 +66,14 @@ beforeEach(() => {
       switchListeners.push(listener);
       return () => {
         switchListeners = switchListeners.filter((candidate) => candidate !== listener);
+      };
+    }),
+    onAgentNavigation: vi.fn((listener: () => void) => {
+      agentNavigationListeners.push(listener);
+      return () => {
+        agentNavigationListeners = agentNavigationListeners.filter(
+          (candidate) => candidate !== listener,
+        );
       };
     }),
     onCertificateBlocked: vi.fn(() => () => undefined),
@@ -104,6 +115,11 @@ function emitNavigationState(): void {
     hasDocument: true,
   };
   for (const listener of stateListeners) listener(minimal);
+}
+
+/** Emits one agent-navigation push to every listener (like one IPC event). */
+function emitAgentNavigation(): void {
+  for (const listener of agentNavigationListeners) listener();
 }
 
 describe('createBrowserPane page panel', () => {
@@ -525,6 +541,47 @@ describe('createBrowserPane navigation failure recovery', () => {
     expect(other.isOpen).toBe(true);
     expect(pane.panelHost.isActive(other)).toBe(true);
     expect(viewHost?.hidden).toBe(true);
+  });
+
+  it('dismisses an open panel when the agent navigates, revealing the destination', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const other = createPanel({
+      title: 'Other',
+      closeAriaLabel: 'Close other',
+      content: document.createElement('div'),
+      onDismiss: () => pane.panelHost.close(),
+    });
+    pane.appendPanel(other);
+    // A page is loaded and covered by the panel - the exact state the reported
+    // bug describes (Settings/History/hosts panel over the page-view region).
+    emitNavigationState();
+    pane.panelHost.open(other);
+    expect(viewHost?.hidden).toBe(true);
+
+    // The agent's `browser_navigate` pushes `browser:agent-navigation`; unlike
+    // an in-page navigation it must reveal the destination.
+    emitAgentNavigation();
+
+    expect(other.isOpen).toBe(false);
+    expect(pane.panelHost.isActive(other)).toBe(false);
+    expect(viewHost?.hidden).toBe(false);
+  });
+
+  it('clears the forced home veil when the agent navigates', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    emitNavigationState();
+    // Home forces the veil over the loaded page; the agent's navigation must
+    // reveal its destination rather than leave the welcome screen up.
+    pane.element.querySelector<HTMLElement>('[title="Home"]')?.click();
+    expect(home?.hidden).toBe(false);
+
+    emitAgentNavigation();
+
+    expect(home?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(false);
   });
 });
 
