@@ -23,7 +23,7 @@ import {
  * to; JSON Lines gives the same strict schema with none of that ceremony.
  *
  * The journal is a UI projection, not a replacement for the SDK's own session
- * state (the SDK session backing a chat lives under `<home>/etoolbox-daisy/copilot`).
+ * state (the SDK session backing a chat lives under the agent's own state directory in `%LOCALAPPDATA%/etoolbox-daisy/agents`).
  * Per the plan it persists complete messages and tool outcomes, and folds the
  * per-token `assistant.text.delta` events into a single
  * `assistant.message.partial` record for a turn that was interrupted before

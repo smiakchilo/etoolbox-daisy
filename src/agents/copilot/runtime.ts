@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+
 import { buildAemToolPolicy } from './aemToolPolicy';
 import { getCopilotAuthPresence } from './authPresence';
 import {
@@ -13,7 +15,6 @@ import {
   toAuthStatus,
   type CopilotClient,
 } from './copilotClient';
-import { getCopilotHomeDir } from './copilotHome';
 import { meta } from './meta';
 import { loadModelCatalog } from './modelCatalog';
 import { resolveCliExePath } from './runtimePaths';
@@ -74,11 +75,14 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
         // Already exited or never started - nothing to clean up.
       }
     },
-    createClient: ({ proxy, githubToken }) =>
-      createHardenedCopilotClient({
+    createClient: ({ proxy, githubToken }) => {
+      mkdirSync(host.stateDirectory, { recursive: true });
+      return createHardenedCopilotClient({
+        copilotHomeDir: host.stateDirectory,
         ...(proxy !== undefined ? { proxy } : {}),
         ...(githubToken !== undefined ? { githubToken } : {}),
-      }),
+      });
+    },
     // A rejection from either resolver (secret storage unavailable, ...)
     // aborts the recycle before the working runtime is touched.
     resolveProxyOverrides: async (settings) =>
@@ -92,7 +96,8 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
       return { status: 'failed', message: 'A login is already in progress' };
     }
     const cliExePath = resolveCliExePath(resolveDefaultRuntimePathsEnv());
-    const copilotHomeDir = getCopilotHomeDir();
+    const copilotHomeDir = host.stateDirectory;
+    mkdirSync(copilotHomeDir, { recursive: true });
     // The sign-in child reaches GitHub through the proxy the user selected for
     // the runtime, rather than bypassing it.
     const { proxy } = await host.resolveConnection(meta.id, settings);
@@ -119,7 +124,7 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
   };
 
   const logout = async (): Promise<LogoutResult> => {
-    const result = await localSignOut(getCopilotHomeDir());
+    const result = await localSignOut(host.stateDirectory);
     await manager.refresh();
     return { apiVersion: 1, warning: result.warning };
   };
@@ -139,7 +144,7 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
     },
     // Cheap and non-starting: reads our own COPILOT_HOME config pointer, never
     // the runtime. Used to gate "Set active" for an inactive Copilot.
-    getAuthPresence: () => getCopilotAuthPresence(),
+    getAuthPresence: () => getCopilotAuthPresence(host.stateDirectory),
     login,
     cancelLogin: () => {
       inFlightLogin?.cancel();

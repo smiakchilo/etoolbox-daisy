@@ -79,6 +79,9 @@ commit unless the user asks.**
 │    aem/ ................ URL building, response validation, broker   │
 │    ipc/ ................ typed IPC handlers, sender guards           │
 │    settingsStore / secretStore / logger / appPaths                   │
+│    (appPaths: visible ~\etoolbox-daisy = settings, chats, logs;      │
+│     technical %LOCALAPPDATA%\etoolbox-daisy = browser, agents,       │
+│     secrets, window-state, tmp)                                      │
 │                                                                      │
 │  src/agents/<name>/  ← agent plugins; the ONLY place an SDK is imported│
 │    copilot/: meta · agent · runtime · sdkAgentService · toolPolicy … │
@@ -269,7 +272,7 @@ src/agents/<name>/
   (`tests/support/agentDiagnosticsConformance.ts`) via its own harness. Semantics
   are documented in `src/shared/contracts/agentEvents.ts`.
 - Copilot's files: `copilotClient.ts` (`createHardenedCopilotClient`),
-  `runtimePaths.ts` (+ `findProjectRoot`), `copilotHome.ts`, `toolPolicy.ts`
+  `runtimePaths.ts` (+ `findProjectRoot`), `toolPolicy.ts`
   (**the hardening core**), `aemToolPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
   `authPresence.ts` (cheap non-starting `getAuthPresence` from `config.json`),
   `modelCatalog.ts`, `runtimeManager.ts`, `runtime.ts`.
@@ -1018,7 +1021,16 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3328 passed / 14 skipped** (+4 against the
+Current baseline: **`npm run test` → 3333 passed / 14 skipped** (+5 against the
+3328 of the previous entry - **technical data moved out of the visible folder**:
+`~\etoolbox-daisy` keeps only settings, chats and logs; the browser profile,
+agent state (`agents\<id>`, via the new `AgentHost.stateDirectory`), secrets,
+window-state and tmp live under `%LOCALAPPDATA%\etoolbox-daisy` (macOS
+`~/Library/Application Support/`, Linux `$XDG_DATA_HOME` or `~/.local/share/`,
+via `getLocalDataDirectory`); `copilotHome.ts`
+and the `copilot` path field are gone, no migration - see `docs/verification.md`
+"Technical data moved out of the visible folder to %LOCALAPPDATA% (2026-10-16)").
+Before that it was 3328 (+4 against the
 3324 of the previous entry - **an agent navigation reveals the page it opens**:
 with a whole-size panel (Settings/History/hosts picker) or the Home veil
 covering the page-view region, the agent's `browser_navigate` left the new page

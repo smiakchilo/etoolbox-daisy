@@ -7,7 +7,6 @@ import type {
   GetAuthStatusResponse,
   GetStatusResponse,
 } from '@github/copilot-sdk';
-import { getCopilotHomeDir } from './copilotHome';
 import { findProjectRoot, resolveSdkRuntimeExePath, type RuntimePathsEnv } from './runtimePaths';
 import type { AuthStatus } from '../../shared';
 
@@ -94,8 +93,8 @@ export function buildRuntimeChildEnv(
 }
 
 export interface CreateHardenedClientOptions {
-  /** Overrides the app-owned COPILOT_HOME dir; tests use a scratch directory. */
-  readonly copilotHomeDir?: string;
+  /** The app-owned COPILOT_HOME dir (`AgentHost.stateDirectory`). */
+  readonly copilotHomeDir: string;
   /** Overrides the resolved runtime exe path; tests use a stub. */
   readonly runtimeExePath?: string;
   readonly proxy?: ProxyEnvOverrides;
@@ -122,12 +121,9 @@ export interface CreateHardenedClientOptions {
  * - `baseDirectory` set to the app-owned `COPILOT_HOME`.
  * - No `mode: "empty"` (see `toolPolicy.ts` for the full reasoning).
  */
-export function createHardenedCopilotClient(
-  options: CreateHardenedClientOptions = {},
-): CopilotClient {
+export function createHardenedCopilotClient(options: CreateHardenedClientOptions): CopilotClient {
   const runtimeExePath =
     options.runtimeExePath ?? resolveSdkRuntimeExePath(resolveDefaultRuntimePathsEnv());
-  const copilotHomeDir = options.copilotHomeDir ?? getCopilotHomeDir();
   const env = buildRuntimeChildEnv(
     options.baseEnv ?? process.env,
     options.proxy,
@@ -136,7 +132,7 @@ export function createHardenedCopilotClient(
 
   return new CopilotClient({
     connection: RuntimeConnection.forStdio({ path: runtimeExePath }),
-    baseDirectory: copilotHomeDir,
+    baseDirectory: options.copilotHomeDir,
     env,
     logLevel: options.logLevel ?? 'warning',
   });

@@ -197,7 +197,7 @@ test('a token typed into Settings is never written in plaintext, and activates t
 
   // The secret store must have produced a file, and that file must NOT contain
   // the plaintext - encryption at rest, verified rather than assumed.
-  const secretsDir = path.join(home, 'etoolbox-daisy', 'settings', 'secrets');
+  const secretsDir = path.join(localAppData, 'etoolbox-daisy', 'secrets');
   const secretFiles = readdirSync(secretsDir);
   expect(secretFiles.length).toBeGreaterThan(0);
 

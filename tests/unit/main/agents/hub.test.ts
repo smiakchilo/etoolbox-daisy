@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import { createAgentHub, type AgentHubDeps } from '../../../../src/main/agents/hub';
@@ -94,6 +96,7 @@ function build(
     definitions: options.definitions ?? DEFINITIONS,
     modules,
     useFake: false,
+    agentsDirectory: AGENTS_DIRECTORY,
     host: {
       isPackaged: false,
       resolveConnection: () => Promise.resolve({}),
@@ -120,8 +123,16 @@ function build(
 }
 
 const SERVICE = {} as AgentService;
+const AGENTS_DIRECTORY = path.join('C:\\', 'data', 'agents');
 
 describe('createAgentHub', () => {
+  it('hands each agent its own state directory under the agents directory', () => {
+    const b = build();
+
+    expect(b.hosts.get('alpha')?.stateDirectory).toBe(path.join(AGENTS_DIRECTORY, 'alpha'));
+    expect(b.hosts.get('beta')?.stateDirectory).toBe(path.join(AGENTS_DIRECTORY, 'beta'));
+  });
+
   it('starts only the configured agent', async () => {
     const b = build();
     await b.hub.start(settingsWithActive(BETA));
@@ -282,6 +293,7 @@ describe('createAgentHub', () => {
       definitions: DEFINITIONS,
       modules: [],
       useFake: true,
+      agentsDirectory: AGENTS_DIRECTORY,
       host: {
         isPackaged: false,
         resolveConnection: () => Promise.resolve({}),

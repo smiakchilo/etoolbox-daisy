@@ -11,6 +11,7 @@ afterEach(() => {
 function host(installService: (service: AgentService) => Promise<void>): AgentHost {
   return {
     isPackaged: false,
+    stateDirectory: 'C:\\agents\\fake',
     resolveConnection: () => Promise.resolve({}),
     createProxyFetch: () => {
       throw new Error('not used');

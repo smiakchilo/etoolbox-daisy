@@ -79,6 +79,14 @@ export interface AgentToolkit {
 export interface AgentHost {
   readonly isPackaged: boolean;
   /**
+   * An absolute directory this agent owns for its runtime state (sessions, its
+   * account config). Application-owned and technical - kept outside the
+   * user-visible data folder - and private to this agent: no other agent is
+   * handed the same one. The host creates the parent, not this directory; an
+   * agent creates it on first use if its SDK does not.
+   */
+  readonly stateDirectory: string;
+  /**
    * Resolves the proxy and token for `agentId` from `settings` (`undefined` before settings load).
    */
   readonly resolveConnection: (

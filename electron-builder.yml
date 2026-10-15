@@ -82,8 +82,13 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  # Application data lives under the user's own etoolbox-daisy home directory
-  # (see requirements-decisions.md section 8), not under this installer's
-  # per-version program directory, so upgrades keep the same data paths.
+  # User-facing data lives under the user's own etoolbox-daisy home directory
+  # (see requirements-decisions.md section 8) and technical data under
+  # %LOCALAPPDATA%\etoolbox-daisy, not under this installer's per-version
+  # program directory, so upgrades keep the same data paths. Neither is removed
+  # by this flag (it only covers $APPDATA\<app name>); scripts/installer.nsh
+  # removes the technical %LOCALAPPDATA% folder on a real uninstall (never on an
+  # upgrade) and leaves the user-visible home folder alone.
   deleteAppDataOnUninstall: false
+  include: scripts/installer.nsh
 publish: null

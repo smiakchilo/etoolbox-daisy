@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AuthPresence } from '../../shared';
-import { getCopilotHomeDir } from './copilotHome';
 
 /**
  * A cheap, *non-starting* sign-in presence probe for Copilot.
@@ -24,9 +23,7 @@ import { getCopilotHomeDir } from './copilotHome';
  * unreadable or absent file is simply "no session" - so it is safe on the
  * Settings refresh path.
  */
-export async function getCopilotAuthPresence(
-  copilotHomeDir: string = getCopilotHomeDir(),
-): Promise<AuthPresence> {
+export async function getCopilotAuthPresence(copilotHomeDir: string): Promise<AuthPresence> {
   try {
     const raw = await readFile(path.join(copilotHomeDir, 'config.json'), 'utf8');
     return { present: hasLoggedInUser(JSON.parse(raw)) };

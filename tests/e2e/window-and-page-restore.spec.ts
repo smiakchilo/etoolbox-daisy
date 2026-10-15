@@ -49,7 +49,7 @@ function createProfile(): Record<string, string> {
 }
 
 function windowStatePath(env: Record<string, string>): string {
-  return path.join(env['USERPROFILE'] ?? '', 'etoolbox-daisy', 'window-state.json');
+  return path.join(env['LOCALAPPDATA'] ?? '', 'etoolbox-daisy', 'window-state.json');
 }
 
 function readWindowStateFile(env: Record<string, string>): {

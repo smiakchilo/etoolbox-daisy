@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import {
   type AgentDefinition,
   type AgentHost,
@@ -56,7 +58,9 @@ export interface AgentHubDeps {
   readonly modules: readonly AgentModule[];
   /** Stand a fake runtime in for every enabled agent; no agent module is used. */
   readonly useFake: boolean;
-  readonly host: Omit<AgentHost, 'installService'>;
+  /** Parent of every agent's own `AgentHost.stateDirectory` (`<agentsDirectory>/<agentId>`). */
+  readonly agentsDirectory: string;
+  readonly host: Omit<AgentHost, 'installService' | 'stateDirectory'>;
   /** Installs `service` as the live chat surface (see `installAgentService`). */
   readonly installService: (service: AgentService) => Promise<void>;
   /** Puts the chat surface into its "no agent available" state. */
@@ -76,6 +80,7 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
   // live chat surface, so each agent's install is gated on being the active one.
   const hostFor = (agentId: AgentId): AgentHost => ({
     ...deps.host,
+    stateDirectory: path.join(deps.agentsDirectory, agentId),
     installService: async (service) => {
       if (agentId === activeId) await deps.installService(service);
     },

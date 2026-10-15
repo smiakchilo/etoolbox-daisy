@@ -39,7 +39,12 @@ import { resolveConnection } from './agents/connection';
 import { createAgentHub, type AgentHub } from './agents/hub';
 import { buildProxyFetch } from './agents/proxyFetch';
 import { buildAgentRegistry, discoverAgentLoaders } from './agents/registry';
-import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
+import {
+  ensureAppDirectories,
+  getLocalDataDirectory,
+  getOsHomeDirectory,
+  resolveAppPaths,
+} from './appPaths';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
 import { listChatHistory, removeChatJournal } from './chatHistory';
@@ -117,10 +122,11 @@ if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
 }
 
-// Resolving paths is pure (os.homedir + path.join): it performs no filesystem
-// access, so it is safe to do before this process owns the single-instance
-// lock. Creating the directories is NOT, and stays below the lock check.
-const appPaths = resolveAppPaths(getOsHomeDirectory());
+// Resolving paths is pure (os.homedir + %LOCALAPPDATA% + path.join): it performs
+// no filesystem access, so it is safe to do before this process owns the
+// single-instance lock. Creating the directories is NOT, and stays below the
+// lock check.
+const appPaths = resolveAppPaths(getOsHomeDirectory(), getLocalDataDirectory());
 
 // By default Chromium on Windows forwards WebAuthn/FIDO2 requests to the
 // native Windows WebAuthn API, which raises the "Windows Security" security-key
@@ -154,7 +160,7 @@ if (startupSettings.browser.disableNativeWebAuthn) {
 //     lock first happens to work today - empirically the native lock is
 //     registered late enough to observe a later `setPath` - but that is an
 //     implicit timing dependency, not a documented contract. Setting the
-//     path first makes "one process owns ~/etoolbox-daisy" true by
+//     path first makes "one process owns %LOCALAPPDATA%\etoolbox-daisy" true by
 //     construction instead of by accident. Verified from both directions in
 //     tests/e2e/step04-storage.spec.ts: two different storage roots do not
 //     conflict, and one storage root still conflicts across different
@@ -166,16 +172,16 @@ if (startupSettings.browser.disableNativeWebAuthn) {
 // browser/session-owned data (cookies, disk cache, Local Storage, GPU cache,
 // Electron's own "Local State" file); "settings"/"copilot"/"chats" are plain
 // app-managed directories read directly from `appPaths` by other modules
-// (settingsStore, secretStore, the agent runtime, chat history), not through
-// `app.getPath`, so they are not set here.
+// (settingsStore, secretStore, each agent's state directory, chat history), not
+// through `app.getPath`, so they are not set here.
 app.setPath('userData', appPaths.browser);
 app.setPath('sessionData', appPaths.browser);
 app.setPath('temp', appPaths.tmp);
 app.setPath('logs', appPaths.logs);
 
-// One process owns `~/etoolbox-daisy`. This must be checked before touching
+// One process owns the application data. This must be checked before touching
 // the filesystem at all: a second launch must not create or write any of
-// the six storage subdirectories, only hand its argv to the primary
+// the storage subdirectories, only hand its argv to the primary
 // instance (via requestSingleInstanceLock's own IPC, unrelated to our
 // storage tree) and exit.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -264,8 +270,7 @@ if (!gotSingleInstanceLock) {
     // wrapper on Windows) is injected as the store's `SecretCipher` here -
     // the only place this app is allowed to construct one - so
     // `secretStore.ts` itself stays Electron-free and unit-testable. The
-    // secrets directory is a subdirectory of the existing `settings` path,
-    // not a new top-level directory alongside `appPaths`'s fixed six.
+    // secrets live in the technical data root, away from `settings.json`.
     const logger = createLogger(appPaths.logs);
     // The tool HTTP log (`logs/tools.log`): the full request URL and the
     // request/response headers for every AEM bridge round trip. Deliberately a
@@ -293,8 +298,7 @@ if (!gotSingleInstanceLock) {
           ids: { chatId: summary.chatId, turnId: summary.turnId },
         }),
     });
-    const secretsDir = path.join(appPaths.settings, 'secrets');
-    const secretStore = createSecretStore(secretsDir, safeStorage);
+    const secretStore = createSecretStore(appPaths.secrets, safeStorage);
 
     // Explicit, observable failure path - never a silent plaintext
     // fallback. `secretStore` itself already throws instead of falling
@@ -785,6 +789,7 @@ if (!gotSingleInstanceLock) {
         definitions: agentDefinitions,
         modules: agentRegistry.modules,
         useFake: useFakeAgentService,
+        agentsDirectory: appPaths.agents,
         host: {
           isPackaged: app.isPackaged,
           resolveConnection: (agentId, settings) =>

@@ -28,6 +28,7 @@ function buildHost(
   const resolveConnection = vi.fn(options.resolveConnection ?? (() => Promise.resolve(connection)));
   const host: AgentHost = {
     isPackaged: false,
+    stateDirectory: 'C:\\agents\\openrouter',
     resolveConnection,
     createProxyFetch: () => globalThis.fetch,
     installService: (service) => {

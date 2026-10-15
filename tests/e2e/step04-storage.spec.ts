@@ -9,7 +9,8 @@ import path from 'node:path';
  *
  *   A. that the app writes under a scratch home instead of the real user
  *      home (isolation - see below for why USERPROFILE alone is not enough),
- *   B. that all six storage subdirectories are really created on disk,
+ *   B. that the visible (home) and technical (LOCALAPPDATA) directories are
+ *      really created on disk, and no technical data lands in the visible one,
  *   C. that `app.setPath(...)` in src/main/index.ts really takes effect, and
  *   D. that `electron.safeStorage` is really available and DPAPI-backed on
  *      this machine, and genuinely satisfies `SecretCipher` at runtime -
@@ -166,9 +167,10 @@ async function expectSecondInstanceRefused(
 }
 
 test.describe('Step 04 storage - Electron-level verification', () => {
-  test("A-D: isolates storage, creates all six subdirectories, redirects Electron's paths, and exposes real DPAPI", async () => {
+  test("A-D: isolates storage, splits visible and technical directories, redirects Electron's paths, and exposes real DPAPI", async () => {
     const profile = createScratchProfile('primary');
     const appRoot = path.join(profile.home, 'etoolbox-daisy');
+    const dataRoot = path.join(profile.localAppData, 'etoolbox-daisy');
 
     // --- A: prove the scratch profile itself never touches the real home,
     // before Electron is even launched. ------------------------------------
@@ -181,13 +183,24 @@ test.describe('Step 04 storage - Electron-level verification', () => {
     try {
       await app.firstWindow();
 
-      // --- B: all six subdirectories exist on the real filesystem --------
-      const subdirs = ['settings', 'browser', 'copilot', 'chats', 'tmp', 'logs'] as const;
-      for (const dir of subdirs) {
-        const dirPath = path.join(appRoot, dir);
+      // --- B: the visible root holds only user-facing data; the technical
+      // root (under LOCALAPPDATA) holds the rest ---------------------------
+      const visibleDirs = ['settings', 'chats', 'logs'] as const;
+      const technicalDirs = ['secrets', 'browser', 'agents', 'tmp'] as const;
+      for (const dirPath of [
+        ...visibleDirs.map((dir) => path.join(appRoot, dir)),
+        ...technicalDirs.map((dir) => path.join(dataRoot, dir)),
+      ]) {
         expect(existsSync(dirPath), `expected ${dirPath} to exist`).toBe(true);
         expect(statSync(dirPath).isDirectory(), `expected ${dirPath} to be a directory`).toBe(true);
       }
+      for (const technical of ['browser', 'copilot', 'copilot-home', 'tmp', 'window-state.json']) {
+        expect(
+          existsSync(path.join(appRoot, technical)),
+          `technical entry "${technical}" must not live in the user-visible root`,
+        ).toBe(false);
+      }
+      expect(existsSync(path.join(appRoot, 'settings', 'secrets'))).toBe(false);
 
       // --- C: app.setPath(...) took effect, and stayed inside the scratch
       // tree (the other half of the part-A isolation proof: this is what
@@ -198,9 +211,9 @@ test.describe('Step 04 storage - Electron-level verification', () => {
         temp: electronApp.getPath('temp'),
         logs: electronApp.getPath('logs'),
       }));
-      expect(electronPaths.userData).toBe(path.join(appRoot, 'browser'));
-      expect(electronPaths.sessionData).toBe(path.join(appRoot, 'browser'));
-      expect(electronPaths.temp).toBe(path.join(appRoot, 'tmp'));
+      expect(electronPaths.userData).toBe(path.join(dataRoot, 'browser'));
+      expect(electronPaths.sessionData).toBe(path.join(dataRoot, 'browser'));
+      expect(electronPaths.temp).toBe(path.join(dataRoot, 'tmp'));
       expect(electronPaths.logs).toBe(path.join(appRoot, 'logs'));
       for (const resolved of Object.values(electronPaths)) {
         expect(
@@ -278,13 +291,11 @@ test.describe('Step 04 storage - Electron-level verification', () => {
       }
     });
 
-    test('investigation: two DIFFERENT scratch USERPROFILE values do NOT conflict with each other', async () => {
-      // Decisive experiment requested by the task: vary ONLY
-      // USERPROFILE/HOME (the storage root), holding APPDATA/LOCALAPPDATA
-      // (Electron's default, pre-setPath userData location) identical
-      // between the two launches. If the second were still refused, the
-      // lock would be global to the default userData; if allowed, it
-      // follows setPath's storage root.
+    test('investigation: two DIFFERENT scratch USERPROFILE values with the SAME LOCALAPPDATA conflict', async () => {
+      // The single-instance lock follows the setPath'd userData, which now
+      // lives under LOCALAPPDATA. Vary ONLY USERPROFILE/HOME (the visible
+      // root), holding APPDATA/LOCALAPPDATA identical: both launches share one
+      // userData, so the second is refused.
       const profileA = createScratchProfile('diff-home-a');
       const profileB = createScratchProfile('diff-home-b');
       const sharedAppData = { appData: profileA.appData, localAppData: profileA.localAppData };
@@ -296,33 +307,20 @@ test.describe('Step 04 storage - Electron-level verification', () => {
       try {
         await appA.firstWindow();
 
-        let appB: LaunchedApp | undefined;
-        try {
-          appB = await electron.launch({
-            args: [mainEntry],
-            env: envFor(profileB, sharedAppData),
-          });
-          const secondWindow = await appB.firstWindow();
-          expect(Boolean(secondWindow)).toBe(true);
-          console.log(
-            '[diff-home, same-appdata] second instance with a different USERPROFILE got its OWN window: ' +
-              "the single-instance lock is scoped to the storage root (setPath'd userData), " +
-              "NOT to Electron's default pre-setPath userData/APPDATA location.",
-          );
-        } finally {
-          await appB?.close().catch(() => {});
-        }
+        await expectSecondInstanceRefused(envFor(profileB, sharedAppData), 'diff-home-same-local');
+        console.log(
+          '[diff-home, same-localappdata] second instance was refused: the single-instance ' +
+            "lock follows the technical root (setPath'd userData under LOCALAPPDATA), not the visible home root.",
+        );
       } finally {
         await appA.close();
       }
     });
 
-    test('investigation: the SAME storage root still conflicts even with a DIFFERENT default userData/APPDATA', async () => {
-      // The complementary half of the decisive experiment: hold
-      // USERPROFILE/HOME (the storage root) fixed, and vary only
-      // APPDATA/LOCALAPPDATA. This isolates the same variable from the
-      // other side and should still collide if the lock truly follows the
-      // storage root rather than the default userData location.
+    test('investigation: the SAME home with a DIFFERENT LOCALAPPDATA does NOT conflict', async () => {
+      // The complementary half: hold USERPROFILE/HOME fixed and vary only
+      // APPDATA/LOCALAPPDATA. The technical roots (and so the userData lock)
+      // differ, so the second instance gets its own window.
       const profile = createScratchProfile('same-home-diff-appdata');
       const altAppData = createScratchProfile('same-home-diff-appdata-alt');
 
@@ -334,11 +332,17 @@ test.describe('Step 04 storage - Electron-level verification', () => {
           appData: altAppData.appData,
           localAppData: altAppData.localAppData,
         });
-        await expectSecondInstanceRefused(secondEnv, 'same-home-diff-appdata');
-        console.log(
-          '[same-home, diff-appdata] second instance was refused despite a different default userData: ' +
-            "confirms the lock follows the storage root, not Electron's default APPDATA-based userData.",
-        );
+        let second: LaunchedApp | undefined;
+        try {
+          second = await electron.launch({ args: [mainEntry], env: secondEnv });
+          expect(Boolean(await second.firstWindow())).toBe(true);
+          console.log(
+            '[same-home, diff-localappdata] second instance got its OWN window: the lock ' +
+              'follows the technical root, not the visible home root.',
+          );
+        } finally {
+          await second?.close().catch(() => {});
+        }
       } finally {
         await primary.close();
       }
