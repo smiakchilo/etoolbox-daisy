@@ -2,6 +2,7 @@ import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProxyId, type ProxySnapshot } from '../../../shared';
 import { createCommitSaver } from './commitSaver';
+import { labelledField } from './fieldHelp';
 import { createPasswordControl } from './passwordEntry';
 import { type SaveOutcome, type StatusBannerSink, confirmDestructiveAction } from './statusBanner';
 import { resolveHostLabelInput, validateOriginInput } from './viewModel';
@@ -39,13 +40,6 @@ function setInvalid(field: TextField, help: HTMLElement, message: string | undef
   }
   field.setAttribute('invalid', '');
   help.textContent = message;
-}
-
-function labelledField(fieldId: string, label: string, control: HTMLElement): HTMLElement {
-  return el('div', {
-    attrs: { class: 'host-field' },
-    children: [el('sp-field-label', { attrs: { for: fieldId }, text: label }), control],
-  });
 }
 
 /**
@@ -121,10 +115,30 @@ function buildProxyItem(
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
-      labelledField(addressFieldId, 'Address (required)', addressField),
-      labelledField(labelFieldId, 'Label', labelField),
-      labelledField(usernameFieldId, 'User name', usernameField),
-      labelledField('', 'Password', passwordControl.element),
+      labelledField(
+        addressFieldId,
+        'Address (required)',
+        addressField,
+        'The address of the proxy server',
+      ),
+      labelledField(
+        labelFieldId,
+        'Label',
+        labelField,
+        'The name shown for this proxy. If blank, defaults to the address',
+      ),
+      labelledField(
+        usernameFieldId,
+        'User name',
+        usernameField,
+        'The user name. Used if the proxy requires authentication',
+      ),
+      labelledField(
+        '',
+        'Password',
+        passwordControl.element,
+        'The password. Used if the proxy requires authentication. Stored in the OS secret store and never shown again',
+      ),
     ],
   });
 

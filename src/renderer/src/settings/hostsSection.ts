@@ -16,6 +16,7 @@ import { colorKey, createColorPicker } from './colorPicker';
 import { createProjectPicker, type ProjectSelection } from './projectPicker';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import { createCommitSaver } from './commitSaver';
+import { labelledField } from './fieldHelp';
 import {
   type SaveOutcome,
   type StatusBannerAction,
@@ -193,56 +194,54 @@ function buildHostItem(
     onChange: onProjectSelectionChange,
   });
 
+  const addressFieldBlock = labelledField(
+    addressFieldId,
+    'Address (required)',
+    addressField,
+    'The host origin, without path',
+  );
+  const colorFieldBlock = labelledField(
+    colorFieldId,
+    'Color tag',
+    colorPicker.element,
+    'The color associated with this host',
+  );
+  colorFieldBlock.classList.add('host-field--color');
+  const labelFieldBlock = labelledField(
+    labelFieldId,
+    'Label',
+    labelField,
+    'The name shown for this host. If blank, defaults to the address',
+  );
+  labelFieldBlock.classList.add('host-field--label');
+  const proxyFieldBlock = labelledField(
+    proxyFieldId,
+    'Proxy',
+    proxyPicker.element,
+    "Which proxy reaches this host. (Default) uses the browser's default proxy",
+  );
+  const projectFieldBlock = labelledField(
+    projectFieldId,
+    'Project',
+    projectPicker.element,
+    "The project describing this host's content layout for the agent. (Default) applies only the standard layout",
+  );
+
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
       // 1. Address - full width, alone on its line.
-      el('div', {
-        attrs: { class: 'host-field' },
-        children: [
-          // No `required` on the label: `sp-field-label` renders that as an
-          // asterisk, and the agreed copy spells it out as "(required)".
-          el('sp-field-label', { attrs: { for: addressFieldId }, text: 'Address (required)' }),
-          addressField,
-        ],
-      }),
+      addressFieldBlock,
       // 2. Colour tag + Label share one line: the colour tag is a fixed width
       // (its hex is a known shape); the label spans the remaining space.
       el('div', {
         attrs: { class: 'host-field-row' },
-        children: [
-          el('div', {
-            attrs: { class: 'host-field host-field--color' },
-            children: [
-              el('sp-field-label', { attrs: { for: colorFieldId }, text: 'Color tag' }),
-              colorPicker.element,
-            ],
-          }),
-          el('div', {
-            attrs: { class: 'host-field host-field--label' },
-            children: [
-              el('sp-field-label', { attrs: { for: labelFieldId }, text: 'Label' }),
-              labelField,
-            ],
-          }),
-        ],
+        children: [colorFieldBlock, labelFieldBlock],
       }),
       // 3. Proxy.
-      el('div', {
-        attrs: { class: 'host-field' },
-        children: [
-          el('sp-field-label', { attrs: { for: proxyFieldId }, text: 'Proxy' }),
-          proxyPicker.element,
-        ],
-      }),
+      proxyFieldBlock,
       // 4. Project.
-      el('div', {
-        attrs: { class: 'host-field' },
-        children: [
-          el('sp-field-label', { attrs: { for: projectFieldId }, text: 'Project' }),
-          projectPicker.element,
-        ],
-      }),
+      projectFieldBlock,
     ],
   });
 

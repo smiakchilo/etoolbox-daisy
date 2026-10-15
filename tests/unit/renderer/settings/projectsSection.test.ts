@@ -161,6 +161,27 @@ describe('createProjectsSection', () => {
     ]);
   });
 
+  it('gives every project field a contextual-help badge carrying its phrase', () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'HPE')]);
+
+    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      "The name shown for this project in the hosts' Project picker",
+      'Where to look for components',
+      'Where to look for pages in search operations',
+      'Paths searched first within the content roots; matches here are listed before the rest',
+      'Where to look for DAM assets in search operations',
+    ]);
+    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
+      'Help: Label',
+      'Help: Component roots',
+      'Help: Content roots',
+      'Help: Content priority paths',
+      'Help: DAM roots',
+    ]);
+  });
+
   it('adds an empty draft only when "Add item" is clicked', () => {
     const section = buildSection();
     section.update([]);

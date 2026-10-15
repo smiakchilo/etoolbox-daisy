@@ -1,5 +1,6 @@
 import { el } from '../lib/dom';
 import type { AppSettingsSnapshot, ProxyId, ProxySnapshot } from '../../../shared';
+import { createContextualHelp, helpAccessibleName, labelledField } from './fieldHelp';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import type { SaveOutcome, StatusBannerSink } from './statusBanner';
 
@@ -67,13 +68,12 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     },
   });
 
-  const proxyField = el('div', {
-    attrs: { class: 'host-field browser-section__proxy' },
-    children: [
-      el('sp-field-label', { attrs: { for: proxyFieldId }, text: 'Default proxy' }),
-      proxyPicker.element,
-    ],
-  });
+  const proxyField = labelledField(
+    proxyFieldId,
+    'Default proxy',
+    proxyPicker.element,
+    "The proxy used by this browser default. Can be overridden by hosts' settings",
+  );
 
   const checkbox = el('sp-checkbox', {
     attrs: { id: 'browser-disable-native-webauthn' },
@@ -85,9 +85,22 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     text: 'Takes effect after restarting the app',
   });
 
+  // The checkbox's own text is its label, so its help badge follows that text
+  // on the same line rather than sitting in a separate label row.
+  const checkboxRow = el('div', {
+    attrs: { class: 'field-label-row' },
+    children: [
+      checkbox,
+      createContextualHelp(
+        'Asks browser to handle security keys autonomously, avoiding the Windows prompt',
+        helpAccessibleName('Suppress the Windows security-key prompt'),
+      ),
+    ],
+  });
+
   const checkboxGroup = el('div', {
     attrs: { class: 'browser-section__group' },
-    children: [checkbox, helper],
+    children: [checkboxRow, helper],
   });
 
   const fields = el('div', {

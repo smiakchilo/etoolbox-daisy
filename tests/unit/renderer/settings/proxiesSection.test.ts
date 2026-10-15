@@ -150,6 +150,25 @@ describe('createProxiesSection', () => {
     for (const button of buttons) expect(button.hasAttribute('quiet')).toBe(true);
   });
 
+  it('gives every proxy field a contextual-help badge carrying its phrase', () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'https://a.example', 'A')]);
+
+    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      'The address of the proxy server',
+      'The name shown for this proxy. If blank, defaults to the address',
+      'The user name. Used if the proxy requires authentication',
+      'The password. Used if the proxy requires authentication. Stored in the OS secret store and never shown again',
+    ]);
+    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
+      'Help: Address',
+      'Help: Label',
+      'Help: User name',
+      'Help: Password',
+    ]);
+  });
+
   it('adds an empty draft only when "Add item" is clicked', () => {
     const section = buildSection();
     section.update([]);

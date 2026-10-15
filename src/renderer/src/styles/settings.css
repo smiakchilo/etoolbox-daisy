@@ -143,6 +143,45 @@
   min-width: 0;
 }
 
+/* A field's label row: the visible label, then an optional contextual-help
+   badge immediately after it (`settings/fieldHelp.ts`) - never pushed to the far
+   right of the column. The same row wraps the Browser tab's checkbox, whose own
+   text is its label. */
+.field-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The help badge: a small, quiet marker immediately after a field's label. It is
+   deliberately understated - 80% scale, 70% opacity at rest - so it reads as an
+   annotation rather than a control. Its one hover cue is returning to full
+   opacity; the fill and content colour never change. The popover it opens lives
+   in the native top layer, which escapes this transform and opacity (verified
+   against the built app), so the help text itself is never scaled or faded.
+   Scaling from the left edge keeps the visible badge flush against the label's
+   text, leaving the row's 8px gap as the whole separation. */
+.field-label-row sp-contextual-help {
+  flex: 0 0 auto;
+  transform: scale(0.8);
+  transform-origin: left center;
+  opacity: 0.7;
+  transition: opacity var(--spectrum-animation-duration-100, 130ms) ease-in-out;
+
+  /* No hover/press/focus fill or colour shift; the hover cue is opacity only. */
+  --mod-actionbutton-background-color-hover: transparent;
+  --mod-actionbutton-background-color-down: transparent;
+  --mod-actionbutton-background-color-focus: transparent;
+  --mod-actionbutton-content-color-hover: var(--spectrum-neutral-content-color-default);
+  --mod-actionbutton-content-color-down: var(--spectrum-neutral-content-color-default);
+  --mod-actionbutton-content-color-focus: var(--spectrum-neutral-content-color-default);
+}
+
+.field-label-row sp-contextual-help:hover {
+  opacity: 1;
+}
+
 .host-item__fields {
   display: flex;
   flex-direction: column;

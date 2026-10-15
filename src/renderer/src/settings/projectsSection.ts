@@ -2,6 +2,7 @@ import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProjectId, type ProjectSnapshot } from '../../../shared';
 import { createCommitSaver } from './commitSaver';
+import { labelledField } from './fieldHelp';
 import { type SaveOutcome, type StatusBannerSink, confirmDestructiveAction } from './statusBanner';
 import { validateProjectLabelInput } from './viewModel';
 
@@ -38,13 +39,6 @@ function setInvalid(field: TextField, help: HTMLElement, message: string | undef
   }
   field.setAttribute('invalid', '');
   help.textContent = message;
-}
-
-function labelledField(fieldId: string, label: string, control: HTMLElement): HTMLElement {
-  return el('div', {
-    attrs: { class: 'host-field' },
-    children: [el('sp-field-label', { attrs: { for: fieldId }, text: label }), control],
-  });
 }
 
 /**
@@ -131,11 +125,36 @@ function buildProjectItem(
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
-      labelledField(labelFieldId, 'Label (required)', labelField),
-      labelledField(componentRootsFieldId, 'Component roots', componentRootsField),
-      labelledField(contentRootsFieldId, 'Content roots', contentRootsField),
-      labelledField(priorityPathsFieldId, 'Content priority paths', priorityPathsField),
-      labelledField(damRootsFieldId, 'DAM roots', damRootsField),
+      labelledField(
+        labelFieldId,
+        'Label (required)',
+        labelField,
+        "The name shown for this project in the hosts' Project picker",
+      ),
+      labelledField(
+        componentRootsFieldId,
+        'Component roots',
+        componentRootsField,
+        'Where to look for components',
+      ),
+      labelledField(
+        contentRootsFieldId,
+        'Content roots',
+        contentRootsField,
+        'Where to look for pages in search operations',
+      ),
+      labelledField(
+        priorityPathsFieldId,
+        'Content priority paths',
+        priorityPathsField,
+        'Paths searched first within the content roots; matches here are listed before the rest',
+      ),
+      labelledField(
+        damRootsFieldId,
+        'DAM roots',
+        damRootsField,
+        'Where to look for DAM assets in search operations',
+      ),
     ],
   });
 

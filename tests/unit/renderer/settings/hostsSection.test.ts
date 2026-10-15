@@ -185,6 +185,27 @@ describe('createHostsSection', () => {
     expect(section.element.querySelectorAll('.multifield__action--remove')).toHaveLength(2);
   });
 
+  it('gives every host field a contextual-help badge carrying its phrase', () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'https://a.example', 'A')]);
+
+    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      'The host origin, without path',
+      'The color associated with this host',
+      'The name shown for this host. If blank, defaults to the address',
+      "Which proxy reaches this host. (Default) uses the browser's default proxy",
+      "The project describing this host's content layout for the agent. (Default) applies only the standard layout",
+    ]);
+    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
+      'Help: Address',
+      'Help: Color tag',
+      'Help: Label',
+      'Help: Proxy',
+      'Help: Project',
+    ]);
+  });
+
   it('adds an empty draft only when "Add item" is clicked', () => {
     const section = buildSection();
     section.update([]);

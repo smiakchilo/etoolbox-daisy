@@ -294,6 +294,30 @@ describe('createAgentsSection', () => {
     ).toEqual(['API key (token)', 'Proxy', 'Model', 'Reasoning effort']);
   });
 
+  it('gives every agent field a contextual-help badge, but not the auth row', async () => {
+    const section = buildSection();
+    await section.refresh(snapshotWith({ copilot: { active: true } }));
+
+    const firstItem = section.element.querySelector('.agent-item');
+    const badges = [...(firstItem?.querySelectorAll('sp-contextual-help') ?? [])];
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      'The stored token this provider signs in with; kept in the OS secret store and never shown again',
+      "Which proxy the provider's runtime uses",
+      'The model this provider uses. Some providers may offer no choice of models',
+      'How much the model reasons before answering. Some models do not support reasoning or give no choice',
+    ]);
+    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
+      'Help: API key (token)',
+      'Help: Proxy',
+      'Help: Model',
+      'Help: Reasoning effort',
+    ]);
+    // The auth row is a status light, not an input field, so it carries none.
+    expect(
+      section.element.querySelector('.agent-item__auth')?.querySelector('sp-contextual-help'),
+    ).toBeNull();
+  });
+
   it('shows a settings-derived marker on a provider whose runtime is not running', async () => {
     const section = buildSection();
     await section.refresh(snapshotWith({ copilot: { active: true } }));

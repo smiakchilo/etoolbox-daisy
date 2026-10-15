@@ -14,6 +14,7 @@ import {
   resolveEffectiveActiveAgentId,
 } from '../../../shared';
 import { createCommitSaver } from './commitSaver';
+import { labelledField } from './fieldHelp';
 import {
   buildAgentsViewModel,
   catalogueFailureMessage,
@@ -93,13 +94,6 @@ export interface AgentsSection {
 }
 
 type PickerElement = HTMLElement & { value: string; disabled: boolean };
-
-function labelledField(fieldId: string, label: string, control: HTMLElement): HTMLElement {
-  return el('div', {
-    attrs: { class: 'host-field' },
-    children: [el('sp-field-label', { attrs: { for: fieldId }, text: label }), control],
-  });
-}
 
 /** An agent's stored proxy id as the picker's value; absent means "(No proxy)". */
 function agentProxySelection(proxyId: ProxyId | undefined): ProxySelection {
@@ -435,10 +429,30 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
             // No label above this row: the status light says what it is, and
             // the user's own wording for it is the light's text.
             authControl,
-            labelledField('', 'API key (token)', tokenControl.element),
-            labelledField(proxyFieldId, 'Proxy', proxyPicker.element),
-            labelledField(modelFieldId, 'Model', modelPicker),
-            labelledField(effortFieldId, 'Reasoning effort', effortPicker),
+            labelledField(
+              '',
+              'API key (token)',
+              tokenControl.element,
+              'The stored token this provider signs in with; kept in the OS secret store and never shown again',
+            ),
+            labelledField(
+              proxyFieldId,
+              'Proxy',
+              proxyPicker.element,
+              "Which proxy the provider's runtime uses",
+            ),
+            labelledField(
+              modelFieldId,
+              'Model',
+              modelPicker,
+              'The model this provider uses. Some providers may offer no choice of models',
+            ),
+            labelledField(
+              effortFieldId,
+              'Reasoning effort',
+              effortPicker,
+              'How much the model reasons before answering. Some models do not support reasoning or give no choice',
+            ),
           ],
         }),
       ],

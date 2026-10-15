@@ -4,6 +4,7 @@ import '@spectrum-web-components/theme/scale-medium.js';
 import '@spectrum-web-components/button/sp-button.js';
 import '@spectrum-web-components/textfield/sp-textfield.js';
 import '@spectrum-web-components/field-label/sp-field-label.js';
+import '@spectrum-web-components/contextual-help/sp-contextual-help.js';
 import '@spectrum-web-components/status-light/sp-status-light.js';
 import '@spectrum-web-components/action-button/sp-action-button.js';
 import '@spectrum-web-components/picker-button/sp-picker-button.js';

@@ -380,10 +380,11 @@ features, left as real windows for SSO - vs tabs, loaded in the same view),
 ### `src/renderer/`
 
 **Adobe Spectrum Web Components for all UI** —
-<https://opensource.adobe.com/spectrum-web-components/>. Twenty packages, all
-pinned to `1.12.2` (including `alert-banner`, which renders the browser pane's
-status/message row); add new ones at that same version. Elements are registered
-by side-effect import in `src/renderer/src/main.ts`.
+<https://opensource.adobe.com/spectrum-web-components/>. Twenty-one packages,
+all pinned to `1.12.2` (including `alert-banner`, which renders the browser
+pane's status/message row, and `contextual-help`, the Settings fields' help
+badges); add new ones at that same version. Elements are registered by
+side-effect import in `src/renderer/src/main.ts`.
 
 **Banner copy never ends with a period.** Every message row
 (`lib/alertBanner.ts`'s `sp-alert-banner` surfaces) reads as a label, not a
@@ -393,6 +394,25 @@ in-text sentences are joined with a period only where they need it. An E2E once
 failed precisely because a helper text had no period while its assertion
 expected one (AGENTS.md §11) - that asymmetry is the rule, applied to the app's
 own copy.
+
+**Every Settings field carries contextual help.** Each field's label row is
+built by `settings/fieldHelp.ts`'s `labelledField(fieldId, label, control,
+helpText)` - the visible label, then an `sp-contextual-help` badge immediately
+after it - or, for a control with no label of its own (the Browser tab's
+checkbox), a bare `createContextualHelp(text, accessibleName)` in a
+`.field-label-row`. A control that is not an input at all carries none (the
+Agents tab's auth row is a status light, not a field). The help is one short
+phrase stating the field's role and then its limitations, **fixed in code**
+(there is no translation layer and none is planned), **never ending with a
+period**, and every Settings field must have one: new work is a call to
+`labelledField` with its own text, never a hand-written `<sp-field-label>` +
+control pair. The per-section tests assert the exact badge set
+(`tests/unit/renderer/settings/*.test.ts`), so a field added without help fails
+them. The badge derives its accessible name from the visible label
+(`Help: <Field>`, a `(required)` suffix dropped), opens its popover
+`bottom-start` so it stays inside the panel, and is styled by `settings.css` as
+an understated marker - 80% scale, 70% opacity at rest, returning to full opacity
+on hover, with no fill or content-colour change.
 
 `chat/` separates view-model from view on purpose: `transcriptViewModel.ts`,
 `composerViewModel.ts`, `historyViewModel.ts` and the query tool's `queryResultViewModel.ts` (now in
@@ -1021,7 +1041,20 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3333 passed / 14 skipped** (+5 against the
+Current baseline: **`npm run test` → 3345 passed / 14 skipped** (+9 against the
+3336 the working tree measured before this change - the 3333 recorded here
+earlier was stale - **contextual help on every Settings field**: each field's
+label row is now built by `settings/fieldHelp.ts`'s `labelledField(...)` - the
+label, then an `sp-contextual-help` badge (Spectrum 1.12.2, newly added and
+registered in `main.ts`) immediately after it - carrying one short phrase per
+field, fixed in code; a control with no label of its own (the Browser checkbox)
+gets a bare `createContextualHelp(...)` in a `.field-label-row`, while a
+non-input control (the Agents auth row) gets none. +4 `fieldHelp`, +1 each in
+`hostsSection`/`projectsSection`/`proxiesSection`/`browserSection`/
+`agentsSection`, and a new built-app `settings-context-help.spec.ts`; three
+mutations caught - see `docs/verification.md` "Contextual help on every Settings
+field (2026-10-16)").
+Before that it was 3333 (+5 against the
 3328 of the previous entry - **technical data moved out of the visible folder**:
 `~\etoolbox-daisy` keeps only settings, chats and logs; the browser profile,
 agent state (`agents\<id>`, via the new `AgentHost.stateDirectory`), secrets,
@@ -1605,8 +1638,15 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 137 tests; a full run is typically 126 passed / 6 failed.** The
-latest +1 is a new case in `settings-panel-close.spec.ts`, proving against the
+**Playwright → 138 tests; a full run is typically 126 passed / 6 failed.** The
+latest +1 is `settings-context-help.spec.ts`, proving against the built app that
+every Settings field's `sp-contextual-help` badge is a genuinely registered
+element with a shadow root, sits immediately after its label, is styled as an
+understated marker (scale 0.8, opacity 0.7 rising to 1 on hover, no fill change),
+and opens its popover on click (a mutation removing the registration import from
+`main.ts` failed it at `customElements.get`; a mutation dropping the badge from
+`labelledField` failed the unit suites too). Before that, the +1 since 137 is a
+new case in `settings-panel-close.spec.ts`, proving against the
 built app that an agent navigation (the `browser:agent-navigation` push sent from
 main) dismisses an open Settings panel and restores the native view; a mutation
 no-op'ing the pane's reveal failed it with the panel still open. It clicks the

@@ -123,6 +123,20 @@ describe('createBrowserSection', () => {
     expect(section.element.textContent).toContain('Takes effect after restarting the app');
   });
 
+  it('gives both fields a contextual-help badge carrying its phrase', () => {
+    const section = buildSection();
+
+    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
+    expect(badges.map((badge) => badge.textContent)).toEqual([
+      "The proxy used by this browser default. Can be overridden by hosts' settings",
+      'Asks browser to handle security keys autonomously, avoiding the Windows prompt',
+    ]);
+    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
+      'Help: Default proxy',
+      'Help: Suppress the Windows security-key prompt',
+    ]);
+  });
+
   it('reflects the stored value on update, in both directions', () => {
     const section = buildSection();
     section.update(snapshotWith(false));
