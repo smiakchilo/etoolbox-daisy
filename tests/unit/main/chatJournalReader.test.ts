@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { readChatJournal } from '../../../src/main/chatJournalReader';
+import { readChatJournal, readChatSessionIds } from '../../../src/main/chatJournalReader';
 
 /**
  * `chatJournalReader` is deliberately injectable (`readText`/`fileSize`), so
@@ -45,6 +45,13 @@ const interruption = {
   at: 4,
   chatId: 'chat-1',
   reason: 'stopped',
+};
+
+const sessionOpened = {
+  recordType: 'session.opened',
+  at: 5,
+  chatId: 'chat-1',
+  sdkSessionId: 'sdk-2',
 };
 
 function lines(...records: unknown[]): string {
@@ -136,5 +143,46 @@ describe('readChatJournal', () => {
     const readText = vi.fn(() => lines(header));
     readChatJournal(CHATS_DIR, 'chat-1', { fileSize: () => 1, readText });
     expect(readText).toHaveBeenCalledWith(path.join(CHATS_DIR, 'chat-1.jsonl'));
+  });
+});
+
+describe('readChatSessionIds', () => {
+  it('returns the header session first, then one id per session.opened record', () => {
+    const ids = readChatSessionIds(CHATS_DIR, 'chat-1', {
+      fileSize: () => 100,
+      readText: () =>
+        lines(header, userPrompt, sessionOpened, {
+          ...sessionOpened,
+          sdkSessionId: 'sdk-3',
+        }),
+    });
+    expect(ids).toEqual(['sdk-1', 'sdk-2', 'sdk-3']);
+  });
+
+  it('reads an old journal with a header only as a single id', () => {
+    const ids = readChatSessionIds(CHATS_DIR, 'chat-1', {
+      fileSize: () => 100,
+      readText: () => lines(header, userPrompt),
+    });
+    expect(ids).toEqual(['sdk-1']);
+  });
+
+  it('returns no ids for an unreadable, oversized or missing file', () => {
+    expect(
+      readChatSessionIds(CHATS_DIR, 'chat-1', {
+        fileSize: () => {
+          throw new Error('ENOENT');
+        },
+        readText: () => '',
+      }),
+    ).toEqual([]);
+    expect(
+      readChatSessionIds(CHATS_DIR, 'chat-1', {
+        maxBytes: 10,
+        fileSize: () => 11,
+        readText: () => lines(header),
+      }),
+    ).toEqual([]);
+    expect(readChatSessionIds(CHATS_DIR, '../escape', { fileSize: () => 1 })).toEqual([]);
   });
 });

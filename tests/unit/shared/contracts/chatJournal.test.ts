@@ -53,6 +53,46 @@ describe('chatJournalRecordSchema - header', () => {
   });
 });
 
+describe('chatJournalRecordSchema - session.opened', () => {
+  it('accepts a later session the chat was opened with', () => {
+    expect(
+      parseChatJournalRecord({
+        recordType: 'session.opened',
+        at: 1_700_000_000_500,
+        chatId: CHAT_ID,
+        sdkSessionId: 'sdk-session-2',
+      }),
+    ).toEqual({
+      recordType: 'session.opened',
+      at: 1_700_000_000_500,
+      chatId: CHAT_ID,
+      sdkSessionId: 'sdk-session-2',
+    });
+  });
+
+  it('rejects a missing sdkSessionId', () => {
+    expect(
+      chatJournalRecordSchema.safeParse({
+        recordType: 'session.opened',
+        at: 1,
+        chatId: CHAT_ID,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an unrecognised extra key (strict)', () => {
+    expect(
+      chatJournalRecordSchema.safeParse({
+        recordType: 'session.opened',
+        at: 1,
+        chatId: CHAT_ID,
+        sdkSessionId: 'sdk-session-2',
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe('chatJournalRecordSchema - other record kinds', () => {
   it('accepts a user.prompt record', () => {
     expect(

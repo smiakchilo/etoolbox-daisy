@@ -5,9 +5,8 @@ import {
   type ChatId,
   type ChatJournalRecord,
   chatIdSchema,
-  type SdkSessionId,
 } from '../shared';
-import { toChatFileName } from './chatJournal';
+import { toChatFileName } from './chatJournalPaths';
 import { readChatJournal, type ChatJournalReadOutcome } from './chatJournalReader';
 
 /**
@@ -125,18 +124,6 @@ export function listChatHistory(
     return left.chatId < right.chatId ? -1 : left.chatId > right.chatId ? 1 : 0;
   });
   return entries;
-}
-
-/** The SDK session id a chat's journal header recorded, or `undefined` if there is none to read. */
-export function readChatSessionId(
-  chatsDir: string,
-  chatId: ChatId,
-  options: ChatHistoryListOptions = {},
-): SdkSessionId | undefined {
-  const readJournal = options.readJournal ?? readChatJournal;
-  const outcome = readJournal(chatsDir, chatId);
-  if (!outcome.ok) return undefined;
-  return outcome.records.find((record) => record.recordType === 'header')?.sdkSessionId;
 }
 
 /**

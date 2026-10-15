@@ -206,12 +206,22 @@ describe('createChatJournal - header', () => {
 
   it('appends without a header when the file already has content (a resumed chat)', () => {
     const dir = createScratchRoot();
-    writeFileSync(path.join(dir, `${CHAT_ID}.jsonl`), '{"recordType":"header"}\n', 'utf8');
+    writeFileSync(
+      path.join(dir, `${CHAT_ID}.jsonl`),
+      JSON.stringify({
+        recordType: 'header',
+        schemaVersion: 1,
+        chatId: CHAT_ID,
+        sdkSessionId: SDK_SESSION_ID,
+        startedAt: 1,
+      }) + '\n',
+      'utf8',
+    );
     const journal = createChatJournal(dir, { now: counterClock() });
     journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     const records = readRecords(dir);
-    expect(records[0]).toEqual({ recordType: 'header' });
+    expect(records[0]).toMatchObject({ recordType: 'header', sdkSessionId: 'sdk-session-1' });
     expect(
       records.filter((record) => (record as { recordType: string }).recordType === 'header'),
     ).toHaveLength(1);
@@ -223,6 +233,102 @@ describe('createChatJournal - header', () => {
     const journal = createChatJournal(dir, { now: counterClock() });
     journal.openChat({ chatId: '../escape' as ChatId, sdkSessionId: SDK_SESSION_ID });
     expect(journal.getHealth().lastFailureCode).toBe('UNSAFE_CHAT_ID');
+  });
+});
+
+describe('createChatJournal - later sessions (session.opened)', () => {
+  const SECOND_SESSION = 'sdk-session-2' as SdkSessionId;
+
+  function recordTypes(dir: string): string[] {
+    return readRecords(dir).map((record) => (record as { recordType: string }).recordType);
+  }
+
+  it('records a session.opened when an open chat is recycled to a new session', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordEvent(stateChanged('sending'));
+    // A runtime recycle re-opens the same chat under a new session.
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SECOND_SESSION });
+    journal.recordEvent(stateChanged('idle'));
+
+    const records = readRecords(dir);
+    expect(
+      records.filter((record) => (record as { recordType: string }).recordType === 'header'),
+    ).toHaveLength(1);
+    expect(records[0]).toMatchObject({ recordType: 'header', sdkSessionId: 'sdk-session-1' });
+    const opened = records.filter(
+      (record) => (record as { recordType: string }).recordType === 'session.opened',
+    );
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({
+      recordType: 'session.opened',
+      sdkSessionId: 'sdk-session-2',
+    });
+  });
+
+  it('does not record a second session.opened for the same session', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordEvent(stateChanged('sending'));
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordEvent(stateChanged('idle'));
+    expect(recordTypes(dir)).toEqual(['header', 'agent.event', 'agent.event']);
+  });
+
+  it("replaces the deferred header's session when a chat is recycled before it is used", () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    // Opened but never used: the header is still pending and no file exists.
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SECOND_SESSION });
+    journal.recordEvent(stateChanged('sending'));
+
+    const records = readRecords(dir);
+    expect(records[0]).toMatchObject({ recordType: 'header', sdkSessionId: 'sdk-session-2' });
+    expect(recordTypes(dir)).toEqual(['header', 'agent.event']);
+  });
+
+  it('records a session.opened when an existing journal is opened under a new session', () => {
+    const dir = createScratchRoot();
+    writeFileSync(
+      path.join(dir, `${CHAT_ID}.jsonl`),
+      JSON.stringify({
+        recordType: 'header',
+        schemaVersion: 1,
+        chatId: CHAT_ID,
+        sdkSessionId: SDK_SESSION_ID,
+        startedAt: 1,
+      }) + '\n',
+      'utf8',
+    );
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SECOND_SESSION });
+
+    expect(recordTypes(dir)).toEqual(['header', 'session.opened']);
+    expect(readRecords(dir)[1]).toMatchObject({
+      recordType: 'session.opened',
+      sdkSessionId: 'sdk-session-2',
+    });
+  });
+
+  it('appends nothing when an existing journal is reopened under its recorded session', () => {
+    const dir = createScratchRoot();
+    writeFileSync(
+      path.join(dir, `${CHAT_ID}.jsonl`),
+      JSON.stringify({
+        recordType: 'header',
+        schemaVersion: 1,
+        chatId: CHAT_ID,
+        sdkSessionId: SDK_SESSION_ID,
+        startedAt: 1,
+      }) + '\n',
+      'utf8',
+    );
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    expect(readRecords(dir)).toHaveLength(1);
   });
 });
 

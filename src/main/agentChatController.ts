@@ -145,18 +145,20 @@ export interface AgentChatControllerDeps {
    */
   readonly resolveSkillPrompt?: (prompt: string) => string;
   /**
-   * Reads the SDK session id a chat's journal header recorded, so conversation
-   * deletion can delete the SDK's stored session data (`deleteSession`). The
-   * controller keeps no historical chat-to-session map - the journal is the
-   * only record. Optional so a unit test can construct a controller without
-   * chat storage; conversation deletion then deletes no SDK session.
+   * Reads every SDK session id a chat's journal recorded, so conversation
+   * deletion can delete the SDK's stored data for each (`deleteSession`). A
+   * chat opened under a new session after a runtime recycle records more than
+   * the header's first id, and all of them must go. The controller keeps no
+   * historical chat-to-session map - the journal is the only record. Optional
+   * so a unit test can construct a controller without chat storage;
+   * conversation deletion then deletes no SDK session.
    */
-  readonly readChatSessionId?: (chatId: ChatId) => SdkSessionId | undefined;
+  readonly readChatSessionIds?: (chatId: ChatId) => readonly SdkSessionId[];
   /**
    * Removes a chat's stored journal file (the app's own conversation storage).
    * Returns `false` when it could not be removed, which conversation deletion
    * reports as a storage error rather than declaring the chat gone. Optional
-   * like `readChatSessionId`.
+   * like `readChatSessionIds`.
    */
   readonly removeChatJournal?: (chatId: ChatId) => boolean;
 }
@@ -730,11 +732,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
    *     about to have no stored transcript, and the journal's leftover
    *     bookkeeping (partial message, abandoned tool calls, `chat.closed`) is
    *     written before the file is removed.
-   *  2. Delete the SDK's stored session data for the session the journal's
-   *     header recorded. Deliberately non-fatal: the request cannot be proven
+   *  2. Delete the SDK's stored session data for every session the journal
+   *     recorded (its header, plus one `session.opened` per runtime recycle).
+   *     Deliberately non-fatal per session: the request cannot be proven
    *     idempotent against a session the SDK has already forgotten, and
-   *     blocking deletion on that would strand a chat whose SDK data is
-   *     already gone. A failure is logged; the chat is still removed below.
+   *     blocking deletion on one that is already gone would strand a chat
+   *     whose other session data is still there. A failure is logged; the chat
+   *     is still removed below.
    *  3. Remove the journal file - the app's own record, and what makes the
    *     chat stop appearing in History. A failure here *is* fatal: the chat
    *     must not silently stay in the list while claiming to be deleted.
@@ -747,8 +751,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       if (!closed.ok) return closed;
     }
 
-    const sdkSessionId = deps.readChatSessionId?.(chatId);
-    if (sdkSessionId !== undefined) {
+    for (const sdkSessionId of deps.readChatSessionIds?.(chatId) ?? []) {
       const deleted = await agentService.deleteSession(sdkSessionId);
       if (!deleted.ok) {
         logger.warn('AGENT_CHAT_DELETE_SESSION_FAILED', { ids: { chatId, sdkSessionId } });

@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createAgentChatController,
@@ -9,8 +12,10 @@ import {
   type AgentChatControllerDeps,
   type AgentChatEventSink,
 } from '../../../src/main/agentChatController';
-import type { ChatJournal } from '../../../src/main/chatJournal';
 import { createFakeAgentService } from '../../../src/main/agents/fakeAgentService';
+import { removeChatJournal } from '../../../src/main/chatHistory';
+import { type ChatJournal, createChatJournal } from '../../../src/main/chatJournal';
+import { readChatSessionIds } from '../../../src/main/chatJournalReader';
 import type { Logger } from '../../../src/main/logger';
 import {
   type AgentAuthState,
@@ -1127,7 +1132,7 @@ describe('agentChatController.deleteConversation', () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const removeChatJournal = vi.fn(() => true);
     const { controller } = buildController(agentService, {
-      readChatSessionId: () => 'sdk-chat-1' as SdkSessionId,
+      readChatSessionIds: () => ['sdk-chat-1' as SdkSessionId],
       removeChatJournal,
     });
 
@@ -1138,10 +1143,70 @@ describe('agentChatController.deleteConversation', () => {
     expect(removeChatJournal).toHaveBeenCalledWith('chat-1');
   });
 
+  it('deletes every session the journal recorded, not only the header', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService, {
+      readChatSessionIds: () => [
+        'sdk-chat-1' as SdkSessionId,
+        'sdk-chat-1-recycled' as SdkSessionId,
+      ],
+      removeChatJournal: () => true,
+    });
+
+    const result = await controller.deleteConversation({ chatId: newChatId('chat-1') });
+
+    expect(result).toEqual({ ok: true });
+    expect(agentService.deletedSessionIds()).toEqual(['sdk-chat-1', 'sdk-chat-1-recycled']);
+  });
+
+  it('removes every session a twice-recycled chat recorded, through the real journal', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'daisy-delete-'));
+    const journalPath = path.join(dir, 'chat-1.jsonl');
+    try {
+      const journal = createChatJournal(dir);
+      const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+      let sessionId = 'sdk-1' as SdkSessionId;
+      const withSession: AgentService = { ...agentService, getOpenSessionId: () => sessionId };
+      const { controller } = buildController(withSession, {
+        chatJournal: journal,
+        readChatSessionIds: (chatId) => readChatSessionIds(dir, chatId),
+        removeChatJournal: (chatId) => removeChatJournal(dir, chatId),
+      });
+
+      const chatId = newChatId('chat-1');
+      await controller.openConversation({ chatId });
+      // Using the chat flushes its header - the first session id.
+      await controller.sendMessage({ chatId, prompt: 'one' });
+      await controller.closeConversation({ chatId });
+
+      // A first runtime recycle re-opens the same chat under a new session.
+      sessionId = 'sdk-2' as SdkSessionId;
+      await controller.openConversation({ chatId });
+      await controller.sendMessage({ chatId, prompt: 'two' });
+      await controller.closeConversation({ chatId });
+
+      // A second recycle mints yet another session for the same chat.
+      sessionId = 'sdk-3' as SdkSessionId;
+      await controller.openConversation({ chatId });
+
+      // Three sessions are recorded on disk before deletion.
+      expect(readChatSessionIds(dir, chatId)).toEqual(['sdk-1', 'sdk-2', 'sdk-3']);
+
+      const result = await controller.deleteConversation({ chatId });
+
+      expect(result).toEqual({ ok: true });
+      expect(agentService.deletedSessionIds()).toEqual(['sdk-1', 'sdk-2', 'sdk-3']);
+      // The app's own record is gone too.
+      expect(existsSync(journalPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('stops and closes an open chat before deleting it', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller } = buildController(agentService, {
-      readChatSessionId: () => 'sdk-chat-1' as SdkSessionId,
+      readChatSessionIds: () => ['sdk-chat-1' as SdkSessionId],
       removeChatJournal: () => true,
     });
 
@@ -1177,7 +1242,7 @@ describe('agentChatController.deleteConversation', () => {
     };
     const { controller } = buildController(failing, {
       logger,
-      readChatSessionId: () => 'sdk-chat-1' as SdkSessionId,
+      readChatSessionIds: () => ['sdk-chat-1' as SdkSessionId],
       removeChatJournal,
     });
 
@@ -1193,7 +1258,7 @@ describe('agentChatController.deleteConversation', () => {
   it('reports a storage error when the journal file cannot be removed', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller } = buildController(agentService, {
-      readChatSessionId: () => undefined,
+      readChatSessionIds: () => [],
       removeChatJournal: () => false,
     });
 

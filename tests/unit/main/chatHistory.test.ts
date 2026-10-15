@@ -3,12 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChatId, ChatJournalRecord } from '../../../src/shared';
-import {
-  deriveChatTitle,
-  listChatHistory,
-  readChatSessionId,
-  removeChatJournal,
-} from '../../../src/main/chatHistory';
+import { deriveChatTitle, listChatHistory, removeChatJournal } from '../../../src/main/chatHistory';
 import type { ChatJournalReadOutcome } from '../../../src/main/chatJournalReader';
 
 /**
@@ -145,20 +140,6 @@ describe('listChatHistory', () => {
       },
     });
     expect(entries).toEqual([]);
-  });
-});
-
-describe('readChatSessionId', () => {
-  it('reads the header session id', () => {
-    const id = readChatSessionId(CHATS_DIR, cid('chat-1'), {
-      readJournal: readerFor({ 'chat-1': [header('chat-1')] }),
-    });
-    expect(id).toBe('sdk-chat-1');
-  });
-
-  it('returns undefined when there is no readable journal', () => {
-    const id = readChatSessionId(CHATS_DIR, cid('chat-1'), {});
-    expect(id).toBeUndefined();
   });
 });
 

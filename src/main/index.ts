@@ -42,9 +42,14 @@ import { buildAgentRegistry, discoverAgentLoaders } from './agents/registry';
 import { ensureAppDirectories, getOsHomeDirectory, resolveAppPaths } from './appPaths';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
-import { createChatJournal, toChatFileName } from './chatJournal';
-import { listChatHistory, readChatSessionId, removeChatJournal } from './chatHistory';
-import { readChatJournal, type ChatJournalReadFailureReason } from './chatJournalReader';
+import { listChatHistory, removeChatJournal } from './chatHistory';
+import { createChatJournal } from './chatJournal';
+import { toChatFileName } from './chatJournalPaths';
+import {
+  readChatJournal,
+  readChatSessionIds,
+  type ChatJournalReadFailureReason,
+} from './chatJournalReader';
 import { installContentSecurityPolicy } from './csp';
 import { mergeDisabledFeatures } from './disabledFeatures';
 import { loadInstructionResources } from './instructions/instructionResources';
@@ -844,10 +849,11 @@ if (!gotSingleInstanceLock) {
                   prompt,
                   skillCatalog.current().map((skill) => skill.name),
                 ),
-              // Conversation deletion reads the SDK session id the journal
-              // header recorded and removes the journal file; both are plain
-              // filesystem facts main owns, kept out of the controller.
-              readChatSessionId: (chatId) => readChatSessionId(appPaths.chats, chatId),
+              // Conversation deletion reads every SDK session id the journal
+              // recorded (the header's first, plus one per runtime recycle) and
+              // removes the journal file; both are plain filesystem facts main
+              // owns, kept out of the controller.
+              readChatSessionIds: (chatId) => readChatSessionIds(appPaths.chats, chatId),
               removeChatJournal: (chatId) => removeChatJournal(appPaths.chats, chatId),
               gatedController: agentChatController,
             },

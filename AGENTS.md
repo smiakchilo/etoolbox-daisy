@@ -56,8 +56,8 @@ Step 09's **history surface** now exists — a whole-size History panel listing
 stored conversations (title/date/server) with resume and single-chat delete,
 derived from the journals (see `docs/verification.md` "History and conversation
 browsing: a list, resume, and delete (2026-10-15)"). What remains of Step 09/10
-is recorded in `docs/backlog.md` (per-chat SDK-session history, host cascading
-deletion, the cross-agent resume-honesty item).
+is recorded in `docs/backlog.md` (the host cascade, and the cross-agent /
+after-a-recycle resume-honesty item).
 
 Milestone A (steps 00–07) is functionally complete, **except that the 15-row
 manual smoke checklist (in `docs/verification/milestone-a-steps-00-08.md`) has
@@ -194,7 +194,12 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent contract change is Step 09's history surface (2026-10-15):
+> The most recent contract change is the per-chat SDK session history
+> (2026-10-15): `contracts/chatJournal.ts` gained a `session.opened` record
+> (after the header, one per runtime recycle) so chat deletion can remove every
+> SDK session the chat minted — see `docs/verification.md` "Per-chat SDK session
+> history: deletion removes every session a chat minted (2026-10-15)". Before
+> that it was Step 09's history surface (2026-10-15):
 > `contracts/agentService`'s `AgentService` gained `deleteSession(sdkSessionId)`
 > (implemented by both adapters and the fake; `HardenedSessionClient.deleteSession`
 > is optional) and `agent-chat-ipc.ts` / `ipc-channels.ts` gained the
@@ -338,9 +343,15 @@ active agent falls back to the first definition; with none the chat pane says
 tolerant read) are accompanied by `chatHistory.ts`: `listChatHistory` derives the
 browsable History list on demand from the journals under `chats/` (title from the
 first user prompt, date/server/session from the header) — there is deliberately
-no `ChatMetadata` store — plus `readChatSessionId`/`removeChatJournal` for
-single-chat deletion. `agentChatController.deleteConversation` orchestrates it:
-close the chat if open, delete its SDK session (best-effort), remove the journal.
+no `ChatMetadata` store — plus `removeChatJournal` for single-chat deletion. The
+file-name guard `toChatFileName` lives in its own `chatJournalPaths.ts`, because
+the writer now reads a chat's already-recorded session ids at open time
+(`chatJournalReader.readChatSessionIds`) and importing the reader directly would
+cycle through that shared guard. `agentChatController.deleteConversation`
+orchestrates it: close the chat if open, delete every SDK session the journal
+recorded (best-effort per session), remove the journal. A runtime recycle
+re-opens the same chat under a new SDK session, so the journal records each one
+(a `session.opened` record after the header) and deletion removes them all.
 
 `main/aem/` splits deliberately: `resourceUrl.ts` and `queryUrl.ts` build URLs,
 `responseValidation.ts` classifies HTTP responses, `queryResponse.ts` reads
@@ -965,8 +976,26 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3296 passed / 14 skipped** (+37 against the
-3259 of the previous entry - **History and conversation browsing**: the chat
+Current baseline: **`npm run test` → 3307 passed / 14 skipped** (+11 against the
+3296 of the previous entry - **Per-chat SDK session history**: a chat's journal
+now records every SDK session it was opened with, so deleting it removes the
+SDK's stored data for a runtime recycle's later session too, not only the
+header's first. Contract change: a new `session.opened` record in
+`chatJournal.ts`. `openChat` appends one when an already-open chat is recycled
+to a new session (or a resumed chat is opened under a genuinely new id), and
+replaces the still-deferred header's id when a recycle happens before first use;
+an id it already recorded appends nothing. The new
+`chatJournalReader.readChatSessionIds` returns every id in order (tolerating an
+old header-only journal), and `deleteConversation` calls `deleteSession` for
+each, still non-fatal per session (`readChatSessionId` → `readChatSessionIds`;
+`toChatFileName` moved to a new `chatJournalPaths.ts` so the writer can read at
+open time without cycling through the reader). +3 contract cases, +3 reader, +5
+`chatJournal`, +2 controller (one a real-journal integration: open → header →
+two recycles → read → delete all three ids, file gone); a built-app
+`history.spec.ts` case (new) proves deleting a chat whose journal recorded two
+sessions removes both and the file. See `docs/verification.md` "Per-chat SDK session history: deletion removes
+every session a chat minted (2026-10-15)". Before that it was 3296 (+37 against
+the 3259 of the previous entry - **History and conversation browsing**: the chat
 toolbar's History button now opens a whole-size **History panel** listing the
 stored conversations (title from the first user prompt, start date and host from
 the journal header - derived on demand by the new `src/main/chatHistory.ts`, no

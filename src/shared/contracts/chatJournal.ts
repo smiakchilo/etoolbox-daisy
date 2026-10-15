@@ -73,6 +73,31 @@ export const chatJournalHeaderRecordSchema = z
 export type ChatJournalHeaderRecord = Readonly<z.infer<typeof chatJournalHeaderRecordSchema>>;
 
 /**
+ * A *later* SDK session the same chat was opened with. A chat is keyed by the
+ * application-owned `chatId`, but the `header` (written once) can only record
+ * the first session: a runtime recycle - a proxy, token or active-provider
+ * change - disposes the agent runtime and re-opens the same chat under a **new**
+ * SDK session. One of these records is appended (never before the header) each
+ * time a chat is opened with an id it has not recorded before, so deleting the
+ * chat can remove the SDK's stored data for *every* session the chat ever
+ * minted, not only the first. Re-opening a chat with an id it already recorded
+ * appends nothing, and a journal that predates this record (a header only) is
+ * read as a single session.
+ */
+export const chatJournalSessionOpenedRecordSchema = z
+  .object({
+    recordType: z.literal('session.opened'),
+    at: epochMillisecondsSchema,
+    chatId: chatIdSchema,
+    sdkSessionId: sdkSessionIdSchema,
+  })
+  .strict();
+
+export type ChatJournalSessionOpenedRecord = Readonly<
+  z.infer<typeof chatJournalSessionOpenedRecordSchema>
+>;
+
+/**
  * The user's own prompt. There is no `AgentEvent` variant for a user message
  * (the renderer is the only other place that knows the exact text - see
  * `transcriptStore.ts`'s `applyUserPrompt`), so the journal synthesizes this
@@ -274,6 +299,7 @@ export type ChatJournalClosedRecord = Readonly<z.infer<typeof chatJournalClosedR
 
 export const chatJournalRecordSchema = z.discriminatedUnion('recordType', [
   chatJournalHeaderRecordSchema,
+  chatJournalSessionOpenedRecordSchema,
   chatJournalUserPromptRecordSchema,
   chatJournalAgentEventRecordSchema,
   chatJournalPartialMessageRecordSchema,

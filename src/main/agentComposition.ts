@@ -432,8 +432,8 @@ export interface InstallAgentServiceDeps {
    * verbatim to `createAgentChatController`; omitted means no rewrite.
    */
   readonly resolveSkillPrompt?: (prompt: string) => string;
-  /** Reads a chat's journal-header SDK session id, for conversation deletion. See `AgentChatControllerDeps`. */
-  readonly readChatSessionId?: (chatId: ChatId) => SdkSessionId | undefined;
+  /** Reads every SDK session id a chat's journal recorded, for conversation deletion. See `AgentChatControllerDeps`. */
+  readonly readChatSessionIds?: (chatId: ChatId) => readonly SdkSessionId[];
   /** Removes a chat's stored journal file, for conversation deletion. See `AgentChatControllerDeps`. */
   readonly removeChatJournal?: (chatId: ChatId) => boolean;
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
@@ -469,7 +469,9 @@ export async function installAgentService(
     ...(deps.resolveSkillPrompt !== undefined
       ? { resolveSkillPrompt: deps.resolveSkillPrompt }
       : {}),
-    ...(deps.readChatSessionId !== undefined ? { readChatSessionId: deps.readChatSessionId } : {}),
+    ...(deps.readChatSessionIds !== undefined
+      ? { readChatSessionIds: deps.readChatSessionIds }
+      : {}),
     ...(deps.removeChatJournal !== undefined ? { removeChatJournal: deps.removeChatJournal } : {}),
   });
   await deps.gatedController.replaceDelegate(controller);

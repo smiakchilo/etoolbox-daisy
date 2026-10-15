@@ -20,6 +20,8 @@ import {
   type TurnId,
   type TurnOutcome,
 } from '../shared';
+import { readChatSessionIds } from './chatJournalReader';
+import { toChatFileName } from './chatJournalPaths';
 
 /**
  * The append-only chat journal writer (implementation-plan.md step 09).
@@ -83,8 +85,10 @@ export interface ChatJournal {
    * chat's first real record, not at open time, so a chat that is opened and
    * never used leaves no file on disk; whatever records follow are appended
    * after it. A resumed chat (the file already has content) appends to its
-   * existing journal without a second header. A second call for an
-   * already-open chat is a no-op.
+   * existing journal without a second header, and an open under an SDK session
+   * it has not recorded before adds a `session.opened` record, so every session
+   * a chat was ever opened with is recorded for deletion. A second call for an
+   * already-open chat under a known session id is a no-op.
    */
   openChat(params: ChatJournalOpenParams): void;
   /**
@@ -164,6 +168,14 @@ interface OpenChat {
    * opened-but-unused conversation from ever creating a file.
    */
   pendingHeader?: ChatJournalHeaderRecord;
+  /**
+   * Every SDK session id this chat has been opened with and recorded (or is
+   * about to record, via `pendingHeader`), seeded from the journal when a chat
+   * is resumed. A runtime recycle re-opens the same chat under a new session
+   * while this state is still held; comparing against this set is what turns
+   * that into a `session.opened` record so deletion can remove every session.
+   */
+  readonly recordedSessionIds: Set<SdkSessionId>;
   /** Folded deltas per assistant message, plus the turn each belongs to. */
   readonly foldsByMessageId: Map<MessageId, MessageFold>;
   readonly completedMessageIds: Set<MessageId>;
@@ -184,29 +196,6 @@ interface OpenChat {
   };
   /** The turn being timed, from its first event until its terminal one. */
   turn?: TurnAccumulator;
-}
-
-/**
- * Derives the file name for a chat. `ChatId`s are validated to be free of
- * control characters but are not otherwise constrained, so this rejects path
- * separators explicitly rather than trusting the id's provenance - the journal
- * must never be steerable to an arbitrary file by a crafted id.
- *
- * Exported because the reader (`chatJournalReader.ts`) must apply the identical
- * guard: a read path built from an attacker-influenced id is the same hazard as
- * a write path.
- */
-export function toChatFileName(chatId: string): string {
-  if (
-    chatId.length === 0 ||
-    chatId === '.' ||
-    chatId === '..' ||
-    chatId.includes('/') ||
-    chatId.includes('\\')
-  ) {
-    throw new Error(`Refusing to derive a chat journal file name from unsafe chatId "${chatId}"`);
-  }
-  return `${chatId}.jsonl`;
 }
 
 /** Extracts a Node `fs` error's `.code` without ever touching `.message`. */
@@ -474,7 +463,36 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
 
   return {
     openChat(params) {
-      if (openChats.has(params.chatId)) return;
+      const existing = openChats.get(params.chatId);
+      if (existing !== undefined) {
+        if (existing.recordedSessionIds.has(params.sdkSessionId)) return;
+        const pendingHeader = existing.pendingHeader;
+        if (pendingHeader !== undefined) {
+          // Nothing is on disk yet, so this chat's `header` is still going to
+          // be its first line: the newest session belongs in it rather than in
+          // a second record. The earlier session it replaces was never used
+          // (the header is written before a chat's first real record), so there
+          // is nothing to keep.
+          existing.recordedSessionIds.delete(pendingHeader.sdkSessionId);
+          existing.recordedSessionIds.add(params.sdkSessionId);
+          existing.pendingHeader = { ...pendingHeader, sdkSessionId: params.sdkSessionId };
+          return;
+        }
+        // The chat already has a `header` on disk, so this is a runtime recycle
+        // minting a new SDK session for the same chat. Record it (eagerly - the
+        // session exists on disk as soon as the open succeeded) so deletion can
+        // remove this session's data too. One small line per recycle is
+        // negligible and bounded by real use.
+        existing.recordedSessionIds.add(params.sdkSessionId);
+        appendRecord(existing, {
+          recordType: 'session.opened',
+          at: now(),
+          chatId: params.chatId,
+          sdkSessionId: params.sdkSessionId,
+        });
+        return;
+      }
+
       let filePath: string;
       try {
         filePath = path.join(chatsDir, toChatFileName(params.chatId));
@@ -484,15 +502,36 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       }
       const state: OpenChat = {
         filePath,
+        recordedSessionIds: new Set(),
         foldsByMessageId: new Map(),
         completedMessageIds: new Set(),
         outstandingToolCalls: new Map(),
       };
       openChats.set(params.chatId, state);
-      // A resumed chat already has its header on disk; a fresh one defers it
-      // until its first real record (see `appendRecord`), so merely opening a
-      // conversation never creates a file.
-      if (fileHasContent(filePath)) return;
+      // A resumed chat already has its header (and possibly `session.opened`
+      // records) on disk. Seed the recorded set from the file so a recycle can
+      // be told from the session it already names, and - for a genuinely new id
+      // over an existing journal (a chat re-opened with a fresh session) - give
+      // it its own record. A resumed chat re-opened with an id it already
+      // recorded appends nothing.
+      if (fileHasContent(filePath)) {
+        for (const id of readChatSessionIds(chatsDir, params.chatId)) {
+          state.recordedSessionIds.add(id);
+        }
+        if (!state.recordedSessionIds.has(params.sdkSessionId)) {
+          state.recordedSessionIds.add(params.sdkSessionId);
+          appendRecord(state, {
+            recordType: 'session.opened',
+            at: now(),
+            chatId: params.chatId,
+            sdkSessionId: params.sdkSessionId,
+          });
+        }
+        return;
+      }
+      // A fresh chat defers its header until its first real record (see
+      // `appendRecord`), so merely opening a conversation never creates a file.
+      state.recordedSessionIds.add(params.sdkSessionId);
       state.pendingHeader = {
         recordType: 'header',
         schemaVersion: CHAT_JOURNAL_SCHEMA_VERSION,

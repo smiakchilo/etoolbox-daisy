@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { chatJournalRecordSchema, type ChatJournalRecord } from '../shared';
-import { toChatFileName } from './chatJournal';
+import { chatJournalRecordSchema, type ChatJournalRecord, type SdkSessionId } from '../shared';
+import { toChatFileName } from './chatJournalPaths';
 
 /**
  * Reads one chat's append-only journal (`chatJournal.ts`), the UI projection a
@@ -89,4 +89,30 @@ export function readChatJournal(
     if (record.success) records.push(record.data);
   }
   return { ok: true, records };
+}
+
+/**
+ * Every SDK session id a chat's journal recorded, in order: the `header`'s
+ * first session followed by one id per later `session.opened` record (a runtime
+ * recycle). This is what makes deleting a chat remove the SDK's stored data for
+ * *every* session it ever minted - an old journal with a header only (written
+ * before `session.opened` existed) reads as a single id rather than failing.
+ *
+ * Tolerant like {@link readChatJournal}: an unreadable or oversized file yields
+ * no ids rather than throwing, so the caller's deletion still proceeds.
+ */
+export function readChatSessionIds(
+  chatsDir: string,
+  chatId: string,
+  options: ChatJournalReaderOptions = {},
+): readonly SdkSessionId[] {
+  const outcome = readChatJournal(chatsDir, chatId, options);
+  if (!outcome.ok) return [];
+  const ids: SdkSessionId[] = [];
+  for (const record of outcome.records) {
+    if (record.recordType === 'header' || record.recordType === 'session.opened') {
+      ids.push(record.sdkSessionId);
+    }
+  }
+  return ids;
 }

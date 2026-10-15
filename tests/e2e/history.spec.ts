@@ -1,10 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import {
+  _electron as electron,
+  expect,
+  test,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
-import { FAKE_AGENT_SERVICE_ENV_VAR } from '../../src/main/agentComposition';
+import {
+  FAKE_AGENT_SERVICE_ENV_VAR,
+  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
+} from '../../src/main/agentComposition';
 
 /**
  * The History panel, proven against the real built app.
@@ -77,6 +94,24 @@ async function sendViaComposer(page: Page, prompt: string): Promise<void> {
 
 function row(page: Page, text: string) {
   return page.locator('.history-item', { hasText: text });
+}
+
+/** The journal files a profile has written, under `<home>/etoolbox-daisy/chats`. */
+function journalFiles(home: string): readonly string[] {
+  const dir = path.join(home, 'etoolbox-daisy', 'chats');
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.jsonl'))
+    .map((name) => path.join(dir, name));
+}
+
+/** Every `sdkSessionId` the live fake agent was asked to delete, in order. */
+function readDeletedSessionIds(app: ElectronApplication): Promise<readonly string[]> {
+  return app.evaluate((_electronNamespace, globalKey: string) => {
+    const fake = (globalThis as Record<string, unknown>)[globalKey] as {
+      readonly deletedSessionIds: () => readonly string[];
+    };
+    return fake.deletedSessionIds();
+  }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
 }
 
 test.describe('History panel', () => {
@@ -179,6 +214,67 @@ test.describe('History panel', () => {
     } finally {
       await app.close();
       server.close();
+    }
+  });
+
+  test('deleting a chat whose journal recorded several sessions removes every session', async () => {
+    test.setTimeout(180_000);
+    const env = createProfile();
+    const home = env['USERPROFILE'] ?? '';
+
+    const app = await electron.launch({ args: [mainEntry], env });
+    try {
+      const page = await app.firstWindow();
+      await waitForComposerReady(page);
+      await sendViaComposer(page, 'a chat that will be recycled');
+
+      // This chat now has one journal, whose header names its first SDK session.
+      const journalPaths = journalFiles(home);
+      expect(journalPaths).toHaveLength(1);
+      const journalPath = journalPaths[0];
+      if (journalPath === undefined) throw new Error('no journal was written');
+      const records = readFileSync(journalPath, 'utf8')
+        .split('\n')
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const header = records.find((record) => record['recordType'] === 'header');
+      const chatId = header?.['chatId'];
+      const headerSession = header?.['sdkSessionId'];
+      if (typeof chatId !== 'string' || typeof headerSession !== 'string') {
+        throw new Error('the journal has no header');
+      }
+
+      // A runtime recycle re-opens the same chat under a new SDK session; this
+      // is the exact record `chatJournal.openChat` appends for it. The fake
+      // cannot recycle itself (its `reconcile` is deliberately inert), so the
+      // second session is written here rather than driven through Settings -
+      // the point under test is deletion, not how the record came to exist.
+      const recycledSession = 'sdk-recycled-e2e';
+      appendFileSync(
+        journalPath,
+        JSON.stringify({
+          recordType: 'session.opened',
+          at: Date.now(),
+          chatId,
+          sdkSessionId: recycledSession,
+        }) + '\n',
+        'utf8',
+      );
+
+      // Delete the chat through History.
+      await page.locator('.chat-toolbar sp-action-button[aria-label="History"]').click();
+      await expect(page.locator('.history-panel')).toBeVisible({ timeout: 30_000 });
+      const target = row(page, 'a chat that will be recycled');
+      await target.locator('.history-item__delete').click();
+      await target.locator('.history-item__confirm-delete').click();
+      await expect(page.locator('.history-item')).toHaveCount(0, { timeout: 30_000 });
+
+      // The stored transcript is gone...
+      expect(existsSync(journalPath)).toBe(false);
+      // ...and the SDK was asked to delete *both* sessions, in journal order.
+      expect(await readDeletedSessionIds(app)).toEqual([headerSession, recycledSession]);
+    } finally {
+      await app.close();
     }
   });
 });

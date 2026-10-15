@@ -57,6 +57,7 @@ export function replayJournalIntoTranscript(
         transcriptStore.addInterruption(record.reason, false);
         break;
       case 'header':
+      case 'session.opened':
       case 'assistant.message.partial':
       case 'tool.call.abandoned':
       case 'chat.closed':
