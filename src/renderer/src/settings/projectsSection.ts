@@ -72,6 +72,7 @@ function buildProjectItem(
       class: 'host-field__input',
       placeholder: 'Project name',
       'aria-label': 'Label',
+      'data-field': 'project-label',
     },
   }) as TextField;
   labelField.value = project?.label ?? '';
@@ -86,6 +87,7 @@ function buildProjectItem(
       class: 'host-field__input',
       placeholder: 'E.g. /content/a, /content/b (comma-separated)',
       'aria-label': 'Content roots',
+      'data-field': 'project-content-roots',
     },
   }) as TextField;
   contentRootsField.value = project?.contentRoots ?? '';
@@ -96,6 +98,7 @@ function buildProjectItem(
       class: 'host-field__input',
       placeholder: 'E.g. /apps/a, /apps/b (comma-separated)',
       'aria-label': 'Component roots',
+      'data-field': 'project-component-roots',
     },
   }) as TextField;
   componentRootsField.value = project?.componentRoots ?? '';
@@ -106,6 +109,7 @@ function buildProjectItem(
       class: 'host-field__input',
       placeholder: 'E.g.: /content/a/blueprint, /content/a/language/en (comma-separated)',
       'aria-label': 'Content priority paths',
+      'data-field': 'project-priority-paths',
     },
   }) as TextField;
   priorityPathsField.value = project?.contentPriorityPaths ?? '';
@@ -118,6 +122,7 @@ function buildProjectItem(
       class: 'host-field__input',
       placeholder: 'E.g.: /content/dam/a, /content/dam/b',
       'aria-label': 'DAM roots',
+      'data-field': 'project-dam-roots',
     },
   }) as TextField;
   damRootsField.value = project?.damRoots ?? '';
@@ -516,7 +521,10 @@ export function createProjectsSection(options: ProjectsSectionOptions): Projects
   }
 
   const element = el('section', {
-    attrs: { class: 'settings-section projects-section', 'aria-label': 'Projects' },
+    attrs: {
+      class: 'settings-section projects-section',
+      'aria-label': 'Projects',
+    },
     children: [multifield.element],
   });
 

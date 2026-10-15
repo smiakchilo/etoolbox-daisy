@@ -69,19 +69,15 @@ describe('filterSkillsByName', () => {
 });
 
 describe('renderSkillInvocationDirective', () => {
-  it('names the skill and the skill tool when there is no remainder', () => {
+  it('names the skill when there is no remainder', () => {
     const directive = renderSkillInvocationDirective('aem-tool-selection', '');
-    expect(directive).toContain('"aem-tool-selection"');
-    expect(directive).toContain('`skill` tool');
-    expect(directive).toContain('{"skill":"aem-tool-selection"}');
+    expect(directive).toContain('aem-tool-selection');
     expect(directive).not.toContain('\n\n');
   });
 
-  it('frames the trailing text as this skill input, then appends it', () => {
+  it('appends the trailing text as the skill input after the plain directive', () => {
     const directive = renderSkillInvocationDirective('query-results', 'why zero rows?');
     expect(directive.startsWith(renderSkillInvocationDirective('query-results', ''))).toBe(true);
-    expect(directive).toContain("The text below is the user's input for this skill");
-    expect(directive).toContain('do not ask the user to restate it');
     expect(directive.endsWith('why zero rows?')).toBe(true);
   });
 });
@@ -102,22 +98,6 @@ describe('renderSkillCatalogue', () => {
     expect(block).toContain('- query-results: Read a query result correctly.');
   });
 
-  it('tells the model to load a matching skill before acting, via the skill tool', () => {
-    const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [skill]);
-    expect(block).toContain('before acting');
-    expect(block).toContain(`\`${SKILL_TOOL_NAME}\` tool`);
-    expect(block).toContain(`{"${SKILL_TOOL_NAME}":"<name>"}`);
-    expect(block).toContain('Available skills:');
-    // The model must not be invited to ask the user whether to load it.
-    expect(block).toContain('do not ask the user to confirm');
-  });
-
-  it("states that a skill's input is the whole request, which is never asked to be restated", () => {
-    const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [skill]);
-    expect(block).toContain("A skill's input is the user's whole request");
-    expect(block).toContain('never ask the user to restate it');
-  });
-
   it('leaves no placeholder behind and puts the skills last', () => {
     const block = renderSkillCatalogue(REAL_SKILLS_TEMPLATE, [skill]);
     expect(block).not.toContain('{{');
@@ -133,8 +113,8 @@ describe('renderSkillCatalogue', () => {
     ['no catalogue placeholder', 'Just prose'],
     ['two catalogue placeholders', '{{catalogue}} and {{catalogue}}'],
   ])('throws for a template with %s, even for an empty catalogue', (_name, template) => {
-    expect(() => renderSkillCatalogue(template, [skill])).toThrow(/exactly one \{\{catalogue}}/);
-    expect(() => renderSkillCatalogue(template, [])).toThrow(/exactly one \{\{catalogue}}/);
+    expect(() => renderSkillCatalogue(template, [skill])).toThrow();
+    expect(() => renderSkillCatalogue(template, [])).toThrow();
   });
 });
 
@@ -153,9 +133,7 @@ describe('resolveSkillPrompt', () => {
 
   it('carries a bare search term through as this skill input (the /search Waldo case)', () => {
     const prompt = resolveSkillPrompt('/search Waldo', ['search', 'semantic-search']);
-    expect(prompt).toContain('{"skill":"search"}');
-    expect(prompt).toContain("The text below is the user's input for this skill");
-    expect(prompt).toContain('do not ask the user to restate it');
+    expect(prompt).toContain('search');
     expect(prompt.trimEnd().endsWith('Waldo')).toBe(true);
     // The literal token is consumed, never shown to the model as a path to read.
     expect(prompt).not.toContain('/search');

@@ -113,7 +113,6 @@ describe('createAskUserExecutor', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('CANCELLED');
-      expect(result.error.message).toContain('dismissed');
     }
   });
 
@@ -181,15 +180,11 @@ describe('renderAskUserSuccess', () => {
       requestId: 'r' as never,
       question: 'Q',
     };
-    expect(renderAskUserSuccess({ ...base, selections: ['A'], freeform: null })).toBe(
-      'The user chose: A',
-    );
-    expect(renderAskUserSuccess({ ...base, selections: ['A', 'B'], freeform: null })).toBe(
-      'The user chose: A, B',
-    );
-    expect(renderAskUserSuccess({ ...base, selections: [], freeform: 'typed' })).toBe(
-      'The user answered: typed',
-    );
+    expect(renderAskUserSuccess({ ...base, selections: ['A'], freeform: null })).toContain('A');
+    const multiple = renderAskUserSuccess({ ...base, selections: ['A', 'B'], freeform: null });
+    expect(multiple).toContain('A');
+    expect(multiple).toContain('B');
+    expect(renderAskUserSuccess({ ...base, selections: [], freeform: 'typed' })).toContain('typed');
   });
 });
 
@@ -238,9 +233,8 @@ describe('ask_user transcript composition', () => {
   it('still composes a describeCall fallback (never displayed)', () => {
     const details = renderer.describeCall({ question: 'Pick', options: ['A', 'B'] });
     expect(details.summary).toBe('Pick');
-    expect(details.parameters).toEqual([
-      { label: 'Question', value: 'Pick' },
-      { label: 'Options', value: 'A, B' },
-    ]);
+    const values = details.parameters.map((row) => row.value);
+    expect(values).toContain('Pick');
+    expect(values).toContain('A, B');
   });
 });

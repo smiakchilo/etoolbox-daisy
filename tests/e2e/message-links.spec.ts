@@ -1,13 +1,19 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { _electron as electron, expect, type Page, test } from '@playwright/test';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 import type { ScriptedTurn } from '../../src/main/agents/fakeAgentService';
+import { type ElectronApp, mainEntry } from '../support/e2e/app';
 import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+  CHAT_STATUS_BANNER,
+  COMPOSER_FIELD,
+  COMPOSER_SEND,
+  waitForComposerReady,
+} from '../support/e2e/composer';
+import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * Message links (owner request, 2026-09-22): an assistant message's `http(s)`
@@ -35,40 +41,20 @@ import {
  *   npx playwright test tests/e2e/message-links.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'message-links-scratch');
 const HOST = 'https://aem.example.invalid';
 
-const CHAT_STATUS_BANNER = '.chat-status-banner';
 /**
  * Every browser navigation - including one a transcript link starts - is owned
  * by the browser pane, so a failed load is reported in the browser pane's
  * message row (with its Reload), never the chat pane's banner.
  */
 const BROWSER_MESSAGE = '.browser-toolbar-message';
-const COMPOSER_SEND = '.chat-composer__send';
-const COMPOSER_FIELD = '.chat-composer textarea';
 const ASSISTANT = '.chat-message--assistant';
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
 
 /** Seeds a profile whose single configured host is {@link HOST}, then launches the built app. */
 async function launchWithHost(): Promise<ElectronApp> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
   const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
   const base = defaultAppSettings();
@@ -90,48 +76,7 @@ async function launchWithHost(): Promise<ElectronApp> {
 
   return electron.launch({
     args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  });
-}
-
-function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
-  const payload = JSON.stringify({ globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY, turn });
-  return app.evaluate((_electronNamespace, json: string) => {
-    const arg = JSON.parse(json) as { globalKey: string; turn: unknown };
-    const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-      readonly scriptNextResponse: (t: unknown) => void;
-    };
-    fake.scriptNextResponse(arg.turn);
-  }, payload);
-}
-
-async function flushFake(app: ElectronApp): Promise<void> {
-  for (let guard = 0; guard < 200; guard += 1) {
-    const delivered = await app.evaluate((_electronNamespace, key: string) => {
-      const fake = (globalThis as Record<string, unknown>)[key] as {
-        readonly advance: () => boolean;
-      };
-      return fake.advance();
-    }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
-    if (!delivered) return;
-  }
-  throw new Error('flushFake exceeded its guard - the fake never drained.');
-}
-
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
-    timeout: 60_000,
-  });
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '', {
-    timeout: 60_000,
+    env: scratchEnv({ home, appData, localAppData }, { fakeAgent: true }),
   });
 }
 
@@ -165,7 +110,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     await sendMessage(app, shell, `See [Alpha](${HOST}/content/site/alpha.html) for the page.`);
 
@@ -190,15 +135,15 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     await sendMessage(app, shell, `See [Alpha](${HOST}/content/site/alpha.html).`);
     const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
     await expect(link).toHaveCount(1, { timeout: 30_000 });
 
     // Open Settings so it covers the pane's page-view region.
-    const settingsPanel = shell.locator('.settings-panel');
-    await shell.locator('sp-action-button[title="Settings"]').first().click();
+    const settingsPanel = shell.locator(byTestId('settings-panel'));
+    await shell.locator(byTestId('chat-settings')).click();
     await expect(settingsPanel).toBeVisible({ timeout: 30_000 });
 
     // Clicking the link starts an externally-caused navigation, which must
@@ -218,7 +163,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // With no page loaded, the pane has no active host: the bare path must be
     // plain text (owner decision: "do not convert relative paths to links if
@@ -232,7 +177,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // Put the pane on the host. The load fails, but the attempted navigation
     // is what makes the host "active" - exactly the state a real AEM page
     // would leave it in.
-    const addressInput = shell.locator('#browser-address-bar input');
+    const addressInput = shell.locator(`${byTestId('browser-address')} input`);
     await addressInput.fill(HOST);
     await addressInput.press('Enter');
     await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
@@ -254,11 +199,11 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // Put the pane on the host so a relative path resolves (the load fails, but
     // the attempt is what makes the origin active).
-    const addressInput = shell.locator('#browser-address-bar input');
+    const addressInput = shell.locator(`${byTestId('browser-address')} input`);
     await addressInput.fill(HOST);
     await addressInput.press('Enter');
     await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
@@ -295,10 +240,10 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // Put the pane on the host so the table's bare paths linkify.
-    const addressInput = shell.locator('#browser-address-bar input');
+    const addressInput = shell.locator(`${byTestId('browser-address')} input`);
     await addressInput.fill(HOST);
     await addressInput.press('Enter');
     await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
@@ -345,7 +290,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     await sendMessage(app, shell, `See [Alpha](${HOST}/content/site/alpha.html).`);
     const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
@@ -354,10 +299,10 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // The overlay is registered in the shipped bundle (jsdom cannot prove
     // this) and appears with exactly the two page actions.
     await link.hover();
-    const overlay = shell.locator('sp-overlay');
+    const overlay = shell.locator(byTestId('hover-popover'));
     await expect(overlay).toHaveCount(1);
-    const edit = shell.locator('sp-overlay sp-action-button[title="Edit"]');
-    const crx = shell.locator('sp-overlay sp-action-button[title="CRX"]');
+    const edit = shell.locator(byTestId('popover-edit'));
+    const crx = shell.locator(byTestId('popover-crx'));
     await expect(edit).toBeVisible({ timeout: 30_000 });
     await expect(crx).toBeVisible();
     await expect
@@ -380,11 +325,11 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // Put the pane on the host, so the table's full paths (and the page-relative
     // node hanging off them) resolve.
-    const addressInput = shell.locator('#browser-address-bar input');
+    const addressInput = shell.locator(`${byTestId('browser-address')} input`);
     await addressInput.fill(HOST);
     await addressInput.press('Enter');
     await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(
@@ -437,22 +382,22 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // Hover the blanked-path row: its node hangs off the page the row above
     // rendered, and the popover offers the node's CRX and nothing else.
     await nodeCells.nth(1).hover();
-    const crx = shell.locator('sp-overlay sp-action-button[title="CRX"]');
+    const crx = shell.locator(byTestId('popover-crx'));
     await expect(crx).toBeVisible({ timeout: 30_000 });
-    await expect(shell.locator('sp-overlay sp-action-button[title="Edit"]')).toHaveCount(0);
+    await expect(shell.locator(byTestId('popover-edit'))).toHaveCount(0);
     // Spectrum positions the overlay a frame or two after it opens, so a click
     // fired the instant it appears can land on the table cell underneath it.
     // Wait until the button is the hit-test target before clicking.
     await expect
       .poll(() =>
-        shell.evaluate(() => {
-          const button = document.querySelector('sp-overlay sp-action-button[title="CRX"]');
+        shell.evaluate((selector) => {
+          const button = document.querySelector(selector);
           if (button === null) return false;
           const rect = button.getBoundingClientRect();
           return (
             document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === button
           );
-        }),
+        }, byTestId('popover-crx')),
       )
       .toBe(true);
 
@@ -473,7 +418,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     await sendMessage(
       app,
@@ -484,9 +429,9 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await expect(links).toHaveCount(2, { timeout: 30_000 });
 
     await links.nth(0).hover();
-    const overlay = shell.locator('sp-overlay');
+    const overlay = shell.locator(byTestId('hover-popover'));
     await expect(overlay).toHaveCount(1);
-    await expect(shell.locator('sp-overlay sp-action-button[title="Edit"]')).toBeVisible({
+    await expect(shell.locator(byTestId('popover-edit'))).toBeVisible({
       timeout: 30_000,
     });
 
@@ -498,7 +443,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await expect
       .poll(() => overlay.evaluate((element) => (element as unknown as { open: boolean }).open))
       .toBe(true);
-    await expect(shell.locator('sp-overlay sp-action-button[title="Edit"]')).toBeVisible();
+    await expect(shell.locator(byTestId('popover-edit'))).toBeVisible();
 
     await app.close();
   });
@@ -507,7 +452,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // Two links stacked one per line, the upper directly above the lower. Equal
     // labels keep them the same width, so the lower link's centre column is
@@ -523,7 +468,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     // Hover the LOWER link; the popover opens above it, over the upper link.
     const lower = links.nth(1);
     await lower.hover();
-    const edit = shell.locator('sp-overlay sp-action-button[title="Edit"]');
+    const edit = shell.locator(byTestId('popover-edit'));
     await expect(edit).toBeVisible({ timeout: 30_000 });
 
     // Carry the pointer up into the popover in small steps, as a hand would. A
@@ -550,23 +495,23 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // Record every focus that lands inside the popover.
-    await shell.evaluate(() => {
+    await shell.evaluate((popoverSelector) => {
       const scope = window as unknown as { __popoverFocus: string[] };
       scope.__popoverFocus = [];
       document.addEventListener(
         'focusin',
         (event) => {
           const target = event.target as Element | null;
-          if (target !== null && target.closest('sp-overlay') !== null) {
+          if (target !== null && target.closest(popoverSelector) !== null) {
             scope.__popoverFocus.push(target.tagName);
           }
         },
         true,
       );
-    });
+    }, byTestId('hover-popover'));
 
     // First turn: CRX keeps the exact resource the message referenced - this is
     // the regression, since re-classifying the trimmed href retargeted it at the
@@ -585,20 +530,20 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await expect(resourceLink).toHaveAttribute('href', `${HOST}/content/site/alpha.html`);
 
     await resourceLink.hover();
-    const crx = shell.locator('sp-overlay sp-action-button[title="CRX"]');
+    const crx = shell.locator(byTestId('popover-crx'));
     await expect(crx).toBeVisible({ timeout: 30_000 });
 
     // Prove the detector is not vacuous: a programmatic focus IS recorded, so
     // an empty record after the real click is evidence, not an untested pass.
-    const detectorWorks = await shell.evaluate(() => {
+    const detectorWorks = await shell.evaluate((selector) => {
       const scope = window as unknown as { __popoverFocus: string[] };
-      const button = document.querySelector('sp-overlay sp-action-button[title="CRX"]');
+      const button = document.querySelector(selector);
       (button as HTMLElement | null)?.focus();
       const recorded = scope.__popoverFocus.length;
       (document.activeElement as HTMLElement | null)?.blur?.();
       scope.__popoverFocus.length = 0;
       return recorded;
-    });
+    }, byTestId('popover-crx'));
     expect(detectorWorks).toBeGreaterThan(0);
 
     await crx.click();
@@ -618,7 +563,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await expect(secondLink).toHaveAttribute('href', `${HOST}/content/site/beta.html`);
 
     await secondLink.hover();
-    const edit = shell.locator('sp-overlay sp-action-button[title="Edit"]');
+    const edit = shell.locator(byTestId('popover-edit'));
     await expect(edit).toBeVisible({ timeout: 30_000 });
     await edit.click();
     await expect(banner).toContainText(`${HOST}/editor.html/content/site/beta.html`, {
@@ -639,7 +584,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     await sendMessage(app, shell, `See [Apps](${HOST}/apps/x/jcr:content/y).`);
     const link = shell.locator(`${ASSISTANT} a[data-daisy-link]`);
@@ -661,7 +606,7 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     const app = await launchWithHost();
     await stubOpenExternal(app);
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     await sendMessage(app, shell, 'See [External](https://external.example/page).');
     const link = shell.locator(`${ASSISTANT} a[data-daisy-external]`);
@@ -682,11 +627,11 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     test.setTimeout(120_000);
     const app = await launchWithHost();
     const shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
 
     // Put the pane on the host so the table's bare AEM path resolves to a link
     // (the load fails; the attempt is what makes the origin active).
-    const addressInput = shell.locator('#browser-address-bar input');
+    const addressInput = shell.locator(`${byTestId('browser-address')} input`);
     await addressInput.fill(HOST);
     await addressInput.press('Enter');
     await expect(shell.locator('sp-alert-banner.browser-toolbar-message')).toHaveAttribute(

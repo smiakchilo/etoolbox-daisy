@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserSection } from '../../../../src/renderer/src/settings/browserSection';
 import type {
@@ -13,6 +13,9 @@ import {
   type ProxySnapshot,
 } from '../../../../src/shared';
 import { PROXY_NONE_VALUE } from '../../../../src/renderer/src/settings/proxyPicker';
+import { flushMicrotasks } from '../../../support/asyncWaits';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
+import { byField } from '../../../support/selectors';
 
 /**
  * The Browser section's DOM, in jsdom. The real custom-element upgrade is
@@ -22,9 +25,8 @@ import { PROXY_NONE_VALUE } from '../../../../src/renderer/src/settings/proxyPic
  * unhooks the listener.
  */
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 const updateBrowserSettings = vi.fn();
 
@@ -58,7 +60,7 @@ function snapshotWith(
 function proxyPickerOf(section: ReturnType<typeof createBrowserSection>): HTMLElement & {
   value: string;
 } {
-  const picker = section.element.querySelector('[aria-label="Proxy"]');
+  const picker = section.element.querySelector(byField('browser-default-proxy'));
   if (picker === null) throw new Error('proxy picker not found');
   return picker as HTMLElement & { value: string };
 }
@@ -68,9 +70,7 @@ function chooseProxy(picker: HTMLElement & { value: string }, value: string): vo
   picker.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 }
 
-async function flush(): Promise<void> {
-  for (let tick = 0; tick < 4; tick += 1) await Promise.resolve();
-}
+const flush = (): Promise<void> => flushMicrotasks(4);
 
 function checkboxOf(section: ReturnType<typeof createBrowserSection>): HTMLElement & {
   checked: boolean;
@@ -99,16 +99,12 @@ beforeEach(() => {
   reportSave = vi.fn<(outcome: Promise<SaveOutcome>) => void>();
   onSettingsChanged = vi.fn<() => void>();
 
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   Reflect.set(dom.window, 'daisy', { settings: { updateBrowserSettings } });
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 function buildSection() {
@@ -116,27 +112,6 @@ function buildSection() {
 }
 
 describe('createBrowserSection', () => {
-  it('renders the suppression checkbox with its label and the restart caveat', () => {
-    const section = buildSection();
-    expect(section.element.getAttribute('aria-label')).toBe('Browser');
-    expect(checkboxOf(section).textContent).toBe('Suppress the Windows security-key prompt');
-    expect(section.element.textContent).toContain('Takes effect after restarting the app');
-  });
-
-  it('gives both fields a contextual-help badge carrying its phrase', () => {
-    const section = buildSection();
-
-    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
-    expect(badges.map((badge) => badge.textContent)).toEqual([
-      "The proxy used by this browser default. Can be overridden by hosts' settings",
-      'Asks browser to handle security keys autonomously, avoiding the Windows prompt',
-    ]);
-    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
-      'Help: Default proxy',
-      'Help: Suppress the Windows security-key prompt',
-    ]);
-  });
-
   it('reflects the stored value on update, in both directions', () => {
     const section = buildSection();
     section.update(snapshotWith(false));

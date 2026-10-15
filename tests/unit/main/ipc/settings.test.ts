@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newProjectId, newProxyId, newServerId } from '../../../../src/shared';
@@ -37,24 +37,16 @@ import {
   type TrustedSenderExpectation,
 } from '../../../../src/main/ipc/settings';
 import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDefinitions';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 const CANARY_PASSWORD = 'CANARY-PASSWORD-8f14e45fceea167a';
 
 /** Scratch directories live under the project's own `test-results/`, never an OS temp dir. */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'settingsIpc-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'settingsIpc-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 /** A real (non-Electron) AES-256-GCM cipher standing in for `electron.safeStorage`. */

@@ -1,9 +1,12 @@
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * Two pieces of per-run state remembered across a full quit and relaunch,
@@ -19,34 +22,9 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * which is exactly what these tests launch.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'startup-state-scratch');
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
 /** A profile directory both launches share - localStorage/window state live under it. */
-function createProfile(): Record<string, string> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
-}
 
 function windowStatePath(env: Record<string, string>): string {
   return path.join(env['LOCALAPPDATA'] ?? '', 'etoolbox-daisy', 'window-state.json');
@@ -62,12 +40,6 @@ function readWindowStateFile(env: Record<string, string>): {
     height: number;
     maximized: boolean;
   };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
 /** The main window's stored geometry, read from inside the main process. */
@@ -90,7 +62,7 @@ function readGeometryWindow(app: ElectronApplication): Promise<
 test.describe('startup state', () => {
   test('restores the main window size and maximized-ness across a relaunch', async () => {
     test.setTimeout(180_000);
-    const env = createProfile();
+    const env = createLaunchProfile(scratchBase).env;
 
     // --- first run: size the window, then maximize it ------------------------
     const first = await electron.launch({ args: [mainEntry], env });
@@ -124,7 +96,7 @@ test.describe('startup state', () => {
 
   test('reopens the last AEM page instead of the hosts picker after a relaunch', async () => {
     test.setTimeout(180_000);
-    const env = createProfile();
+    const env = createLaunchProfile(scratchBase).env;
 
     const state = { hits: 0 };
     const server: Server = createServer((_req, res) => {
@@ -157,7 +129,7 @@ test.describe('startup state', () => {
     // --- first run: pick the seeded host, which loads and is remembered ------
     const first = await electron.launch({ args: [mainEntry], env });
     const firstPage = await first.firstWindow();
-    await firstPage.locator(`.hosts-item[data-origin="${origin}"]`).click();
+    await firstPage.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
     // Wait until the address bar reflects the load: the same state push the
     // last-page subscription consumes, so the URL is guaranteed remembered.
@@ -165,7 +137,7 @@ test.describe('startup state', () => {
       .poll(
         () =>
           firstPage
-            .locator('#browser-address-bar')
+            .locator(byTestId('browser-address'))
             .evaluate((element) => (element as unknown as { value: string }).value),
         { timeout: 30_000 },
       )
@@ -178,12 +150,14 @@ test.describe('startup state', () => {
     await expect.poll(() => state.hits > 1, { timeout: 30_000 }).toBe(true);
 
     const restoredAddress = await secondPage
-      .locator('#browser-address-bar')
+      .locator(byTestId('browser-address'))
       .evaluate((element) => (element as unknown as { value: string }).value);
     expect(restoredAddress).toContain(origin);
     // The picker is the "no page remembered" affordance; a restore must not
     // also open it over the page the user left.
-    await expect(secondPage.locator(`.hosts-item[data-origin="${origin}"]`)).not.toBeVisible();
+    await expect(
+      secondPage.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`),
+    ).not.toBeVisible();
 
     await second.close();
     server.close();

@@ -1,5 +1,4 @@
-import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { expect, test } from '@playwright/test';
 import path from 'node:path';
 import {
   AEM_REMEMBER_COOKIE,
@@ -12,6 +11,8 @@ import {
   type AemOrigin,
   type SsoIdp,
 } from '../integration/support/testAemServer';
+import { launchApp } from '../support/e2e/app';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * Step 05 success criteria, executed against the REAL shipped artefacts:
@@ -31,59 +32,14 @@ import {
  * those two do not touch.
  *
  * Run with the BUILT app:
- *   npm run build && npx playwright test tests/e2e/step05-aem-session.spec.ts
+ *   npm run build && npx playwright test tests/e2e/aem-session.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const aemPreload = path.resolve(__dirname, '../../out/preload/aem-preload.js');
-const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-aem-session-scratch');
+const scratchBase = path.resolve(__dirname, '../../test-results', 'aem-session-scratch');
 
 /** The partition `src/main/aem/session.ts` really uses. A different value here would silently test nothing. */
 const AEM_PARTITION = 'persist:aem';
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-interface ScratchProfile {
-  readonly home: string;
-  readonly appData: string;
-  readonly localAppData: string;
-}
-
-/**
- * Overriding USERPROFILE/HOME alone crashes Electron on this machine
- * (0x80000003) - APPDATA/LOCALAPPDATA must agree. Established in
- * `step04-storage.spec.ts`; repeated here because the whole restart test
- * depends on both launches sharing one profile.
- */
-function makeScratchProfile(): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-function launch(profile: ScratchProfile): Promise<Awaited<ReturnType<typeof electron.launch>>> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-    },
-  });
-}
 
 interface EvaluateArgs {
   readonly partition: string;
@@ -119,7 +75,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
     });
     sibling = await startAemOrigin();
 
-    const profile = makeScratchProfile();
+    const profile = createScratchDirs(scratchBase);
     const args: EvaluateArgs = {
       partition: AEM_PARTITION,
       preload: aemPreload,
@@ -134,7 +90,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
     };
 
     // ---------------------------------------------------------------- launch 1
-    const first = await launch(profile);
+    const first = await launchApp(profile);
     const report = await first.evaluate(
       async ({ session, BrowserWindow, WebContentsView: View }, input: EvaluateArgs) => {
         const marks: string[] = [];
@@ -451,7 +407,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
     expect(report.primaryHeadingRestored).toBe('AEM content');
 
     // ---------------------------------------------------------------- launch 2
-    const second = await launch(profile);
+    const second = await launchApp(profile);
     const afterRestart = await second.evaluate(
       async ({ session, BrowserWindow, WebContentsView: View }, input: EvaluateArgs) => {
         const aemSession = session.fromPartition(input.partition);

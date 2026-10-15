@@ -22,11 +22,12 @@ const activeContext: LinkContext = { hostOrigins: [AUTHOR], activeOrigin: AUTHOR
 const hostsOnlyContext: LinkContext = { hostOrigins: [AUTHOR], activeOrigin: undefined };
 const emptyContext: LinkContext = { hostOrigins: [], activeOrigin: undefined };
 
+// The visible title is production copy; only the action's id and href are certified.
 function editAction(href: string): { id: 'edit'; title: string; href: string } {
-  return { id: 'edit', title: 'Edit', href };
+  return { id: 'edit', title: expect.any(String) as string, href };
 }
 function crxAction(href: string): { id: 'crx'; title: string; href: string } {
-  return { id: 'crx', title: 'CRX', href };
+  return { id: 'crx', title: expect.any(String) as string, href };
 }
 function pane(href: string, actions: ResolvedLink['actions']): ResolvedLink {
   return { openIn: 'pane', href, actions };

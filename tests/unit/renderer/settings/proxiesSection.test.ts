@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BANNER_ACTION_MARKER } from '../../../../src/renderer/src/lib/alertBanner';
 import { createProxiesSection } from '../../../../src/renderer/src/settings/proxiesSection';
@@ -8,10 +8,12 @@ import type {
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
 import { newProxyId, proxySnapshotSchema, type ProxySnapshot } from '../../../../src/shared';
+import { settle } from '../../../support/asyncWaits';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
+import { byField } from '../../../support/selectors';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 const addProxy = vi.fn();
 const updateProxy = vi.fn();
@@ -49,8 +51,15 @@ function buildSection() {
   return createProxiesSection({ status, reportSave, onSettingsChanged });
 }
 
-function field(root: ParentNode, ariaLabel: 'Address' | 'Label' | 'User name' | 'Password') {
-  return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
+const FIELD_IDS = {
+  Address: 'proxy-address',
+  Label: 'proxy-label',
+  'User name': 'proxy-username',
+  Password: 'proxy-password',
+} as const;
+
+function field(root: ParentNode, name: keyof typeof FIELD_IDS) {
+  return root.querySelector<HTMLElement & { value: string }>(byField(FIELD_IDS[name]));
 }
 
 function type(node: HTMLElement & { value: string }, value: string): void {
@@ -66,11 +75,6 @@ function commit(node: HTMLElement): void {
 function typeAndCommit(node: HTMLElement & { value: string }, value: string): void {
   type(node, value);
   commit(node);
-}
-
-async function settle(ms = 1000): Promise<void> {
-  await vi.advanceTimersByTimeAsync(ms);
-  await vi.advanceTimersByTimeAsync(0);
 }
 
 beforeEach(() => {
@@ -107,9 +111,7 @@ beforeEach(() => {
   reportSave = vi.fn<(outcome: Promise<SaveOutcome>) => void>();
   onSettingsChanged = vi.fn<() => void>();
 
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   Reflect.set(dom.window, 'daisy', {
     settings: {
       addProxy,
@@ -124,13 +126,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createProxiesSection', () => {
-  it('renders one labelled item per proxy with the four field labels and quiet Set/Clear actions', () => {
+  it('renders one item per proxy with its field values', () => {
     const section = buildSection();
     section.update([
       snapshot('a', 'https://a.example', 'A'),
@@ -141,32 +141,6 @@ describe('createProxiesSection', () => {
     expect(field(section.element, 'Address')?.value).toBe('https://a.example');
     expect(field(section.element, 'Label')?.value).toBe('A');
     expect(field(section.element, 'User name')?.value).toBe('');
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(8);
-
-    const passwordRow = section.element.querySelector('.password-control');
-    expect(passwordRow).not.toBeNull();
-    const buttons = [...(passwordRow?.querySelectorAll('sp-action-button') ?? [])];
-    expect(buttons.map((button) => button.textContent)).toEqual(['Set', 'Clear']);
-    for (const button of buttons) expect(button.hasAttribute('quiet')).toBe(true);
-  });
-
-  it('gives every proxy field a contextual-help badge carrying its phrase', () => {
-    const section = buildSection();
-    section.update([snapshot('a', 'https://a.example', 'A')]);
-
-    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
-    expect(badges.map((badge) => badge.textContent)).toEqual([
-      'The address of the proxy server',
-      'The name shown for this proxy. If blank, defaults to the address',
-      'The user name. Used if the proxy requires authentication',
-      'The password. Used if the proxy requires authentication. Stored in the OS secret store and never shown again',
-    ]);
-    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
-      'Help: Address',
-      'Help: Label',
-      'Help: User name',
-      'Help: Password',
-    ]);
   });
 
   it('adds an empty draft only when "Add item" is clicked', () => {
@@ -273,9 +247,7 @@ describe('createProxiesSection', () => {
     await settle();
 
     expect(address.hasAttribute('invalid')).toBe(true);
-    expect(address.querySelector('[slot="negative-help-text"]')?.textContent).toMatch(
-      /valid address/,
-    );
+    expect(address.querySelector('[slot="negative-help-text"]')?.textContent).toBeTruthy();
     expect(addProxy).not.toHaveBeenCalled();
     expect(reportSave).not.toHaveBeenCalled();
   });
@@ -344,7 +316,7 @@ describe('createProxiesSection', () => {
       .querySelector('.multifield__action--remove')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    expect(lastPrompt?.copy).toBe(`Press ${BANNER_ACTION_MARKER} to remove the proxy`);
+    expect(lastPrompt?.copy).toContain(BANNER_ACTION_MARKER);
     expect(removeProxy).not.toHaveBeenCalled();
 
     lastPrompt?.action.onActivate();

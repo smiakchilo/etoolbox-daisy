@@ -36,6 +36,11 @@ export interface PasswordControlOptions {
    * `"password"`; the Agents tab passes `"token"`.
    */
   readonly noun?: string;
+  /**
+   * Stable test hook: the field wears `data-field="<fieldId>"` and its buttons
+   * `data-testid="<fieldId>-set"` / `"<fieldId>-clear"`.
+   */
+  readonly fieldId?: string;
 }
 
 /**
@@ -60,15 +65,28 @@ export function createPasswordControl(
   const article = /^[aeiou]/i.test(noun) ? 'an' : 'a';
 
   const passwordField = el('sp-textfield', {
-    attrs: { type: 'password', placeholder: `New ${noun}`, 'aria-label': nounLabel },
+    attrs: {
+      type: 'password',
+      placeholder: `New ${noun}`,
+      'aria-label': nounLabel,
+      ...(options.fieldId === undefined ? {} : { 'data-field': options.fieldId }),
+    },
   }) as HTMLElement & { value: string };
 
   const setButton = el('sp-action-button', {
-    attrs: { quiet: '', label: `Set ${noun}` },
+    attrs: {
+      quiet: '',
+      label: `Set ${noun}`,
+      ...(options.fieldId === undefined ? {} : { 'data-testid': `${options.fieldId}-set` }),
+    },
     text: 'Set',
   });
   const clearButton = el('sp-action-button', {
-    attrs: { quiet: '', label: `Clear ${noun}` },
+    attrs: {
+      quiet: '',
+      label: `Clear ${noun}`,
+      ...(options.fieldId === undefined ? {} : { 'data-testid': `${options.fieldId}-clear` }),
+    },
     text: 'Clear',
   });
 

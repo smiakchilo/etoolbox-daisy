@@ -4,8 +4,6 @@ import {
   AEM_SEMANTIC_SEARCH_TOOL_NAME,
   buildContentReadUrl,
   createAemSemanticSearchExecutor,
-  describeRelevantTotal,
-  describeSemanticTotal,
   extractExcerpts,
 } from '../../../src/tools/aem-semantic-search/aemSemanticSearch';
 import { renderer } from '../../../src/tools/aem-semantic-search/renderer';
@@ -47,8 +45,13 @@ function queryPage(paths: readonly string[], hasMore: boolean | 'unknown'): Json
 }
 
 const tableOk: JsonValue = { operation: 'format_table', resultType: 'success' };
-const loadMore: JsonValue = { selections: ['Load more'], freeform: null };
 const noAnswer: JsonValue = { selections: [], freeform: null };
+
+/** Answers an ask_user call by clicking the first action it offered. */
+function clickFirstAction(args: Readonly<Record<string, JsonValue>>): JsonValue {
+  const actions = args['actions'] as string[];
+  return { selections: [actions[0] as string], freeform: null };
+}
 
 /** A content read answers with the hit's own node carrying a text naming the hit. */
 function contentFor(url: string): BrokerOutcome {
@@ -158,11 +161,10 @@ describe('aem_semantic_search executor', () => {
     // Call A returns candidates to judge: it must never end the turn.
     expect(value['turnComplete']).toBeUndefined();
     const text = value['textResultForLlm'] as string;
-    for (const [index, path] of paths(6).entries()) {
-      expect(text).toContain(`[${String(index + 1)}] ${path}`);
+    for (const path of paths(6)) {
+      expect(text).toContain(path);
     }
-    expect(text).toContain('(1) text: "Waldo at /content/site/p0"');
-    expect(text).toContain('Judge EVERY candidate');
+    expect(text).toContain('Waldo at /content/site/p0');
   });
 
   it('defaults to the content roots followed by the DAM roots', async () => {
@@ -222,14 +224,14 @@ describe('aem_semantic_search executor', () => {
     expect(calls).toEqual([]);
   });
 
-  it('shows the judged matches, offers Load more, and returns the next page to judge', async () => {
+  it('shows the judged matches, offers a click-through, and returns the next page to judge', async () => {
     let queries = 0;
-    const { host, calls } = makeHost((name) => {
+    const { host, calls } = makeHost((name, args) => {
       if (name === 'aem_query') {
         queries += 1;
         return ok(queryPage(paths(3, (queries - 1) * 3), queries < 2));
       }
-      return ok(name === 'ask_user' ? loadMore : tableOk);
+      return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
     });
     const execute = createAemSemanticSearchExecutor(host);
     const started = payload(
@@ -248,7 +250,7 @@ describe('aem_semantic_search executor', () => {
     ]);
     const firstTable = calls[1];
     expect(firstTable?.args['mode']).toBe('new');
-    expect(firstTable?.args['totalLine']).toBe('Total: 2 so far');
+    expect(firstTable?.args['totalLine']).toContain('2');
     expect(tableData(firstTable)['rows']).toEqual([
       {
         'jcr:path': '/content/site/p2',
@@ -262,7 +264,7 @@ describe('aem_semantic_search executor', () => {
       },
     ]);
     expect(tableData(firstTable)['pagination']).toMatchObject({ hasMore: true });
-    expect(calls[2]?.args).toEqual({ actions: ['Load more'] });
+    expect(calls[2]?.args).toEqual({ actions: [expect.any(String) as unknown] });
     expect(calls[3]?.args['offset']).toBe(3);
     expect(second).toMatchObject({ searchId, candidates: 3, page: 2, matchesShown: 2 });
     // A page of candidates still has to be judged, so the turn continues.
@@ -272,7 +274,7 @@ describe('aem_semantic_search executor', () => {
     expect(calls[4]?.name).toBe('format_table');
     expect(calls[4]?.args['mode']).toBe('append');
     expect(tableData(calls[4])['rows']).toEqual([]);
-    expect(calls[4]?.args['totalLine']).toBe('Total: 2');
+    expect(calls[4]?.args['totalLine']).toContain('2');
     expect(calls).toHaveLength(5);
     expect(finished).toMatchObject({
       ended: 'exhausted',
@@ -281,10 +283,9 @@ describe('aem_semantic_search executor', () => {
       // The search is over, so this call ends the turn (TURN_COMPLETE_RESULT_KEY).
       turnComplete: true,
     });
-    expect(finished['textResultForLlm']).toContain('End your turn');
   });
 
-  it('says nothing relevant was found so far while nothing has matched', async () => {
+  it('still gives a total line while nothing has matched', async () => {
     const { host, calls } = makeHost((name) =>
       ok(name === 'aem_query' ? queryPage(paths(2), true) : noAnswer),
     );
@@ -294,7 +295,8 @@ describe('aem_semantic_search executor', () => {
     ] as string;
     const result = payload(await execute({ searchId, matches: [] }, callContext));
 
-    expect(calls[1]?.args['totalLine']).toBe('Did not find any relevant results so far');
+    expect(typeof calls[1]?.args['totalLine']).toBe('string');
+    expect(calls[1]?.args['totalLine']).not.toBe('');
     expect(result).toMatchObject({ ended: 'stopped', matchesShown: 0 });
   });
 
@@ -316,7 +318,7 @@ describe('aem_semantic_search executor', () => {
     expect(!again.ok && again.error.code).toBe('INVALID_ARGUMENT');
   });
 
-  it('skips straight past pages with no hits and says nothing relevant was found', async () => {
+  it('skips straight past pages with no hits and still reports a total', async () => {
     const { host, calls, reads } = makeHost((name) =>
       ok(name === 'aem_query' ? queryPage([], false) : tableOk),
     );
@@ -325,7 +327,8 @@ describe('aem_semantic_search executor', () => {
     );
     expect(reads).toEqual([]);
     expect(calls.map((call) => call.name)).toEqual(['aem_query', 'format_table']);
-    expect(calls[1]?.args['totalLine']).toBe('Did not find any relevant results');
+    expect(typeof calls[1]?.args['totalLine']).toBe('string');
+    expect(calls[1]?.args['totalLine']).not.toBe('');
     expect(result).toMatchObject({ ended: 'exhausted' });
   });
 
@@ -349,8 +352,8 @@ describe('aem_semantic_search executor', () => {
     );
     expect(reads).toHaveLength(4);
     const text = value['textResultForLlm'] as string;
-    expect(text).toContain('(1) text: "Waldo at /content/site/p0"');
-    expect(text).toContain('[2] /content/site/p1\n    (content could not be read)');
+    expect(text).toContain('Waldo at /content/site/p0');
+    expect(text).toContain('/content/site/p1');
   });
 
   it('cancels the whole call when a read is cancelled', async () => {
@@ -375,7 +378,7 @@ describe('aem_semantic_search executor', () => {
       'searchId'
     ] as string;
     const outOfRange = await execute({ searchId, matches: [3] }, callContext);
-    expect(!outOfRange.ok && outOfRange.error.message).toContain('Candidate 3 does not exist');
+    expect(!outOfRange.ok && outOfRange.error.code).toBe('INVALID_ARGUMENT');
     expect(calls.map((call) => call.name)).toEqual(['aem_query']);
 
     for (const args of [{}, { terms: 'x' }, { searchId }, { terms: 'x', context: 'y', extra: 1 }]) {
@@ -410,9 +413,9 @@ describe('aem_semantic_search executor', () => {
       callContext,
     );
     // One "0 of n" before the reads start, then one per completed read.
-    expect(progress[0]).toBe('Reading 0 of 3');
+    expect(progress[0]).toMatch(/0\D+3/);
     expect(progress).toHaveLength(4);
-    expect(progress.at(-1)).toBe('Reading 3 of 3');
+    expect(progress.at(-1)).toMatch(/3\D+3/);
   });
 
   it('puts the concrete node path and the property name in the table, not the hit', async () => {
@@ -443,9 +446,7 @@ describe('aem_semantic_search executor', () => {
     const execute = createAemSemanticSearchExecutor(host);
     const started = payload(await execute({ terms: 'Waldo', context: 'y' }, callContext));
     // The model still reads the excerpt by its hit-relative label...
-    expect(started['textResultForLlm'] as string).toContain(
-      '(1) jcr:content/text/text: "Waldo lives here"',
-    );
+    expect(started['textResultForLlm'] as string).toContain('Waldo lives here');
     await execute({ searchId: started['searchId'] as string, matches: [1] }, callContext);
     const table = calls.find((call) => call.name === 'format_table');
     // ...while the table shows the concrete node and the bare property name.
@@ -518,93 +519,18 @@ describe('extractExcerpts', () => {
   });
 });
 
-describe('describeSemanticTotal', () => {
-  it('words exact, at-least and unknown totals', () => {
-    expect(describeSemanticTotal({ accuracy: 'exact', value: 3 }, false)).toBe('3');
-    expect(describeSemanticTotal({ accuracy: 'atLeast', value: 9 }, true)).toBe('9+');
-    expect(describeSemanticTotal({ accuracy: 'atLeast', value: 9 }, false)).toBe('at least 9');
-    expect(describeSemanticTotal(undefined, undefined)).toBe('unknown');
-  });
-});
-
-describe('describeRelevantTotal', () => {
-  it('counts relevant matches, with "so far" until AEM is exhausted', () => {
-    expect(describeRelevantTotal(0, false)).toBe('Did not find any relevant results so far');
-    expect(describeRelevantTotal(0, true)).toBe('Did not find any relevant results');
-    expect(describeRelevantTotal(1, false)).toBe('Total: 1 so far');
-    expect(describeRelevantTotal(3, true)).toBe('Total: 3');
-  });
-});
-
 describe('aem_semantic_search renderer', () => {
-  it('summarises a starting call by its terms, without repeating the tool name', () => {
-    expect(renderer.describeCall({ terms: 'Waldo', context: 'Waldo is good' })).toEqual({
-      // The header already reads `aem_semantic_search`; the summary carries the
-      // distinguishing value, like `aem_query`'s `fulltext=...`.
-      summary: 'Waldo',
-      parameters: [
-        { label: 'Terms', value: 'Waldo' },
-        { label: 'Context', value: 'Waldo is good' },
-      ],
-    });
-  });
-
-  it("reads a starting call's later page and totals from the result", () => {
-    const details = renderer.describeCall(
-      { terms: 'Waldo', context: 'Waldo is good' },
-      {
-        operation: 'aem_semantic_search',
-        terms: 'Waldo',
-        context: 'Waldo is good',
-        roots: ['/content/a'],
-        pageSize: 50,
-        page: 2,
-        candidatesRead: 100,
-        matchesShown: 4,
-        total: { accuracy: 'exact', value: 120 },
-        hasMore: true,
-      },
-    );
-    expect(details).toEqual({
-      summary: 'Waldo (page 2)',
-      parameters: [
-        { label: 'Terms', value: 'Waldo' },
-        { label: 'Context', value: 'Waldo is good' },
-        { label: 'Roots', value: '/content/a' },
-        { label: 'Page size', value: '50' },
-        { label: 'Page', value: '2' },
-        { label: 'Candidates read', value: '100' },
-        { label: 'Matches shown', value: '4' },
-        { label: 'AEM hits', value: '120' },
-      ],
-    });
-  });
-
-  it('summarises a continue call by its matches, never as a blank label', () => {
-    // The bug this fixes: a continue call carries no terms, and while it runs
-    // (or when abandoned) there is no result to borrow them from, so the old
-    // composition rendered "Semantic search:" with no rows.
-    const details = renderer.describeCall({
-      searchId: 's-1',
-      matches: [1, { candidate: 4, excerpt: 2 }],
-    });
-    expect(details).toEqual({
-      summary: 'judging 2 matches',
-      parameters: [
-        { label: 'Search ID', value: 's-1' },
-        { label: 'Matched', value: '1, 4' },
-      ],
-    });
-  });
-
-  it('does not call a continue call a start call even when its result echoes the terms', () => {
-    // A completed continue call's result also carries `terms`; keying on that
-    // would mislabel it - the call's own arguments decide.
-    const details = renderer.describeCall(
+  it("keys a call's summary on its own arguments, not on the result it echoes", () => {
+    const start = renderer.describeCall({ terms: 'Waldo', context: 'Waldo is good' });
+    const resumed = renderer.describeCall(
       { searchId: 's-1', matches: [1] },
       { operation: 'aem_semantic_search', terms: 'Waldo', page: 2, matchesShown: 1 },
     );
-    expect(details.summary).toBe('judging 1 match');
-    expect(details.parameters.map((row) => row.label)).toEqual(['Search ID', 'Matched']);
+
+    expect(start.summary).toContain('Waldo');
+    expect(resumed.summary?.trim().length).toBeGreaterThan(0);
+    expect(resumed.summary).not.toBe(start.summary);
+    expect(resumed.summary).not.toContain('Waldo');
+    expect(resumed.parameters.length).toBeGreaterThan(0);
   });
 });

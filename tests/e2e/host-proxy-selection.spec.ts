@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * The Hosts multifield's "Proxy" combobox: it offers "(Default)" (inherit
@@ -14,16 +17,7 @@ import path from 'node:path';
  * `removeProxy` reference-clearing). The unit suite covers the pieces.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'host-proxy-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 interface SettingsDoc {
   hosts?: { origin?: string; proxyId?: string }[];
@@ -34,21 +28,9 @@ interface SettingsDoc {
 test('a host uses a library proxy, and removing it clears the reference', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const readDoc = (): SettingsDoc => {
@@ -65,30 +47,31 @@ test('a host uses a library proxy, and removing it clears the reference', async 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button[title="Settings"]').first().click();
-    await page.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('chat-settings')).click();
+    await page
+      .locator(byTestId('settings-panel'))
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
 
     // --- Add one library proxy on the Proxies tab --------------------------
-    await page.locator('sp-tab', { hasText: 'Proxies' }).click();
-    const proxies = page.locator('section[aria-label="Proxies"]');
+    await page.locator(byTestId('settings-tab-proxies')).click();
+    const proxies = page.locator('.proxies-section');
     await proxies.locator('.multifield__add').first().click();
     const proxyItem = proxies.locator('.multifield__item').last();
-    await proxyItem
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://proxy.example:8080');
-    const proxyLabel = proxyItem.locator('sp-textfield[aria-label="Label"] input');
+    await proxyItem.locator(`${byField('proxy-address')} input`).fill('https://proxy.example:8080');
+    const proxyLabel = proxyItem.locator(`${byField('proxy-label')} input`);
     await proxyLabel.fill('Corporate');
     // Leaving the address (label focus) commits it; Enter commits the label.
     await proxyLabel.press('Enter');
     await expect.poll(() => proxyIdOnDisk(), { timeout: 60_000 }).toBeDefined();
 
     // --- Add a host and give it that proxy --------------------------------
-    await page.locator('sp-tab', { hasText: 'Hosts' }).click();
-    const hosts = page.locator('section[aria-label="Hosts"]');
+    await page.locator(byTestId('settings-tab-hosts')).click();
+    const hosts = page.locator('.hosts-section');
     await hosts.locator('.multifield__add').first().click();
     const hostItem = hosts.locator('.multifield__item').last();
-    const hostAddress = hostItem.locator('sp-textfield[aria-label="Address"] input');
+    const hostAddress = hostItem.locator(`${byField('host-address')} input`);
     await hostAddress.fill('https://host.example');
     // The host is created on leaving the address; Enter commits it while
     // keeping focus, so the proxy selection below has a persisted host to
@@ -96,7 +79,7 @@ test('a host uses a library proxy, and removing it clears the reference', async 
     await hostAddress.press('Enter');
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBeUndefined();
 
-    const picker = hostItem.locator('sp-picker[aria-label="Proxy"]');
+    const picker = hostItem.locator(byField('host-proxy'));
     const corporateId = proxyIdOnDisk();
     if (corporateId === undefined) throw new Error('proxy id missing on disk');
     // Selecting is done through the picker's own `value` + `change` (the same
@@ -112,24 +95,21 @@ test('a host uses a library proxy, and removing it clears the reference', async 
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBe(corporateId);
 
     // --- Remove the proxy; the host's reference is cleared ----------------
-    await page.locator('sp-tab', { hasText: 'Proxies' }).click();
+    await page.locator(byTestId('settings-tab-proxies')).click();
     await proxies
       .locator('.multifield__item')
       .first()
       .locator('.multifield__action--remove')
       .click();
-    await page
-      .locator('.surface-status-banner sp-action-button', { hasText: 'OK' })
-      .first()
-      .click();
+    await page.locator(byTestId('banner-confirm')).first().click();
     await expect.poll(() => readDoc().proxies ?? [], { timeout: 60_000 }).toEqual([]);
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBeUndefined();
 
     // And the Hosts combobox now reads "(Default)" - the reference is cleared,
     // so the host inherits `browser.proxy` again.
-    await page.locator('sp-tab', { hasText: 'Hosts' }).click();
+    await page.locator(byTestId('settings-tab-hosts')).click();
     const selected = await hosts
-      .locator('sp-picker[aria-label="Proxy"]')
+      .locator(byField('host-proxy'))
       .first()
       .evaluate((element) => (element as HTMLElement & { value: string }).value);
     expect(selected).toBe('__default__');
@@ -141,21 +121,9 @@ test('a host uses a library proxy, and removing it clears the reference', async 
 test('a host can explicitly disable the proxy, and the browser default proxy persists', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const readDoc = (): SettingsDoc => {
@@ -173,19 +141,20 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button[title="Settings"]').first().click();
-    await page.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('chat-settings')).click();
+    await page
+      .locator(byTestId('settings-panel'))
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
 
     // Add one library proxy.
-    await page.locator('sp-tab', { hasText: 'Proxies' }).click();
-    const proxies = page.locator('section[aria-label="Proxies"]');
+    await page.locator(byTestId('settings-tab-proxies')).click();
+    const proxies = page.locator('.proxies-section');
     await proxies.locator('.multifield__add').first().click();
     const proxyItem = proxies.locator('.multifield__item').last();
-    await proxyItem
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://proxy.example:8080');
-    const proxyLabel = proxyItem.locator('sp-textfield[aria-label="Label"] input');
+    await proxyItem.locator(`${byField('proxy-address')} input`).fill('https://proxy.example:8080');
+    const proxyLabel = proxyItem.locator(`${byField('proxy-label')} input`);
     await proxyLabel.fill('Corporate');
     // Leaving the address (label focus) commits it; Enter commits the label.
     await proxyLabel.press('Enter');
@@ -194,9 +163,9 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
     if (corporateId === undefined) throw new Error('proxy id missing on disk');
 
     // The Browser tab's Default proxy maps to `browser.proxy`.
-    await page.locator('sp-tab', { hasText: 'Browser' }).click();
-    const browserSection = page.locator('section[aria-label="Browser"]');
-    const defaultProxy = browserSection.locator('sp-picker[aria-label="Proxy"]');
+    await page.locator(byTestId('settings-tab-browser')).click();
+    const browserSection = page.locator('.browser-section');
+    const defaultProxy = browserSection.locator(byField('browser-default-proxy'));
     await defaultProxy.evaluate((node, value) => {
       const picker = node as HTMLElement & { value: string };
       picker.value = value;
@@ -205,11 +174,11 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
     await expect.poll(() => browserProxyOnDisk(), { timeout: 60_000 }).toBe(corporateId);
 
     // A host set to "(No proxy)" stores the "none" sentinel, not an omission.
-    await page.locator('sp-tab', { hasText: 'Hosts' }).click();
-    const hosts = page.locator('section[aria-label="Hosts"]');
+    await page.locator(byTestId('settings-tab-hosts')).click();
+    const hosts = page.locator('.hosts-section');
     await hosts.locator('.multifield__add').first().click();
     const hostItem = hosts.locator('.multifield__item').last();
-    const hostAddress = hostItem.locator('sp-textfield[aria-label="Address"] input');
+    const hostAddress = hostItem.locator(`${byField('host-address')} input`);
     await hostAddress.fill('https://host.example');
     // The host is created on leaving the address; Enter commits it while
     // keeping focus, so the proxy selection below has a persisted host to
@@ -217,7 +186,7 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
     await hostAddress.press('Enter');
     await expect.poll(() => hostProxyIdOnDisk(), { timeout: 60_000 }).toBeUndefined();
 
-    await hostItem.locator('sp-picker[aria-label="Proxy"]').evaluate((node) => {
+    await hostItem.locator(byField('host-proxy')).evaluate((node) => {
       const picker = node as HTMLElement & { value: string };
       picker.value = '__none__';
       picker.dispatchEvent(new Event('change', { bubbles: true }));

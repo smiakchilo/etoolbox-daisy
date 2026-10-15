@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The left pane's home (welcome) screen: the base layer that guarantees the
@@ -20,16 +22,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * collapse.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'home-screen-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 async function startEchoOrigin(): Promise<{ origin: string; close: () => void }> {
   const server: Server = createServer((_req, res) => {
@@ -45,82 +38,44 @@ async function startEchoOrigin(): Promise<{ origin: string; close: () => void }>
   };
 }
 
-function launchProfile(): { home: string; env: Record<string, string> } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
-
 test('a fresh install lands on the home screen, with no panel covering a gap', async () => {
   test.setTimeout(120_000);
 
-  const { env } = launchProfile();
+  const { env } = createLaunchProfile(scratchBase);
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
 
     const homeScreen = page.locator('.browser-home');
     await expect(homeScreen).toBeVisible({ timeout: 10_000 });
     // The native view is collapsed and no panel is auto-opened on a fresh
     // profile - the home screen is the landing surface, not a cover for a
     // blank.
-    await expect(page.locator('[data-testid="browser-view-host"]')).toBeHidden();
-    await expect(page.locator('.settings-panel')).toBeHidden();
-    await expect(page.locator('.hosts-panel')).toBeHidden();
+    await expect(page.locator('.browser-view-host')).toBeHidden();
+    await expect(page.locator(byTestId('settings-panel'))).toBeHidden();
+    await expect(page.locator(byTestId('hosts-panel'))).toBeHidden();
 
     // Name is static; version arrives from `getAppInfo`; the skill list arrives
     // from the (folder-scanned, non-hardcoded) catalogue.
-    await expect(page.locator('.browser-home__name')).toHaveText('EToolbox Daisy');
-    await expect(page.locator('.browser-home__version')).toContainText('Version', {
-      timeout: 10_000,
-    });
+    await expect(page.locator('.browser-home__name')).not.toBeEmpty();
+    await expect(page.locator('.browser-home__version')).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('.browser-home__skill-name').first()).toBeVisible({
       timeout: 10_000,
     });
-    const skillNames = await page
-      .locator('.browser-home__skill-name')
-      .evaluateAll((nodes) => nodes.map((node) => node.textContent));
-    expect(skillNames).toContain('/search');
-    await expect(page.locator('.browser-home__section-title')).toHaveText('Useful commands');
 
     // No hosts are configured, so "Choose a host" is not offered.
-    await expect(page.locator('.browser-home__action').first()).toBeDisabled();
+    await expect(page.locator(byTestId('home-hosts'))).toBeDisabled();
 
-    // The action row is Select a host / History / Settings; History opens the
+    // The action row is hosts / history / settings; history opens the
     // stored-conversations panel (the same one the chat toolbar's button opens).
-    const actionLabels = await page
-      .locator('.browser-home__action')
-      .evaluateAll((nodes) => nodes.map((node) => node.textContent));
-    expect(actionLabels).toEqual(['Select a host', 'History', 'Settings']);
+    await expect(page.locator('.browser-home__action')).toHaveCount(3);
 
-    await page.locator('.browser-home__action', { hasText: 'History' }).click();
-    await expect(page.locator('.history-panel')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('.history-panel__empty')).toContainText('No stored conversations', {
-      timeout: 10_000,
-    });
-    await page.locator('.history-panel .panel__close').click();
-    await expect(page.locator('.history-panel')).toBeHidden();
+    await page.locator(byTestId('home-history')).click();
+    await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.history-panel__empty')).toBeVisible({ timeout: 10_000 });
+    await page.locator(byTestId('history-panel-close')).click();
+    await expect(page.locator(byTestId('history-panel'))).toBeHidden();
   } finally {
     await app.close();
   }
@@ -135,7 +90,7 @@ test('a failed first load leaves the home screen in place behind the error row',
   // fails with no page to fall back to.
   server.close();
 
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -157,19 +112,19 @@ test('a failed first load leaves the home screen in place behind the error row',
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const panel = page.locator('.hosts-panel');
+    const panel = page.locator(byTestId('hosts-panel'));
     const homeScreen = page.locator('.browser-home');
     const message = page.locator('.browser-toolbar-message');
 
     // Seeded host: the picker leads at startup.
     await expect(panel).toBeVisible({ timeout: 10_000 });
-    await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
 
     // The load fails and the error row appears below the page-view region.
     await expect(message).toHaveAttribute('open', '', { timeout: 30_000 });
     // No page ever committed, so the home screen - not a blank native view -
     // remains behind the error row.
-    await expect(page.locator('[data-testid="browser-view-host"]')).toBeHidden();
+    await expect(page.locator('.browser-view-host')).toBeHidden();
     await expect(homeScreen).toBeVisible();
   } finally {
     await app.close();
@@ -180,7 +135,7 @@ test('the toolbar Home button reveals the home screen over a loaded page, and na
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -203,17 +158,17 @@ test('the toolbar Home button reveals the home screen over a loaded page, and na
   try {
     const page = await app.firstWindow();
     const homeScreen = page.locator('.browser-home');
-    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const viewHost = page.locator('.browser-view-host');
 
     // Load a page from the startup picker.
-    await expect(page.locator('.hosts-panel')).toBeVisible({ timeout: 10_000 });
-    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await expect(page.locator(byTestId('hosts-panel'))).toBeVisible({ timeout: 10_000 });
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${server.origin}"]`).click();
     await expect(viewHost).toBeVisible({ timeout: 30_000 });
     await expect(homeScreen).toBeHidden();
 
     // The Home control is leftmost and its icon is really registered (jsdom
     // cannot prove a custom element is registered - see AGENTS.md section 9).
-    const homeButton = page.locator('sp-action-button[title="Home"]');
+    const homeButton = page.locator(byTestId('browser-home'));
     await expect(homeButton).toBeVisible();
     expect(await page.evaluate(() => Boolean(customElements.get('sp-icon-home')))).toBe(true);
 
@@ -225,12 +180,12 @@ test('the toolbar Home button reveals the home screen over a loaded page, and na
     await expect(homeScreen).toBeVisible();
     await expect(viewHost).toBeHidden();
 
-    const addressInput = page.locator('#browser-address-bar input');
+    const addressInput = page.locator(byTestId('browser-address') + ' input');
     await expect(addressInput).toHaveValue('');
-    await expect(page.locator('sp-action-button[aria-label="Back"]')).toBeDisabled();
-    await expect(page.locator('sp-action-button[aria-label="Forward"]')).toBeDisabled();
+    await expect(page.locator(byTestId('browser-back'))).toBeDisabled();
+    await expect(page.locator(byTestId('browser-forward'))).toBeDisabled();
 
-    const close = page.locator('.browser-home__close');
+    const close = page.locator(byTestId('home-close'));
     await expect(close).toBeVisible();
     // The close control reuses the panels' own hairline close glyph, which is
     // really registered (jsdom cannot prove a custom element is registered -
@@ -249,7 +204,7 @@ test('the toolbar Home button reveals the home screen over a loaded page, and na
     // returns the page - Refresh is a page control, not a veil control.
     await homeButton.click();
     await expect(homeScreen).toBeVisible();
-    await page.locator('sp-action-button[aria-label="Refresh"]').click();
+    await page.locator(byTestId('browser-refresh')).click();
     await expect(viewHost).toBeVisible();
     await expect(homeScreen).toBeHidden();
   } finally {
@@ -262,7 +217,7 @@ test('the home close control sits exactly where a panel close control does, so o
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -284,14 +239,14 @@ test('the home close control sits exactly where a panel close control does, so o
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await expect(page.locator('.hosts-panel')).toBeVisible({ timeout: 10_000 });
-    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
-    await expect(page.locator('[data-testid="browser-view-host"]')).toBeVisible({
+    await expect(page.locator(byTestId('hosts-panel'))).toBeVisible({ timeout: 10_000 });
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${server.origin}"]`).click();
+    await expect(page.locator('.browser-view-host')).toBeVisible({
       timeout: 30_000,
     });
 
-    await page.locator('sp-action-button[title="Home"]').click();
-    const close = page.locator('.browser-home__close');
+    await page.locator(byTestId('browser-home')).click();
+    const close = page.locator(byTestId('home-close'));
     await expect(close).toBeVisible();
     const before = await close.boundingBox();
 
@@ -299,12 +254,12 @@ test('the home close control sits exactly where a panel close control does, so o
     // control must land on the identical screen position, so the cross does not
     // jump when the panel appears (or when it is dismissed and the welcome
     // screen returns).
-    await page.locator('.browser-home__action', { hasText: 'Settings' }).click();
-    await expect(page.locator('.settings-panel')).toBeVisible();
-    const panelClose = await page.locator('.settings-panel .panel__close').boundingBox();
+    await page.locator(byTestId('home-settings')).click();
+    await expect(page.locator(byTestId('settings-panel'))).toBeVisible();
+    const panelClose = await page.locator(byTestId('settings-panel-close')).boundingBox();
 
-    await page.locator('.settings-panel .panel__close').click();
-    await expect(page.locator('.settings-panel')).toBeHidden();
+    await page.locator(byTestId('settings-panel-close')).click();
+    await expect(page.locator(byTestId('settings-panel'))).toBeHidden();
     await expect(close).toBeVisible();
     const after = await close.boundingBox();
 

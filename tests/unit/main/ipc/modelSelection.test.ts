@@ -1,4 +1,3 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultAppSettings } from '../../../../src/shared';
@@ -11,6 +10,7 @@ import {
 import { err, ok } from '../../../../src/shared';
 import type { ModelCatalogEntry } from '../../../../src/shared';
 import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDefinitions';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * Tests for the `settings:get-model-selection` / `settings:set-model-preferences`
@@ -23,20 +23,11 @@ import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDef
  * clearing.
  */
 
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'modelSelection-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'modelSelection-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 const catalog: readonly ModelCatalogEntry[] = [

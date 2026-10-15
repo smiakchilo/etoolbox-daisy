@@ -1,6 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -8,6 +7,9 @@ import {
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   defaultAppSettings,
 } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * Regression test for the Settings panel's dismissal bug: loading a URL from
@@ -22,45 +24,10 @@ import {
  * the bug. Only the real built app can prove the native view is actually
  * collapsed while the panel is open and *restored* on close, so this spec
  * reads the real `WebContentsView` child bounds through `app.evaluate`
- * exactly like step05-view-bounds.spec.ts.
+ * exactly like view-bounds.spec.ts.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'settings-panel-close-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function launchProfile(): { home: string; env: Record<string, string> } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 test('closing Settings with its close button restores the AEM view and Settings can open again', async () => {
   test.setTimeout(120_000);
@@ -77,7 +44,7 @@ test('closing Settings with its close button restores the AEM view and Settings 
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -103,11 +70,11 @@ test('closing Settings with its close button restores the AEM view and Settings 
     // panel cannot be dismissed yet (no page sits under it — the close button
     // and Escape are inert), so we pick the echo host directly: it loads the
     // page and closes the panel in one step.
-    const pickerItem = page.locator(`.hosts-item[data-origin="${origin}"]`);
+    const pickerItem = page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`);
     await pickerItem.waitFor({ state: 'visible', timeout: 10_000 });
     await pickerItem.click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
-    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const viewHost = page.locator('.browser-view-host');
     await viewHost.waitFor({ state: 'visible', timeout: 30_000 });
 
     const readNativeBounds = (): Promise<
@@ -154,20 +121,20 @@ test('closing Settings with its close button restores the AEM view and Settings 
     expect(await waitForNativeView('full')).toBe(true);
 
     // --- Step 2: open Settings ---------------------------------------------
-    await page.locator('sp-action-button[title="Settings"]').first().click();
-    const settingsPanel = page.locator('.settings-panel');
+    await page.locator(byTestId('chat-settings')).click();
+    const settingsPanel = page.locator(byTestId('settings-panel'));
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
     // The panel covers the page-view region: the native view is collapsed.
     expect(await waitForNativeView('collapsed')).toBe(true);
 
     // --- Step 3: close Settings with its own close button ------------------
-    await page.locator('.settings-panel__close').click();
+    await page.locator(byTestId('settings-panel-close')).click();
     await expect(settingsPanel).toBeHidden();
     // The native view must come back - this was the regression.
     expect(await waitForNativeView('full')).toBe(true);
 
     // --- Step 4: Settings can be opened again and suspends the view again --
-    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator(byTestId('chat-settings')).click();
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
     expect(await waitForNativeView('collapsed')).toBe(true);
 
@@ -203,7 +170,7 @@ test('an agent navigation dismisses an open Settings panel so the page is reveal
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -225,15 +192,15 @@ test('an agent navigation dismisses an open Settings panel so the page is reveal
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const pickerItem = page.locator(`.hosts-item[data-origin="${origin}"]`);
+    const pickerItem = page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`);
     await pickerItem.waitFor({ state: 'visible', timeout: 10_000 });
     await pickerItem.click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
-    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const viewHost = page.locator('.browser-view-host');
     await viewHost.waitFor({ state: 'visible', timeout: 30_000 });
 
-    await page.locator('.chat-toolbar sp-action-button[title="Settings"]').click();
-    const settingsPanel = page.locator('.settings-panel');
+    await page.locator(byTestId('chat-settings')).click();
+    const settingsPanel = page.locator(byTestId('settings-panel'));
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
     // The panel replaces the page-view region, so the native view is hidden.
     await expect(viewHost).toBeHidden();
@@ -274,7 +241,7 @@ test('save feedback survives closing the Settings panel', async () => {
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -296,29 +263,27 @@ test('save feedback survives closing the Settings panel', async () => {
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const pickerItem = page.locator(`.hosts-item[data-origin="${origin}"]`);
+    const pickerItem = page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`);
     await pickerItem.waitFor({ state: 'visible', timeout: 10_000 });
     await pickerItem.click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
 
-    await page.locator('sp-action-button[title="Settings"]').first().click();
-    const settingsPanel = page.locator('.settings-panel');
+    await page.locator(byTestId('chat-settings')).click();
+    const settingsPanel = page.locator(byTestId('settings-panel'));
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
 
     // Commit a label edit (leaving the field), then close the panel straight
     // away - the save is still settling.
-    const label = page.locator(
-      'section[aria-label="Hosts"] sp-textfield[aria-label="Label"] input',
-    );
+    const label = page.locator(`${'.hosts-section'} ${byField('host-label')} input`);
     await label.fill('Echo renamed');
     await label.press('Enter');
-    await page.locator('.settings-panel__close').click();
+    await page.locator(byTestId('settings-panel-close')).click();
     await expect(settingsPanel).toBeHidden();
 
     // The acknowledgement is still on screen, in the pane's row - never inside
     // the dismissed panel.
     const banner = page.locator('.surface-status-banner');
-    await expect(banner).toHaveText('Settings saved', { timeout: 30_000 });
+    await expect(banner).toHaveText(/\S/, { timeout: 30_000 });
     await expect(banner).toBeVisible();
     expect(await banner.evaluate((el) => el.closest('.settings-panel') === null)).toBe(true);
   } finally {

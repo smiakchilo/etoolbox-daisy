@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   AEM_SESSION_COOKIE,
   FIXTURE_PASSWORD,
@@ -19,6 +18,8 @@ import {
   type AemBridgeFetchCommand,
   type AemBridgeReply,
 } from '../../src/shared/contracts/aemBridge';
+import { type ElectronApp, launchApp } from '../support/e2e/app';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * Step 06 "private bridge" success criteria, proven end-to-end against the
@@ -75,12 +76,11 @@ import {
  * fake clock and a fake sender - until then.
  *
  * Run with the BUILT app (this file never runs the build itself):
- *   npx playwright test tests/e2e/step06-aem-bridge.spec.ts
+ *   npx playwright test tests/e2e/aem-bridge.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const aemPreload = path.resolve(__dirname, '../../out/preload/aem-preload.js');
-const scratchBase = path.resolve(__dirname, '../../test-results', 'step06-aem-bridge-scratch');
+const scratchBase = path.resolve(__dirname, '../../test-results', 'aem-bridge-scratch');
 
 /** Distinct partitions per scenario group so signed-in state never leaks between them. */
 const AUTH_PARTITION = 'persist:aem-bridge-auth';
@@ -90,53 +90,6 @@ const NAV_PARTITION = 'persist:aem-bridge-nav';
 
 /** Ample for a fixture that answers over localhost with no artificial delay. */
 const BRIDGE_TIMEOUT_MS = 15_000;
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-interface ScratchProfile {
-  readonly home: string;
-  readonly appData: string;
-  readonly localAppData: string;
-}
-
-/**
- * Overriding USERPROFILE/HOME alone crashes Electron on this machine
- * (0x80000003) - APPDATA/LOCALAPPDATA must agree. Established in
- * `step04-storage.spec.ts` and repeated in `step05-aem-session.spec.ts`;
- * copied here verbatim rather than shared, matching this suite's existing
- * per-file convention.
- */
-function makeScratchProfile(): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-function launch(profile: ScratchProfile): Promise<ElectronApp> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-    },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // View plumbing: create a real AEM WebContentsView (with the real shipped
@@ -238,7 +191,7 @@ interface SubmitLoginArgs {
  * `id="submit"`, and HTML named-element access makes `form.submit` resolve to
  * that BUTTON element rather than to `HTMLFormElement.prototype.submit` -
  * calling it throws. This is documented and worked around identically in
- * `step05-aem-session.spec.ts`; clicking the button is unambiguous and closer
+ * `aem-session.spec.ts`; clicking the button is unambiguous and closer
  * to what a real user does.
  */
 async function submitLoginForm(
@@ -546,8 +499,8 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
   let application: ElectronApp;
 
   test.beforeAll(async () => {
-    const profile = makeScratchProfile();
-    application = await launch(profile);
+    const profile = createScratchDirs(scratchBase);
+    application = await launchApp(profile);
   });
 
   test.afterAll(async () => {

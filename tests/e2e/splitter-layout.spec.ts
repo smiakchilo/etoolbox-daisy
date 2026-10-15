@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test, type ElectronApplication } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The draggable pane boundary, exercised against the real built app.
@@ -26,40 +28,9 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  *    only observable across two real app processes sharing one profile.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'splitter-layout-scratch');
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
 /** A profile directory both launches share - localStorage lives under it. */
-function createProfile(): Record<string, string> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 function readNativeBounds(
   app: ElectronApplication,
@@ -74,7 +45,7 @@ function readNativeBounds(
 test('the pane boundary is draggable, moves the native view with it, and is remembered across runs', async () => {
   test.setTimeout(180_000);
 
-  const env = createProfile();
+  const env = createLaunchProfile(scratchBase).env;
 
   // Seed one real host. A fresh profile opens (and then keeps) the Settings
   // panel at startup - a panel is not user-dismissible until a page sits under
@@ -116,15 +87,15 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   // nothing loaded into the native view yet it is not dismissible, so pick
   // the seeded host: it closes the panel AND loads a page, and the
   // splitter/native-view measurements below land on the idle two-pane shell.
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
   await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
 
-  const splitterHost = page.locator('[data-testid="pane-splitter"]');
+  const splitterHost = page.locator('sp-split-view');
   // The draggable bar itself lives inside `sp-split-view`'s own (open) shadow
   // root; Playwright's CSS engine pierces shadow boundaries by default, so a
   // plain descendant selector reaches it without any special syntax.
   const splitter = splitterHost.locator('#splitter');
-  const host = page.locator('[data-testid="browser-view-host"]');
+  const host = page.locator('.browser-view-host');
   await splitterHost.waitFor({ state: 'visible', timeout: 30_000 });
   await host.waitFor({ state: 'visible', timeout: 30_000 });
 
@@ -193,7 +164,7 @@ test('the pane boundary is draggable, moves the native view with it, and is reme
   // The first run left the echo page as the last opened page, so this run
   // restores it automatically and never opens the hosts picker (see
   // `lastPageStore.ts`): the idle shell is reached with no click.
-  const restoredHost = restoredPage.locator('[data-testid="browser-view-host"]');
+  const restoredHost = restoredPage.locator('.browser-view-host');
   await restoredHost.waitFor({ state: 'visible', timeout: 30_000 });
 
   const restored = await restoredHost.boundingBox();

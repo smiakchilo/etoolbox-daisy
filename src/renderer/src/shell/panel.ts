@@ -58,6 +58,11 @@ export interface CreatePanelOptions extends PanelDismissHandler {
   readonly closeButtonClassName?: string;
   /** Selector of the element to focus on open; defaults to the close button. */
   readonly autofocusSelector?: string;
+  /**
+   * Stable test hook: the surface wears `data-testid="<testId>"` and its close
+   * button `data-testid="<testId>-close"`.
+   */
+  readonly testId?: string;
 }
 
 export function createPanel(options: CreatePanelOptions): Panel {
@@ -70,6 +75,7 @@ export function createPanel(options: CreatePanelOptions): Panel {
       quiet: '',
       'aria-label': options.closeAriaLabel,
       class: ['panel__close', options.closeButtonClassName].filter(Boolean).join(' '),
+      ...(options.testId === undefined ? {} : { 'data-testid': `${options.testId}-close` }),
     },
   });
   const closeIcon = document.createElement(CLOSE_ICON_TAG);
@@ -84,6 +90,7 @@ export function createPanel(options: CreatePanelOptions): Panel {
   const element = el('div', {
     attrs: {
       class: ['panel', options.surfaceClassName].filter(Boolean).join(' '),
+      ...(options.testId === undefined ? {} : { 'data-testid': options.testId }),
     },
     children: [header, options.content],
   });

@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * The agent personal-access-token secret boundary, proven against the running
@@ -23,7 +26,6 @@ import path from 'node:path';
  *   npx playwright test tests/e2e/agent-token-canary.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'agent-token-canary-scratch');
 
 /** Distinctive enough that a substring hit cannot be a coincidence. */
@@ -31,14 +33,6 @@ const CANARY = 'Daisy-Canary-Token-7f3a91c4-DO-NOT-PERSIST';
 
 /** The deterministic pointer the token is filed under (see `agentTokenSecretRef`). */
 const AGENT_TOKEN_REF = 'agent-token:copilot';
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 interface ScanResult {
   readonly filesScanned: number;
@@ -96,33 +90,24 @@ function scanForCanary(root: string): ScanResult {
 test('a token typed into Settings is never written in plaintext, and activates the agent', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const shell = await app.firstWindow();
-    await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
 
-    await shell.locator('sp-action-button[title="Settings"]').first().click();
-    await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('chat-settings')).click();
+    await shell
+      .locator(byTestId('settings-panel'))
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
 
-    await shell.locator('sp-tab', { hasText: 'Agents' }).click();
-    const agents = shell.locator('section[aria-label="Agents"]');
+    await shell.locator(byTestId('settings-tab-agents')).click();
+    const agents = shell.locator('.agents-section');
     await agents.waitFor({ state: 'visible', timeout: 60_000 });
 
     // A fresh, signed-out profile: nothing is active (no badge) and the status
@@ -140,25 +125,21 @@ test('a token typed into Settings is never written in plaintext, and activates t
     const tokenField = agents
       .locator('.password-control')
       .first()
-      .locator('[aria-label="API key (token)"] input');
+      .locator(`${byField('agent-token')} input`);
     await tokenField.waitFor({ state: 'visible', timeout: 60_000 });
     await tokenField.fill(CANARY);
-    await agents
-      .locator('.password-control')
-      .first()
-      .locator('sp-action-button', { hasText: 'Set' })
-      .click();
+    await agents.locator('.password-control').first().locator(byTestId('agent-token-set')).click();
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
-    await expect(shell.locator('.surface-status-banner')).toHaveText('API key (token) saved', {
+    await expect(shell.locator('.surface-status-banner')).toHaveText(/\S/, {
       timeout: 60_000,
     });
 
     // Behaviour: a stored token counts as authentication, so the provider is
     // active (badge) and its status light reads authenticated, green.
     await expect(agents.locator('.agent-item__active')).toHaveCount(1, { timeout: 60_000 });
-    await expect(statusLight).toHaveText('Authenticated with API key (token)', { timeout: 60_000 });
+    await expect(statusLight).toHaveText(/\S/, { timeout: 60_000 });
     expect(await statusLight.getAttribute('variant')).toBe('positive');
 
     // The active item is washed light-blue, so the highlight is visible beyond

@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { _electron as electron, expect, test } from '@playwright/test';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * DevTools access, against the built app.
@@ -28,16 +31,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * hence the seeded local host and the picker click.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'devtools-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 test('Ctrl+Shift+I toggles the app shell DevTools from either pane, with no menu bar', async () => {
   test.setTimeout(90_000);
@@ -51,13 +45,7 @@ test('Ctrl+Shift+I toggles the app shell DevTools from either pane, with no menu
   if (address === null || typeof address === 'string') throw new Error('no server port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
   const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
   const base = defaultAppSettings();
@@ -86,21 +74,15 @@ test('Ctrl+Shift+I toggles the app shell DevTools from either pane, with no menu
 
   const app = await electron.launch({
     args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
+    env: scratchEnv({ home, appData, localAppData }),
   });
 
   try {
     const page = await app.firstWindow();
     // A seeded host makes the pane visible and loadable; picking it starts a
     // real load, which is what gives the view's `WebContents` focus later.
-    await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
 
     const shellDevToolsOpened = () =>
       app.evaluate(

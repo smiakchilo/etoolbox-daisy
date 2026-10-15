@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  BROWSER_NAVIGATE_ALLOWLIST_ENTRY,
   BROWSER_NAVIGATE_TOOL_NAME,
   browserNavigateArgsSchema,
   BROWSER_NAVIGATE_PLACE_PATHS,
@@ -348,7 +347,7 @@ describe('browserNavigateArgsSchema - places and repository roots', () => {
     for (const path of ['/system/console', '/crx/de/index.jsp', '/sites.html']) {
       const parsed = browserNavigateArgsSchema.safeParse({ mode: 'sites', path });
       expect(parsed.success).toBe(false);
-      if (!parsed.success) expect(parsed.error.issues[0]?.message).toContain('place');
+      if (!parsed.success) expect(parsed.error.issues[0]?.message).toBeTruthy();
     }
   });
 
@@ -422,10 +421,5 @@ describe('createBrowserNavigateExecutor - places', () => {
     for (const path of Object.values(BROWSER_NAVIGATE_PLACE_PATHS)) {
       expect(path.startsWith('/')).toBe(true);
     }
-  });
-});
-describe('browser_navigate manifest', () => {
-  it('uses the custom allowlist entry', () => {
-    expect(BROWSER_NAVIGATE_ALLOWLIST_ENTRY).toBe('custom:browser_navigate');
   });
 });

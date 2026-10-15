@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * Step 04/05 secret boundary, proven against the running application rather
@@ -18,19 +21,10 @@ import path from 'node:path';
  * under its isolated profile.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-canary-scratch');
 
 /** Distinctive enough that a substring hit cannot be a coincidence. */
 const CANARY = 'Daisy-Canary-Pw-7f3a91c4-DO-NOT-PERSIST';
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 interface ScanResult {
   readonly filesScanned: number;
@@ -88,35 +82,26 @@ function scanForCanary(root: string): ScanResult {
 test('a password typed into Settings is never written anywhere in plaintext', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const shell = await app.firstWindow();
-    await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
 
-    await shell.locator('sp-action-button[title="Settings"]').first().click();
-    await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('chat-settings')).click();
+    await shell
+      .locator(byTestId('settings-panel'))
+      .first()
+      .waitFor({ state: 'visible', timeout: 60_000 });
 
     // Settings is tabbed; the proxy library lives behind the "Proxies" tab as
     // a multifield. Create one entry, then set its password.
-    await shell.locator('sp-tab', { hasText: 'Proxies' }).click();
-    const proxies = shell.locator('section[aria-label="Proxies"]');
+    await shell.locator(byTestId('settings-tab-proxies')).click();
+    const proxies = shell.locator('.proxies-section');
     await proxies.locator('.multifield__add').click();
 
     // A proxy address and username must exist before a password has anywhere
@@ -125,10 +110,10 @@ test('a password typed into Settings is never written anywhere in plaintext', as
     // to a proxy the main process already knows about. The callback must not
     // throw while the file does not exist yet - expect.poll fails immediately
     // on a thrown error, it only retries on a matcher mismatch.
-    const addressField = proxies.locator('[aria-label="Address"] input');
+    const addressField = proxies.locator(byField('proxy-address') + ' input');
     await addressField.waitFor({ state: 'visible', timeout: 60_000 });
     await addressField.fill('https://proxy.example:8080');
-    const usernameField = proxies.locator('[aria-label="User name"] input');
+    const usernameField = proxies.locator(byField('proxy-username') + ' input');
     await usernameField.fill('canary-user');
     // Leaving the address (username focus) commits it; Enter commits the
     // username, so both are on disk before the password below attaches to it.
@@ -146,15 +131,15 @@ test('a password typed into Settings is never written anywhere in plaintext', as
       )
       .toContain('https://proxy.example:8080');
 
-    const passwordField = proxies.locator('[aria-label="Password"] input');
+    const passwordField = proxies.locator(byField('proxy-password') + ' input');
     await passwordField.waitFor({ state: 'visible', timeout: 60_000 });
     await passwordField.fill(CANARY);
-    await proxies.locator('.password-control sp-action-button', { hasText: 'Set' }).click();
+    await proxies.locator(byTestId('proxy-password-set')).click();
 
     // The app's own confirmation is the sync point - not an arbitrary sleep,
     // which could let the scan run before anything had been written at all.
     // It appears in the pane-owned surface-status banner.
-    await expect(shell.locator('.surface-status-banner')).toHaveText('Password saved', {
+    await expect(shell.locator('.surface-status-banner')).toHaveText(/\S/, {
       timeout: 60_000,
     });
 

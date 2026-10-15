@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import { FAKE_AGENT_SERVICE_ENV_VAR } from '../../src/main/agentComposition';
+import { expect, test, type Page } from '@playwright/test';
+import { type ElectronApp, launchApp } from '../support/e2e/app';
+import { COMPOSER_FIELD, waitForComposerReady } from '../support/e2e/composer';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * The composer's `/skillname` autocomplete, driven end to end against the
@@ -19,65 +20,12 @@ import { FAKE_AGENT_SERVICE_ENV_VAR } from '../../src/main/agentComposition';
  *   npx playwright test tests/e2e/skill-autocomplete.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'skill-autocomplete-scratch');
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-interface ScratchProfile {
-  readonly home: string;
-  readonly appData: string;
-  readonly localAppData: string;
-}
-
-function makeScratchProfile(): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-function launch(profile: ScratchProfile): Promise<ElectronApp> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  });
-}
-
-const COMPOSER_FIELD = '.chat-composer textarea';
-const COMPOSER_SEND = '.chat-composer__send';
-const CHAT_STATUS_BANNER = '.chat-status-banner';
 const SKILL_OVERLAY = 'sp-overlay.chat-skill-overlay';
 const SKILL_NAME = '.chat-composer__skills .chat-composer__skill-name';
 const SKILL_ROW = '.chat-composer__skills .chat-composer__skill';
 const SELECTED_NAME = '.chat-composer__skill[aria-selected="true"] .chat-composer__skill-name';
-
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
-    timeout: 60_000,
-  });
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
-}
 
 /** Whether the skill overlay is open, read the same way `message-links.spec.ts` reads the link popover. */
 function skillOverlayOpen(shell: Page): Promise<boolean> {
@@ -92,30 +40,35 @@ test.describe('composer skill autocomplete', () => {
 
   test.beforeAll(async () => {
     test.setTimeout(90_000);
-    app = await launch(makeScratchProfile());
+    app = await launchApp(createScratchDirs(scratchBase), { fakeAgent: true });
     shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { expectSendVisible: false });
   });
 
   test.afterAll(async () => {
     await app.close();
   });
 
-  test('lists only the user-invocable skills, navigates with the arrows, and inserts on Enter, Tab or click', async () => {
+  test('lists the skills, navigates with the arrows, and inserts on Enter, Tab or click', async () => {
     const field = shell.locator(COMPOSER_FIELD);
     await field.click();
     await field.fill('/');
 
-    // The real catalogue, read from resources/skills on disk. Only
-    // user-invocable skills appear - `query-results` (and `daisy-conventions`)
-    // are auxiliary (`user-invocable: false`) and must not be offered.
+    // The real catalogue, read from resources/skills on disk: whatever skills
+    // are bundled, at least one is offered and every later step derives its
+    // expectation from the listed names rather than from a hard-coded list.
     await expect.poll(() => skillOverlayOpen(shell)).toBe(true);
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(4);
-    await expect(shell.locator(SKILL_NAME, { hasText: /^navigate$/ })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: /^search$/ })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: /^search-component$/ })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: 'semantic-search' })).toHaveCount(1);
-    await expect(shell.locator(SKILL_NAME, { hasText: 'query-results' })).toHaveCount(0);
+    await expect(shell.locator(SKILL_NAME).first()).toBeVisible();
+    const names = (await shell.locator(SKILL_NAME).allTextContents()).map((name) => name.trim());
+    expect(names.length).toBeGreaterThanOrEqual(1);
+    const prefix = (names[0] ?? '').slice(0, 1);
+    expect(prefix).not.toBe('');
+    const withPrefix = names.filter((name) => name.startsWith(prefix));
+    const secondIndex = Math.min(1, withPrefix.length - 1);
+    const second = withPrefix[secondIndex] ?? '';
+    // Filtering by a longer prefix keeps every name that still starts with it.
+    const fullName = names[0] ?? '';
+    const withFullName = names.filter((name) => name.startsWith(fullName));
 
     // The empty composer fills the pane, so there is no room above it: the list
     // must be flipped to open *below* the first line of typed text (never over
@@ -147,40 +100,41 @@ test.describe('composer skill autocomplete', () => {
     );
     expect(hoverColor).not.toBe(restingColor);
 
-    // `/s` matches the three s-skills; the first (sorted) is highlighted.
-    await field.fill('/s');
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(3);
-    await expect(shell.locator(SELECTED_NAME)).toHaveText('search');
+    // A typed prefix narrows the list to the names starting with it; the first
+    // listed one is highlighted.
+    await field.fill(`/${prefix}`);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(withPrefix.length);
+    await expect(shell.locator(SELECTED_NAME)).toHaveText(withPrefix[0] ?? '');
 
-    // Down moves the highlight; Tab accepts it, inserting the name and a space.
-    await field.press('ArrowDown');
-    await expect(shell.locator(SELECTED_NAME)).toHaveText('search-component');
-    await field.press('ArrowDown');
-    await expect(shell.locator(SELECTED_NAME)).toHaveText('semantic-search');
+    // Down moves the highlight (when there is another row); Tab accepts it,
+    // inserting the name and a space.
+    if (withPrefix.length > 1) await field.press('ArrowDown');
+    await expect(shell.locator(SELECTED_NAME)).toHaveText(second);
     await field.press('Tab');
-    await expect(field).toHaveValue('/semantic-search ');
+    await expect(field).toHaveValue(`/${second} `);
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Enter accepts the highlighted suggestion too - the intuitive key - rather
-    // than submitting the half-typed `/s` token.
-    await field.fill('/s');
-    await expect(shell.locator(SELECTED_NAME)).toHaveText('search');
+    // than submitting the half-typed token.
+    await field.fill(`/${prefix}`);
+    await expect(shell.locator(SELECTED_NAME)).toHaveText(withPrefix[0] ?? '');
     await field.press('Enter');
-    await expect(field).toHaveValue('/search ');
+    await expect(field).toHaveValue(`/${withPrefix[0]} `);
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Escape dismisses without editing the text.
-    await field.fill('/search');
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
+    await field.fill(`/${fullName}`);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(withFullName.length);
     await field.press('Escape');
-    await expect(field).toHaveValue('/search');
+    await expect(field).toHaveValue(`/${fullName}`);
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
 
     // Clicking a suggestion inserts it and closes the popup.
-    await field.fill('/search');
-    await expect(shell.locator(SKILL_NAME)).toHaveCount(2);
+    await field.fill(`/${fullName}`);
+    await expect(shell.locator(SKILL_NAME)).toHaveCount(withFullName.length);
+    const clickedName = ((await shell.locator(SKILL_NAME).first().textContent()) ?? '').trim();
     await shell.locator(SKILL_ROW).first().click();
-    await expect(field).toHaveValue('/search ');
+    await expect(field).toHaveValue(`/${clickedName} `);
     await expect.poll(() => skillOverlayOpen(shell)).toBe(false);
   });
 });

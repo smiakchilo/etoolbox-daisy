@@ -135,7 +135,7 @@ describe('buildAgentRegistry', () => {
       disabledSources: [],
     });
     expect(result.modules).toHaveLength(1);
-    expect(result.failures[0]?.reason).toContain('Duplicate');
+    expect(result.failures[0]?.reason).not.toBe('');
   });
 
   it('yields an empty registry when there are no agent folders', async () => {

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChatJournal } from '../../../src/main/chatJournal';
@@ -12,25 +12,17 @@ import type {
   ToolCallId,
   TurnId,
 } from '../../../src/shared';
+import { createScratchDirs } from '../../support/scratchDirs';
 
 /**
  * Scratch directories live under the project's own `test-results/` (already
  * gitignored), matching `logger.test.ts` and `windowState.test.ts`.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'chatJournal-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'chatJournal-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 const CHAT_ID = 'chat-1' as ChatId;

@@ -1,13 +1,14 @@
 // noinspection HtmlUnknownTarget
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import type { ScriptedStep, ScriptedTurn } from '../../src/main/agents/fakeAgentService';
-import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+import { expect, test, type Page } from '@playwright/test';
+import { type ScriptedStep } from '../../src/main/agents/fakeAgentService';
+import { type ElectronApp, launchApp } from '../support/e2e/app';
+import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
+import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
+import { createScratchDirs } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The `format_table` message gutter's **Copy** and **Export** actions, against
@@ -28,75 +29,12 @@ import {
  *   npx playwright test tests/e2e/table-export.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'table-export-scratch');
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function makeScratchProfile(): { home: string; appData: string; localAppData: string } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-function launch(profile: ReturnType<typeof makeScratchProfile>): Promise<ElectronApp> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  });
-}
-
-function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
-  const payload = JSON.stringify({ globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY, turn });
-  return app.evaluate((_electronNamespace, json: string) => {
-    const arg = JSON.parse(json) as { globalKey: string; turn: unknown };
-    const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-      readonly scriptNextResponse: (t: unknown) => void;
-    };
-    fake.scriptNextResponse(arg.turn);
-  }, payload);
-}
-
-async function flushFake(app: ElectronApp): Promise<void> {
-  for (let guard = 0; guard < 200; guard += 1) {
-    const delivered = await app.evaluate((_electronNamespace, key: string) => {
-      const fake = (globalThis as Record<string, unknown>)[key] as {
-        readonly advance: () => boolean;
-      };
-      return fake.advance();
-    }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
-    if (!delivered) return;
-  }
-  throw new Error('flushFake exceeded its guard - the fake never drained.');
-}
-
-const COMPOSER_SEND = '.chat-composer__send';
-const CHAT_STATUS_BANNER = '.chat-status-banner';
-const COMPOSER_FIELD = '.chat-composer textarea';
 const TABLE = '.chat-table-message sp-table';
-const OPEN_OVERLAY = 'sp-overlay[open]';
-const COPY_BUTTON = 'sp-overlay[open] sp-action-button[title="Copy"]';
-const EXPORT_BUTTON = 'sp-overlay[open] sp-action-button[title="Export"]';
+const OPEN_OVERLAY = `${byTestId('hover-popover')}[open]`;
+const COPY_BUTTON = `${OPEN_OVERLAY} ${byTestId('popover-copy')}`;
+const EXPORT_BUTTON = `${OPEN_OVERLAY} ${byTestId('popover-export')}`;
 
 /**
  * Waits until the transcript's scroll position stops changing. The gutter
@@ -140,20 +78,6 @@ async function hoverGutterUntilOpen(shell: Page): Promise<void> {
       { timeout: 15_000 },
     )
     .toBe(2);
-}
-
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
-    timeout: 60_000,
-  });
-  await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
-}
-
-async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  await shell.locator(COMPOSER_FIELD).fill(prompt);
-  await shell.locator(COMPOSER_SEND).click();
 }
 
 /** A scripted `format_table` call carrying `data` verbatim (the app paints the table from the call's args). */
@@ -205,9 +129,9 @@ test.describe('format_table gutter: copy and export', () => {
 
   test.beforeAll(async () => {
     test.setTimeout(120_000);
-    const profile = makeScratchProfile();
+    const profile = createScratchDirs(scratchBase);
     exportPath = path.join(profile.home, 'exported-table.csv');
-    app = await launch(profile);
+    app = await launchApp(profile, { fakeAgent: true });
     shell = await app.firstWindow();
     await waitForComposerReady(shell);
 
@@ -303,7 +227,7 @@ test.describe('format_table gutter: copy and export', () => {
     // row reads (and copies) as one sentence rather than "…csvOpen in folder".
     const fullCopy = await banner.locator('.banner-row__copy').evaluate((copy) => copy.textContent);
     expect(fullCopy).toBe('Exported to exported-table.csv Open in folder');
-    const openInFolder = banner.locator('sp-action-button', { hasText: 'Open in folder' });
+    const openInFolder = banner.locator(byTestId('banner-open-in-folder'));
     await expect(openInFolder).toBeVisible();
 
     await openInFolder.click();
@@ -318,14 +242,14 @@ test.describe('format_table gutter: copy and export', () => {
 
   test('the gutter popover is right-aligned to the table', async () => {
     await hoverGutterUntilOpen(shell);
-    const geometry = await shell.evaluate(() => {
+    const geometry = await shell.evaluate((openOverlay) => {
       const table = document.querySelector('.chat-table-message sp-table');
-      const popover = document.querySelector('sp-overlay[open] sp-popover');
+      const popover = document.querySelector(`${openOverlay} sp-popover`);
       if (table === null || popover === null) return null;
       const tableRect = table.getBoundingClientRect();
       const popoverRect = popover.getBoundingClientRect();
       return { table: tableRect, popover: popoverRect };
-    });
+    }, OPEN_OVERLAY);
     expect(geometry).not.toBeNull();
     const { table, popover } = geometry!;
     // The popover hugs the table's RIGHT edge (right-aligned) rather than

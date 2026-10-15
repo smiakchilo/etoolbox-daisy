@@ -1,9 +1,12 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The address bar displays the full current URL, so it must also ACCEPT one.
@@ -42,18 +45,9 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * (browserToolbar.test.ts).
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-deep-link-scratch');
 
 const DEEP_PATH = '/editor.html/content/site/en.html';
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 /**
  * A server that echoes the path it was asked for, so "did the deep link
@@ -81,21 +75,9 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
   test.setTimeout(120_000);
 
   const aem = await startEchoOrigin();
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   // Built from the app's own defaults and validated with the real schema, so
   // a contract change fails loudly here instead of producing a file the app
@@ -125,7 +107,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     // page sitting under it yet it is not dismissible. Picking the seeded host
     // is the sanctioned way out - it loads the page "the app was showing
     // them", which the deep link (copied straight back) then deepens.
-    await page.locator(`.hosts-item[data-origin="${aem.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${aem.origin}"]`).click();
     // The address bar is always visible (the toolbar never hides), so waiting
     // on it synchronizes nothing. What must settle first is the picker's
     // server switch: this assertion is about the deep link replacing a
@@ -134,7 +116,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     // address bar reflecting the loaded URL together prove the switch has
     // fully settled.
     await expect.poll(() => aem.paths.includes('/'), { timeout: 30_000 }).toBe(true);
-    const addressInput = page.locator('#browser-address-bar input');
+    const addressInput = page.locator(byTestId('browser-address') + ' input');
     await expect
       .poll(async () => await addressInput.inputValue())
       .toMatch(new RegExp(`^${aem.origin}/?$`));
@@ -162,7 +144,7 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     await addressInput.fill(unknownDeepUrl);
     await addressInput.press('Enter');
 
-    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
+    await expect(message).toHaveText(/\S/, { timeout: 60_000 });
     // The copy must never cite the URL/host: the address bar is right above
     // the banner and already shows it, and repeating it is noise.
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
@@ -181,22 +163,22 @@ test('a pasted deep link navigates to that page, while an unconfigured origin st
     // fires no `change` for an unchanged value) must still navigate and prompt
     // again.
     await addressInput.press('Enter');
-    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
+    await expect(message).toHaveText(/\S/, { timeout: 60_000 });
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
 
     // Case 2: dismissing again, then pressing Refresh - the address bar's URL
     // differs from the loaded page, so Refresh must navigate it (not blindly
     // reload the stale page) and the prompt must reappear.
     await dismissMessage();
-    await page.getByRole('button', { name: 'Refresh' }).click();
-    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
+    await page.locator(byTestId('browser-refresh')).click();
+    await expect(message).toHaveText(/\S/, { timeout: 60_000 });
 
     // The prompt's OK action button persists the server (only after the
     // user's explicit click), then retries the address through the normal
     // switchServer path. The retry will DNS-fail (`unconfigured.example` is
     // reserved and unresolvable), so the observable proof is the new entry in
     // settings.json rather than the navigation outcome.
-    await page.getByRole('button', { name: 'OK' }).click();
+    await page.locator(byTestId('browser-banner-add-host')).click();
     try {
       await expect
         .poll(
@@ -244,21 +226,9 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
   test.setTimeout(120_000);
 
   const aem = await startEchoOrigin();
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-fresh-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase, 'profile-fresh-');
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   // A page must be loaded before the prompt flow can be exercised, because a
   // panel is not user-dismissible until one is (panel.ts `setCloseable`).
@@ -292,11 +262,11 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
     // Seeded profile: the hosts panel opens at startup and is not dismissible
     // until a page sits under it - pick the echo host first (it closes the
     // panel AND loads a page in one step).
-    await page.locator(`.hosts-item[data-origin="${aem.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${aem.origin}"]`).click();
     // Same synchronization as test 1: wait for the picked page to settle so
     // this assertion measures the unknown-origin prompt for a *settled* page.
     await expect.poll(() => aem.paths.includes('/'), { timeout: 30_000 }).toBe(true);
-    const addressInput = page.locator('#browser-address-bar input');
+    const addressInput = page.locator(byTestId('browser-address') + ' input');
     await expect
       .poll(async () => await addressInput.inputValue())
       .toMatch(new RegExp(`^${aem.origin}/?$`));
@@ -306,7 +276,7 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
 
     await addressInput.fill(unknownDeepUrl);
     await addressInput.press('Enter');
-    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
+    await expect(message).toHaveText(/\S/, { timeout: 60_000 });
 
     // Dismiss, then Refresh: the requested URL (the unknown deep link, which
     // the refused navigation never loaded) differs from the loaded echo page,
@@ -314,8 +284,8 @@ test('Refresh re-triggers the unknown-origin banner when the address bar differs
     // the stale page).
     await page.locator('.browser-toolbar-message sp-close-button').click();
     await expect(message).not.toHaveAttribute('open');
-    await page.getByRole('button', { name: 'Refresh' }).click();
-    await expect(message).toContainText('Unknown host. Press OK to add it', { timeout: 60_000 });
+    await page.locator(byTestId('browser-refresh')).click();
+    await expect(message).toHaveText(/\S/, { timeout: 60_000 });
     // The copy still never cites the host after the re-trigger.
     expect((await message.textContent()) ?? '').not.toContain('unconfigured.example');
   } finally {

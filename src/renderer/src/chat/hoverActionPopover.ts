@@ -76,7 +76,7 @@ export function createHoverActionPopover(
   const popover = el('sp-popover', { attrs: { class: 'chat-link-popover' } });
   popover.append(buttons);
   const overlay = el('sp-overlay', {
-    attrs: { type: 'manual', placement: 'top' },
+    attrs: { type: 'manual', placement: 'top', 'data-testid': 'hover-popover' },
   });
   overlay.append(popover);
 
@@ -125,7 +125,12 @@ export function createHoverActionPopover(
       // button sets its own host to `tabindex="0"` only when none is present);
       // `mousedown` is prevented so a click never focuses it either. The popover
       // is a transient hover affordance, so no button may ever take focus.
-      attrs: { label: action.title, title: action.title, tabindex: '-1' },
+      attrs: {
+        label: action.title,
+        title: action.title,
+        tabindex: '-1',
+        'data-testid': `popover-${action.id}`,
+      },
     });
     button.append(icon);
     button.addEventListener('mousedown', (event) => event.preventDefault());

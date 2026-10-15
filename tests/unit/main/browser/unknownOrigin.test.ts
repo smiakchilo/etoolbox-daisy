@@ -1,20 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decideAddressNavigation } from '../../../../src/main/browser/unknownOrigin';
-import { newServerId } from '../../../../src/shared/contracts/ids';
-import {
-  serverConfigSchema,
-  type ServerConfig,
-} from '../../../../src/shared/contracts/serverConfig';
-
-function makeServer(id: string, origin: string): ServerConfig {
-  return serverConfigSchema.parse({
-    id: newServerId(() => id),
-    label: `Server ${id}`,
-    origin,
-    color: { kind: 'swatch', swatch: 'blue' },
-    revision: 0,
-  });
-}
+import { makeServer } from '../../../support/configFixtures';
 
 describe('decideAddressNavigation', () => {
   it("navigates when the typed address matches a configured server's origin exactly", () => {

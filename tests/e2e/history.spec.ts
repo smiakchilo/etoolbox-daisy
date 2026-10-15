@@ -1,14 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-} from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import {
   _electron as electron,
@@ -18,10 +10,11 @@ import {
   type Page,
 } from '@playwright/test';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
-import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+import { mainEntry } from '../support/e2e/app';
+import { waitForComposerReady } from '../support/e2e/composer';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
+import { TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY } from '../../src/main/agentComposition';
 
 /**
  * The History panel, proven against the real built app.
@@ -41,50 +34,7 @@ import {
  *   npx playwright test tests/e2e/history.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'history-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function createProfile(): Record<string, string> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-    [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
-
-async function waitForComposerReady(page: Page): Promise<void> {
-  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(page.locator('.chat-status-banner')).not.toHaveAttribute('open', '', {
-    timeout: 60_000,
-  });
-  await expect(page.locator('.chat-composer__send')).not.toHaveAttribute('disabled', '', {
-    timeout: 60_000,
-  });
-}
 
 async function sendViaComposer(page: Page, prompt: string): Promise<void> {
   await page.locator('.chat-composer textarea').fill(prompt);
@@ -93,7 +43,7 @@ async function sendViaComposer(page: Page, prompt: string): Promise<void> {
 }
 
 function row(page: Page, text: string) {
-  return page.locator('.history-item', { hasText: text });
+  return page.locator(byTestId('history-item'), { hasText: text });
 }
 
 /** The journal files a profile has written, under `<home>/etoolbox-daisy/chats`. */
@@ -117,7 +67,7 @@ function readDeletedSessionIds(app: ElectronApplication): Promise<readonly strin
 test.describe('History panel', () => {
   test('lists stored conversations, resumes one, and deletes another', async () => {
     test.setTimeout(180_000);
-    const env = createProfile();
+    const env = createLaunchProfile(scratchBase, { fakeAgent: true }).env;
     const home = env['USERPROFILE'] ?? '';
 
     const server: Server = createServer((_req, res) => {
@@ -150,19 +100,19 @@ test.describe('History panel', () => {
     const app = await electron.launch({ args: [mainEntry], env });
     try {
       const page = await app.firstWindow();
-      await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-      await waitForComposerReady(page);
+      await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+      await waitForComposerReady(page, { expectSendVisible: false });
 
       // Two conversations, so History has something to distinguish.
       await sendViaComposer(page, 'first question about media');
-      await page.locator('[title="New session"]').click();
+      await page.locator(byTestId('chat-new-session')).click();
       await expect(page.locator('.chat-message--user')).toHaveCount(0, { timeout: 30_000 });
       await sendViaComposer(page, 'second question about assets');
 
       // The History button opens the panel; both chats are listed, newest first.
-      await page.locator('.chat-toolbar sp-action-button[aria-label="History"]').click();
-      await expect(page.locator('.history-panel')).toBeVisible({ timeout: 30_000 });
-      await expect(page.locator('.history-item')).toHaveCount(2, { timeout: 30_000 });
+      await page.locator(byTestId('chat-history')).click();
+      await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator(byTestId('history-item'))).toHaveCount(2, { timeout: 30_000 });
 
       const firstRow = row(page, 'first question about media');
       const secondRow = row(page, 'second question about assets');
@@ -180,7 +130,7 @@ test.describe('History panel', () => {
       // Resume is an icon button wearing the replay glyph, and the glyph is a
       // *registered* custom element - not an unknown tag (which jsdom cannot
       // prove, so it is asserted here against the built app).
-      await expect(firstRow.locator('.history-item__resume sp-icon-replay')).toHaveCount(1);
+      await expect(firstRow.locator(`${byTestId('history-resume')} sp-icon-replay`)).toHaveCount(1);
       expect(await page.evaluate(() => customElements.get('sp-icon-replay') !== undefined)).toBe(
         true,
       );
@@ -190,8 +140,8 @@ test.describe('History panel', () => {
       expect(order[0]).toContain('second question about assets');
 
       // Resume the first: the panel closes and its transcript returns.
-      await firstRow.locator('.history-item__resume').click();
-      await expect(page.locator('.history-panel')).not.toBeVisible({ timeout: 30_000 });
+      await firstRow.locator(byTestId('history-resume')).click();
+      await expect(page.locator(byTestId('history-panel'))).not.toBeVisible({ timeout: 30_000 });
       await expect(page.locator('.chat-message--user')).toContainText(
         'first question about media',
         {
@@ -202,21 +152,19 @@ test.describe('History panel', () => {
       // Delete the second: the confirmation is the pane's one-button alert
       // banner (the same prompt Settings uses for a removal), never a
       // row-local dialog.
-      await page.locator('.chat-toolbar sp-action-button[aria-label="History"]').click();
-      await expect(page.locator('.history-panel')).toBeVisible({ timeout: 30_000 });
-      await expect(page.locator('.history-item')).toHaveCount(2, { timeout: 30_000 });
-      await secondRow.locator('.history-item__delete').click();
+      await page.locator(byTestId('chat-history')).click();
+      await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator(byTestId('history-item'))).toHaveCount(2, { timeout: 30_000 });
+      await secondRow.locator(byTestId('history-delete')).click();
       const confirmBanner = page.locator('.surface-status-banner[open]');
-      // The one-button confirmation names its action; the button reads OK.
-      await expect(confirmBanner).toContainText('Press OK to delete the conversation');
-      const confirmOk = confirmBanner.locator('sp-action-button');
-      await expect(confirmOk).toHaveText('OK');
+      await expect(confirmBanner).toHaveText(/\S/);
+      const confirmOk = confirmBanner.locator(byTestId('banner-confirm'));
       await confirmOk.click();
-      await expect(page.locator('.history-item')).toHaveCount(1, { timeout: 30_000 });
+      await expect(page.locator(byTestId('history-item'))).toHaveCount(1, { timeout: 30_000 });
       await expect(row(page, 'second question about assets')).toHaveCount(0);
       await expect(row(page, 'first question about media')).toBeVisible();
       // The outcome takes the same banner row after the confirmation clears.
-      await expect(page.locator('.surface-status-banner')).toContainText('Conversation deleted');
+      await expect(page.locator('.surface-status-banner[open]')).toHaveText(/\S/);
     } finally {
       await app.close();
       server.close();
@@ -225,13 +173,13 @@ test.describe('History panel', () => {
 
   test('deleting a chat whose journal recorded several sessions removes every session', async () => {
     test.setTimeout(180_000);
-    const env = createProfile();
+    const env = createLaunchProfile(scratchBase, { fakeAgent: true }).env;
     const home = env['USERPROFILE'] ?? '';
 
     const app = await electron.launch({ args: [mainEntry], env });
     try {
       const page = await app.firstWindow();
-      await waitForComposerReady(page);
+      await waitForComposerReady(page, { expectSendVisible: false });
       await sendViaComposer(page, 'a chat that will be recycled');
 
       // This chat now has one journal, whose header names its first SDK session.
@@ -268,16 +216,16 @@ test.describe('History panel', () => {
       );
 
       // Delete the chat through History.
-      await page.locator('.chat-toolbar sp-action-button[aria-label="History"]').click();
-      await expect(page.locator('.history-panel')).toBeVisible({ timeout: 30_000 });
+      await page.locator(byTestId('chat-history')).click();
+      await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 30_000 });
       const target = row(page, 'a chat that will be recycled');
       // No host was configured or picked in this profile, so the chat stayed
       // host-less and its row shows no host chip at all (omitted, never a
       // placeholder).
       await expect(target.locator('.history-item__server')).toHaveCount(0);
-      await target.locator('.history-item__delete').click();
-      await page.locator('.surface-status-banner[open] sp-action-button').click();
-      await expect(page.locator('.history-item')).toHaveCount(0, { timeout: 30_000 });
+      await target.locator(byTestId('history-delete')).click();
+      await page.locator(`.surface-status-banner[open] ${byTestId('banner-confirm')}`).click();
+      await expect(page.locator(byTestId('history-item'))).toHaveCount(0, { timeout: 30_000 });
 
       // The stored transcript is gone...
       expect(existsSync(journalPath)).toBe(false);

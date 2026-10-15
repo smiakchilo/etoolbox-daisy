@@ -1,7 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The browser toolbar's labelless "Open in external browser" control, against
@@ -17,57 +19,22 @@ import { defaultAppSettings } from '../../src/shared';
  * field's validity (an absolute http(s) URL).
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'external-button-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function launchProfile(): { home: string; env: Record<string, string> } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 test('the open-in-external-browser control is registered, icon-led, and gated on a valid address', async () => {
   test.setTimeout(60_000);
 
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   writeSettings(home, defaultAppSettings());
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
 
-    const button = page.locator('.browser-toolbar [title="Open in external browser"]');
+    const button = page.locator(byTestId('browser-external'));
     await expect(button).toBeVisible();
     // Labelless, like the rest of the toolbar buttons: icon only.
     await expect(button).toHaveText('');

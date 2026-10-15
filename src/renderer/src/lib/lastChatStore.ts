@@ -39,7 +39,7 @@ import {
  * never take the window down with it.
  */
 
-const STORAGE_KEY = 'daisy.mainShell.lastChat';
+export const STORAGE_KEY = 'daisy.mainShell.lastChat';
 /** A stored value longer than any plausible record is discarded rather than trusted. */
 const MAX_RAW_LENGTH = 1000;
 

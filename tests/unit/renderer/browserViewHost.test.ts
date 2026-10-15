@@ -1,6 +1,7 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserViewHost } from '../../../src/renderer/src/shell/browserViewHost';
+import { InertResizeObserver, installJsdomGlobals } from '../../support/jsdomGlobals';
 
 /**
  * The reserved-region reporter, with the hosts-panel suspension path under
@@ -27,15 +28,14 @@ interface Bounds {
 }
 
 let dom: JSDOM;
+let restoreGlobals: () => void;
 let setViewBounds: ReturnType<typeof vi.fn>;
 let rect: Bounds;
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
-
 beforeEach(() => {
-  dom = new JSDOM();
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals({
+    extraGlobals: { ResizeObserver: InertResizeObserver },
+  }));
   setViewBounds = vi.fn();
   rect = { x: 0, y: 40, width: 800, height: 560 };
 
@@ -45,23 +45,10 @@ beforeEach(() => {
   // no layout, so every `getBoundingClientRect` is stubbed per-test.
   Reflect.set(dom.window, 'requestAnimationFrame', () => 1);
   Reflect.set(dom.window, 'cancelAnimationFrame', () => {});
-  Reflect.set(
-    globalThis,
-    'ResizeObserver',
-    class {
-      observe(): void {}
-      disconnect(): void {}
-    },
-  );
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
-  Reflect.set(globalThis, 'ResizeObserver', previousResizeObserver);
+  restoreGlobals();
 });
 
 /** Builds a host whose reserved element measures `rect` (jsdom performs no layout). */

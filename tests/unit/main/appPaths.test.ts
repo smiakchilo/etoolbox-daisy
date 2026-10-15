@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,6 +9,7 @@ import {
   getOsHomeDirectory,
   resolveAppPaths,
 } from '../../../src/main/appPaths';
+import { createScratchDirs } from '../../support/scratchDirs';
 
 /**
  * Scratch directories are created under the project's own `test-results/`
@@ -16,20 +17,11 @@ import {
  * every test - never `/tmp` or `os.tmpdir()`. Matches
  * tests/unit/agent/runtimePaths.test.ts.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'appPaths-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'appPaths-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 describe('getOsHomeDirectory', () => {
@@ -75,10 +67,11 @@ describe('resolveAppPaths', () => {
     const local = createScratchRoot();
     const paths = resolveAppPaths(home, local);
 
-    expect(paths.root).toBe(path.join(home, 'etoolbox-daisy'));
-    expect(paths.settings).toBe(path.join(paths.root, 'settings'));
-    expect(paths.chats).toBe(path.join(paths.root, 'chats'));
-    expect(paths.logs).toBe(path.join(paths.root, 'logs'));
+    expect(path.dirname(paths.root)).toBe(home);
+    for (const visible of [paths.settings, paths.chats, paths.logs]) {
+      expect(path.dirname(visible)).toBe(paths.root);
+    }
+    expect(new Set([paths.settings, paths.chats, paths.logs]).size).toBe(3);
   });
 
   it('puts technical data under the local app-data root, never the visible one', () => {
@@ -86,12 +79,7 @@ describe('resolveAppPaths', () => {
     const local = createScratchRoot();
     const paths = resolveAppPaths(home, local);
 
-    expect(paths.dataRoot).toBe(path.join(local, 'etoolbox-daisy'));
-    expect(paths.secrets).toBe(path.join(paths.dataRoot, 'secrets'));
-    expect(paths.windowState).toBe(path.join(paths.dataRoot, 'window-state.json'));
-    expect(paths.browser).toBe(path.join(paths.dataRoot, 'browser'));
-    expect(paths.agents).toBe(path.join(paths.dataRoot, 'agents'));
-    expect(paths.tmp).toBe(path.join(paths.dataRoot, 'tmp'));
+    expect(path.dirname(paths.dataRoot)).toBe(local);
     for (const technical of [
       paths.secrets,
       paths.windowState,
@@ -99,6 +87,7 @@ describe('resolveAppPaths', () => {
       paths.agents,
       paths.tmp,
     ]) {
+      expect(path.dirname(technical)).toBe(paths.dataRoot);
       expect(technical.startsWith(paths.root + path.sep)).toBe(false);
     }
   });

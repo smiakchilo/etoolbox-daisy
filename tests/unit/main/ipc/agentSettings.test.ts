@@ -1,5 +1,3 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   defaultAppSettings,
@@ -21,6 +19,7 @@ import {
   type AgentSettingsDependencies,
 } from '../../../../src/main/ipc/settings';
 import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDefinitions';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * Tests for `settings:set-agent-settings` (the Agents surface).
@@ -35,20 +34,11 @@ import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../../support/agentDef
  * catalogue.
  */
 
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'agentSettings-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'agentSettings-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 const catalog: readonly ModelCatalogEntry[] = [

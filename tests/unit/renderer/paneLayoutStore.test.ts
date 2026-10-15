@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadBrowserPaneFraction,
   saveBrowserPaneFraction,
+  STORAGE_KEY,
 } from '../../../src/renderer/src/lib/paneLayoutStore';
+import { createWindowStorageInstaller, memoryStorage } from '../../support/memoryStorage';
 
 /**
  * `paneLayoutStore.ts` touches nothing but `window.localStorage`, so a
@@ -11,36 +13,15 @@ import {
  * which are exactly the paths that must not take the window down with them.
  */
 
-interface StubStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-}
-
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-
-function installStorage(storage: StubStorage): void {
-  Reflect.set(globalThis, 'window', { localStorage: storage });
-}
-
-function memoryStorage(seed: Record<string, string> = {}): StubStorage & {
-  readonly values: Record<string, string>;
-} {
-  const values: Record<string, string> = { ...seed };
-  return {
-    values,
-    getItem: (key) => values[key] ?? null,
-    setItem: (key, value) => {
-      values[key] = value;
-    },
-  };
-}
+const windowStorage = createWindowStorageInstaller();
+const installStorage = windowStorage.install;
 
 beforeEach(() => {
   installStorage(memoryStorage());
 });
 
 afterEach(() => {
-  Reflect.set(globalThis, 'window', previousWindow);
+  windowStorage.restore();
 });
 
 describe('pane layout persistence', () => {
@@ -54,13 +35,13 @@ describe('pane layout persistence', () => {
   });
 
   it('discards a stored value that would collapse a pane', () => {
-    const storage = memoryStorage({ 'daisy.mainShell.browserPaneFraction': '1' });
+    const storage = memoryStorage({ [STORAGE_KEY]: '1' });
     installStorage(storage);
     expect(loadBrowserPaneFraction()).toBeUndefined();
   });
 
   it('discards an unparseable stored value instead of yielding NaN', () => {
-    installStorage(memoryStorage({ 'daisy.mainShell.browserPaneFraction': 'not-a-number' }));
+    installStorage(memoryStorage({ [STORAGE_KEY]: 'not-a-number' }));
     expect(loadBrowserPaneFraction()).toBeUndefined();
   });
 

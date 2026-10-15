@@ -1,32 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { describeToolCall } from '../../../../src/renderer/src/chat/toolCallDetails';
 
+type Details = ReturnType<typeof describeToolCall>;
+
+/** The row values only: labels are the renderer's own wording and are not pinned here. */
+function valuesOf(details: Details): string[] {
+  return details.parameters.map((parameter) => parameter.value);
+}
+
 describe('describeToolCall - aem_get_json', () => {
   it('summarises the requested path and shows it, plus the effective request, as parameters', () => {
     const details = describeToolCall('aem_get_json', { path: '/content/acme/en/us/home' });
 
     expect(details.summary).toBe('/content/acme/en/us/home');
-    expect(details.parameters).toContainEqual({
-      label: 'Path',
-      value: '/content/acme/en/us/home',
-    });
-    expect(details.parameters).toContainEqual({
-      label: 'Request',
-      value: '/content/acme/en/us/home.0.json',
-    });
+    expect(valuesOf(details)).toContain('/content/acme/en/us/home');
+    expect(valuesOf(details)).toContain('/content/acme/en/us/home.0.json');
   });
 
   it('reflects includeChildren in the request selector and adds an explicit row', () => {
+    const without = describeToolCall('aem_get_json', { path: '/content/acme' });
     const details = describeToolCall('aem_get_json', {
       path: '/content/acme',
       includeChildren: true,
     });
 
-    expect(details.parameters).toContainEqual({
-      label: 'Request',
-      value: '/content/acme.1.json',
-    });
-    expect(details.parameters).toContainEqual({ label: 'Include children', value: 'Yes' });
+    expect(valuesOf(details)).toContain('/content/acme.1.json');
+    expect(valuesOf(details)).not.toContain('/content/acme.0.json');
+    expect(details.parameters.length).toBe(without.parameters.length + 1);
   });
 
   it('lists the requested properties when present', () => {
@@ -35,18 +35,15 @@ describe('describeToolCall - aem_get_json', () => {
       properties: ['jcr:title', 'jcr:description'],
     });
 
-    expect(details.parameters).toContainEqual({
-      label: 'Properties',
-      value: 'jcr:title, jcr:description',
-    });
+    expect(valuesOf(details)).toContain('jcr:title, jcr:description');
   });
 
   it('degrades honestly when path is missing rather than inventing one', () => {
     const details = describeToolCall('aem_get_json', {});
 
     expect(details.summary).toBeUndefined();
-    expect(details.parameters).toContainEqual({ label: 'Path', value: '(not provided)' });
-    expect(details.parameters.some((parameter) => parameter.label === 'Request')).toBe(false);
+    expect(details.parameters.length).toBeGreaterThan(0);
+    expect(valuesOf(details).some((value) => value.endsWith('.json'))).toBe(false);
   });
 });
 
@@ -59,12 +56,9 @@ describe('describeToolCall - aem_query', () => {
     });
 
     expect(details.summary).toBe('path=/content/site&type=cq:Page');
-    expect(details.parameters).toContainEqual({
-      label: 'Query',
-      value: 'path=/content/site&type=cq:Page',
-    });
-    expect(details.parameters).toContainEqual({ label: 'Offset', value: '0' });
-    expect(details.parameters).toContainEqual({ label: 'Limit', value: '25' });
+    expect(valuesOf(details)).toContain('path=/content/site&type=cq:Page');
+    expect(valuesOf(details)).toContain('0');
+    expect(valuesOf(details)).toContain('25');
   });
 
   it('shows the property projection space-separated, matching the wire parameter', () => {
@@ -73,17 +67,15 @@ describe('describeToolCall - aem_query', () => {
       properties: ['jcr:path', 'jcr:title'],
     });
 
-    expect(details.parameters).toContainEqual({
-      label: 'Properties',
-      value: 'jcr:path jcr:title',
-    });
+    expect(valuesOf(details)).toContain('jcr:path jcr:title');
   });
 
   it('treats a non-string predicate value as no usable query', () => {
     const details = describeToolCall('aem_query', { predicates: { depth: 2 } });
 
     expect(details.summary).toBeUndefined();
-    expect(details.parameters).toContainEqual({ label: 'Query', value: '(no predicates)' });
+    expect(details.parameters.length).toBeGreaterThan(0);
+    expect(valuesOf(details).some((value) => value.includes('depth'))).toBe(false);
   });
 
   it('shows the roots being fanned out across when present', () => {
@@ -92,10 +84,7 @@ describe('describeToolCall - aem_query', () => {
       roots: ['/content/a', '/content/b'],
     });
 
-    expect(details.parameters).toContainEqual({
-      label: 'Roots',
-      value: '/content/a, /content/b',
-    });
+    expect(valuesOf(details)).toContain('/content/a, /content/b');
   });
 });
 
@@ -124,22 +113,19 @@ describe('describeToolCall - environment_facts', () => {
     const details = describeToolCall('environment_facts', {}, data);
 
     expect(details.summary).toBe('https://author.example');
-    expect(details.parameters).toContainEqual({
-      label: 'Current host',
-      value: 'https://author.example',
-    });
-    expect(details.parameters).toContainEqual({ label: 'Content roots', value: '/content/a' });
-    expect(details.parameters).toContainEqual({ label: 'Component roots', value: '/apps' });
-    expect(details.parameters).toContainEqual({
-      label: 'Hosts',
-      value: 'HPE DEV (current): https://author.example; Staging: https://stage.example',
-    });
+    expect(valuesOf(details)).toContain('https://author.example');
+    expect(valuesOf(details)).toContain('/content/a');
+    expect(valuesOf(details)).toContain('/apps');
+    const hosts = valuesOf(details).find((value) => value.includes('Staging'));
+    expect(hosts).toContain('HPE DEV');
+    expect(hosts).toContain('https://author.example');
+    expect(hosts).toContain('https://stage.example');
   });
 
   it('falls back to the generic argument view before the result arrives', () => {
     const details = describeToolCall('environment_facts', {});
 
-    expect(details.parameters).toEqual([{ label: 'Arguments', value: '(none)' }]);
+    expect(details.parameters.length).toBeGreaterThan(0);
   });
 });
 
@@ -158,14 +144,25 @@ describe('describeToolCall - browser_navigate', () => {
       },
     );
 
-    expect(details.summary).toBe('Open HPE DEV: /content/wknd.html');
-    expect(details.parameters).toEqual([
-      { label: 'URL', value: 'https://author.example/content/wknd.html' },
-      { label: 'Result', value: 'Opened' },
-    ]);
+    expect(details.summary).toContain('HPE DEV');
+    expect(details.summary).toContain('/content/wknd.html');
+    expect(valuesOf(details)).toContain('https://author.example/content/wknd.html');
+    expect(details.parameters).toHaveLength(2);
   });
 
   it('shows the mode from the arguments and the URL the application built', () => {
+    const withoutMode = describeToolCall(
+      'browser_navigate',
+      { host: 'HPE DEV', path: '/content/hpe/languages/jp-apj/home' },
+      {
+        operation: 'browser_navigate',
+        hostLabel: 'HPE DEV',
+        origin: 'https://author.example',
+        path: '/content/hpe/languages/jp-apj/home.html',
+        url: 'https://author.example/content/hpe/languages/jp-apj/home.html',
+        switched: false,
+      },
+    );
     const details = describeToolCall(
       'browser_navigate',
       { host: 'HPE DEV', path: '/content/hpe/languages/jp-apj/home', mode: 'sites' },
@@ -180,15 +177,11 @@ describe('describeToolCall - browser_navigate', () => {
       },
     );
 
-    expect(details.summary).toBe('Open HPE DEV: /content/hpe/languages/jp-apj/home');
-    expect(details.parameters).toEqual([
-      {
-        label: 'URL',
-        value: 'https://author.example/sites.html/content/hpe/languages/jp-apj/home',
-      },
-      { label: 'Mode', value: 'Sites console' },
-      { label: 'Result', value: 'Opened' },
-    ]);
+    expect(details.summary).toContain('/content/hpe/languages/jp-apj/home');
+    expect(valuesOf(details)).toContain(
+      'https://author.example/sites.html/content/hpe/languages/jp-apj/home',
+    );
+    expect(details.parameters.length).toBe(withoutMode.parameters.length + 1);
   });
 
   it('names a standard place in the summary and a Place row', () => {
@@ -197,8 +190,10 @@ describe('describeToolCall - browser_navigate', () => {
       place: 'package_manager',
     });
 
-    expect(details.summary).toBe('Open HPE DEV: Package Manager');
-    expect(details.parameters).toEqual([{ label: 'Place', value: 'Package Manager' }]);
+    expect(details.summary).toContain('HPE DEV');
+    expect(details.parameters).toHaveLength(1);
+    // The place row and the summary name the same place.
+    expect(details.summary).toContain(details.parameters[0]?.value ?? '');
   });
 
   it('shows only the mode while the call is pending', () => {
@@ -207,7 +202,8 @@ describe('describeToolCall - browser_navigate', () => {
       path: '/crx/de',
     });
 
-    expect(details.summary).toBe('Open HPE DEV: /crx/de');
+    expect(details.summary).toContain('HPE DEV');
+    expect(details.summary).toContain('/crx/de');
     expect(details.parameters).toEqual([]);
   });
 });
@@ -228,15 +224,11 @@ describe('describeToolCall - aem_query_format_ask', () => {
       },
     );
 
-    expect(details.summary).toBe('Search: waldo');
-    expect(details.parameters.map((row) => row.label)).toEqual([
-      'Terms',
-      'Roots',
-      'Page size',
-      'Pages',
-      'Rows',
-      'Total',
-    ]);
+    expect(details.summary).toContain('waldo');
+    // Terms, roots, page size, pages, rows and total.
+    expect(details.parameters).toHaveLength(6);
+    expect(valuesOf(details)).toContain('waldo');
+    expect(valuesOf(details)).toContain('/content/a');
   });
 });
 
@@ -259,31 +251,23 @@ describe('describeToolCall - aem_semantic_search', () => {
       },
     );
 
-    expect(details.summary).toBe('waldo (page 2)');
-    expect(details.parameters.map((row) => row.label)).toEqual([
-      'Terms',
-      'Context',
-      'Roots',
-      'Page size',
-      'Page',
-      'Candidates read',
-      'Matches shown',
-      'AEM hits',
-    ]);
+    expect(details.summary).toContain('waldo');
+    expect(details.summary).toContain('2');
+    // Terms, context, roots, page size, page, candidates read, matches shown, AEM hits.
+    expect(details.parameters).toHaveLength(8);
+    expect(valuesOf(details)).toContain('Waldo is good');
   });
 
   it('summarises a continue call by its matches, with Search ID and Matched rows', () => {
     // A continue call (`{ searchId, matches }`) has no terms of its own; it must
-    // never render as a blank "Semantic search:" with a dead chevron.
+    // never render as a blank summary with a dead chevron.
     const details = describeToolCall('aem_semantic_search', {
       searchId: 's-1',
       matches: [3, { candidate: 7 }],
     });
-    expect(details.summary).toBe('judging 2 matches');
-    expect(details.parameters).toEqual([
-      { label: 'Search ID', value: 's-1' },
-      { label: 'Matched', value: '3, 7' },
-    ]);
+    expect(details.summary?.length).toBeGreaterThan(0);
+    expect(details.summary).toContain('2');
+    expect(valuesOf(details)).toEqual(['s-1', '3, 7']);
   });
 });
 
@@ -304,6 +288,6 @@ describe('describeToolCall - unknown tools', () => {
   it('never returns an empty parameter list', () => {
     const details = describeToolCall('aem_unknown_tool', {});
 
-    expect(details.parameters).toEqual([{ label: 'Arguments', value: '(none)' }]);
+    expect(details.parameters.length).toBeGreaterThan(0);
   });
 });

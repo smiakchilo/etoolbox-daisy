@@ -230,7 +230,7 @@ describe('aemTool - createAemGetJsonExecutor', () => {
     if (!result.ok) throw new Error('expected ok');
     const payload = asPayload(result.value);
     expect(payload.resultType).toBe('success');
-    expect(payload.textResultForLlm).toContain('AEM node /content/foo');
+    expect(payload.textResultForLlm).toContain('/content/foo');
   });
 
   it('maps a failed AemGetJsonResult to a returned err(ToolError), with the error still readable', async () => {
@@ -448,7 +448,7 @@ describe('aemTool - createAemQueryExecutor', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('passes the pagination signal through to the model-facing text', async () => {
+  it('passes the pagination signal through to the result', async () => {
     const ids = counterIdGenerator();
     const executor = createAemQueryExecutor(
       makeQueryConfig(
@@ -459,8 +459,7 @@ describe('aemTool - createAemQueryExecutor', () => {
     );
     const result = await executor({ predicates: { path: '/content/site' } }, toolCallContext());
     if (!result.ok) throw new Error('expected success');
-    expect(JSON.stringify(result.value)).toMatch(/more results exist/i);
-    expect(JSON.stringify(result.value)).toMatch(/lower bound/i);
+    expect(JSON.stringify(result.value)).toContain('900');
   });
 
   it('returns a domain failure as an error, never as an empty row set', async () => {

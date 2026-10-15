@@ -1,9 +1,12 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * Loading indicators for navigations initiated outside the webview (the
@@ -22,16 +25,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * registration (`customElements.get`) and a real shadow root on the banner.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-loading-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 /**
  * A server that answers every request only after `delayMs`, so the loading
@@ -103,21 +97,9 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   test.setTimeout(120_000);
 
   const { server, port } = await startSlowServer(2_500);
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   // Pre-seed a server whose (configured) origin resolves to the slow fixture.
   const origin = `http://127.0.0.1:${String(port)}`;
@@ -148,8 +130,8 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
   // seeded host is the sanctioned way out: it closes the panel AND starts the
   // slow external navigation, so the loading-banner assertions land on the
   // visible page-view region.
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+  await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
 
   // The loading banner is an `sp-alert-banner` with a real shadow root
   // (registered, not an unknown element), carrying the loading text and the
@@ -160,7 +142,7 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
     .poll(() => banner.evaluate(() => Boolean(customElements.get('sp-alert-banner'))))
     .toBe(true);
   await expect.poll(() => banner.evaluate((element) => element.shadowRoot !== null)).toBe(true);
-  await expect(banner).toContainText('Loading\u2026');
+  await expect(banner).toHaveText(/\S/);
 
   // The loading banner is not dismissible - a load in flight is not something
   // to wave away; only error/prompt rows get a close control.
@@ -209,13 +191,13 @@ test('an external navigation shows "Loading…" + Stop until the page renders, t
 
   // During loading the Refresh button becomes the Stop button.
   const toolbar = page.locator('.browser-toolbar');
-  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(1, { timeout: 10_000 });
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(0);
+  await expect(toolbar.locator(byTestId('browser-stop'))).toHaveCount(1, { timeout: 10_000 });
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(0);
 
   // The page eventually renders and the loading presentation is cleared.
   await expect(banner).not.toBeVisible({ timeout: 60_000 });
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
-  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(0);
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1);
+  await expect(toolbar.locator(byTestId('browser-stop'))).toHaveCount(0);
 
   await app.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -225,21 +207,9 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
   test.setTimeout(120_000);
 
   const { server, port } = await startSlowServer(2_500);
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-stop-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase, 'profile-stop-');
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   const origin = `http://127.0.0.1:${String(port)}`;
   const serverId = randomUUID();
@@ -268,10 +238,10 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
   // yet (no page sits under it - see panel.ts `setCloseable`). Picking the
   // seeded host is the sanctioned way out: it closes the panel AND starts the
   // first slow external navigation.
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+  await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
 
-  const addressInput = page.locator('#browser-address-bar input');
+  const addressInput = page.locator(`${byTestId('browser-address')} input`);
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   const toolbar = page.locator('.browser-toolbar');
 
@@ -281,7 +251,7 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
   // Playwright's `page`; the loading banner closing (isLoading false =
   // content rendered) is that completion signal.
   await expect(banner).not.toBeVisible({ timeout: 60_000 });
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1);
 
   // Second navigation: an ongoing slow load shows Loading + Stop; clicking
   // Stop must cancel it cleanly - the banner closes and, being a voluntary
@@ -289,13 +259,13 @@ test('Stop mid-load cancels the loading presentation without an error banner', a
   await addressInput.fill(`${origin}/second`);
   await addressInput.press('Enter');
   await expect(banner).toBeVisible({ timeout: 60_000 });
-  await expect(banner).toContainText('Loading\u2026');
-  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(1, { timeout: 10_000 });
+  await expect(banner).toHaveText(/\S/);
+  await expect(toolbar.locator(byTestId('browser-stop'))).toHaveCount(1, { timeout: 10_000 });
 
-  await toolbar.locator('[aria-label="Stop"]').click();
+  await toolbar.locator(byTestId('browser-stop')).click();
 
   await expect(banner).not.toBeVisible({ timeout: 30_000 });
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1);
   // Cancellation is not an error: no humanised error copy, no raw ERR_ text.
   await expect(banner).not.toBeVisible();
   expect(((await banner.textContent().catch(() => null)) ?? '').length).toBe(0);
@@ -313,21 +283,9 @@ test('a navigation that finishes inside the 200ms debounce window shows no loadi
   test.setTimeout(120_000);
 
   const { server, port } = await startSlowServer(100);
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-fast-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase, 'profile-fast-');
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   const origin = `http://127.0.0.1:${String(port)}`;
   const serverId = randomUUID();
@@ -356,8 +314,8 @@ test('a navigation that finishes inside the 200ms debounce window shows no loadi
   // yet (no page sits under it - see panel.ts `setCloseable`). Picking the
   // seeded host is the sanctioned way out: it closes the panel AND starts the
   // fast navigation (~100ms, inside the 200ms debounce).
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+  await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
 
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   const toolbar = page.locator('.browser-toolbar');
@@ -373,9 +331,9 @@ test('a navigation that finishes inside the 200ms debounce window shows no loadi
     })
     .toBe(false);
   // The load completed: Refresh restored, still no banner.
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1);
   await expect(banner).not.toBeVisible();
-  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(0);
+  await expect(toolbar.locator(byTestId('browser-stop'))).toHaveCount(0);
 
   await app.close();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -391,21 +349,9 @@ test('a page-initiated navigation drives the same address, Stop, Loading and Bac
   test.setTimeout(120_000);
 
   const { server, port } = await startLinkFixtureServer(3_000);
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-inpage-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase, 'profile-inpage-');
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   const origin = `http://127.0.0.1:${String(port)}`;
   const serverId = randomUUID();
@@ -433,16 +379,16 @@ test('a page-initiated navigation drives the same address, Stop, Loading and Bac
   // Seeded profile: the hosts panel opens at startup and is NOT dismissible
   // yet (no page sits under it). Picking the seeded host is the sanctioned way
   // out: it closes the panel AND starts the first (toolbar-initiated) load.
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+  await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
 
-  const addressInput = page.locator('#browser-address-bar input');
+  const addressInput = page.locator(`${byTestId('browser-address')} input`);
   const banner = page.locator('sp-alert-banner.browser-toolbar-message');
   const toolbar = page.locator('.browser-toolbar');
 
   // The first, toolbar-initiated load completes and the address bar holds its
   // URL before the page navigates itself away.
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1, { timeout: 60_000 });
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1, { timeout: 60_000 });
   await expect(addressInput).toHaveValue(`${origin}/`, { timeout: 10_000 });
 
   // Click the in-page link with a genuine user-gesture input event (script
@@ -480,20 +426,20 @@ test('a page-initiated navigation drives the same address, Stop, Loading and Bac
   // the destination as the load starts...
   await expect(addressInput).toHaveValue(`${origin}/next`, { timeout: 15_000 });
   // ...Refresh becomes Stop...
-  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(1, { timeout: 10_000 });
+  await expect(toolbar.locator(byTestId('browser-stop'))).toHaveCount(1, { timeout: 10_000 });
   // ...and the Loading banner appears.
   await expect(banner).toBeVisible({ timeout: 10_000 });
-  await expect(banner).toContainText('Loading\u2026');
+  await expect(banner).toHaveText(/\S/);
 
   // The slow destination eventually renders and everything restores.
   await expect(banner).not.toBeVisible({ timeout: 60_000 });
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1);
-  await expect(toolbar.locator('[aria-label="Stop"]')).toHaveCount(0);
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1);
+  await expect(toolbar.locator(byTestId('browser-stop'))).toHaveCount(0);
   await expect(addressInput).toHaveValue(`${origin}/next`);
 
   // The user-gesture click is a real history entry: Back is enabled, and
   // clicking it returns to the first page.
-  const back = toolbar.locator('[aria-label="Back"]');
+  const back = toolbar.locator(byTestId('browser-back'));
   await expect(back).not.toHaveAttribute('disabled', '');
   await back.click();
   await expect(addressInput).toHaveValue(`${origin}/`, { timeout: 15_000 });

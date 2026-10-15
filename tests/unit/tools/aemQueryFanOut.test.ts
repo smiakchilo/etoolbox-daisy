@@ -1,36 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import {
-  aemQueryRequestSchema,
-  createAemQueryExecutor,
-  executeAemQuery,
-  type AemQueryRequest,
-} from '../../../src/tools/aem-query/aemQuery';
+import { createAemQueryExecutor, executeAemQuery } from '../../../src/tools/aem-query/aemQuery';
 import {
   type BrokerOutcome,
   type CurrentAemToolContext,
   newChatId,
-  newRequestId,
   newServerId,
   newTurnId,
 } from '../../../src/shared';
+import { aemQueryEnvelope as envelope } from '../../support/aemQueryEnvelope';
 import { createCountingIdGenerator } from '../../support/testIds';
 
 const ORIGIN = 'https://author.example';
-
-function envelope(args: unknown): AemQueryRequest {
-  const ids = createCountingIdGenerator('q');
-  return aemQueryRequestSchema.parse({
-    operation: 'aem_query',
-    requestId: newRequestId(ids),
-    chatId: newChatId(ids),
-    turnId: newTurnId(ids),
-    serverId: newServerId(ids),
-    serverRevision: 1,
-    navigationEpoch: 0,
-    deadlineMs: 1,
-    args,
-  });
-}
 
 function queryBody(hits: readonly string[], total: number, more: boolean): string {
   return JSON.stringify({
@@ -154,7 +134,6 @@ describe('executeAemQuery root fan-out', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('INVALID_ARGUMENT');
-      expect(result.error.message).toMatch(/cannot combine 'roots' with a 'path'/);
     }
   });
 

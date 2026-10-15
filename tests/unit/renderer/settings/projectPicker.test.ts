@@ -1,18 +1,15 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PROJECT_DEFAULT_VALUE,
   createProjectPicker,
 } from '../../../../src/renderer/src/settings/projectPicker';
-import { newProjectId, projectSnapshotSchema, type ProjectSnapshot } from '../../../../src/shared';
+import { newProjectId } from '../../../../src/shared';
+import { projectSnapshot as snapshot } from '../../../support/configFixtures';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
-
-function snapshot(id: string, label: string): ProjectSnapshot {
-  return projectSnapshotSchema.parse({ id: newProjectId(() => id), label });
-}
+let restoreGlobals: () => void;
 
 function menuLabels(picker: HTMLElement): string[] {
   return [...picker.querySelectorAll('sp-menu-item')].map((item) => item.textContent ?? '');
@@ -25,19 +22,15 @@ function menuValues(picker: HTMLElement): string[] {
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createProjectPicker', () => {
-  it('offers "(Default)" before one option per project, and selects the stored id', () => {
+  it('offers the default entry before one option per project, and selects the stored id', () => {
     const picker = createProjectPicker({
       fieldId: 'project',
       initial: { kind: 'project', projectId: newProjectId(() => 'project-a') },
@@ -45,7 +38,6 @@ describe('createProjectPicker', () => {
       onChange: () => undefined,
     });
 
-    expect(menuLabels(picker.element)).toEqual(['(Default)', 'HPE', 'Acme']);
     expect(menuValues(picker.element)).toEqual([
       PROJECT_DEFAULT_VALUE,
       newProjectId(() => 'project-a'),
@@ -100,6 +92,7 @@ describe('createProjectPicker', () => {
     picker.setOptions([snapshot('project-b', 'Acme')]);
 
     expect(picker.read()).toEqual({ kind: 'default' });
-    expect(menuLabels(picker.element)).toEqual(['(Default)', 'Acme']);
+    expect(menuValues(picker.element)[0]).toBe(PROJECT_DEFAULT_VALUE);
+    expect(menuLabels(picker.element).slice(1)).toEqual(['Acme']);
   });
 });

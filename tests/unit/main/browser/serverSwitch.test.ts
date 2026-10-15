@@ -5,9 +5,10 @@ import {
   type AemSwitchSession,
   type SwitchableAemView,
 } from '../../../../src/main/browser/serverSwitch';
-import { newProxyId, newServerId } from '../../../../src/shared';
-import { serverConfigSchema, type ServerConfig } from '../../../../src/shared';
+import { newProxyId } from '../../../../src/shared';
+import { type ServerConfig } from '../../../../src/shared';
 import { proxyConfigSchema } from '../../../../src/shared';
+import { makeAuthorServer } from '../../../support/configFixtures';
 
 /**
  * The requirement (requirements-decisions.md section 4) is an *order*, not
@@ -15,16 +16,8 @@ import { proxyConfigSchema } from '../../../../src/shared';
  * from fake collaborators, exactly as the task instructions call for,
  * rather than asserting each call happened in isolation.
  */
-function makeServer(overrides: Partial<Record<string, unknown>> = {}): ServerConfig {
-  return serverConfigSchema.parse({
-    id: newServerId(() => 'server-1'),
-    label: 'Author',
-    origin: 'https://author.example',
-    color: { kind: 'swatch', swatch: 'blue' },
-    revision: 0,
-    ...overrides,
-  });
-}
+const makeServer = (overrides: Partial<Record<string, unknown>> = {}): ServerConfig =>
+  makeAuthorServer('server-1', overrides);
 
 function makeRecordingHarness() {
   const calls: string[] = [];

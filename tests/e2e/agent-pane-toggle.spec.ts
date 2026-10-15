@@ -6,10 +6,12 @@ import {
   type Locator,
 } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The browser toolbar's agent-pane toggle, against the real built app.
@@ -23,39 +25,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * split really comes back.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'agent-pane-toggle-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function createProfile(): Record<string, string> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 function readNativeBounds(
   app: ElectronApplication,
@@ -92,7 +62,7 @@ function paintedBackground(locator: Locator): Promise<{ r: number; g: number; b:
 test('the agent pane collapses to give the page the full width, and restores its former split', async () => {
   test.setTimeout(180_000);
 
-  const env = createProfile();
+  const env = createLaunchProfile(scratchBase).env;
 
   const state = { hits: 0 };
   const server: Server = createServer((_req, res) => {
@@ -128,10 +98,10 @@ test('the agent pane collapses to give the page the full width, and restores its
 
     // A seeded profile opens the hosts picker at startup; pick the host so a
     // page loads and the idle two-pane shell is reached.
-    await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
 
-    const host = page.locator('[data-testid="browser-view-host"]');
+    const host = page.locator('.browser-view-host');
     const chatPane = page.locator('.chat-pane');
     await host.waitFor({ state: 'visible', timeout: 30_000 });
     await expect(chatPane).toBeVisible();
@@ -145,7 +115,7 @@ test('the agent pane collapses to give the page the full width, and restores its
     expect(beforeWidth).toBeLessThan(windowWidth - 50);
 
     // ── Collapse ────────────────────────────────────────────────────────────
-    const closeToggle = page.locator('[title="Close chat"]');
+    const closeToggle = page.locator(byTestId('agent-pane-toggle'));
     // Open pane = toggle selected, tinted light gray (Spectrum's default
     // selected fill is dark gray with white content; this app re-tints it).
     await expect(closeToggle).toHaveAttribute('selected', '');
@@ -158,7 +128,7 @@ test('the agent pane collapses to give the page the full width, and restores its
     await closeToggle.click();
 
     await expect(chatPane).toBeHidden();
-    const openToggle = page.locator('[title="Open chat"]');
+    const openToggle = page.locator(byTestId('agent-pane-toggle'));
     await expect(openToggle).toBeVisible();
     await expect(openToggle).not.toHaveAttribute('selected', '');
 
@@ -181,10 +151,10 @@ test('the agent pane collapses to give the page the full width, and restores its
       .toBe(true);
 
     // ── Restore ─────────────────────────────────────────────────────────────
-    await page.locator('[title="Open chat"]').click();
+    await page.locator(byTestId('agent-pane-toggle')).click();
 
     await expect(chatPane).toBeVisible();
-    const restoredToggle = page.locator('[title="Close chat"]');
+    const restoredToggle = page.locator(byTestId('agent-pane-toggle'));
     await expect(restoredToggle).toBeVisible();
     await expect(restoredToggle).toHaveAttribute('selected', '');
     await expect

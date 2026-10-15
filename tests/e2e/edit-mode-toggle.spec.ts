@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The browser toolbar's edit-mode toggle, against the real built app.
@@ -19,44 +21,12 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * `wcmmode` query parameter) rather than merely repainting.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'edit-mode-toggle-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function createProfile(): Record<string, string> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 test('the edit-mode toggle follows the open page and flips /editor.html', async () => {
   test.setTimeout(120_000);
 
-  const env = createProfile();
+  const env = createLaunchProfile(scratchBase).env;
 
   const state = { hits: 0, paths: [] as string[] };
   const server: Server = createServer((req, res) => {
@@ -94,10 +64,10 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
 
     // A seeded profile opens the hosts picker at startup; pick the host so a
     // page loads and the idle shell is reached.
-    await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
     await expect.poll(() => state.hits > 0, { timeout: 30_000 }).toBe(true);
 
-    const toggle = page.locator('.browser-toolbar__edit-toggle');
+    const toggle = page.locator(byTestId('browser-edit-mode'));
     // The host root is not an editable page, so the control is hidden entirely.
     await expect(toggle).toBeHidden();
     // Labelless, like the rest of the toolbar buttons: icon only.
@@ -118,11 +88,11 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
       afterAddressGroup: el.previousElementSibling?.classList.contains(
         'browser-toolbar__address-group',
       ),
-      beforeExternal: el.nextElementSibling?.getAttribute('title') === 'Open in external browser',
+      beforeExternal: el.nextElementSibling?.getAttribute('data-testid') === 'browser-external',
     }));
     expect(place).toEqual({ afterAddressGroup: true, beforeExternal: true });
 
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     const addressInput = addressBar.locator('input').first();
 
     // A `/content` `.html` page in the web-content view: shown, off.

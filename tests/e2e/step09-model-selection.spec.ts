@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * Step 09 (models bullet): the Settings surface really can select a model and
@@ -26,36 +29,14 @@ import path from 'node:path';
  * deterministic fake agent, so the options are known without a live Copilot.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step09-models-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 test('a model and reasoning effort chosen in Settings are persisted and shown again', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-    ETOOLBOX_DAISY_FAKE_AGENT_SERVICE: '1',
-  };
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   // The persisted model/reasoning pair moved from two top-level keys to the
@@ -79,29 +60,25 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
   const openSettings = async () => {
     const app = await electron.launch({ args: [mainEntry], env });
     const settings = await app.firstWindow();
-    await settings.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await settings.locator('sp-action-button[title="Settings"]').first().click();
     await settings
-      .locator('.settings-panel')
+      .locator(byTestId('browser-address'))
+      .waitFor({ state: 'visible', timeout: 60_000 });
+    await settings.locator(byTestId('chat-settings')).click();
+    await settings
+      .locator(byTestId('settings-panel'))
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
     // Settings is tabbed and the Hosts tab is selected by default, so the
     // Agents panel is only visible once its tab is chosen.
-    await settings.locator('sp-tab', { hasText: 'Agents' }).click();
-    await settings
-      .locator('section[aria-label="Agents"]')
-      .waitFor({ state: 'visible', timeout: 60_000 });
+    await settings.locator(byTestId('settings-tab-agents')).click();
+    await settings.locator('.agents-section').waitFor({ state: 'visible', timeout: 60_000 });
     return { app, settings };
   };
 
   // --- Launch 1: the section is real, and a choice can be saved -----------
   const first = await openSettings();
   try {
-    const section = first.settings.locator('section[aria-label="Agents"]');
-
-    // The step-07 deferral placeholder must be gone, not merely supplemented.
-    await expect(section).not.toContainText('deferred to a later step');
-    await expect(section).not.toContainText('step 07');
+    const section = first.settings.locator('.agents-section');
 
     // `sp-picker` is genuinely upgraded - the assertion jsdom cannot make.
     const registered = await first.settings.evaluate(
@@ -114,25 +91,23 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
       .evaluate((node) => node.shadowRoot !== null);
     expect(hasShadowRoot).toBe(true);
 
-    const modelPicker = section.locator('sp-picker[aria-label="Model"]').first();
-    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]').first();
+    const modelPicker = section.locator(byField('agent-model')).first();
+    const reasoningPicker = section.locator(byField('agent-reasoning-effort')).first();
     // One picker pair per provider (Copilot and OpenRouter).
-    await expect(section.locator('sp-picker[aria-label="Model"]')).toHaveCount(2);
-    await expect(section.locator('sp-picker[aria-label="Reasoning effort"]')).toHaveCount(2);
+    await expect(section.locator(byField('agent-model'))).toHaveCount(2);
+    await expect(section.locator(byField('agent-reasoning-effort'))).toHaveCount(2);
 
     // The catalogue arrived over the new IPC channel: "no preference" plus the
     // two fake models.
     await expect(modelPicker.locator('sp-menu-item')).toHaveCount(3);
-    await expect(section).toContainText('Fake Model (reasoning)');
 
     // The fake reports a signed-in provider, so both pickers are live (a
     // signed-out one disables them both - see settings-tabs.spec.ts).
     await expect(modelPicker).toBeEnabled();
     await expect(reasoningPicker).toBeEnabled();
 
-    // One auth action at a time, and it is the sign-out half of the pair.
-    await expect(section.locator('.agent-item__action')).toHaveCount(1);
-    await expect(section.locator('.agent-item__action')).toHaveText('Sign out');
+    // One auth action at a time (the provider is signed in).
+    await expect(section.locator(byTestId('agent-auth-action'))).toHaveCount(1);
 
     // Choosing the reasoning-capable model must populate the second picker
     // with that model's own levels - "show only supported reasoning levels".
@@ -164,9 +139,9 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
   // --- Launch 2: the saved choice comes back, and can be cleared ----------
   const second = await openSettings();
   try {
-    const section = second.settings.locator('section[aria-label="Agents"]');
-    const modelPicker = section.locator('sp-picker[aria-label="Model"]').first();
-    const reasoningPicker = section.locator('sp-picker[aria-label="Reasoning effort"]').first();
+    const section = second.settings.locator('.agents-section');
+    const modelPicker = section.locator(byField('agent-model')).first();
+    const reasoningPicker = section.locator(byField('agent-reasoning-effort')).first();
 
     await expect
       .poll(

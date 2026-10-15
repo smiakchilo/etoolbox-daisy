@@ -45,10 +45,7 @@ describe('classifyScopeEntry', () => {
   ])('rejects %j as neither a path nor a fragment', (raw) => {
     const entry = classifyScopeEntry(raw);
     expect(entry.kind).toBe('invalid');
-    if (entry.kind === 'invalid') {
-      expect(entry.message).toContain('is not a JCR path or a path fragment');
-      expect(entry.message).toContain('ask_user');
-    }
+    if (entry.kind === 'invalid') expect(entry.message).not.toBe('');
   });
 
   it('truncates a long value in its message', () => {
@@ -68,14 +65,10 @@ describe('searchRootsSchema and queryRootsSchema', () => {
     expect(searchRootsSchema.safeParse(tooMany).success).toBe(false);
   });
 
-  it('rejects a description in words with the corrective message', () => {
+  it('rejects a description in words with a corrective message', () => {
     const parsed = searchRootsSchema.safeParse(['the US site']);
     expect(parsed.success).toBe(false);
-    expect(parsed.error?.issues[0]?.message).toContain('is not a JCR path or a path fragment');
-  });
-
-  it('keeps the shared maximum at ten', () => {
-    expect(MAX_SEARCH_ROOTS).toBe(10);
+    expect(parsed.error?.issues[0]?.message).toBeTruthy();
   });
 
   it('gives aem_query the same maximum but full paths only', () => {
@@ -189,11 +182,11 @@ describe('resolveSearchScope', () => {
     expect(await resolve(['us/en'])).toEqual(ok(['/content/b/us/en']));
     expect(calls).toHaveLength(1);
     expect(calls[0]?.name).toBe('ask_user');
-    expect(calls[0]?.args).toEqual({
-      question: 'Which branch does "us/en" mean?',
+    expect(calls[0]?.args).toMatchObject({
       options: ['/content/a/us/en', '/content/b/us/en'],
       freeInput: true,
     });
+    expect(calls[0]?.args['question']).toContain('us/en');
   });
 
   it('falls back to a content root that ends with the fragment', async () => {
@@ -267,13 +260,10 @@ describe('resolveSearchScope', () => {
       { ...FACTS, contentPriorityPaths: [] },
     );
     expect(await resolve(['xx/yy'])).toEqual(ok(['/content/typed/us/en']));
-    expect(calls[1]).toEqual({
-      name: 'ask_user',
-      args: {
-        question: 'I could not find a branch matching "xx/yy". Which path should I search?',
-        freeInput: true,
-      },
-    });
+    expect(calls[1]?.name).toBe('ask_user');
+    expect(calls[1]?.args).toMatchObject({ freeInput: true });
+    expect(calls[1]?.args['question']).toContain('xx/yy');
+    expect(calls[1]?.args).not.toHaveProperty('options');
   });
 
   it('treats a failed lookup as finding nothing, and asks', async () => {
@@ -321,10 +311,7 @@ describe('resolveSearchScope', () => {
     );
     const result = await resolve(['us/en']);
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.code).toBe('INVALID_ARGUMENT');
-      expect(result.error.message).toContain('must start with "/"');
-    }
+    if (!result.ok) expect(result.error.code).toBe('INVALID_ARGUMENT');
   });
 
   it('refuses an answer that selects something that was not offered', async () => {

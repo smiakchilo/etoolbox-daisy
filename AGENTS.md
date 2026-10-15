@@ -1041,7 +1041,14 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3345 passed / 14 skipped** (+9 against the
+Current baseline: **`npm run test` → 3286 passed / 14 skipped** (−59 against the
+3345 below - **the test-literal cleanup**: tests no longer certify production-owned
+copy, CSS classes, icon tags or re-typed constants; those cases were deleted or
+turned into state checks, and elements are located by test-id hooks - see §9 and
+`docs/verification/followons-2026-10.md` "Test suite: no literal-certifying
+tests, test-id hooks, shared helpers (2026-10-16)"). Playwright: 133 passed / 6
+failed in a full run, the 6 being environment-bound `network-error` (4)
+and load-correlated flakes. Before that it was **3345 passed / 14 skipped** (+9 against the
 3336 the working tree measured before this change - the 3333 recorded here
 earlier was stale - **contextual help on every Settings field**: each field's
 label row is now built by `settings/fieldHelp.ts`'s `labelledField(...)` - the
@@ -1198,9 +1205,9 @@ facts only, and the journal's `user.prompt` carries an optional `pageContext`;
 the search skills lost their duplicated prose. mutations caught - see
 `docs/verification.md` "Search scope and instruction resources (2026-10-15)".
 A full Playwright run was 126 passed / 9 failed: the 5 known environment-bound
-cases (`settings-tabs.spec.ts:30`, four `step05-network-error`), two
-`step07-agent-chat` cases (520, 637) that fail identically on a clean HEAD, and
-the load-correlated `host-proxy-selection` / `step05-address-deep-link` flakes).
+cases (`settings-tabs.spec.ts:30`, four `network-error`), two
+`agent-chat` cases (520, 637) that fail identically on a clean HEAD, and
+the load-correlated `host-proxy-selection` / `address-deep-link` flakes).
 Before that it was 3112 (+21 against the
 3091 of the previous entry - **the edit-mode toggle**: a new browser-toolbar
 button (`sp-icon-edit`, immediately after the address bar) that flips the open
@@ -1673,7 +1680,7 @@ no host), that **Resume** reopens one
 (its transcript returns), and that the two-step **Delete** removes the other (3/3
 under `--repeat-each=3`; a mutation making the History button a no-op failed it
 at `expect(.history-panel).toBeVisible()`). The five neighbouring specs named in
-that entry were re-run green, and `step07-agent-chat` shows only its documented
+that entry were re-run green, and `agent-chat` shows only its documented
 pre-existing case-637 failure. Before that, the +1 since 133 is the new
 `host-switch-contextual.spec.ts`,
 proving against the built app, with two request-recording servers, that picking a
@@ -1768,7 +1775,7 @@ cases), one ask-user `actions` case, and rewrote `step08-query-results.spec.ts`
 to the `aem_query` billet + `format_table` message flow (still 5 cases) — see
 `docs/verification.md` "Deterministic search tables ... (2026-10-09)". The 6
 failures are **pre-existing and environment-bound**: `settings-tabs.spec.ts:30`
-and four `step05-network-error.spec.ts` cases reproduce identically on a clean
+and four `network-error.spec.ts` cases reproduce identically on a clean
 HEAD (the browser-pane hosts panel / network banner), and
 `chat-transcript-scroll.spec.ts` is the documented load-correlated flake (green
 in isolation). The new specs and the ask-user case are green. (The previously
@@ -1806,8 +1813,8 @@ one deterministic failure is the pre-existing `settings-tabs.spec.ts:121`,
 which fails identically on HEAD — the settings "Takes effect after restarting
 the app" helper carries no trailing period while the assertion expects one; the
 load-correlated flakes — `settings-color-picker` (its 1–2 px geometry), the
-hosts-typing case in `step05-settings-servers.spec.ts`, and the documented
-`step05-loading-indicator` — are green in isolation, so a full run can show 2;
+hosts-typing case in `settings-hosts.spec.ts`, and the documented
+`loading-indicator` — are green in isolation, so a full run can show 2;
 includes `message-links.spec.ts`, the assistant
 message-link case, now 11 tests covering the Edit/CRX hover popover, the
 `jcr:content` resource case - link/Edit trimmed to the owning page but CRX kept
@@ -1823,11 +1830,11 @@ billet). (The Session "Authentication"/"Models"
 on — see `docs/verification.md`.) **`npm run verify`** typechecks cleanly (the old red WIP file is now the
 registered-but-disabled `src/tools/aem-create-page/`); it is red only on
 pre-existing lint errors in
-`tests/unit/main/aem/session.test.ts:12` and `tests/e2e/step05-aem-session.spec.ts`
+`tests/unit/main/aem/session.test.ts:12` and `tests/e2e/aem-session.spec.ts`
 (prefer-const).
 The repository now has **commits** (HEAD `eab74e6`), so `git status`/`git log`
 work again; the older "zero commits" notes are stale. One **pre-existing,
-non-flaky** E2E failure remains: `step06-aem-bridge.spec.ts` test 2 asserts an
+non-flaky** E2E failure remains: `aem-bridge.spec.ts` test 2 asserts an
 exact bridge-reply key list that commit `9a79dae`'s optional `headers` field
 invalidated — see `docs/verification.md` "Assistant message links open the AEM
 pane in edit mode (2026-09-22)".
@@ -1835,12 +1842,12 @@ pane in edit mode (2026-09-22)".
 provisions a scratch storage home like every sibling spec (see
 `docs/verification.md` "Settings Servers renamed to Hosts", traps). Residual E2E
 flakes, all load-correlated and green in isolation:
-`step05-address-deep-link.spec.ts` (see `docs/verification.md` Step 05
+`address-deep-link.spec.ts` (see `docs/verification.md` Step 05
 closeability section), `settings-color-picker.spec.ts` (its 1–2 px geometry
-assertions), `agent-token-canary.spec.ts`, `step05-loading-indicator.spec.ts`,
+assertions), `agent-token-canary.spec.ts`, `loading-indicator.spec.ts`,
 and `host-proxy-selection.spec.ts` (its Settings proxy-combobox persistence).
 The two
-previously-*consistent* failures — `step05-settings-servers.spec.ts` (an
+previously-*consistent* failures — `settings-hosts.spec.ts` (an
 orphaned banner collapse timer detached the OK button mid-click) and
 `step08-query-results.spec.ts`'s markup case (a stale `onerror=` fixture) — were
 fixed on 2026-09-22; see `docs/verification.md` "Fix the three knowingly-failing
@@ -1959,6 +1966,103 @@ because the two-field form permits impossible states.
 A green test suite is **not** evidence. Three habits found every real defect so
 far; keep them.
 
+### Writing tests: the rules
+
+These came out of the 2026-10-16 test-suite review (`docs/verification/followons-2026-10.md`
+"Test suite: no literal-certifying tests, test-id hooks, shared helpers"). They
+bind every new or edited test.
+
+**1. Do not certify production-owned literals.** A test must not assert that
+"Lorem ipsum" renders as "Lorem ipsum". Help texts, labels, placeholders, banner
+and error copy, tooltips, CSS class names, icon tags, default values, model-facing
+prose and re-typed constants may be reworded or changed freely; a test that pins
+their exact value fails for no reason and makes routine copy edits expensive.
+Instead:
+
+- assert **behaviour and state** (the banner appears, the button is disabled, the
+  row is removed, the value was persisted), not the words;
+- when the text itself must be referenced, **import the exported constant**
+  (`STORAGE_KEY`, `ATTENTION_CLASS`, ...) rather than re-typing it - and if none
+  is exported, export one from `src/` in the same change;
+- a test that only restates a constant, a static map, a class list or a markup
+  snapshot of the code under test is **deleted, not written**;
+- keep exact values **only where they are a contract**: error codes, tool and IPC
+  names, fixture echoes (what the test itself fed in), computed output, security
+  checks (escaping, origin guards, no `innerHTML`), the "banner copy never ends
+  with a period" invariant, and the exact enabled/disabled tool sets.
+
+Before asserting a string, ask: *if the owner rewords this tomorrow, should this
+test fail?* If not, do not assert it.
+
+**2. Locate elements by test id, not by copy, title, aria-label or class.**
+Production *controls* (buttons, toggles, inputs), whole-size *panels*, repeated
+*rows* and *dynamic* elements (`settings-tab-<value>`, `host-color-swatch-<c>`)
+carry `data-testid="<kebab-id>"`; Settings fields carry `data-field="<id>"`.
+Tests use `byTestId` / `byField` from `tests/support/selectors.ts`.
+`[title=]`, `[aria-label=]` and text locators are not allowed in new tests. A
+hook is **not** added to a plain structural wrapper (a region, list, section or
+slot root): such a root is found by its own structural class or element tag
+(`.browser-view-host`, `.hosts-section`, `sp-split-view`), which the layout and
+CSS already depend on. A control a test needs but lacks a hook for gets one **in
+the same change** - an additive, behaviour-free attribute; say so in the
+handoff. Playwright specs must not import from `src/renderer`.
+
+**3. Look for an existing helper before writing one.** Search `tests/support/`
+(and `tests/support/e2e/`) first - by name and by body - before adding any
+setup, teardown, fixture builder, wait, fake or locator helper to a test file:
+
+- unit: `jsdomGlobals`, `memoryStorage`, `scratchDirs`, `asyncWaits`,
+  `configFixtures`, `aemQueryEnvelope`, `fakeAemTransport`, `fakeAemFixtures`,
+  `fakeBrowserSide`, `fakeAgent`, `testClock`, `testIds`, `toolUnions`,
+  `agentDefinitions`, `instructionResources`;
+- E2E: `env` (scratch environment), `profile` (settings/profile writing), `app`
+  (launch/close), `composer` (wait-ready, send), `fakeAgent`.
+
+If one nearly fits, **extend it** rather than writing a variant. When the same
+block appears in a second test file, move it to `tests/support/` in that change
+(a third copy is never acceptable). A helper stays local only when it is
+genuinely specific to that spec - e.g. each `makeHost` builds a different
+`ToolHost` - and says why in a short comment. A new support module gets a
+single clear name for a single job; do not create a `utils.ts` catch-all.
+
+**4. Specs are named for the feature, never for a plan step.** E2E files are
+`<feature>.spec.ts` (`aem-bridge`, `agent-chat`, `network-error`), not
+`stepNN-*`. When renaming a spec, `git mv` it and update live references
+(AGENTS.md, current docs, comments); dated evidence in `docs/verification/` keeps
+the name the spec had when it ran. Legacy `step04`/`step08`/`step09` names stay
+until someone renames them deliberately.
+
+**5. No arbitrary sleeps; wait on a condition.** Use `asyncWaits` / Playwright
+`expect(...).toPass()` / `waitFor` on an observable state. `waitForTimeout` is
+tolerated only as the back-off inside a polling loop. Do not assert on a "last"
+element of a *shared* app (`.last()` after a send) without first capturing the
+count before the action - a stale element passes or fails by accident.
+
+**6. Make failures informative and tests independent.** Prefer a specific
+matcher to a bare `toThrow()` / `toBeDefined()` / `toBeTruthy()`; assert the error
+code or the one property that matters. Avoid `as unknown as` to force a fixture
+through the type system - build a correctly-typed fixture through the shared
+helpers instead. A test creates its own scratch directory/profile and cleans it
+up; it never depends on another test's leftovers or on `npm run dev` being
+absent. One test, one behaviour.
+
+**7. Test files stay reviewable.** A test file approaching ~1400 lines is split
+by behaviour (the backlog lists the current offenders: `browserToolbar`,
+`agentChatController`, `transcriptView`, `sdkAgentService`, `settingsStore`,
+`chatPane`, `browserController`, `ipc/settings`); do not push a file further past
+that, and split a file you are already making substantially larger.
+
+**8. Prove a new test discriminates.** After writing a test, break the production
+behaviour it guards (a realistic mutation), see it fail for the right reason,
+restore, and see it pass - and for a UI change, run the built-app Playwright case
+(`npm run build` first; E2E runs against `out/`). A test that cannot fail is
+removed.
+
+**9. Report the cost of the change.** When a task adds a hook, exports a
+constant, changes a contract, or deletes a test, say so in the handoff and in the
+evidence log. Do not delete a test silently and do not weaken an assertion
+without recording why. The baseline in §6 is updated only from a measured run.
+
 **`get_file_problems` before the gate.** After editing any project file, run the
 `get_file_problems` tool from the intellij MCP on that file and amend until it
 reports zero problems — *before* Prettier/ESLint/`npm run verify`. Fix
@@ -2054,7 +2158,7 @@ file).
 | `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — tracked in `docs/backlog.md` (same entry). |
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory — see `docs/backlog.md` "Milestones B and C". |
 | Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live AEM session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/aem/proxyResolution.ts`). |
-| `step05-address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
+| `address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 

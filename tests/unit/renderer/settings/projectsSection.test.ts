@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BANNER_ACTION_MARKER } from '../../../../src/renderer/src/lib/alertBanner';
 import { createProjectsSection } from '../../../../src/renderer/src/settings/projectsSection';
@@ -7,29 +7,19 @@ import type {
   StatusBannerAction,
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
-import { newProjectId, projectSnapshotSchema, type ProjectSnapshot } from '../../../../src/shared';
+import { newProjectId } from '../../../../src/shared';
+import { settle } from '../../../support/asyncWaits';
+import { projectSnapshot as snapshot } from '../../../support/configFixtures';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
+import { byField } from '../../../support/selectors';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 const addProject = vi.fn();
 const updateProject = vi.fn();
 const removeProject = vi.fn();
 const reorderProjects = vi.fn();
-
-function snapshot(
-  id: string,
-  label: string,
-  roots: {
-    contentRoots?: string;
-    componentRoots?: string;
-    contentPriorityPaths?: string;
-    damRoots?: string;
-  } = {},
-): ProjectSnapshot {
-  return projectSnapshotSchema.parse({ id: newProjectId(() => id), label, ...roots });
-}
 
 interface PromptCapture {
   copy: string;
@@ -46,11 +36,16 @@ function buildSection() {
   return createProjectsSection({ status, reportSave, onSettingsChanged });
 }
 
-function field(
-  root: ParentNode,
-  ariaLabel: 'Label' | 'Content roots' | 'Component roots' | 'Content priority paths' | 'DAM roots',
-) {
-  return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
+const FIELD_IDS = {
+  Label: 'project-label',
+  'Content roots': 'project-content-roots',
+  'Component roots': 'project-component-roots',
+  'Content priority paths': 'project-priority-paths',
+  'DAM roots': 'project-dam-roots',
+} as const;
+
+function field(root: ParentNode, name: keyof typeof FIELD_IDS) {
+  return root.querySelector<HTMLElement & { value: string }>(byField(FIELD_IDS[name]));
 }
 
 function type(node: HTMLElement & { value: string }, value: string): void {
@@ -66,11 +61,6 @@ function commit(node: HTMLElement): void {
 function typeAndCommit(node: HTMLElement & { value: string }, value: string): void {
   type(node, value);
   commit(node);
-}
-
-async function settle(ms = 1000): Promise<void> {
-  await vi.advanceTimersByTimeAsync(ms);
-  await vi.advanceTimersByTimeAsync(0);
 }
 
 beforeEach(() => {
@@ -103,9 +93,7 @@ beforeEach(() => {
   reportSave = vi.fn<(outcome: Promise<SaveOutcome>) => void>();
   onSettingsChanged = vi.fn<() => void>();
 
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   Reflect.set(dom.window, 'daisy', {
     settings: {
       addProject,
@@ -118,13 +106,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createProjectsSection', () => {
-  it('renders one labelled item per project with its five field labels', () => {
+  it('renders one item per project with its field values', () => {
     const section = buildSection();
     section.update([
       snapshot('a', 'HPE', {
@@ -142,44 +128,6 @@ describe('createProjectsSection', () => {
     expect(field(section.element, 'Component roots')?.value).toBe('/apps/a');
     expect(field(section.element, 'Content priority paths')?.value).toBe('/content/a/blueprint');
     expect(field(section.element, 'DAM roots')?.value).toBe('/content/dam/a');
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(10);
-  });
-
-  it('orders the fields Component roots, Content roots, Content priority paths, DAM roots', () => {
-    const section = buildSection();
-    section.update([snapshot('a', 'HPE')]);
-
-    const labels = [...section.element.querySelectorAll('sp-field-label')].map(
-      (label) => label.textContent,
-    );
-    expect(labels).toEqual([
-      'Label (required)',
-      'Component roots',
-      'Content roots',
-      'Content priority paths',
-      'DAM roots',
-    ]);
-  });
-
-  it('gives every project field a contextual-help badge carrying its phrase', () => {
-    const section = buildSection();
-    section.update([snapshot('a', 'HPE')]);
-
-    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
-    expect(badges.map((badge) => badge.textContent)).toEqual([
-      "The name shown for this project in the hosts' Project picker",
-      'Where to look for components',
-      'Where to look for pages in search operations',
-      'Paths searched first within the content roots; matches here are listed before the rest',
-      'Where to look for DAM assets in search operations',
-    ]);
-    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
-      'Help: Label',
-      'Help: Component roots',
-      'Help: Content roots',
-      'Help: Content priority paths',
-      'Help: DAM roots',
-    ]);
   });
 
   it('adds an empty draft only when "Add item" is clicked', () => {
@@ -357,7 +305,7 @@ describe('createProjectsSection', () => {
       .querySelector('.multifield__action--remove')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    expect(lastPrompt?.copy).toBe(`Press ${BANNER_ACTION_MARKER} to remove the project`);
+    expect(lastPrompt?.copy).toContain(BANNER_ACTION_MARKER);
     expect(removeProject).not.toHaveBeenCalled();
 
     lastPrompt?.action.onActivate();

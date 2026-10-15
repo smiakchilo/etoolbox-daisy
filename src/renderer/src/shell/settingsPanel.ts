@@ -186,7 +186,9 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
   const tabs = el('sp-tabs', {
     attrs: { class: 'settings-panel__tabs', selected: 'hosts', size: 'm' },
     children: [
-      ...tabSections.map(({ value, label }) => el('sp-tab', { attrs: { value }, text: label })),
+      ...tabSections.map(({ value, label }) =>
+        el('sp-tab', { attrs: { value, 'data-testid': `settings-tab-${value}` }, text: label }),
+      ),
       ...tabSections.map(({ value, element }) =>
         el('sp-tab-panel', {
           attrs: { class: 'settings-panel__tab-panel', value },
@@ -206,6 +208,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     title: 'Settings',
     closeAriaLabel: 'Close settings',
     surfaceClassName: 'settings-panel',
+    testId: 'settings-panel',
     closeButtonClassName: 'settings-panel__close',
     content,
     onDismiss(): void {

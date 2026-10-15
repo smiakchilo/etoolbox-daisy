@@ -1,13 +1,14 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createColorPicker } from '../../../../src/renderer/src/settings/colorPicker';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
+import { byField } from '../../../support/selectors';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 function field(picker: ReturnType<typeof createColorPicker>) {
-  return picker.element.querySelector<HTMLElement & { value: string }>('[aria-label="Color tag"]');
+  return picker.element.querySelector<HTMLElement & { value: string }>(byField('host-color'));
 }
 
 function preview(picker: ReturnType<typeof createColorPicker>) {
@@ -15,15 +16,11 @@ function preview(picker: ReturnType<typeof createColorPicker>) {
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createColorPicker', () => {

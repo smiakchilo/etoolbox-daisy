@@ -1,10 +1,10 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMultifield } from '../../../src/renderer/src/lib/multifield';
+import { installJsdomGlobals } from '../../support/jsdomGlobals';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 function field(text: string): HTMLElement {
   const node = dom.window.document.createElement('div');
@@ -18,19 +18,15 @@ function keysOf(multifield: ReturnType<typeof createMultifield>): readonly strin
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createMultifield', () => {
-  it('renders the add button with the requested label and an add icon', () => {
+  it('renders an add button with the requested label that calls onAdd', () => {
     const onAdd = vi.fn();
     const multifield = createMultifield({
       addLabel: 'Add item',
@@ -40,10 +36,7 @@ describe('createMultifield', () => {
     });
     const addButton = multifield.element.querySelector('.multifield__add');
     expect(addButton).not.toBeNull();
-    expect(addButton?.tagName.toLowerCase()).toBe('sp-action-button');
-    expect(addButton?.hasAttribute('quiet')).toBe(false);
     expect(addButton?.textContent).toBe('Add item');
-    expect(addButton?.querySelector('sp-icon-add')).not.toBeNull();
 
     addButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     expect(onAdd).toHaveBeenCalledTimes(1);

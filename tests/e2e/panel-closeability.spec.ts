@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The closeability contract for whole-size panels over the page-view region,
@@ -28,16 +30,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * hidden/visible native-view region, and the real home screen.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'panel-closeability-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 async function startEchoOrigin(): Promise<{ origin: string; hits: number; close: () => void }> {
   const state = { hits: 0 };
@@ -58,37 +51,11 @@ async function startEchoOrigin(): Promise<{ origin: string; hits: number; close:
   };
 }
 
-function launchProfile(): { home: string; env: Record<string, string> } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
-
 test('a panel is always dismissible, revealing the home screen or the loaded page beneath', async () => {
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -110,10 +77,10 @@ test('a panel is always dismissible, revealing the home screen or the loaded pag
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const panel = page.locator('.hosts-panel');
-    const closeButton = page.locator('.hosts-panel__close');
-    const pickerButton = page.locator('#hosts-button');
-    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const panel = page.locator(byTestId('hosts-panel'));
+    const closeButton = page.locator(byTestId('hosts-panel-close'));
+    const pickerButton = page.locator(byTestId('browser-hosts-button'));
+    const viewHost = page.locator('.browser-view-host');
     const homeScreen = page.locator('.browser-home');
 
     // A seeded profile keeps its startup affordance: the hosts picker leads.
@@ -147,7 +114,7 @@ test('a panel is always dismissible, revealing the home screen or the loaded pag
     // Selecting a host closes the panel AND loads a page, replacing the home
     // screen with the native view.
     await pickerButton.click();
-    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${server.origin}"]`).click();
     await expect.poll(() => server.hits > 0, { timeout: 30_000 }).toBe(true);
     await expect(panel).toBeHidden();
     await expect(homeScreen).toBeHidden();

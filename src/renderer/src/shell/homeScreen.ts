@@ -83,6 +83,7 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
       quiet: '',
       title: 'Back to page',
       'aria-label': 'Back to page',
+      'data-testid': 'home-close',
     },
   });
   const closeIcon = document.createElement(CLOSE_ICON_TAG);
@@ -101,13 +102,23 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
   });
 
   const hostsButton = el('sp-action-button', {
-    attrs: { class: 'browser-home__action', title: 'Select a host', 'aria-label': 'Select a host' },
+    attrs: {
+      class: 'browser-home__action',
+      title: 'Select a host',
+      'aria-label': 'Select a host',
+      'data-testid': 'home-hosts',
+    },
     text: 'Select a host',
   });
   hostsButton.addEventListener('click', () => callbacks.onOpenHosts());
 
   const historyButton = el('sp-action-button', {
-    attrs: { class: 'browser-home__action', title: 'History', 'aria-label': 'History' },
+    attrs: {
+      class: 'browser-home__action',
+      title: 'History',
+      'aria-label': 'History',
+      'data-testid': 'home-history',
+    },
     text: 'History',
   });
   historyButton.addEventListener('click', () => callbacks.onOpenHistory());
@@ -117,6 +128,7 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
       class: 'browser-home__action',
       title: 'Settings',
       'aria-label': 'Settings',
+      'data-testid': 'home-settings',
     },
     text: 'Settings',
   });

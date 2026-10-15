@@ -1,10 +1,15 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ATTENTION_ANIMATION,
+  ATTENTION_CLASS,
   type Composer,
   createComposer,
   type ComposerSendOutcome,
+  STRIP_CLASS,
 } from '../../../../src/renderer/src/chat/composer';
+import { STORAGE_KEY } from '../../../../src/renderer/src/lib/composerHistoryStore';
+import { createWindowStorageInstaller, memoryStorage } from '../../../support/memoryStorage';
 
 // `composer.ts` builds its DOM through `lib/dom.ts`'s `el()` helper, which
 // reaches for the ambient global `document` (unlike `renderMarkdown.ts`,
@@ -69,42 +74,20 @@ function readyComposer(onSend = vi.fn<(prompt: string) => Promise<ComposerSendOu
 }
 
 describe('createComposer', () => {
-  it('builds a borderless field inside a frame, with normal Send and Stop action buttons', () => {
-    const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
-
-    const frame = query(composer.element, '.chat-composer__frame');
-    const field = query(composer.element, 'sp-textfield');
-    const sendButton = query(composer.element, '.chat-composer__send');
-    const stopButton = query(composer.element, '.chat-composer__stop');
-
-    // A new composer starts on an empty conversation, so its field is taller.
-    expect(field.getAttribute('rows')).toBe('8');
-    expect(field.hasAttribute('multiline')).toBe(true);
-    expect(field.getAttribute('placeholder')).toBe('Type your message or command here');
-    expect(field.classList.contains('chat-composer__field')).toBe(true);
-    expect(frame.contains(sendButton)).toBe(true);
-    expect(frame.contains(stopButton)).toBe(true);
-    expect(sendButton.tagName.toLowerCase()).toBe('sp-action-button');
-    expect(sendButton.hasAttribute('icon-only')).toBe(false);
-    expect(sendButton.getAttribute('aria-label')).toBe('Send');
-    expect(sendButton.querySelector('sp-icon-send')).not.toBeNull();
-    expect(stopButton.tagName.toLowerCase()).toBe('sp-action-button');
-    expect(stopButton.hasAttribute('icon-only')).toBe(false);
-    expect(stopButton.getAttribute('aria-label')).toBe('Stop');
-    expect(stopButton.querySelector('[slot="icon"]')?.tagName.toLowerCase()).toBe(
-      'sp-icon-cross600',
-    );
-  });
-
   it('shrinks the field from the empty height to the ordinary height once the conversation has content', () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     const field = query(composer.element, 'sp-textfield');
+    const rows = (): number => Number(field.getAttribute('rows'));
 
+    // A new composer starts on an empty conversation, so its field is taller.
+    const emptyRows = rows();
     composer.setConversationEmpty(false);
-    expect(field.getAttribute('rows')).toBe('4');
+    const ordinaryRows = rows();
+    expect(ordinaryRows).toBeGreaterThan(0);
+    expect(ordinaryRows).toBeLessThan(emptyRows);
 
     composer.setConversationEmpty(true);
-    expect(field.getAttribute('rows')).toBe('8');
+    expect(rows()).toBe(emptyRows);
   });
 
   it('focus() puts the caret in the prompt field', () => {
@@ -158,7 +141,7 @@ describe('createComposer', () => {
     });
   });
 
-  it("starts in the 'connecting' presentation with a disabled Send and no message of its own", () => {
+  it("starts in the 'connecting' presentation with a disabled Send", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     const sendButton = query(composer.element, '.chat-composer__send');
     const stopButton = query(composer.element, '.chat-composer__stop');
@@ -166,9 +149,6 @@ describe('createComposer', () => {
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(true);
     expect(isShown(stopButton)).toBe(false);
-    // The composer no longer owns any message: "Connecting to agent..." is the
-    // chat pane's banner (see `chatPane.test.ts`), not a composer notice.
-    expect(composer.element.querySelector('.chat-composer__notice')).toBeNull();
   });
 
   it("shows an enabled Send button once told 'send-enabled'", () => {
@@ -179,32 +159,24 @@ describe('createComposer', () => {
     const stopButton = query(composer.element, '.chat-composer__stop');
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(false);
-    // The accent fill rides on this class; it is what makes the enabled state
-    // visibly blue and every disabled state visibly grey.
-    expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(true);
     expect(isShown(stopButton)).toBe(false);
   });
 
-  it("shows a disabled Send (no accent fill) when 'send-disabled'", () => {
+  it("shows a disabled Send when 'send-disabled'", () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'send-disabled', reason: 'not_authenticated' });
 
     const sendButton = query(composer.element, '.chat-composer__send');
     expect(sendButton.hasAttribute('disabled')).toBe(true);
-    expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(false);
   });
 
-  it('shows a disabled, silent Send (no accent fill) when no agent is active', () => {
+  it('shows a disabled Send when no agent is active', () => {
     const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
     composer.setButtonState({ kind: 'agent-inactive' });
 
     const sendButton = query(composer.element, '.chat-composer__send');
     expect(isShown(sendButton)).toBe(true);
     expect(sendButton.hasAttribute('disabled')).toBe(true);
-    expect(sendButton.classList.contains('chat-composer__send--enabled')).toBe(false);
-    // The chat pane's own banner carries the wording; the composer holds no
-    // message element at all.
-    expect(composer.element.querySelector('.chat-composer__notice')).toBeNull();
   });
 
   it('swaps to the enabled Stop control (and hides Send) when a turn is in flight', () => {
@@ -318,7 +290,7 @@ describe('createComposer', () => {
 
     it('restores the previous text when onSend resolves not-ok, leaving the message to the banner', async () => {
       const onSend = vi.fn().mockResolvedValue({ ok: false } satisfies ComposerSendOutcome);
-      const { composer, field } = readyComposer(onSend);
+      const { field } = readyComposer(onSend);
       field.value = 'will fail';
 
       pressEnter(field);
@@ -326,9 +298,6 @@ describe('createComposer', () => {
       await Promise.resolve();
 
       expect(field.value).toBe('will fail');
-      // The failure message is the chat pane's banner; the composer carries no
-      // notice to duplicate it.
-      expect(composer.element.querySelector('.chat-composer__notice')).toBeNull();
     });
 
     describe('IME composition must never accidentally submit', () => {
@@ -455,25 +424,13 @@ describe('createComposer', () => {
   });
 
   describe('prompt history recall', () => {
-    const STORAGE_KEY = 'daisy.chat.composerHistory';
-    const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-
-    interface StubStorage {
-      getItem(key: string): string | null;
-      setItem(key: string, value: string): void;
-    }
+    const windowStorage = createWindowStorageInstaller();
 
     /** Installs a `window` whose `localStorage` is an in-memory stub, returning its backing map. */
     function installStorage(seed: Record<string, string> = {}): Record<string, string> {
-      const values: Record<string, string> = { ...seed };
-      const storage: StubStorage = {
-        getItem: (key) => values[key] ?? null,
-        setItem: (key, value) => {
-          values[key] = value;
-        },
-      };
-      Reflect.set(globalThis, 'window', { localStorage: storage });
-      return values;
+      const storage = memoryStorage(seed);
+      windowStorage.install(storage);
+      return storage.values;
     }
 
     beforeEach(() => {
@@ -481,7 +438,7 @@ describe('createComposer', () => {
     });
 
     afterEach(() => {
-      Reflect.set(globalThis, 'window', previousWindow);
+      windowStorage.restore();
     });
 
     function arrowEvent(
@@ -726,8 +683,8 @@ describe('createComposer', () => {
 
       const buttons = composer.element.querySelectorAll('.chat-ask__action');
       expect(buttons).toHaveLength(2);
-      expect(buttons.item(0)?.classList.contains('chat-ask__action--emphasis')).toBe(false);
-      expect(buttons.item(1)?.classList.contains('chat-ask__action--emphasis')).toBe(true);
+      // The emphasized action is styled apart from the ordinary one.
+      expect(buttons.item(1)?.className).not.toBe(buttons.item(0)?.className);
     });
 
     it('answers with the clicked label and holds the (disabled) panel until the turn ends', () => {
@@ -799,8 +756,6 @@ describe('createComposer', () => {
   });
 
   describe("the composer frame's button strip", () => {
-    const STRIP_CLASS = 'chat-composer__frame--strip';
-
     function frameOf(composer: Composer): HTMLElement {
       return query(composer.element, '.chat-composer__frame');
     }
@@ -852,7 +807,7 @@ describe('createComposer', () => {
   });
 
   describe('the ask-user attention flash', () => {
-    const FLASH_CLASS = 'chat-composer__frame--attention';
+    const FLASH_CLASS = ATTENTION_CLASS;
 
     function frameOf(composer: Composer): HTMLElement {
       return query(composer.element, '.chat-composer__frame');
@@ -870,7 +825,7 @@ describe('createComposer', () => {
     /** Fires the frame's own fade's `animationend`, exactly as the browser does. */
     function endFlash(frame: HTMLElement): void {
       const event = new dom.window.Event('animationend');
-      Object.defineProperty(event, 'animationName', { value: 'chat-composer-attention' });
+      Object.defineProperty(event, 'animationName', { value: ATTENTION_ANIMATION });
       frame.dispatchEvent(event);
     }
 

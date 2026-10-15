@@ -1,6 +1,5 @@
 import { TEST_AGENT_DEFINITIONS } from '../../../support/agentDefinitions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
@@ -10,6 +9,7 @@ import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView
 import type { NavigationEpochTracker } from '../../../../src/main/browser/navigationEpoch';
 import type { Logger } from '../../../../src/main/logger';
 import { err } from '../../../../src/shared';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * Proves the sender check is actually WIRED to every registered IPC channel.
@@ -58,20 +58,11 @@ const { createSecretStore } = await import('../../../../src/main/secretStore');
 const MAIN_WEB_CONTENTS_ID = 7;
 const OTHER_WEB_CONTENTS_ID = 8;
 
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'senderGuard-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'senderGuard-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 function fakeCipher(): SecretCipher {

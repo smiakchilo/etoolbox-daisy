@@ -242,7 +242,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // prompt rows' inline actions (`buildBannerPrompt`), so the copy is a
   // `buildBannerCopy` span. Its click handler survives being swapped out and
   // back in, because the same button node is reused.
-  const agentSettingsButton = createBannerActionButton('Settings');
+  const agentSettingsButton = createBannerActionButton('Settings', 'chat-banner-open-settings');
   agentSettingsButton.addEventListener('click', () => options.onOpenSettings('agents'));
   const agentPromptContent: readonly Node[] = [
     buildBannerCopy(['Activate an agent in ', agentSettingsButton, ' to send messages']),
@@ -1210,6 +1210,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         if (!result.ok || !result.saved) return;
         statusBanner.showNotice(`Exported to ${result.fileName}`, {
           label: 'Open in folder',
+          testId: 'banner-open-in-folder',
           onActivate: () => revealLastExport(),
         });
       })
@@ -1300,7 +1301,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // reveal). Both hrefs are inert (`#`) because the actions go through
   // callbacks/IPC; `preventDefault` stops the fragment navigation.
   const agentSummaryAnchor = el('a', {
-    attrs: { class: 'chat-agent-summary', href: '#', title: 'Open agent settings' },
+    attrs: {
+      class: 'chat-agent-summary',
+      href: '#',
+      title: 'Open agent settings',
+      'data-testid': 'chat-agent-summary',
+    },
   });
   agentSummaryAnchor.addEventListener('click', (event) => {
     event.preventDefault();
@@ -1312,6 +1318,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       href: '#',
       'aria-label': 'Reveal chat log in Explorer',
       title: 'Reveal chat log in Explorer',
+      'data-testid': 'chat-reveal-log',
     },
   });
   sessionIdAnchor.append(el('sp-icon-file-txt', { attrs: { size: 's' } }));

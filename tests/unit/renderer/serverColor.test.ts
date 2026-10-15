@@ -30,8 +30,9 @@ describe('resolveServerSwatchFromHex', () => {
   });
 
   it('is case- and whitespace-insensitive', () => {
-    expect(resolveServerSwatchFromHex('  #2680EB ')).toBe('blue');
-    expect(resolveServerSwatchFromHex('#2680eb')).toBe('blue');
+    const blue = resolveServerColorCss({ kind: 'swatch', swatch: 'blue' });
+    expect(resolveServerSwatchFromHex(`  ${blue.toUpperCase()} `)).toBe('blue');
+    expect(resolveServerSwatchFromHex(blue.toLowerCase())).toBe('blue');
   });
 
   it('returns undefined for colours outside the closed swatch set', () => {

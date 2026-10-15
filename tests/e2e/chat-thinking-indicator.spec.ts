@@ -1,11 +1,9 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import type { ScriptedTurn } from '../../src/main/agents/fakeAgentService';
-import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+import { expect, test, type Page } from '@playwright/test';
+import { type ElectronApp, launchApp } from '../support/e2e/app';
+import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
+import { advanceFake, flushFakeAtOnce, scriptTurn } from '../support/e2e/fakeAgent';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * The transcript's trailing "Thinking" indicator (spinner + label) shown while
@@ -20,7 +18,7 @@ import {
  * `shadowRoot` against the BUILT app, which is the only way to catch that.
  *
  * The deterministic `createFakeAgentService` fake is driven from
- * `application.evaluate` the same way `step07-agent-chat.spec.ts` does (see
+ * `application.evaluate` the same way `agent-chat.spec.ts` does (see
  * that file's doc comment for the full rationale).
  *
  * Run against the BUILT app (this file never builds it itself):
@@ -28,88 +26,7 @@ import {
  *   npx playwright test tests/e2e/chat-thinking-indicator.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'chat-thinking-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-interface ScratchProfile {
-  readonly home: string;
-  readonly appData: string;
-  readonly localAppData: string;
-}
-
-function makeScratchProfile(): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-function launch(profile: ScratchProfile): Promise<ElectronApp> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  });
-}
-
-interface FakeHandleArg {
-  readonly globalKey: string;
-}
-
-function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
-  const payload = JSON.stringify({ globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY, turn });
-  return app.evaluate((_electronNamespace, json: string) => {
-    const arg = JSON.parse(json) as FakeHandleArg & { readonly turn: unknown };
-    const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-      readonly scriptNextResponse: (t: unknown) => void;
-    };
-    fake.scriptNextResponse(arg.turn);
-  }, payload);
-}
-
-function advanceFake(app: ElectronApp): Promise<boolean> {
-  return app.evaluate(
-    (_electronNamespace, arg: FakeHandleArg) => {
-      const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-        readonly advance: () => boolean;
-      };
-      return fake.advance();
-    },
-    { globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY },
-  );
-}
-
-function flushFake(app: ElectronApp): Promise<number> {
-  return app.evaluate(
-    (_electronNamespace, arg: FakeHandleArg) => {
-      const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-        readonly flush: () => number;
-      };
-      return fake.flush();
-    },
-    { globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY },
-  );
-}
 
 async function advanceFakeTimes(app: ElectronApp, times: number): Promise<void> {
   for (let i = 0; i < times; i += 1) {
@@ -123,40 +40,18 @@ async function advanceFakeTimes(app: ElectronApp, times: number): Promise<void> 
 }
 
 // File-local minimal DOM shape (tsconfig.test.json has no "dom" lib) - real at
-// runtime inside the renderer, same convention as step07-agent-chat.spec.ts.
+// runtime inside the renderer, same convention as agent-chat.spec.ts.
 declare const document: {
   querySelector(selector: string): { readonly shadowRoot: unknown } | null;
 };
 declare const customElements: { get(name: string): unknown };
 
-const COMPOSER_SEND = '.chat-composer__send';
 const COMPOSER_STOP = '.chat-composer__stop';
-const CHAT_STATUS_BANNER = '.chat-status-banner';
-const COMPOSER_FIELD = '.chat-composer textarea';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
 const THINKING = '.chat-message--thinking';
 const THINKING_TOGGLE = '.chat-message__thinking-toggle';
 const THINKING_LINE = '.chat-message__thinking-line';
 const THINKING_BODY = '.chat-message__thinking-body';
-
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  // The composer's messages live on the pane's banner now: it is open while the
-  // service is still "connecting" and closed once ready with an active agent.
-  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
-    timeout: 60_000,
-  });
-  await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
-}
-
-async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  const button = shell.locator(COMPOSER_SEND);
-  await expect(button).toBeVisible();
-  await expect(button).not.toHaveAttribute('disabled', '');
-  await shell.locator(COMPOSER_FIELD).fill(prompt);
-  await button.click();
-}
 
 /**
  * Whether the thinking node contains a genuinely upgraded `<sp-progress-circle>`
@@ -180,7 +75,7 @@ test.describe('transcript thinking indicator', () => {
 
   test.beforeAll(async () => {
     test.setTimeout(90_000);
-    app = await launch(makeScratchProfile());
+    app = await launchApp(createScratchDirs(scratchBase), { fakeAgent: true });
     shell = await app.firstWindow();
     await waitForComposerReady(shell);
   });
@@ -191,12 +86,12 @@ test.describe('transcript thinking indicator', () => {
 
   test('shows a registered sp-progress-circle "Thinking" indicator while in flight, and removes it once text streams', async () => {
     await scriptTurn(app, { steps: [{ kind: 'delta', text: 'Hello' }] });
-    await sendViaComposer(shell, 'say hello');
+    await sendViaComposer(shell, 'say hello', { requireVisible: true, requireEnabled: true });
 
     const thinking = shell.locator(THINKING);
     // Visible the moment a turn is in flight, before any text has arrived.
     await expect(thinking).toBeVisible();
-    await expect(thinking).toContainText('Thinking');
+    await expect(thinking).toHaveText(/\S/);
     // The composer's Stop button is visible at the same time (same predicate).
     await expect(shell.locator(COMPOSER_STOP)).toBeVisible();
 
@@ -213,7 +108,7 @@ test.describe('transcript thinking indicator', () => {
     await expect(shell.locator(ASSISTANT_MESSAGE).last()).toHaveText('Hello');
 
     // Still gone after the turn completes.
-    await flushFake(app);
+    await flushFakeAtOnce(app);
     await expect(thinking).toHaveCount(0);
   });
 
@@ -221,7 +116,7 @@ test.describe('transcript thinking indicator', () => {
     await scriptTurn(app, {
       steps: [{ kind: 'reasoning', text: 'first thought\nsecond thought' }],
     });
-    await sendViaComposer(shell, 'reason about it');
+    await sendViaComposer(shell, 'reason about it', { requireVisible: true, requireEnabled: true });
 
     const thinking = shell.locator(THINKING);
     await expect(thinking).toBeVisible();
@@ -250,7 +145,7 @@ test.describe('transcript thinking indicator', () => {
     await expect(shell.locator(THINKING_BODY)).toBeHidden();
     await expect(shell.locator(THINKING_TOGGLE)).toBeDisabled();
 
-    await flushFake(app);
+    await flushFakeAtOnce(app);
     await expect(thinking).toHaveCount(0);
   });
 });

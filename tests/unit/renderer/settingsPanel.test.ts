@@ -1,9 +1,10 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseAppSettingsSnapshot, type BrowserNavigationState } from '../../../src/shared';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
 import { createSettingsPanel } from '../../../src/renderer/src/shell/settingsPanel';
 import { TEST_AGENT_ID } from '../../support/agentDefinitions';
+import { InertResizeObserver, installJsdomGlobals } from '../../support/jsdomGlobals';
 
 /**
  * The Settings panel's dismissal contract (settingsPanel.ts + mainShell.ts),
@@ -34,14 +35,13 @@ const modelStateStub = {
 };
 
 let dom: JSDOM;
+let restoreGlobals: () => void;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
-
 beforeEach(() => {
-  dom = new JSDOM();
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals({
+    extraGlobals: { ResizeObserver: InertResizeObserver },
+  }));
   stateListeners = [];
   Reflect.set(dom.window, 'daisy', {
     browser: {
@@ -71,23 +71,10 @@ beforeEach(() => {
   });
   Reflect.set(dom.window, 'requestAnimationFrame', () => 1);
   Reflect.set(dom.window, 'cancelAnimationFrame', () => undefined);
-  Reflect.set(
-    globalThis,
-    'ResizeObserver',
-    class {
-      observe(): void {}
-      disconnect(): void {}
-    },
-  );
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
-  Reflect.set(globalThis, 'ResizeObserver', previousResizeObserver);
+  restoreGlobals();
 });
 
 /** Mirrors the mainShell wiring: the panel is dismissed into the pane's host. */
@@ -117,7 +104,7 @@ function emitNavigationState(): void {
 describe('createSettingsPanel dismissal', () => {
   it('forwards the close button to the pane host, restoring the view so Settings can open again', () => {
     const { pane, settings } = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const panelSurface = pane.element.querySelector<HTMLElement>('.settings-panel');
 
     pane.panelHost.open(settings);
@@ -159,7 +146,7 @@ describe('createSettingsPanel dismissal', () => {
 
   it('lets Settings be dismissed before any page has loaded, revealing the home screen', () => {
     const { pane, settings } = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const close = pane.element.querySelector<HTMLElement>('.settings-panel__close');
 

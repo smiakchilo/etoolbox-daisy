@@ -1,6 +1,7 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTranscriptFollower } from '../../../../src/renderer/src/chat/transcriptFollower';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
 
 /**
  * The transcript's stick-to-bottom policy.
@@ -14,11 +15,8 @@ import { createTranscriptFollower } from '../../../../src/renderer/src/chat/tran
  * dispatches one, exactly as a browser would.
  */
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
-
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 interface ObserverRecord {
   readonly callback: ResizeObserverCallback;
@@ -74,18 +72,14 @@ function triggerLayoutChange(): void {
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals({
+    extraGlobals: { ResizeObserver: StubResizeObserver },
+  }));
   observers = [];
-  Reflect.set(globalThis, 'ResizeObserver', StubResizeObserver);
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
-  Reflect.set(globalThis, 'ResizeObserver', previousResizeObserver);
+  restoreGlobals();
 });
 
 describe('createTranscriptFollower', () => {

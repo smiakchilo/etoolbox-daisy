@@ -71,6 +71,8 @@ import {
 
 export interface StatusBannerAction {
   readonly label: string;
+  /** The button's `data-testid`, so a test finds the action without its copy. */
+  readonly testId?: string;
   onActivate(): void;
 }
 
@@ -161,6 +163,7 @@ export function confirmDestructiveAction(
 ): void {
   status.showPrompt(`Press ${BANNER_ACTION_MARKER} to ${phrase}`, {
     label: 'OK',
+    testId: 'banner-confirm',
     onActivate: onConfirm,
   });
 }
@@ -354,7 +357,7 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     // buttons (browserToolbar.ts) - deliberately NOT an accent `sp-button`,
     // so the confirm/notice reads as a status-strip action, not a blocking
     // dialog.
-    const actionButton = createBannerActionButton(action.label);
+    const actionButton = createBannerActionButton(action.label, action.testId);
     actionButton.addEventListener('click', () => action.onActivate());
     return buildBannerPrompt(copy, [actionButton]);
   }
@@ -406,6 +409,7 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
         'notice',
         inlineActionContent(copy, {
           label: action.label,
+          ...(action.testId === undefined ? {} : { testId: action.testId }),
           onActivate: () => {
             if (slot === 'notice') dismissSlot();
             action.onActivate();

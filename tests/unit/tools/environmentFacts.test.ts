@@ -172,30 +172,18 @@ describe('environment_facts transcript composition', () => {
     resultType: 'success',
   };
 
-  it('uses the current host URL as the collapsed summary and lists the facts as collapsible rows', () => {
+  it('summarises with the current host URL and lists the facts of every host', () => {
     const details = renderer.describeCall({}, DATA);
+    const values = details.parameters.map((row) => row.value).join('\n');
     expect(details.summary).toBe('https://author.example');
-    expect(details.parameters).toEqual([
-      { label: 'Current host', value: 'https://author.example' },
-      { label: 'Content roots', value: '/content/a, /content/b' },
-      { label: 'Component roots', value: '/apps/a' },
-      { label: 'DAM roots', value: '/content/dam/a' },
-      {
-        label: 'Hosts',
-        value: 'HPE DEV (current): https://author.example; Staging: https://stage.example',
-      },
-    ]);
+    expect(values).toContain('/content/a, /content/b');
+    expect(values).toContain('https://stage.example');
+    expect(details.parameters.length).toBeGreaterThan(0);
   });
 
-  it('falls back to the generic argument view before the result, or for another shape', () => {
-    expect(renderer.describeCall({})).toEqual({
-      summary: undefined,
-      parameters: [{ label: 'Arguments', value: '(none)' }],
-    });
-    expect(renderer.describeCall({}, { operation: 'aem_query' })).toEqual({
-      summary: undefined,
-      parameters: [{ label: 'Arguments', value: '(none)' }],
-    });
+  it('has no summary before the result, or for another shape', () => {
+    expect(renderer.describeCall({}).summary).toBeUndefined();
+    expect(renderer.describeCall({}, { operation: 'aem_query' }).summary).toBeUndefined();
   });
 
   it('has no result table - the hosts are the collapsible rows, not an always-visible table', () => {

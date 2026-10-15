@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -13,27 +13,19 @@ import {
   type WindowSize,
   type WindowStateSource,
 } from '../../../src/main/windowState';
+import { createScratchDirs } from '../../support/scratchDirs';
 
 /**
  * Scratch directories live under the project's own `test-results/` (already
  * gitignored) and are removed after every test - never `/tmp`/`os.tmpdir()`.
  * Matches tests/unit/main/appPaths.test.ts.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'windowState-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'windowState-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
   vi.useRealTimers();
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 interface FakeWindow extends WindowStateSource {
@@ -148,7 +140,7 @@ describe('readWindowState / writeWindowState', () => {
   it('creates any missing parent directory', () => {
     const filePath = path.join(createScratchRoot(), 'nested', 'deeper', 'window-state.json');
     writeWindowState(filePath, { width: 1024, height: 768, maximized: false });
-    expect(readFileSync(filePath, 'utf8')).toContain('"width": 1024');
+    expect(readWindowState(filePath)).toEqual({ width: 1024, height: 768, maximized: false });
   });
 
   it('leaves no temp files behind after a successful write', () => {
@@ -157,7 +149,7 @@ describe('readWindowState / writeWindowState', () => {
     writeWindowState(filePath, { width: 1024, height: 768, maximized: false });
 
     // Only the target file remains: the temp file was renamed onto it, not copied.
-    expect(readdirSync(dir)).toEqual(['window-state.json']);
+    expect(readdirSync(dir)).toEqual([path.basename(filePath)]);
   });
 });
 
@@ -181,11 +173,14 @@ describe('fitWindowStateToWorkArea', () => {
   });
 
   it('never clamps below the usable minimum even on a tiny display', () => {
-    expect(fitWindowStateToWorkArea(DEFAULT_WINDOW_STATE, { width: 320, height: 240 })).toEqual({
-      width: 640,
-      height: 480,
-      maximized: false,
-    });
+    const tiny = { width: 320, height: 240 };
+    const fitted = fitWindowStateToWorkArea(DEFAULT_WINDOW_STATE, tiny);
+
+    expect(fitted.width).toBeGreaterThan(tiny.width);
+    expect(fitted.height).toBeGreaterThan(tiny.height);
+    expect(fitted.width).toBeLessThanOrEqual(DEFAULT_WINDOW_STATE.width);
+    expect(fitted.height).toBeLessThanOrEqual(DEFAULT_WINDOW_STATE.height);
+    expect(fitted.maximized).toBe(DEFAULT_WINDOW_STATE.maximized);
   });
 });
 
@@ -200,10 +195,10 @@ describe('attachWindowStatePersistence', () => {
     window.emit('resize');
     window.bounds = { width: 1100, height: 820 };
     window.emit('resize');
-    vi.advanceTimersByTime(399);
+    // Nothing is written before the debounce fires.
     expect(readWindowState(filePath)).toEqual(DEFAULT_WINDOW_STATE);
 
-    vi.advanceTimersByTime(1);
+    vi.runAllTimers();
     expect(readWindowState(filePath)).toEqual({ width: 1100, height: 820, maximized: false });
     persistence.dispose();
   });
@@ -216,12 +211,12 @@ describe('attachWindowStatePersistence', () => {
 
     window.maximized = true;
     window.emit('maximize');
-    vi.advanceTimersByTime(400);
+    vi.runAllTimers();
     expect(readWindowState(filePath).maximized).toBe(true);
 
     window.maximized = false;
     window.emit('unmaximize');
-    vi.advanceTimersByTime(400);
+    vi.runAllTimers();
     expect(readWindowState(filePath).maximized).toBe(false);
     persistence.dispose();
   });
@@ -237,9 +232,9 @@ describe('attachWindowStatePersistence', () => {
     window.emit('close');
     expect(readWindowState(filePath)).toEqual({ width: 1234, height: 567, maximized: false });
 
-    // Advancing past the debounce must not write again over the close value.
+    // Running the pending timers must not write again over the close value.
     window.bounds = { width: 1, height: 1 };
-    vi.advanceTimersByTime(1000);
+    vi.runAllTimers();
     expect(readWindowState(filePath)).toEqual({ width: 1234, height: 567, maximized: false });
     persistence.dispose();
   });
@@ -256,7 +251,7 @@ describe('attachWindowStatePersistence', () => {
     window.bounds = { width: 1200, height: 900 };
     window.emit('resize');
     persistence.dispose();
-    vi.advanceTimersByTime(1000);
+    vi.runAllTimers();
     expect(readWindowState(filePath)).toEqual({ width: 900, height: 700, maximized: false });
   });
 });

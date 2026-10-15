@@ -382,7 +382,7 @@ export function shouldUseFakeAgentService(
 }
 
 /**
- * `globalThis` property name `tests/e2e/step07-agent-chat.spec.ts` reads via
+ * `globalThis` property name `tests/e2e/agent-chat.spec.ts` reads via
  * Playwright's `electronApplication.evaluate(...)`, which runs its callback
  * directly inside this same main process - so a value assigned here is
  * visible to that callback with no IPC of its own. Named obviously

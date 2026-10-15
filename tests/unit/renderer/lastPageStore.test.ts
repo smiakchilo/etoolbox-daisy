@@ -3,7 +3,9 @@ import {
   isHostPageUrl,
   loadLastPageUrl,
   saveLastPageUrl,
+  STORAGE_KEY,
 } from '../../../src/renderer/src/lib/lastPageStore';
+import { createWindowStorageInstaller, memoryStorage } from '../../support/memoryStorage';
 
 /**
  * `lastPageStore.ts` touches nothing but `window.localStorage`, so a minimal
@@ -12,36 +14,15 @@ import {
  * Mirrors tests/unit/renderer/paneLayoutStore.test.ts.
  */
 
-interface StubStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-}
-
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-
-function installStorage(storage: StubStorage): void {
-  Reflect.set(globalThis, 'window', { localStorage: storage });
-}
-
-function memoryStorage(seed: Record<string, string> = {}): StubStorage & {
-  readonly values: Record<string, string>;
-} {
-  const values: Record<string, string> = { ...seed };
-  return {
-    values,
-    getItem: (key) => values[key] ?? null,
-    setItem: (key, value) => {
-      values[key] = value;
-    },
-  };
-}
+const windowStorage = createWindowStorageInstaller();
+const installStorage = windowStorage.install;
 
 beforeEach(() => {
   installStorage(memoryStorage());
 });
 
 afterEach(() => {
-  Reflect.set(globalThis, 'window', previousWindow);
+  windowStorage.restore();
 });
 
 const HOST_ORIGINS = ['https://author.example'];
@@ -58,12 +39,12 @@ describe('last page persistence', () => {
   });
 
   it('discards a stored value that is not a real http(s) address', () => {
-    installStorage(memoryStorage({ 'daisy.mainShell.lastPageUrl': 'about:blank' }));
+    installStorage(memoryStorage({ [STORAGE_KEY]: 'about:blank' }));
     expect(loadLastPageUrl()).toBeUndefined();
   });
 
   it('discards a malformed stored value', () => {
-    installStorage(memoryStorage({ 'daisy.mainShell.lastPageUrl': 'not a url' }));
+    installStorage(memoryStorage({ [STORAGE_KEY]: 'not a url' }));
     expect(loadLastPageUrl()).toBeUndefined();
   });
 

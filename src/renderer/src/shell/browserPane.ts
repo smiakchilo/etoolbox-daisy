@@ -233,7 +233,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   // comment). The picker's element also lives here; no panel is ever a sibling
   // of the row. The home screen is first so it sits at the bottom of the stack.
   const viewSlot = el('div', {
-    attrs: { class: 'browser-view-slot', 'data-testid': 'browser-view-slot' },
+    attrs: { class: 'browser-view-slot' },
     children: [home.element, viewHost.element, picker.element],
   });
 
@@ -248,7 +248,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   // Both collapse to zero height when idle, so the browser row sits flush under
   // the page whenever the surface row is empty.
   const pagePanel = el('div', {
-    attrs: { class: 'browser-page-panel', 'data-testid': 'browser-page-panel' },
+    attrs: { class: 'browser-page-panel' },
     children: [viewSlot, surfaceStatus.element, toolbar.messageElement],
   });
 

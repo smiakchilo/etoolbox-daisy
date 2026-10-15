@@ -15,7 +15,7 @@ import { isBrowserPaneFraction } from '../shell/splitLayout';
  * width must never take the window down with it.
  */
 
-const STORAGE_KEY = 'daisy.mainShell.browserPaneFraction';
+export const STORAGE_KEY = 'daisy.mainShell.browserPaneFraction';
 
 /** The last committed fraction, or `undefined` when there is no usable stored value. */
 export function loadBrowserPaneFraction(): number | undefined {

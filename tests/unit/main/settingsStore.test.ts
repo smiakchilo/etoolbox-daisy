@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -46,43 +46,21 @@ import {
   serverConfigSchema,
 } from '../../../src/shared';
 import { TEST_AGENT_DEFINITIONS, TEST_AGENT_ID } from '../../support/agentDefinitions';
+import { makeServer } from '../../support/configFixtures';
+import { createScratchDirs } from '../../support/scratchDirs';
 
 /**
  * Scratch directories live under the project's own `test-results/` (already
  * gitignored), never an OS temp directory - matching
  * tests/unit/main/secretStore.test.ts and tests/unit/main/appPaths.test.ts.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'settingsStore-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'settingsStore-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
   vi.restoreAllMocks();
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
-
-function makeServer(
-  id: string,
-  origin: string,
-  overrides: Partial<Record<string, unknown>> = {},
-): ServerConfig {
-  return serverConfigSchema.parse({
-    id: newServerId(() => id),
-    label: `Server ${id}`,
-    origin,
-    color: { kind: 'swatch', swatch: 'blue' },
-    revision: 0,
-    ...overrides,
-  });
-}
 
 function makeSettings(hosts: ServerConfig[], proxies: readonly unknown[] = []): AppSettings {
   return appSettingsSchema.parse({
@@ -1505,7 +1483,8 @@ describe('canary: plaintext secrets never reach settings', () => {
 
 describe('agent token mutations', () => {
   it('mints a deterministic secretRef per provider', () => {
-    expect(agentTokenSecretRef(TEST_AGENT_ID)).toBe(`agent-token:${TEST_AGENT_ID}`);
+    expect(agentTokenSecretRef(TEST_AGENT_ID)).toContain(TEST_AGENT_ID);
+    expect(agentTokenSecretRef(TEST_AGENT_ID)).toBe(agentTokenSecretRef(TEST_AGENT_ID));
     // Scoped by provider id, not a single shared key.
     expect(agentTokenSecretRef(TEST_AGENT_ID)).not.toBe(agentTokenSecretRef('other' as AgentId));
   });

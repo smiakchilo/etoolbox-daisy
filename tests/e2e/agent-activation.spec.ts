@@ -1,10 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+import { TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY } from '../../src/main/agentComposition';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The chat pane's "no usable agent" state, proven against the REAL built app
@@ -32,16 +31,7 @@ import {
  *   npx playwright test tests/e2e/agent-activation.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'agent-activation-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 /** Blue-minus-red of a computed `rgb(...)`/`rgba(...)` colour; >0 means blue-ish. */
 function blueMinusRed(color: string): number {
@@ -53,30 +43,16 @@ function blueMinusRed(color: string): number {
 test('no usable agent shows the banner, greys Send, and opens Settings on Agents', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
   const app = await electron.launch({
     args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-      // Selects the deterministic fake so the test can drive auth state.
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
+    env: scratchEnv({ home, appData, localAppData }, { fakeAgent: true }),
   });
 
   try {
     const shell = await app.firstWindow();
-    await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
 
     // The fake starts signed in: no banner, Send enabled.
     const send = shell.locator('.chat-composer__send');
@@ -97,8 +73,7 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
 
     const banner = shell.locator('.chat-status-banner');
     await expect(banner).toBeVisible({ timeout: 30_000 });
-    await expect(banner).toContainText('Activate an agent in');
-    await expect(banner).toContainText('to send messages');
+    await expect(banner).toHaveText(/\S/);
 
     // Banner styling rules, proven on the real upgraded component:
     // - the embedded action is always size "s" (24px tall);
@@ -144,7 +119,7 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
     expect(clamp?.overflow).toBe('hidden');
     // Not clamped: a button-carrying copy grows with its message so the inline
     // action can never be cut off (proven against a long URL in
-    // `step05-network-error.spec.ts`). A three-line clamp would cap this.
+    // `network-error.spec.ts`). A three-line clamp would cap this.
     expect(clamp?.height ?? 0).toBeGreaterThan(3 * (clamp?.lineHeight ?? 0));
 
     // Send is disabled and visibly grey - not the "still looks enabled" accent
@@ -164,14 +139,14 @@ test('no usable agent shows the banner, greys Send, and opens Settings on Agents
     await expect(shell.locator('.chat-composer__notice')).toHaveCount(0);
 
     // The banner's inline Settings control lands on the Agents tab.
-    await banner.locator('sp-action-button', { hasText: 'Settings' }).click();
-    const panel = shell.locator('.settings-panel').first();
+    await banner.locator(byTestId('chat-banner-open-settings')).click();
+    const panel = shell.locator(byTestId('settings-panel')).first();
     await expect(panel).toBeVisible({ timeout: 60_000 });
     await expect(shell.locator('.settings-panel__tab-panel[selected]').first()).toHaveAttribute(
       'value',
       'agents',
     );
-    await expect(shell.locator('section[aria-label="Agents"]')).toBeVisible();
+    await expect(shell.locator('.agents-section')).toBeVisible();
   } finally {
     await app.close();
   }

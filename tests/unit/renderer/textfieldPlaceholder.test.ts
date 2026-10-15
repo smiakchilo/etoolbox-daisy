@@ -1,10 +1,10 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installTextfieldPlaceholderColor } from '../../../src/renderer/src/lib/textfieldPlaceholder';
+import { installJsdomGlobals } from '../../support/jsdomGlobals';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 function makeField(): HTMLElement {
   const field = dom.window.document.createElement('sp-textfield');
@@ -22,16 +22,11 @@ async function flushObserver(): Promise<void> {
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
-  Reflect.set(globalThis, 'MutationObserver', dom.window.MutationObserver);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals({ windowGlobals: ['MutationObserver'] }));
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('installTextfieldPlaceholderColor', () => {

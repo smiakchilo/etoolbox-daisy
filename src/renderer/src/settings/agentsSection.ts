@@ -347,7 +347,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     // text says what it is. The button is created once; the sign-in/sign-out
     // choice is read from the mutable `authAction` when it is clicked.
     const actionButton = el('sp-action-button', {
-      attrs: { class: 'agent-item__action agent-item__button' },
+      attrs: { class: 'agent-item__action agent-item__button', 'data-testid': 'agent-auth-action' },
     });
     let authAction: AgentItemViewModel['authAction'];
     actionButton.addEventListener('click', () => {
@@ -374,6 +374,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
           options.onSettingsChanged();
         },
         noun: 'API key (token)',
+        fieldId: 'agent-token',
       },
       options.status,
     );
@@ -387,14 +388,25 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
       includeDefault: false,
       onChange: () => persistProxy(id, agentProxyId(proxyPicker.read())),
     });
+    proxyPicker.element.setAttribute('data-field', 'agent-proxy');
 
     const modelFieldId = `agent-${id}-model`;
     const modelPicker = el('sp-picker', {
-      attrs: { id: modelFieldId, class: 'host-field__input', 'aria-label': 'Model' },
+      attrs: {
+        id: modelFieldId,
+        class: 'host-field__input',
+        'aria-label': 'Model',
+        'data-field': 'agent-model',
+      },
     }) as PickerElement;
     const effortFieldId = `agent-${id}-effort`;
     const effortPicker = el('sp-picker', {
-      attrs: { id: effortFieldId, class: 'host-field__input', 'aria-label': 'Reasoning effort' },
+      attrs: {
+        id: effortFieldId,
+        class: 'host-field__input',
+        'aria-label': 'Reasoning effort',
+        'data-field': 'agent-reasoning-effort',
+      },
     }) as PickerElement;
 
     modelPicker.addEventListener('change', () => {
@@ -420,7 +432,7 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     });
 
     const element = el('div', {
-      attrs: { class: 'agent-item' },
+      attrs: { class: 'agent-item', 'data-agent-id': id },
       children: [
         header,
         el('div', {
@@ -689,7 +701,10 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
   }
 
   const element = el('section', {
-    attrs: { class: 'settings-section agents-section', 'aria-label': 'Agents' },
+    attrs: {
+      class: 'settings-section agents-section',
+      'aria-label': 'Agents',
+    },
     children: [group],
   });
 

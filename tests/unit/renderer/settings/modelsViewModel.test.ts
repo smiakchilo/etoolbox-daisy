@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AUTO_LABEL } from '../../../../src/renderer/src/settings/agentsViewModel';
 import {
   NO_PREFERENCE_VALUE,
   buildModelsViewModel,
@@ -78,7 +79,9 @@ describe('buildModelsViewModel', () => {
     const vm = buildModelsViewModel(stateWith(), { model: 'model-gone', reasoningEffort: null });
     expect(vm.selectedModelValue).toBe('model-gone');
     const option = vm.modelOptions.find((candidate) => candidate.value === 'model-gone');
-    expect(option?.label).toBe('model-gone (not currently offered)');
+    expect(option?.label).toContain('model-gone');
+    // The label flags that the model is no longer offered, so it differs from the bare id.
+    expect(option?.label).not.toBe('model-gone');
   });
 
   it('does not duplicate a stored model that IS in the catalogue', () => {
@@ -97,7 +100,7 @@ describe('buildModelsViewModel', () => {
       { model: null, reasoningEffort: null },
     );
     expect(vm.modelOptions.map((option) => option.value)).toEqual([NO_PREFERENCE_VALUE, 'model-a']);
-    expect(vm.modelOptions.filter((option) => option.label === '(Auto)')).toHaveLength(1);
+    expect(vm.modelOptions.filter((option) => option.label === AUTO_LABEL)).toHaveLength(1);
   });
 
   it("shows a stored Copilot 'auto' as the generic '(Auto)', not as an extra option", () => {
@@ -106,7 +109,7 @@ describe('buildModelsViewModel', () => {
       { model: 'auto', reasoningEffort: null },
     );
     expect(vm.selectedModelValue).toBe(NO_PREFERENCE_VALUE);
-    expect(vm.modelOptions).toEqual([{ value: NO_PREFERENCE_VALUE, label: '(Auto)' }]);
+    expect(vm.modelOptions).toEqual([{ value: NO_PREFERENCE_VALUE, label: AUTO_LABEL }]);
   });
 
   it('keeps a stored selection when the catalogue could not be read', () => {

@@ -22,6 +22,7 @@ import {
   type ModelPreference,
 } from '../../../../src/shared';
 import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
+import { flushMicrotasks } from '../../../support/asyncWaits';
 
 /**
  * Event-mapping tests for the OpenRouter adapter, driven by a fake
@@ -126,9 +127,7 @@ const finalState = (events: readonly AgentEvent[]): string | undefined => {
   return last?.type === 'session.state.changed' ? last.state : undefined;
 };
 
-async function flush(): Promise<void> {
-  for (let i = 0; i < 8; i += 1) await Promise.resolve();
-}
+const flush = (): Promise<void> => flushMicrotasks(8);
 
 /**
  * Waits for a detached turn to reach its terminal `session.state.changed`

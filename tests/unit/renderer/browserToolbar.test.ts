@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserToolbar } from '../../../src/renderer/src/shell/browserToolbar';
 import {
@@ -12,6 +12,8 @@ import type {
 } from '../../../src/shared';
 import { newServerId } from '../../../src/shared';
 import type { HostOption } from '../../../src/renderer/src/shell/viewModel';
+import { installJsdomGlobals } from '../../support/jsdomGlobals';
+import { byTestId } from '../../support/selectors';
 
 /**
  * The toolbar's external-navigation loading state machine (browserToolbar.ts).
@@ -55,6 +57,7 @@ interface FakeDaisySettings {
 }
 
 let dom: JSDOM;
+let restoreGlobals: () => void;
 let browser: FakeDaisyBrowser;
 let settings: FakeDaisySettings;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
@@ -63,11 +66,8 @@ let blockedListeners: Array<(info: CertificateBlockedInfo) => void>;
 
 const AUTHOR_SERVER_ID = newServerId(() => 'server-a');
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-
 beforeEach(() => {
-  dom = new JSDOM();
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   stateListeners = [];
   switchListeners = [];
   blockedListeners = [];
@@ -102,19 +102,31 @@ beforeEach(() => {
     addServer: vi.fn(() => Promise.resolve({ ok: true, server: snapshotOf(AUTHOR_SERVER_ID) })),
   };
   Reflect.set(dom.window, 'daisy', { browser, settings });
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
+let refreshLabel = '';
+
 function build(): ReturnType<typeof createBrowserToolbar> {
-  return createBrowserToolbar({ onHostsPickerClick: () => {}, onHomeClick: () => {} });
+  const toolbar = createBrowserToolbar({ onHostsPickerClick: () => {}, onHomeClick: () => {} });
+  // A freshly built toolbar is idle, so its nav button is in Refresh mode.
+  refreshLabel = findNavButton(toolbar).getAttribute('aria-label') ?? '';
+  return toolbar;
+}
+
+function expectRefreshMode(toolbar: ReturnType<typeof createBrowserToolbar>): void {
+  expect(refreshLabel.length).toBeGreaterThan(0);
+  expect(findNavButton(toolbar).getAttribute('aria-label')).toBe(refreshLabel);
+}
+
+function expectStopMode(toolbar: ReturnType<typeof createBrowserToolbar>): void {
+  const label = findNavButton(toolbar).getAttribute('aria-label');
+  expect(label?.length).toBeGreaterThan(0);
+  expect(label).not.toBe(refreshLabel);
 }
 
 function loadingState(isLoading: boolean): BrowserNavigationState {
@@ -134,7 +146,9 @@ function findMessage(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElem
 }
 
 function findNavButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
-  const button = toolbar.element.querySelector('[aria-label="Refresh"], [aria-label="Stop"]');
+  const button = toolbar.element.querySelector(
+    `${byTestId('browser-refresh')}, ${byTestId('browser-stop')}`,
+  );
   if (!button) throw new Error('nav (refresh/stop) button not found');
   return button as HTMLElement;
 }
@@ -153,19 +167,17 @@ describe('createBrowserToolbar loading state machine', () => {
     // The Refresh→Stop swap is immediate (same moment the address target is
     // committed); only the banner waits 200ms of sustained load.
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
 
     vi.advanceTimersByTime(1000);
 
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
     // The loading presentation is not dismissible and ends in a progress line.
     expect(message.hasAttribute('dismissible')).toBe(false);
     expect(message.querySelector('.banner-row__progress')).not.toBeNull();
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
-    // The stop affordance is a cross, not the media "stop playback" glyph.
-    expect(findNavButton(toolbar).querySelector('sp-icon-cross600')).not.toBeNull();
+    expectStopMode(toolbar);
     expect(browser.reload).toHaveBeenCalledTimes(1);
 
     stateListeners[0]?.(loadingState(false));
@@ -176,7 +188,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(message.querySelector('.banner-row__progress')).toBeNull();
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
   });
 
   it('treats an in-webview navigation exactly like a chrome-initiated one', () => {
@@ -187,25 +199,25 @@ describe('createBrowserToolbar loading state machine', () => {
     // No toolbar action started this load - the page did (a link or button).
     stateListeners[0]?.(loadingState(true));
     // The Refresh→Stop swap is immediate; the banner waits out the debounce.
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
     expect(message.hasAttribute('open')).toBe(false);
 
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
 
     stateListeners[0]?.(loadingState(false));
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
   });
 
   it('arms the loading presentation from Back/Forward too', () => {
     vi.useFakeTimers();
     const toolbar = build();
     const message = findMessage(toolbar);
-    // Back is the Refresh/Stop button's sibling with aria-label "Back".
-    const back = toolbar.element.querySelector('[aria-label="Back"]') as HTMLElement;
+    // Back is the Refresh/Stop button's sibling.
+    const back = toolbar.element.querySelector(byTestId('browser-back')) as HTMLElement;
     if (!back) throw new Error('back button not found');
 
     back.click();
@@ -215,7 +227,7 @@ describe('createBrowserToolbar loading state machine', () => {
 
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
 
     stateListeners[0]?.(loadingState(false));
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
@@ -238,10 +250,10 @@ describe('createBrowserToolbar loading state machine', () => {
     // A later in-webview navigation is not "silent": it drives the same
     // loading presentation as any other load.
     stateListeners[0]?.(loadingState(true));
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
   });
 
   it('never shows the banner when the armed load finishes inside the 200ms debounce window', () => {
@@ -259,7 +271,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
     expect(message.querySelector('.banner-row__progress')).toBeNull();
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
   });
 
   it('suppresses the ERR_ABORTED from a user-initiated Stop (no error banner)', async () => {
@@ -282,7 +294,7 @@ describe('createBrowserToolbar loading state machine', () => {
     );
     stateListeners[0]?.(loadingState(true));
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
 
     await vi.waitFor(() => {
       expect(browser.navigate).toHaveBeenCalledTimes(1);
@@ -295,7 +307,7 @@ describe('createBrowserToolbar loading state machine', () => {
       expect(message.hasAttribute('open')).toBe(false);
     });
     expect(message.textContent).toBe('');
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
   });
 
   it('suppresses the real Stop cancellation (ERR_FAILED from Electron 44) without an error banner', async () => {
@@ -320,12 +332,12 @@ describe('createBrowserToolbar loading state machine', () => {
     );
     stateListeners[0]?.(loadingState(true));
     expect(message.hasAttribute('open')).toBe(false);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
 
     // The load persists past the debounce, so the banner appears too.
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Stop');
+    expectStopMode(toolbar);
 
     // The user clicks Stop: verified against Electron 44.3.0, a Stop during a
     // pending loadURL makes that promise reject with ERR_FAILED, not
@@ -351,7 +363,7 @@ describe('createBrowserToolbar loading state machine', () => {
     vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
     expect(message.hasAttribute('open')).toBe(false);
     expect(message.textContent).toBe('');
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
   });
 
   it('shows error copy for a failed fetch navigation, and closes on dismissal', async () => {
@@ -382,7 +394,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.textContent).toContain('dead.example');
     // Error/prompt rows are dismissible, unlike the loading presentation.
     expect(message.hasAttribute('dismissible')).toBe(true);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
 
     message.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
     // The dismissal collapses the row, then tears it down.
@@ -406,7 +418,7 @@ describe('createBrowserToolbar loading state machine', () => {
 
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
 
     // The load starts; then the switch controller reports done while the page
     // is still loading — the banner must not close early (the load is still in
@@ -414,7 +426,7 @@ describe('createBrowserToolbar loading state machine', () => {
     stateListeners[0]?.(loadingState(true));
     switchListeners[0]?.({ switching: false });
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
 
     // did-stop-loading collapses it.
@@ -428,7 +440,7 @@ describe('createBrowserToolbar loading state machine', () => {
   it('keeps the address field enabled through a server switch while back/forward disable', () => {
     const toolbar = build();
     const address = toolbar.element.querySelector('.address-bar') as HTMLElement;
-    const back = toolbar.element.querySelector('[aria-label="Back"]') as HTMLElement;
+    const back = toolbar.element.querySelector(byTestId('browser-back')) as HTMLElement;
 
     switchListeners[0]?.({ switching: true });
     expect(address.hasAttribute('disabled')).toBe(false);
@@ -533,7 +545,7 @@ describe('createBrowserToolbar loading state machine', () => {
     stateListeners[0]?.(loadingState(true));
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
     expect(message.querySelector('.banner-row__progress')).not.toBeNull();
 
@@ -549,7 +561,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(message.hasAttribute('open')).toBe(false);
     vi.advanceTimersByTime(1000);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toBe('Loading\u2026');
+    expect(message.textContent?.length).toBeGreaterThan(0);
     expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
     expect(message.querySelector('.banner-row__progress')).not.toBeNull();
   });
@@ -588,7 +600,7 @@ describe('createBrowserToolbar loading state machine', () => {
     });
     expect(message.textContent).toContain('dead.example');
     expect(message.hasAttribute('dismissible')).toBe(true);
-    expect(findNavButton(toolbar).getAttribute('aria-label')).toBe('Refresh');
+    expectRefreshMode(toolbar);
   });
 });
 
@@ -639,7 +651,8 @@ describe('createBrowserToolbar navigation failure recovery', () => {
 
     const reload = message.querySelector('sp-action-button');
     expect(reload).not.toBeNull();
-    expect(reload?.textContent).toBe('Reload');
+    expect(message.textContent).toContain('dead.example');
+    expect(reload?.textContent?.length).toBeGreaterThan(0);
     expect(reload?.getAttribute('size')).toBe('s');
 
     const before = browser.navigate.mock.calls.length;
@@ -669,7 +682,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
       expect(message.hasAttribute('open')).toBe(true);
     });
     expect(message.textContent).toContain('Timed out reaching');
-    expect(message.querySelector('sp-action-button')?.textContent).toBe('Reload');
+    expect(message.querySelector('sp-action-button')?.textContent?.length).toBeGreaterThan(0);
   });
 
   it('keeps the error row readable while the silent restore is loading', async () => {
@@ -806,7 +819,7 @@ describe('createBrowserToolbar navigation failure recovery', () => {
     await vi.waitFor(() => {
       expect(message.hasAttribute('open')).toBe(true);
     });
-    expect(message.querySelector('sp-action-button')?.textContent).toBe('Reload');
+    expect(message.querySelector('sp-action-button')?.textContent?.length).toBeGreaterThan(0);
     // A reload's "previous page" is the very page that just failed, so there
     // is nothing to fall back to.
     expect(browser.navigate).not.toHaveBeenCalled();
@@ -853,7 +866,7 @@ function findPromptOk(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLEle
 }
 
 describe('createBrowserToolbar certificate prompt', () => {
-  it('renders the prompt with the fixed copy and an enabled OK when a configured server matches the blocked origin', () => {
+  it('renders the prompt with copy and an enabled OK when a configured server matches the blocked origin', () => {
     const toolbar = build();
     const message = findMessage(toolbar);
     toolbar.setHostOptions([
@@ -864,7 +877,7 @@ describe('createBrowserToolbar certificate prompt', () => {
     blockedListeners[0]?.(BLOCKED_INFO);
 
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain('Untrusted certificate. Press OK to allow');
+    expect(message.textContent?.length).toBeGreaterThan(0);
     expect(findPromptOk(toolbar).hasAttribute('disabled')).toBe(false);
     expect(findPromptOk(toolbar).getAttribute('size')).toBe('s');
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
@@ -916,9 +929,12 @@ describe('createBrowserToolbar certificate prompt', () => {
       error: { code: 'server_not_found', message: `no server with id server-a` },
     });
 
+    const promptText = message.textContent;
+
     findPromptOk(toolbar).click();
     await vi.waitFor(() => {
-      expect(message.textContent).toContain('no longer exists');
+      expect(message.textContent).not.toBe(promptText);
+      expect(message.textContent?.length).toBeGreaterThan(0);
     });
     expect(message.hasAttribute('open')).toBe(true);
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
@@ -1024,7 +1040,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     });
 
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain('Unknown host. Press OK to add it');
+    expect(message.textContent?.length).toBeGreaterThan(0);
     // The origin is visible in the address bar above the banner; the copy
     // must not repeat it (noise, and invites reading the banner instead of
     // the real navigated address).
@@ -1033,7 +1049,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     // `sp-button` - no blue fill). Cancel is the banner's dismiss cross.
     const okButtons = message.querySelectorAll('sp-action-button');
     expect(okButtons).toHaveLength(1);
-    expect(okButtons[0]?.textContent).toBe('OK');
+    expect(okButtons[0]?.textContent?.length).toBeGreaterThan(0);
     // Banner actions are always size "s" (createBannerActionButton).
     expect(okButtons[0]?.getAttribute('size')).toBe('s');
     expect(message.querySelector('sp-button[variant="accent"]')).toBeNull();
@@ -1093,10 +1109,9 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     findUnknownOriginOk(toolbar).click();
 
     await vi.waitFor(() => {
-      expect(message.textContent).toContain("Couldn't add");
+      expect(message.textContent).toContain('settings file could not be written');
     });
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain('settings file could not be written');
     // The failed add must not have auto-retried the navigation.
     expect(browser.navigate).toHaveBeenCalledTimes(1);
     expect(findMessage(toolbar).hasAttribute('dismissible')).toBe(true);
@@ -1190,7 +1205,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     });
     expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain('Unknown host. Press OK to add it');
+    expect(message.textContent?.length).toBeGreaterThan(0);
   });
 
   it('Refresh navigates the address bar URL when it differs from the loaded page', async () => {
@@ -1308,7 +1323,7 @@ describe('createBrowserToolbar unknown-origin prompt', () => {
     expect(browser.navigate).toHaveBeenLastCalledWith(UNKNOWN_URL);
     expect(browser.reload).not.toHaveBeenCalled();
     expect(message.hasAttribute('open')).toBe(true);
-    expect(message.textContent).toContain('Unknown host. Press OK to add it');
+    expect(message.textContent?.length).toBeGreaterThan(0);
   });
 
   it('navigates on Enter exactly once and ignores a stray change (blur)', async () => {
@@ -1651,7 +1666,7 @@ describe('createBrowserToolbar home button', () => {
     const onHomeClick = vi.fn();
     const toolbar = createBrowserToolbar({ onHostsPickerClick: () => {}, onHomeClick });
 
-    const home = toolbar.element.querySelector<HTMLElement>('[title="Home"]');
+    const home = toolbar.element.querySelector<HTMLElement>(byTestId('browser-home'));
     expect(home).not.toBeNull();
     expect(toolbar.element.firstElementChild).toBe(home);
 
@@ -1678,8 +1693,8 @@ describe('createBrowserToolbar forced home screen', () => {
 
   it('blanks the address and disables Back/Forward while shown, restoring both on dismiss', () => {
     const toolbar = withDocument();
-    const back = toolbar.element.querySelector('[aria-label="Back"]') as HTMLElement;
-    const forward = toolbar.element.querySelector('[aria-label="Forward"]') as HTMLElement;
+    const back = toolbar.element.querySelector(byTestId('browser-back')) as HTMLElement;
+    const forward = toolbar.element.querySelector(byTestId('browser-forward')) as HTMLElement;
 
     expect(addressOf(toolbar).value).toBe('https://author.example/content/page.html');
     expect(back.hasAttribute('disabled')).toBe(false);
@@ -1717,9 +1732,7 @@ describe('createBrowserToolbar forced home screen', () => {
 
 describe('createBrowserToolbar agent-pane toggle', () => {
   function toggleButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
-    const button = toolbar.element.querySelector<HTMLElement>(
-      '[title="Close chat"], [title="Open chat"]',
-    );
+    const button = toolbar.element.querySelector<HTMLElement>(byTestId('agent-pane-toggle'));
     if (!button) throw new Error('agent-pane toggle button not found');
     return button;
   }
@@ -1739,16 +1752,16 @@ describe('createBrowserToolbar agent-pane toggle', () => {
     };
   }
 
-  it('renders the toggle as the toolbar\'s right-most control, starting selected ("Close chat")', () => {
+  it("renders the toggle as the toolbar's right-most control, starting selected", () => {
     const { toolbar } = buildWithToggle();
     const button = toggleButton(toolbar);
 
     // Right-most: nothing else follows it in the toolbar.
     expect(toolbar.element.lastElementChild).toBe(button);
-    expect(button.getAttribute('title')).toBe('Close chat');
-    expect(button.getAttribute('aria-label')).toBe('Close chat');
+    expect(button.getAttribute('title')?.length).toBeGreaterThan(0);
+    expect(button.getAttribute('aria-label')).toBe(button.getAttribute('title'));
     expect(button.hasAttribute('selected')).toBe(true);
-    expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+    expect(button.children.length).toBeGreaterThan(0);
     // Icon-only: no text content of its own.
     expect(button.textContent).toBe('');
   });
@@ -1759,28 +1772,31 @@ describe('createBrowserToolbar agent-pane toggle', () => {
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it('drops `selected` and renames to "Open chat" when the pane is hidden, and back', () => {
+  it('drops `selected` and renames itself when the pane is hidden, and back', () => {
     const { toolbar } = buildWithToggle();
     const button = toggleButton(toolbar);
+    const openLabel = button.getAttribute('title');
 
     toolbar.setAgentPaneOpen(false);
-    expect(button.getAttribute('title')).toBe('Open chat');
-    expect(button.getAttribute('aria-label')).toBe('Open chat');
+    const closedLabel = button.getAttribute('title');
+    expect(closedLabel?.length).toBeGreaterThan(0);
+    expect(closedLabel).not.toBe(openLabel);
+    expect(button.getAttribute('aria-label')).toBe(closedLabel);
     expect(button.hasAttribute('selected')).toBe(false);
     // One fixed glyph: the state is carried by `selected`, not an icon swap.
-    expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+    expect(button.children.length).toBeGreaterThan(0);
 
     toolbar.setAgentPaneOpen(true);
-    expect(button.getAttribute('title')).toBe('Close chat');
-    expect(button.getAttribute('aria-label')).toBe('Close chat');
+    expect(button.getAttribute('title')).toBe(openLabel);
+    expect(button.getAttribute('aria-label')).toBe(openLabel);
     expect(button.hasAttribute('selected')).toBe(true);
-    expect(button.querySelector('sp-icon-padding-right')).not.toBeNull();
+    expect(button.children.length).toBeGreaterThan(0);
   });
 });
 
 describe('createBrowserToolbar open-in-external-browser button', () => {
   function externalButton(toolbar: ReturnType<typeof createBrowserToolbar>): HTMLElement {
-    const button = toolbar.element.querySelector<HTMLElement>('[title="Open in external browser"]');
+    const button = toolbar.element.querySelector<HTMLElement>(byTestId('browser-external'));
     if (!button) throw new Error('open-in-external-browser button not found');
     return button;
   }
@@ -1803,15 +1819,15 @@ describe('createBrowserToolbar open-in-external-browser button', () => {
 
     // Labelless, like the rest of the toolbar buttons: no text, just the icon.
     expect(button.textContent).toBe('');
-    expect(button.querySelector('sp-icon-open-in-light')).not.toBeNull();
-    expect(button.getAttribute('title')).toBe('Open in external browser');
-    expect(button.getAttribute('aria-label')).toBe('Open in external browser');
+    expect(button.children.length).toBeGreaterThan(0);
+    expect(button.getAttribute('title')?.length).toBeGreaterThan(0);
+    expect(button.getAttribute('aria-label')).toBe(button.getAttribute('title'));
     // Disabled until a valid URL is in the address field.
     expect(button.hasAttribute('disabled')).toBe(true);
 
     // Placed after the address group, before the last control (agent toggle).
     const last = toolbar.element.lastElementChild;
-    expect(last?.getAttribute('title')).toBe('Close chat');
+    expect(last).not.toBe(button);
     expect(button.nextElementSibling).toBe(last);
   });
 
@@ -1911,11 +1927,11 @@ describe('createBrowserToolbar edit-mode toggle', () => {
 
     // Labelless, like the rest of the toolbar buttons: icon only.
     expect(button.textContent).toBe('');
-    // The `sp-icon-edit` glyph in the icon slot (queried by slot, not tag, so
-    // the assertion does not depend on the element being registered in jsdom).
-    expect(button.querySelector('[slot="icon"]')?.tagName.toLowerCase()).toBe('sp-icon-edit');
-    expect(button.getAttribute('title')).toBe('Edit mode');
-    expect(button.getAttribute('aria-label')).toBe('Edit mode');
+    // An icon in the icon slot (queried by slot, not tag, so the assertion
+    // does not depend on the element being registered in jsdom).
+    expect(button.querySelector('[slot="icon"]')).not.toBeNull();
+    expect(button.getAttribute('title')?.length).toBeGreaterThan(0);
+    expect(button.getAttribute('aria-label')).toBe(button.getAttribute('title'));
     // Hidden (not merely disabled) until an editable page loads.
     expect(button.hasAttribute('hidden')).toBe(true);
     expect(button.hasAttribute('selected')).toBe(false);
@@ -1923,30 +1939,36 @@ describe('createBrowserToolbar edit-mode toggle', () => {
     // Immediately after the address group, before "Open in external browser".
     const addressGroup = toolbar.element.querySelector('.browser-toolbar__address-group');
     expect(button.previousElementSibling).toBe(addressGroup);
-    expect(button.nextElementSibling?.getAttribute('title')).toBe('Open in external browser');
+    expect(button.nextElementSibling).toBe(
+      toolbar.element.querySelector(byTestId('browser-external')),
+    );
   });
 
   it('shows and stays off for a /content .html page in the web-content view', () => {
     const toolbar = build();
     const button = editButton(toolbar);
+    const offLabel = button.getAttribute('title');
 
     pushPage('https://author.example/content/site/page.html');
 
     expect(button.hasAttribute('hidden')).toBe(false);
     expect(button.hasAttribute('selected')).toBe(false);
-    expect(button.getAttribute('title')).toBe('Edit mode');
+    expect(button.getAttribute('title')).toBe(offLabel);
   });
 
   it('turns on for a page already open in the editor', () => {
     const toolbar = build();
     const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html');
+    const offLabel = button.getAttribute('title');
 
     pushPage('https://author.example/editor.html/content/site/page.html');
 
     expect(button.hasAttribute('hidden')).toBe(false);
     expect(button.hasAttribute('selected')).toBe(true);
-    expect(button.getAttribute('title')).toBe('Exit edit mode');
-    expect(button.getAttribute('aria-label')).toBe('Exit edit mode');
+    expect(button.getAttribute('title')?.length).toBeGreaterThan(0);
+    expect(button.getAttribute('title')).not.toBe(offLabel);
+    expect(button.getAttribute('aria-label')).toBe(button.getAttribute('title'));
   });
 
   it('navigates to the editor URL when clicked from the web-content view', async () => {

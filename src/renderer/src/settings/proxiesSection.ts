@@ -74,6 +74,7 @@ function buildProxyItem(
       class: 'host-field__input',
       placeholder: 'https://proxy.example:8080',
       'aria-label': 'Address',
+      'data-field': 'proxy-address',
     },
   }) as TextField;
   addressField.value = proxy?.url ?? '';
@@ -86,6 +87,7 @@ function buildProxyItem(
       class: 'host-field__input',
       placeholder: 'Defaults to the address',
       'aria-label': 'Label',
+      'data-field': 'proxy-label',
     },
   }) as TextField;
   labelField.value = proxy?.label ?? '';
@@ -98,6 +100,7 @@ function buildProxyItem(
       class: 'host-field__input',
       placeholder: 'Optional username',
       'aria-label': 'User name',
+      'data-field': 'proxy-username',
     },
   }) as TextField;
   usernameField.value = proxy?.credentials?.username ?? '';
@@ -108,6 +111,7 @@ function buildProxyItem(
     {
       target: () => (proxyId === undefined ? undefined : { kind: 'proxy', proxyId }),
       onChanged: () => ctx.onSettingsChanged(),
+      fieldId: 'proxy-password',
     },
     ctx.status,
   );
@@ -472,7 +476,10 @@ export function createProxiesSection(options: ProxiesSectionOptions): ProxiesSec
   }
 
   const element = el('section', {
-    attrs: { class: 'settings-section proxies-section', 'aria-label': 'Proxies' },
+    attrs: {
+      class: 'settings-section proxies-section',
+      'aria-label': 'Proxies',
+    },
     children: [multifield.element],
   });
 

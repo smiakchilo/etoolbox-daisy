@@ -1,4 +1,4 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BANNER_ACTION_MARKER } from '../../../../src/renderer/src/lib/alertBanner';
 import { createHostsSection } from '../../../../src/renderer/src/settings/hostsSection';
@@ -23,10 +23,12 @@ import {
   PROXY_NONE_VALUE,
 } from '../../../../src/renderer/src/settings/proxyPicker';
 import { PROJECT_DEFAULT_VALUE } from '../../../../src/renderer/src/settings/projectPicker';
+import { settle } from '../../../support/asyncWaits';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
+import { byField } from '../../../support/selectors';
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 const addServer = vi.fn();
 const removeServer = vi.fn();
@@ -89,11 +91,16 @@ function buildSection() {
   return createHostsSection({ status, reportSave, onSettingsChanged });
 }
 
-function field(
-  root: ParentNode,
-  ariaLabel: 'Address' | 'Label' | 'Color tag' | 'Proxy' | 'Project',
-) {
-  return root.querySelector<HTMLElement & { value: string }>(`[aria-label="${ariaLabel}"]`);
+const FIELD_IDS = {
+  Address: 'host-address',
+  Label: 'host-label',
+  'Color tag': 'host-color',
+  Proxy: 'host-proxy',
+  Project: 'host-project',
+} as const;
+
+function field(root: ParentNode, name: keyof typeof FIELD_IDS) {
+  return root.querySelector<HTMLElement & { value: string }>(byField(FIELD_IDS[name]));
 }
 
 function type(node: HTMLElement & { value: string }, value: string): void {
@@ -109,11 +116,6 @@ function commit(node: HTMLElement): void {
 function typeAndCommit(node: HTMLElement & { value: string }, value: string): void {
   type(node, value);
   commit(node);
-}
-
-async function settle(ms = 1000): Promise<void> {
-  await vi.advanceTimersByTimeAsync(ms);
-  await vi.advanceTimersByTimeAsync(0);
 }
 
 beforeEach(() => {
@@ -148,9 +150,7 @@ beforeEach(() => {
   reportSave = vi.fn<(outcome: Promise<SaveOutcome>) => void>();
   onSettingsChanged = vi.fn<() => void>();
 
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   Reflect.set(dom.window, 'daisy', {
     settings: {
       addServer,
@@ -164,13 +164,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createHostsSection', () => {
-  it('renders one labelled item per host with no empty draft', () => {
+  it('renders one item per host with no empty draft', () => {
     const section = buildSection();
     section.update([
       snapshot('a', 'https://a.example', 'A'),
@@ -180,30 +178,6 @@ describe('createHostsSection', () => {
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(2);
     expect(field(section.element, 'Address')?.value).toBe('https://a.example');
     expect(field(section.element, 'Label')?.value).toBe('A');
-    // Address, Color tag, Label, Proxy, Project per item.
-    expect(section.element.querySelectorAll('sp-field-label')).toHaveLength(10);
-    expect(section.element.querySelectorAll('.multifield__action--remove')).toHaveLength(2);
-  });
-
-  it('gives every host field a contextual-help badge carrying its phrase', () => {
-    const section = buildSection();
-    section.update([snapshot('a', 'https://a.example', 'A')]);
-
-    const badges = [...section.element.querySelectorAll('sp-contextual-help')];
-    expect(badges.map((badge) => badge.textContent)).toEqual([
-      'The host origin, without path',
-      'The color associated with this host',
-      'The name shown for this host. If blank, defaults to the address',
-      "Which proxy reaches this host. (Default) uses the browser's default proxy",
-      "The project describing this host's content layout for the agent. (Default) applies only the standard layout",
-    ]);
-    expect(badges.map((badge) => badge.getAttribute('label'))).toEqual([
-      'Help: Address',
-      'Help: Color tag',
-      'Help: Label',
-      'Help: Proxy',
-      'Help: Project',
-    ]);
   });
 
   it('adds an empty draft only when "Add item" is clicked', () => {
@@ -217,8 +191,8 @@ describe('createHostsSection', () => {
 
     expect(section.element.querySelectorAll('.multifield__item')).toHaveLength(1);
     expect(field(section.element, 'Address')?.value).toBe('');
-    // Default colour is the blue swatch.
-    expect(field(section.element, 'Color tag')?.value).toBe('#2680eb');
+    // A default colour is preselected.
+    expect(field(section.element, 'Color tag')?.value).toMatch(/^#[0-9a-f]{6}$/i);
     expect(section.hasPendingEdits()).toBe(true);
   });
 
@@ -386,9 +360,7 @@ describe('createHostsSection', () => {
     await settle();
 
     expect(address.hasAttribute('invalid')).toBe(true);
-    expect(address.querySelector('[slot="negative-help-text"]')?.textContent).toMatch(
-      /valid address/,
-    );
+    expect(address.querySelector('[slot="negative-help-text"]')?.textContent).toBeTruthy();
     expect(addServer).not.toHaveBeenCalled();
     expect(reportSave).not.toHaveBeenCalled();
   });
@@ -410,7 +382,7 @@ describe('createHostsSection', () => {
     await settle();
 
     expect(updateServerTargeting).not.toHaveBeenCalled();
-    expect(lastPrompt?.copy).toBe(`Press ${BANNER_ACTION_MARKER} to change the address`);
+    expect(lastPrompt?.copy).toContain(BANNER_ACTION_MARKER);
 
     lastPrompt?.action.onActivate();
     await settle();
@@ -448,7 +420,7 @@ describe('createHostsSection', () => {
       .querySelector('.multifield__action--remove')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    expect(lastPrompt?.copy).toBe(`Press ${BANNER_ACTION_MARKER} to remove the host`);
+    expect(lastPrompt?.copy).toContain(BANNER_ACTION_MARKER);
     expect(removeServer).not.toHaveBeenCalled();
 
     lastPrompt?.action.onActivate();

@@ -2,10 +2,12 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import type { WebContentsView } from 'electron';
 import { issueUntrustedLeafCert } from '../integration/support/testCa';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
 
 /**
  * Technical gate G3, certificate half (docs/requirements-decisions.md §10).
@@ -26,7 +28,6 @@ import { issueUntrustedLeafCert } from '../integration/support/testCa';
  *   npm run build && npx playwright test tests/e2e/g3-cert-scope.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results/g3-scratch');
 
 interface ServerHandle {
@@ -54,16 +55,6 @@ interface CertErrorCall {
 interface CertException {
   origin: string;
   fingerprint: string;
-}
-
-function definedEnv(source: NodeJS.ProcessEnv): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (value !== undefined) {
-      result[key] = value;
-    }
-  }
-  return result;
 }
 
 async function startHttps(
@@ -109,23 +100,16 @@ test('G3: certificate exceptions are scoped to an exact origin and certificate',
   const serverC = await startHttps(otherCert, 'C-different-cert');
   const pageHost = await startPageHost();
 
-  mkdirSync(scratchBase, { recursive: true });
-  const scratchRoot = mkdtempSync(path.join(scratchBase, 'probe-'));
-  const home = path.join(scratchRoot, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const {
+    root: scratchRoot,
+    home,
+    appData,
+    localAppData,
+  } = createScratchDirs(scratchBase, 'probe-');
 
   const application = await electron.launch({
     args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
+    env: scratchEnv({ home, appData, localAppData }),
   });
 
   let serverASwapped: ServerHandle | undefined;

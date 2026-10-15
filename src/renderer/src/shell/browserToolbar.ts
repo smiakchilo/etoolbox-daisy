@@ -168,12 +168,13 @@ export interface BrowserToolbarCallbacks {
  * mouse users (native tooltip) and assistive tech alike.
  */
 function buildNavButton(
+  testId: string,
   label: string,
   iconTag: string,
   options?: { readonly iconClass?: string },
 ): HTMLElement {
   const button = el('sp-action-button', {
-    attrs: { quiet: '', title: label, 'aria-label': label },
+    attrs: { quiet: '', title: label, 'aria-label': label, 'data-testid': testId },
   });
   const icon = document.createElement(iconTag);
   icon.setAttribute('slot', 'icon');
@@ -225,14 +226,16 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // Home reveals the pane's home (welcome) screen. Leftmost, like a browser's
   // Home control; the pane owns what "home" means, including closing any open
   // panel. The button is never disabled - the home screen is always available.
-  const homeButton = buildNavButton('Home', 'sp-icon-home');
+  const homeButton = buildNavButton('browser-home', 'Home', 'sp-icon-home');
   homeButton.addEventListener('click', () => callbacks.onHomeClick());
 
   // "Back" reuses Forward's sp-icon-arrow400 glyph, rotated 180deg via CSS
   // (see .nav-icon--back in browser.css) rather than a separate icon asset.
-  const backButton = buildNavButton('Back', 'sp-icon-arrow400', { iconClass: 'nav-icon--back' });
-  const forwardButton = buildNavButton('Forward', 'sp-icon-arrow400');
-  const refreshButton = buildNavButton('Refresh', 'sp-icon-refresh');
+  const backButton = buildNavButton('browser-back', 'Back', 'sp-icon-arrow400', {
+    iconClass: 'nav-icon--back',
+  });
+  const forwardButton = buildNavButton('browser-forward', 'Forward', 'sp-icon-arrow400');
+  const refreshButton = buildNavButton('browser-refresh', 'Refresh', 'sp-icon-refresh');
   // Nothing is loaded yet (no navigation state has been reported), so there
   // is nothing to go back/forward to until the first `onStateChanged` event.
   backButton.setAttribute('disabled', '');
@@ -267,7 +270,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // failed (the target that timed out / was unreachable), so the user can
   // retry without retyping. Built once and read `errorRetry` at click time, so
   // it always reflects the currently displayed error.
-  const reloadButton = createBannerActionButton('Reload');
+  const reloadButton = createBannerActionButton('Reload', 'browser-banner-reload');
   reloadButton.addEventListener('click', () => {
     const retry = errorRetry;
     if (retry !== null) retry();
@@ -467,7 +470,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     if (info === null) return;
 
     const matchingHost = hostOptions.find((host) => host.origin === info.origin);
-    const okButton = createBannerActionButton('OK');
+    const okButton = createBannerActionButton('OK', 'browser-banner-allow-certificate');
     if (matchingHost === undefined) {
       okButton.setAttribute('disabled', '');
     }
@@ -524,7 +527,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     const prompt = unknownOriginPrompt;
     if (prompt === null) return;
 
-    const okButton = createBannerActionButton('OK');
+    const okButton = createBannerActionButton('OK', 'browser-banner-add-host');
     okButton.addEventListener('click', () => {
       void addOriginServer(prompt);
     });
@@ -722,6 +725,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       refreshButton.append(icon);
       refreshButton.setAttribute('title', 'Stop');
       refreshButton.setAttribute('aria-label', 'Stop');
+      refreshButton.setAttribute('data-testid', 'browser-stop');
       navClickHandler = () => {
         void window.daisy.browser.stop().then(handleVoidResult);
       };
@@ -731,6 +735,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       refreshButton.append(icon);
       refreshButton.setAttribute('title', 'Refresh');
       refreshButton.setAttribute('aria-label', 'Refresh');
+      refreshButton.setAttribute('data-testid', 'browser-refresh');
       navClickHandler = () => {
         // When the address bar shows a different URL than the loaded page,
         // Refresh navigates to the address bar value instead of blindly
@@ -975,6 +980,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // navigation-state event arrives (see `hasLiveNavigationState` below).
       placeholder: 'Select a host or type an address',
       'aria-label': 'Address',
+      'data-testid': 'browser-address',
     },
   }) as AddressField;
 
@@ -1142,6 +1148,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       class: 'hosts-button',
       position: 'right',
       'accessible-label': 'Choose host',
+      'data-testid': 'browser-hosts-button',
       title: 'Choose host',
       disabled: '',
     },
@@ -1179,6 +1186,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       class: 'browser-toolbar__edit-toggle',
       title: 'Edit mode',
       'aria-label': 'Edit mode',
+      'data-testid': 'browser-edit-mode',
       hidden: '',
     },
   });
@@ -1195,7 +1203,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // http(s) URL (the same predicate main re-validates with), so it never
   // offers an action main would refuse. Sits after the address group and
   // before the agent-pane toggle.
-  const externalButton = buildNavButton('Open in external browser', 'sp-icon-open-in-light');
+  const externalButton = buildNavButton(
+    'browser-external',
+    'Open in external browser',
+    'sp-icon-open-in-light',
+  );
   externalButton.setAttribute('disabled', '');
   externalButton.addEventListener('click', () => {
     const value = addressField.value.trim();
@@ -1209,7 +1221,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // pane is open. `title`/`aria-label` keep naming the action; the pane does
   // not exist yet at mount, so it starts selected/open.
   const agentToggleButton = el('sp-action-button', {
-    attrs: { quiet: '', class: 'browser-toolbar__agent-toggle' },
+    attrs: {
+      quiet: '',
+      class: 'browser-toolbar__agent-toggle',
+      'data-testid': 'agent-pane-toggle',
+    },
   });
   const agentToggleIcon = document.createElement('sp-icon-padding-right');
   agentToggleIcon.setAttribute('slot', 'icon');

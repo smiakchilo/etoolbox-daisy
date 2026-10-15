@@ -11,7 +11,7 @@ export const TEST_AGENT_ID = agentIdSchema.parse('copilot');
 
 export const TEST_AGENT_DEFINITION: AgentDefinition = {
   id: TEST_AGENT_ID,
-  label: 'GitHub Copilot',
+  label: 'Test Agent',
   requiresAuth: true,
   supportsInteractiveLogin: true,
 };

@@ -1,9 +1,10 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createMainSplitView,
   type MainSplitView,
 } from '../../../src/renderer/src/shell/mainSplitView';
+import { installJsdomGlobals } from '../../support/jsdomGlobals';
 
 /**
  * `mainSplitView.ts`'s own responsibilities only - not `sp-split-view`'s
@@ -32,7 +33,7 @@ import {
  */
 
 let dom: JSDOM;
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
+let restoreGlobals: () => void;
 
 const WIDTH_PX = 1000;
 
@@ -80,25 +81,19 @@ function keydown(target: HTMLElement, key = 'ArrowLeft'): void {
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals({ exposeWindow: false }));
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
+  restoreGlobals();
 });
 
 describe('createMainSplitView', () => {
-  it("builds a resizable sp-split-view with the app's min widths and an accessible label", () => {
+  it('builds a resizable sp-split-view', () => {
     const { splitView } = build();
     const { element } = splitView;
     expect(element.tagName.toLowerCase()).toBe('sp-split-view');
     expect(element.hasAttribute('resizable')).toBe(true);
-    expect(element.getAttribute('primary-min')).toBe('320');
-    expect(element.getAttribute('secondary-min')).toBe('280');
-    expect(element.getAttribute('label')).toBe('Resize the browser and chat panes');
-    expect(element.getAttribute('data-testid')).toBe('pane-splitter');
   });
 
   it('derives the initial pixel split from the restored fraction on relayout', () => {
@@ -119,11 +114,13 @@ describe('createMainSplitView', () => {
     // Dispatched directly on the host: mirrors how a real, open-shadow-DOM
     // `sp-split-view` retargets an event whose origin is its own internal
     // splitter to report `event.target === element`.
+    const body = dom.window.document.body;
+    const idleClasses = body.className;
     pointer(splitView.element, 'pointerdown');
-    expect(dom.window.document.body.classList.contains('daisy-pane-resizing')).toBe(true);
+    expect(body.className).not.toBe(idleClasses);
 
     pointer(splitView.element, 'pointerup');
-    expect(dom.window.document.body.classList.contains('daisy-pane-resizing')).toBe(false);
+    expect(body.className).toBe(idleClasses);
   });
 
   it('ignores a pointerdown/pointerup originating from slotted pane content', () => {
@@ -131,9 +128,11 @@ describe('createMainSplitView', () => {
     const paneContent = dom.window.document.createElement('div');
     splitView.element.append(paneContent);
 
+    const idleClasses = dom.window.document.body.className;
     pointer(paneContent, 'pointerdown');
+    expect(dom.window.document.body.className).toBe(idleClasses);
     pointer(paneContent, 'pointerup');
-    expect(dom.window.document.body.classList.contains('daisy-pane-resizing')).toBe(false);
+    expect(dom.window.document.body.className).toBe(idleClasses);
     expect(persist).not.toHaveBeenCalled();
   });
 

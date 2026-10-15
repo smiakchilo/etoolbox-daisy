@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createChatJournal } from '../../../src/main/chatJournal';
@@ -12,19 +12,13 @@ import {
   type ToolCallId,
   type TurnId,
 } from '../../../src/shared';
+import { createScratchDirs } from '../../support/scratchDirs';
 
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'turnSummary-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'turnSummary-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) rmSync(dir, { recursive: true, force: true });
+  scratch.cleanup();
 });
 
 const CHAT = 'chat-1' as ChatId;

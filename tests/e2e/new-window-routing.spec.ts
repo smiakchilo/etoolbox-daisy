@@ -1,9 +1,12 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * New-window requests from the pane's content are split by Chromium's own
@@ -29,16 +32,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * swallow the request before the app's handler ever saw it.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-new-window-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 /**
  * A page whose `/` holds a `target="_blank"` link, a bare `window.open` button
@@ -102,21 +96,9 @@ test('target=_blank, bare window.open and noopener window.open load in the same 
   test.setTimeout(180_000);
 
   const { server, port } = await startNewWindowFixtureServer();
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   const origin = `http://127.0.0.1:${String(port)}`;
   const serverId = randomUUID();
@@ -144,14 +126,14 @@ test('target=_blank, bare window.open and noopener window.open load in the same 
   // Seeded profile: the hosts panel opens at startup and is not dismissible
   // yet. Picking the seeded host is the sanctioned way out and starts the
   // first (toolbar-initiated) load.
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-  await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 30_000 });
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+  await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
 
-  const addressInput = page.locator('#browser-address-bar input');
+  const addressInput = page.locator(byTestId('browser-address') + ' input');
   const toolbar = page.locator('.browser-toolbar');
 
   // The launcher page is loaded and settled.
-  await expect(toolbar.locator('[aria-label="Refresh"]')).toHaveCount(1, { timeout: 60_000 });
+  await expect(toolbar.locator(byTestId('browser-refresh'))).toHaveCount(1, { timeout: 60_000 });
   await expect(addressInput).toHaveValue(`${origin}/`, { timeout: 10_000 });
 
   // Locate the AEM view's own webContents - the only surface that may receive
@@ -197,7 +179,7 @@ test('target=_blank, bare window.open and noopener window.open load in the same 
 
   // The routed navigation is a real history entry: Back returns to the
   // launcher, and the pane is still the only window.
-  const back = toolbar.locator('[aria-label="Back"]');
+  const back = toolbar.locator(byTestId('browser-back'));
   await expect(back).not.toHaveAttribute('disabled', '');
   await back.click();
   await expect(addressInput).toHaveValue(`${origin}/`, { timeout: 15_000 });

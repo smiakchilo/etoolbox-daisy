@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   loadComposerHistory,
   saveComposerHistory,
+  STORAGE_KEY,
 } from '../../../src/renderer/src/lib/composerHistoryStore';
 import { COMPOSER_HISTORY_LIMIT } from '../../../src/renderer/src/chat/composerHistory';
+import { createWindowStorageInstaller, memoryStorage } from '../../support/memoryStorage';
 
 /**
  * `composerHistoryStore.ts` touches nothing but `window.localStorage`, so a
@@ -12,37 +14,15 @@ import { COMPOSER_HISTORY_LIMIT } from '../../../src/renderer/src/chat/composerH
  * down. Mirrors tests/unit/renderer/lastPageStore.test.ts.
  */
 
-interface StubStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-}
-
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-const STORAGE_KEY = 'daisy.chat.composerHistory';
-
-function installStorage(storage: StubStorage): void {
-  Reflect.set(globalThis, 'window', { localStorage: storage });
-}
-
-function memoryStorage(seed: Record<string, string> = {}): StubStorage & {
-  readonly values: Record<string, string>;
-} {
-  const values: Record<string, string> = { ...seed };
-  return {
-    values,
-    getItem: (key) => values[key] ?? null,
-    setItem: (key, value) => {
-      values[key] = value;
-    },
-  };
-}
+const windowStorage = createWindowStorageInstaller();
+const installStorage = windowStorage.install;
 
 beforeEach(() => {
   installStorage(memoryStorage());
 });
 
 afterEach(() => {
-  Reflect.set(globalThis, 'window', previousWindow);
+  windowStorage.restore();
 });
 
 describe('composer history persistence', () => {

@@ -68,6 +68,8 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     },
   });
 
+  proxyPicker.element.setAttribute('data-field', 'browser-default-proxy');
+
   const proxyField = labelledField(
     proxyFieldId,
     'Default proxy',
@@ -76,7 +78,7 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
   );
 
   const checkbox = el('sp-checkbox', {
-    attrs: { id: 'browser-disable-native-webauthn' },
+    attrs: { id: 'browser-disable-native-webauthn', 'data-field': 'browser-disable-webauthn' },
     text: 'Suppress the Windows security-key prompt',
   }) as HTMLElement & { checked: boolean };
 
@@ -109,7 +111,10 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
   });
 
   const section = el('div', {
-    attrs: { class: 'settings-section browser-section', 'aria-label': 'Browser' },
+    attrs: {
+      class: 'settings-section browser-section',
+      'aria-label': 'Browser',
+    },
     children: [fields],
   });
 

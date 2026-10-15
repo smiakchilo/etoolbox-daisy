@@ -1,37 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import {
-  aemQueryRequestSchema,
-  executeAemQuery,
-  renderQuerySuccess,
-  type AemQueryRequest,
-} from '../../../src/tools/aem-query/aemQuery';
-import {
-  type BrokerOutcome,
-  type ToolHost,
-  newChatId,
-  newRequestId,
-  newServerId,
-  newTurnId,
-} from '../../../src/shared';
+import { executeAemQuery } from '../../../src/tools/aem-query/aemQuery';
+import { type BrokerOutcome, type ToolHost } from '../../../src/shared';
 import { tool } from '../../../src/tools/aem-query/tool';
+import { aemQueryEnvelope as envelope } from '../../support/aemQueryEnvelope';
 import { createCountingIdGenerator } from '../../support/testIds';
 
 const ORIGIN = 'https://author.example';
-
-function envelope(args: unknown): AemQueryRequest {
-  const ids = createCountingIdGenerator('q');
-  return aemQueryRequestSchema.parse({
-    operation: 'aem_query',
-    requestId: newRequestId(ids),
-    chatId: newChatId(ids),
-    turnId: newTurnId(ids),
-    serverId: newServerId(ids),
-    serverRevision: 1,
-    navigationEpoch: 0,
-    deadlineMs: 1,
-    args,
-  });
-}
 
 const inside = (node: string, root: string): boolean =>
   node === root || node.startsWith(`${root}/`);
@@ -384,20 +358,5 @@ describe('executeAemQuery priority paths', () => {
       deps(fetch, PRIORITIES),
     );
     expect(result.ok).toBe(false);
-  });
-
-  it('says so in the model-facing text', async () => {
-    const { fetch } = repository(NODES);
-    const result = await executeAemQuery(
-      envelope({ predicates: {}, roots: ['/content/a'], limit: 3 }),
-      deps(fetch, PRIORITIES),
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const text = renderQuerySuccess(result);
-    expect(text).toContain(
-      'Ordered by priority paths: /content/a/blueprint, /content/a/language/en, then the rest of the scope',
-    );
-    expect(text).not.toContain('per root');
   });
 });

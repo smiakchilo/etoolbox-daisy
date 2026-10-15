@@ -37,6 +37,13 @@ const AUTHOR = 'https://author.example';
 const ACTIVE_CONTEXT = { hostOrigins: [AUTHOR], activeOrigin: AUTHOR };
 const HOSTS_ONLY_CONTEXT = { hostOrigins: [AUTHOR], activeOrigin: undefined };
 
+/** The stamped popover actions as `{ id, href }`; the visible titles are production copy. */
+function actionsOf(element: Element | null | undefined): { id: string; href: string }[] {
+  return parseLinkActions(element?.getAttribute('data-daisy-actions') ?? null).map(
+    ({ id, href }) => ({ id, href }),
+  );
+}
+
 describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
   it('rewrites a relative /content page link to its rendered URL and marks it as a pane link', () => {
     const doc = parse(renderer.render('[Page](/content/site/en/page)', ACTIVE_CONTEXT));
@@ -64,9 +71,9 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(anchor?.hasAttribute('data-daisy-link')).toBe(true);
     // The popover actions are stamped from the *original* resource path, so
     // re-classifying the trimmed href can never retarget CRX at the page.
-    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
-      { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
     ]);
   });
 
@@ -74,9 +81,9 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     const doc = parse(renderer.render('See /content/a/b/jcr:content/x now.', ACTIVE_CONTEXT));
     const anchor = doc.querySelector('a[data-daisy-link]');
     expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/a/b.html`);
-    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
-      { id: 'edit', title: 'Edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'edit', href: `${AUTHOR}/editor.html/content/a/b.html` },
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/content/a/b/jcr%3Acontent/x` },
     ]);
   });
 
@@ -84,8 +91,8 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     const doc = parse(renderer.render('See /apps/x/jcr:content/y now.', ACTIVE_CONTEXT));
     const anchor = doc.querySelector('a[data-daisy-link]');
     expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/apps/x/jcr%3Acontent/y`);
-    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
-      { id: 'crx', title: 'CRX', href: `${AUTHOR}/crx/de/index.jsp#/apps/x/jcr%3Acontent/y` },
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/apps/x/jcr%3Acontent/y` },
     ]);
   });
 
@@ -110,10 +117,9 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(partial?.textContent).toBe('jcr:content/parsys/text');
     expect(partial?.hasAttribute('data-daisy-link')).toBe(false);
     expect(partial?.hasAttribute('href')).toBe(false);
-    expect(parseLinkActions(partial?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+    expect(actionsOf(partial)).toEqual([
       {
         id: 'crx',
-        title: 'CRX',
         href: `${AUTHOR}/crx/de/index.jsp#/content/site/alpha/jcr%3Acontent/parsys/text`,
       },
     ]);
@@ -196,17 +202,15 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
       `${AUTHOR}/content/hpe/base/blueprint/regression/components/` +
         'new-country-selector-template/home-page-5.html',
     );
-    expect(parseLinkActions(anchor?.getAttribute('data-daisy-actions') ?? null)).toEqual([
+    expect(actionsOf(anchor)).toEqual([
       {
         id: 'edit',
-        title: 'Edit',
         href:
           `${AUTHOR}/editor.html/content/hpe/base/blueprint/regression/components/` +
           'new-country-selector-template/home-page-5.html',
       },
       {
         id: 'crx',
-        title: 'CRX',
         href:
           `${AUTHOR}/crx/de/index.jsp#/content/hpe/base/blueprint/regression/components/` +
           'new-country-selector-template/home-page-5/jcr%3Acontent',
@@ -235,7 +239,7 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(anchor?.getAttribute('href')).toBe('https://other.example/x');
     expect(anchor?.hasAttribute('data-daisy-external')).toBe(true);
     expect(anchor?.hasAttribute('data-daisy-link')).toBe(false);
-    expect(anchor?.getAttribute('title')).toBe('Opens in your browser');
+    expect(anchor?.hasAttribute('title')).toBe(true);
   });
 
   it('does not make a relative path clickable when no host is active', () => {

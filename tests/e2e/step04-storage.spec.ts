@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { existsSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { definedEnv } from '../support/e2e/env';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * Electron-level verification for docs/implementation-plan.md step 04
@@ -23,7 +26,6 @@ import path from 'node:path';
  *   npm run build && npx playwright test tests/e2e/step04-storage.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const testResultsRoot = path.resolve(__dirname, '../../test-results');
 const scratchBase = path.join(testResultsRoot, 'step04-storage-scratch');
 const CANARY = 'CANARY-SECRET-d41d8cd98f00b204';
@@ -64,27 +66,12 @@ const scratchRoots: string[] = [];
  * overridden together for every launch in this file.
  */
 function createScratchProfile(label: string): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, `${label}-`));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { root, home, appData, localAppData } = createScratchDirs(scratchBase, `${label}-`);
   scratchRoots.push(root);
   return { root, home, appData, localAppData };
 }
 
 /** Drops `undefined` values so the result is assignable to Playwright's `env`. */
-function definedEnv(source: NodeJS.ProcessEnv): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (value !== undefined) {
-      result[key] = value;
-    }
-  }
-  return result;
-}
 
 /**
  * Builds the launch `env` for `profile`. `process.env` is spread through

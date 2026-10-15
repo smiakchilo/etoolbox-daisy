@@ -86,6 +86,7 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
       class: 'color-picker__field',
       placeholder: '#2680eb or a swatch name',
       'aria-label': 'Color tag',
+      'data-field': 'host-color',
     },
   }) as TextField;
   const negativeHelp = el('span', { attrs: { slot: 'negative-help-text' } });
@@ -103,7 +104,11 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
   });
 
   const colorMenuButton = el('sp-action-menu', {
-    attrs: { class: 'color-picker-button', quiet: '', label: 'Choose colour' },
+    attrs: {
+      class: 'color-picker-button',
+      quiet: '',
+      label: 'Choose colour',
+    },
   }) as HTMLElement & { value: string };
   const colorMenuIcon = document.createElement('sp-icon-chevron-down');
   colorMenuIcon.setAttribute('slot', 'icon');
@@ -116,7 +121,7 @@ export function createColorPicker(options: CreateColorPickerOptions): ColorPicke
       dot.style.backgroundColor = resolveServerColorCss({ kind: 'swatch', swatch });
       dot.setAttribute('slot', 'icon');
       return el('sp-menu-item', {
-        attrs: { value: swatch },
+        attrs: { value: swatch, 'data-testid': `host-color-swatch-${swatch}` },
         text: swatchLabel(swatch),
         children: [dot],
       });

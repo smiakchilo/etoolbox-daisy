@@ -3,8 +3,10 @@ import {
   clearLastChat,
   loadLastChat,
   saveLastChat,
+  STORAGE_KEY,
 } from '../../../src/renderer/src/lib/lastChatStore';
 import type { ChatId, SdkSessionId, ServerId } from '../../../src/shared';
+import { createWindowStorageInstaller, memoryStorage } from '../../support/memoryStorage';
 
 /**
  * `lastChatStore.ts` touches nothing but `window.localStorage`, so a minimal
@@ -13,34 +15,8 @@ import type { ChatId, SdkSessionId, ServerId } from '../../../src/shared';
  * Mirrors `lastPageStore.test.ts`.
  */
 
-interface StubStorage {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-  removeItem(key: string): void;
-}
-
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-const STORAGE_KEY = 'daisy.mainShell.lastChat';
-
-function installStorage(storage: StubStorage): void {
-  Reflect.set(globalThis, 'window', { localStorage: storage });
-}
-
-function memoryStorage(seed: Record<string, string> = {}): StubStorage & {
-  readonly values: Record<string, string>;
-} {
-  const values: Record<string, string> = { ...seed };
-  return {
-    values,
-    getItem: (key) => values[key] ?? null,
-    setItem: (key, value) => {
-      values[key] = value;
-    },
-    removeItem: (key) => {
-      delete values[key];
-    },
-  };
-}
+const windowStorage = createWindowStorageInstaller();
+const installStorage = windowStorage.install;
 
 const record = {
   chatId: 'chat-1' as ChatId,
@@ -53,7 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  Reflect.set(globalThis, 'window', previousWindow);
+  windowStorage.restore();
 });
 
 describe('last chat persistence', () => {

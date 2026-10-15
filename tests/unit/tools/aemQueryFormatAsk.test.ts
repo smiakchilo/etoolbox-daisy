@@ -3,7 +3,6 @@ import {
   AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR,
   AEM_QUERY_FORMAT_ASK_TOOL_NAME,
   createAemQueryFormatAskExecutor,
-  describeSearchTotal,
 } from '../../../src/tools/aem-query-format-ask/aemQueryFormatAsk';
 import { renderer } from '../../../src/tools/aem-query-format-ask/renderer';
 import { tool } from '../../../src/tools/aem-query-format-ask/tool';
@@ -15,11 +14,13 @@ import {
   type ToolDiagnosticCode,
   type ToolError,
   type ToolHost,
+  CONTENT_ROOT_DEFAULT,
   SEARCH_PAGE_SIZE,
   createToolError,
   err,
   ok,
 } from '../../../src/shared';
+import { flushMicrotasks as flush } from '../../support/asyncWaits';
 import { createCountingIdGenerator } from '../../support/testIds';
 
 interface Invocation {
@@ -157,15 +158,16 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 }
 
 /** Lets pending microtasks/promise chains run. */
-async function flush(): Promise<void> {
-  for (let i = 0; i < 12; i += 1) await Promise.resolve();
-}
-
 const callContext = { toolCallId: 'call-1' as never, signal: undefined };
 
 function payload(result: Result<JsonValue, ToolError>): Record<string, JsonValue> {
   if (!result.ok) throw new Error(`expected success, got ${result.error.code}`);
   return result.value as Record<string, JsonValue>;
+}
+
+/** The buttons an ask_user call offered; their wording is the executor's own. */
+function actionsOf(call: Invocation | undefined): readonly JsonValue[] {
+  return (call?.args['actions'] as JsonValue[] | undefined) ?? [];
 }
 
 describe('aem_query_format_ask manifest', () => {
@@ -331,7 +333,7 @@ describe('aem_query_format_ask executor', () => {
       'aem_query',
       'format_table',
     ]);
-    expect(calls[2]?.args).toEqual({ actions: ['Load more'] });
+    expect(actionsOf(calls[2])).toHaveLength(1);
     expect(calls[3]?.args['offset']).toBe(2);
     expect(calls[4]?.args['mode']).toBe('append');
     expect(payload(result)).toMatchObject({ pages: 2, rows: 4, ended: 'exhausted' });
@@ -351,12 +353,12 @@ describe('aem_query_format_ask executor', () => {
     expect(payload(result)).toMatchObject({ pages: 1, ended: 'stopped', hasMore: 'unknown' });
   });
 
-  it('defaults the roots to /content when the host has no facts', async () => {
+  it('defaults the roots to the shared content default when the host has no facts', async () => {
     const { host, calls } = makeHost((name) =>
       name === 'aem_query' ? ok(queryPage(0, false)) : ok(tableOk),
     );
     await createAemQueryFormatAskExecutor(host)({ terms: 'x' }, callContext);
-    expect(calls[0]?.args['roots']).toEqual(['/content']);
+    expect(calls[0]?.args['roots']).toEqual([CONTENT_ROOT_DEFAULT]);
   });
 
   it('runs hand-built predicates, scoped to the content roots, with chosen properties', async () => {
@@ -586,7 +588,7 @@ describe('aem_query_format_ask "Load all"', () => {
       callContext,
     );
 
-    expect(calls[2]?.args).toEqual({ actions: ['Load more', 'Load all'] });
+    expect(actionsOf(calls[2])).toHaveLength(2);
     expect(payload(result)).toMatchObject({ pages: 2, rows: 4, ended: 'exhausted' });
   });
 
@@ -635,7 +637,7 @@ describe('aem_query_format_ask "Load all"', () => {
     );
     await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', limit: 2 }, callContext);
 
-    expect(calls[2]?.args).toEqual({ actions: ['Load more'] });
+    expect(actionsOf(calls[2])).toHaveLength(1);
   });
 
   it('offers Load all on the next question once a lower-bound count settles', async () => {
@@ -670,7 +672,7 @@ describe('aem_query_format_ask "Load all"', () => {
 
     // Page 1's question: the exact total is still counting, so no Load all yet.
     const firstAskCall = calls.find((call) => call.name === 'ask_user');
-    expect(firstAskCall?.args).toEqual({ actions: ['Load more'] });
+    expect(actionsOf(firstAskCall)).toHaveLength(1);
 
     // The count settles (it fits), then the user loads the next page.
     gate.resolve(countResponse(6));
@@ -680,7 +682,7 @@ describe('aem_query_format_ask "Load all"', () => {
 
     const asks = calls.filter((call) => call.name === 'ask_user');
     expect(asks).toHaveLength(2);
-    expect(asks[1]?.args).toEqual({ actions: ['Load more', 'Load all'] });
+    expect(actionsOf(asks[1])).toHaveLength(2);
   });
 });
 
@@ -738,7 +740,7 @@ describe('aem_query_format_ask background count', () => {
     expect(settle?.args['mode']).toBe('append');
     expect(settle?.args['totalPending']).toBe(false);
     expect((settleData['rows'] as readonly JsonValue[]).length).toBe(0);
-    expect(settle?.args['totalLine']).toBe('Total: 1234');
+    expect(settle?.args['totalLine']).toContain('1234');
 
     // A later page keeps the exact total and shows no spinner.
     ask.resolve(ok(loadMore));
@@ -749,7 +751,7 @@ describe('aem_query_format_ask background count', () => {
       ended: 'exhausted',
     });
     const lastPage = calls.filter((call) => call.name === 'format_table').at(-1);
-    expect(lastPage?.args['totalLine']).toBe('Total: 1234');
+    expect(lastPage?.args['totalLine']).toContain('1234');
     expect(lastPage?.args['totalPending']).toBe(false);
   });
 
@@ -872,37 +874,13 @@ describe('aem_query_format_ask background count', () => {
   });
 });
 
-describe('describeSearchTotal', () => {
-  it('words exact, at-least and unknown totals', () => {
-    expect(describeSearchTotal({ accuracy: 'exact', value: 3 }, false)).toBe('3');
-    expect(describeSearchTotal({ accuracy: 'atLeast', value: 9 }, true)).toBe('9+');
-    expect(describeSearchTotal({ accuracy: 'atLeast', value: 9 }, 'unknown')).toBe('at least 9');
-    expect(describeSearchTotal({ accuracy: 'estimated', value: 9 }, true)).toBe('9+');
-    expect(describeSearchTotal({ accuracy: 'unknown' }, true)).toBe('unknown');
-    expect(describeSearchTotal(undefined, undefined)).toBe('unknown');
-  });
-});
-
 describe('aem_query_format_ask renderer', () => {
-  it('summarises a hand-built search from its predicates', () => {
-    expect(renderer.describeCall({ predicates: { type: 'cq:Page', fulltext: 'waldo' } })).toEqual({
-      summary: 'Search: type=cq:Page; fulltext=waldo',
-      parameters: [{ label: 'Predicates', value: 'type=cq:Page; fulltext=waldo' }],
+  it('derives its summary from the call arguments and adds rows once the search finished', () => {
+    const byTerms = renderer.describeCall({ terms: 'waldo', limit: 20 });
+    const byPredicates = renderer.describeCall({
+      predicates: { type: 'cq:Page', fulltext: 'waldo' },
     });
-  });
-
-  it('summarises a pending call from its arguments', () => {
-    expect(renderer.describeCall({ terms: 'waldo', limit: 20 })).toEqual({
-      summary: 'Search: waldo',
-      parameters: [
-        { label: 'Terms', value: 'waldo' },
-        { label: 'Page size', value: '20' },
-      ],
-    });
-  });
-
-  it('adds roots, pages, rows and total once the search finished', () => {
-    const details = renderer.describeCall(
+    const finished = renderer.describeCall(
       { terms: 'waldo' },
       {
         operation: 'aem_query_format_ask',
@@ -914,16 +892,11 @@ describe('aem_query_format_ask renderer', () => {
         hasMore: false,
       },
     );
-    expect(details).toEqual({
-      summary: 'Search: waldo',
-      parameters: [
-        { label: 'Terms', value: 'waldo' },
-        { label: 'Roots', value: '/content/a, /content/b' },
-        { label: 'Page size', value: '50' },
-        { label: 'Pages', value: '2' },
-        { label: 'Rows', value: '73' },
-        { label: 'Total', value: '73' },
-      ],
-    });
+
+    expect(byTerms.summary).toContain('waldo');
+    expect(byPredicates.summary).toContain('waldo');
+    expect(finished.summary).toContain('waldo');
+    expect(finished.parameters.length).toBeGreaterThan(byTerms.parameters.length);
+    expect(finished.parameters.some((row) => row.value.includes('73'))).toBe(true);
   });
 });

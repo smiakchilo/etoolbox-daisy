@@ -1,27 +1,19 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createToolHttpLogger, type ToolHttpLogger } from '../../../../src/main/aem/toolHttpLog';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * Scratch directories live under the project's own `test-results/` (already
  * gitignored), never an OS temp directory - matching
  * tests/unit/main/logger.test.ts.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'tool-http-log-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'tool-http-log-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 function readRecords(dir: string, fileName = 'tools.log'): Record<string, unknown>[] {

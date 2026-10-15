@@ -1,10 +1,12 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
 import type { Socket } from 'node:net';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * Regression test for two coupled defects, reproduced by: launch with no last
@@ -28,16 +30,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * subtree, so this drives the real Electron window and reads real geometry.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'panel-banner-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 /**
  * A server that accepts requests and never responds, so the pane sits in its
@@ -76,37 +69,11 @@ async function startHangingOrigin(): Promise<{
   };
 }
 
-function launchProfile(): { home: string; env: Record<string, string> } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
-
 test('a failed load does not replace an open panel, and the error banner is visible below it', async () => {
   test.setTimeout(120_000);
 
   const hanging = await startHangingOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   writeSettings(
@@ -129,23 +96,23 @@ test('a failed load does not replace an open panel, and the error banner is visi
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
 
-    const picker = page.locator('.hosts-panel');
-    const settingsPanel = page.locator('.settings-panel');
+    const picker = page.locator(byTestId('hosts-panel'));
+    const settingsPanel = page.locator(byTestId('settings-panel'));
     const banner = page.locator('.browser-toolbar-message');
-    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const viewHost = page.locator('.browser-view-host');
 
     // Startup hosts picker is open (no last visited URL). Pick the hanging
     // host: the picker closes and a load begins that never settles.
     await expect(picker).toBeVisible({ timeout: 10_000 });
-    await page.locator(`.hosts-item[data-origin="${hanging.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${hanging.origin}"]`).click();
     await expect.poll(() => hanging.hits > 0, { timeout: 30_000 }).toBe(true);
     await expect(picker).toBeHidden();
 
     // While it is still loading, open Settings from the chat toolbar.
-    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator(byTestId('chat-settings')).click();
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
     await expect(viewHost).toBeHidden();
 
@@ -156,7 +123,7 @@ test('a failed load does not replace an open panel, and the error banner is visi
     await expect(banner).toContainText(hanging.origin, { timeout: 60_000 });
     await expect(settingsPanel).toBeVisible();
     await expect(picker).toBeHidden();
-    await expect(page.locator('#hosts-button')).not.toHaveAttribute('open', '');
+    await expect(page.locator(byTestId('browser-hosts-button'))).not.toHaveAttribute('open', '');
 
     // (b) The banner is a sibling BELOW the panel's slot, so it is genuinely
     // painted under the panel rather than covered by or hidden behind it.

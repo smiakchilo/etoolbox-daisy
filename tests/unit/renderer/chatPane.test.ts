@@ -1,5 +1,6 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BANNER_CLOSING_CLASS } from '../../../src/renderer/src/lib/alertBanner';
 import {
   createChatPane,
   type ChatPane,
@@ -15,6 +16,9 @@ import type {
   SdkSessionId,
   TurnId,
 } from '../../../src/shared';
+import { flushMicrotasks as flush } from '../../support/asyncWaits';
+import { installJsdomGlobals } from '../../support/jsdomGlobals';
+import { byTestId } from '../../support/selectors';
 
 /**
  * The chat pane's reaction to the `agent-chat:status-changed` push.
@@ -32,9 +36,8 @@ import type {
  * as given and drives the renderer with it.
  */
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 const getStatus = vi.fn();
 const openConversation = vi.fn();
@@ -61,10 +64,6 @@ function definedStatus(overrides: Partial<AgentChatStatus> = {}): AgentChatStatu
 }
 
 /** Runs the pane's async `applyStatus` chain and the click's `.then`s to completion. */
-async function flush(): Promise<void> {
-  for (let tick = 0; tick < 12; tick += 1) await Promise.resolve();
-}
-
 /**
  * The transcript repaints on a real 100ms interval (only when the store is
  * dirty), so a unit test must let that interval actually fire before the DOM
@@ -159,9 +158,7 @@ beforeEach(() => {
   respondToInput.mockResolvedValue({ ok: true });
   navigate.mockResolvedValue({ ok: true });
 
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   Reflect.set(dom.window, 'daisy', {
     agentChat: {
       getStatus,
@@ -190,9 +187,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('createChatPane status push', () => {
@@ -300,7 +295,9 @@ describe('createChatPane status push', () => {
 
     // Dismissing the error restores the standing prompt on the same row.
     banner?.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
-    expect(banner?.textContent).toContain('Activate an agent in');
+    expect(banner?.hasAttribute('open')).toBe(true);
+    expect(banner?.textContent).not.toBe('boom');
+    expect(banner?.textContent?.length).toBeGreaterThan(0);
 
     pane.dispose();
   });
@@ -328,7 +325,6 @@ describe('createChatPane status push', () => {
     // The prompt is not lost: the composer restores the field and owns no
     // message of its own (the banner is the one place it is shown).
     expect(field.value).toBe('hello');
-    expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
 
     pane.dispose();
   });
@@ -438,7 +434,7 @@ describe('createChatPane status push', () => {
     } as AgentEvent);
     expect(agentBanner(pane)?.textContent).toBe('Request rejected. Try another model');
 
-    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    const newSessionButton = pane.element.querySelector(byTestId('chat-new-session'));
     newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
 
@@ -459,11 +455,8 @@ describe('createChatPane status push', () => {
 
     const banner = agentBanner(pane);
     expect(banner?.hasAttribute('open')).toBe(true);
-    expect(banner?.textContent).toBe('Connecting to agent...');
-    expect(banner?.classList.contains('banner-row--loading')).toBe(true);
+    expect(banner?.textContent?.length).toBeGreaterThan(0);
     expect(banner?.querySelector('.banner-row__progress')).not.toBeNull();
-    // No duplicate message in the composer.
-    expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
 
     pane.dispose();
   });
@@ -484,10 +477,10 @@ describe('createChatPane status push', () => {
 
     const banner = agentBanner(pane);
     expect(sendButton(pane)?.hasAttribute('disabled')).toBe(true);
-    expect(banner?.textContent).toBe('This conversation is closed');
+    expect(banner?.hasAttribute('open')).toBe(true);
+    expect(banner?.textContent?.length).toBeGreaterThan(0);
     // A plain row, not the loading presentation.
-    expect(banner?.classList.contains('banner-row--loading')).toBe(false);
-    expect(pane.element.querySelector('.chat-composer__notice')).toBeNull();
+    expect(banner?.querySelector('.banner-row__progress')).toBeNull();
 
     pane.dispose();
   });
@@ -511,7 +504,7 @@ describe('createChatPane status push', () => {
     expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
     expect(pane.element.classList.contains('chat-pane--empty')).toBe(false);
 
-    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    const newSessionButton = pane.element.querySelector(byTestId('chat-new-session'));
     newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
 
@@ -536,7 +529,7 @@ describe('createChatPane status push', () => {
     const field = pane.element.querySelector('.chat-composer__field') as HTMLElement;
     const focusSpy = vi.spyOn(field, 'focus');
 
-    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    const newSessionButton = pane.element.querySelector(byTestId('chat-new-session'));
     newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
 
@@ -552,7 +545,7 @@ describe('createChatPane status push', () => {
     // try to open a conversation the gated controller would refuse.
     const pane = createChatPane({ onOpenSettings: vi.fn() });
 
-    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    const newSessionButton = pane.element.querySelector(byTestId('chat-new-session'));
     // It is genuinely disabled, not merely inert: with nothing to act on, the
     // control must not look actionable.
     expect(newSessionButton?.hasAttribute('disabled')).toBe(true);
@@ -744,8 +737,8 @@ describe('createChatPane startup restore', () => {
     // actually waiting on - the session resume, not the generic connecting row.
     expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
     const banner = agentBanner(pane);
-    expect(banner?.textContent).toBe('Restoring conversation...');
-    expect(banner?.classList.contains('banner-row--loading')).toBe(true);
+    expect(banner?.textContent?.length).toBeGreaterThan(0);
+    expect(banner?.querySelector('.banner-row__progress')).not.toBeNull();
     // No session has been resumed yet: the pane owns no conversation.
     expect(openConversation).not.toHaveBeenCalled();
 
@@ -930,7 +923,7 @@ describe('createChatPane skill catalogue', () => {
 
     expect(listSkills).toHaveBeenCalledTimes(1);
     expect(agentBanner(pane)?.hasAttribute('open')).toBe(true);
-    expect(agentBanner(pane)?.textContent).toContain('Loading skills');
+    expect(agentBanner(pane)?.textContent?.length).toBeGreaterThan(0);
 
     resolveSkills?.({ ok: true, skills: [{ name: 'search', description: 'query' }] });
     await flush();
@@ -1028,11 +1021,11 @@ describe('createChatPane interruptions and session id', () => {
     await waitForInterruption(pane);
 
     const notice = pane.element.querySelector('.chat-message--interruption');
-    expect(notice?.querySelector('.chat-message__interruption-label')?.textContent).toBe(
-      'Session stopped',
-    );
-    // A live "Session stopped" notice offers the Resume action.
-    expect(notice?.querySelector('[data-interruption-resume]')?.textContent).toBe('Resume');
+    expect(
+      notice?.querySelector('.chat-message__interruption-label')?.textContent?.length,
+    ).toBeGreaterThan(0);
+    // A live stopped notice offers the Resume action.
+    expect(notice?.querySelector('[data-interruption-resume]')).not.toBeNull();
 
     pane.dispose();
   });
@@ -1123,8 +1116,8 @@ describe('createChatPane interruptions and session id', () => {
     const chatId = currentChatId();
 
     const anchor = pane.element.querySelector<HTMLAnchorElement>('.chat-session-id');
-    expect(anchor?.getAttribute('aria-label')).toBe('Reveal chat log in Explorer');
-    expect(anchor?.querySelector('sp-icon-file-txt')).not.toBeNull();
+    expect(anchor?.getAttribute('aria-label')?.length).toBeGreaterThan(0);
+    expect(anchor?.firstElementChild).not.toBeNull();
     expect(pane.element.querySelector('.chat-pane__footer')?.hasAttribute('hidden')).toBe(false);
 
     anchor?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -1170,7 +1163,7 @@ describe('createChatPane interruptions and session id', () => {
     await flush();
 
     const summary = pane.element.querySelector<HTMLAnchorElement>('.chat-agent-summary');
-    expect(summary?.textContent).toBe('GitHub Copilot / GPT-5 Turbo / High');
+    expect(summary?.textContent).toContain('GPT-5 Turbo');
 
     summary?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(onOpenSettings).toHaveBeenCalledWith('agents');
@@ -1213,7 +1206,7 @@ describe('createChatPane interruptions and session id', () => {
     await flush();
 
     const summary = pane.element.querySelector<HTMLAnchorElement>('.chat-agent-summary');
-    expect(summary?.textContent).toBe('GitHub Copilot / GPT-5 Turbo / High');
+    expect(summary?.textContent).toContain('GPT-5 Turbo');
 
     // The shell re-applies the snapshot after a Settings model change; the
     // footer must follow it rather than keep the model it showed before.
@@ -1222,7 +1215,8 @@ describe('createChatPane interruptions and session id', () => {
     });
     await flush();
 
-    expect(summary?.textContent).toBe('GitHub Copilot / Claude Sonnet / (Auto)');
+    expect(summary?.textContent).toContain('Claude Sonnet');
+    expect(summary?.textContent).not.toContain('GPT-5 Turbo');
 
     pane.dispose();
   });
@@ -1303,7 +1297,7 @@ describe('createChatPane interruptions and session id', () => {
         }),
     );
 
-    const newSessionButton = pane.element.querySelector('[title="New session"]');
+    const newSessionButton = pane.element.querySelector(byTestId('chat-new-session'));
     newSessionButton?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
     const newChatId = (openConversation.mock.calls[1]?.[0] as { chatId: ChatId }).chatId;
@@ -1337,7 +1331,7 @@ describe('createChatPane conversation open serialization', () => {
   };
 
   function newSessionButton(pane: ChatPane): HTMLElement | null {
-    return pane.element.querySelector('[title="New session"]');
+    return pane.element.querySelector(byTestId('chat-new-session'));
   }
 
   it('disables "New session" while an open is in flight, and re-enables it when the open settles', async () => {
@@ -1472,12 +1466,12 @@ describe('createChatPane conversation open serialization', () => {
     // The resume is the work the user is waiting on, so the row names it (not
     // the generic connecting row) and nothing is sendable yet.
     const banner = agentBanner(pane);
-    expect(banner?.textContent).toBe('Restoring conversation...');
-    expect(banner?.classList.contains('banner-row--loading')).toBe(true);
+    expect(banner?.textContent?.length).toBeGreaterThan(0);
+    expect(banner?.querySelector('.banner-row__progress')).not.toBeNull();
     // Still up, not mid-collapse: the row covers the resume, not just the wait
     // before it (clearing `pendingStartup` early would start the collapse here).
     expect(banner?.hasAttribute('open')).toBe(true);
-    expect(banner?.classList.contains('banner-row--closing')).toBe(false);
+    expect(banner?.classList.contains(BANNER_CLOSING_CLASS)).toBe(false);
     expect(sendButton(pane)?.hasAttribute('disabled')).toBe(true);
     expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(true);
 

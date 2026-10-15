@@ -33,6 +33,9 @@ import {
   type ProjectConfig,
   type ProjectId,
   type ServerConfig,
+  COMPONENT_ROOT_DEFAULT,
+  CONTENT_ROOT_DEFAULT,
+  DAM_ROOT_DEFAULT,
   newChatId,
   newProjectId,
   newServerId,
@@ -129,10 +132,10 @@ describe('createCurrentPageContext', () => {
       () => undefined,
     );
     const context = provider();
-    expect(context).toContain('Host origin: https://author.example');
-    expect(context).toContain('Content path: /content/wknd/us/en');
-    expect(context).toContain('Content roots: /content');
-    expect(context).toContain('Component roots: /apps');
+    expect(context).toContain('https://author.example');
+    expect(context).toContain('/content/wknd/us/en');
+    expect(context).toContain(CONTENT_ROOT_DEFAULT);
+    expect(context).toContain(COMPONENT_ROOT_DEFAULT);
   });
 
   it("renders the host's configured roots from the environment facts", () => {
@@ -148,8 +151,8 @@ describe('createCurrentPageContext', () => {
       }),
     );
     const context = provider();
-    expect(context).toContain('Content roots: /content/a, /content/b');
-    expect(context).toContain('Component roots: /apps/a');
+    expect(context).toContain('/content/a, /content/b');
+    expect(context).toContain('/apps/a');
   });
 
   it('reads the live URL fresh on every call, so navigation between turns is reflected', () => {
@@ -159,9 +162,10 @@ describe('createCurrentPageContext', () => {
       () => url,
       () => undefined,
     );
-    expect(provider()).toContain('Content path: /content/wknd/a');
+    expect(provider()).toContain('/content/wknd/a');
     url = 'https://author.example/content/wknd/b.html';
-    expect(provider()).toContain('Content path: /content/wknd/b');
+    expect(provider()).toContain('/content/wknd/b');
+    expect(provider()).not.toContain('/content/wknd/a');
   });
 });
 
@@ -220,9 +224,9 @@ describe('createEnvironmentFacts', () => {
       () => [host('https://author.example')],
       () => [],
     )();
-    expect(facts?.contentRoots).toEqual(['/content']);
-    expect(facts?.componentRoots).toEqual(['/apps']);
-    expect(facts?.damRoots).toEqual(['/content/dam']);
+    expect(facts?.contentRoots).toEqual([CONTENT_ROOT_DEFAULT]);
+    expect(facts?.componentRoots).toEqual([COMPONENT_ROOT_DEFAULT]);
+    expect(facts?.damRoots).toEqual([DAM_ROOT_DEFAULT]);
   });
 
   it('returns undefined for an unconfigured origin and when there is no document', () => {
@@ -296,9 +300,9 @@ describe('createConfiguredHosts', () => {
       {
         label: 'Host',
         origin: 'https://bare.example',
-        contentRoots: ['/content'],
-        componentRoots: ['/apps'],
-        damRoots: ['/content/dam'],
+        contentRoots: [CONTENT_ROOT_DEFAULT],
+        componentRoots: [COMPONENT_ROOT_DEFAULT],
+        damRoots: [DAM_ROOT_DEFAULT],
       },
     ]);
   });

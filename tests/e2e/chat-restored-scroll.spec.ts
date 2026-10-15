@@ -1,14 +1,14 @@
 import { createServer, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
-import type { ScriptedStep, ScriptedTurn } from '../../src/main/agents/fakeAgentService';
-import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+import { type ElectronApp, mainEntry } from '../support/e2e/app';
+import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
+import { advanceFake, scriptTurn } from '../support/e2e/fakeAgent';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
+import { type ScriptedStep } from '../../src/main/agents/fakeAgentService';
 
 /**
  * A **restored** transcript's stick-to-bottom behaviour, against the real built
@@ -45,11 +45,8 @@ import {
  *   npx playwright test tests/e2e/chat-restored-scroll.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'chat-restored-scroll-scratch');
 
-const COMPOSER_SEND = '.chat-composer__send';
-const COMPOSER_FIELD = '.chat-composer textarea';
 const TRANSCRIPT = '.chat-transcript';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
 
@@ -113,76 +110,11 @@ const tallTable = {
   pagination: { hasMore: true, total: { accuracy: 'exact', value: 60 } },
 };
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
 /** `scrollHeight - scrollTop - clientHeight`; 0 means the scroller is at its bottom. */
 async function bottomGap(shell: Page): Promise<number> {
   return shell
     .locator(TRANSCRIPT)
     .evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-interface ScratchProfile {
-  readonly env: Record<string, string>;
-  readonly home: string;
-}
-
-function makeScratchProfile(): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
-
-function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
-  const payload = JSON.stringify({ globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY, turn });
-  return app.evaluate((_electronNamespace, json: string) => {
-    const arg = JSON.parse(json) as { readonly globalKey: string; readonly turn: unknown };
-    const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-      readonly scriptNextResponse: (t: unknown) => void;
-    };
-    fake.scriptNextResponse(arg.turn);
-  }, payload);
-}
-
-function advanceFake(app: ElectronApp): Promise<boolean> {
-  return app.evaluate(
-    (_electronNamespace, arg: { readonly globalKey: string }) => {
-      const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-        readonly advance: () => boolean;
-      };
-      return fake.advance();
-    },
-    { globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY },
-  );
 }
 
 /**
@@ -223,24 +155,10 @@ async function flushFake(app: ElectronApp): Promise<void> {
   }
 }
 
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '', {
-    timeout: 60_000,
-  });
-}
-
-async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  const button = shell.locator(COMPOSER_SEND);
-  await expect(button).not.toHaveAttribute('disabled', '');
-  await shell.locator(COMPOSER_FIELD).fill(prompt);
-  await button.click();
-}
-
 test.describe('Chat transcript: a restored conversation is followed', () => {
   test('a restored transcript with tables sits at its bottom, and a new turn is followed', async () => {
     test.setTimeout(240_000);
-    const profile = makeScratchProfile();
+    const profile = createLaunchProfile(scratchBase, { fakeAgent: true });
 
     const server: Server = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -272,8 +190,8 @@ test.describe('Chat transcript: a restored conversation is followed', () => {
     // --- run 1: search turns, each leaving a tall table in the journal --------
     const first = await electron.launch({ args: [mainEntry], env: profile.env });
     const firstPage = await first.firstWindow();
-    await firstPage.locator(`.hosts-item[data-origin="${origin}"]`).click();
-    await waitForComposerReady(firstPage);
+    await firstPage.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+    await waitForComposerReady(firstPage, { awaitBannerClosed: false, expectSendVisible: false });
 
     for (let turn = 0; turn < RESTORED_TURNS; turn += 1) {
       await scriptTurn(first, {
@@ -282,7 +200,7 @@ test.describe('Chat transcript: a restored conversation is followed', () => {
           formatTableStep(tallTable, 'new'),
         ],
       });
-      await sendViaComposer(firstPage, '/search anything');
+      await sendViaComposer(firstPage, '/search anything', { requireEnabled: true });
       const expected = turn + 1;
       await drainUntil(
         first,
@@ -300,7 +218,7 @@ test.describe('Chat transcript: a restored conversation is followed', () => {
     // --- run 2: the restored transcript must be at its bottom -----------------
     const second = await electron.launch({ args: [mainEntry], env: profile.env });
     const secondPage = await second.firstWindow();
-    await waitForComposerReady(secondPage);
+    await waitForComposerReady(secondPage, { awaitBannerClosed: false, expectSendVisible: false });
     await expect(secondPage.locator('.chat-table-message sp-table')).toHaveCount(RESTORED_TURNS, {
       timeout: 60_000,
     });
@@ -319,7 +237,7 @@ test.describe('Chat transcript: a restored conversation is followed', () => {
     // store keeps its message ids in their own set. The "appended content must
     // be followed" rule is the same either way.
     await scriptTurn(second, { steps: [{ kind: 'delta', text: longAnswer(60) }] });
-    await sendViaComposer(secondPage, 'give me a long answer');
+    await sendViaComposer(secondPage, 'give me a long answer', { requireEnabled: true });
     await drainUntil(
       second,
       async () =>

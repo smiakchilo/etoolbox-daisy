@@ -63,7 +63,6 @@ export function createMainSplitView(
   element.setAttribute('primary-min', String(MIN_BROWSER_PANE_PX));
   element.setAttribute('secondary-min', String(MIN_CHAT_PANE_PX));
   element.setAttribute('label', 'Resize the browser and chat panes');
-  element.setAttribute('data-testid', 'pane-splitter');
 
   let currentFraction = initialFraction;
 

@@ -154,6 +154,7 @@ function buildHostItem(
       class: 'host-field__input',
       placeholder: 'https://author.example',
       'aria-label': 'Address',
+      'data-field': 'host-address',
     },
   }) as TextField;
   addressField.value = server?.origin ?? '';
@@ -166,6 +167,7 @@ function buildHostItem(
       class: 'host-field__input',
       placeholder: 'Defaults to the address',
       'aria-label': 'Label',
+      'data-field': 'host-label',
     },
   }) as TextField;
   labelField.value = server?.label ?? '';
@@ -186,6 +188,7 @@ function buildHostItem(
     includeDefault: true,
     onChange: onProxySelectionChange,
   });
+  proxyPicker.element.setAttribute('data-field', 'host-proxy');
 
   const projectPicker = createProjectPicker({
     fieldId: projectFieldId,
@@ -193,6 +196,7 @@ function buildHostItem(
     projects: ctx.projects(),
     onChange: onProjectSelectionChange,
   });
+  projectPicker.element.setAttribute('data-field', 'host-project');
 
   const addressFieldBlock = labelledField(
     addressFieldId,
@@ -369,6 +373,7 @@ function buildHostItem(
   // The confirming action: a single OK click persists the staged origin.
   const applyOriginAction: StatusBannerAction = {
     label: 'OK',
+    testId: 'banner-confirm',
     onActivate(): void {
       if (busy || pendingOrigin === undefined) return;
       const origin = pendingOrigin;
@@ -874,7 +879,10 @@ export function createHostsSection(options: HostsSectionOptions): HostsSection {
   }
 
   const element = el('section', {
-    attrs: { class: 'settings-section hosts-section', 'aria-label': 'Hosts' },
+    attrs: {
+      class: 'settings-section hosts-section',
+      'aria-label': 'Hosts',
+    },
     children: [multifield.element],
   });
 

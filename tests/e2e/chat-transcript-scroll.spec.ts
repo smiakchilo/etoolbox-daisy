@@ -1,12 +1,11 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { AEM_QUERY_TOOL_NAME } from '../../src/tools/aem-query/aemQuery';
-import type { ScriptedStep, ScriptedTurn } from '../../src/main/agents/fakeAgentService';
-import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+import { type ScriptedStep } from '../../src/main/agents/fakeAgentService';
+import { type ElectronApp, launchApp } from '../support/e2e/app';
+import { COMPOSER_FIELD, sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
+import { advanceFake, flushFake, scriptTurn } from '../support/e2e/fakeAgent';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * The transcript's stick-to-bottom policy, against the REAL shipped renderer
@@ -27,11 +26,8 @@ import {
  *   npx playwright test tests/e2e/chat-transcript-scroll.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'chat-transcript-scroll-scratch');
 
-const COMPOSER_SEND = '.chat-composer__send';
-const COMPOSER_FIELD = '.chat-composer textarea';
 const TRANSCRIPT = '.chat-transcript';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
 const TOOL_CALL = '.chat-tool-call';
@@ -113,96 +109,7 @@ async function wheelUp(shell: Page): Promise<void> {
     .toBe(true);
 }
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-interface ScratchProfile {
-  readonly home: string;
-  readonly appData: string;
-  readonly localAppData: string;
-}
-
 /** APPDATA/LOCALAPPDATA must agree with USERPROFILE/HOME or Electron crashes on this machine. */
-function makeScratchProfile(): ScratchProfile {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-function launch(profile: ScratchProfile): Promise<ElectronApp> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  });
-}
-
-interface FakeHandleArg {
-  readonly globalKey: string;
-}
-
-function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
-  const payload = JSON.stringify({ globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY, turn });
-  return app.evaluate((_electronNamespace, json: string) => {
-    const arg = JSON.parse(json) as FakeHandleArg & { readonly turn: unknown };
-    const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-      readonly scriptNextResponse: (t: unknown) => void;
-    };
-    fake.scriptNextResponse(arg.turn);
-  }, payload);
-}
-
-function advanceFake(app: ElectronApp): Promise<boolean> {
-  return app.evaluate(
-    (_electronNamespace, arg: FakeHandleArg) => {
-      const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-        readonly advance: () => boolean;
-      };
-      return fake.advance();
-    },
-    { globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY },
-  );
-}
-
-async function flushFake(app: ElectronApp): Promise<void> {
-  for (let guard = 0; guard < 200; guard += 1) {
-    if (!(await advanceFake(app))) return;
-  }
-  throw new Error('flushFake exceeded its guard - the fake never drained.');
-}
-
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '', {
-    timeout: 60_000,
-  });
-}
-
-async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  const button = shell.locator(COMPOSER_SEND);
-  await expect(button).toBeVisible();
-  await expect(button).not.toHaveAttribute('disabled', '');
-  await shell.locator(COMPOSER_FIELD).fill(prompt);
-  await button.click();
-}
 
 /** A long enough answer that the transcript overflows and can be scrolled. */
 function longAnswer(paragraphs: number): string {
@@ -218,9 +125,9 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
 
   test.beforeAll(async () => {
     test.setTimeout(120_000);
-    app = await launch(makeScratchProfile());
+    app = await launchApp(createScratchDirs(scratchBase), { fakeAgent: true });
     shell = await app.firstWindow();
-    await waitForComposerReady(shell);
+    await waitForComposerReady(shell, { awaitBannerClosed: false, expectSendVisible: false });
   });
 
   test.afterAll(async () => {
@@ -229,7 +136,10 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
 
   test('a growing composer re-pins the newest entry instead of stranding it', async () => {
     await scriptTurn(app, { steps: [{ kind: 'delta', text: longAnswer(60) }] });
-    await sendViaComposer(shell, 'give me a long answer');
+    await sendViaComposer(shell, 'give me a long answer', {
+      requireVisible: true,
+      requireEnabled: true,
+    });
     await flushFake(app);
     await expect(shell.locator(ASSISTANT_MESSAGE).last()).toBeVisible();
 
@@ -262,7 +172,10 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
       })),
     ];
     await scriptTurn(app, { steps });
-    await sendViaComposer(shell, 'another long answer');
+    await sendViaComposer(shell, 'another long answer', {
+      requireVisible: true,
+      requireEnabled: true,
+    });
 
     // Let the long delta land so the transcript overflows, and confirm it is
     // pinned to the bottom before scrolling away from it.
@@ -283,7 +196,7 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
 
     // Sending is deliberate: it jumps back to the bottom regardless.
     await scriptTurn(app, { steps: [{ kind: 'delta', text: 'Done.' }] });
-    await sendViaComposer(shell, 'one more');
+    await sendViaComposer(shell, 'one more', { requireVisible: true, requireEnabled: true });
     await flushFake(app);
     await expect.poll(() => bottomGap(shell), { timeout: 10_000 }).toBeLessThanOrEqual(4);
   });
@@ -298,7 +211,7 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
         queryStep({ rows: [{ 'jcr:path': '/content/site/a' }], total: 1 }),
       ],
     });
-    await sendViaComposer(shell, 'query the site');
+    await sendViaComposer(shell, 'query the site', { requireVisible: true, requireEnabled: true });
     await flushFake(app);
 
     const billet = shell.locator(TOOL_CALL).last();
@@ -332,7 +245,10 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
         { kind: 'reasoning', text: 'Summarising. ' },
       ],
     });
-    await sendViaComposer(shell, '/search anything');
+    await sendViaComposer(shell, '/search anything', {
+      requireVisible: true,
+      requireEnabled: true,
+    });
 
     // Deliver events until the table exists.
     for (
@@ -407,7 +323,10 @@ test.describe('Chat transcript: stick-to-bottom across layout changes', () => {
         formatTableStep(appendTable, 'append'),
       ],
     });
-    await sendViaComposer(shell, '/search anything');
+    await sendViaComposer(shell, '/search anything', {
+      requireVisible: true,
+      requireEnabled: true,
+    });
 
     // Deliver the turn up to its unanswered "Load more": the tall first page
     // is on screen and the one-click action waits in the composer. Scope every

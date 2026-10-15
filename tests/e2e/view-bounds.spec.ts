@@ -1,9 +1,12 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * Regression test for a defect that every unit test and a clean build missed:
@@ -24,16 +27,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * where the layout says it should be.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
-const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-view-bounds-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
+const scratchBase = path.resolve(__dirname, '../../test-results', 'view-bounds-scratch');
 
 test("the AEM view is composited over the renderer's reserved region, not at 0 x 0", async () => {
   test.setTimeout(90_000);
@@ -47,13 +41,7 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
   const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
   const base = defaultAppSettings();
@@ -82,13 +70,7 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
 
   const app = await electron.launch({
     args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
+    env: scratchEnv({ home, appData, localAppData }),
   });
 
   const page = await app.firstWindow();
@@ -96,8 +78,8 @@ test("the AEM view is composited over the renderer's reserved region, not at 0 x
   // loaded yet it is not dismissible, so pick the seeded host: it loads a page
   // and closes the panel in one step, restoring the native view to full size
   // for the bounds measurement below.
-  await page.locator(`.hosts-item[data-origin="${origin}"]`).click();
-  const hostLocator = page.locator('[data-testid="browser-view-host"]');
+  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+  const hostLocator = page.locator('.browser-view-host');
   await hostLocator.waitFor({ state: 'visible', timeout: 30_000 });
 
   const readNativeBounds = (): Promise<{ x: number; y: number; width: number; height: number }[]> =>

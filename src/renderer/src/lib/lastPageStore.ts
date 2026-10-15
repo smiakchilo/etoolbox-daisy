@@ -22,7 +22,7 @@ import { parseNavigationTarget } from '../../../shared';
  * must never take the window down with it.
  */
 
-const STORAGE_KEY = 'daisy.mainShell.lastPageUrl';
+export const STORAGE_KEY = 'daisy.mainShell.lastPageUrl';
 /** A stored value longer than any plausible address is discarded rather than trusted. */
 const MAX_URL_LENGTH = 4000;
 

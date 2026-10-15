@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
@@ -14,7 +14,7 @@ import type { Logger } from '../../../../src/main/logger';
 import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
 import { newProxyId, newServerId } from '../../../../src/shared';
 import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
-import { proxyConfigSchema, serverConfigSchema, type ServerConfig } from '../../../../src/shared';
+import { proxyConfigSchema, type ServerConfig } from '../../../../src/shared';
 import type { BrowserNavigationState } from '../../../../src/shared';
 import {
   BROWSER_AGENT_NAVIGATION_CHANNEL,
@@ -22,6 +22,8 @@ import {
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../../../src/shared';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
+import { makeAuthorServer } from '../../../support/configFixtures';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * `createBrowserController` unconditionally calls `app.on("certificate-error", ...)`
@@ -52,20 +54,11 @@ vi.mock('electron', () => ({
 }));
 
 /** Scratch directories live under the project's own `test-results/`, never an OS temp dir. */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'browserController-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'browserController-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
   vi.restoreAllMocks();
 });
 
@@ -74,16 +67,8 @@ async function writeSettings(settingsDir: string, settings: AppSettings): Promis
   if (!result.ok) throw new Error(`failed to write test settings: ${result.error.message}`);
 }
 
-function makeServer(overrides: Partial<Record<string, unknown>> = {}): ServerConfig {
-  return serverConfigSchema.parse({
-    id: newServerId(() => 'server-a'),
-    label: 'Author',
-    origin: 'https://author.example',
-    color: { kind: 'swatch', swatch: 'blue' },
-    revision: 0,
-    ...overrides,
-  });
-}
+const makeServer = (overrides: Partial<Record<string, unknown>> = {}): ServerConfig =>
+  makeAuthorServer('server-a', overrides);
 
 function settingsWithOneServer(server: ServerConfig): AppSettings {
   return {

@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The hosts picker's contextual switch, against the real built app: picking
@@ -17,39 +19,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * are asserted through the same request logs.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'host-switch-contextual-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function createProfile(): Record<string, string> {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
 
 interface RecordingServer {
   readonly origin: string;
@@ -77,7 +47,7 @@ async function startRecordingServer(): Promise<RecordingServer> {
 test('picking a host carries the open page to it, and falls back to the root otherwise', async () => {
   test.setTimeout(150_000);
 
-  const env = createProfile();
+  const env = createLaunchProfile(scratchBase).env;
   const hostA = await startRecordingServer();
   const hostB = await startRecordingServer();
 
@@ -109,10 +79,10 @@ test('picking a host carries the open page to it, and falls back to the root oth
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressInput = page.locator('#browser-address-bar').locator('input').first();
-    const pickerButton = page.locator('#hosts-button');
-    const itemA = page.locator(`.hosts-item[data-origin="${hostA.origin}"]`);
-    const itemB = page.locator(`.hosts-item[data-origin="${hostB.origin}"]`);
+    const addressInput = page.locator(byTestId('browser-address')).locator('input').first();
+    const pickerButton = page.locator(byTestId('browser-hosts-button'));
+    const itemA = page.locator(`${byTestId('hosts-item')}[data-origin="${hostA.origin}"]`);
+    const itemB = page.locator(`${byTestId('hosts-item')}[data-origin="${hostB.origin}"]`);
 
     // A load that is still settling pushes its URL back into the address field,
     // which can overwrite a value typed a moment earlier; retry the typing until

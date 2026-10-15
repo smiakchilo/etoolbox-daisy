@@ -44,7 +44,7 @@ export interface BrowserViewHost {
 
 export function createBrowserViewHost(): BrowserViewHost {
   const host = el('div', {
-    attrs: { class: 'browser-view-host', 'data-testid': 'browser-view-host' },
+    attrs: { class: 'browser-view-host' },
   });
 
   let lastReported: ReservedRegionBounds | undefined;

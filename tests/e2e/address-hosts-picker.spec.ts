@@ -1,9 +1,11 @@
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
 import { createServer, type Server } from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { mainEntry } from '../support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { byTestId } from '../support/selectors';
 
 /**
  * The address bar is a plain `sp-textfield` with an `sp-picker-button`
@@ -23,16 +25,7 @@ import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
  * hidden/suspended native view, and a real custom element.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'address-picker-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 async function startEchoOrigin(): Promise<{ origin: string; hits: number; close: () => void }> {
   const state = { hits: 0 };
@@ -90,32 +83,6 @@ async function startSlowOrigin(
   };
 }
 
-function launchProfile(): { home: string; env: Record<string, string> } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return {
-    home,
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: home,
-      HOME: home,
-      APPDATA: appData,
-      LOCALAPPDATA: localAppData,
-    },
-  };
-}
-
-function writeSettings(home: string, settings: unknown): void {
-  const settingsPath = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
-  mkdirSync(path.dirname(settingsPath), { recursive: true });
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-}
-
 /**
  * The `open` attribute must *paint* pressed, not just tag the element: the
  * non-quiet `sp-picker-button` paints its resting fill on `.spectrum-PickerButton-fill`
@@ -138,7 +105,7 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
 
   const serverA = await startEchoOrigin();
   const serverB = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
@@ -166,12 +133,12 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
-    const pickerButton = page.locator('#hosts-button');
-    const panel = page.locator('.hosts-panel');
-    const viewHost = page.locator('[data-testid="browser-view-host"]');
+    const pickerButton = page.locator(byTestId('browser-hosts-button'));
+    const panel = page.locator(byTestId('hosts-panel'));
+    const viewHost = page.locator('.browser-view-host');
     const addressLabel = page.locator('.address-bar__host-label');
     await expect(pickerButton).toBeVisible({ timeout: 10_000 });
 
@@ -191,8 +158,8 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     // cross button is disabled, Escape is inert, and the picker button's
     // toggle does nothing. Selecting a host is the sanctioned way to leave
     // it (it closes the panel AND loads a page in one step).
-    const itemA = page.locator(`.hosts-item[data-origin="${serverA.origin}"]`);
-    const itemB = page.locator(`.hosts-item[data-origin="${serverB.origin}"]`);
+    const itemA = page.locator(`${byTestId('hosts-item')}[data-origin="${serverA.origin}"]`);
+    const itemB = page.locator(`${byTestId('hosts-item')}[data-origin="${serverB.origin}"]`);
     await expect(panel).toBeVisible({ timeout: 10_000 });
     await expect(itemA).toBeVisible({ timeout: 10_000 });
     await expect(itemB).toBeVisible({ timeout: 10_000 });
@@ -250,7 +217,7 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
 
     // Deciding to back out: the header's cross button closes the panel and
     // restores the native view region without navigating anywhere.
-    await page.locator('.hosts-panel__close').click();
+    await page.locator(byTestId('hosts-panel-close')).click();
     await expect(panel).toBeHidden();
     await expect(viewHost).toBeVisible();
     await expect(pickerButton).not.toHaveAttribute('open', '');
@@ -299,7 +266,7 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
     // "a superseding navigation works" (that supersede path is covered by the
     // dedicated test below). The toolbar's Refresh (rather than Stop) is the
     // "not loading" signal.
-    await expect(page.locator('.browser-toolbar [aria-label="Refresh"]')).toHaveCount(1, {
+    await expect(page.locator(byTestId('browser-refresh'))).toHaveCount(1, {
       timeout: 30_000,
     });
 
@@ -318,16 +285,16 @@ test("picking a host from the address bar's hosts panel navigates to it", async 
 test("with no configured hosts, the address bar's hosts button stays visible but disabled", async () => {
   test.setTimeout(60_000);
 
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
   writeSettings(home, defaultAppSettings());
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
-    const pickerButton = page.locator('#hosts-button');
+    const pickerButton = page.locator(byTestId('browser-hosts-button'));
 
     // The button is still present (never hidden) but disabled, and clicking
     // it must never surface the panel when there is nothing to pick from.
@@ -336,7 +303,7 @@ test("with no configured hosts, the address bar's hosts button stays visible but
     await addressInput.click();
     await pickerButton.click({ force: true });
     await page.waitForTimeout(500);
-    await expect(page.locator('.hosts-panel')).toBeHidden();
+    await expect(page.locator(byTestId('hosts-panel'))).toBeHidden();
     await expect(addressInput).toBeEnabled();
   } finally {
     await app.close();
@@ -348,7 +315,7 @@ test('the hosts picker stays enabled while a page loads, and picking another hos
 
   const slow = await startSlowOrigin(15_000);
   const fast = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
@@ -376,19 +343,19 @@ test('the hosts picker stays enabled while a page loads, and picking another hos
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
-    const pickerButton = page.locator('#hosts-button');
-    const panel = page.locator('.hosts-panel');
+    const pickerButton = page.locator(byTestId('browser-hosts-button'));
+    const panel = page.locator(byTestId('hosts-panel'));
     const message = page.locator('.browser-toolbar-message');
 
     // Startup panel is open; pick the slow host to begin a long load.
-    await page.locator(`.hosts-item[data-origin="${slow.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${slow.origin}"]`).click();
     await expect.poll(() => slow.hits > 0, { timeout: 30_000 }).toBe(true);
 
     // The loading presentation appears (debounced) while the request hangs.
-    await expect(message).toContainText('Loading', { timeout: 20_000 });
+    await expect(message).toHaveText(/\S/, { timeout: 20_000 });
 
     // The picker must not be disabled mid-load - that was the usability trap:
     // a slow or wrong address must never leave the user with no way to pick
@@ -401,7 +368,7 @@ test('the hosts picker stays enabled while a page loads, and picking another hos
     await expect(pickerButton).toHaveAttribute('open', '');
 
     // Picking another host aborts the pending slow load and navigates instead.
-    await page.locator(`.hosts-item[data-origin="${fast.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${fast.origin}"]`).click();
     await expect.poll(() => fast.hits > 0, { timeout: 30_000 }).toBe(true);
     await expect
       .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
@@ -422,7 +389,7 @@ test('the address bar selects all on the first click and inline-completes host a
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
@@ -443,13 +410,13 @@ test('the address bar selects all on the first click and inline-completes host a
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
     const addressLabel = page.locator('.address-bar__host-label');
 
     // Load the host so the field holds a real navigated URL to select.
-    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${server.origin}"]`).click();
     await expect
       .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
       .toMatch(new RegExp(`^${server.origin}/?$`));
@@ -558,7 +525,7 @@ test('a long host label shrinks inside the address field instead of overflowing 
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   const longLabel = 'HPE DEV Author With A Very Long Environment Name';
@@ -580,12 +547,12 @@ test('a long host label shrinks inside the address field instead of overflowing 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressLabel = page.locator('.address-bar__host-label');
 
     // Load the host so the long label is shown.
-    await page.locator(`.hosts-item[data-origin="${server.origin}"]`).click();
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${server.origin}"]`).click();
     await expect(addressLabel).toBeVisible();
     await expect(addressLabel).toHaveText(longLabel);
 
@@ -642,7 +609,7 @@ test('selecting a long address keeps its start visible and never under the chip'
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   const seeded = appSettingsSchema.parse({
@@ -663,7 +630,7 @@ test('selecting a long address keeps its start visible and never under the chip'
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
 
@@ -729,7 +696,7 @@ test('typing a host label completes to "label + URL" without selecting the whole
   test.setTimeout(120_000);
 
   const server = await startEchoOrigin();
-  const { home, env } = launchProfile();
+  const { home, env } = createLaunchProfile(scratchBase);
 
   const base = defaultAppSettings();
   const label = 'HPE DEV Author';
@@ -751,7 +718,7 @@ test('typing a host label completes to "label + URL" without selecting the whole
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    const addressBar = page.locator('#browser-address-bar');
+    const addressBar = page.locator(byTestId('browser-address'));
     await addressBar.waitFor({ state: 'visible', timeout: 30_000 });
     const addressInput = addressBar.locator('input').first();
 

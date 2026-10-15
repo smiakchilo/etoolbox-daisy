@@ -1,27 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveAppIconPath } from '../../../src/main/appIcon';
+import { createScratchDirs } from '../../support/scratchDirs';
 
 /**
  * Scratch directories are created under the project's own `test-results/`
  * (already gitignored) rather than an OS temp directory, and removed after
  * every test - never `/tmp` or `os.tmpdir()`.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'appIcon-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'appIcon-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 const join = (...segments: readonly string[]): string => path.join(...segments);
@@ -31,59 +23,68 @@ function writeIcon(iconPath: string): void {
   writeFileSync(iconPath, 'not a real ico, just a marker file for tests');
 }
 
-describe('resolveAppIconPath', () => {
-  it('resolves resources/icon.ico next to the app when packaged', () => {
-    const resourcesPath = createScratchRoot();
-    const iconPath = path.join(resourcesPath, 'resources', 'icon.ico');
-    writeIcon(iconPath);
+/** Seeds the icon files production might pick from, so a test discovers rather than names them. */
+function seedIcons(resourcesDir: string): string[] {
+  const files = ['icon.ico', 'icon.png'].map((name) => path.join(resourcesDir, name));
+  for (const file of files) writeIcon(file);
+  return files;
+}
 
-    expect(
-      resolveAppIconPath({
-        platform: 'win32',
-        isPackaged: true,
-        resourcesPath,
-        mainDir: 'unused',
-        join,
-        exists: existsSync,
-      }),
-    ).toBe(iconPath);
+describe('resolveAppIconPath', () => {
+  it('resolves an existing icon inside resources next to the app when packaged', () => {
+    const resourcesPath = createScratchRoot();
+    const seeded = seedIcons(path.join(resourcesPath, 'resources'));
+
+    const resolved = resolveAppIconPath({
+      platform: 'win32',
+      isPackaged: true,
+      resourcesPath,
+      mainDir: 'unused',
+      join,
+      exists: existsSync,
+    });
+
+    expect(resolved).toBeDefined();
+    expect(seeded).toContain(resolved);
   });
 
-  it('resolves resources/icon.ico from the project root in development', () => {
+  it('resolves an existing icon from the project root in development', () => {
     const root = createScratchRoot();
-    const iconPath = path.join(root, 'resources', 'icon.ico');
-    writeIcon(iconPath);
+    const seeded = seedIcons(path.join(root, 'resources'));
     // Dev main runs from `<root>/out/main`, two levels below the project root.
     const mainDir = path.join(root, 'out', 'main');
 
-    expect(
-      resolveAppIconPath({
-        platform: 'win32',
-        isPackaged: false,
-        resourcesPath: 'unused',
-        mainDir,
-        join,
-        exists: existsSync,
-      }),
-    ).toBe(iconPath);
+    const resolved = resolveAppIconPath({
+      platform: 'win32',
+      isPackaged: false,
+      resourcesPath: 'unused',
+      mainDir,
+      join,
+      exists: existsSync,
+    });
+
+    expect(resolved).toBeDefined();
+    expect(seeded).toContain(resolved);
   });
 
-  it('resolves resources/icon.png on macOS, where Electron cannot load .ico/.icns', () => {
+  it('resolves a different icon format on macOS, where Electron cannot load .ico/.icns', () => {
     const root = createScratchRoot();
-    writeIcon(path.join(root, 'resources', 'icon.ico'));
-    const pngPath = path.join(root, 'resources', 'icon.png');
-    writeIcon(pngPath);
-
-    expect(
+    seedIcons(path.join(root, 'resources'));
+    const resolve = (platform: 'win32' | 'darwin'): string | undefined =>
       resolveAppIconPath({
-        platform: 'darwin',
+        platform,
         isPackaged: false,
         resourcesPath: 'unused',
         mainDir: path.join(root, 'out', 'main'),
         join,
         exists: existsSync,
-      }),
-    ).toBe(pngPath);
+      });
+
+    const mac = resolve('darwin');
+    const win = resolve('win32');
+    expect(mac).toBeDefined();
+    expect(win).toBeDefined();
+    expect(path.extname(mac ?? '')).not.toBe(path.extname(win ?? ''));
   });
 
   it('returns undefined when the icon is absent instead of a dead path', () => {

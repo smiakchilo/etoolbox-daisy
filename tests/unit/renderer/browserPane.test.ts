@@ -1,10 +1,12 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserPane } from '../../../src/renderer/src/shell/browserPane';
 import { createPanel } from '../../../src/renderer/src/shell/panel';
 import { BANNER_TRANSITION_DURATION_MS } from '../../../src/renderer/src/lib/alertBanner';
 import type { BrowserNavigationState, BrowserSwitchState } from '../../../src/shared';
 import { newServerId } from '../../../src/shared';
+import { InertResizeObserver, installJsdomGlobals } from '../../support/jsdomGlobals';
+import { byTestId } from '../../support/selectors';
 
 /**
  * The browser pane's page panel grouping (browserPane.ts): the toolbar's
@@ -35,17 +37,16 @@ interface FakeDaisyBrowser {
 }
 
 let dom: JSDOM;
+let restoreGlobals: () => void;
 let browser: FakeDaisyBrowser;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
 let switchListeners: Array<(state: BrowserSwitchState) => void>;
 let agentNavigationListeners: Array<() => void>;
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
-const previousResizeObserver = Reflect.get(globalThis, 'ResizeObserver') as unknown;
-
 beforeEach(() => {
-  dom = new JSDOM();
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals({
+    extraGlobals: { ResizeObserver: InertResizeObserver },
+  }));
   stateListeners = [];
   switchListeners = [];
   agentNavigationListeners = [];
@@ -81,24 +82,11 @@ beforeEach(() => {
   Reflect.set(dom.window, 'daisy', { browser });
   Reflect.set(dom.window, 'requestAnimationFrame', () => 1);
   Reflect.set(dom.window, 'cancelAnimationFrame', () => undefined);
-  Reflect.set(
-    globalThis,
-    'ResizeObserver',
-    class {
-      observe(): void {}
-      disconnect(): void {}
-    },
-  );
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
 });
 
 afterEach(() => {
   vi.useRealTimers();
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
-  Reflect.set(globalThis, 'ResizeObserver', previousResizeObserver);
+  restoreGlobals();
 });
 
 function build(): ReturnType<typeof createBrowserPane> {
@@ -126,9 +114,9 @@ describe('createBrowserPane page panel', () => {
   it('stacks the message row below the view slot, outside the region a panel replaces', () => {
     const pane = build();
     const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
-    const viewSlot = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-slot"]');
+    const viewSlot = pane.element.querySelector<HTMLElement>('.browser-view-slot');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
 
     expect(pagePanel).not.toBeNull();
     expect(pagePanel?.hidden).toBe(false);
@@ -166,7 +154,7 @@ describe('createBrowserPane page panel', () => {
 
   it('shows the home screen until a document loads, and the native view after', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
 
     // Fresh pane: nothing is loaded, so the home screen occupies the region and
@@ -182,7 +170,7 @@ describe('createBrowserPane page panel', () => {
 
   it('hides only the native view while the hosts panel is open, keeping the message row', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
@@ -209,7 +197,7 @@ describe('createBrowserPane page panel', () => {
     vi.useFakeTimers();
     try {
       const pane = build();
-      const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+      const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
       const surface = pane.element.querySelector<HTMLElement>('.surface-status-banner');
 
       pane.surfaceStatus.showStatus('Settings saved');
@@ -234,7 +222,7 @@ describe('createBrowserPane page panel', () => {
 
   it('swaps the hosts panel instantly via `hidden`', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
 
     pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
     // The list needs the layout space immediately, so the view must be
@@ -260,7 +248,7 @@ describe('createBrowserPane message lifecycle', () => {
 
     vi.advanceTimersByTime(1000);
     expect(message?.hasAttribute('open')).toBe(true);
-    expect(message?.textContent).toBe('Loading\u2026');
+    expect(message?.textContent?.length).toBeGreaterThan(0);
 
     switchListeners[0]?.({ switching: false });
     // The row collapses over the shared transition, then is torn down.
@@ -277,7 +265,7 @@ describe('createBrowserPane message lifecycle', () => {
 
     switchListeners[0]?.({ switching: true });
     vi.advanceTimersByTime(1000);
-    expect(message?.textContent).toBe('Loading\u2026');
+    expect(message?.textContent?.length).toBeGreaterThan(0);
 
     stateListeners[0]?.({
       url: 'https://author.example/content/page.html',
@@ -287,7 +275,7 @@ describe('createBrowserPane message lifecycle', () => {
       hasDocument: true,
     });
     expect(message?.hasAttribute('open')).toBe(true);
-    expect(message?.textContent).toBe('Loading\u2026');
+    expect(message?.textContent?.length).toBeGreaterThan(0);
 
     switchListeners[0]?.({ switching: false });
     stateListeners[0]?.({
@@ -325,7 +313,7 @@ describe('createBrowserPane message lifecycle', () => {
     switchListeners[0]?.({ switching: true });
     vi.advanceTimersByTime(1000);
     expect(message?.hasAttribute('open')).toBe(true);
-    expect(message?.textContent).toBe('Loading\u2026');
+    expect(message?.textContent?.length).toBeGreaterThan(0);
 
     // A synthetic close while loading still active: preventDefault means
     // this module keeps control and the already-visible loading presentation
@@ -334,14 +322,14 @@ describe('createBrowserPane message lifecycle', () => {
     // programmatic events reach here.
     message?.dispatchEvent(new dom.window.Event('close', { bubbles: true, composed: true }));
     expect(message?.hasAttribute('open')).toBe(true);
-    expect(message?.textContent).toBe('Loading\u2026');
+    expect(message?.textContent?.length).toBeGreaterThan(0);
   });
 });
 
 describe('createBrowserPane closeability', () => {
   it('lets the cross dismiss a panel before any page has loaded, revealing the home screen', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const picker = pane.element.querySelector<HTMLElement>('.hosts-panel');
     const close = pane.element.querySelector<HTMLElement>('.hosts-panel__close');
@@ -361,7 +349,7 @@ describe('createBrowserPane closeability', () => {
 
   it('lets Escape dismiss a panel, revealing the home screen when no page is loaded', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
 
     pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
@@ -375,7 +363,7 @@ describe('createBrowserPane closeability', () => {
 
   it('lets the hosts-button toggle dismiss the panel', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
@@ -387,7 +375,7 @@ describe('createBrowserPane closeability', () => {
 
   it('lets a host selection close the panel and navigate', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const pickerButton = pane.element.querySelector<HTMLElement>('#hosts-button');
 
@@ -464,7 +452,7 @@ describe('createBrowserPane navigation failure recovery', () => {
 
   it('reveals the home screen (not a bare region) when a failed load has no page to restore', async () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const picker = pane.element.querySelector<HTMLElement>('.hosts-panel');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
@@ -488,7 +476,7 @@ describe('createBrowserPane navigation failure recovery', () => {
 
   it('closes an open panel when an external navigation starts, and shows the error row when the load fails', async () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const message = pane.element.querySelector<HTMLElement>('.browser-toolbar-message');
     const picker = pane.element.querySelector<HTMLElement>('.hosts-panel');
     const other = createPanel({
@@ -523,7 +511,7 @@ describe('createBrowserPane navigation failure recovery', () => {
 
   it('leaves an open panel alone when the AEM page navigates itself', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const other = createPanel({
       title: 'Other',
       closeAriaLabel: 'Close other',
@@ -545,7 +533,7 @@ describe('createBrowserPane navigation failure recovery', () => {
 
   it('dismisses an open panel when the agent navigates, revealing the destination', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const other = createPanel({
       title: 'Other',
       closeAriaLabel: 'Close other',
@@ -570,12 +558,12 @@ describe('createBrowserPane navigation failure recovery', () => {
 
   it('clears the forced home veil when the agent navigates', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     emitNavigationState();
     // Home forces the veil over the loaded page; the agent's navigation must
     // reveal its destination rather than leave the welcome screen up.
-    pane.element.querySelector<HTMLElement>('[title="Home"]')?.click();
+    pane.element.querySelector<HTMLElement>(byTestId('browser-home'))?.click();
     expect(home?.hidden).toBe(false);
 
     emitAgentNavigation();
@@ -606,9 +594,9 @@ describe('createBrowserPane home screen', () => {
 
   it('reveals the home screen on Home even with a page loaded, and leaves it on navigation', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
-    const homeButton = pane.element.querySelector<HTMLElement>('[title="Home"]');
+    const homeButton = pane.element.querySelector<HTMLElement>(byTestId('browser-home'));
 
     emitNavigationState();
     expect(viewHost?.hidden).toBe(false);
@@ -625,10 +613,10 @@ describe('createBrowserPane home screen', () => {
 
   it('is a veil, not a page: Home blanks the address/Back, and the close control returns to the page', () => {
     const pane = build();
-    const viewHost = pane.element.querySelector<HTMLElement>('[data-testid="browser-view-host"]');
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
     const home = pane.element.querySelector<HTMLElement>('.browser-home');
     const close = pane.element.querySelector<HTMLElement>('.browser-home__close');
-    const back = pane.element.querySelector<HTMLElement>('[aria-label="Back"]');
+    const back = pane.element.querySelector<HTMLElement>(byTestId('browser-back'));
     const address = pane.element.querySelector('#browser-address-bar') as unknown as {
       value: string;
     };
@@ -639,7 +627,7 @@ describe('createBrowserPane home screen', () => {
     expect(address.value).toBe('https://author.example/content/page.html');
     expect(close?.hidden).toBe(true);
 
-    pane.element.querySelector<HTMLElement>('[title="Home"]')?.click();
+    pane.element.querySelector<HTMLElement>(byTestId('browser-home'))?.click();
     expect(home?.hidden).toBe(false);
     expect(viewHost?.hidden).toBe(true);
     // The welcome screen is not a page: no address to show, and Back must not
@@ -673,7 +661,7 @@ describe('createBrowserPane home screen', () => {
     pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
     expect(panel?.hidden).toBe(false);
 
-    pane.element.querySelector<HTMLElement>('[title="Home"]')?.click();
+    pane.element.querySelector<HTMLElement>(byTestId('browser-home'))?.click();
     expect(panel?.hidden).toBe(true);
     expect(home?.hidden).toBe(false);
   });
@@ -715,9 +703,7 @@ describe('createBrowserPane home screen', () => {
 
 describe('createBrowserPane agent-pane toggle', () => {
   function toggleOf(pane: ReturnType<typeof createBrowserPane>): HTMLElement {
-    const button = pane.element.querySelector<HTMLElement>(
-      '[title="Close chat"], [title="Open chat"]',
-    );
+    const button = pane.element.querySelector<HTMLElement>(byTestId('agent-pane-toggle'));
     if (!button) throw new Error('agent-pane toggle button not found');
     return button;
   }
@@ -733,12 +719,15 @@ describe('createBrowserPane agent-pane toggle', () => {
 
   it('reflects the pane state onto the toolbar button', () => {
     const pane = createBrowserPane();
-    expect(toggleOf(pane).getAttribute('title')).toBe('Close chat');
+    const openTitle = toggleOf(pane).getAttribute('title');
+    expect(openTitle?.length).toBeGreaterThan(0);
 
     pane.setAgentPaneOpen(false);
-    expect(toggleOf(pane).getAttribute('title')).toBe('Open chat');
+    const closedTitle = toggleOf(pane).getAttribute('title');
+    expect(closedTitle?.length).toBeGreaterThan(0);
+    expect(closedTitle).not.toBe(openTitle);
 
     pane.setAgentPaneOpen(true);
-    expect(toggleOf(pane).getAttribute('title')).toBe('Close chat');
+    expect(toggleOf(pane).getAttribute('title')).toBe(openTitle);
   });
 });

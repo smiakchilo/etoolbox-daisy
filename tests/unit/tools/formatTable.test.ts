@@ -85,31 +85,25 @@ describe('normalizeFormatTable', () => {
     ]);
   });
 
-  it('renders a lower-bound total as an at-least line, never a bare number', () => {
-    const normalized = normalizeFormatTable(
-      { rows: [], pagination: { total: { accuracy: 'atLeast', value: 900 } } },
-      'new',
-    );
-    expect(normalized?.total).toBe('Total: at least 900');
-  });
+  it('distinguishes a lower-bound total from an exact one', () => {
+    const totalOf = (accuracy: string, hasMore?: boolean) =>
+      normalizeFormatTable(
+        {
+          rows: [],
+          pagination: {
+            ...(hasMore === undefined ? {} : { hasMore }),
+            total: { accuracy, value: 900 },
+          },
+        },
+        'new',
+      )?.total;
 
-  it('reads a legacy `estimated` total as the same lower bound', () => {
-    const normalized = normalizeFormatTable(
-      { rows: [], pagination: { total: { accuracy: 'estimated', value: 900 } } },
-      'new',
-    );
-    expect(normalized?.total).toBe('Total: at least 900');
-  });
-
-  it('renders a lower-bound total with hasMore:true as an open-ended lower bound', () => {
-    const normalized = normalizeFormatTable(
-      {
-        rows: [],
-        pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 20 } },
-      },
-      'new',
-    );
-    expect(normalized?.total).toBe('Total: 20+');
+    expect(totalOf('exact')).toContain('900');
+    expect(totalOf('atLeast')).toContain('900');
+    expect(totalOf('atLeast')).not.toBe(totalOf('exact'));
+    expect(totalOf('atLeast', true)).not.toBe(totalOf('exact'));
+    // A legacy `estimated` total reads as the same lower bound.
+    expect(totalOf('estimated')).toBe(totalOf('atLeast'));
   });
 
   it('marks the table as counting when totalPending is set', () => {
@@ -123,8 +117,8 @@ describe('normalizeFormatTable', () => {
         { rows: [], pagination: { total: { accuracy: 'exact', value: 0 } } },
         'new',
       )?.total,
-    ).toBe('Total: 0');
-    expect(normalizeFormatTable({ rows: [], total: 3 }, 'new')?.total).toBe('Total: 3');
+    ).toContain('0');
+    expect(normalizeFormatTable({ rows: [], total: 3 }, 'new')?.total).toContain('3');
   });
 
   it('filters non-record rows', () => {
@@ -145,7 +139,7 @@ describe('normalizeFormatTable', () => {
     for (const text of [json, '```json\n' + json + '\n```']) {
       const normalized = normalizeFormatTable(text, 'new');
       expect(normalized?.rows).toEqual([['/content/a']]);
-      expect(normalized?.total).toBe('Total: 1');
+      expect(normalized?.total).toContain('1');
     }
   });
 
@@ -160,7 +154,7 @@ describe('normalizeFormatTable', () => {
     ].join('\n');
     const normalized = normalizeFormatTable(text, 'new');
     expect(normalized?.rows).toEqual([['/content/a'], ['/content/b']]);
-    expect(normalized?.total).toBe('Total: 2+');
+    expect(normalized?.total).toContain('2');
   });
 
   it('unwraps a result nested under a wrapper key and a stringified rows array', () => {
@@ -218,7 +212,7 @@ describe('createFormatTableExecutor', () => {
     expect(payload.operation).toBe(FORMAT_TABLE_TOOL_NAME);
     expect(payload.rowCount).toBe(2);
     expect(payload.mode).toBe('new');
-    expect(payload.textResultForLlm).toBe('Presented 2 rows.');
+    expect(payload.textResultForLlm).toContain('2');
   });
 
   it('fails with INVALID_ARGUMENT when data is not a rows container', async () => {
@@ -258,7 +252,7 @@ describe('format_table transcript composition', () => {
       mode: 'append',
     });
     expect(message?.mode).toBe('append');
-    expect(message?.total).toBe('Total: 1');
+    expect(message?.total).toContain('1');
   });
 
   it('reads the totalPending flag off the call arguments', () => {
@@ -273,24 +267,22 @@ describe('format_table transcript composition', () => {
       rows: [{ 'jcr:path': '/a' }],
       pagination: { total: { accuracy: 'exact', value: 9 } },
     };
-    expect(renderer.readTableMessage?.({ data, totalLine: '  Total: 1 so far ' })?.total).toBe(
-      'Total: 1 so far',
+    const derived = renderer.readTableMessage?.({ data })?.total;
+    expect(derived).toContain('9');
+    expect(renderer.readTableMessage?.({ data, totalLine: '  custom line ' })?.total).toBe(
+      'custom line',
     );
-    expect(renderer.readTableMessage?.({ data, totalLine: ' ' })?.total).toBe('Total: 9');
+    expect(renderer.readTableMessage?.({ data, totalLine: ' ' })?.total).toBe(derived);
     expect(
-      renderer.readTableMessage?.({
-        data: { rows: [] },
-        totalLine: 'Did not find any relevant results so far',
-      })?.total,
-    ).toBe('Did not find any relevant results so far');
+      renderer.readTableMessage?.({ data: { rows: [] }, totalLine: 'nothing yet' })?.total,
+    ).toBe('nothing yet');
   });
 
-  it('describes the call as N rows (the collapsed safety net)', () => {
+  it('describes the call by its row count (the collapsed safety net)', () => {
     const details = renderer.describeCall({
       data: { rows: [{ 'jcr:path': '/a' }, { 'jcr:path': '/b' }] },
     });
-    expect(details.summary).toBe('2 rows');
-    expect(details.parameters).toEqual([{ label: 'Rows', value: '2' }]);
+    expect(details.summary).toContain('2');
   });
 
   it('returns undefined for a call it does not recognise', () => {

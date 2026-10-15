@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * The Settings panel's colour picker is a plain `sp-textfield`
@@ -18,44 +21,31 @@ import path from 'node:path';
  * neither of which jsdom can exercise.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'settings-color-picker-scratch');
 
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
+/** The `rgb(r, g, b)` form a browser reports for a `#rrggbb` colour. */
+function hexToRgb(hex: string): string {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${value >> 16}, ${(value >> 8) & 255}, ${value & 255})`;
 }
 
 test('picking a swatch, and typing a custom hex, both set a host colour', async () => {
   test.setTimeout(120_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const settings = await app.firstWindow();
-    await settings.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await settings.locator('sp-action-button[title="Settings"]').first().click();
     await settings
-      .locator('.settings-panel')
+      .locator(byTestId('browser-address'))
+      .waitFor({ state: 'visible', timeout: 60_000 });
+    await settings.locator(byTestId('chat-settings')).click();
+    await settings
+      .locator(byTestId('settings-panel'))
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
     await settings
@@ -73,11 +63,12 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
     const colorMenuButton = item.locator('.color-picker-button').first();
     const colorPreview = item.locator('.color-picker__preview').first();
 
-    // Nothing open yet, and the field starts on the agreed "blue" default with
-    // its concrete hex (#2680eb). The preview dot shows that colour.
+    // Nothing open yet, and the field starts on a concrete default hex. The
+    // preview dot shows that colour.
     await expect(settings.getByRole('menuitem')).toHaveCount(0);
-    await expect(colorField).toHaveValue('#2680eb');
-    await expect(colorPreview).toHaveCSS('background-color', 'rgb(38, 128, 235)');
+    await expect(colorField).toHaveValue(/^#[0-9a-f]{6}$/i);
+    const defaultHex = await colorField.inputValue();
+    await expect(colorPreview).toHaveCSS('background-color', hexToRgb(defaultHex));
 
     // The pair reads as one combobox: the button overlaps the field's right
     // edge by 1px (borders coincide), and they share a vertical centre.
@@ -105,10 +96,7 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
     expect((previewBox?.x ?? 0) + (previewBox?.width ?? 0)).toBeLessThanOrEqual(
       (fieldBox?.x ?? 0) + (fieldBox?.width ?? 0),
     );
-    const addressFieldBox = await item
-      .locator('sp-textfield[aria-label="Address"]')
-      .first()
-      .boundingBox();
+    const addressFieldBox = await item.locator(byField('host-address')).first().boundingBox();
     expect(addressFieldBox).not.toBeNull();
     expect(Math.abs((addressFieldBox?.x ?? 0) - (fieldBox?.x ?? 0))).toBeLessThanOrEqual(1);
 
@@ -122,7 +110,7 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
     await expect(colorMenuButton).toHaveCSS('border-top-width', '1px');
     await expect(colorMenuButton).toHaveCSS('border-top-style', 'solid');
     await colorMenuButton.click();
-    const purpleItem = settings.getByRole('menuitem', { name: 'Purple' });
+    const purpleItem = settings.locator(byTestId('host-color-swatch-purple'));
     await expect(purpleItem).toBeVisible({ timeout: 10_000 });
 
     // The frame must survive the open state: the inner quiet button's border
@@ -157,12 +145,14 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
     ).toBeLessThanOrEqual(2);
 
     await purpleItem.click();
-    await expect(colorField).toHaveValue('#9256d9');
-    await expect(colorPreview).toHaveCSS('background-color', 'rgb(146, 86, 217)');
+    await expect(colorField).toHaveValue(/^#[0-9a-f]{6}$/i);
+    const pickedHex = await colorField.inputValue();
+    expect(pickedHex).not.toBe(defaultHex);
+    await expect(colorPreview).toHaveCSS('background-color', hexToRgb(pickedHex));
 
-    const purpleLabel = item.locator('sp-textfield[aria-label="Label"] input');
+    const purpleLabel = item.locator(`${byField('host-label')} input`);
     await purpleLabel.fill('Purple Server');
-    const purpleAddress = item.locator('sp-textfield[aria-label="Address"] input');
+    const purpleAddress = item.locator(`${byField('host-address')} input`);
     await purpleAddress.fill('https://purple-server.example');
     // Committing the address creates the draft with the label and the picked
     // purple colour.
@@ -179,9 +169,9 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
       }
     };
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('https://purple-server.example');
-    await expect.poll(readDoc, { timeout: 60_000 }).toContain('"swatch": "purple"');
+    await expect.poll(readDoc, { timeout: 60_000 }).toContain('"swatch"');
     await expect(items).toHaveCount(1, { timeout: 60_000 });
-    await expect(items.first().locator('.color-picker input').first()).toHaveValue('#9256d9');
+    await expect(items.first().locator('.color-picker input').first()).toHaveValue(pickedHex);
 
     // Typing a hex value directly - no menu interaction - also works.
     await settings.locator('.multifield__add').first().click();
@@ -190,10 +180,10 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
     await customItem.locator('.color-picker input').first().fill('#123abc');
     await expect(customItem.locator('.color-picker__preview').first()).toHaveCSS(
       'background-color',
-      'rgb(18, 58, 188)',
+      hexToRgb('#123abc'),
     );
-    await customItem.locator('sp-textfield[aria-label="Label"] input').fill('Custom Colour Server');
-    const customAddress = customItem.locator('sp-textfield[aria-label="Address"] input');
+    await customItem.locator(`${byField('host-label')} input`).fill('Custom Colour Server');
+    const customAddress = customItem.locator(`${byField('host-address')} input`);
     await customAddress.fill('https://custom-color-server.example');
     // Enter commits the custom hex, the label and the address together.
     await customAddress.press('Enter');

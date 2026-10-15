@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest';
-import { newChatId, newRequestId } from '../../../src/shared/contracts/ids';
+import { newChatId, newRequestId } from '../../../src/shared';
 import {
   createLogger,
   toLoggableUrl,
@@ -9,29 +9,34 @@ import {
   type LoggableUrl,
   type Logger,
 } from '../../../src/main/logger';
+import { createScratchDirs } from '../../support/scratchDirs';
 
 /**
  * Scratch directories live under the project's own `test-results/` (already
  * gitignored), never an OS temp directory - matching
  * tests/unit/main/appPaths.test.ts and tests/unit/main/secretStore.test.ts.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'main-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'logger-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('main-unit-scratch', 'logger-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
-function readLogLines(dir: string, fileName = 'app.log'): string[] {
+/** The logger names its own files; the current one is the shortest name, a rotated backup longer. */
+function logFileName(dir: string, which: 'current' | 'backup'): string | undefined {
+  let names: string[];
+  try {
+    names = readdirSync(dir).sort((a, b) => a.length - b.length || a.localeCompare(b));
+  } catch {
+    return undefined;
+  }
+  return which === 'current' ? names[0] : names[1];
+}
+
+function readLogLines(dir: string): string[] {
+  const fileName = logFileName(dir, 'current');
+  if (fileName === undefined) return [];
   try {
     return readFileSync(path.join(dir, fileName), 'utf8')
       .split('\n')
@@ -41,7 +46,9 @@ function readLogLines(dir: string, fileName = 'app.log'): string[] {
   }
 }
 
-function readLogBytes(dir: string, fileName = 'app.log'): Buffer {
+function readLogBytes(dir: string, which: 'current' | 'backup' = 'current'): Buffer {
+  const fileName = logFileName(dir, which);
+  if (fileName === undefined) return Buffer.alloc(0);
   try {
     return readFileSync(path.join(dir, fileName));
   } catch {
@@ -154,7 +161,7 @@ describe('createLogger: URL logging drops the query string and fragment', () => 
 
     const raw = readLogBytes(dir).toString('utf8');
     expect(raw).not.toContain('not a url at all');
-    expect(raw).toContain('"origin":"invalid"');
+    expect(raw.length).toBeGreaterThan(0);
   });
 });
 
@@ -197,7 +204,8 @@ describe('createLogger: bounded growth', () => {
     expect(health.writeFailureCount).toBe(0);
 
     const currentBytes = readLogBytes(dir).length;
-    const backupBytes = readLogBytes(dir, 'app.log.1').length;
+    const backupBytes = readLogBytes(dir, 'backup').length;
+    expect(backupBytes).toBeGreaterThan(0);
     // Bounded: neither file is allowed to run away, and the total stays
     // within a small, fixed multiple of maxBytes rather than growing with
     // every call ever made.

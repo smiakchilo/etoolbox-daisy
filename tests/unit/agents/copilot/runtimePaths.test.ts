@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -9,26 +9,18 @@ import {
   resolveSdkRuntimeExePath,
   type RuntimePathsEnv,
 } from '../../../../src/agents/copilot/runtimePaths';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * Scratch directories are created under the project's own `test-results/`
  * (already gitignored) rather than an OS temp directory, and removed after
  * every test - never `/tmp` or `os.tmpdir()`.
  */
-const scratchRoots: string[] = [];
-
-function createScratchRoot(): string {
-  const base = path.join(process.cwd(), 'test-results', 'agent-unit-scratch');
-  mkdirSync(base, { recursive: true });
-  const dir = mkdtempSync(path.join(base, 'runtimePaths-'));
-  scratchRoots.push(dir);
-  return dir;
-}
+const scratch = createScratchDirs('agent-unit-scratch', 'runtimePaths-');
+const createScratchRoot = scratch.create;
 
 afterEach(() => {
-  for (const dir of scratchRoots.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  scratch.cleanup();
 });
 
 function writeFakeExe(filePath: string): void {

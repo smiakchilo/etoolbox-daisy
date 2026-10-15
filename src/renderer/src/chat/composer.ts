@@ -58,10 +58,10 @@ const SEND_ACCENT_CLASS = 'chat-composer__send--enabled';
  * `chat-composer-attention`). The class is added once per question and removed
  * on `animationend`, so the pane's periodic repaint can never replay it.
  */
-const ATTENTION_CLASS = 'chat-composer__frame--attention';
+export const ATTENTION_CLASS = 'chat-composer__frame--attention';
 
 /** The `@keyframes` name the frame's `animationend` listener filters on. */
-const ATTENTION_ANIMATION = 'chat-composer-attention';
+export const ATTENTION_ANIMATION = 'chat-composer-attention';
 
 /**
  * Puts the composer frame into its "button strip" look - no visible border, a
@@ -70,7 +70,7 @@ const ATTENTION_ANIMATION = 'chat-composer-attention';
  * question, so it survives the "type your own answer" swap that hides the
  * dropdown control itself.
  */
-const STRIP_CLASS = 'chat-composer__frame--strip';
+export const STRIP_CLASS = 'chat-composer__frame--strip';
 
 /**
  * The one-click action labels painted as the **emphasized** variant, so a

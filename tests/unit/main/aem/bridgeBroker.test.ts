@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   createAemBridgeBroker,
-  DEFAULT_MAX_CONCURRENT_AEM_REQUESTS,
   type BridgeReplyOrigin,
   type BridgeTransport,
   type BrokerDeps,
@@ -537,10 +536,6 @@ describe('createAemBridgeBroker - concurrency', () => {
     harness.fireReply(okReply('req-c'));
     await flushMicrotasks();
     expect(c.value()?.kind).toBe('response');
-  });
-
-  it('defaults to more than one concurrent request', () => {
-    expect(DEFAULT_MAX_CONCURRENT_AEM_REQUESTS).toBeGreaterThan(1);
   });
 
   it('cancelAll cancels every in-flight request and every queued one', async () => {

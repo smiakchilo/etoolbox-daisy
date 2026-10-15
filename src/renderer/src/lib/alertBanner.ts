@@ -74,7 +74,7 @@ export const BANNER_ACTION_MARKER = '{action}';
 export const BANNER_TRANSITION_DURATION_MS = 150;
 
 const BANNER_REVEALING_CLASS = 'banner-row--revealing';
-const BANNER_CLOSING_CLASS = 'banner-row--closing';
+export const BANNER_CLOSING_CLASS = 'banner-row--closing';
 const BANNER_HEIGHT_VAR = '--banner-row-height';
 const BANNER_DURATION_VAR = '--banner-row-transition-duration';
 const PREFERS_REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
@@ -216,8 +216,11 @@ export function createBannerProgressLine(): HTMLElement {
  * certificate/origin prompts - gets the same size without having to remember
  * to ask for it.
  */
-export function createBannerActionButton(label: string): HTMLElement {
-  return el('sp-action-button', { attrs: { size: 's' }, text: label });
+export function createBannerActionButton(label: string, testId?: string): HTMLElement {
+  return el('sp-action-button', {
+    attrs: testId === undefined ? { size: 's' } : { size: 's', 'data-testid': testId },
+    text: label,
+  });
 }
 
 /**

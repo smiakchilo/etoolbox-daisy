@@ -1,9 +1,10 @@
-import { JSDOM } from 'jsdom';
+import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   type PickerLike,
   syncPickerOptions,
 } from '../../../../src/renderer/src/settings/pickerOptions';
+import { installJsdomGlobals } from '../../../support/jsdomGlobals';
 
 /**
  * The in-place option/selection sync behind every Settings picker.
@@ -15,9 +16,8 @@ import {
  * anything.
  */
 
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
 let dom: JSDOM;
+let restoreGlobals: () => void;
 
 function picker(): PickerLike {
   return dom.window.document.createElement('sp-picker') as PickerLike;
@@ -30,15 +30,11 @@ function optionSnapshot(node: PickerLike): readonly (readonly [string | null, st
 }
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ dom, restore: restoreGlobals } = installJsdomGlobals());
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('syncPickerOptions', () => {

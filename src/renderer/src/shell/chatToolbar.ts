@@ -33,7 +33,7 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
   const toolbar = el('div', { attrs: { class: 'toolbar chat-toolbar', role: 'toolbar' } });
 
   const newSessionButton = el('sp-action-button', {
-    attrs: { quiet: '', title: 'New session' },
+    attrs: { quiet: '', title: 'New session', 'data-testid': 'chat-new-session' },
   });
   const newChatIcon = document.createElement('sp-icon-chat-add');
   newChatIcon.setAttribute('slot', 'icon');
@@ -46,7 +46,13 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
   // `chat-toolbar__end` auto margin; `title`/`aria-label` carry the name for
   // sighted mouse users (native tooltip) and assistive tech alike.
   const historyButton = el('sp-action-button', {
-    attrs: { quiet: '', class: 'chat-toolbar__end', title: 'History', 'aria-label': 'History' },
+    attrs: {
+      quiet: '',
+      class: 'chat-toolbar__end',
+      title: 'History',
+      'aria-label': 'History',
+      'data-testid': 'chat-history',
+    },
   });
   const historyIcon = document.createElement('sp-icon-history');
   historyIcon.setAttribute('slot', 'icon');
@@ -56,7 +62,12 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
   });
 
   const settingsButton = el('sp-action-button', {
-    attrs: { quiet: '', title: 'Settings', 'aria-label': 'Settings' },
+    attrs: {
+      quiet: '',
+      title: 'Settings',
+      'aria-label': 'Settings',
+      'data-testid': 'chat-settings',
+    },
   });
   const settingsIcon = document.createElement('sp-icon-settings');
   settingsIcon.setAttribute('slot', 'icon');

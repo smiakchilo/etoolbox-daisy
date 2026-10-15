@@ -66,13 +66,18 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
   let deleting = false;
 
   const list = el('div', {
-    attrs: { class: 'history-panel__list', role: 'list', 'aria-label': 'Stored conversations' },
+    attrs: {
+      class: 'history-panel__list',
+      role: 'list',
+      'aria-label': 'Stored conversations',
+    },
   });
 
   const panel = createPanel({
     title: 'History',
     closeAriaLabel: 'Close history',
     surfaceClassName: 'history-panel',
+    testId: 'history-panel',
     closeButtonClassName: 'history-panel__close',
     autofocusSelector: '.history-item__resume',
     content: list,
@@ -121,6 +126,7 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
         class: 'history-item__resume',
         title: 'Resume conversation',
         'aria-label': 'Resume conversation',
+        'data-testid': 'history-resume',
       },
     });
     const resumeIcon = document.createElement('sp-icon-replay');
@@ -136,6 +142,7 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
         class: 'history-item__delete',
         title: 'Delete conversation',
         'aria-label': 'Delete conversation',
+        'data-testid': 'history-delete',
       },
     });
     const removeIcon = document.createElement('sp-icon-delete-outline');
@@ -192,7 +199,12 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
       ],
     });
     return el('div', {
-      attrs: { class: 'history-item', role: 'listitem', 'data-chat-id': entry.chatId },
+      attrs: {
+        class: 'history-item',
+        role: 'listitem',
+        'data-testid': 'history-item',
+        'data-chat-id': entry.chatId,
+      },
       children: [main, buildActions(entry)],
     });
   }

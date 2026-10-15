@@ -1,4 +1,3 @@
-import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyBannerPresentation,
@@ -10,6 +9,7 @@ import {
   createBannerActionButton,
   createBannerRow,
 } from '../../../src/renderer/src/lib/alertBanner';
+import { installJsdomGlobals } from '../../support/jsdomGlobals';
 
 /**
  * The shared banner-row builders (lib/alertBanner.ts). These are pure DOM
@@ -20,21 +20,14 @@ import {
  * built app in the Step 05 E2E, because jsdom does not lay out.
  */
 
-let dom: JSDOM;
-
-const previousDocument = Reflect.get(globalThis, 'document') as unknown;
-const previousWindow = Reflect.get(globalThis, 'window') as unknown;
+let restoreGlobals: () => void;
 
 beforeEach(() => {
-  dom = new JSDOM();
-  Reflect.set(globalThis, 'document', dom.window.document);
-  Reflect.set(globalThis, 'window', dom.window);
+  ({ restore: restoreGlobals } = installJsdomGlobals());
 });
 
 afterEach(() => {
-  dom.window.close();
-  Reflect.set(globalThis, 'document', previousDocument);
-  Reflect.set(globalThis, 'window', previousWindow);
+  restoreGlobals();
 });
 
 describe('buildBannerPrompt', () => {
@@ -79,11 +72,11 @@ describe('buildBannerPrompt', () => {
   });
 
   it('returns a single copy span, never a separate actions sibling', () => {
-    const [only] = buildBannerPrompt(`Press ${BANNER_ACTION_MARKER} to allow it`, [
+    const nodes = buildBannerPrompt(`Press ${BANNER_ACTION_MARKER} to allow it`, [
       createBannerActionButton('OK'),
     ]);
-    expect(only?.classList.contains(BANNER_ROW_COPY_CLASS)).toBe(true);
-    expect(only?.querySelector('.banner-row__actions')).toBeNull();
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]?.classList.contains(BANNER_ROW_COPY_CLASS)).toBe(true);
   });
 });
 

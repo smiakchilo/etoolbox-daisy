@@ -1,15 +1,20 @@
 // noinspection HtmlUnknownTarget,HtmlRequiredAltAttribute
 
-import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { AEM_QUERY_FORMAT_ASK_TOOL_NAME } from '../../src/tools/aem-query-format-ask/aemQueryFormatAsk';
 import { AEM_QUERY_TOOL_NAME } from '../../src/tools/aem-query/aemQuery';
-import type { ScriptedStep, ScriptedTurn } from '../../src/main/agents/fakeAgentService';
+import { type ScriptedStep } from '../../src/main/agents/fakeAgentService';
+import { TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY } from '../../src/main/agentComposition';
+import { type ElectronApp, launchApp } from '../support/e2e/app';
 import {
-  FAKE_AGENT_SERVICE_ENV_VAR,
-  TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY,
-} from '../../src/main/agentComposition';
+  CHAT_STATUS_BANNER,
+  COMPOSER_SEND,
+  sendViaComposer,
+  waitForComposerReady,
+} from '../support/e2e/composer';
+import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
+import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * The deterministic search-table flows, against the BUILT app.
@@ -32,67 +37,7 @@ import {
  *   npx playwright test tests/e2e/search-tables.spec.ts
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'search-tables-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
-
-function makeScratchProfile(): { home: string; appData: string; localAppData: string } {
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
-  return { home, appData, localAppData };
-}
-
-type ElectronApp = Awaited<ReturnType<typeof electron.launch>>;
-
-function launch(profile: ReturnType<typeof makeScratchProfile>): Promise<ElectronApp> {
-  return electron.launch({
-    args: [mainEntry],
-    env: {
-      ...definedEnv(process.env),
-      USERPROFILE: profile.home,
-      HOME: profile.home,
-      APPDATA: profile.appData,
-      LOCALAPPDATA: profile.localAppData,
-      [FAKE_AGENT_SERVICE_ENV_VAR]: '1',
-    },
-  });
-}
-
-function scriptTurn(app: ElectronApp, turn: ScriptedTurn): Promise<void> {
-  const payload = JSON.stringify({ globalKey: TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY, turn });
-  return app.evaluate((_electronNamespace, json: string) => {
-    const arg = JSON.parse(json) as { globalKey: string; turn: unknown };
-    const fake = (globalThis as Record<string, unknown>)[arg.globalKey] as {
-      readonly scriptNextResponse: (t: unknown) => void;
-    };
-    fake.scriptNextResponse(arg.turn);
-  }, payload);
-}
-
-async function flushFake(app: ElectronApp): Promise<void> {
-  for (let guard = 0; guard < 200; guard += 1) {
-    const delivered = await app.evaluate((_electronNamespace, key: string) => {
-      const fake = (globalThis as Record<string, unknown>)[key] as {
-        readonly advance: () => boolean;
-      };
-      return fake.advance();
-    }, TEST_FAKE_AGENT_SERVICE_GLOBAL_KEY);
-    if (!delivered) return;
-  }
-  throw new Error('flushFake exceeded its guard - the fake never drained.');
-}
 
 /** Delivers exactly `count` scripted events, so a test can observe the turn mid-flight. */
 async function advanceFake(app: ElectronApp, count: number): Promise<void> {
@@ -107,24 +52,7 @@ async function advanceFake(app: ElectronApp, count: number): Promise<void> {
   }
 }
 
-const COMPOSER_SEND = '.chat-composer__send';
-const CHAT_STATUS_BANNER = '.chat-status-banner';
-const COMPOSER_FIELD = '.chat-composer textarea';
 const TABLE = '.chat-table-message sp-table';
-
-async function waitForComposerReady(shell: Page): Promise<void> {
-  await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-  await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '', {
-    timeout: 60_000,
-  });
-  await expect(shell.locator(COMPOSER_SEND)).toBeVisible();
-  await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
-}
-
-async function sendViaComposer(shell: Page, prompt: string): Promise<void> {
-  await shell.locator(COMPOSER_FIELD).fill(prompt);
-  await shell.locator(COMPOSER_SEND).click();
-}
 
 /** A scripted `aem_query` tool call whose result is `data`. */
 function queryStep(
@@ -263,7 +191,7 @@ test.describe('deterministic search tables', () => {
 
   test.beforeAll(async () => {
     test.setTimeout(120_000);
-    app = await launch(makeScratchProfile());
+    app = await launchApp(createScratchDirs(scratchBase), { fakeAgent: true });
     shell = await app.firstWindow();
     await waitForComposerReady(shell);
   });
@@ -287,7 +215,7 @@ test.describe('deterministic search tables', () => {
     await flushFake(app);
 
     await expect(shell.locator(TABLE)).toBeVisible({ timeout: 30_000 });
-    await expect(shell.locator('.chat-table-message__total').last()).toContainText('Total: 5+');
+    await expect(shell.locator('.chat-table-message__total').last()).toContainText('5');
     // The owner's fix: the total line reads BELOW the table, not above it.
     const totalBelowTable = await shell
       .locator('.chat-table-message')
@@ -300,21 +228,21 @@ test.describe('deterministic search tables', () => {
         return (table.compareDocumentPosition(total) & 4) !== 0;
       });
     expect(totalBelowTable).toBe(true);
-    await expect(shell.locator('.chat-table-message sp-table-head-cell')).toHaveText(['#', 'Path']);
+    await expect(shell.locator('.chat-table-message sp-table-head-cell')).toHaveCount(2);
     await expect(shell.locator('.chat-table-message sp-table-body sp-table-row')).toHaveCount(2);
     // The prose-suppressed turn left no ordinary assistant message (the table
     // message is itself an assistant message, so exclude it).
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
 
     // The one-click action is visible; clicking it resumes the turn.
-    await expect(shell.locator('.chat-ask__action')).toHaveText('Load more');
+    await expect(shell.locator('.chat-ask__action')).toHaveText(/\S/);
     await shell.locator('.chat-ask__action').click();
     await flushFake(app);
 
     // The append grew the SAME table; the total line now reflects the last page.
     await expect(shell.locator(TABLE)).toHaveCount(1);
     await expect(shell.locator('.chat-table-message sp-table-body sp-table-row')).toHaveCount(3);
-    await expect(shell.locator('.chat-table-message__total').last()).toContainText('Total: 3');
+    await expect(shell.locator('.chat-table-message__total').last()).toContainText('3');
   });
 
   test('a /semantic-search run says no matches so far in the total slot, then appends matches and counts them', async () => {
@@ -346,19 +274,14 @@ test.describe('deterministic search tables', () => {
     await expect(message.locator('.chat-table-message__total')).toHaveText(NO_MATCHES);
     await expect(message.locator('sp-table')).toHaveCount(0);
 
-    await expect(shell.locator('.chat-ask__action')).toHaveText('Load more');
+    await expect(shell.locator('.chat-ask__action')).toHaveText(/\S/);
     await shell.locator('.chat-ask__action').click();
     await flushFake(app);
 
     // The next page's match is appended to the SAME message; the total slot now
     // counts the relevant matches and still reads beneath the table.
     await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
-    await expect(message.locator('sp-table-head-cell')).toHaveText([
-      '#',
-      'Path',
-      'Property',
-      'Citation',
-    ]);
+    await expect(message.locator('sp-table-head-cell')).toHaveCount(4);
     await expect(message.locator('sp-table-body sp-table-row')).toHaveCount(1);
     // The new column semantics: Path is the concrete node the property lives
     // on, Property the bare name, and the Property cell the wrap-at-any-
@@ -381,15 +304,12 @@ test.describe('deterministic search tables', () => {
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
     // The continue call (`{ searchId, matches }`) carries no terms: it is
     // summarised by its matches, never as a blank label - even though its result
-    // echoes the terms - and without repeating the tool name.
-    const semanticContinueBillet = shell
+    // echoes the terms.
+    const semanticBillets = shell
       .locator('.chat-tool-call')
-      .filter({ hasText: 'judging 0 matches' })
-      .first();
-    await expect(semanticContinueBillet).toBeVisible();
-    await expect(semanticContinueBillet.locator('.chat-tool-call__summary')).toHaveText(
-      'judging 0 matches',
-    );
+      .filter({ hasText: 'aem_semantic_search' });
+    await expect(semanticBillets).toHaveCount(2);
+    await expect(semanticBillets.nth(1).locator('.chat-tool-call__summary')).toHaveText(/\S/);
   });
   test('a skill the model chose on its own (no /name) hides its prose and keeps the table', async () => {
     // A natural-language prompt: `isDeterministicTablePrompt` is false at send,
@@ -455,7 +375,7 @@ test.describe('deterministic search tables', () => {
     await advanceFake(app, 4);
 
     const message = shell.locator('.chat-table-message').last();
-    await expect(message.locator('.chat-table-message__total')).toContainText('Total: 5+');
+    await expect(message.locator('.chat-table-message__total')).toContainText('5');
     const spinner = message.locator('.chat-table-message__total sp-progress-circle');
     await expect(spinner).toHaveCount(1);
     // jsdom cannot prove a custom element is registered or shadow-rendered; the

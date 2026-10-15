@@ -14,7 +14,7 @@ import { COMPOSER_HISTORY_LIMIT } from '../chat/composerHistory';
  * never take the window down with it.
  */
 
-const STORAGE_KEY = 'daisy.chat.composerHistory';
+export const STORAGE_KEY = 'daisy.chat.composerHistory';
 
 /** A stored document longer than this is discarded rather than parsed. */
 const MAX_STORED_LENGTH = 200_000;

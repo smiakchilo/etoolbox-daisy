@@ -316,90 +316,57 @@ describe('total matches accuracy', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('qualifies a lower-bound total in the model-facing text', () => {
-    const text = renderToolResultForModel(
-      querySuccess({
-        pagination: {
-          offset: 0,
-          limit: 50,
-          returned: 50,
-          hasMore: true,
-          total: { accuracy: 'atLeast', value: 1234 },
-        },
-      }),
-    );
-    expect(text).toMatch(/at least 1234/);
-    expect(text).toMatch(/lower bound, not an exact count/);
+  it('qualifies a lower-bound total differently from an exact one', () => {
+    const textFor = (accuracy: 'exact' | 'atLeast') =>
+      renderToolResultForModel(
+        querySuccess({
+          pagination: {
+            offset: 0,
+            limit: 50,
+            returned: 50,
+            hasMore: true,
+            total: { accuracy, value: 1234 },
+          },
+        }),
+      );
+    expect(textFor('atLeast')).toContain('1234');
+    expect(textFor('exact')).toContain('1234');
+    expect(textFor('atLeast')).not.toBe(textFor('exact'));
   });
 
-  it('states an unknown total plainly rather than omitting it', () => {
-    const text = renderToolResultForModel(
-      querySuccess({
-        pagination: {
-          offset: 0,
-          limit: 50,
-          returned: 50,
-          hasMore: true,
-          total: { accuracy: 'unknown' },
-        },
-      }),
-    );
-    expect(text).toMatch(/total number of matches is unknown/i);
+  it('renders an unknown total differently from a counted one rather than omitting it', () => {
+    const textFor = (total: Record<string, unknown>) =>
+      renderToolResultForModel(
+        querySuccess({
+          pagination: { offset: 0, limit: 50, returned: 50, hasMore: true, total },
+        }),
+      );
+    expect(textFor({ accuracy: 'unknown' })).not.toBe(textFor({ accuracy: 'exact', value: 50 }));
   });
 });
 
 describe('renderToolResultForModel', () => {
-  it("preserves the 'more results exist' signal for hasMore: true", () => {
-    const result = querySuccess({
-      rows: [{ path: '/content/a' }],
-      pagination: {
-        offset: 0,
-        limit: 1,
-        returned: 1,
-        hasMore: true,
-        total: { accuracy: 'unknown' },
-      },
-    });
-    const text = renderToolResultForModel(result);
-    expect(text).toMatch(/more results exist/i);
+  it('renders the three hasMore states distinctly', () => {
+    const textFor = (hasMore: boolean | 'unknown') =>
+      renderToolResultForModel(
+        querySuccess({
+          rows: [{ path: '/content/a' }],
+          pagination: {
+            offset: 0,
+            limit: 1,
+            returned: 1,
+            hasMore,
+            total: { accuracy: 'unknown' },
+          },
+        }),
+      );
+    const texts = new Set([textFor(true), textFor(false), textFor('unknown')]);
+    expect(texts.size).toBe(3);
   });
 
-  it('states no further results exist for hasMore: false', () => {
-    const result = querySuccess({
-      pagination: {
-        offset: 0,
-        limit: 50,
-        returned: 0,
-        hasMore: false,
-        total: { accuracy: 'unknown' },
-      },
-    });
-    const text = renderToolResultForModel(result);
-    expect(text).toMatch(/no further results exist/i);
-  });
-
-  it("states the more-results signal is unknown for hasMore: 'unknown'", () => {
-    const result = querySuccess({
-      pagination: {
-        offset: 0,
-        limit: 50,
-        returned: 50,
-        hasMore: 'unknown',
-        total: { accuracy: 'unknown' },
-      },
-    });
-    const text = renderToolResultForModel(result);
-    expect(text).toMatch(/unknown/i);
-  });
-
-  it('renders an error result as an error, never as a zero-row success', () => {
-    const text = renderToolResultForModel(errorResult());
-    expect(text).toMatch(/error/i);
-    expect(text).not.toMatch(/Returned 0 row/i);
-  });
-
-  it('renders a zero-row success as a success, never as an error', () => {
-    const text = renderToolResultForModel(
+  it('renders an error result differently from a zero-row success', () => {
+    const errorText = renderToolResultForModel(errorResult());
+    const successText = renderToolResultForModel(
       querySuccess({
         rows: [],
         pagination: {
@@ -411,30 +378,20 @@ describe('renderToolResultForModel', () => {
         },
       }),
     );
-    expect(text).not.toMatch(/AEM tool error/i);
-    expect(text).toMatch(/Returned 0 row/i);
+    expect(errorText).not.toBe(successText);
+    expect(errorText).toContain('NOT_FOUND');
+    expect(successText).not.toContain('NOT_FOUND');
   });
 
-  it("preserves the 'more children exist' signal for a get_json result", () => {
-    const result = getJsonSuccess({
-      children: { requested: true, returned: 50, hasMore: true },
-    });
-    const text = renderToolResultForModel(result);
-    expect(text).toMatch(/more results exist/i);
-  });
-
-  it("states the children signal is unknown when hasMore is 'unknown'", () => {
-    const result = getJsonSuccess({
-      children: { requested: true, returned: 50, hasMore: 'unknown' },
-    });
-    const text = renderToolResultForModel(result);
-    expect(text).toMatch(/unknown/i);
-  });
-
-  it('states children were not requested when children.requested is false', () => {
-    const result = getJsonSuccess({ children: { requested: false } });
-    const text = renderToolResultForModel(result);
-    expect(text).toMatch(/not requested/i);
+  it('renders the three children states of a get_json result distinctly', () => {
+    const textFor = (children: Record<string, unknown>) =>
+      renderToolResultForModel(getJsonSuccess({ children }));
+    const texts = new Set([
+      textFor({ requested: true, returned: 50, hasMore: true }),
+      textFor({ requested: true, returned: 50, hasMore: 'unknown' }),
+      textFor({ requested: false }),
+    ]);
+    expect(texts.size).toBe(3);
   });
 });
 

@@ -1,6 +1,9 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { mainEntry } from '../support/e2e/app';
+import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * Step 05: the Settings surface can actually add and remove servers, and the
@@ -23,43 +26,22 @@ import path from 'node:path';
  * on disk, never by trusting the renderer's own re-fetch.
  */
 
-const mainEntry = path.resolve(__dirname, '../../out/main/index.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-settings-scratch');
-
-function definedEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) out[key] = value;
-  }
-  return out;
-}
 
 test('servers added in the Settings panel persist, and removal persists too', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const openSettings = async () => {
     const app = await electron.launch({ args: [mainEntry], env });
     const shell = await app.firstWindow();
-    await shell.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await shell.locator('sp-action-button[title="Settings"]').first().click();
-    await shell.locator('.settings-panel').first().waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('chat-settings')).click();
+    await shell.locator(byTestId('settings-panel')).waitFor({ state: 'visible', timeout: 60_000 });
     await shell.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     return { app, page: shell };
   };
@@ -77,7 +59,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
 
     // The placeholder is the theme's gray-500, distinct from the value colour
     // (which Spectrum's textfield otherwise shares with the placeholder).
-    const draftAddress = draft.locator('sp-textfield[aria-label="Address"] input');
+    const draftAddress = draft.locator(byField('host-address') + ' input');
     const placeholderColor = await draftAddress.evaluate(
       (el) => getComputedStyle(el, '::placeholder').color,
     );
@@ -86,7 +68,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     expect(valueColor).not.toBe(placeholderColor);
 
     await draftAddress.fill('https://canary-author.example');
-    const draftLabel = draft.locator('sp-textfield[aria-label="Label"] input');
+    const draftLabel = draft.locator(byField('host-label') + ' input');
     await draftLabel.fill('Canary Author');
     // A value commits when its field is left, never on a typing pause: taking
     // focus for the label commits the address, and Enter commits the label.
@@ -108,7 +90,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
       )
       .toContain('https://canary-author.example');
     await expect(items).toHaveCount(initialRowCount + 1, { timeout: 60_000 });
-    await expect(items.last().locator('sp-textfield[aria-label="Label"] input')).toHaveValue(
+    await expect(items.last().locator(byField('host-label') + ' input')).toHaveValue(
       'Canary Author',
       { timeout: 60_000 },
     );
@@ -149,7 +131,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
     // Renaming commits when the field is left; Enter is that commit without
     // moving focus. The row then re-renders from the fresh snapshot and the
     // rename reaches disk without any button click.
-    const labelField = items.first().locator('sp-textfield[aria-label="Label"] input');
+    const labelField = items.first().locator(byField('host-label') + ' input');
     await labelField.fill('Canary Renamed');
     await labelField.press('Enter');
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('Canary Renamed');
@@ -158,16 +140,13 @@ test('servers added in the Settings panel persist, and removal persists too', as
     // An address change is never applied by the commit: leaving the field only
     // raises a one-button confirmation in the banner, and a single OK click
     // persists it.
-    const addressField = items.first().locator('sp-textfield[aria-label="Address"] input');
+    const addressField = items.first().locator(byField('host-address') + ' input');
     await addressField.fill('https://canary-moved.example');
     await addressField.press('Enter');
-    await expect(banner).toContainText('Press OK to change the address', { timeout: 60_000 });
+    await expect(banner.locator('sp-action-button')).toHaveCount(1, { timeout: 60_000 });
     await expect(addressField).toHaveValue('https://canary-moved.example');
 
-    await second.page
-      .locator('.surface-status-banner sp-action-button', { hasText: 'OK' })
-      .first()
-      .click();
+    await second.page.locator(byTestId('banner-confirm')).first().click();
     // The move reaches disk, and the row re-renders from the freshly-fetched
     // snapshot, so the value came back out of the store rather than staying
     // typed in the DOM.
@@ -178,13 +157,10 @@ test('servers added in the Settings panel persist, and removal persists too', as
     // warning, and only the banner's OK button performs it.
     await expect(items).toHaveCount(1);
     await items.first().locator('.multifield__action--remove').click();
-    await expect(banner).toContainText('Press OK to remove the host');
+    await expect(banner.locator('sp-action-button')).toHaveCount(1);
     await expect(items).toHaveCount(1);
 
-    await second.page
-      .locator('.surface-status-banner sp-action-button', { hasText: 'OK' })
-      .first()
-      .click();
+    await second.page.locator(byTestId('banner-confirm')).first().click();
     await expect(items).toHaveCount(0, { timeout: 60_000 });
   } finally {
     await second.app.close();
@@ -206,45 +182,31 @@ test('servers added in the Settings panel persist, and removal persists too', as
 test('the Settings banner keeps one height with and without an action button', async () => {
   test.setTimeout(120_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('chat-settings')).click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     const banner = page.locator('.surface-status-banner').first();
 
     // One host to edit.
     await page.locator('.multifield__add').first().click();
     const item = page.locator('.multifield__item').last();
-    await item
-      .locator('sp-textfield[aria-label="Address"] input')
-      .fill('https://height-check.example');
-    await item.locator('sp-textfield[aria-label="Label"] input').fill('Height Check');
+    await item.locator(byField('host-address') + ' input').fill('https://height-check.example');
+    await item.locator(byField('host-label') + ' input').fill('Height Check');
     await expect(page.locator('.multifield__item')).toHaveCount(1, { timeout: 60_000 });
 
-    // A plain text row: committing the label settles on "Settings saved",
+    // A plain text row: committing the label settles on a status message,
     // which carries no close control and no action button.
-    const heightLabel = item.locator('sp-textfield[aria-label="Label"] input');
+    const heightLabel = item.locator(byField('host-label') + ' input');
     await heightLabel.fill('Height Check 2');
     await heightLabel.press('Enter');
-    await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
+    await expect(banner).toHaveText(/\S/, { timeout: 60_000 });
     await expect(banner.locator('sp-action-button')).toHaveCount(0);
     // The row reveals by animating its block-size; measure once it has settled.
     await expect
@@ -256,11 +218,10 @@ test('the Settings banner keeps one height with and without an action button', a
 
     // A with-button row: committing the address change raises the sticky
     // confirmation with its single OK `sp-action-button`.
-    const heightAddress = item.locator('sp-textfield[aria-label="Address"] input');
+    const heightAddress = item.locator(byField('host-address') + ' input');
     await heightAddress.fill('https://height-moved.example');
     await heightAddress.press('Enter');
-    await expect(banner).toContainText('Press OK to change the address', { timeout: 60_000 });
-    await expect(banner.locator('sp-action-button')).toHaveCount(1);
+    await expect(banner.locator('sp-action-button')).toHaveCount(1, { timeout: 60_000 });
     await expect
       .poll(async () =>
         Math.round(await banner.evaluate((node) => node.getBoundingClientRect().height)),
@@ -290,21 +251,9 @@ test('the Settings banner keeps one height with and without an action button', a
 test('a commit does not steal focus from the field being typed in', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
   const readDoc = (): string => {
     try {
@@ -317,15 +266,15 @@ test('a commit does not steal focus from the field being typed in', async () => 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('chat-settings')).click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     // One persisted host (a draft counts as a row, so the disk read is what
     // proves the address save landed and the row is no longer a draft).
     await page.locator('.multifield__add').first().click();
     const item = page.locator('.multifield__item').last();
-    const focusAddress = item.locator('sp-textfield[aria-label="Address"] input');
+    const focusAddress = item.locator(byField('host-address') + ' input');
     await focusAddress.fill('https://focus-check.example');
     // Enter commits while the field keeps focus: the commit's own reload must
     // not rebuild the row out from under the caret.
@@ -339,11 +288,11 @@ test('a commit does not steal focus from the field being typed in', async () => 
 
     // Commit the label without leaving it: the reload that follows the commit
     // used to tear the row down.
-    const labelHost = item.locator('sp-textfield[aria-label="Label"]');
+    const labelHost = item.locator(byField('host-label'));
     await labelHost.locator('input').fill('Focus Check');
     await labelHost.locator('input').press('Enter');
     await expect.poll(readDoc, { timeout: 60_000 }).toContain('Focus Check');
-    await expect(banner).toHaveText('Settings saved', { timeout: 60_000 });
+    await expect(banner).toHaveText(/\S/, { timeout: 60_000 });
     // The banner is announced before the reload continuation runs, so give the
     // re-read time to land before asserting.
     await page.waitForTimeout(1000);
@@ -368,21 +317,9 @@ test('a commit does not steal focus from the field being typed in', async () => 
 test('reordering hosts persists, and the move buttons follow the new order', async () => {
   test.setTimeout(180_000);
 
-  mkdirSync(scratchBase, { recursive: true });
-  const root = mkdtempSync(path.join(scratchBase, 'profile-'));
-  const home = path.join(root, 'home');
-  const appData = path.join(home, 'AppData', 'Roaming');
-  const localAppData = path.join(home, 'AppData', 'Local');
-  mkdirSync(appData, { recursive: true });
-  mkdirSync(localAppData, { recursive: true });
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = {
-    ...definedEnv(process.env),
-    USERPROFILE: home,
-    HOME: home,
-    APPDATA: appData,
-    LOCALAPPDATA: localAppData,
-  };
+  const env = scratchEnv({ home, appData, localAppData });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const readOrigins = (): string[] => {
@@ -398,8 +335,8 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
 
   const openSettings = async (app: Awaited<ReturnType<typeof electron.launch>>) => {
     const page = await app.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('chat-settings')).click();
     await page.locator('.multifield__item').first().waitFor({ state: 'visible', timeout: 60_000 });
     return page;
   };
@@ -408,15 +345,15 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
   const first = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await first.firstWindow();
-    await page.locator('#browser-address-bar').waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('sp-action-button[title="Settings"]').first().click();
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await page.locator(byTestId('chat-settings')).click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     const add = async (label: string, origin: string): Promise<void> => {
       await page.locator('.multifield__add').first().click();
       const item = page.locator('.multifield__item').last();
-      await item.locator('sp-textfield[aria-label="Address"] input').fill(origin);
-      const labelInput = item.locator('sp-textfield[aria-label="Label"] input');
+      await item.locator(byField('host-address') + ' input').fill(origin);
+      const labelInput = item.locator(byField('host-label') + ' input');
       await labelInput.fill(label);
       // Leaving the address (label focus) commits it; Enter commits the label.
       await labelInput.press('Enter');
@@ -446,7 +383,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     // Focus the first host's address field, then move that host down with the
     // button - which steals focus. The field must come back focused *and*
     // visibly accented, since all the items' fields look alike.
-    const movedFrom = rows.nth(0).locator('sp-textfield[aria-label="Address"]');
+    const movedFrom = rows.nth(0).locator(byField('host-address'));
     await movedFrom.click();
     await down(0).click();
     await expect
@@ -461,7 +398,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
 
     // The moved field (now the second row) still holds focus: the caret stays
     // in the field the user was editing.
-    const movedTo = rows.nth(1).locator('sp-textfield[aria-label="Address"]');
+    const movedTo = rows.nth(1).locator(byField('host-address'));
     expect(await movedTo.evaluate((el) => el === el.ownerDocument.activeElement)).toBe(true);
 
     // Moving again without having focused a field (the button was clicked
@@ -470,7 +407,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     await expect
       .poll(readOrigins, { timeout: 60_000 })
       .toEqual(['https://order-a.example', 'https://order-b.example']);
-    const forced = rows.nth(1).locator('sp-textfield[aria-label="Address"]');
+    const forced = rows.nth(1).locator(byField('host-address'));
     expect(await forced.evaluate((el) => el === el.ownerDocument.activeElement)).toBe(true);
   } finally {
     await second.close();
