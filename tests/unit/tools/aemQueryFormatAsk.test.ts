@@ -205,6 +205,9 @@ describe('aem_query_format_ask executor', () => {
       rows: 2,
       hasMore: false,
       ended: 'exhausted',
+      // The whole search is one call, so it always ends the turn: the model is
+      // not resumed for a "search is finished" completion (TURN_COMPLETE_RESULT_KEY).
+      turnComplete: true,
       resultType: 'success',
     });
   });

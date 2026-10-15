@@ -41,6 +41,7 @@ import {
   createToolError,
   err,
   foldTextDelta,
+  isTurnCompleteResult,
   jsonValueSchema,
   messageIdSchema,
   newReasoningId,
@@ -661,6 +662,52 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   }
 
   /**
+   * Ends the turn as soon as a turn-completing tool's result is out (a result
+   * carrying `TURN_COMPLETE_RESULT_KEY`) instead of letting the runtime resume
+   * the model for one more completion.
+   *
+   * The application's own search composites put the whole answer - the table -
+   * on screen, so the model's follow-up ("search is finished") is pure cost:
+   * a round trip of time and tokens for text the application suppresses anyway.
+   *
+   * `session.abort()` cancels the runtime's continuation. It is best-effort and
+   * advisory, exactly like a Stop (`docs/compatibility.md` section 6.2), so the
+   * `idle` below is what actually ends the turn; clearing `currentTurn` first is
+   * what makes any late SDK event for the dropped turn a no-op (every
+   * turn-scoped case in `handleSdkEvent` returns when it is `undefined`).
+   *
+   * The caller emits `tool.result` immediately before this, and that event's own
+   * transition is `runningTool` -> `streaming` (`sessionState.ts`), so the
+   * session is already in `streaming` and `idle` is the one legal step left.
+   * That `streaming` - rather than `cancelling` - is deliberate: the pane records
+   * an interruption notice on `cancelling` (`chatPane.ts`), and a search that
+   * finished exactly as asked is not an interruption.
+   */
+  function endTurnOnCompletedTool(chatId: ChatId, turn: CurrentTurn): void {
+    if (currentTurn !== turn) return;
+    currentTurn = undefined;
+    disarmAllDispatchWatchdogs();
+    pendingPermissionsByRequestId.clear();
+    rejectPendingUserInputs();
+    const session = openSession;
+    if (session !== undefined) {
+      session.abort().catch((error: unknown) => {
+        console.error(
+          'sdkAgentService: session.abort() rejected while ending a completed turn',
+          error,
+        );
+      });
+    }
+    try {
+      applyAndEmit(makeSessionStateEvent(chatId, 'idle', turn.turnId));
+    } catch (caught) {
+      // The turn is already over; a state-machine surprise here must not crash
+      // the SDK's own tool dispatch. Logged, not surfaced as a turn error.
+      console.error('sdkAgentService: could not settle a completed turn', caught);
+    }
+  }
+
+  /**
    * Wraps one `AemToolExecutor` into the SDK's own `Tool.handler` shape, so
    * the SDK calls straight into this adapter's process instead of a runtime
    * round trip - see finding 3. `tool.result` is emitted from here, not from
@@ -715,6 +762,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         currentTurn === turnAtInvocation &&
         openChatId !== undefined
       ) {
+        const completedTurn = currentTurn;
         applyAndEmit({
           type: 'tool.result',
           chatId: openChatId,
@@ -722,6 +770,13 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
           toolCallId,
           outcome,
         });
+        // A turn-completing tool (`TURN_COMPLETE_RESULT_KEY`) ends the turn as
+        // soon as its result is out, so the runtime never resumes the model for
+        // the "search is finished" completion that would add nothing - see
+        // `endTurnOnCompletedTool`.
+        if (outcome.ok && isTurnCompleteResult(outcome.data)) {
+          endTurnOnCompletedTool(openChatId, completedTurn);
+        }
       }
       // A failure is a fully designed outcome, not an exceptional one - both
       // an `err(ToolError)` from the executor itself and an exception we

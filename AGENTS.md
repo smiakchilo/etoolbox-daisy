@@ -674,6 +674,19 @@ src/tools/<name>/
 - **The search page size is one constant**: `SEARCH_PAGE_SIZE` (20) in
   `src/shared/tools/core/search.ts` is the default `limit` of both search
   composites; change it there.
+- **A tool result may end the turn.** A success payload carrying
+  `TURN_COMPLETE_RESULT_KEY` (`'turnComplete'`,
+  `src/shared/tools/core/turnCompletion.ts`) tells every adapter to end the
+  model's turn at that result instead of resuming it. The two search composites
+  set it when a search is finished - the table is the whole answer, so the
+  model's follow-up ("search is finished") would only cost a round trip - and
+  `aem_semantic_search` sets it *only* on its terminal call, never on a
+  candidates result the model must judge. Copilot ends the turn with a quiet
+  `session.abort()` + `idle` (never `cancelling`, which the pane paints as an
+  interruption); OpenRouter stops the run through its stop condition with
+  `allowFinalResponse: false`; the fake ends the scripted turn. See
+  `docs/verification/followons-2026-10.md` "A search no longer spends a model
+  round after its table (2026-10-15)".
 - Tests live in `tests/unit/tools/` (manifests, executors),
   `tests/unit/main/toolRegistry.test.ts` (discovery + isolation + enabled-set
   snapshot) and `tests/unit/renderer/chat/toolRegistry.test.ts`.
@@ -988,7 +1001,21 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3318 passed / 14 skipped** (+1 against the
+Current baseline: **`npm run test` → 3324 passed / 14 skipped** (+6 against the
+3318 of the previous entry - **a search no longer spends a model round after its
+table**: a success payload carrying `TURN_COMPLETE_RESULT_KEY` (`turnComplete`,
+`src/shared/tools/core/turnCompletion.ts`) ends the model's turn at that tool
+result. The two search composites set it when the search is finished (the table
+is the whole answer, so the resumed model's generic "search is finished" line
+was pure cost) and `aem_semantic_search` sets it *only* on its terminal call.
+Copilot ends the turn with a quiet `session.abort()` + `idle` (never
+`cancelling`), OpenRouter through its stop condition with
+`allowFinalResponse: false`, and the fake ends the scripted turn. +2
+`turnCompletion`, +2 `sdkAgentService`, +1 `openrouter/agentService`, +1
+`fakeAgentService`; three mutations caught (the predicate, the tool marker, and
+the fake's break) and one built-app `search-tables.spec.ts` case added. The
+Copilot path's actual token saving still needs the owner's live confirmation
+(`docs/backlog.md`). Before that it was 3318 (+1 against the
 3317 of the previous entry - **one destructive-confirmation method**: History's
 Delete no longer confirms in a row-local mini-dialog; it raises the same sticky,
 one-button `Press {action} to <phrase>` prompt in the
@@ -1532,8 +1559,13 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 135 tests; a full run is typically 125 passed / 6 failed.** The
-latest +1 is a fourth `chat-session-footer.spec.ts` case, proving against the
+**Playwright → 136 tests; a full run is typically 126 passed / 6 failed.** The
+latest +1 is a fifth `search-tables.spec.ts` case, proving against the built app
+that a turn-completing search result (`turnComplete`) ends the turn: the model is
+not resumed, so a scripted closing delta paints no bubble, no "Session stopped"
+notice is raised and the composer is ready (a mutation disabling the fake's rule
+failed it with the bubble present). Before that, the +1 since 135 is a fourth
+`chat-session-footer.spec.ts` case, proving against the
 built app that an empty conversation (the full-height composer, `.chat-pane--empty`)
 still shows the footer's agent/model/reasoning summary while the reveal-log icon
 is hidden - which failed on the missing `.chat-session-id[hidden] { display: none }`

@@ -12,6 +12,7 @@ import {
   LOAD_ALL_PAGE_LIMIT,
   MAX_SEARCH_ROOTS,
   SEARCH_PAGE_SIZE,
+  TURN_COMPLETE_RESULT_KEY,
   buildQueryUrl,
   classifyAemResponse,
   computeDeadline,
@@ -561,6 +562,10 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
       total: effectiveTotal,
       hasMore,
       ended,
+      // This call is the whole search: the table is on screen and the run is
+      // over, so the model's turn ends here rather than being resumed for a
+      // "search is finished" completion (see `TURN_COMPLETE_RESULT_KEY`).
+      [TURN_COMPLETE_RESULT_KEY]: true,
       textResultForLlm:
         `Searched for ${subject} in ${scope ?? 'the whole repository'}: ${String(rowCount)} row(s) over ` +
         `${String(pages)} page(s) are on screen in the chat's table (total matches: ` +

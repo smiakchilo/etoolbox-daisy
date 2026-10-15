@@ -1,7 +1,8 @@
 import {
-  OpenRouter as AgentClient,
   type ConversationState,
   type StateAccessor,
+  type StopCondition,
+  OpenRouter as AgentClient,
 } from '@openrouter/agent';
 import { stepCountIs } from '@openrouter/agent/stop-conditions';
 import type { Tool } from '@openrouter/agent/tool-types';
@@ -92,6 +93,16 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
     },
 
     callModel(request: OpenRouterCallRequest): OpenRouterCall {
+      // Always cap the loop; additionally stop the moment a tool result says the
+      // turn is over (the search composites), so the SDK does not make the final
+      // "search is finished" call. `allowFinalResponse: false` is what makes that
+      // stop an actual end rather than one more `toolChoice: 'none'` model turn
+      // (`node_modules/@openrouter/agent/esm/inner-loop/call-model.d.ts`).
+      const shouldStopTurn = request.shouldStopTurn;
+      const stopWhen: StopCondition[] = [stepCountIs(MAX_TOOL_STEPS)];
+      if (shouldStopTurn !== undefined) {
+        stopWhen.push(() => shouldStopTurn());
+      }
       return agent.callModel({
         model: request.model,
         instructions: request.instructions,
@@ -99,7 +110,8 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
         tools: request.tools as readonly Tool[],
         state: request.state as StateAccessor,
         signal: request.signal,
-        stopWhen: stepCountIs(MAX_TOOL_STEPS),
+        stopWhen,
+        allowFinalResponse: false,
         ...(request.reasoningEffort !== null
           ? {
               reasoning: { effort: request.reasoningEffort as ReasoningEffort },

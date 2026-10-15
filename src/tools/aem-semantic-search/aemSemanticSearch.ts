@@ -11,6 +11,7 @@ import {
   type ToolHost,
   MAX_SEARCH_ROOTS,
   SEARCH_PAGE_SIZE,
+  TURN_COMPLETE_RESULT_KEY,
   classifyAemResponse,
   computeDeadline,
   createToolError,
@@ -502,7 +503,16 @@ export function createAemSemanticSearchExecutor(host: ToolHost): AemToolExecutor
     matchesShown: state.matchesShown,
     total: state.pagination.total,
     hasMore: state.pagination.hasMore,
-    ...(ended === undefined ? { searchId, candidates: state.candidates.length } : { ended }),
+    ...(ended === undefined
+      ? { searchId, candidates: state.candidates.length }
+      : {
+          ended,
+          // This call finished the search - the table is on screen and no
+          // further candidates are waiting to be judged - so the model's turn
+          // ends here. A start or a "load more" result returns candidates the
+          // model must judge and deliberately carries no marker.
+          [TURN_COMPLETE_RESULT_KEY]: true,
+        }),
     textResultForLlm,
     resultType: 'success',
   });

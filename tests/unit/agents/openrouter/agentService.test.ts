@@ -225,6 +225,51 @@ describe('createOpenRouterAgentService', () => {
     expect(finalState(events)).toBe('idle');
   });
 
+  it('stops the run at a turn-completing tool result, via the predicate handed to the client', async () => {
+    let runTool: RunTool | undefined;
+    const stops: (boolean | undefined)[] = [];
+    const completeSpec: ToolSpec = {
+      name: 'aem_query_format_ask',
+      description: 'search',
+      parameters: { type: 'object', properties: {} },
+      executor: () => Promise.resolve(ok({ turnComplete: true })),
+    };
+    const client: OpenRouterClient = {
+      hasApiKey: true,
+      createConversationState: () => ({ fake: true }),
+      callModel: (request) => ({
+        getTextStream: async function* () {},
+        getReasoningStream: async function* () {},
+        getResponse: async () => {
+          stops.push(request.shouldStopTurn?.());
+          // An ordinary read: the turn must continue.
+          await runTool?.(TOOL_SPEC, { path: '/content/x' }, { callId: 'call_1' });
+          stops.push(request.shouldStopTurn?.());
+          // The search composite finishing: the turn ends here.
+          await runTool?.(completeSpec, { terms: 'waldo' }, { callId: 'call_2' });
+          stops.push(request.shouldStopTurn?.());
+          return {};
+        },
+      }),
+      listModels: () => Promise.resolve([]),
+    };
+    const service = build({
+      client,
+      buildTools: (rt) => {
+        runTool = rt;
+        return [completeSpec];
+      },
+    });
+    const events = collect(service);
+    await service.initialize();
+    await service.openConversation({ chatId: CHAT });
+
+    await service.sendPrompt({ chatId: CHAT, turnId: TURN, prompt: 'search' });
+    await awaitTurnEnd(events);
+
+    expect(stops).toEqual([false, false, true]);
+  });
+
   it('emits user.input.requested carrying actions for a pending question', async () => {
     let question: Promise<unknown> | undefined;
     const service = build({

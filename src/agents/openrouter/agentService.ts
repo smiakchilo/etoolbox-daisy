@@ -33,6 +33,7 @@ import {
   createModelObserver,
   createToolError,
   err,
+  isTurnCompleteResult,
   jsonValueSchema,
   messageIdSchema,
   newRequestId,
@@ -180,6 +181,13 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
   /** Bumped to invalidate a completion path superseded by abort/teardown. */
   let generation = 0;
   let currentAbort: AbortController | undefined;
+  /**
+   * Set when a tool result carries the turn-complete marker
+   * (`TURN_COMPLETE_RESULT_KEY`); read by the `shouldStopTurn` predicate given
+   * to `callModel`, so the SDK ends the run at that step instead of making the
+   * final "search is finished" model call. Reset at the start of every prompt.
+   */
+  let turnCompleteReached = false;
   /** Outstanding ask-user questions, resolved by `respondToInput` and rejected on abort/teardown. */
   const pendingUserInputByRequestId = new Map<
     UserInputRequestId,
@@ -348,6 +356,11 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         textResultForLlm: renderToolFailureForModel(outcome.error),
         resultType: 'failure',
       };
+    }
+    // A turn-completing tool result ends the run at this step (see
+    // `turnCompleteReached` / `shouldStopTurn`): the table is the whole answer.
+    if (isTurnCompleteResult(outcome.value)) {
+      turnCompleteReached = true;
     }
     return outcome.value;
   }
@@ -659,6 +672,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       const turnId = request.turnId;
       currentAbort = controller;
       currentTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
+      turnCompleteReached = false;
 
       // Applied synchronously so a second send before any SDK event already
       // sees "turn_in_progress", mirroring the other adapters.
@@ -695,6 +709,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
           tools,
           state: openState,
           signal: controller.signal,
+          shouldStopTurn: () => turnCompleteReached,
         });
       } catch (error) {
         currentTurn = undefined;

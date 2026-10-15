@@ -54,6 +54,14 @@ export interface OpenRouterCallRequest {
   readonly tools: readonly unknown[];
   readonly state: unknown;
   readonly signal: AbortSignal;
+  /**
+   * Whether the run should stop after the step it is on, read by the client's
+   * stop condition. The service sets it when a tool result carries the
+   * turn-complete marker (`TURN_COMPLETE_RESULT_KEY`), so the SDK ends the run
+   * without making the final "search is finished" model call. Omitted means no
+   * early stop beyond the step cap.
+   */
+  readonly shouldStopTurn?: () => boolean;
 }
 
 /** The seam the service depends on; the real implementation wraps the SDK clients. */

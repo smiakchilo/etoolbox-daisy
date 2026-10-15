@@ -155,6 +155,8 @@ describe('aem_semantic_search executor', () => {
       candidatesRead: 6,
       page: 1,
     });
+    // Call A returns candidates to judge: it must never end the turn.
+    expect(value['turnComplete']).toBeUndefined();
     const text = value['textResultForLlm'] as string;
     for (const [index, path] of paths(6).entries()) {
       expect(text).toContain(`[${String(index + 1)}] ${path}`);
@@ -263,6 +265,8 @@ describe('aem_semantic_search executor', () => {
     expect(calls[2]?.args).toEqual({ actions: ['Load more'] });
     expect(calls[3]?.args['offset']).toBe(3);
     expect(second).toMatchObject({ searchId, candidates: 3, page: 2, matchesShown: 2 });
+    // A page of candidates still has to be judged, so the turn continues.
+    expect(second['turnComplete']).toBeUndefined();
 
     const finished = payload(await execute({ searchId, matches: [] }, callContext));
     expect(calls[4]?.name).toBe('format_table');
@@ -270,7 +274,13 @@ describe('aem_semantic_search executor', () => {
     expect(tableData(calls[4])['rows']).toEqual([]);
     expect(calls[4]?.args['totalLine']).toBe('Total: 2');
     expect(calls).toHaveLength(5);
-    expect(finished).toMatchObject({ ended: 'exhausted', matchesShown: 2, candidatesRead: 6 });
+    expect(finished).toMatchObject({
+      ended: 'exhausted',
+      matchesShown: 2,
+      candidatesRead: 6,
+      // The search is over, so this call ends the turn (TURN_COMPLETE_RESULT_KEY).
+      turnComplete: true,
+    });
     expect(finished['textResultForLlm']).toContain('End your turn');
   });
 

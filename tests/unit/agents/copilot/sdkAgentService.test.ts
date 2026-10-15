@@ -471,6 +471,101 @@ describe('sdkAgentService - tool lifecycle', () => {
     assertLegalSequence(events);
   });
 
+  it('ends the turn at a turn-completing tool result, cancelling the runtime instead of resuming the model', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const executor = vi.fn<AemToolExecutor>(() =>
+      Promise.resolve(ok({ operation: 'aem_query_format_ask', turnComplete: true })),
+    );
+    const { service, chatId, events, createSession } = await setUpOpenConversation(
+      sessionHandle,
+      ids,
+      undefined,
+      { aem_query_format_ask: executor },
+    );
+    const turnId = newTurnId(ids);
+    await service.sendPrompt({ chatId, turnId, prompt: 'search for waldo' });
+    sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: 'msg-1' } });
+    sessionHandle.emit({
+      type: 'external_tool.requested',
+      data: {
+        requestId: 'req-1',
+        toolCallId: 'tool-1',
+        toolName: 'aem_query_format_ask',
+        arguments: { terms: 'waldo' },
+      },
+    });
+
+    const handler = findRegisteredToolHandler(createSession, 'aem_query_format_ask');
+    const invocation: FakeToolInvocation = {
+      sessionId: 'fake-session-id',
+      toolCallId: 'tool-1',
+      toolName: 'aem_query_format_ask',
+      arguments: { terms: 'waldo' },
+    };
+    await handler({ terms: 'waldo' }, invocation);
+
+    // The runtime's continuation is cancelled, and the session is returned to
+    // idle without a `cancelling` (which the pane would record as an
+    // interruption). `tool.result` already stepped `runningTool` -> `streaming`
+    // internally; the only explicit state changes are the send and the end.
+    expect(sessionHandle.abort).toHaveBeenCalledTimes(1);
+    expect(events.find((event) => event.type === 'tool.result')).toMatchObject({
+      outcome: { ok: true, data: { operation: 'aem_query_format_ask', turnComplete: true } },
+    });
+    expect(
+      events
+        .filter((event) => event.type === 'session.state.changed')
+        .map((event) => (event as { state: string }).state),
+    ).toEqual(['sending', 'idle']);
+    expect(
+      events.some(
+        (event) => event.type === 'session.state.changed' && event.state === 'cancelling',
+      ),
+    ).toBe(false);
+
+    // A late event from the cancelled turn is dropped: the turn is gone.
+    sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: 'msg-2' } });
+    sessionHandle.emit({
+      type: 'assistant.message',
+      data: { messageId: 'msg-2', content: 'The search is finished.' },
+    });
+    expect(events.some((event) => event.type === 'assistant.message.completed')).toBe(false);
+    expect(assertLegalSequence(events).state).toBe('idle');
+  });
+
+  it('does not end the turn for a tool result without the turn-complete marker', async () => {
+    const ids = counterIdGenerator();
+    const sessionHandle = makeFakeSession();
+    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const { service, chatId, events, createSession } = await setUpOpenConversation(
+      sessionHandle,
+      ids,
+      undefined,
+      { aem_get_json: executor },
+    );
+    const turnId = newTurnId(ids);
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+    sessionHandle.emit({
+      type: 'external_tool.requested',
+      data: { requestId: 'req-1', toolCallId: 'tool-1', toolName: 'aem_get_json', arguments: {} },
+    });
+
+    const handler = findRegisteredToolHandler(createSession, 'aem_get_json');
+    await handler(
+      {},
+      {
+        sessionId: 'fake-session-id',
+        toolCallId: 'tool-1',
+        toolName: 'aem_get_json',
+        arguments: {},
+      },
+    );
+
+    expect(sessionHandle.abort).not.toHaveBeenCalled();
+    expect(assertLegalSequence(events).state).toBe('streaming');
+  });
+
   it('maps the runtime skill.invoked event onto the internal skill tool call, so it can be hidden and drive search-prose suppression', async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();

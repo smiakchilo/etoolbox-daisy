@@ -3,6 +3,7 @@
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import { AEM_QUERY_FORMAT_ASK_TOOL_NAME } from '../../src/tools/aem-query-format-ask/aemQueryFormatAsk';
 import { AEM_QUERY_TOOL_NAME } from '../../src/tools/aem-query/aemQuery';
 import type { ScriptedStep, ScriptedTurn } from '../../src/main/agents/fakeAgentService';
 import {
@@ -202,6 +203,33 @@ function semanticStep(args: Record<string, unknown>): ScriptedStep {
             operation: 'aem_semantic_search',
             terms: 'waldo',
             textResultForLlm: 'ok',
+            resultType: 'success',
+          } as never,
+        },
+      },
+    },
+  };
+}
+
+/**
+ * A scripted `aem_query_format_ask` call whose successful result carries the
+ * turn-complete marker the real composite sets, so the app ends the turn at
+ * that result instead of resuming the model.
+ */
+function finalSearchStep(): ScriptedStep {
+  return {
+    kind: 'toolCall',
+    call: {
+      toolName: AEM_QUERY_FORMAT_ASK_TOOL_NAME,
+      arguments: { terms: 'waldo' },
+      decision: {
+        kind: 'approved',
+        outcome: {
+          ok: true,
+          data: {
+            operation: AEM_QUERY_FORMAT_ASK_TOOL_NAME,
+            turnComplete: true,
+            textResultForLlm: 'The search is finished',
             resultType: 'success',
           } as never,
         },
@@ -457,5 +485,33 @@ test.describe('deterministic search tables', () => {
       ),
     ).toBe('kept');
     await flushFake(app);
+  });
+
+  test('a turn-completing search result ends the turn instead of resuming the model for closing prose', async () => {
+    const assistantBefore = await shell
+      .locator('.chat-message--assistant:not(.chat-table-message)')
+      .count();
+    await scriptTurn(app, {
+      steps: [
+        formatTableStep(PAGE_2, 'new', 'Total: 3'),
+        finalSearchStep(),
+        // What the model would otherwise add. The prompt is natural language (no
+        // `/search`), so prose suppression does not apply here: the closing line
+        // is absent only because the turn ended at the marked result.
+        { kind: 'delta', text: 'The search is finished.' },
+      ],
+    });
+    await sendViaComposer(shell, 'search for waldo');
+    await flushFake(app);
+
+    await expect(shell.locator(TABLE).last()).toBeVisible({ timeout: 30_000 });
+    // No ordinary assistant bubble: the closing delta was never emitted.
+    await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(
+      assistantBefore,
+    );
+    // The turn reached idle: the composer is usable and no "Session stopped"
+    // notice was raised for a search that simply finished.
+    await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '');
+    await expect(shell.locator(COMPOSER_SEND)).not.toHaveAttribute('disabled', '');
   });
 });

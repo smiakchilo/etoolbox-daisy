@@ -27,6 +27,7 @@ import {
   canSendMessage,
   createToolError,
   err,
+  isTurnCompleteResult,
   newMessageId,
   newReasoningId,
   newRequestId,
@@ -696,11 +697,20 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       }
       const toolCallId = newToolCallId(idGenerator);
       queue.push(makeToolRequestedEvent(chatId, toolCallId, step.call));
-      if (step.call.decision.kind === 'approved') {
-        queue.push(makeToolApprovedEvent(chatId, toolCallId));
-        queue.push(makeToolResultEvent(chatId, toolCallId, step.call.decision.outcome));
-      } else {
+      if (step.call.decision.kind === 'rejected') {
         queue.push(makeToolRejectedEvent(chatId, toolCallId, step.call.decision.reason));
+        continue;
+      }
+      queue.push(makeToolApprovedEvent(chatId, toolCallId));
+      queue.push(makeToolResultEvent(chatId, toolCallId, step.call.decision.outcome));
+      // A turn-completing tool result ends the turn here, exactly as the real
+      // adapters do at `TURN_COMPLETE_RESULT_KEY` (see
+      // `endTurnOnCompletedTool`): the model is not resumed, so any later
+      // scripted step - a closing "search is finished" delta - is never
+      // emitted, and the closing `assistant.message.completed` below carries
+      // only the text that preceded the call.
+      if (step.call.decision.outcome.ok && isTurnCompleteResult(step.call.decision.outcome.data)) {
+        break;
       }
     }
     closeReasoningBlock();

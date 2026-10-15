@@ -127,6 +127,40 @@ describe('FakeAgentService - scripted content', () => {
     assertLegalSequence(events);
   });
 
+  it('ends a scripted turn at a turn-completing tool result, dropping any later scripted delta', async () => {
+    const ids = counterIdGenerator();
+    const fake = createFakeAgentService();
+    const events: AgentEvent[] = [];
+    fake.onEvent((event) => events.push(event));
+    const chatId = newChatId(ids);
+    await fake.openConversation({ chatId });
+
+    fake.scriptNextResponse({
+      steps: [
+        { kind: 'delta', text: 'Searching. ' },
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'aem_query_format_ask',
+            arguments: { terms: 'waldo' },
+            decision: { kind: 'approved', outcome: { ok: true, data: { turnComplete: true } } },
+          },
+        },
+        // What the model would otherwise add: the real adapters never resume the
+        // model after a turn-completing result, so the fake must not emit it.
+        { kind: 'delta', text: 'The search is finished.' },
+      ],
+    });
+    await fake.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
+    fake.flush();
+
+    const deltas = events.filter((event) => event.type === 'assistant.text.delta');
+    expect(deltas.map((event) => (event as { delta: string }).delta)).toEqual(['Searching. ']);
+    expect(events.find(isCompletedEvent)?.content).toBe('Searching. ');
+    expect(events.at(-1)).toMatchObject({ type: 'session.state.changed', state: 'idle' });
+    assertLegalSequence(events);
+  });
+
   it('finalContentOverride lets a scenario deliberately diverge from the folded deltas', async () => {
     const ids = counterIdGenerator();
     const fake = createFakeAgentService();
