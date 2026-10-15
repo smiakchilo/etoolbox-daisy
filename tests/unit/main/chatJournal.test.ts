@@ -35,6 +35,7 @@ afterEach(() => {
 
 const CHAT_ID = 'chat-1' as ChatId;
 const TURN_ID = 'turn-1' as TurnId;
+const SECOND_TURN_ID = 'turn-2' as TurnId;
 const MESSAGE_ID = 'message-1' as MessageId;
 
 function readRecords(dir: string, chatId = CHAT_ID): unknown[] {
@@ -57,12 +58,12 @@ function counterClock(start = 1000): () => number {
 const SDK_SESSION_ID = 'sdk-session-1' as SdkSessionId;
 const SERVER_ID = 'server-a' as ServerId;
 
-const stateChanged = (state: string, withTurn = true): AgentEvent =>
+const stateChanged = (state: string, withTurn = true, turnId: TurnId = TURN_ID): AgentEvent =>
   ({
     type: 'session.state.changed',
     chatId: CHAT_ID,
     sequence: 0,
-    ...(withTurn ? { turnId: TURN_ID } : {}),
+    ...(withTurn ? { turnId } : {}),
     state,
   }) as AgentEvent;
 
@@ -233,6 +234,72 @@ describe('createChatJournal - header', () => {
     const journal = createChatJournal(dir, { now: counterClock() });
     journal.openChat({ chatId: '../escape' as ChatId, sdkSessionId: SDK_SESSION_ID });
     expect(journal.getHealth().lastFailureCode).toBe('UNSAFE_CHAT_ID');
+  });
+});
+
+describe("createChatJournal - the chat's host", () => {
+  it('fills a deferred header with the host the chat was first used on', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    // The startup chat: opened before any page/host was restored.
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordUserPrompt({
+      chatId: CHAT_ID,
+      turnId: TURN_ID,
+      prompt: 'where is the media library?',
+      serverId: SERVER_ID,
+    });
+    journal.recordEvent(stateChanged('sending'));
+
+    const records = readRecords(dir);
+    expect(records[0]).toMatchObject({ recordType: 'header', serverId: 'server-a' });
+    expect(records[1]).toMatchObject({ recordType: 'user.prompt', serverId: 'server-a' });
+  });
+
+  it("keeps the open-time host over a later prompt's", () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID, serverId: SERVER_ID });
+    journal.recordUserPrompt({
+      chatId: CHAT_ID,
+      turnId: TURN_ID,
+      prompt: 'hi',
+      serverId: 'server-b' as ServerId,
+    });
+    journal.recordEvent(stateChanged('sending'));
+
+    const records = readRecords(dir);
+    expect(records[0]).toMatchObject({ recordType: 'header', serverId: 'server-a' });
+    expect(records[1]).toMatchObject({ recordType: 'user.prompt', serverId: 'server-b' });
+  });
+
+  it('leaves the header host-less when no prompt named one, and records a later host on its prompt', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    // First send with no host: the header is flushed host-less.
+    journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'plain' });
+    journal.recordEvent(stateChanged('sending'));
+    journal.recordEvent(stateChanged('idle'));
+    // A later send on a host: the append-only header cannot gain it, so the host
+    // rides on the prompt record for History to find.
+    journal.recordUserPrompt({
+      chatId: CHAT_ID,
+      turnId: SECOND_TURN_ID,
+      prompt: 'on a host',
+      serverId: SERVER_ID,
+    });
+    journal.recordEvent(stateChanged('sending', true, SECOND_TURN_ID));
+
+    const records = readRecords(dir);
+    expect(records[0]).toMatchObject({ recordType: 'header' });
+    expect(records[0]).not.toHaveProperty('serverId');
+    const prompts = records.filter(
+      (record) => (record as { recordType: string }).recordType === 'user.prompt',
+    );
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toHaveProperty('serverId');
+    expect(prompts[1]).toMatchObject({ serverId: 'server-a' });
   });
 });
 

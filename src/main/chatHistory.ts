@@ -18,10 +18,11 @@ import { readChatJournal, type ChatJournalReadOutcome } from './chatJournalReade
  * like the writer and reader beside it.
  *
  * THERE IS NO SECOND METADATA STORE. The journal already holds everything the
- * list needs - the header's `startedAt`/`serverId`/`sdkSessionId` and the first
- * `user.prompt` - so an index would only be a second thing to keep in sync with
- * the file it summarizes. The cost is reading each (bounded, small) journal on
- * every open; the alternative, a store that can drift from the journals it
+ * list needs - the header's `startedAt`/`sdkSessionId`, the chat's host (the
+ * header's `serverId`, or the first prompt's when the header names none) and the
+ * first `user.prompt` - so an index would only be a second thing to keep in sync
+ * with the file it summarizes. The cost is reading each (bounded, small) journal
+ * on every open; the alternative, a store that can drift from the journals it
  * describes, is strictly worse for a local single-user app.
  *
  * A journal that cannot be read (missing, unreadable, too large, torn) is
@@ -71,6 +72,20 @@ function entryFromRecords(
   const firstPrompt = records.find((record) => record.recordType === 'user.prompt');
   const title = firstPrompt === undefined ? undefined : deriveChatTitle(firstPrompt.prompt);
 
+  // The host the chat belongs to. The header names the host active when the chat
+  // *opened*, which for the startup chat (opened before any page was restored) is
+  // none. The first prompt that named one is the host it was first *used* on, so
+  // it is the fallback - first known host wins.
+  let serverId = header.serverId;
+  if (serverId === undefined) {
+    for (const record of records) {
+      if (record.recordType === 'user.prompt' && record.serverId !== undefined) {
+        serverId = record.serverId;
+        break;
+      }
+    }
+  }
+
   let updatedAt = header.startedAt;
   for (const record of records) {
     const at = recordAt(record);
@@ -82,7 +97,7 @@ function entryFromRecords(
     ...(title !== undefined ? { title } : {}),
     startedAt: header.startedAt,
     updatedAt,
-    ...(header.serverId !== undefined ? { serverId: header.serverId } : {}),
+    ...(serverId !== undefined ? { serverId } : {}),
     ...(header.sdkSessionId !== undefined ? { sdkSessionId: header.sdkSessionId } : {}),
   };
 }

@@ -31,13 +31,18 @@ function header(chatId: string, options: { readonly serverId?: string } = {}): C
   } as unknown as ChatJournalRecord;
 }
 
-function userPrompt(chatId: string, prompt: string, at = 2000): ChatJournalRecord {
+function userPrompt(
+  chatId: string,
+  prompt: string,
+  options: { readonly at?: number; readonly serverId?: string } = {},
+): ChatJournalRecord {
   return {
     recordType: 'user.prompt',
-    at,
+    at: options.at ?? 2000,
     chatId,
     turnId: `turn-${chatId}`,
     prompt,
+    ...(options.serverId !== undefined ? { serverId: options.serverId } : {}),
   } as unknown as ChatJournalRecord;
 }
 
@@ -103,6 +108,44 @@ describe('listChatHistory', () => {
     });
     expect(entries).toHaveLength(1);
     expect(entries[0]?.title).toBeUndefined();
+  });
+
+  it('falls back to the first prompt that named a host when the header names none', () => {
+    const entries = listChatHistory(CHATS_DIR, {
+      readDirectory: () => ['chat-1.jsonl'],
+      readJournal: readerFor({
+        'chat-1': [
+          header('chat-1'),
+          userPrompt('chat-1', 'plain'),
+          userPrompt('chat-1', 'on a host', { at: 3000, serverId: 'server-p' }),
+        ],
+      }),
+    });
+    expect(entries[0]?.serverId).toBe('server-p');
+  });
+
+  it("prefers the header's host over a later prompt's", () => {
+    const entries = listChatHistory(CHATS_DIR, {
+      readDirectory: () => ['chat-1.jsonl'],
+      readJournal: readerFor({
+        'chat-1': [
+          header('chat-1', { serverId: 'server-9' }),
+          userPrompt('chat-1', 'later', { serverId: 'server-p' }),
+        ],
+      }),
+    });
+    expect(entries[0]?.serverId).toBe('server-9');
+  });
+
+  it('stays host-less when neither the header nor any prompt named one', () => {
+    const entries = listChatHistory(CHATS_DIR, {
+      readDirectory: () => ['chat-1.jsonl'],
+      readJournal: readerFor({
+        'chat-1': [header('chat-1'), userPrompt('chat-1', 'plain')],
+      }),
+    });
+    expect(entries[0]?.serverId).toBeUndefined();
+    expect(entries[0]).not.toHaveProperty('serverId');
   });
 
   it('orders by most recently used, breaking ties by chat id', () => {

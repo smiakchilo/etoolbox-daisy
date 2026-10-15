@@ -647,6 +647,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const turnId = newTurnId(idGenerator);
     activeTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
     const pageContext = deps.currentPageContext();
+    // Read fresh, exactly as the tool context is: the host the chat is first
+    // *used* on is what its journal should record, which for the startup chat
+    // (opened before any page was restored) is the only time a host is known.
+    const server = deps.currentAemServerContext();
     // The user's own text is kept for display and the journal; only the prompt
     // the model reads is rewritten for a leading `/skillname`.
     const modelPrompt = deps.resolveSkillPrompt?.(request.prompt) ?? request.prompt;
@@ -659,6 +663,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       chatId: request.chatId,
       turnId,
       prompt: request.prompt,
+      ...(server !== undefined ? { serverId: server.serverId } : {}),
       ...(pageContext !== undefined && pageContext.length > 0 ? { pageContext } : {}),
     });
     const result = await agentService.sendPrompt({

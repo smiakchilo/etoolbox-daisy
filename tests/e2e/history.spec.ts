@@ -168,13 +168,13 @@ test.describe('History panel', () => {
       const secondRow = row(page, 'second question about assets');
       await expect(firstRow).toBeVisible();
       await expect(secondRow).toBeVisible();
-      // Each row carries a formatted start date. The host is the server that
-      // was active when the chat *opened*: the first chat opened at startup
-      // before any host was picked, so its row has no host chip at all (omitted,
-      // not shown as a placeholder); the second opened after the page loaded,
-      // so it names Echo.
+      // Each row carries a formatted start date and the host the chat was first
+      // *used* on. The first chat's header was still deferred when it was opened
+      // at startup (before any host was picked), so it takes the host its first
+      // prompt named; the second opened after the page loaded, so it names Echo
+      // too.
       await expect(firstRow.locator('.history-item__date')).not.toBeEmpty();
-      await expect(firstRow.locator('.history-item__server')).toHaveCount(0);
+      await expect(firstRow.locator('.history-item__server-label')).toHaveText('Echo');
       await expect(secondRow.locator('.history-item__server-label')).toHaveText('Echo');
 
       // Resume is an icon button wearing the replay glyph, and the glyph is a
@@ -265,6 +265,10 @@ test.describe('History panel', () => {
       await page.locator('.chat-toolbar sp-action-button[aria-label="History"]').click();
       await expect(page.locator('.history-panel')).toBeVisible({ timeout: 30_000 });
       const target = row(page, 'a chat that will be recycled');
+      // No host was configured or picked in this profile, so the chat stayed
+      // host-less and its row shows no host chip at all (omitted, never a
+      // placeholder).
+      await expect(target.locator('.history-item__server')).toHaveCount(0);
       await target.locator('.history-item__delete').click();
       await target.locator('.history-item__confirm-delete').click();
       await expect(page.locator('.history-item')).toHaveCount(0, { timeout: 30_000 });

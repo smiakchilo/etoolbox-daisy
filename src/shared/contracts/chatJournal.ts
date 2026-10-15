@@ -110,6 +110,16 @@ export type ChatJournalSessionOpenedRecord = Readonly<
  * turn - which host, which roots, which page - except by asking the model, whose
  * own account can be wrong. Absent when the pane was on no AEM page of the
  * active server (so there was no block).
+ *
+ * `serverId` is the AEM host the pane was on when this prompt was sent. A chat
+ * is "bound to one server" by policy, and the header's `serverId` records the
+ * host the chat *opened* on - but the startup chat opens before any page is
+ * restored, so its header often names none. This field is what makes the host
+ * known at the moment the chat is first *used*: the writer fills a still-deferred
+ * header from the first prompt that names a host, and History falls back to the
+ * first prompt's `serverId` when the header names none (first known host wins).
+ * Absent when the pane was on no configured host. Diagnostics, like
+ * `pageContext` - the renderer never paints it.
  */
 export const chatJournalUserPromptRecordSchema = z
   .object({
@@ -119,6 +129,7 @@ export const chatJournalUserPromptRecordSchema = z
     turnId: turnIdSchema,
     prompt: z.string().min(1).max(PROMPT_MAX_LENGTH),
     pageContext: z.string().min(1).max(PAGE_CONTEXT_MAX_LENGTH).optional(),
+    serverId: serverIdSchema.optional(),
   })
   .strict();
 

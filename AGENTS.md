@@ -194,7 +194,12 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent contract change is the per-chat SDK session history
+> The most recent contract change is "a chat records its host when it is first
+> used" (2026-10-15): `contracts/chatJournal.ts`'s `user.prompt` record gained an
+> optional `serverId` (the host the pane was on when the prompt was sent), so a
+> chat opened before any host was restored still records the host it was first
+> *used* on — see `docs/verification.md` "A chat records its host when it is
+> first used (2026-10-15)". Before that it was the per-chat SDK session history
 > (2026-10-15): `contracts/chatJournal.ts` gained a `session.opened` record
 > (after the header, one per runtime recycle) so chat deletion can remove every
 > SDK session the chat minted — see `docs/verification.md` "Per-chat SDK session
@@ -976,9 +981,23 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3307 passed / 14 skipped** (+11 against the
-3296 of the previous entry - **Per-chat SDK session history**: a chat's journal
-now records every SDK session it was opened with, so deleting it removes the
+Current baseline: **`npm run test` → 3317 passed / 14 skipped** (+10 against the
+3307 of the previous entry - **A chat records its host when it is first used**:
+the journal's `user.prompt` record gains an optional `serverId`, so a chat's host
+is observed at first *use*, not only at open - the startup chat opens before any
+page is restored, so its header often named none. `chatJournal.ts`'s
+`flushPendingPrompt` fills a still-deferred header's absent `serverId` from the
+prompt's, `sendMessage` supplies it from `currentAemServerContext()` (read
+fresh), and `chatHistory` falls back to the first prompt that named a host
+(first known host wins). Contract change: `contracts/chatJournal.ts`'s
+`user.prompt` gains `serverId`. +2 contract cases, +3 `chatJournal`, +3
+`chatHistory`, +2 `agentChatController` (3 existing exact `recordUserPrompt`
+arguments updated); the built-app `history.spec.ts` first case now asserts the
+startup chat, used on Echo, is listed with Echo, and its second pins the omitted
+chip for a chat never used on a host. See `docs/verification.md` "A chat records
+its host when it is first used (2026-10-15)". Before that it was 3307 (+11
+against the 3296 of the previous entry - **Per-chat SDK session history**: a chat's
+journal now records every SDK session it was opened with, so deleting it removes the
 SDK's stored data for a runtime recycle's later session too, not only the
 header's first. Contract change: a new `session.opened` record in
 `chatJournal.ts`. `openChat` appends one when an already-open chat is recycled

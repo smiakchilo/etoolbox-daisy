@@ -63,6 +63,12 @@ export interface ChatJournalUserPromptParams {
   readonly prompt: string;
   /** The current-page block the model read besides the prompt, when there was one. */
   readonly pageContext?: string | undefined;
+  /**
+   * The AEM host the pane was on when this prompt was sent, if any. The first
+   * prompt that names one is what gives a chat opened with no host its host (see
+   * the record schema's own doc), and it is stored on the record as diagnostics.
+   */
+  readonly serverId?: ServerId | undefined;
 }
 
 export interface ChatJournalInterruptionParams {
@@ -192,6 +198,7 @@ interface OpenChat {
     readonly turnId: TurnId;
     readonly prompt: string;
     readonly pageContext?: string;
+    readonly serverId?: ServerId;
     readonly at: number;
   };
   /** The turn being timed, from its first event until its terminal one. */
@@ -300,6 +307,18 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
     if (pending === undefined || pending.turnId !== turnId) return;
     beginTurn(state, chatId, turnId);
     delete state.pendingPrompt;
+    // The chat's host is the one active when it was first *used*. A fresh chat's
+    // header is deferred until this, its first record, so a header that names no
+    // host yet takes the prompt's - the open-time host, when there was one, is
+    // already on the header and wins (first known host).
+    const pendingHeader = state.pendingHeader;
+    if (
+      pendingHeader !== undefined &&
+      pendingHeader.serverId === undefined &&
+      pending.serverId !== undefined
+    ) {
+      state.pendingHeader = { ...pendingHeader, serverId: pending.serverId };
+    }
     appendRecord(state, {
       recordType: 'user.prompt',
       at: now(),
@@ -307,6 +326,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       turnId: pending.turnId,
       prompt: pending.prompt,
       ...(pending.pageContext !== undefined ? { pageContext: pending.pageContext } : {}),
+      ...(pending.serverId !== undefined ? { serverId: pending.serverId } : {}),
     });
   }
 
@@ -552,6 +572,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         turnId: params.turnId,
         prompt: params.prompt,
         ...(params.pageContext !== undefined ? { pageContext: params.pageContext } : {}),
+        ...(params.serverId !== undefined ? { serverId: params.serverId } : {}),
         at: now(),
       };
     },

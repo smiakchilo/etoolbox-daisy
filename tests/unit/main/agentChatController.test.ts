@@ -862,7 +862,12 @@ describe('agentChatController chat journal', () => {
     // The prompt is staged before sendPrompt, whose synchronous first event is
     // the "sending" state change - so on disk the prompt precedes the turn.
     expect(methods(calls).slice(1, 3)).toEqual(['recordUserPrompt', 'recordEvent']);
-    expect(calls[1]?.args).toEqual({ chatId, turnId: sent.turnId, prompt: 'hello' });
+    expect(calls[1]?.args).toEqual({
+      chatId,
+      turnId: sent.turnId,
+      prompt: 'hello',
+      serverId: 'server-a',
+    });
     expect(calls[2]?.args).toMatchObject({ type: 'session.state.changed', state: 'sending' });
 
     agentService.flush();
@@ -887,8 +892,47 @@ describe('agentChatController chat journal', () => {
       chatId,
       turnId: sent.turnId,
       prompt: 'hello',
+      serverId: 'server-a',
       pageContext: block,
     });
+  });
+
+  it('journals the host the chat is used on, read fresh at send time', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    let server: AemServerContext | undefined = serverContext({ serverId: 'server-a' as ServerId });
+    const { controller } = buildController(agentService, {
+      chatJournal: journal,
+      currentAemServerContext: () => server,
+    });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    // The pane moves to another host before the first prompt: the controller
+    // reports the host at send time, and the journal applies first-known-host-wins.
+    server = serverContext({ serverId: 'server-b' as ServerId });
+    await controller.sendMessage({ chatId, prompt: 'hello' });
+
+    expect(calls[0]?.method).toBe('openChat');
+    expect(calls[0]?.args).toMatchObject({ serverId: 'server-a' });
+    expect(calls[1]?.args).toMatchObject({ serverId: 'server-b' });
+  });
+
+  it('journals no host when none is selected', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, {
+      chatJournal: journal,
+      currentAemServerContext: () => undefined,
+    });
+
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    await controller.sendMessage({ chatId, prompt: 'hello' });
+
+    expect(calls[0]?.method).toBe('openChat');
+    expect(calls[0]?.args).not.toHaveProperty('serverId');
+    expect(calls[1]?.args).not.toHaveProperty('serverId');
   });
 
   it.each([
