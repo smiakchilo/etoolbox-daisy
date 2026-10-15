@@ -17,6 +17,21 @@ import { type UserInputRequest, USER_INPUT_MAX_ACTIONS } from '../../../shared';
 /** The cheat-code prefix. `!!` cannot collide with a `/skillname`. */
 export const ASK_USER_PREVIEW_PREFIX = '!!ask';
 
+/** The `!!ask` forms as `[form, description]` pairs; `!!ask ?` prints them (see `devCommands.ts`). */
+export const ASK_USER_PREVIEW_HELP: ReadonlyArray<readonly [string, string]> = [
+  ['!!ask', 'default: 3 options, single-select (radios)'],
+  ['!!ask radio 8', 'single-select, 8 options (dropdown)'],
+  ['!!ask multi 4', 'multiple, 4 options (checkboxes)'],
+  ['!!ask multi 8', 'multiple, 8 options (multi-select dropdown)'],
+  ['!!ask free', 'free input only'],
+  ['!!ask radio 3 +free', 'options plus the free-input link'],
+  ['!!ask actions', 'one-click actions: a single "Action" button (no question/text field)'],
+  ['!!ask actions 3', 'one-click actions: 3 buttons, all labelled "Action"'],
+  ['!!ask load', 'a search prompt\'s "Load more" with "Load all" beside it'],
+  ['!!ask long', 'long question/labels (wrapping)'],
+  ['!!ask nasty', 'HTML-ish labels (proves textContent, never HTML)'],
+];
+
 const DEFAULT_OPTIONS = ['Option A', 'Option B', 'Option C'];
 
 function numberedOptions(count: number): string[] {
@@ -26,17 +41,8 @@ function numberedOptions(count: number): string[] {
 /**
  * Parses a `!!ask ...` input into a preview request, or `undefined` when the
  * input is not a preview command (so ordinary prompts pass through untouched).
- *
- *   !!ask                  default: 3 options, single-select (radios)
- *   !!ask radio 8          single-select, 8 options (dropdown)
- *   !!ask multi 4          multiple, 4 options (checkboxes)
- *   !!ask multi 8          multiple, 8 options (multi-select dropdown)
- *   !!ask free             free input only
- *   !!ask radio 3 +free    options plus the free-input link
- *   !!ask actions          one-click actions: a single "Action" button (no question/text field)
- *   !!ask actions 3        one-click actions: 3 buttons, all labelled "Action"
- *   !!ask long             long question/labels (wrapping)
- *   !!ask nasty            HTML-ish labels (proves textContent, never HTML)
+ * The accepted forms are in {@link ASK_USER_PREVIEW_HELP}; a lone `?`/`help`
+ * argument is answered by `devCommands.ts` before this parser runs.
  */
 export function parseAskUserPreview(input: string): UserInputRequest | undefined {
   const trimmed = input.trim();
@@ -107,6 +113,13 @@ export function parseAskUserPreview(input: string): UserInputRequest | undefined
       freeInput: false,
     };
   }
+  if (kind === 'load') {
+    return {
+      actions: ['Load more', 'Load all'],
+      multiple: false,
+      freeInput: false,
+    };
+  }
   if (kind === 'radio' || kind === 'multi') {
     const requested = Number.parseInt(tokens[1] ?? '3', 10);
     const count = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : 3;
@@ -119,7 +132,7 @@ export function parseAskUserPreview(input: string): UserInputRequest | undefined
   }
 
   return {
-    question: `Unrecognised preview "${rest}" - try: radio N, multi N, free, actions [N], long, nasty`,
+    question: `Unrecognised preview "${rest}" - try: radio N, multi N, free, actions [N], load, long, nasty`,
     options: DEFAULT_OPTIONS,
     multiple: false,
     freeInput: false,

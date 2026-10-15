@@ -399,6 +399,64 @@ test.describe('ask-user interactive question', () => {
     await expect(shell.locator('.chat-ask-user')).toHaveCount(shellsBefore);
   });
 
+  test('Load more and Load all sit together at the left, before Cancel', async () => {
+    await scriptTurn(app, {
+      steps: [{ kind: 'inputRequest', actions: ['Load more', 'Load all'] }],
+    });
+    await sendViaComposer(shell, '/search waldo');
+    await flushFake(app);
+
+    const buttons = shell.locator('.chat-ask__action');
+    await expect(buttons).toHaveCount(2);
+    await expect(buttons.nth(0)).toHaveText('Load more');
+    await expect(buttons.nth(1)).toHaveText('Load all');
+    await expect(shell.locator('.chat-ask__actions')).toHaveCount(1);
+
+    const first = await buttons.nth(0).boundingBox();
+    const second = await buttons.nth(1).boundingBox();
+    const cancel = await shell.locator(COMPOSER_STOP).boundingBox();
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(cancel).not.toBeNull();
+    if (first && second && cancel) {
+      // Load more left, Load all to its right, Cancel right of both with a gap.
+      expect(second.x).toBeGreaterThan(first.x + first.width);
+      expect(cancel.x).toBeGreaterThan(second.x + second.width);
+      expect(cancel.x - (second.x + second.width)).toBeGreaterThanOrEqual(8);
+    }
+
+    // "Load all" is the emphasized action: an accent-blue border *and* label,
+    // distinct from "Load more"'s default hairline border and dark text.
+    // Spectrum paints both from the `--mod-actionbutton-*-color` tokens, so read
+    // the resolved colours (the border off the host, the label off its shadow).
+    const colorsOf = (index: number): Promise<{ border: string; text: string }> =>
+      buttons.nth(index).evaluate((element) => {
+        const label = (
+          element as HTMLElement & { shadowRoot: ShadowRoot | null }
+        ).shadowRoot?.querySelector('#label');
+        return {
+          border: getComputedStyle(element).borderTopColor,
+          text: label ? getComputedStyle(label).color : getComputedStyle(element).color,
+        };
+      });
+    const emphasized = await colorsOf(1);
+    const plain = await colorsOf(0);
+    expect(emphasized.border).not.toBe(plain.border);
+    expect(emphasized.text).not.toBe(plain.text);
+    const blueDominant = (value: string): boolean => {
+      const [r = 0, g = 0, b = 0] = (value.match(/\d+/g) ?? []).map(Number);
+      // Blue-dominant: the colour really is the accent, not some grey.
+      return b > r && b > g;
+    };
+    expect(blueDominant(emphasized.border)).toBe(true);
+    expect(blueDominant(emphasized.text)).toBe(true);
+
+    // Clicking Load all answers with its own label, ending the turn.
+    await buttons.nth(1).click();
+    await flushFake(app);
+    await expect(shell.locator('.chat-ask__actions')).toBeHidden();
+  });
+
   test('Cancel on a pending question dismisses it without ending the turn', async () => {
     await scriptTurn(app, {
       steps: [{ kind: 'inputRequest', actions: ['Load more'] }],

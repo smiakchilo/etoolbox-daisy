@@ -308,7 +308,11 @@ describe('aem_query_format_ask executor', () => {
     const { host, calls } = makeHost((name, args) => {
       if (name === 'aem_query') {
         queries += 1;
-        return ok(queryPage(2, queries < 2, args['offset'] as number));
+        // A total far beyond the "Load all" budget: this test is about the
+        // single-page Load more path, which stays the only button.
+        return ok(
+          queryPage(2, queries < 2, args['offset'] as number, { accuracy: 'exact', value: 5000 }),
+        );
       }
       return ok(name === 'ask_user' ? loadMore : tableOk);
     });
@@ -553,6 +557,127 @@ describe('aem_query_format_ask executor', () => {
     );
     expect(!result.ok && result.error.code).toBe('CANCELLED');
     expect(calls).toEqual([]);
+  });
+});
+
+describe('aem_query_format_ask "Load all"', () => {
+  const loadAll: JsonValue = { selections: ['Load all'], freeform: null };
+
+  it("offers Load all beside Load more when the page's own exact total fits the budget", async () => {
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(
+            offset === 0
+              ? queryPage(2, true, 0, { accuracy: 'exact', value: 4 })
+              : queryPage(2, false, 2, { accuracy: 'exact', value: 4 }),
+          );
+        }
+        return ok(name === 'ask_user' ? loadMore : tableOk);
+      },
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+
+    expect(calls[2]?.args).toEqual({ actions: ['Load more', 'Load all'] });
+    expect(payload(result)).toMatchObject({ pages: 2, rows: 4, ended: 'exhausted' });
+  });
+
+  it('loads every remaining page on one Load all click, without asking again', async () => {
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(queryPage(2, offset < 4, offset, { accuracy: 'exact', value: 6 }));
+        }
+        return ok(name === 'ask_user' ? loadAll : tableOk);
+      },
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+
+    expect(calls.map((call) => call.name)).toEqual([
+      'aem_query',
+      'format_table',
+      'ask_user',
+      'aem_query',
+      'format_table',
+      'aem_query',
+      'format_table',
+    ]);
+    expect(payload(result)).toMatchObject({ pages: 3, rows: 6, ended: 'exhausted' });
+  });
+
+  it('does not offer Load all when the exact total exceeds the page budget', async () => {
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(
+            offset === 0
+              ? queryPage(2, true, 0, { accuracy: 'exact', value: 203 })
+              : queryPage(2, false, 2, { accuracy: 'exact', value: 203 }),
+          );
+        }
+        return ok(name === 'ask_user' ? loadMore : tableOk);
+      },
+      ['/content/site'],
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', limit: 2 }, callContext);
+
+    expect(calls[2]?.args).toEqual({ actions: ['Load more'] });
+  });
+
+  it('offers Load all on the next question once a lower-bound count settles', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const firstAsk = deferred<Result<JsonValue, ToolError>>();
+    let asked = 0;
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(
+            offset < 4
+              ? lowerBoundPage(2, true, offset)
+              : queryPage(2, false, offset, { accuracy: 'exact', value: 6 }),
+          );
+        }
+        if (name === 'ask_user') {
+          asked += 1;
+          return asked === 1 ? firstAsk.promise : ok(loadMore);
+        }
+        return ok(tableOk);
+      },
+      ['/content/site'],
+      { currentContext: () => COUNT_CONTEXT, count: () => gate.promise },
+    );
+
+    const running = createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+    await flush();
+
+    // Page 1's question: the exact total is still counting, so no Load all yet.
+    const firstAskCall = calls.find((call) => call.name === 'ask_user');
+    expect(firstAskCall?.args).toEqual({ actions: ['Load more'] });
+
+    // The count settles (it fits), then the user loads the next page.
+    gate.resolve(countResponse(6));
+    await flush();
+    firstAsk.resolve(ok(loadMore));
+    await running;
+
+    const asks = calls.filter((call) => call.name === 'ask_user');
+    expect(asks).toHaveLength(2);
+    expect(asks[1]?.args).toEqual({ actions: ['Load more', 'Load all'] });
   });
 });
 

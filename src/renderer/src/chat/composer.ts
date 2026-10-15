@@ -73,6 +73,18 @@ const ATTENTION_ANIMATION = 'chat-composer-attention';
 const STRIP_CLASS = 'chat-composer__frame--strip';
 
 /**
+ * The one-click action labels painted as the **emphasized** variant, so a
+ * secondary, whole-result action reads distinctly from the primary one beside
+ * it - the search composites offer "Load all" beside "Load more". Keyed by
+ * label because the ask-user contract carries only labels; see `chat.css`'s
+ * `.chat-ask__action--emphasis` (an accent-blue border).
+ */
+const EMPHASIZED_ACTIONS: ReadonlySet<string> = new Set(['Load all']);
+
+/** The modifier class {@link buildActionButton} adds for an {@link EMPHASIZED_ACTIONS} label. */
+const ACTION_EMPHASIS_CLASS = 'chat-ask__action--emphasis';
+
+/**
  * The composer's mutable working copy of an in-progress ask-user answer. Kept
  * mutable so the option controls (which the DOM owns) can update it in place
  * without rebuilding themselves on every keystroke/selection.
@@ -104,8 +116,10 @@ export interface ComposerCallbacks {
   /**
    * Dev-only: intercepts an input before it is sent, so local cheat codes
    * (`!!ask ...`, `!!open <chatId>`) can drive the composer without a model or
-   * an AEM instance. Returns whether the input was consumed. Absent in a
-   * packaged build, where the composer never treats any input as a command.
+   * an AEM instance. A lone `?` argument prints a command's usage (`!!ask ?`,
+   * `!!open ?`; `!!?` lists them all - see `dev/devCommands.ts`). Returns
+   * whether the input was consumed. Absent in a packaged build, where the
+   * composer never treats any input as a command.
    */
   onDevCommand?(input: string): boolean;
 }
@@ -528,10 +542,16 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
    * One one-click action button. It answers the instant it is clicked (there
    * is no Submit); the answered panel is held on screen (buttons disabled) until
    * the next question or the end of the turn - see `holdingAnsweredActions`.
+   * An {@link EMPHASIZED_ACTIONS} label additionally wears the emphasized
+   * modifier (a blue border).
    */
   function buildActionButton(action: string): HTMLElement {
+    const emphasized = EMPHASIZED_ACTIONS.has(action);
     const button = el('sp-action-button', {
-      attrs: { class: 'chat-ask__action', 'aria-label': action },
+      attrs: {
+        class: emphasized ? `chat-ask__action ${ACTION_EMPHASIS_CLASS}` : 'chat-ask__action',
+        'aria-label': action,
+      },
       text: action,
     });
     button.addEventListener('click', () => {

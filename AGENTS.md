@@ -416,10 +416,16 @@ in the pane. The second is the **open-by-id trigger**: the pure parser
 `openStoredConversation`, which reads that chat's journal, paints it, and
 opens/resumes it (the header's session id first, else a fresh session under the
 same id) — the only way to reach a chat the last-used pointer and its host gate
-can never select. Keep new dev-only modules here rather than mixing them into
-`chat/`/`shell/`. These modules are intentionally **untested** — they exist to
-exercise other code, and testing the test tooling is redundant (their behaviour
-is covered end-to-end by the real features' specs).
+can never select. A third module, `dev/devCommands.ts`, is the one **command
+registry**: each command exports its `[form, description]` usage lines, and the
+registry answers a lone `?`/`help` argument for all of them (`!!ask ?`,
+`!!open ?`; `!!?` lists every command), printing the usage into the transcript
+as a synthetic assistant message. It is checked *before* the command parsers, so
+`?` is never mistaken for an argument. Keep new dev-only modules here rather
+than mixing them into `chat/`/`shell/`. These modules are intentionally
+**untested** — they exist to exercise other code, and testing the test tooling
+is redundant (their behaviour is covered end-to-end by the real features'
+specs).
 
 ### Tools are plugins: one folder under `src/tools/<name>/`
 
@@ -911,8 +917,16 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3227 passed / 14 skipped** (+85 against the
-3142 measured at the start of this work; the 3112 below is the older logged
+Current baseline: **`npm run test` → 3232 passed / 14 skipped** (+5 against the
+3227 of the previous entry - **"Load all"**: the chat's search table gains a
+**Load all** button beside **Load more**, offered only once an exact total is
+known and the remaining matches fit within `LOAD_ALL_PAGE_LIMIT` (100) further
+pages, and a click pages to the end without asking again; it wears an
+**accent-blue border and label**, distinguishing it from "Load more" (an
+emphasized-action class keyed on its label, `composer.ts`) - see
+`docs/verification.md` "\"Load all\": one click finishes a search that fits in
+the page budget (2026-10-14)"). Before that, 3227 (+85 against the
+3142 measured at the start of that work; the 3112 below is the older logged
 figure - **search scope and instruction resources**: the model-facing prose moved
 out of TypeScript into `resources/instructions/` (`session.md`, `skills.md`)
 (the small per-tool search prose stays inline in each tool), a search's `roots`

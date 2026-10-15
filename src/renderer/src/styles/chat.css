@@ -664,7 +664,7 @@
   gap: var(--spectrum-spacing-100, 8px);
   /* Extra breathing room between the Send/Stop control and the frame edge,
      on top of the frame's own padding. */
-  padding: 0 4px 4px 0;
+  padding: 4px;
 }
 
 /* Accent-filled Send, applied only while Send may actually be pressed (the
@@ -753,6 +753,26 @@
 
 .chat-ask__actions[hidden] {
   display: none;
+}
+
+/* The emphasized one-click action (the search composites' "Load all") wears an
+   accent-blue border and label, so it reads distinctly from the primary "Load
+   more" beside it. Spectrum's action button draws both inside the shadow from
+   its `--mod-actionbutton-border-color-*` / `--mod-actionbutton-content-color-*`
+   tokens, so the colours are set there (the same mechanism the strip's Send
+   uses), not on the host's own `border`/`color`. */
+.chat-ask__action--emphasis {
+  --mod-actionbutton-border-color-default: var(--spectrum-accent-background-color-default, #0265dc);
+  --mod-actionbutton-border-color-hover: var(--spectrum-accent-background-color-default, #0265dc);
+  --mod-actionbutton-border-color-down: var(--spectrum-accent-background-color-default, #0265dc);
+  --mod-actionbutton-border-color-focus: var(--spectrum-accent-background-color-default, #0265dc);
+  --mod-actionbutton-content-color-default: var(
+    --spectrum-accent-background-color-default,
+    #0265dc
+  );
+  --mod-actionbutton-content-color-hover: var(--spectrum-accent-background-color-default, #0265dc);
+  --mod-actionbutton-content-color-down: var(--spectrum-accent-background-color-default, #0265dc);
+  --mod-actionbutton-content-color-focus: var(--spectrum-accent-background-color-default, #0265dc);
 }
 
 .chat-ask__question {

@@ -26,3 +26,12 @@ export const TOTAL_GUESS_CAP = 100;
  * ones - see `docs/backlog.md` "Default root fan-out is silently capped".
  */
 export const MAX_SEARCH_ROOTS = 10;
+
+/**
+ * The most pages one "Load all" click may load. The `aem_query_format_ask`
+ * composite only offers "Load all" when the remaining matches fit within this
+ * many pages (an exact total is required first), so a single click can never
+ * fetch an unbounded result set. With the default {@link SEARCH_PAGE_SIZE} of
+ * 20, that is 2000 further rows.
+ */
+export const LOAD_ALL_PAGE_LIMIT = 100;

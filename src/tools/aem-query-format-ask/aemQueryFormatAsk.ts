@@ -9,6 +9,7 @@ import {
   type ToolHost,
   AEM_COUNT_TIMEOUT_MS,
   CONTENT_ROOT_DEFAULT,
+  LOAD_ALL_PAGE_LIMIT,
   MAX_SEARCH_ROOTS,
   SEARCH_PAGE_SIZE,
   buildQueryUrl,
@@ -35,10 +36,12 @@ import {
  * `ask_user`. It is the `/search` loop made deterministic. A full-text query
  * runs through `aem_query`; the page goes to `format_table` (`new`, then
  * `append`); while more results may exist, `ask_user` offers one "Load more"
- * button, and a click repeats the loop at the next offset. The model makes one
- * call and never relays JSON between tools, and never forgets the button. A
- * hand-built search passes its QueryBuilder predicates instead of terms;
- * the loop is the same.
+ * button, and a click repeats the loop at the next offset. Once an exact total
+ * is known and fits in `LOAD_ALL_PAGE_LIMIT` pages, a "Load all" button is
+ * offered alongside it; a click then pages to the end without asking again. The
+ * model makes one call and never relays JSON between tools, and never forgets a
+ * button. A hand-built search passes its QueryBuilder predicates instead of
+ * terms; the loop is the same.
  *
  * Every step is the real tool, run through {@link ToolHost.invokeTool} (the
  * tool-to-tool bridge), so each step shows in the transcript and journal
@@ -65,6 +68,8 @@ export const AEM_QUERY_FORMAT_ASK_USES = ['aem_query', 'format_table', 'ask_user
 
 const MAX_SEARCH_PAGE_SIZE = 200;
 const LOAD_MORE = 'Load more';
+/** The whole-result button; only offered alongside "Load more" when it fits (see below). */
+const LOAD_ALL = 'Load all';
 
 export const aemQueryFormatAskArgsSchema = z
   .object({
@@ -111,7 +116,9 @@ export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
   description:
     'Runs an AEM search and presents it completely, in one call: it queries, shows the page as ' +
     "the chat's table, and, while more results may exist, offers the user a 'Load more' button " +
-    'and loads the next page when it is clicked. Pass either `terms` (a plain full-text search ' +
+    'and loads the next page when it is clicked. When an exact total is known and is small ' +
+    "enough to fetch in one go, it also offers 'Load all', which loads every remaining page. " +
+    'Pass either `terms` (a plain full-text search ' +
     'string) or `predicates` (a hand-built QueryBuilder predicate map, exactly as for ' +
     'aem_query) - never both. A `predicates` search that carries its own `path` scopes itself: ' +
     'never combine `roots` with a `path` predicate. `properties` ' +
@@ -401,6 +408,37 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
     let offset = 0;
     let pages = 0;
     let rowCount = 0;
+    /**
+     * Whether a "Load all" click would finish the search within the page
+     * budget. It needs an **exact** total (`exactTotal` from the background
+     * count, or the page's own total when it is already exact) and the
+     * remaining matches must fit in `LOAD_ALL_PAGE_LIMIT` further pages, so one
+     * click can never fetch an unbounded result set. A lower-bound total offers
+     * no "Load all": the true size is unknown while the count runs, and the
+     * next question - once the count has settled - offers it. Measured with
+     * `limit` (one page per root): a multi-root fan-out yields more rows per
+     * page, so fewer pages, making this a safe upper bound.
+     */
+    const canLoadAll = (
+      pageTotal: JsonValue,
+      rowsShown: number,
+      more: boolean | 'unknown',
+    ): boolean => {
+      if (more !== true) return false;
+      const pageExact =
+        isRecord(pageTotal) &&
+        pageTotal['accuracy'] === 'exact' &&
+        typeof pageTotal['value'] === 'number'
+          ? pageTotal['value']
+          : undefined;
+      const exact = exactTotal ?? pageExact;
+      if (exact === undefined) return false;
+      const remaining = exact - rowsShown;
+      return remaining > 0 && remaining <= limit * LOAD_ALL_PAGE_LIMIT;
+    };
+    /** Set once the user clicks "Load all": the loop then pages without asking again. */
+    let loadAll = false;
+    let loadAllPagesLeft = 0;
     let total: JsonValue;
     let hasMore: boolean | 'unknown';
     let ended: SearchEnd;
@@ -451,7 +489,23 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
           break;
         }
 
-        const asked = await host.invokeTool('ask_user', { actions: [LOAD_MORE] }, context);
+        if (loadAll) {
+          // A "Load all" click keeps paging without asking again, bounded by
+          // the budget `canLoadAll` proved would finish the search - so a
+          // single click can never fetch an unbounded result set.
+          if (loadAllPagesLeft <= 0) {
+            ended = 'stopped';
+            break;
+          }
+          loadAllPagesLeft -= 1;
+          offset += limit;
+          continue;
+        }
+
+        const actions = canLoadAll(pagination.total, rowCount, hasMore)
+          ? [LOAD_MORE, LOAD_ALL]
+          : [LOAD_MORE];
+        const asked = await host.invokeTool('ask_user', { actions }, context);
         if (!asked.ok) {
           if (asked.error.code === 'CANCELLED') {
             ended = 'stopped';
@@ -460,7 +514,11 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
           return asked;
         }
         const answer = askAnswerSchema.safeParse(asked.value);
-        if (!answer.success || !answer.data.selections.includes(LOAD_MORE)) {
+        const selections = answer.success ? answer.data.selections : [];
+        if (selections.includes(LOAD_ALL)) {
+          loadAll = true;
+          loadAllPagesLeft = LOAD_ALL_PAGE_LIMIT;
+        } else if (!selections.includes(LOAD_MORE)) {
           ended = 'stopped';
           break;
         }

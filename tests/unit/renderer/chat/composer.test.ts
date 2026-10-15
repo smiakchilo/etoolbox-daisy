@@ -715,6 +715,21 @@ describe('createComposer', () => {
       expect(isShown(query(composer.element, '.chat-composer__stop'))).toBe(true);
     });
 
+    it('marks only the emphasized "Load all" action', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn() });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({
+        actions: ['Load more', 'Load all'],
+        multiple: false,
+        freeInput: false,
+      });
+
+      const buttons = composer.element.querySelectorAll('.chat-ask__action');
+      expect(buttons).toHaveLength(2);
+      expect(buttons.item(0)?.classList.contains('chat-ask__action--emphasis')).toBe(false);
+      expect(buttons.item(1)?.classList.contains('chat-ask__action--emphasis')).toBe(true);
+    });
+
     it('answers with the clicked label and holds the (disabled) panel until the turn ends', () => {
       const onAnswer = vi.fn();
       const composer = composerInActionsMode(onAnswer);

@@ -45,6 +45,7 @@ import {
   type UserInputRequestId,
 } from '../../../shared';
 import { createAskUserPreviewTrigger } from '../dev/askUserPreviewTrigger';
+import { buildDevHelpMessage, matchDevHelp } from '../dev/devCommands';
 import { parseOpenChatById, type OpenChatByIdCommand } from '../dev/openChatById';
 
 export interface ChatPane {
@@ -273,6 +274,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // Bumped per read so a slow earlier response cannot overwrite a newer one.
   let modelSelectionRequest = 0;
   let chatId: ChatId | undefined;
+  // Mints a distinct id per `!!` help message, so each `!!ask ?` / `!!open ?`
+  // prints its own transcript item rather than rewriting the previous one. The
+  // dev `!!` commands live entirely under `src/renderer/src/dev/`.
+  let devHelpSequence = 0;
   // The open currently in flight for the pane's chat, if any. The pane adopts
   // a new id and enables the composer *before* `agentChat.openConversation`
   // resolves (deliberately - see `startNewSession`), so a send could otherwise
@@ -858,13 +863,22 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   /**
    * Consumes a dev-only cheat code when dev tools are enabled; returns whether
-   * it did. `!!ask ...` paints the local ask-user preview, `!!open <chatId>`
-   * opens a stored conversation by id. All of their logic lives in
-   * `src/renderer/src/dev/`; this factory plus `onAnswer`/`resetInputMode`/
-   * `onStop`/`openStoredConversation` are the pane's only coupling to it.
+   * it did. A lone `?` (or `help`) argument prints a command's usage (`!!ask ?`,
+   * `!!open ?`; `!!?` lists them all) through the shared registry in
+   * `src/renderer/src/dev/devCommands.ts` - checked first, so `?` is never read
+   * as a command's own argument. `!!ask ...` paints the local ask-user preview,
+   * `!!open <chatId>` opens a stored conversation by id. All of their logic
+   * lives in `src/renderer/src/dev/`; this factory plus `onAnswer`/
+   * `resetInputMode`/`onStop`/`openStoredConversation` are the pane's only
+   * coupling to it.
    */
   function onDevCommand(input: string): boolean {
     if (!window.daisy.devTools) return false;
+    const help = matchDevHelp(input);
+    if (help !== undefined) {
+      printDevMessage(help);
+      return true;
+    }
     const started = askUserPreview.start(input);
     if (started !== undefined) {
       transcriptStore.applyEvent(started.toolCall);
@@ -879,6 +893,21 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       return true;
     }
     return false;
+  }
+
+  /**
+   * Dev-only: prints `text` into the transcript as an assistant message - the
+   * `!!` commands' help output - through a synthetic
+   * `assistant.message.completed`, exactly as the ask-user preview feeds its
+   * own synthetic events. Each call is a distinct item (see `devHelpSequence`),
+   * so repeated help does not rewrite the last one.
+   */
+  function printDevMessage(text: string): void {
+    transcriptStore.applyEvent(buildDevHelpMessage(text, devHelpSequence));
+    devHelpSequence += 1;
+    refreshEmptyState();
+    repaintTranscript();
+    transcriptFollower.pin();
   }
 
   /**

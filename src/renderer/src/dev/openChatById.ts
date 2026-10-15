@@ -21,6 +21,11 @@ import { chatIdSchema, type ChatId } from '../../../shared';
 /** The cheat-code prefix. `!!` cannot collide with a `/skillname`. */
 export const OPEN_CHAT_BY_ID_PREFIX = '!!open';
 
+/** The `!!open` form as `[form, description]`; `!!open ?` prints it (see `devCommands.ts`). */
+export const OPEN_CHAT_BY_ID_HELP: ReadonlyArray<readonly [string, string]> = [
+  ['!!open <chatId>', 'open a stored conversation by its chat id'],
+];
+
 export type OpenChatByIdCommand =
   | { readonly kind: 'open'; readonly chatId: ChatId }
   | { readonly kind: 'invalid'; readonly raw: string };
