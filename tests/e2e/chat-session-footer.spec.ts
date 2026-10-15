@@ -17,7 +17,9 @@ import type { DaisyAppApi } from '../../src/shared';
  *    navigation") is driven by the real `cancelling` event a Stop produces, and
  *  - the transcript footer's left summary (agent / model / reasoning) opens
  *    Settings on the Agents tab, and its right icon calls the real
- *    `agent-chat:reveal-journal` preload bridge with the active chat id.
+ *    `agent-chat:reveal-journal` preload bridge with the active chat id. The
+ *    footer's summary is shown even for an empty conversation (the full-height
+ *    composer), while the reveal icon waits for conversation content.
  *
  * `shell.showItemInFolder` is stubbed to a recorder so the reveal does not open
  * a real Explorer window - the same technique `message-links.spec.ts` uses for
@@ -279,5 +281,21 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     await expect(shell.locator(AGENT_SUMMARY)).toHaveText(
       'GitHub Copilot / Fake Model (reasoning) / (Auto)',
     );
+  });
+
+  test('shows the footer summary, but not the reveal icon, while the composer is full height', async () => {
+    // Close Settings, which the previous case left open, then start a fresh,
+    // empty conversation - the full-height composer.
+    if (await shell.locator('.settings-panel').isVisible()) {
+      await shell.locator('.settings-panel .panel__close').click();
+    }
+    await shell.locator('[title="New session"]').click();
+    await expect(shell.locator('.chat-pane--empty')).toBeVisible();
+
+    // The empty conversation still carries the agent summary in the footer - it
+    // is useful before the first prompt - but the reveal-log icon has no
+    // conversation content to point at, so it is hidden.
+    await expect(shell.locator(AGENT_SUMMARY)).toBeVisible();
+    await expect(shell.locator(SESSION_ID)).toBeHidden();
   });
 });

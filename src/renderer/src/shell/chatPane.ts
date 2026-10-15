@@ -1296,8 +1296,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // The pane footer, sitting directly beneath the composer: on the left, a
   // short "agent / model / reasoning" summary that opens the Settings Agents
   // tab; on the right, an icon that reveals this conversation's journal file in
-  // the OS file manager. Both hrefs are inert (`#`) because the actions go
-  // through callbacks/IPC; `preventDefault` stops the fragment navigation.
+  // the OS file manager (shown only once the conversation has content to
+  // reveal). Both hrefs are inert (`#`) because the actions go through
+  // callbacks/IPC; `preventDefault` stops the fragment navigation.
   const agentSummaryAnchor = el('a', {
     attrs: { class: 'chat-agent-summary', href: '#', title: 'Open agent settings' },
   });
@@ -1328,18 +1329,22 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   /**
    * Reflects the current conversation and active agent into the footer. The row
-   * is visible only once there is a conversation with content, so an empty or
-   * not-yet-open chat shows nothing; the summary line is hidden within it while
-   * no agent is active (the icon still shows). Called from both refresh paths
-   * (the status derivation and the transcript's empty-state check), since either
-   * can be the first to see a new `chatId`, the first transcript item, or a
-   * changed active agent.
+   * is visible once the pane owns a conversation - an empty one included, so the
+   * full-height composer still shows the "agent / model / reasoning" summary -
+   * but stays hidden when it would carry nothing (no conversation yet, or no
+   * active agent on an empty one). The reveal-log icon needs a conversation with
+   * content to reveal, so it is hidden while the conversation is empty; the
+   * summary line is hidden while no agent is active. Called from both refresh
+   * paths (the status derivation and the transcript's empty-state check), since
+   * either can be the first to see a new `chatId`, the first transcript item, or
+   * a changed active agent.
    */
   function updateSessionFooter(): void {
-    transcriptFooter.hidden = !(chatId !== undefined && !conversationEmpty);
     const summary = activeAgentId === undefined ? undefined : buildAgentSummary(activeAgentId);
     agentSummaryAnchor.hidden = summary === undefined;
     agentSummaryAnchor.textContent = summary ?? '';
+    sessionIdAnchor.hidden = conversationEmpty;
+    transcriptFooter.hidden = chatId === undefined || (summary === undefined && conversationEmpty);
   }
 
   const transcript = el('div', {

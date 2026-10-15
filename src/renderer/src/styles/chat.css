@@ -62,7 +62,9 @@
 
 /* The pane footer, directly beneath the composer: a thin line. Left is the
    "agent / model / reasoning" summary (a jump to Settings), right is the
-   chat-log reveal icon. Hidden until a conversation with content exists. */
+   chat-log reveal icon. Shown once the pane owns a conversation - an empty one
+   included, so the full-height composer still carries the summary; the reveal
+   icon waits for conversation content (`chatPane.ts`). */
 .chat-pane__footer {
   flex: 0 0 auto;
   display: flex;
@@ -99,7 +101,8 @@
 }
 
 /* The chat-log reveal icon: pushed to the right, muted like the summary text,
-   turning accent on hover/focus. */
+   turning accent on hover/focus. Hidden while the conversation is empty (a
+   class rule would otherwise outrank the UA `[hidden]` rule). */
 .chat-session-id {
   flex: 0 0 auto;
   margin-left: auto;
@@ -107,6 +110,10 @@
   align-items: center;
   color: var(--spectrum-gray-600, #6e6e6e);
   text-decoration: none;
+}
+
+.chat-session-id[hidden] {
+  display: none;
 }
 
 .chat-session-id:hover,

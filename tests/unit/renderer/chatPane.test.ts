@@ -1277,10 +1277,15 @@ describe('createChatPane interruptions and session id', () => {
     pane.dispose();
   });
 
-  it('hides the footer while the conversation is empty', async () => {
+  it('shows the agent summary but hides the reveal icon while the conversation is empty', async () => {
     const pane = await readyPane();
 
-    expect(pane.element.querySelector('.chat-pane__footer')?.hasAttribute('hidden')).toBe(true);
+    // The full-height composer still shows the footer's summary - it is useful
+    // before the first prompt - while the reveal-log icon, which needs a
+    // conversation with content to reveal, stays hidden.
+    expect(pane.element.querySelector('.chat-pane__footer')?.hasAttribute('hidden')).toBe(false);
+    expect(pane.element.querySelector('.chat-agent-summary')?.hasAttribute('hidden')).toBe(false);
+    expect(pane.element.querySelector('.chat-session-id')?.hasAttribute('hidden')).toBe(true);
 
     pane.dispose();
   });

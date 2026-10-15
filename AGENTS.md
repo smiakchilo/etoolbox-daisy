@@ -1532,8 +1532,13 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 134 tests; a full run is typically 125 passed / 6 failed.** The
-latest +1 is `history.spec.ts`, proving against the built app that the History
+**Playwright → 135 tests; a full run is typically 125 passed / 6 failed.** The
+latest +1 is a fourth `chat-session-footer.spec.ts` case, proving against the
+built app that an empty conversation (the full-height composer, `.chat-pane--empty`)
+still shows the footer's agent/model/reasoning summary while the reveal-log icon
+is hidden - which failed on the missing `.chat-session-id[hidden] { display: none }`
+rule (its class `display: inline-flex` outranked the UA `[hidden]`) before the fix.
+Before that, the +1 since 134 is `history.spec.ts`, proving against the built app that the History
 toolbar button opens the panel, that two sent conversations are listed newest
 first with their titles, dates, and host chips (omitted for the chat that named
 no host), that **Resume** reopens one
