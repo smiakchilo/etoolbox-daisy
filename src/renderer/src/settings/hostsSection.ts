@@ -16,7 +16,12 @@ import { colorKey, createColorPicker } from './colorPicker';
 import { createProjectPicker, type ProjectSelection } from './projectPicker';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import { createCommitSaver } from './commitSaver';
-import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
+import {
+  type SaveOutcome,
+  type StatusBannerAction,
+  type StatusBannerSink,
+  confirmDestructiveAction,
+} from './statusBanner';
 import { resolveHostLabelInput, validateHostColorInput, validateOriginInput } from './viewModel';
 
 type TextField = HTMLElement & { value: string };
@@ -381,17 +386,15 @@ function buildHostItem(
     ctx.status.showPrompt(`Press ${BANNER_ACTION_MARKER} to change the address`, applyOriginAction);
   }
 
-  const removeAction: StatusBannerAction = {
-    label: 'OK',
-    onActivate(): void {
-      if (busy || !removeArmed) return;
-      removeArmed = false;
-      // The prompt has served its purpose; persisting replaces it with
-      // "Saving..." -> "Settings saved" via the save reporter.
-      ctx.status.clear();
-      void persistRemoval();
-    },
-  };
+  /** The confirming action: a single OK click removes the saved host. */
+  function activateRemoval(): void {
+    if (busy || !removeArmed) return;
+    removeArmed = false;
+    // The prompt has served its purpose; persisting replaces it with
+    // "Saving..." -> "Settings saved" via the save reporter.
+    ctx.status.clear();
+    void persistRemoval();
+  }
 
   /**
    * Runs one save with the item's current values. Returns the outcome promise
@@ -679,10 +682,7 @@ function buildHostItem(
     // the settings document.
     pendingOrigin = undefined;
     removeArmed = true;
-    ctx.status.showPrompt(
-      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the host`,
-      removeAction,
-    );
+    confirmDestructiveAction(ctx.status, 'remove the host', activateRemoval);
   }
 
   return {

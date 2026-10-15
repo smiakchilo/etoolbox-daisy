@@ -55,6 +55,7 @@
 
 import {
   applyBannerPresentation,
+  BANNER_ACTION_MARKER,
   BANNER_TRANSITION_DURATION_MS,
   buildBannerCopy,
   buildBannerPrompt,
@@ -137,6 +138,31 @@ export interface StatusBanner extends StatusBannerSink {
     presentation?: StatusBannerStandingPresentation,
   ): void;
   dispose(): void;
+}
+
+/**
+ * Raises the app's single destructive-confirmation prompt in a surface's alert
+ * banner: a sticky, one-button row reading `Press {action} to <phrase>`. Every
+ * surface that destroys something - Settings removing a host, a project or a
+ * proxy, and History deleting a stored conversation - goes through this one
+ * method, so the framing, the "OK" label and the one-button rule are identical
+ * everywhere and no second confirmation UI exists to drift from them.
+ *
+ * `onConfirm` runs on the button press. A caller that must refuse a stale press
+ * - the Settings sections disarm a pending removal when their row is edited -
+ * guards inside its own callback; this method only raises the prompt. A caller
+ * whose confirmed work reports through the banner must drop this prompt first
+ * (a prompt outranks the status/error it would otherwise mask).
+ */
+export function confirmDestructiveAction(
+  status: StatusBannerSink,
+  phrase: string,
+  onConfirm: () => void,
+): void {
+  status.showPrompt(`Press ${BANNER_ACTION_MARKER} to ${phrase}`, {
+    label: 'OK',
+    onActivate: onConfirm,
+  });
 }
 
 /** The standing floor's two presentations: an ordinary row, or the loading one. */

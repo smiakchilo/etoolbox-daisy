@@ -1,4 +1,5 @@
 import { el } from '../lib/dom';
+import { type StatusBannerSink, confirmDestructiveAction } from '../settings/statusBanner';
 import {
   formatHistoryTimestamp,
   historyEntryTitle,
@@ -21,7 +22,8 @@ import type { AgentChatHistoryEntry } from '../../../shared';
  * painted. Each row is a title, the chat's start date, and the host it is bound
  * to, with a **Resume** action (open the conversation, switching the browser to
  * its host - the shell does that part) and a **Delete** action that confirms in
- * place before calling back.
+ * the pane's message alert banner (the shared one-button prompt the Settings
+ * panel uses) before calling back.
  *
  * Resume and delete are callbacks, not IPC calls made here: the shell owns the
  * chat pane (which repaints the resumed transcript) and the browser pane (which
@@ -37,7 +39,15 @@ export interface HistoryPanel extends Panel {
   setServers(servers: readonly HostOption[]): void;
 }
 
-export interface HistoryPanelCallbacks {
+export interface HistoryPanelOptions {
+  /**
+   * The pane-owned status slot (the browser pane's `surfaceStatus`) - the same
+   * sink the Settings panel is handed. A destructive confirmation, and the
+   * outcome the shell reports for it, live in the pane's message alert banner,
+   * never in the row: one shared confirmation method for every surface that
+   * destroys something, and feedback that outlives the panel.
+   */
+  readonly status: StatusBannerSink;
   /** Opens `entry`'s conversation. The shell repaints it and switches the browser host. */
   readonly onResume: (entry: AgentChatHistoryEntry) => void;
   /**
@@ -49,8 +59,11 @@ export interface HistoryPanelCallbacks {
   readonly onDismiss: () => void;
 }
 
-export function createHistoryPanel(callbacks: HistoryPanelCallbacks): HistoryPanel {
+export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
+  const status = options.status;
   let servers: readonly HostOption[] = [];
+  /** True while a confirmed deletion is in flight, so a second press is inert. */
+  let deleting = false;
 
   const list = el('div', {
     attrs: { class: 'history-panel__list', role: 'list', 'aria-label': 'Stored conversations' },
@@ -64,7 +77,7 @@ export function createHistoryPanel(callbacks: HistoryPanelCallbacks): HistoryPan
     autofocusSelector: '.history-item__resume',
     content: list,
     onDismiss(): void {
-      callbacks.onDismiss();
+      options.onDismiss();
     },
   });
 
@@ -91,75 +104,69 @@ export function createHistoryPanel(callbacks: HistoryPanelCallbacks): HistoryPan
   }
 
   /**
-   * The row's two actions. Delete is a deliberate two-step: its first click
-   * swaps this area for a confirm prompt, so a stray click can never remove a
-   * conversation. Cancel restores the actions; Delete runs the deletion (which
-   * the panel then reloads around).
+   * The row's two actions. Resume opens the conversation; Delete asks for
+   * confirmation in the pane's shared one-button alert-banner prompt (the same
+   * method Settings uses to remove a host/project/proxy), so a stray click can
+   * never remove a conversation and the confirmation is the same control
+   * everywhere - never a second, row-local dialog.
    */
   function buildActions(entry: AgentChatHistoryEntry): HTMLElement {
     const area = el('div', { attrs: { class: 'history-item__actions' } });
 
-    function showActions(): void {
-      // Both actions are quiet icon buttons; the icons carry the meaning and the
-      // `aria-label`/`title` name them for assistive tech and the mouse
-      // tooltip. Resume is the icon-only replacement of the former text button.
-      const resume = el('sp-action-button', {
-        attrs: {
-          quiet: '',
-          class: 'history-item__resume',
-          title: 'Resume conversation',
-          'aria-label': 'Resume conversation',
-        },
-      });
-      const resumeIcon = document.createElement('sp-icon-replay');
-      resumeIcon.setAttribute('slot', 'icon');
-      resume.append(resumeIcon);
-      resume.addEventListener('click', () => {
-        callbacks.onResume(entry);
-      });
+    // Both actions are quiet icon buttons; the icons carry the meaning and the
+    // `aria-label`/`title` name them for assistive tech and the mouse tooltip.
+    const resume = el('sp-action-button', {
+      attrs: {
+        quiet: '',
+        class: 'history-item__resume',
+        title: 'Resume conversation',
+        'aria-label': 'Resume conversation',
+      },
+    });
+    const resumeIcon = document.createElement('sp-icon-replay');
+    resumeIcon.setAttribute('slot', 'icon');
+    resume.append(resumeIcon);
+    resume.addEventListener('click', () => {
+      options.onResume(entry);
+    });
 
-      const remove = el('sp-action-button', {
-        attrs: {
-          quiet: '',
-          class: 'history-item__delete',
-          title: 'Delete conversation',
-          'aria-label': 'Delete conversation',
-        },
-      });
-      const removeIcon = document.createElement('sp-icon-delete-outline');
-      removeIcon.setAttribute('slot', 'icon');
-      remove.append(removeIcon);
-      remove.addEventListener('click', () => showConfirm());
+    const remove = el('sp-action-button', {
+      attrs: {
+        quiet: '',
+        class: 'history-item__delete',
+        title: 'Delete conversation',
+        'aria-label': 'Delete conversation',
+      },
+    });
+    const removeIcon = document.createElement('sp-icon-delete-outline');
+    removeIcon.setAttribute('slot', 'icon');
+    remove.append(removeIcon);
+    remove.addEventListener('click', () => requestDelete(entry));
 
-      area.replaceChildren(resume, remove);
-    }
-
-    function showConfirm(): void {
-      const prompt = el('span', {
-        attrs: { class: 'history-item__confirm-text' },
-        text: 'Delete this conversation?',
-      });
-      const confirm = el('sp-action-button', {
-        attrs: {
-          class: 'history-item__confirm-delete',
-          title: 'Delete conversation permanently',
-        },
-        text: 'OK',
-      });
-      confirm.addEventListener('click', () => {
-        confirm.setAttribute('disabled', '');
-        void callbacks.onDelete(entry).then(() => reload());
-      });
-      const cancel = el('sp-action-button', {
-        attrs: { quiet: '', class: 'history-item__confirm-cancel', title: 'Keep conversation' },
-        text: 'Cancel',
-      });
-      cancel.addEventListener('click', () => showActions());
-      area.replaceChildren(prompt, confirm, cancel);
-    }
-
-    showActions();
+    area.replaceChildren(resume, remove);
     return area;
+  }
+
+  /**
+   * Raises the shared destructive-confirmation prompt - in the pane's message
+   * alert banner, exactly as Settings does - and, on OK, deletes and reloads.
+   * `deleting` makes the confirmation single-shot, so a second press while the
+   * deletion is in flight is inert.
+   */
+  function requestDelete(entry: AgentChatHistoryEntry): void {
+    confirmDestructiveAction(status, 'delete the conversation', () => {
+      if (deleting) return;
+      deleting = true;
+      // Drop the prompt first: the shell reports the outcome ("Conversation
+      // deleted" or the failure) through that same single row, which a live
+      // prompt would outrank.
+      status.clear();
+      const settle = (): void => {
+        deleting = false;
+        void reload();
+      };
+      void options.onDelete(entry).then(settle, settle);
+    });
   }
 
   function buildItem(entry: AgentChatHistoryEntry): HTMLElement {

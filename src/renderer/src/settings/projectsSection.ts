@@ -1,9 +1,8 @@
-import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
 import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProjectId, type ProjectSnapshot } from '../../../shared';
 import { createCommitSaver } from './commitSaver';
-import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
+import { type SaveOutcome, type StatusBannerSink, confirmDestructiveAction } from './statusBanner';
 import { validateProjectLabelInput } from './viewModel';
 
 type TextField = HTMLElement & { value: string };
@@ -152,17 +151,15 @@ function buildProjectItem(
   let removeArmed = false;
   let busy = false;
 
-  const removeAction: StatusBannerAction = {
-    label: 'OK',
-    onActivate(): void {
-      if (busy || !removeArmed) return;
-      removeArmed = false;
-      // The prompt has served its purpose; persisting replaces it with
-      // "Saving..." -> "Settings saved" via the save reporter.
-      ctx.status.clear();
-      void persistRemoval();
-    },
-  };
+  /** The confirming action: a single OK click removes the saved project. */
+  function activateRemoval(): void {
+    if (busy || !removeArmed) return;
+    removeArmed = false;
+    // The prompt has served its purpose; persisting replaces it with
+    // "Saving..." -> "Settings saved" via the save reporter.
+    ctx.status.clear();
+    void persistRemoval();
+  }
 
   function validateLabel(): { readonly ok: boolean; readonly label: string } {
     const result = validateProjectLabelInput(labelField.value);
@@ -345,10 +342,7 @@ function buildProjectItem(
       return;
     }
     removeArmed = true;
-    ctx.status.showPrompt(
-      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the project`,
-      removeAction,
-    );
+    confirmDestructiveAction(ctx.status, 'remove the project', activateRemoval);
   }
 
   return {

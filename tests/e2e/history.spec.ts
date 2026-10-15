@@ -34,8 +34,8 @@ import {
  *
  * Flow: one host; send a first prompt; start a New session and send a second;
  * open History and assert both rows (title, host, date); Resume the first and
- * assert its transcript returns; delete the second (in-place confirm) and
- * assert the row is gone.
+ * assert its transcript returns; delete the second (confirmed in the pane's
+ * alert banner) and assert the row is gone.
  *
  *   npm run build
  *   npx playwright test tests/e2e/history.spec.ts
@@ -199,18 +199,24 @@ test.describe('History panel', () => {
         },
       );
 
-      // Delete the second: an in-place confirm, then the row is gone.
+      // Delete the second: the confirmation is the pane's one-button alert
+      // banner (the same prompt Settings uses for a removal), never a
+      // row-local dialog.
       await page.locator('.chat-toolbar sp-action-button[aria-label="History"]').click();
       await expect(page.locator('.history-panel')).toBeVisible({ timeout: 30_000 });
       await expect(page.locator('.history-item')).toHaveCount(2, { timeout: 30_000 });
       await secondRow.locator('.history-item__delete').click();
-      // The confirmation names its buttons OK and Cancel.
-      await expect(secondRow.locator('.history-item__confirm-delete')).toHaveText('OK');
-      await expect(secondRow.locator('.history-item__confirm-cancel')).toHaveText('Cancel');
-      await secondRow.locator('.history-item__confirm-delete').click();
+      const confirmBanner = page.locator('.surface-status-banner[open]');
+      // The one-button confirmation names its action; the button reads OK.
+      await expect(confirmBanner).toContainText('Press OK to delete the conversation');
+      const confirmOk = confirmBanner.locator('sp-action-button');
+      await expect(confirmOk).toHaveText('OK');
+      await confirmOk.click();
       await expect(page.locator('.history-item')).toHaveCount(1, { timeout: 30_000 });
       await expect(row(page, 'second question about assets')).toHaveCount(0);
       await expect(row(page, 'first question about media')).toBeVisible();
+      // The outcome takes the same banner row after the confirmation clears.
+      await expect(page.locator('.surface-status-banner')).toContainText('Conversation deleted');
     } finally {
       await app.close();
       server.close();
@@ -270,7 +276,7 @@ test.describe('History panel', () => {
       // placeholder).
       await expect(target.locator('.history-item__server')).toHaveCount(0);
       await target.locator('.history-item__delete').click();
-      await target.locator('.history-item__confirm-delete').click();
+      await page.locator('.surface-status-banner[open] sp-action-button').click();
       await expect(page.locator('.history-item')).toHaveCount(0, { timeout: 30_000 });
 
       // The stored transcript is gone...

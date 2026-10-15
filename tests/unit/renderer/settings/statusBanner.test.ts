@@ -1,10 +1,12 @@
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  BANNER_ACTION_MARKER,
   BANNER_ROW_LOADING_CLASS,
   BANNER_TRANSITION_DURATION_MS,
 } from '../../../../src/renderer/src/lib/alertBanner';
 import {
+  confirmDestructiveAction,
   createSaveReporter,
   createStatusBanner,
   reportSave,
@@ -167,6 +169,25 @@ describe('createStatusBanner single slot', () => {
 
     (button as HTMLElement).click();
     expect(onActivate).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirmDestructiveAction raises the shared one-button prompt and fires on confirm', () => {
+    const onConfirm = vi.fn();
+    const banner = createStatusBanner();
+    confirmDestructiveAction(banner, 'remove the host', onConfirm);
+
+    expect(banner.isPromptShowing()).toBe(true);
+    const copy = banner.element.querySelector('.banner-row__copy')?.textContent ?? '';
+    expect(copy).toBe(`Press OK to remove the host`);
+    // The marker is consumed with the button, never left as literal text.
+    expect(copy).not.toContain(BANNER_ACTION_MARKER);
+
+    const button = banner.element.querySelector('sp-action-button');
+    expect(button?.textContent).toBe('OK');
+    expect(button?.getAttribute('size')).toBe('s');
+
+    (button as HTMLElement).click();
+    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
   it('a notice renders its one action button, is sticky and dismissible, and invokes onActivate', () => {

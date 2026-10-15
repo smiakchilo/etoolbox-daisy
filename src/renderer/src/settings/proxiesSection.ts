@@ -1,10 +1,9 @@
-import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
 import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
 import { type ProxyId, type ProxySnapshot } from '../../../shared';
 import { createCommitSaver } from './commitSaver';
 import { createPasswordControl } from './passwordEntry';
-import type { SaveOutcome, StatusBannerAction, StatusBannerSink } from './statusBanner';
+import { type SaveOutcome, type StatusBannerSink, confirmDestructiveAction } from './statusBanner';
 import { resolveHostLabelInput, validateOriginInput } from './viewModel';
 
 type TextField = HTMLElement & { value: string };
@@ -138,17 +137,15 @@ function buildProxyItem(
   let removeArmed = false;
   let busy = false;
 
-  const removeAction: StatusBannerAction = {
-    label: 'OK',
-    onActivate(): void {
-      if (busy || !removeArmed) return;
-      removeArmed = false;
-      // The prompt has served its purpose; persisting replaces it with
-      // "Saving..." -> "Settings saved" via the save reporter.
-      ctx.status.clear();
-      void persistRemoval();
-    },
-  };
+  /** The confirming action: a single OK click removes the saved proxy. */
+  function activateRemoval(): void {
+    if (busy || !removeArmed) return;
+    removeArmed = false;
+    // The prompt has served its purpose; persisting replaces it with
+    // "Saving..." -> "Settings saved" via the save reporter.
+    ctx.status.clear();
+    void persistRemoval();
+  }
 
   /**
    * Runs one save with the item's current values. Returns the outcome promise
@@ -307,10 +304,7 @@ function buildProxyItem(
       return;
     }
     removeArmed = true;
-    ctx.status.showPrompt(
-      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the proxy`,
-      removeAction,
-    );
+    confirmDestructiveAction(ctx.status, 'remove the proxy', activateRemoval);
   }
 
   return {

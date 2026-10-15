@@ -87,6 +87,10 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // owns resume (chat pane + browser host switch) and delete (the IPC call),
   // so the panel only reports what the reader chose.
   const historyPanel: HistoryPanel = createHistoryPanel({
+    // The pane owns the status row (the same one Settings uses), so the
+    // destructive confirmation and the deletion's outcome live in the alert
+    // banner at the bottom of the pane, not in a row-local dialog.
+    status: browserPane.surfaceStatus,
     onResume(entry: AgentChatHistoryEntry): void {
       void resumeHistoryConversation(entry);
     },

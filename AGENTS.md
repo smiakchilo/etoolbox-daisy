@@ -402,7 +402,14 @@ guarding that.
 the stored conversations (`window.daisy.agentChat.listConversations`, derived in
 main); each row is a title, a start date, and (only when the chat names a
 configured host) a host chip, with an icon **Resume** (the `sp-icon-replay`
-glyph) and a two-step **Delete**. The chat toolbar's History button and the
+glyph) and a **Delete** that confirms in the pane's message alert banner. That
+confirmation is the one shared destructive-confirm method
+(`confirmDestructiveAction`, `settings/statusBanner.ts`): a sticky, one-button
+`Press {action} to <phrase>` prompt in the pane-owned
+status row, the same one Settings uses to remove a host/project/proxy - never a
+row-local second dialog, and it outlives the panel. The panel is handed that
+sink (`browserPane.surfaceStatus`) rather than creating a banner of its own. The
+chat toolbar's History button and the
 browser pane's home screen (its "History" action, beside "Select a host" and
 "Settings") both open it through the same
 `BrowserPanelHost`; the shell owns resume (switch the browser to the chat's host
@@ -981,7 +988,27 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3317 passed / 14 skipped** (+10 against the
+Current baseline: **`npm run test` → 3318 passed / 14 skipped** (+1 against the
+3317 of the previous entry - **one destructive-confirmation method**: History's
+Delete no longer confirms in a row-local mini-dialog; it raises the same sticky,
+one-button `Press {action} to <phrase>` prompt in the
+pane-owned message alert banner that Settings uses to remove a host/project/proxy
+(the `This can't be undone. ` prefix was dropped: nothing in the app *can* be
+undone, so it implied a distinction that does not exist). The prompt copy, the
+"OK" label and the `showPrompt` call now live once, in
+`confirmDestructiveAction` (`settings/statusBanner.ts`), and all four surfaces
+(History delete, host/project/proxy removal) call it; the three Settings sections'
+per-item `removeAction: StatusBannerAction` objects became plain `activateRemoval`
+functions (their armed/busy guard unchanged), History's `HistoryPanelCallbacks`
+became `HistoryPanelOptions` with a `status: StatusBannerSink` (the pane's
+`surfaceStatus`), and the obsolete `.history-item__confirm-text` CSS went with the
+mini-dialog. +1 `statusBanner` case (the shared method's copy, "OK" button and
+`onActivate`). The built-app `history.spec.ts` now asserts the confirmation in
+`.surface-status-banner[open]` and the "Conversation deleted" outcome in that same
+row; a mutation neutering `confirmDestructiveAction` failed both its unit case and
+both E2E cases. See `docs/verification/followons-2026-10.md`
+"One destructive-confirmation method for Settings and History (2026-10-15)").
+Before that it was 3317 (+10 against the
 3307 of the previous entry - **A chat records its host when it is first used**:
 the journal's `user.prompt` record gains an optional `serverId`, so a chat's host
 is observed at first *use*, not only at open - the startup chat opens before any

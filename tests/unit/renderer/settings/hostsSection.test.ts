@@ -427,9 +427,7 @@ describe('createHostsSection', () => {
       .querySelector('.multifield__action--remove')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
 
-    expect(lastPrompt?.copy).toBe(
-      `This can't be undone. Press ${BANNER_ACTION_MARKER} to remove the host`,
-    );
+    expect(lastPrompt?.copy).toBe(`Press ${BANNER_ACTION_MARKER} to remove the host`);
     expect(removeServer).not.toHaveBeenCalled();
 
     lastPrompt?.action.onActivate();
