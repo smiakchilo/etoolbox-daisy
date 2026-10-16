@@ -18,7 +18,10 @@ import { byTestId } from '../support/selectors';
  * view (`/content/site/page.html?wcmmode=disabled`) and the editor
  * (`/editor.html/content/site/page.html`, no `wcmmode`) - against a local echo
  * server, which is what proves the toggle actually navigates (and rewrites the
- * `wcmmode` query parameter) rather than merely repainting.
+ * `wcmmode` query parameter) rather than merely repainting. A final step drives
+ * AEM as a Cloud Service's shell editor form (`/ui#/aem/editor.html/...`), whose
+ * real UI path sits in the fragment, and proves the toggle both recognises it
+ * and leaves the shell for the plain web-content view.
  */
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'edit-mode-toggle-scratch');
@@ -123,6 +126,22 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
     await toggle.click();
     await expect(toggle).toHaveAttribute('selected', '');
     await expect(addressInput).toHaveValue(`${origin}/editor.html/content/site/page.html`);
+
+    // AEM as a Cloud Service serves the editor behind its shell route, with the
+    // real UI path in the fragment: the toggle must recognise it and, on a
+    // click, leave the shell for the plain web-content view.
+    await addressInput.fill(`${origin}/ui#/aem/editor.html/content/site/page.html`);
+    await addressInput.press('Enter');
+    await expect.poll(() => state.paths.includes('/ui'), { timeout: 30_000 }).toBe(true);
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute('selected', '');
+
+    await toggle.click();
+    await expect(toggle).not.toHaveAttribute('selected', '');
+    await expect
+      .poll(() => state.paths.includes('/content/site/page.html'), { timeout: 30_000 })
+      .toBe(true);
+    await expect(addressInput).toHaveValue(`${origin}/content/site/page.html?wcmmode=disabled`);
 
     // A non-page URL (the host root, no `.html`) hides the control again.
     await addressInput.fill(`${origin}/`);

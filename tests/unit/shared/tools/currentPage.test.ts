@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { deriveCurrentPageContext, renderCurrentPageContextForModel } from '../../../../src/shared';
+import {
+  deriveCurrentPageContext,
+  editorPagePath,
+  renderCurrentPageContextForModel,
+} from '../../../../src/shared';
 
 /**
  * Unit tests for `src/shared/tools/core/currentPage.ts` - the pure projection
@@ -112,6 +116,47 @@ describe('deriveCurrentPageContext', () => {
 
   it('trims a trailing slash on a content path', () => {
     expect(derive(`${AUTHOR}/content/wknd/`)?.jcrPath).toBe('/content/wknd');
+  });
+});
+
+describe('editorPagePath', () => {
+  it('reads the page out of the on-prem editor pathname', () => {
+    expect(editorPagePath('/editor.html/content/site/page.html')).toBe('/content/site/page.html');
+    expect(editorPagePath('/editor.html/content/hpe/country/us/en/about.html')).toBe(
+      '/content/hpe/country/us/en/about.html',
+    );
+  });
+
+  it('reads the page out of an AEM as a Cloud Service shell fragment', () => {
+    // The shell puts the real UI path behind an `/aem` app segment in the
+    // fragment, not at the start of the pathname.
+    expect(editorPagePath('/aem/editor.html/content/hpe/country/us/en/about.html')).toBe(
+      '/content/hpe/country/us/en/about.html',
+    );
+  });
+
+  it('drops a query or fragment the shell route carried after the page', () => {
+    expect(editorPagePath('/aem/editor.html/content/site/page.html?appId=aemshell')).toBe(
+      '/content/site/page.html',
+    );
+    expect(editorPagePath('/editor.html/content/site/page.html?wcmmode=disabled')).toBe(
+      '/content/site/page.html',
+    );
+  });
+
+  it('returns undefined for a console route or a bare content path', () => {
+    expect(editorPagePath('/sites.html/content/site/page.html')).toBeUndefined();
+    expect(editorPagePath('/content/site/page.html')).toBeUndefined();
+    expect(editorPagePath('/aem/sites.html/content/site/page.html')).toBeUndefined();
+  });
+
+  it('never mistakes a page named editor.html for the editor', () => {
+    expect(editorPagePath('/content/editor.html/page.html')).toBeUndefined();
+  });
+
+  it('resolves the editor wrapper alone to the empty path, and keeps a non-content remainder', () => {
+    expect(editorPagePath('/editor.html')).toBe('');
+    expect(editorPagePath('/editor.html/libs/x.html')).toBe('/libs/x.html');
   });
 });
 

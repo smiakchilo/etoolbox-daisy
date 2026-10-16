@@ -2003,6 +2003,26 @@ describe('createBrowserToolbar edit-mode toggle', () => {
     );
   });
 
+  it('turns on for a Cloud Service shell editor and untoggles out of the shell', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/ui#/aem/editor.html/content/site/page.html?appId=aemshell');
+
+    expect(button.hasAttribute('hidden')).toBe(false);
+    expect(button.hasAttribute('selected')).toBe(true);
+
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledWith(
+        'https://author.example/content/site/page.html?wcmmode=disabled',
+      );
+    });
+    expect(addressValue(toolbar)).toBe(
+      'https://author.example/content/site/page.html?wcmmode=disabled',
+    );
+  });
+
   it('drops wcmmode=disabled when toggling into the editor', async () => {
     const toolbar = build();
     const button = editButton(toolbar);

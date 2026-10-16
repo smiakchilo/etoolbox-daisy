@@ -1085,7 +1085,29 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3358 passed / 14 skipped** (+4 against the
+Current baseline: **`npm run test` → 3368 passed / 14 skipped** (+10 against the
+3358 below - **the edit-mode toggle on AEM as a Cloud Service**: the page editor
+is served in two URL shapes and the toggle now recognises both. On-prem it leads
+the pathname (`/editor.html/content/site/page.html`, unchanged); AEMaaCS (and 6.5
+with the unified shell) puts the real UI path behind the shell's `/ui` route in
+the fragment (`<origin>/ui#/aem/editor.html/content/site/page.html?appId=aemshell`),
+where the toggle used to stay hidden. The shell knowledge stays in one place: a
+new `AEM_EDITOR_PATH_PREFIX` + `editorPagePath(candidate)` in
+`src/shared/tools/core/currentPage.ts` (which also now shares the prefix with
+`AEM_UI_PATH_PREFIXES`) reads the page out of either shape, dropping whatever the
+route carried after it (the shell's `?appId=aemshell`). `resolveEditModeTarget`
+consults the fragment only when the pathname is not itself the editor, and
+untoggling a **shell** editor leaves the shell entirely - the web-content view is
+an ordinary page, not a `/ui` route - so its route fragment and shell query are
+dropped. Toggling on still produces the plain `/editor.html/...` (which AEMaaCS
+accepts; the shell may re-wrap it, and the toggle then reads the shell form).
++6 `editorPagePath` cases, +3 `resolveEditModeTarget`, +1 toolbar, and the built-app
+`edit-mode-toggle.spec.ts` gained a shell-URL step; two mutations caught (the
+`/aem` app-segment strip and the shell query/fragment drop) plus a build-level
+mutation that failed the E2E. See `docs/verification/followons-2026-10.md`
+"The edit-mode toggle recognises AEM as a Cloud Service's shell editor URL
+(2026-10-16)"). Before that it was
+**3358 passed / 14 skipped** (+4 against the
 3354 below - **the shell's zoom level persists**: it is stored as an optional
 `zoomLevel` in `window-state.json` (`windowState.ts`; omitted at 100%, clamped to
 the ±5 zoom bounds), restored on the shell's first `dom-ready` (after `index.ts`

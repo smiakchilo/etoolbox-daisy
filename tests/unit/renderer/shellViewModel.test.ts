@@ -445,6 +445,41 @@ describe('resolveEditModeTarget', () => {
     expect(target.editing).toBe(false);
   });
 
+  it('recognises the editor behind the Cloud Service shell route in the fragment', () => {
+    // AEM as a Cloud Service serves the editor as `<origin>/ui#/aem/editor.html/...`:
+    // the wrapper sits in the fragment, not at the start of the pathname.
+    expect(
+      resolveEditModeTarget('https://author.example/ui#/aem/editor.html/content/site/page.html'),
+    ).toEqual({
+      enabled: true,
+      editing: true,
+      toggledUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
+    });
+  });
+
+  it('untogling a shell editor leaves the shell - its route fragment and shell query are dropped', () => {
+    expect(
+      resolveEditModeTarget(
+        'https://author.example/ui#/aem/editor.html/content/site/page.html?appId=aemshell',
+      )?.toggledUrl,
+    ).toBe('https://author.example/content/site/page.html?wcmmode=disabled');
+    expect(
+      resolveEditModeTarget(
+        'https://author.example/ui?appId=aemshell#/aem/editor.html/content/site/page.html',
+      )?.toggledUrl,
+    ).toBe('https://author.example/content/site/page.html?wcmmode=disabled');
+  });
+
+  it('does not treat a shell console route as the editor', () => {
+    expect(
+      resolveEditModeTarget('https://author.example/ui#/aem/sites.html/content/site/page.html')
+        .enabled,
+    ).toBe(false);
+    expect(
+      resolveEditModeTarget('https://author.example/ui#/aem/editor.html/libs/x.html').enabled,
+    ).toBe(false);
+  });
+
   it('disables the control for a non-http(s) URL, an unparseable value, or no URL at all', () => {
     expect(resolveEditModeTarget('file:///content/page.html').enabled).toBe(false);
     expect(resolveEditModeTarget('javascript:alert(1)').enabled).toBe(false);

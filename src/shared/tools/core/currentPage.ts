@@ -52,6 +52,13 @@ const CONTENT_ROOT = '/content';
 const HTML_EXTENSION = '.html';
 
 /**
+ * The page editor's UI route wrapper (`/editor.html/content/site/page.html`).
+ * It is the one wrapper that means "the page is open for editing" - as opposed
+ * to a console route that merely names content.
+ */
+export const AEM_EDITOR_PATH_PREFIX = '/editor.html';
+
+/**
  * The AEM Author UI route wrappers that carry a content path immediately after
  * them (`/editor.html/content/...`, `/sites.html/content/...`, ...). Only these
  * - plus a bare `/content/...` - are treated as naming content. Without the
@@ -60,7 +67,7 @@ const HTML_EXTENSION = '.html';
  * mistaken for "this page".
  */
 const AEM_UI_PATH_PREFIXES = [
-  '/editor.html',
+  AEM_EDITOR_PATH_PREFIX,
   '/sites.html',
   '/assets.html',
   '/siteadmin.html',
@@ -92,6 +99,34 @@ function stripAemUiPrefix(candidate: string): string {
     if (candidate.startsWith(`${prefix}/`)) return candidate.slice(prefix.length);
   }
   return candidate;
+}
+
+/**
+ * The browser path of the page an AEM page editor wraps, or `undefined` when
+ * `candidate` names no editor route.
+ *
+ * AEM serves the editor in two shapes and both must be recognised:
+ *
+ *  - on-prem / AEM 6.5 - the editor wrapper *leads* the pathname:
+ *    `/editor.html/content/site/page.html`;
+ *  - AEM as a Cloud Service, and 6.5 with the unified shell enabled - the real
+ *    UI path sits behind the shell's `/ui` route in the **fragment**, with an
+ *    `/aem` app segment before the editor wrapper:
+ *    `<origin>/ui#/aem/editor.html/content/site/page.html`.
+ *
+ * `candidate` is a URL pathname or a shell fragment body. Whatever the route
+ * carried after the page - a `?query` or `#fragment` inside the fragment, such
+ * as the shell's `?appId=aemshell` - is dropped, because the editor route is the
+ * path up to its first `?`/`#`. The returned path is left **as written**
+ * (percent-encoding intact): it is a browser path, not a decoded JCR path.
+ */
+export function editorPagePath(candidate: string): string | undefined {
+  const route = candidate.split(/[?#]/, 1)[0] ?? '';
+  const path = stripAppPrefix(route);
+  if (path === AEM_EDITOR_PATH_PREFIX || path.startsWith(`${AEM_EDITOR_PATH_PREFIX}/`)) {
+    return path.slice(AEM_EDITOR_PATH_PREFIX.length);
+  }
+  return undefined;
 }
 
 /**

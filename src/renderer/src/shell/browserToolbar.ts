@@ -1197,13 +1197,15 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   });
 
   // The edit-mode toggle: switches the open page between AEM's web-content view
-  // (`/content/site/page.html`) and its page editor
-  // (`/editor.html/content/site/page.html`). It sits immediately after the
-  // address bar and is a real toggle - one fixed `sp-icon-edit` glyph, the
-  // `selected` state (styled by browser.css) showing the page is open in the
-  // editor. It is **hidden** unless the pane is showing an editable `/content`
-  // page (see `resolveEditModeTarget`), so it never offers a switch AEM would
-  // refuse; `title`/`aria-label` name the action, like the agent-pane toggle.
+  // (`/content/site/page.html`) and its page editor - the on-prem
+  // `/editor.html/content/site/page.html`, or AEM as a Cloud Service's
+  // shell form `/ui#/aem/editor.html/content/site/page.html`. It sits
+  // immediately after the address bar and is a real toggle - one fixed
+  // `sp-icon-edit` glyph, the `selected` state (styled by browser.css) showing
+  // the page is open in the editor. It is **hidden** unless the pane is showing
+  // an editable `/content` page (see `resolveEditModeTarget`), so it never
+  // offers a switch AEM would refuse; `title`/`aria-label` name the action, like
+  // the agent-pane toggle.
   const editModeButton = el('sp-action-button', {
     attrs: {
       quiet: '',
