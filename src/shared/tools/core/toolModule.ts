@@ -111,6 +111,16 @@ export interface ToolHost {
    */
   readonly reportToolProgress?: (toolCallId: ToolCallId, text: string) => void;
   /**
+   * Optional: adds one-click `actions` (button labels) to the `ask_user`
+   * question this turn currently has pending, for an action whose availability
+   * is only decided while the question is up (the search's "Load all", once its
+   * exact total settles). UX only and best effort: it is a no-op when no
+   * question is pending (already answered, turn over), it is never journaled,
+   * and a tool that omits it simply offers the action on its next question. The
+   * caller must still validate an answer that selects such an action.
+   */
+  readonly addUserInputActions?: (actions: readonly string[]) => void;
+  /**
    * Optional diagnostics sink for a semantic outcome a tool reaches that is
    * not a response classification and never reaches the user. Today its one
    * code is `AEM_COUNT_FAILED`: the background honest-count a search may run

@@ -123,6 +123,18 @@ function validToolCallProgress(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function validUserInputActionsAdded(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'user.input.actions.added',
+    chatId: 'chat-1',
+    sequence: 5,
+    turnId: 'turn-1',
+    requestId: 'input-1',
+    actions: ['Load all'],
+    ...overrides,
+  };
+}
+
 function validError(overrides: Record<string, unknown> = {}) {
   return {
     type: 'error',
@@ -160,6 +172,7 @@ describe('agentEventSchema: valid variants', () => {
     ['tool.call.approved', validToolCallApproved()],
     ['tool.call.rejected', validToolCallRejected()],
     ['tool.call.progress', validToolCallProgress()],
+    ['user.input.actions.added', validUserInputActionsAdded()],
     ['tool.result (success)', validToolResult()],
     [
       'tool.result (failure)',
@@ -264,6 +277,15 @@ describe('agentEventSchema: does not forward raw SDK payloads', () => {
     expect(agentEventSchema.safeParse(omitKey(validToolCallProgress(), 'toolCallId')).success).toBe(
       false,
     );
+  });
+
+  it('rejects an added-actions event with no actions, or with no request to attach them to', () => {
+    expect(agentEventSchema.safeParse(validUserInputActionsAdded({ actions: [] })).success).toBe(
+      false,
+    );
+    expect(
+      agentEventSchema.safeParse(omitKey(validUserInputActionsAdded(), 'requestId')).success,
+    ).toBe(false);
   });
 
   it('rejects a negative sequence number', () => {

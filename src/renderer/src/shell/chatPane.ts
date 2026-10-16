@@ -571,6 +571,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           multiple: event.multiple,
           freeInput: event.freeInput,
         });
+      } else if (event.type === 'user.input.actions.added') {
+        if (event.requestId === pendingInputRequestId) composer.addInputActions(event.actions);
       } else if (
         event.type === 'session.state.changed' &&
         (event.state === 'idle' ||

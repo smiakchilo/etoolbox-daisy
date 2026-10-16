@@ -15,6 +15,7 @@ import {
   type ToolError,
   type ToolHost,
   CONTENT_ROOT_DEFAULT,
+  LOAD_ALL_ROW_LIMIT,
   SEARCH_PAGE_SIZE,
   createToolError,
   err,
@@ -97,6 +98,8 @@ interface HostOptions {
   readonly onDiagnostic?: (code: ToolDiagnosticCode) => void;
   /** DAM roots the facts report; omitted means none, so a default-roots test can prove order. */
   readonly damRoots?: readonly string[];
+  /** Called with the actions the executor adds to the question that is pending. */
+  readonly onAddActions?: (actions: readonly string[]) => void;
 }
 
 function makeHost(
@@ -139,6 +142,9 @@ function makeHost(
     reportToolDiagnostic: (code) => {
       diagnostics.push(code);
       options.onDiagnostic?.(code);
+    },
+    addUserInputActions: (actions) => {
+      options.onAddActions?.(actions);
     },
     invokeTool: (name, args) => {
       calls.push({ name, args });
@@ -592,12 +598,14 @@ describe('aem_query_format_ask "Load all"', () => {
     expect(payload(result)).toMatchObject({ pages: 2, rows: 4, ended: 'exhausted' });
   });
 
-  it('loads every remaining page on one Load all click, without asking again', async () => {
+  it('loads the whole remainder in one request on a Load all click, without asking again', async () => {
     const { host, calls } = makeHost(
       (name, args) => {
         if (name === 'aem_query') {
           const offset = args['offset'] as number;
-          return ok(queryPage(2, offset < 4, offset, { accuracy: 'exact', value: 6 }));
+          const limit = args['limit'] as number;
+          const rows = Math.min(limit, 6 - offset);
+          return ok(queryPage(rows, offset + rows < 6, offset, { accuracy: 'exact', value: 6 }));
         }
         return ok(name === 'ask_user' ? loadAll : tableOk);
       },
@@ -614,22 +622,40 @@ describe('aem_query_format_ask "Load all"', () => {
       'ask_user',
       'aem_query',
       'format_table',
-      'aem_query',
-      'format_table',
     ]);
-    expect(payload(result)).toMatchObject({ pages: 3, rows: 6, ended: 'exhausted' });
+    // One request for everything still missing, from where the table stopped.
+    expect(calls[3]?.args).toMatchObject({ offset: 2, limit: 4 });
+    expect(calls[4]?.args).toMatchObject({ mode: 'append' });
+    expect(payload(result)).toMatchObject({ pages: 2, rows: 6, ended: 'exhausted' });
   });
 
-  it('does not offer Load all when the exact total exceeds the page budget', async () => {
+  it('stops after the one Load all request even if the result still reports more', async () => {
     const { host, calls } = makeHost(
       (name, args) => {
         if (name === 'aem_query') {
           const offset = args['offset'] as number;
-          return ok(
-            offset === 0
-              ? queryPage(2, true, 0, { accuracy: 'exact', value: 203 })
-              : queryPage(2, false, 2, { accuracy: 'exact', value: 203 }),
-          );
+          return ok(queryPage(2, true, offset, { accuracy: 'exact', value: 6 }));
+        }
+        return ok(name === 'ask_user' ? loadAll : tableOk);
+      },
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+
+    expect(calls.filter((call) => call.name === 'aem_query')).toHaveLength(2);
+    expect(payload(result)).toMatchObject({ ended: 'stopped' });
+  });
+
+  it('does not offer Load all when the exact total exceeds the row budget', async () => {
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          const total = { accuracy: 'exact', value: LOAD_ALL_ROW_LIMIT + 3 } as const;
+          return ok(offset === 0 ? queryPage(2, true, 0, total) : queryPage(2, false, 2, total));
         }
         return ok(name === 'ask_user' ? loadMore : tableOk);
       },
@@ -640,11 +666,14 @@ describe('aem_query_format_ask "Load all"', () => {
     expect(actionsOf(calls[2])).toHaveLength(1);
   });
 
-  it('offers Load all on the next question once a lower-bound count settles', async () => {
-    const gate = deferred<BrokerOutcome>();
-    const firstAsk = deferred<Result<JsonValue, ToolError>>();
+  /** A lower-bound page 1 whose count the test settles, with page 2 exact. */
+  function lateCountHost(options: {
+    readonly firstAsk: Promise<Result<JsonValue, ToolError>>;
+    readonly count: Promise<BrokerOutcome>;
+    readonly revealed: (readonly string[])[];
+  }) {
     let asked = 0;
-    const { host, calls } = makeHost(
+    return makeHost(
       (name, args) => {
         if (name === 'aem_query') {
           const offset = args['offset'] as number;
@@ -656,13 +685,28 @@ describe('aem_query_format_ask "Load all"', () => {
         }
         if (name === 'ask_user') {
           asked += 1;
-          return asked === 1 ? firstAsk.promise : ok(loadMore);
+          return asked === 1 ? options.firstAsk : ok(loadMore);
         }
         return ok(tableOk);
       },
       ['/content/site'],
-      { currentContext: () => COUNT_CONTEXT, count: () => gate.promise },
+      {
+        currentContext: () => COUNT_CONTEXT,
+        count: () => options.count,
+        onAddActions: (actions) => options.revealed.push(actions),
+      },
     );
+  }
+
+  it('reveals Load all on the pending question the moment a lower-bound count settles', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const firstAsk = deferred<Result<JsonValue, ToolError>>();
+    const revealed: (readonly string[])[] = [];
+    const { host, calls } = lateCountHost({
+      firstAsk: firstAsk.promise,
+      count: gate.promise,
+      revealed,
+    });
 
     const running = createAemQueryFormatAskExecutor(host)(
       { terms: 'waldo', limit: 2 },
@@ -670,19 +714,152 @@ describe('aem_query_format_ask "Load all"', () => {
     );
     await flush();
 
-    // Page 1's question: the exact total is still counting, so no Load all yet.
-    const firstAskCall = calls.find((call) => call.name === 'ask_user');
-    expect(actionsOf(firstAskCall)).toHaveLength(1);
+    // Page 1's question went up with Load more only: the total was still counting.
+    expect(actionsOf(calls.find((call) => call.name === 'ask_user'))).toHaveLength(1);
+    expect(revealed).toEqual([]);
 
-    // The count settles (it fits), then the user loads the next page.
+    // The count settles (it fits): the same question gains Load all.
     gate.resolve(countResponse(6));
+    await flush();
+    expect(revealed).toHaveLength(1);
+
+    firstAsk.resolve(ok(loadMore));
+    await running;
+
+    // What was revealed is exactly the button a later question carries.
+    const asks = calls.filter((call) => call.name === 'ask_user');
+    expect(asks).toHaveLength(2);
+    expect(actionsOf(asks[1])[1]).toBe(revealed[0]?.[0]);
+  });
+
+  it('reveals nothing when the settled total is beyond the page budget', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const firstAsk = deferred<Result<JsonValue, ToolError>>();
+    const revealed: (readonly string[])[] = [];
+    const { host } = lateCountHost({ firstAsk: firstAsk.promise, count: gate.promise, revealed });
+
+    const running = createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+    await flush();
+    gate.resolve(countResponse(5000));
     await flush();
     firstAsk.resolve(ok(loadMore));
     await running;
 
-    const asks = calls.filter((call) => call.name === 'ask_user');
-    expect(asks).toHaveLength(2);
-    expect(actionsOf(asks[1])).toHaveLength(2);
+    expect(revealed).toEqual([]);
+  });
+
+  it('reveals nothing when the count fails', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const firstAsk = deferred<Result<JsonValue, ToolError>>();
+    const revealed: (readonly string[])[] = [];
+    const { host } = lateCountHost({ firstAsk: firstAsk.promise, count: gate.promise, revealed });
+
+    const running = createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+    await flush();
+    gate.resolve({ kind: 'cancelled' });
+    await flush();
+    firstAsk.resolve(ok(loadMore));
+    await running;
+
+    expect(revealed).toEqual([]);
+  });
+
+  it('reveals nothing once the question is answered, even if the count settles later', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const revealed: (readonly string[])[] = [];
+    const { host } = lateCountHost({
+      firstAsk: Promise.resolve(ok({ selections: [], freeform: null })),
+      count: gate.promise,
+      revealed,
+    });
+
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', limit: 2 }, callContext);
+    gate.resolve(countResponse(6));
+    await flush();
+
+    expect(revealed).toEqual([]);
+  });
+
+  it('reveals nothing while the next page loads between two questions', async () => {
+    const gate = deferred<BrokerOutcome>();
+    const nextPage = deferred<Result<JsonValue, ToolError>>();
+    const secondAsk = deferred<Result<JsonValue, ToolError>>();
+    const revealed: (readonly string[])[] = [];
+    let asked = 0;
+    const { host } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          return (args['offset'] as number) === 0
+            ? ok(lowerBoundPage(2, true, 0))
+            : nextPage.promise;
+        }
+        if (name === 'ask_user') {
+          asked += 1;
+          return asked === 1 ? ok(loadMore) : secondAsk.promise;
+        }
+        return ok(tableOk);
+      },
+      ['/content/site'],
+      {
+        currentContext: () => COUNT_CONTEXT,
+        count: () => gate.promise,
+        onAddActions: (actions) => revealed.push(actions),
+      },
+    );
+
+    const running = createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', limit: 2 },
+      callContext,
+    );
+    await flush();
+    gate.resolve(countResponse(6));
+    await flush();
+    expect(revealed).toEqual([]);
+
+    nextPage.resolve(ok(lowerBoundPage(2, false, 2)));
+    secondAsk.resolve(ok({ selections: [], freeform: null }));
+    await running;
+  });
+
+  it('does not reveal a button the question already carries', async () => {
+    const revealed: (readonly string[])[] = [];
+    const { host } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(queryPage(2, offset === 0, offset, { accuracy: 'exact', value: 4 }));
+        }
+        return ok(name === 'ask_user' ? loadMore : tableOk);
+      },
+      ['/content/site'],
+      { onAddActions: (actions) => revealed.push(actions) },
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', limit: 2 }, callContext);
+
+    expect(revealed).toEqual([]);
+  });
+
+  it('treats a Load all answer as Load more when the total no longer fits the budget', async () => {
+    const { host, calls } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          const offset = args['offset'] as number;
+          return ok(queryPage(2, offset < 4, offset, { accuracy: 'exact', value: 5000 }));
+        }
+        return ok(name === 'ask_user' ? loadAll : tableOk);
+      },
+      ['/content/site'],
+    );
+    await createAemQueryFormatAskExecutor(host)({ terms: 'waldo', limit: 2 }, callContext);
+
+    // One question per page: a forged Load all never switched on unbounded paging.
+    expect(calls.filter((call) => call.name === 'ask_user').length).toBeGreaterThan(1);
   });
 });
 

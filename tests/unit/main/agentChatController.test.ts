@@ -1504,6 +1504,77 @@ describe('interactive questions', () => {
     });
     expect(result.ok).toBe(false);
   });
+
+  describe('live-added actions', () => {
+    async function askQuestion() {
+      const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+      const { journal, calls } = createRecordingJournal();
+      const { controller } = buildController(agentService, { chatJournal: journal });
+      const received: AgentEvent[] = [];
+      controller.onEvent((event) => received.push(event));
+      const chatId = newChatId('chat-a');
+      await controller.openConversation({ chatId });
+      agentService.scriptNextResponse({
+        steps: [{ kind: 'inputRequest', question: 'Continue?', options: ['Yes', 'No'] }],
+      });
+      await controller.sendMessage({ chatId, prompt: 'hi' });
+      agentService.flush();
+      const requested = received.find((event) => event.type === 'user.input.requested');
+      if (requested?.type !== 'user.input.requested') throw new Error('no question forwarded');
+      return { controller, received, calls, chatId, requestId: requested.requestId };
+    }
+
+    const added = (received: readonly AgentEvent[]) =>
+      received.filter((event) => event.type === 'user.input.actions.added');
+
+    it('forwards the added actions for the pending question, but never journals them', async () => {
+      const { controller, received, calls, requestId } = await askQuestion();
+
+      controller.recordUserInputActionsAdded(['Load all']);
+
+      expect(added(received)).toMatchObject([{ requestId, actions: ['Load all'] }]);
+      const journaled = calls
+        .filter((call) => call.method === 'recordEvent')
+        .map((call) => (call.args as AgentEvent).type);
+      expect(journaled).not.toContain('user.input.actions.added');
+    });
+
+    it('drops them once the question has been answered', async () => {
+      const { controller, received, chatId, requestId } = await askQuestion();
+      await controller.respondToInput({
+        chatId,
+        requestId,
+        answer: { selections: ['Yes'], freeform: null },
+      });
+
+      controller.recordUserInputActionsAdded(['Load all']);
+
+      expect(added(received)).toEqual([]);
+    });
+
+    it('drops them when no question is pending', () => {
+      const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+      const { controller } = buildController(agentService);
+      const received: AgentEvent[] = [];
+      controller.onEvent((event) => received.push(event));
+
+      controller.recordUserInputActionsAdded(['Load all']);
+
+      expect(added(received)).toEqual([]);
+    });
+
+    it('is forwarded by the startup-gated controller once the real one is installed', async () => {
+      const { controller: real } = buildController(
+        createFakeAgentService({ idGenerator: counterIdGenerator('fake') }),
+      );
+      const spy = vi.spyOn(real, 'recordUserInputActionsAdded');
+      const gated = createStartupGatedAgentChatController();
+      gated.recordUserInputActionsAdded(['Load all']);
+      await gated.replaceDelegate(real);
+      gated.recordUserInputActionsAdded(['Load all']);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('nested tool calls (ToolHost.invokeTool)', () => {

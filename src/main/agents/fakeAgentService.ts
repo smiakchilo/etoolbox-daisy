@@ -142,6 +142,12 @@ export interface ScriptedInputRequestStep {
   readonly options?: readonly string[];
   /** One-click button labels (e.g. `['Load more']`). Mutually exclusive with `options`. */
   readonly actions?: readonly string[];
+  /**
+   * Buttons revealed a moment after the question is shown (a separate
+   * `user.input.actions.added` event, delivered as its own `advance` step), as
+   * the search composite does when its honest total settles.
+   */
+  readonly lateActions?: readonly string[];
   readonly multiple?: boolean;
   readonly freeInput?: boolean;
 }
@@ -675,6 +681,16 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
           requestId,
           ...shared,
         });
+        if (step.lateActions !== undefined && step.lateActions.length > 0) {
+          queue.push({
+            type: 'user.input.actions.added',
+            chatId,
+            sequence: nextSequence(chatId),
+            turnId,
+            requestId,
+            actions: [...step.lateActions],
+          });
+        }
         const result: ToolResultEvent = {
           type: 'tool.result',
           chatId,

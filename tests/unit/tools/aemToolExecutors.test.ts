@@ -7,12 +7,18 @@ import {
   type AemGetJsonResult,
 } from '../../../src/tools/aem-get-json/aemGetJson';
 import {
+  AEM_QUERY_TOOL_DESCRIPTOR,
   createAemQueryExecutor,
   type AemQueryRequestEnvelope,
   type AemQueryResult,
 } from '../../../src/tools/aem-query/aemQuery';
+import { aemQueryFormatAskArgsSchema } from '../../../src/tools/aem-query-format-ask/aemQueryFormatAsk';
+import { aemSemanticSearchArgsSchema } from '../../../src/tools/aem-semantic-search/aemSemanticSearch';
 import type { ToolCallId } from '../../../src/shared';
 import {
+  LOAD_ALL_ROW_LIMIT,
+  MAX_QUERY_LIMIT,
+  MIN_QUERY_LIMIT,
   newChatId,
   newRequestId,
   newServerId,
@@ -434,6 +440,85 @@ describe('aemTool - createAemQueryExecutor', () => {
     );
     expect(result.ok).toBe(false);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('never lets a model call lift the limit cap or request an unbounded page', async () => {
+    const ids = counterIdGenerator();
+    const execute = vi.fn(() => Promise.resolve(makeQuerySuccess(newRequestId(ids))));
+    const executor = createAemQueryExecutor(makeQueryConfig(ids, execute, () => makeContext(ids)));
+    for (const limit of [MAX_QUERY_LIMIT + 1, LOAD_ALL_ROW_LIMIT, -1, 0]) {
+      const result = await executor(
+        { predicates: { path: '/content/site' }, limit },
+        toolCallContext(),
+      );
+      expect(result.ok).toBe(false);
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  describe('a nested call from the tool-to-tool bridge', () => {
+    const nestedContext = (): ReturnType<typeof toolCallContext> & { nested: true } => ({
+      ...toolCallContext(),
+      nested: true,
+    });
+
+    it('may ask for a limit up to the Load all row budget', async () => {
+      const ids = counterIdGenerator();
+      let seen: AemQueryRequestEnvelope | undefined;
+      const executor = createAemQueryExecutor(
+        makeQueryConfig(
+          ids,
+          (envelope) => {
+            seen = envelope;
+            return Promise.resolve(makeQuerySuccess(envelope.requestId));
+          },
+          () => makeContext(ids),
+        ),
+      );
+      const result = await executor(
+        { predicates: { path: '/content/site' }, limit: LOAD_ALL_ROW_LIMIT },
+        nestedContext(),
+      );
+      expect(result.ok).toBe(true);
+      expect(seen?.args.limit).toBe(LOAD_ALL_ROW_LIMIT);
+    });
+
+    it('still refuses an over-budget, unbounded or unknown-key request', async () => {
+      const ids = counterIdGenerator();
+      const execute = vi.fn(() => Promise.resolve(makeQuerySuccess(newRequestId(ids))));
+      const executor = createAemQueryExecutor(
+        makeQueryConfig(ids, execute, () => makeContext(ids)),
+      );
+      const bad = [
+        { predicates: { path: '/content/site' }, limit: LOAD_ALL_ROW_LIMIT + 1 },
+        { predicates: { path: '/content/site' }, limit: -1 },
+        { predicates: { path: '/content/site' }, limit: 10, origin: 'https://attacker.example' },
+      ];
+      for (const args of bad) {
+        expect((await executor(args, nestedContext())).ok).toBe(false);
+      }
+      expect(execute).not.toHaveBeenCalled();
+    });
+  });
+
+  it('keeps the model-facing descriptor at the ordinary limit cap', () => {
+    const parameters = AEM_QUERY_TOOL_DESCRIPTOR.parameters as {
+      properties: { limit: { maximum: number } };
+    };
+    expect(parameters.properties.limit.maximum).toBe(MAX_QUERY_LIMIT);
+  });
+
+  it('shares one limit range with both search composites', () => {
+    const search = { terms: 'x', context: 'y' };
+    const formatAsk = { terms: 'x' };
+    for (const [schema, base] of [
+      [aemQueryFormatAskArgsSchema, formatAsk],
+      [aemSemanticSearchArgsSchema, search],
+    ] as const) {
+      expect(schema.safeParse({ ...base, limit: MAX_QUERY_LIMIT }).success).toBe(true);
+      expect(schema.safeParse({ ...base, limit: MAX_QUERY_LIMIT + 1 }).success).toBe(false);
+      expect(schema.safeParse({ ...base, limit: MIN_QUERY_LIMIT - 1 }).success).toBe(false);
+    }
   });
 
   it('honours an already-aborted signal before validating anything', async () => {

@@ -20,7 +20,15 @@ import type { Result } from '../../result';
  */
 export type AemToolExecutor = (
   args: Readonly<Record<string, JsonValue>>,
-  context: { readonly toolCallId: ToolCallId; readonly signal: AbortSignal | undefined },
+  context: {
+    readonly toolCallId: ToolCallId;
+    readonly signal: AbortSignal | undefined;
+    /**
+     * Set only by the application's tool-to-tool bridge (`ToolHost.invokeTool`),
+     * never by an agent adapter: the call comes from another tool, not the model.
+     */
+    readonly nested?: true;
+  },
 ) => Promise<Result<JsonValue, ToolError>>;
 
 /**

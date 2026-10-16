@@ -29,7 +29,7 @@ import {
  * requirements-decisions.md section 2 forbids for anything beyond content
  * the user already has access to, and (b) couple every consumer to an SDK
  * version instead of to this module. So every event below is a deliberately
- * narrow, hand-picked projection: sixteen variants, each a `.strict()` object of
+ * narrow, hand-picked projection: seventeen variants, each a `.strict()` object of
  * named fields, with no `unknown`/`Record<string, unknown>` escape hatch
  * anywhere in the tree. If a caller wants something this module does not
  * expose, that is a decision to revisit here, not a reason to reach past it.
@@ -335,6 +335,28 @@ const userInputRequestedEventSchema = z
   .strict();
 
 /**
+ * One-click actions added to an `ask_user` question that is already pending, so
+ * a button whose availability is only decided later (the search's "Load all",
+ * offered once its honest total settles) appears the moment it becomes valid
+ * instead of on the next question.
+ *
+ * Emitted by the application, not by an agent adapter: a tool executor reports
+ * it through `ToolHost.addUserInputActions` and the chat controller injects it
+ * keyed to the question outstanding at that moment. Like `tool.call.progress`
+ * it is transient - never journaled, gone on replay. A consumer applies it only
+ * if `requestId` is the question it is still showing.
+ */
+const userInputActionsAddedEventSchema = z
+  .object({
+    type: z.literal('user.input.actions.added'),
+    ...baseEventFields,
+    turnId: turnIdSchema,
+    requestId: userInputRequestIdSchema,
+    actions: userInputActionsSchema,
+  })
+  .strict();
+
+/**
  * Normalizes `session.start`/`session.idle`/`session.resume`/
  * `session.shutdown`/`assistant.turn_start`/`assistant.turn_end`
  * (docs/compatibility.md). `turnId` is optional because `session.start` and
@@ -450,6 +472,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   errorEventSchema,
   sessionStateChangedEventSchema,
   userInputRequestedEventSchema,
+  userInputActionsAddedEventSchema,
 ]);
 
 export type AgentEvent = z.infer<typeof agentEventSchema>;
@@ -468,6 +491,7 @@ export type ToolCallProgressEvent = z.infer<typeof toolCallProgressEventSchema>;
 export type ErrorEvent = z.infer<typeof errorEventSchema>;
 export type SessionStateChangedEvent = z.infer<typeof sessionStateChangedEventSchema>;
 export type UserInputRequestedEvent = z.infer<typeof userInputRequestedEventSchema>;
+export type UserInputActionsAddedEvent = z.infer<typeof userInputActionsAddedEventSchema>;
 export type ModelChangedEvent = z.infer<typeof modelChangedEventSchema>;
 export type ModelUsageEvent = z.infer<typeof modelUsageEventSchema>;
 export type ModelCallFailedEvent = z.infer<typeof modelCallFailedEventSchema>;

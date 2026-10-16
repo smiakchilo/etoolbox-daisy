@@ -11,6 +11,7 @@ import {
   createCurrentPageContext,
   createEnvironmentFacts,
   createLateBoundAemToolContext,
+  createLateBoundUserInputActions,
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
   resolveBundledResourcesDirectory,
@@ -380,6 +381,21 @@ describe('createLateBoundAemToolContext', () => {
 
     expect(lateBound.currentContext()).toEqual(contexts[0]);
     expect(lateBound.currentContext()).toEqual(contexts[1]);
+  });
+});
+
+describe('createLateBoundUserInputActions', () => {
+  it('ignores an add before the controller is bound, then forwards to it', () => {
+    const recordUserInputActionsAdded = vi.fn();
+    const lateBound = createLateBoundUserInputActions();
+
+    lateBound.add(['Load all']);
+    expect(recordUserInputActionsAdded).not.toHaveBeenCalled();
+
+    lateBound.bind({ recordUserInputActionsAdded });
+    lateBound.add(['Load all']);
+
+    expect(recordUserInputActionsAdded).toHaveBeenCalledExactlyOnceWith(['Load all']);
   });
 });
 

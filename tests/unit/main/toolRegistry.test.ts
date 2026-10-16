@@ -336,6 +336,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
     const context = callee.mock.calls[0]?.[1];
     expect(context?.signal).toBe(controller.signal);
     expect(context?.toolCallId).not.toBe(parentId);
+    expect(context?.nested).toBe(true);
   });
 
   it('refuses a tool missing from the caller uses list, without running it', async () => {

@@ -25,6 +25,7 @@ import {
   createLateBoundAemToolContext,
   createLateBoundToolProgress,
   createLateBoundUserInput,
+  createLateBoundUserInputActions,
   createModelPreferenceCache,
   installAgentService,
   isAgentTurnInFlight,
@@ -571,6 +572,8 @@ if (!gotSingleInstanceLock) {
     // A long-running tool's progress notes, late-bound to the chat controller
     // for the same construction-order reason (see `createLateBoundToolProgress`).
     const lateBoundToolProgress = createLateBoundToolProgress();
+    // Extra one-click actions on a pending question, late-bound likewise.
+    const lateBoundUserInputActions = createLateBoundUserInputActions();
     // The host's content/component roots, resolved from the live pane URL, the
     // current settings document and the host's selected project. Read fresh so
     // a roots/project edit in Settings is visible immediately;
@@ -622,6 +625,7 @@ if (!gotSingleInstanceLock) {
           toolLogger.classification({ requestId, kind });
         },
         reportToolProgress: (toolCallId, text) => lateBoundToolProgress.report(toolCallId, text),
+        addUserInputActions: (actions) => lateBoundUserInputActions.add(actions),
         // Diagnostics only: a search's background honest count that did not
         // prove an exact total - the table silently keeps its capped fallback.
         reportToolDiagnostic: (code) => {
@@ -660,6 +664,7 @@ if (!gotSingleInstanceLock) {
     lateBoundAemToolContext.bind(agentChatController);
     lateBoundUserInput.bind(agentChatController);
     lateBoundToolProgress.bind(agentChatController);
+    lateBoundUserInputActions.bind(agentChatController);
 
     const unregisterAgentChatIpc = registerAgentChatIpcHandlers({
       controller: agentChatController,

@@ -21,10 +21,14 @@ import {
   classifyAemResponse,
   createToolExecutor,
   DEFAULT_PROJECTION,
+  DEFAULT_QUERY_LIMIT,
   effectiveRoots,
   envelopeCommonShape,
   hasMoreSchema,
   jsonValueSchema,
+  LOAD_ALL_ROW_LIMIT,
+  MAX_QUERY_LIMIT,
+  MIN_QUERY_LIMIT,
   originSchema,
   PATH_PROPERTY,
   planPrioritySegments,
@@ -56,10 +60,6 @@ import {
 // Predicates validation
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_QUERY_LIMIT = 50;
-export const MAX_QUERY_LIMIT = 200;
-export const MIN_QUERY_LIMIT = 1;
-
 /**
  * `p.limit=-1` (unbounded) must be impossible to express - `min(1)` alone
  * already makes that true, but rejecting is the point: a request for -1 fails
@@ -71,6 +71,19 @@ export const queryLimitSchema = z
   .int('limit must be an integer')
   .min(MIN_QUERY_LIMIT, `limit must be at least ${String(MIN_QUERY_LIMIT)}`)
   .max(MAX_QUERY_LIMIT, `limit must be at most ${String(MAX_QUERY_LIMIT)}`)
+  .default(DEFAULT_QUERY_LIMIT);
+
+/**
+ * The most `limit` a *nested* call (another tool through `ToolHost.invokeTool`)
+ * may ask for: the one request behind the search composite's "Load all", whose
+ * size is a proven exact remainder. The model never reaches it - its own calls
+ * keep {@link MAX_QUERY_LIMIT}; `-1` stays inexpressible for both.
+ */
+const nestedQueryLimitSchema = z
+  .number()
+  .int('limit must be an integer')
+  .min(MIN_QUERY_LIMIT, `limit must be at least ${String(MIN_QUERY_LIMIT)}`)
+  .max(LOAD_ALL_ROW_LIMIT, `limit must be at most ${String(LOAD_ALL_ROW_LIMIT)}`)
   .default(DEFAULT_QUERY_LIMIT);
 
 export const queryOffsetSchema = z
@@ -192,6 +205,9 @@ export const aemQueryArgsSchema = z
   })
   .strict();
 
+/** The arguments a nested call accepts: the model's, with the wider `limit` cap. */
+const nestedAemQueryArgsSchema = aemQueryArgsSchema.extend({ limit: nestedQueryLimitSchema });
+
 export type AemQueryArgs = z.infer<typeof aemQueryArgsSchema>;
 
 export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
@@ -235,6 +251,10 @@ export const aemQueryRequestSchema = z
   })
   .strict();
 
+const nestedAemQueryRequestSchema = aemQueryRequestSchema.extend({
+  args: nestedAemQueryArgsSchema,
+});
+
 export type AemQueryRequest = z.infer<typeof aemQueryRequestSchema>;
 
 // ---------------------------------------------------------------------------
@@ -244,7 +264,7 @@ export type AemQueryRequest = z.infer<typeof aemQueryRequestSchema>;
 export const paginationMetadataSchema = z
   .object({
     offset: z.number().int().nonnegative(),
-    limit: z.number().int().min(1).max(200),
+    limit: z.number().int().min(MIN_QUERY_LIMIT).max(LOAD_ALL_ROW_LIMIT),
     returned: z.number().int().nonnegative(),
     hasMore: hasMoreSchema,
     total: totalMatchesSchema,
@@ -918,10 +938,25 @@ export interface AemQueryExecutorConfig<TRuntimeDeps extends Record<string, unkn
 export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemQueryExecutorConfig<TRuntimeDeps>,
 ): AemToolExecutor {
+  const forModel = createQueryExecutor(config, aemQueryArgsSchema, aemQueryRequestSchema);
+  const forNested = createQueryExecutor(
+    config,
+    nestedAemQueryArgsSchema,
+    nestedAemQueryRequestSchema,
+  );
+  return (args, context) =>
+    context.nested === true ? forNested(args, context) : forModel(args, context);
+}
+
+function createQueryExecutor<TRuntimeDeps extends Record<string, unknown>>(
+  config: AemQueryExecutorConfig<TRuntimeDeps>,
+  argsSchema: z.ZodType,
+  requestSchema: z.ZodType<AemQueryRequest>,
+): AemToolExecutor {
   return createToolExecutor({
     operation: 'aem_query',
-    argsSchema: aemQueryArgsSchema,
-    requestSchema: aemQueryRequestSchema,
+    argsSchema,
+    requestSchema,
     render: renderQuerySuccess,
     // The payload is the whole success shape (rows/pagination/selection), plus
     // the two fields every payload carries: `textResultForLlm` (the model's

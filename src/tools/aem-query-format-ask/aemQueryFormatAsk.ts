@@ -9,8 +9,10 @@ import {
   type ToolHost,
   AEM_COUNT_TIMEOUT_MS,
   CONTENT_ROOT_DEFAULT,
-  LOAD_ALL_PAGE_LIMIT,
+  LOAD_ALL_ROW_LIMIT,
+  MAX_QUERY_LIMIT,
   MAX_SEARCH_ROOTS,
+  MIN_QUERY_LIMIT,
   SEARCH_PAGE_SIZE,
   TURN_COMPLETE_RESULT_KEY,
   buildQueryUrl,
@@ -38,8 +40,10 @@ import {
  * runs through `aem_query`; the page goes to `format_table` (`new`, then
  * `append`); while more results may exist, `ask_user` offers one "Load more"
  * button, and a click repeats the loop at the next offset. Once an exact total
- * is known and fits in `LOAD_ALL_PAGE_LIMIT` pages, a "Load all" button is
- * offered alongside it; a click then pages to the end without asking again. The
+ * is known and fits in `LOAD_ALL_ROW_LIMIT` rows, a "Load all" button is
+ * offered alongside it; a click then fetches the whole remainder in one
+ * `aem_query` request (a nested call may ask for that larger `limit`; the model
+ * may not) and appends it as one table block. The
  * model makes one call and never relays JSON between tools, and never forgets a
  * button. A hand-built search passes its QueryBuilder predicates instead of
  * terms; the loop is the same.
@@ -67,7 +71,6 @@ export const AEM_QUERY_FORMAT_ASK_ALLOWLIST_ENTRY = 'custom:aem_query_format_ask
 /** The tools this one runs, in order; the manifest's `uses` list. */
 export const AEM_QUERY_FORMAT_ASK_USES = ['aem_query', 'format_table', 'ask_user'] as const;
 
-const MAX_SEARCH_PAGE_SIZE = 200;
 const LOAD_MORE = 'Load more';
 /** The whole-result button; only offered alongside "Load more" when it fits (see below). */
 const LOAD_ALL = 'Load all';
@@ -102,8 +105,8 @@ export const aemQueryFormatAskArgsSchema = z
     limit: z
       .number()
       .int()
-      .min(1)
-      .max(MAX_SEARCH_PAGE_SIZE)
+      .min(MIN_QUERY_LIMIT)
+      .max(MAX_QUERY_LIMIT)
       .default(SEARCH_PAGE_SIZE)
       .describe('Rows per page. Omit it unless the user asked for a page size.'),
   })
@@ -323,6 +326,10 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
     let countSettled = false;
     let exactTotal: number | undefined;
     let finished = false;
+    /** True while a "Load more" question is awaiting the user's answer. */
+    let askPending = false;
+    /** Whether the question now pending already carries "Load all". */
+    let loadAllOffered = false;
 
     const runCount = async (): Promise<number | undefined> => {
       let current;
@@ -397,6 +404,12 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
         // an early error) must not enqueue a nested call: `finished` is set in
         // `finally`, before this microtask can run.
         if (finished || context.signal?.aborted === true) return;
+        // The count usually settles while "Load more" is already on screen:
+        // offer "Load all" on that very question instead of the next one.
+        if (askPending && !loadAllOffered && canLoadAll(total, rowCount, hasMore)) {
+          loadAllOffered = true;
+          host.addUserInputActions?.([LOAD_ALL]);
+        }
         void settleTable(exact);
       };
       // `runCount` is written not to reject, but a rejected promise must never
@@ -410,22 +423,22 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
     let pages = 0;
     let rowCount = 0;
     /**
-     * Whether a "Load all" click would finish the search within the page
-     * budget. It needs an **exact** total (`exactTotal` from the background
-     * count, or the page's own total when it is already exact) and the
-     * remaining matches must fit in `LOAD_ALL_PAGE_LIMIT` further pages, so one
-     * click can never fetch an unbounded result set. A lower-bound total offers
-     * no "Load all": the true size is unknown while the count runs, and the
-     * next question - once the count has settled - offers it. Measured with
-     * `limit` (one page per root): a multi-root fan-out yields more rows per
-     * page, so fewer pages, making this a safe upper bound.
+     * How many rows a "Load all" click would still fetch, or `undefined` when it
+     * must not be offered. It needs an **exact** total (`exactTotal` from the
+     * background count, or the page's own total when it is already exact) and
+     * the remaining matches must fit in `LOAD_ALL_ROW_LIMIT`, so one click
+     * fetches a proven, bounded number of rows - never an unbounded set. A
+     * lower-bound total offers no "Load all": the true size is unknown while the
+     * count runs, and the next question - once the count has settled - offers
+     * it. With a multi-root fan-out `limit` applies per root, so this remainder
+     * is a safe upper bound for each root.
      */
-    const canLoadAll = (
+    const loadAllRemaining = (
       pageTotal: JsonValue,
       rowsShown: number,
       more: boolean | 'unknown',
-    ): boolean => {
-      if (more !== true) return false;
+    ): number | undefined => {
+      if (more !== true) return undefined;
       const pageExact =
         isRecord(pageTotal) &&
         pageTotal['accuracy'] === 'exact' &&
@@ -433,13 +446,19 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
           ? pageTotal['value']
           : undefined;
       const exact = exactTotal ?? pageExact;
-      if (exact === undefined) return false;
+      if (exact === undefined) return undefined;
       const remaining = exact - rowsShown;
-      return remaining > 0 && remaining <= limit * LOAD_ALL_PAGE_LIMIT;
+      return remaining > 0 && remaining <= LOAD_ALL_ROW_LIMIT ? remaining : undefined;
     };
-    /** Set once the user clicks "Load all": the loop then pages without asking again. */
+    const canLoadAll = (
+      pageTotal: JsonValue,
+      rowsShown: number,
+      more: boolean | 'unknown',
+    ): boolean => loadAllRemaining(pageTotal, rowsShown, more) !== undefined;
+    /** Set once the user clicks "Load all": the next request is the last one. */
     let loadAll = false;
-    let loadAllPagesLeft = 0;
+    /** The `limit` of the next request: a page, or - after "Load all" - the whole remainder. */
+    let requestLimit = limit;
     let total: JsonValue;
     let hasMore: boolean | 'unknown';
     let ended: SearchEnd;
@@ -455,7 +474,7 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
             predicates,
             ...(roots === undefined ? {} : { roots: [...roots] }),
             properties: [...(parsed.data.properties ?? [])],
-            limit,
+            limit: requestLimit,
             offset,
           },
           context,
@@ -491,22 +510,20 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
         }
 
         if (loadAll) {
-          // A "Load all" click keeps paging without asking again, bounded by
-          // the budget `canLoadAll` proved would finish the search - so a
-          // single click can never fetch an unbounded result set.
-          if (loadAllPagesLeft <= 0) {
-            ended = 'stopped';
-            break;
-          }
-          loadAllPagesLeft -= 1;
-          offset += limit;
-          continue;
+          // The "Load all" request asked for the whole proven remainder; if the
+          // result still says more exists, the data changed underneath it - stop
+          // rather than loop.
+          ended = 'stopped';
+          break;
         }
 
         const actions = canLoadAll(pagination.total, rowCount, hasMore)
           ? [LOAD_MORE, LOAD_ALL]
           : [LOAD_MORE];
+        loadAllOffered = actions.includes(LOAD_ALL);
+        askPending = true;
         const asked = await host.invokeTool('ask_user', { actions }, context);
+        askPending = false;
         if (!asked.ok) {
           if (asked.error.code === 'CANCELLED') {
             ended = 'stopped';
@@ -516,10 +533,12 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor
         }
         const answer = askAnswerSchema.safeParse(asked.value);
         const selections = answer.success ? answer.data.selections : [];
-        if (selections.includes(LOAD_ALL)) {
+        const wantsAll = selections.includes(LOAD_ALL);
+        const remaining = wantsAll ? loadAllRemaining(total, rowCount, hasMore) : undefined;
+        if (remaining !== undefined) {
           loadAll = true;
-          loadAllPagesLeft = LOAD_ALL_PAGE_LIMIT;
-        } else if (!selections.includes(LOAD_MORE)) {
+          requestLimit = remaining;
+        } else if (!wantsAll && !selections.includes(LOAD_MORE)) {
           ended = 'stopped';
           break;
         }

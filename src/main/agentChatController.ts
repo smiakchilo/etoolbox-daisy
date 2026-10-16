@@ -30,6 +30,7 @@ import {
   type TurnId,
   type UserInputAnswer,
   type UserInputRequest,
+  type UserInputRequestId,
   agentEventSchema,
   applyAgentEvent,
   canSendMessage,
@@ -204,6 +205,14 @@ export interface AgentChatController {
    * turn in flight.
    */
   recordToolProgress(toolCallId: ToolCallId, text: string): void;
+  /**
+   * Adds one-click `actions` to the `ask_user` question currently pending, as a
+   * transient event (listeners only - never journaled), so a button whose
+   * availability is decided while the question is up appears at once. Called
+   * from a tool executor through `ToolHost.addUserInputActions`, not over IPC.
+   * Ignored with no pending question, and for one the user has already answered.
+   */
+  recordUserInputActionsAdded(actions: readonly string[]): void;
   /** Notifies `listener` of every `AgentEvent` that survives the ownership guard, in order. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**
@@ -310,6 +319,11 @@ interface ActiveTurn {
   readonly toolCallIds: Set<ToolCallId>;
 }
 
+/** The `ask_user` question currently awaiting an answer, tracked so a late action can be attached to it. */
+interface PendingInput {
+  readonly requestId: UserInputRequestId;
+  readonly turnId: TurnId;
+}
 /**
  * One phase of a tool call a tool made through `ToolHost.invokeTool` (see
  * `src/main/tools/registry.ts`). Agent-agnostic: no SDK sees these calls.
@@ -334,6 +348,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 
   let activeChatId: ChatId | undefined;
   let activeTurn: ActiveTurn | undefined;
+  let pendingInput: PendingInput | undefined;
   /**
    * Single-flight for `openConversation`. At most one
    * `agentService.openConversation` call may be in flight at a time, and
@@ -402,6 +417,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
         // actually in flight, so a late one from an abandoned turn is dropped
         // exactly like a late assistant delta.
         return activeTurn !== undefined && event.turnId === activeTurn.turnId;
+      case 'user.input.actions.added':
+        return activeTurn !== undefined && event.turnId === activeTurn.turnId;
       case 'error':
       case 'session.state.changed':
         // Both variants carry `turnId` optionally (e.g. the terminal
@@ -429,6 +446,9 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     if (activeTurn === undefined) return;
     if (event.type === 'assistant.message.started') activeTurn.messageIds.add(event.messageId);
     if (event.type === 'tool.call.requested') activeTurn.toolCallIds.add(event.toolCallId);
+    if (event.type === 'user.input.requested') {
+      pendingInput = { requestId: event.requestId, turnId: event.turnId };
+    }
   }
 
   function clearTurnIfTerminal(): void {
@@ -533,6 +553,31 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     });
     if (!parsed.success) {
       logger.error('AGENT_CHAT_TOOL_PROGRESS_INVALID', { ids: { chatId: activeChatId } });
+      return;
+    }
+    ingestOwnedEvent(parsed.data, true);
+  }
+
+  /**
+   * Shows extra one-click actions on the question that is pending right now.
+   * Transient like `recordToolProgress` (never journaled). It is a no-op unless
+   * a question of the in-flight turn is still unanswered - `respondToInput`
+   * clears the tracked one the moment an answer is sent, so a reveal that races
+   * the user's click is dropped rather than attached to a question that is gone.
+   */
+  function recordUserInputActionsAdded(actions: readonly string[]): void {
+    if (activeChatId === undefined || activeTurn === undefined) return;
+    if (pendingInput === undefined || pendingInput.turnId !== activeTurn.turnId) return;
+    const parsed = agentEventSchema.safeParse({
+      type: 'user.input.actions.added',
+      chatId: activeChatId,
+      sequence: 0,
+      turnId: pendingInput.turnId,
+      requestId: pendingInput.requestId,
+      actions: [...actions],
+    });
+    if (!parsed.success) {
+      logger.error('AGENT_CHAT_INPUT_ACTIONS_INVALID', { ids: { chatId: activeChatId } });
       return;
     }
     ingestOwnedEvent(parsed.data, true);
@@ -792,6 +837,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     if (activeChatId === undefined || request.chatId !== activeChatId) {
       return { ok: false, error: notOpenConversationError(request.chatId) };
     }
+    if (pendingInput?.requestId === request.requestId) pendingInput = undefined;
     const result = await agentService.respondToInput(
       request.chatId,
       request.requestId,
@@ -872,6 +918,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     respondToInput,
     recordNestedToolCall,
     recordToolProgress,
+    recordUserInputActionsAdded,
     onEvent,
     onStatusChanged,
     currentAemToolContext,
@@ -1077,6 +1124,10 @@ export function createStartupGatedAgentChatController(
     real?.recordToolProgress(toolCallId, text);
   }
 
+  function recordUserInputActionsAdded(actions: readonly string[]): void {
+    real?.recordUserInputActionsAdded(actions);
+  }
+
   function onEvent(listener: (event: AgentEvent) => void): () => void {
     forwardListeners.add(listener);
     return () => {
@@ -1158,6 +1209,7 @@ export function createStartupGatedAgentChatController(
     respondToInput,
     recordNestedToolCall,
     recordToolProgress,
+    recordUserInputActionsAdded,
     onEvent,
     onStatusChanged,
     currentAemToolContext,

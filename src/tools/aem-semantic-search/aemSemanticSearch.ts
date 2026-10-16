@@ -9,7 +9,9 @@ import {
   type ToolError,
   type ToolExecutionContext,
   type ToolHost,
+  MAX_QUERY_LIMIT,
   MAX_SEARCH_ROOTS,
+  MIN_QUERY_LIMIT,
   SEARCH_PAGE_SIZE,
   TURN_COMPLETE_RESULT_KEY,
   classifyAemResponse,
@@ -56,7 +58,6 @@ export const AEM_SEMANTIC_SEARCH_ALLOWLIST_ENTRY = 'custom:aem_semantic_search';
 /** The tools this one runs; the manifest's `uses` list. */
 export const AEM_SEMANTIC_SEARCH_USES = ['aem_query', 'format_table', 'ask_user'] as const;
 
-const MAX_SEMANTIC_PAGE_SIZE = 100;
 const LOAD_MORE = 'Load more';
 
 /** Concurrent content reads per page; the broker serialises them, this keeps its queue fed. */
@@ -102,8 +103,8 @@ export const aemSemanticSearchArgsSchema = z
     limit: z
       .number()
       .int()
-      .min(1)
-      .max(MAX_SEMANTIC_PAGE_SIZE)
+      .min(MIN_QUERY_LIMIT)
+      .max(MAX_QUERY_LIMIT)
       .describe('Rows per page. Omit it unless the user asked for a page size.')
       .optional(),
     /** Call B: the id call A returned. */

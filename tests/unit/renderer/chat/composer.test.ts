@@ -806,6 +806,93 @@ describe('createComposer', () => {
     });
   });
 
+  describe('live-added actions', () => {
+    const buttonLabels = (composer: Composer): (string | null)[] =>
+      [...composer.element.querySelectorAll('.chat-ask__action')].map((b) => b.textContent);
+
+    it('appends a button to the open actions question without flashing the frame', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer: vi.fn() });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+      const frame = query(composer.element, '.chat-composer__frame');
+      const flash = new dom.window.Event('animationend');
+      Object.defineProperty(flash, 'animationName', { value: ATTENTION_ANIMATION });
+      frame.dispatchEvent(flash);
+      expect(frame.classList.contains(ATTENTION_CLASS)).toBe(false);
+
+      composer.addInputActions(['Load all']);
+
+      expect(buttonLabels(composer)).toEqual(['Load more', 'Load all']);
+      expect(frame.classList.contains(ATTENTION_CLASS)).toBe(false);
+    });
+
+    it('does not duplicate an action the question already carries', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer: vi.fn() });
+      composer.setInputRequest({
+        actions: ['Load more', 'Load all'],
+        multiple: false,
+        freeInput: false,
+      });
+
+      composer.addInputActions(['Load all']);
+      composer.addInputActions(['Load more']);
+
+      expect(buttonLabels(composer)).toEqual(['Load more', 'Load all']);
+    });
+
+    it('does nothing when there is no question', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer: vi.fn() });
+
+      composer.addInputActions(['Load all']);
+
+      expect(buttonLabels(composer)).toEqual([]);
+    });
+
+    it('does nothing for a question that is not an actions question', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer: vi.fn() });
+      composer.setInputRequest({
+        question: 'Pick a colour',
+        options: ['Red', 'Green'],
+        multiple: false,
+        freeInput: false,
+      });
+
+      composer.addInputActions(['Load all']);
+
+      expect(buttonLabels(composer)).toEqual([]);
+    });
+
+    it('does nothing while the answered panel is held', () => {
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer: vi.fn() });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+      composer.element
+        .querySelectorAll('.chat-ask__action')
+        .item(0)
+        .dispatchEvent(new dom.window.MouseEvent('click'));
+
+      composer.addInputActions(['Load all']);
+
+      expect(buttonLabels(composer)).toEqual(['Load more']);
+    });
+
+    it('answers with the added action when it is clicked', () => {
+      const onAnswer = vi.fn();
+      const composer = createComposer({ onSend: vi.fn(), onStop: vi.fn(), onAnswer });
+      composer.setButtonState({ kind: 'stop' });
+      composer.setInputRequest({ actions: ['Load more'], multiple: false, freeInput: false });
+      composer.addInputActions(['Load all']);
+
+      composer.element
+        .querySelectorAll('.chat-ask__action')
+        .item(1)
+        .dispatchEvent(new dom.window.MouseEvent('click'));
+
+      expect(onAnswer).toHaveBeenCalledOnce();
+      expect(JSON.stringify(onAnswer.mock.calls[0])).toContain('Load all');
+    });
+  });
+
   describe('the ask-user attention flash', () => {
     const FLASH_CLASS = ATTENTION_CLASS;
 

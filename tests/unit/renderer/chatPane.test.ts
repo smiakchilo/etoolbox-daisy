@@ -1116,6 +1116,59 @@ describe('createChatPane interruptions and session id', () => {
     pane.dispose();
   });
 
+  describe('live-added question actions', () => {
+    const actionLabels = (pane: ReturnType<typeof createChatPane>): (string | null)[] =>
+      [...pane.element.querySelectorAll('.chat-ask__action')].map((b) => b.textContent);
+
+    async function paneWithActionsQuestion() {
+      const pane = await readyPane();
+      const chatId = currentChatId();
+      pushEvent(sessionState(chatId, 0, 'sending'));
+      pushEvent({
+        type: 'user.input.requested',
+        chatId,
+        sequence: 1,
+        turnId: 'turn-1',
+        requestId: 'req-1',
+        actions: ['Load more'],
+        multiple: false,
+        freeInput: false,
+      } as AgentEvent);
+      await flush();
+      return { pane, chatId };
+    }
+
+    const added = (chatId: ChatId, requestId: string): AgentEvent =>
+      ({
+        type: 'user.input.actions.added',
+        chatId,
+        sequence: 0,
+        turnId: 'turn-1',
+        requestId,
+        actions: ['Load all'],
+      }) as AgentEvent;
+
+    it('adds a button to the pending question it belongs to', async () => {
+      const { pane, chatId } = await paneWithActionsQuestion();
+
+      pushEvent(added(chatId, 'req-1'));
+      await flush();
+
+      expect(actionLabels(pane)).toEqual(['Load more', 'Load all']);
+      pane.dispose();
+    });
+
+    it('ignores an addition for a question that is no longer the pending one', async () => {
+      const { pane, chatId } = await paneWithActionsQuestion();
+
+      pushEvent(added(chatId, 'req-0'));
+      await flush();
+
+      expect(actionLabels(pane)).toEqual(['Load more']);
+      pane.dispose();
+    });
+  });
+
   it('shows the reveal icon in the footer once the conversation has content, and reveals the log on click', async () => {
     const pane = await readyPane('hello');
     const chatId = currentChatId();

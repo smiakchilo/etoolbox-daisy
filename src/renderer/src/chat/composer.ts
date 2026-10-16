@@ -149,6 +149,14 @@ export interface Composer {
    */
   setInputRequest(request: UserInputRequest | undefined): void;
   /**
+   * Appends one-click `actions` to the actions question that is on screen,
+   * without repainting it: no attention flash, and the buttons already shown
+   * (and the reader's hover/focus on them) are untouched. A no-op unless an
+   * actions question is showing and still unanswered; an action already shown
+   * is not duplicated.
+   */
+  addInputActions(actions: readonly string[]): void;
+  /**
    * Puts the keyboard caret in the prompt field. Used when the pane wants the
    * user to start typing straight away - most importantly after "New session",
    * so a fresh conversation opens ready for input rather than requiring a click
@@ -1007,6 +1015,15 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       applyPresentation();
       if (!replacingHeldPanel) flashAttention();
       if (draft.freeInputActive) field.focus();
+    },
+    addInputActions(added) {
+      const request = inputRequest;
+      if (request === undefined || holdingAnsweredActions || !isActionsRequest(request)) return;
+      const shown = request.actions ?? [];
+      const fresh = added.filter((action) => !shown.includes(action));
+      if (fresh.length === 0) return;
+      inputRequest = { ...request, actions: [...shown, ...fresh] };
+      actionButtons.append(...fresh.map(buildActionButton));
     },
     focus() {
       field.focus();

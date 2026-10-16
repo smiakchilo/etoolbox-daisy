@@ -465,6 +465,7 @@ export function createTranscriptStore(
         case 'error':
         case 'session.state.changed':
         case 'user.input.requested':
+        case 'user.input.actions.added':
         case 'model.changed':
         case 'model.usage':
         case 'model.call.failed':

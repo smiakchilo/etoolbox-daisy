@@ -175,7 +175,12 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `userInput.ts` gained an optional
 > `actions` list (1–4 one-click labels) and made `question` optional — the
 > `ask_user` actions mode (see §5 tools). Most recently `contracts/agentEvents.ts`
-> gained a sixteenth variant, `tool.call.progress` (a transient, never-journaled
+> gained a seventeenth variant, `user.input.actions.added` (transient, never
+> journaled: buttons added to the live actions question - "Load all" the moment a
+> search's honest total settles), with the optional
+> `ToolHost.addUserInputActions` that emits it - see
+> `docs/verification/followons-2026-10.md` "\"Load all\" appears the moment the
+> honest total settles (2026-10-16)". Before that it gained a sixteenth variant, `tool.call.progress` (a transient, never-journaled
 > progress note for one in-flight tool call), with the optional
 > `ToolHost.reportToolProgress` capability that emits it — the spinner + live
 > "Reading n of m" on a long semantic search — see `docs/verification.md`
@@ -768,7 +773,10 @@ src/tools/<name>/
   `environment_facts`, `browser_navigate`, `ask_user`, `format_table`.
 - **The search page size is one constant**: `SEARCH_PAGE_SIZE` (20) in
   `src/shared/tools/core/search.ts` is the default `limit` of both search
-  composites; change it there.
+  composites; change it there. So are the other search limits -
+  `DEFAULT_QUERY_LIMIT` (50, `aem_query`'s default), `MIN_QUERY_LIMIT` (1),
+  `MAX_QUERY_LIMIT` (200, the model-facing cap of `aem_query` and both
+  composites) and `LOAD_ALL_ROW_LIMIT` - no tool keeps a private limit constant.
 - **A tool result may end the turn.** A success payload carrying
   `TURN_COMPLETE_RESULT_KEY` (`'turnComplete'`,
   `src/shared/tools/core/turnCompletion.ts`) tells every adapter to end the
@@ -827,6 +835,16 @@ src/tools/<name>/
   aborted on loop end, on turn cancel, and on `hasMore: false`; a replayed
   transcript settles a leftover `totalPending` (`TranscriptStore.settlePendingTotals`).
   See `docs/verification.md` "An accurate search total (2026-10-13)".
+  **Load all** is one request: once an exact total is proven and the remainder
+  fits `LOAD_ALL_ROW_LIMIT` (2000, `src/shared/tools/core/search.ts`), a click
+  makes ONE nested `aem_query` with `limit` = the remainder and the current
+  offset, appended as a single `format_table` block, with no further question.
+  That larger `limit` is accepted only for a *nested* call: the bridge
+  (`createInvokeTool`) stamps `nested: true` on the `AemToolExecutor` context
+  (`types.ts`; adapters never set it), and `aemQuery.ts` then validates against
+  `nestedAemQueryArgsSchema` (cap 2000) instead of the model's (cap 200).
+  `p.limit=-1` stays inexpressible and the descriptor still advertises 200.
+  One request must fit the 90 s per-request deadline.
 - `aem_semantic_search` is the second composite, and the first **stateful**
   one: the model must judge, so the tool runs in two kinds of call keyed by a
   `searchId` (state held in the executor's closure, at most 8 searches).
@@ -1096,7 +1114,27 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3370 passed / 14 skipped** (+2 against the
+Current baseline: **`npm run test` → 3399 passed / 14 skipped** (+1 against the
+3398 below - **one set of search limit constants**: `aem_query` and both search
+composites take their limit range from `src/shared/tools/core/search.ts`;
+`aem_semantic_search`'s max page size is now 200, was 100 - see
+`docs/verification/followons-2026-10.md` "Follow-up: one set of search limit
+constants (2026-10-16)"). Before that it was **3398 passed / 14 skipped** (+5 against the
+3393 below - **"Load all" is one request**: a click makes a single nested
+`aem_query` for the proven remainder (at most `LOAD_ALL_ROW_LIMIT`, 2000, which
+replaces `LOAD_ALL_PAGE_LIMIT`) instead of paging. The wider `limit` is accepted
+only for a nested call - a new optional `nested` flag on the `AemToolExecutor`
+context, stamped by `createInvokeTool` (a shared-surface change); the model's own
+cap stays 200 and `p.limit=-1` stays inexpressible - see
+`docs/verification/followons-2026-10.md` "\"Load all\" is one request, not a
+series of pages (2026-10-16)"). Before that it was **3393 passed / 14 skipped**
+(+23 against the
+3370 below - **"Load all" appears when the honest total settles**: a transient
+`user.input.actions.added` event adds the button to the already-displayed
+"Load more" question instead of waiting for the next one; see
+`docs/verification/followons-2026-10.md` "\"Load all\" appears the moment the
+honest total settles (2026-10-16)"; +1 Playwright case in
+`search-tables.spec.ts`). Before that it was **3370 passed / 14 skipped** (+2 against the
 3368 below - **the home screen's Shortcuts section**: the browser pane's home
 screen gains a static **Shortcuts** section beneath "Useful commands"
 (`HOME_SHORTCUTS` in `homeScreen.ts`), listing the app's keystrokes. Each entry

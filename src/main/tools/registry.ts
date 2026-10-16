@@ -165,7 +165,11 @@ function createInvokeTool(params: {
     observer?.onCallStarted(call);
     let outcome: Result<JsonValue, ToolError>;
     try {
-      outcome = await target(args, { toolCallId: call.toolCallId, signal: parent.signal });
+      outcome = await target(args, {
+        toolCallId: call.toolCallId,
+        signal: parent.signal,
+        nested: true,
+      });
     } catch (caught) {
       // An executor is supposed to resolve `err(...)`, never throw; a thrown
       // one is still reported as a structured failure so the caller can react.

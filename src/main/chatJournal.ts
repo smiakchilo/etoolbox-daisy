@@ -606,7 +606,8 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       if (
         event.type === 'assistant.reasoning.delta' ||
         event.type === 'assistant.reasoning.completed' ||
-        event.type === 'tool.call.progress'
+        event.type === 'tool.call.progress' ||
+        event.type === 'user.input.actions.added'
       ) {
         return;
       }

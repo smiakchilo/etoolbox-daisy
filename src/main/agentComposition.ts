@@ -315,6 +315,28 @@ export function createLateBoundToolProgress(): LateBoundToolProgress {
   };
 }
 
+/**
+ * The tool host's "add actions to the pending question" capability,
+ * late-bound and silently lossy exactly like {@link LateBoundToolProgress}: a
+ * reveal that races startup only means the button waits for the next question.
+ */
+export interface LateBoundUserInputActions {
+  readonly add: (actions: readonly string[]) => void;
+  readonly bind: (controller: Pick<AgentChatController, 'recordUserInputActionsAdded'>) => void;
+}
+
+export function createLateBoundUserInputActions(): LateBoundUserInputActions {
+  let bound: Pick<AgentChatController, 'recordUserInputActionsAdded'> | undefined;
+  return {
+    add: (actions) => {
+      bound?.recordUserInputActionsAdded(actions);
+    },
+    bind: (controller) => {
+      bound = controller;
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Server-switch cancellation (Milestone A criterion 6)
 // ---------------------------------------------------------------------------

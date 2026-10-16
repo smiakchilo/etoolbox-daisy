@@ -612,6 +612,30 @@ describe('FakeAgentService - deleteSession', () => {
 });
 
 describe('scripted input requests', () => {
+  it('delivers late actions as their own step after the question, for the same request', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    const ids = counterIdGenerator();
+    const chatId = newChatId(ids);
+    const turnId = newTurnId(ids);
+    const events: AgentEvent[] = [];
+    service.onEvent((event) => events.push(event));
+
+    await service.openConversation({ chatId });
+    service.scriptNextResponse({
+      steps: [{ kind: 'inputRequest', actions: ['Load more'], lateActions: ['Load all'] }],
+    });
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+    for (let i = 0; i < 4; i += 1) service.advance();
+
+    expect(events.some((event) => event.type === 'user.input.actions.added')).toBe(false);
+    expect(service.advance()).toBe(true);
+
+    const requested = events.find((event) => event.type === 'user.input.requested');
+    const added = events.find((event) => event.type === 'user.input.actions.added');
+    if (requested?.type !== 'user.input.requested') throw new Error('no question emitted');
+    expect(added).toMatchObject({ requestId: requested.requestId, actions: ['Load all'] });
+    expect(service.advance()).toBe(false);
+  });
   it('pauses on the question, then emits the answer as the tool result', async () => {
     const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
     const ids = counterIdGenerator();

@@ -11,6 +11,7 @@ import type {
   ServerId,
   ToolCallId,
   TurnId,
+  UserInputRequestId,
 } from '../../../src/shared';
 import { createScratchDirs } from '../../support/scratchDirs';
 
@@ -511,6 +512,23 @@ describe('createChatJournal - events and prompts', () => {
     // Nothing durable at all - not even a header, because the chat never wrote
     // a real record.
     expect(records).toHaveLength(0);
+  });
+
+  it('never writes a live-added question action to the journal, nor lets it flush a pending prompt', () => {
+    const dir = createScratchRoot();
+    const journal = createChatJournal(dir, { now: counterClock() });
+    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'hi' });
+    journal.recordEvent({
+      type: 'user.input.actions.added',
+      chatId: CHAT_ID,
+      sequence: 1,
+      turnId: TURN_ID,
+      requestId: 'input-1' as UserInputRequestId,
+      actions: ['Load all'],
+    });
+
+    expect(readRecords(dir)).toHaveLength(0);
   });
 
   it('still flushes the staged prompt on the first non-reasoning event', () => {

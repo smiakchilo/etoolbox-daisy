@@ -407,6 +407,30 @@ test.describe('deterministic search tables', () => {
     await flushFake(app);
   });
 
+  test('a Load all revealed after the question appears beside Load more and answers it', async () => {
+    // The composite adds "Load all" once its honest total settles, while the
+    // "Load more" question is already on screen. The fake delivers that as its
+    // own step after the question, so the built app's real IPC + composer path
+    // is what shows the button.
+    await scriptTurn(app, {
+      steps: [{ kind: 'inputRequest', actions: ['Load more'], lateActions: ['Load all'] }],
+    });
+    await sendViaComposer(shell, '/search waldo');
+    // message.started, tool.call.requested, tool.call.approved, user.input.requested.
+    await advanceFake(app, 4);
+
+    const actions = shell.locator('.chat-ask__action');
+    await expect(actions).toHaveCount(1);
+    await expect(actions).toHaveText('Load more');
+
+    await advanceFake(app, 1);
+    await expect(actions).toHaveText(['Load more', 'Load all']);
+
+    await actions.nth(1).click();
+    await flushFake(app);
+    await expect(shell.locator('.chat-ask__actions')).toBeHidden();
+  });
+
   test('a turn-completing search result ends the turn instead of resuming the model for closing prose', async () => {
     const assistantBefore = await shell
       .locator('.chat-message--assistant:not(.chat-table-message)')
