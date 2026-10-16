@@ -23,6 +23,8 @@ import {
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+  BROWSER_FIND_CHANNEL,
+  BROWSER_FIND_RESULT_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
@@ -32,6 +34,7 @@ import {
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_STOP_CHANNEL,
+  BROWSER_STOP_FIND_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
   SETTINGS_ADD_PROJECT_CHANNEL,
@@ -61,6 +64,7 @@ import {
   addServerRequestSchema,
   approveCertificateExceptionRequestSchema,
   clearPasswordRequestSchema,
+  findRequestSchema,
   navigateRequestSchema,
   openExternalRequestSchema,
   parseAddProjectResult,
@@ -88,6 +92,7 @@ import {
   parseBrowserNavigationState,
   parseBrowserSwitchState,
   parseCertificateBlockedInfo,
+  parseFindResult,
   parseGetModelSelectionResult,
   parseGetSettingsSnapshotResult,
   parseLoginOutcome,
@@ -107,6 +112,7 @@ import {
   setAgentSettingsRequestSchema,
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
+  stopFindRequestSchema,
   switchServerRequestSchema,
   tableExportSaveCsvRequestSchema,
   updateBrowserSettingsRequestSchema,
@@ -145,6 +151,8 @@ import {
   type BrowserSwitchState,
   type CertificateBlockedInfo,
   type DaisyAppApi,
+  type FindRequest,
+  type FindResult,
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
   type LoginOutcome,
@@ -160,6 +168,7 @@ import {
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
+  type StopFindRequest,
   type TableExportRevealResult,
   type TableExportSaveCsvRequest,
   type TableExportSaveCsvResult,
@@ -536,6 +545,25 @@ const daisyApi: DaisyAppApi = {
       ipcRenderer.on(BROWSER_CERTIFICATE_BLOCKED_CHANNEL, handler);
       return () => {
         ipcRenderer.removeListener(BROWSER_CERTIFICATE_BLOCKED_CHANNEL, handler);
+      };
+    },
+    async find(request: FindRequest): Promise<BrowserIpcVoidResult> {
+      const parsedRequest = findRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(BROWSER_FIND_CHANNEL, parsedRequest);
+      return parseBrowserIpcVoidResult(raw);
+    },
+    async stopFind(request: StopFindRequest): Promise<BrowserIpcVoidResult> {
+      const parsedRequest = stopFindRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(BROWSER_STOP_FIND_CHANNEL, parsedRequest);
+      return parseBrowserIpcVoidResult(raw);
+    },
+    onFindResult(listener: (result: FindResult) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {
+        listener(parseFindResult(raw));
+      };
+      ipcRenderer.on(BROWSER_FIND_RESULT_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(BROWSER_FIND_RESULT_CHANNEL, handler);
       };
     },
   },

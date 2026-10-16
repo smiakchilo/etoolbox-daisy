@@ -60,6 +60,7 @@ beforeEach(() => {
       }),
       onSwitchStateChanged: vi.fn(() => () => undefined),
       onAgentNavigation: vi.fn(() => () => undefined),
+      onFindResult: vi.fn(() => () => undefined),
     },
     settings: {
       getSnapshot: vi.fn(() => Promise.resolve({ ok: true, snapshot: snapshotStub })),

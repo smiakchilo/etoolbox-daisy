@@ -181,6 +181,8 @@ beforeEach(() => {
     setViewBounds: () => {
       controllerCalls.push('setViewBounds');
     },
+    find: () => record('find'),
+    stopFind: () => record('stopFind'),
     approveCertificateException: () => Promise.resolve(record('approveCertificateException')),
     hydrateCertificateExceptions: () => Promise.resolve(),
     destroy: () => {

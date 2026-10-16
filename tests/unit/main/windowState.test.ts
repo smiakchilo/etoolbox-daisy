@@ -254,4 +254,48 @@ describe('attachWindowStatePersistence', () => {
     vi.runAllTimers();
     expect(readWindowState(filePath)).toEqual({ width: 900, height: 700, maximized: false });
   });
+
+  it('remembers the shell zoom level once a zoom step schedules a save', () => {
+    vi.useFakeTimers();
+    const filePath = path.join(createScratchRoot(), 'window-state.json');
+    let zoomLevel = 0;
+    const persistence = attachWindowStatePersistence(
+      {
+        ...createFakeWindow({ width: 900, height: 700, maximized: false }),
+        getZoomLevel: () => zoomLevel,
+      },
+      filePath,
+    );
+
+    zoomLevel = 2;
+    persistence.scheduleSave();
+    vi.runAllTimers();
+    expect(readWindowState(filePath).zoomLevel).toBe(2);
+
+    zoomLevel = 0;
+    persistence.scheduleSave();
+    vi.runAllTimers();
+    expect(readWindowState(filePath).zoomLevel).toBeUndefined();
+    persistence.dispose();
+  });
+});
+
+describe('the stored zoom level', () => {
+  it('survives normalization and fitting to the work area', () => {
+    const state = normalizeWindowState({
+      width: 1280,
+      height: 800,
+      maximized: false,
+      zoomLevel: 3,
+    });
+    expect(state.zoomLevel).toBe(3);
+    expect(fitWindowStateToWorkArea(state, { width: 5000, height: 5000 }).zoomLevel).toBe(3);
+  });
+
+  it('clamps an out-of-range level and drops an unusable one', () => {
+    expect(normalizeWindowState({ zoomLevel: 99 }).zoomLevel).toBeLessThanOrEqual(5);
+    expect(normalizeWindowState({ zoomLevel: -99 }).zoomLevel).toBeGreaterThanOrEqual(-5);
+    expect(normalizeWindowState({ zoomLevel: 'big' })).toEqual(DEFAULT_WINDOW_STATE);
+    expect(normalizeWindowState({ zoomLevel: Number.NaN })).toEqual(DEFAULT_WINDOW_STATE);
+  });
 });

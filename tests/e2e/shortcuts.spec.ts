@@ -1,10 +1,7 @@
-import { randomUUID } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
-import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
-import { launchApp, type ElectronApp } from '../support/e2e/app';
-import { createScratchDirs, writeSettings } from '../support/e2e/profile';
+import { expect, test } from '@playwright/test';
+import { findAemViewId, pressOn, waitForViewIdle } from '../support/e2e/aemView';
+import { closeFixtureServer, seedHostAndLaunch, startFixtureServer } from '../support/e2e/aemHost';
 import { byTestId } from '../support/selectors';
 
 /**
@@ -27,128 +24,13 @@ import { byTestId } from '../support/selectors';
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'shortcuts-scratch');
 
-interface Fixture {
-  readonly app: ElectronApp;
-  readonly page: Page;
-  readonly origin: string;
-}
-
-async function startFixture(): Promise<{ server: Server; origin: string; requests: string[] }> {
-  const requests: string[] = [];
-  const server = createServer((req, res) => {
-    const url = req.url ?? '/';
-    requests.push(url);
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(`<!doctype html><title>${url}</title><p id="marker">${url}</p>`);
-  });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('no server port');
-  return { server, origin: `http://127.0.0.1:${String(address.port)}`, requests };
-}
-
-async function seedAndLaunch(origin: string): Promise<Fixture> {
-  const dirs = createScratchDirs(scratchBase);
-  const base = defaultAppSettings();
-  writeSettings(
-    dirs.home,
-    appSettingsSchema.parse({
-      ...base,
-      hosts: [
-        ...base.hosts,
-        {
-          id: randomUUID(),
-          label: 'Shortcut fixture',
-          origin,
-          color: { kind: 'swatch', swatch: 'blue' },
-          revision: 0,
-        },
-      ],
-    }),
-  );
-
-  const app = await launchApp(dirs, { fakeAgent: true });
-  const page = await app.firstWindow();
-  // A seeded host makes the pane loadable; picking it starts the real load that
-  // gives the view's WebContents focus later.
-  await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
-  await expect(page.locator(byTestId('browser-address'))).toBeVisible({ timeout: 30_000 });
-  return { app, page, origin };
-}
-
-/** The AEM view's WebContents id, found by its committed origin. */
-async function findAemViewId(app: ElectronApp, origin: string): Promise<number> {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const id = await app.evaluate(({ webContents }, prefix: string) => {
-      return webContents.getAllWebContents().find((c) => c.getURL().startsWith(prefix))?.id ?? -1;
-    }, origin);
-    if (id !== -1) return id;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error('AEM view not found');
-}
-
-/** The AEM view's own `isLoading()` flag, read from main. */
-function viewIsLoading(app: ElectronApp, aemViewId: number): Promise<boolean> {
-  return app.evaluate(
-    ({ webContents }, id: number) => webContents.fromId(id)?.isLoading() ?? false,
-    aemViewId,
-  );
-}
-
-/**
- * Waits until the AEM view has finished loading. The address bar updates on
- * `did-start-navigation`, i.e. *before* the load settles, so a navigation key
- * pressed right after an address assertion can otherwise land mid-load.
- */
-async function waitForViewIdle(app: ElectronApp, aemViewId: number): Promise<void> {
-  await expect.poll(() => viewIsLoading(app, aemViewId), { timeout: 30_000 }).toBe(false);
-}
-
-/**
- * Injects one keystroke into `target`'s `WebContents` from main, as the real
- * input pipeline would, and returns whether that WebContents took focus.
- */
-function pressOn(
-  app: ElectronApp,
-  target: 'shell' | 'aem',
-  aemViewId: number,
-  keyCode: string,
-  modifiers: ('control' | 'alt' | 'shift' | 'meta')[],
-): Promise<boolean> {
-  return app.evaluate(
-    (
-      { BrowserWindow, webContents },
-      args: {
-        target: string;
-        id: number;
-        keyCode: string;
-        modifiers: ('control' | 'alt' | 'shift' | 'meta')[];
-      },
-    ) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.focus();
-      const contents = args.target === 'shell' ? win?.webContents : webContents.fromId(args.id);
-      if (!contents) throw new Error(`no ${args.target} webContents`);
-      contents.focus();
-      contents.sendInputEvent({
-        type: 'keyDown',
-        keyCode: args.keyCode,
-        modifiers: args.modifiers,
-      });
-      contents.sendInputEvent({ type: 'keyUp', keyCode: args.keyCode, modifiers: args.modifiers });
-      return contents.isFocused();
-    },
-    { target, id: aemViewId, keyCode, modifiers },
-  );
-}
-
 test('application shortcuts work from both panes', async () => {
   test.setTimeout(120_000);
 
-  const { server, origin, requests } = await startFixture();
-  const fixture = await seedAndLaunch(origin);
-  const { app, page } = fixture;
+  const { server, origin, requests } = await startFixtureServer(
+    (url) => `<!doctype html><title>${url}</title><p id="marker">${url}</p>`,
+  );
+  const { app, page } = await seedHostAndLaunch(scratchBase, origin, 'Shortcut fixture');
   const addressInput = page.locator(`${byTestId('browser-address')} input`);
   // Picking the host navigates to the bare origin, which the browser normalizes
   // to a trailing-slash root URL.
@@ -199,6 +81,6 @@ test('application shortcuts work from both panes', async () => {
     await expect(addressInput).toBeFocused({ timeout: 15_000 });
   } finally {
     await app.close();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await closeFixtureServer(server);
   }
 });

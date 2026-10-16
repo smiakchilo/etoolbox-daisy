@@ -189,6 +189,12 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       case 'browser.focusAddress':
         browserPane.focusAddress();
         return;
+      case 'browser.find':
+        openBrowserFind();
+        return;
+      case 'app.find':
+        openAppFind();
+        return;
       case 'chat.history':
         browserPane.panelHost.open(historyPanel);
         return;
@@ -199,6 +205,39 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
         chatPane.startNewSession();
         return;
     }
+  }
+
+  /**
+   * Opens the AEM page's find bar. Only one find bar is on screen at a time, so
+   * the chat bar is closed first - but only if the browser bar actually opened:
+   * a refusal (no document, the Home veil, a covering panel) leaves the chat bar
+   * alone rather than trading one for nothing.
+   */
+  function openBrowserFind(): void {
+    if (browserPane.openFind()) chatPane.closeFind();
+  }
+
+  /**
+   * Ctrl+F from the shell. The shell owns both panes, so the target is decided
+   * by where focus is: the address bar (and a whole-size panel) belong to the
+   * browser pane; anything else is the chat. Main sends this action only for a
+   * keystroke from the shell; a keystroke from the AEM view arrives as
+   * `browser.find` instead.
+   */
+  function openAppFind(): void {
+    const active = document.activeElement;
+    if (active !== null && browserPane.element.contains(active)) {
+      openBrowserFind();
+      return;
+    }
+    if (agentPaneVisible) {
+      browserPane.closeFind();
+      chatPane.openFind();
+      return;
+    }
+    // The chat pane is hidden, so there is nothing of its to find in: fall back
+    // to the page (a no-op when the page is not the visible layer).
+    openBrowserFind();
   }
 
   const unsubscribeShortcuts = window.daisy.shortcuts.onAction(handleShortcut);

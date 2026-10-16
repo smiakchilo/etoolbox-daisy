@@ -99,6 +99,62 @@ export function parseCertificateBlockedInfo(candidate: unknown): CertificateBloc
 }
 
 // ---------------------------------------------------------------------------
+// Find-in-page (`browser:find` / `browser:stop-find` / `browser:find-result`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which document a find request targets. Both are `WebContents` main owns: the
+ * AEM pane's view, or the app shell's own document (which is where the chat
+ * transcript lives). The renderer cannot address a `WebContents` directly, so
+ * it names the logical target and main resolves it.
+ */
+export const FIND_TARGETS = ['browser', 'chat'] as const;
+export const findTargetSchema = z.enum(FIND_TARGETS);
+export type FindTarget = (typeof FIND_TARGETS)[number];
+
+const FIND_TEXT_MAX_LENGTH = 1000;
+
+/**
+ * `browser:find` - one `findInPage` request. `forward` selects the direction of
+ * a step (Enter advances, Shift+Enter goes back); a request whose text differs
+ * from the target's current session restarts at the first match, which is how a
+ * fresh query and a step share the one request shape. There is deliberately no
+ * `findNext` flag: Electron 44 only emits `found-in-page` for a request carrying
+ * `findNext: true`, so main always sends that (see `browserController.find`).
+ */
+export const findRequestSchema = z
+  .object({
+    target: findTargetSchema,
+    text: z.string().min(1).max(FIND_TEXT_MAX_LENGTH),
+    forward: z.boolean(),
+  })
+  .strict();
+
+export type FindRequest = Readonly<z.infer<typeof findRequestSchema>>;
+
+/** `browser:stop-find` - ends the target's session and clears its highlight. */
+export const stopFindRequestSchema = z.object({ target: findTargetSchema }).strict();
+export type StopFindRequest = Readonly<z.infer<typeof stopFindRequestSchema>>;
+
+/**
+ * Pushed on `browser:find-result` from the target's `found-in-page` event. The
+ * `target` lets each pane's find bar ignore the other's results.
+ */
+export const findResultSchema = z
+  .object({
+    target: findTargetSchema,
+    matches: z.number().int().nonnegative(),
+    activeMatchOrdinal: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type FindResult = Readonly<z.infer<typeof findResultSchema>>;
+
+export function parseFindResult(candidate: unknown): FindResult {
+  return findResultSchema.parse(candidate);
+}
+
+// ---------------------------------------------------------------------------
 // Errors / void result
 // ---------------------------------------------------------------------------
 

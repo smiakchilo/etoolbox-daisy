@@ -2,6 +2,7 @@ import '@spectrum-web-components/theme/sp-theme.js';
 import '@spectrum-web-components/theme/theme-light.js';
 import '@spectrum-web-components/theme/scale-medium.js';
 import '@spectrum-web-components/button/sp-button.js';
+import '@spectrum-web-components/button/sp-close-button.js';
 import '@spectrum-web-components/textfield/sp-textfield.js';
 import '@spectrum-web-components/field-label/sp-field-label.js';
 import '@spectrum-web-components/contextual-help/sp-contextual-help.js';

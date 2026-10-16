@@ -181,7 +181,12 @@ beforeEach(() => {
         };
       }),
     },
-    browser: { navigate },
+    browser: {
+      navigate,
+      find: vi.fn(() => Promise.resolve({ ok: true })),
+      stopFind: vi.fn(() => Promise.resolve({ ok: true })),
+      onFindResult: vi.fn(() => () => undefined),
+    },
     settings: { getModelSelection },
   });
 });
@@ -1006,7 +1011,7 @@ describe('createChatPane interruptions and session id', () => {
     const chatId = currentChatId();
 
     pushEvent(sessionState(chatId, 0, 'sending'));
-    const field = pane.element.querySelector('sp-textfield') as HTMLElement;
+    const field = pane.element.querySelector(byTestId('chat-composer-field')) as HTMLElement;
     const focusSpy = vi.spyOn(field, 'focus');
     const stop = pane.element.querySelector('.chat-composer__stop');
     expect(stop).not.toBeNull();
@@ -1089,7 +1094,7 @@ describe('createChatPane interruptions and session id', () => {
 
     const stop = pane.element.querySelector('.chat-composer__stop');
     expect(stop).not.toBeNull();
-    const field = pane.element.querySelector('sp-textfield') as HTMLElement;
+    const field = pane.element.querySelector(byTestId('chat-composer-field')) as HTMLElement;
     const focusSpy = vi.spyOn(field, 'focus');
     stop?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await flush();
@@ -1504,6 +1509,22 @@ describe('createChatPane conversation open serialization', () => {
 
     expect(openConversation).not.toHaveBeenCalled();
     expect(newSessionButton(pane)?.hasAttribute('disabled')).toBe(false);
+    pane.dispose();
+  });
+});
+
+describe('createChatPane find bar', () => {
+  it('reveals and hides its find bar through openFind/closeFind', () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    const bar = pane.element.querySelector<HTMLElement>(byTestId('chat-find'));
+
+    expect(bar?.hidden).toBe(true);
+
+    pane.openFind();
+    expect(bar?.hidden).toBe(false);
+
+    pane.closeFind();
+    expect(bar?.hidden).toBe(true);
     pane.dispose();
   });
 });

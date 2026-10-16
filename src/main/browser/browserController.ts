@@ -4,6 +4,7 @@ import {
   APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+  BROWSER_FIND_RESULT_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../shared';
@@ -12,9 +13,12 @@ import type {
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
+  FindRequest,
+  FindTarget,
   OpenExternalRequest,
   OpenPageOutcome,
   OpenPageTarget,
+  StopFindRequest,
   ViewBounds,
 } from '../../shared';
 import type { AppSettings } from '../../shared';
@@ -82,6 +86,8 @@ export interface BrowserControllerOptions {
   readonly aemPreloadPath: string;
   /** The app's own chat-pane renderer `WebContents` - the only trusted push target. */
   readonly rendererWebContents: WebContents;
+  /** Called after the user zoomed the app shell (not the AEM page), to persist its level. */
+  readonly onShellZoomChanged?: () => void;
   /**
    * Test seam: overrides how the AEM `WebContentsView` is constructed.
    * Defaults to the real {@link createAemBrowserView}. Unit tests inject a
@@ -161,6 +167,15 @@ export interface BrowserController {
   /** Stops any in-flight load in the AEM view (the toolbar's Stop control while a navigation is loading). */
   stop(): BrowserIpcVoidResult;
   setViewBounds(bounds: ViewBounds): void;
+  /**
+   * Runs a `findInPage` request against the named document (`browser` = the AEM
+   * view, `chat` = the shell document). The match count is not returned here; it
+   * arrives asynchronously on the target's `found-in-page` event, which is
+   * pushed to the shell renderer as `browser:find-result`.
+   */
+  find(request: FindRequest): BrowserIpcVoidResult;
+  /** Ends the target document's find session and clears its highlight. */
+  stopFind(request: StopFindRequest): BrowserIpcVoidResult;
   approveCertificateException(
     request: ApproveCertificateExceptionRequest,
   ): Promise<BrowserIpcVoidResult>;
@@ -181,6 +196,22 @@ function storageError(message: string): BrowserIpcError {
 
 function toActiveServer(server: AppSettings['hosts'][number]): ActiveAemServer {
   return { serverId: server.id, origin: server.origin, revision: server.revision };
+}
+
+/**
+ * Converts the renderer's reserved-region rectangle from CSS pixels to
+ * device-independent pixels. The two are equal only at 100% page zoom; at any
+ * other shell zoom one CSS pixel covers `zoomFactor` DIP, and
+ * `WebContentsView.setBounds` speaks DIP. Without this the native view would
+ * drift off its slot the moment the shell's text was zoomed.
+ */
+function scaleBounds(bounds: ViewBounds, factor: number): ViewBounds {
+  return {
+    x: Math.round(bounds.x * factor),
+    y: Math.round(bounds.y * factor),
+    width: Math.round(bounds.width * factor),
+    height: Math.round(bounds.height * factor),
+  };
 }
 
 /**
@@ -290,7 +321,79 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     allowChatShortcuts: true,
     send: sendShortcut,
     focusShell,
+    ...(options.onShellZoomChanged ? { onZoomChanged: options.onShellZoomChanged } : {}),
   });
+
+  // ── Zoom ────────────────────────────────────────────────────────────────
+  // Zoom is per-`WebContents` and applied by the shortcut layer
+  // (`applyZoom` from `src/main/zoom.ts`), which runs on whichever view the
+  // keystroke landed on. 'isolated' keeps each view's level its own (not shared
+  // per origin). Not 'manual': in that mode setZoomLevel changes the reported
+  // factor but never zooms the page, so the factor-scaled view bounds drifted
+  // away from an unzoomed layout. Ctrl+wheel is deliberately not a zoom
+  // gesture; Electron only emits `zoom-changed` for it and this app ignores it.
+  aemView.webContents.setZoomMode('isolated');
+  rendererWebContents.setZoomMode('isolated');
+
+  // ── Find-in-page ────────────────────────────────────────────────────────
+  // Both find targets are `WebContents` main owns; the renderer names one
+  // logically (`browser` / `chat`) and never touches a view directly. Each
+  // target's `found-in-page` results are forwarded to the shell renderer, which
+  // routes them to the matching find bar.
+  const findTargetContents = (target: FindTarget): WebContents =>
+    target === 'browser' ? aemView.webContents : rendererWebContents;
+  // The most recent request id issued per target, so a late result from a
+  // superseded request is dropped rather than overwriting a newer count.
+  let browserFindRequestId = -1;
+  let chatFindRequestId = -1;
+  interface FoundInPageResult {
+    readonly requestId: number;
+    readonly matches: number;
+    readonly activeMatchOrdinal: number;
+  }
+  const onAemFoundInPage = (_event: unknown, result: FoundInPageResult): void => {
+    if (result.requestId !== browserFindRequestId) return;
+    rendererWebContents.send(BROWSER_FIND_RESULT_CHANNEL, {
+      target: 'browser',
+      matches: result.matches,
+      activeMatchOrdinal: result.activeMatchOrdinal,
+    });
+  };
+  const onShellFoundInPage = (_event: unknown, result: FoundInPageResult): void => {
+    if (result.requestId !== chatFindRequestId) return;
+    rendererWebContents.send(BROWSER_FIND_RESULT_CHANNEL, {
+      target: 'chat',
+      matches: result.matches,
+      activeMatchOrdinal: result.activeMatchOrdinal,
+    });
+  };
+  aemView.webContents.on('found-in-page', onAemFoundInPage);
+  rendererWebContents.on('found-in-page', onShellFoundInPage);
+
+  function find(request: FindRequest): BrowserIpcVoidResult {
+    const contents = findTargetContents(request.target);
+    if (contents.isDestroyed()) {
+      return fail({ code: 'no_active_view', message: 'there is no view to search' });
+    }
+    const requestId = contents.findInPage(request.text, {
+      forward: request.forward,
+      // Electron 44 emits `found-in-page` only for a request carrying
+      // `findNext: true` (verified against the built app: `false` produces no
+      // result at all). A changed `text` restarts the session at the first
+      // match, an unchanged one advances - which is exactly the new-query vs
+      // step distinction, expressed by the text alone. See `findRequestSchema`.
+      findNext: true,
+    });
+    if (request.target === 'browser') browserFindRequestId = requestId;
+    else chatFindRequestId = requestId;
+    return ok();
+  }
+
+  function stopFind(request: StopFindRequest): BrowserIpcVoidResult {
+    const contents = findTargetContents(request.target);
+    if (!contents.isDestroyed()) contents.stopFindInPage('clearSelection');
+    return ok();
+  }
 
   const navigationEpoch = createNavigationEpochTracker();
 
@@ -908,6 +1011,10 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       aemView.webContents.off('did-start-navigation', onMainFrameNavigationStart);
       aemView.webContents.off('did-fail-load', onMainFrameLoadFailed);
       aemView.webContents.off('did-navigate', onMainFrameCommitted);
+      aemView.webContents.off('found-in-page', onAemFoundInPage);
+    }
+    if (!rendererWebContents.isDestroyed()) {
+      rendererWebContents.off('found-in-page', onShellFoundInPage);
     }
     aemView.destroy();
   }
@@ -925,7 +1032,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     goForward,
     reload,
     stop,
-    setViewBounds: (bounds) => aemView.setBounds(bounds),
+    setViewBounds(bounds: ViewBounds): void {
+      // The renderer reports CSS pixels; the native view is positioned in DIP.
+      // They coincide only at 100% shell zoom (see `scaleBounds`).
+      const factor = rendererWebContents.getZoomFactor();
+      aemView.setBounds(factor === 1 ? bounds : scaleBounds(bounds, factor));
+    },
+    find,
+    stopFind,
     approveCertificateException,
     hydrateCertificateExceptions,
     destroy,

@@ -1,9 +1,11 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { ZOOM_LEVEL_MAX, ZOOM_LEVEL_MIN } from './zoom';
 
 /**
- * Persistence for the main window's geometry (width, height, maximized-ness).
+ * Persistence for the main window's geometry (width, height, maximized-ness)
+ * and the app shell's zoom level.
  *
  * This deliberately does *not* go through `AppSettings`/`settings:*` IPC: the
  * settings document is a step-03 contract whose write path belongs to the
@@ -27,6 +29,12 @@ export interface WindowState {
   readonly width: number;
   readonly height: number;
   readonly maximized: boolean;
+  /**
+   * The app shell's own zoom level (Electron's unit, see `zoom.ts`); omitted at
+   * 100%. Only the shell is remembered: the AEM page is remote content and
+   * starts at 100% on every launch.
+   */
+  readonly zoomLevel?: number;
 }
 
 export interface WindowSize {
@@ -65,6 +73,7 @@ function sanitizeDimension(value: unknown, fallback: number, minimum: number): n
 export function normalizeWindowState(raw: unknown): WindowState {
   if (typeof raw !== 'object' || raw === null) return DEFAULT_WINDOW_STATE;
   const record = raw as Record<string, unknown>;
+  const zoomLevel = sanitizeZoomLevel(record['zoomLevel']);
   return {
     width: sanitizeDimension(record['width'], DEFAULT_WINDOW_STATE.width, MIN_WINDOW_WIDTH),
     height: sanitizeDimension(record['height'], DEFAULT_WINDOW_STATE.height, MIN_WINDOW_HEIGHT),
@@ -72,7 +81,14 @@ export function normalizeWindowState(raw: unknown): WindowState {
       typeof record['maximized'] === 'boolean'
         ? record['maximized']
         : DEFAULT_WINDOW_STATE.maximized,
+    ...(zoomLevel === 0 ? {} : { zoomLevel }),
   };
+}
+
+/** A usable zoom level within the zoom bounds, or 0 (100%) for anything else. */
+function sanitizeZoomLevel(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(ZOOM_LEVEL_MAX, Math.max(ZOOM_LEVEL_MIN, value));
 }
 
 /** Parses stored JSON text, degrading to the default state on any unparseable input. */
@@ -137,6 +153,7 @@ export function fitWindowStateToWorkArea(state: WindowState, workArea: WindowSiz
     width: Math.min(state.width, Math.max(MIN_WINDOW_WIDTH, Math.round(workArea.width))),
     height: Math.min(state.height, Math.max(MIN_WINDOW_HEIGHT, Math.round(workArea.height))),
     maximized: state.maximized,
+    ...(state.zoomLevel === undefined ? {} : { zoomLevel: state.zoomLevel }),
   };
 }
 
@@ -148,12 +165,16 @@ export function fitWindowStateToWorkArea(state: WindowState, workArea: WindowSiz
 export interface WindowStateSource {
   getNormalBounds(): WindowSize;
   isMaximized(): boolean;
+  /** The shell's current zoom level; a source without one is stored at 100%. */
+  getZoomLevel?(): number;
   on(event: 'resize' | 'maximize' | 'unmaximize' | 'close', listener: () => void): unknown;
 }
 
 export interface WindowStatePersistence {
   /** Persists the current geometry immediately (used by tests and by callers that must not debounce). */
   saveNow(): void;
+  /** Schedules a debounced save, for a change no window event announces (a zoom step). */
+  scheduleSave(): void;
   /** Clears any debounced save that has not fired yet. */
   dispose(): void;
 }
@@ -178,6 +199,7 @@ export function attachWindowStatePersistence(
       width: bounds.width,
       height: bounds.height,
       maximized: source.isMaximized(),
+      zoomLevel: source.getZoomLevel?.(),
     });
   }
 
@@ -206,5 +228,5 @@ export function attachWindowStatePersistence(
   source.on('unmaximize', scheduleSave);
   source.on('close', saveNow);
 
-  return { saveNow, dispose: clearPending };
+  return { saveNow, scheduleSave, dispose: clearPending };
 }

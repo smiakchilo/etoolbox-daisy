@@ -1,6 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent, type IpcMainEvent } from 'electron';
 import {
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
+  BROWSER_FIND_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
@@ -8,12 +9,15 @@ import {
   BROWSER_RELOAD_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
   BROWSER_STOP_CHANNEL,
+  BROWSER_STOP_FIND_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
 } from '../../shared';
 import {
   approveCertificateExceptionRequestSchema,
+  findRequestSchema,
   navigateRequestSchema,
   openExternalRequestSchema,
+  stopFindRequestSchema,
   switchServerRequestSchema,
   viewBoundsSchema,
   type BrowserIpcVoidResult,
@@ -159,6 +163,20 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
       return deps.controller.approveCertificateException(parsed.data);
     },
   );
+
+  ipcMain.handle(BROWSER_FIND_CHANNEL, (event, rawRequest: unknown): BrowserIpcVoidResult => {
+    if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
+    const parsed = findRequestSchema.safeParse(rawRequest);
+    if (!parsed.success) return invalidPayloadResult(parsed.error.message);
+    return deps.controller.find(parsed.data);
+  });
+
+  ipcMain.handle(BROWSER_STOP_FIND_CHANNEL, (event, rawRequest: unknown): BrowserIpcVoidResult => {
+    if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
+    const parsed = stopFindRequestSchema.safeParse(rawRequest);
+    if (!parsed.success) return invalidPayloadResult(parsed.error.message);
+    return deps.controller.stopFind(parsed.data);
+  });
 
   ipcMain.on(BROWSER_SET_VIEW_BOUNDS_CHANNEL, (event, rawRequest: unknown) => {
     if (!checkSender(event)) return;

@@ -2,6 +2,8 @@ import { el } from '../lib/dom';
 import { AGENT_DEFINITIONS } from '../agents/agentCatalog';
 import { buildBannerCopy, createBannerActionButton } from '../lib/alertBanner';
 import { createChatToolbar } from './chatToolbar';
+import { createFindBar } from './findBar';
+import { createTranscriptFindController } from '../chat/transcriptFind';
 import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
 import { replayJournalIntoTranscript } from '../chat/journalReplay';
@@ -88,6 +90,13 @@ export interface ChatPane {
    * guards (no conversation yet, or one still opening) apply unchanged.
    */
   startNewSession(): void;
+  /**
+   * Reveals the chat pane's find-in-page bar and focuses its field. The bar
+   * searches the shell document, which is where the chat transcript lives.
+   */
+  openFind(): void;
+  /** Hides the chat find bar and clears its highlight. */
+  closeFind(): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -1390,6 +1399,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     });
     const updatedMessage = updated[updated.length - 1];
     if (updatedMessage !== undefined) transcriptFollower.reveal(updatedMessage);
+    // A repaint rebuilds the transcript's DOM, so a live find's highlight ranges
+    // (which point into the old nodes) must be recomputed.
+    findBar.refresh();
   }
 
   const chatToolbar = createChatToolbar({
@@ -1402,10 +1414,19 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // has nothing to act on until a `ChatId` is adopted (see
   // `updateNewSessionEnabled`).
   updateNewSessionEnabled();
+  // Find-in-page over the chat: a bar below the toolbar, above the transcript.
+  // It searches the transcript subtree directly (the shell document's own
+  // `findInPage` would also match the find field and the composer), and
+  // highlights with the Custom Highlight API.
+  const findBar = createFindBar({
+    testIdPrefix: 'chat-find',
+    controller: createTranscriptFindController(transcript),
+  });
   const element = el('section', {
     attrs: { class: 'pane chat-pane', 'aria-label': 'Chat' },
     children: [
       chatToolbar.element,
+      findBar.element,
       transcript,
       composer.element,
       transcriptFooter,
@@ -1459,6 +1480,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     openConversationFromHistory,
     handleConversationDeleted,
     startNewSession,
+    openFind(): void {
+      findBar.open();
+    },
+    closeFind(): void {
+      findBar.close();
+    },
     dispose(): void {
       unsubscribeEvents?.();
       unsubscribeStatus();
@@ -1466,6 +1493,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (startingPollHandle !== undefined) clearInterval(startingPollHandle);
       if (readyPollHandle !== undefined) clearInterval(readyPollHandle);
       transcriptFollower.dispose();
+      findBar.dispose();
       statusBanner.dispose();
       composer.dispose();
       transcriptView.dispose();

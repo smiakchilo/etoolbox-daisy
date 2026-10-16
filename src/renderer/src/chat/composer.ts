@@ -180,6 +180,7 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
       rows: String(TEXTAREA_EMPTY_ROWS),
       placeholder: 'Type your message or command here',
       'aria-label': 'Message',
+      'data-testid': 'chat-composer-field',
     },
   }) as TextFieldElement;
 

@@ -524,8 +524,35 @@ panel control runs, never a second navigation path. Chat actions (`Ctrl+H`,
 AEM's rich-text editor). Backspace-to-go-Back is deliberately **not** bound:
 whether the caret is in a text field is only knowable in the renderer, and
 Chrome removed the browser-wide form of it for exactly that data-loss reason -
-so there is no renderer-side shortcut at all. Zoom and in-page find are Pass 2
-(`docs/backlog.md`).
+so there is no renderer-side shortcut at all. Zoom (`Ctrl+NumpadAdd` /
+`Ctrl+NumpadSubtract` / `Ctrl+0`; Ctrl+wheel is deliberately not a zoom gesture)
+is acted on in main and never crosses the boundary: `resolveShortcut` returns a
+union (`{kind:'action'}` / `{kind:'zoom'}` / `{kind:'find'}`), and
+`attachShortcutHandling` applies `applyZoom` (`src/main/zoom.ts`) to whichever
+view the input landed on - so the focused pane is zoomed with no routing.
+Shortcut matching accepts both `input.code` and `input.key`: a real OS keystroke
+can carry an empty `code` (the numpad's `+`/`-` arrive as `code: ""`, `key: "+"`),
+which is exactly why the numpad zoom keys did nothing while the letter shortcuts
+worked - see §8. Find (`Ctrl+F`) does cross it, for the AEM page: the bar is renderer UI
+(`shell/findBar.ts`, one instance per pane, only one open at a time) over a
+`FindController` (`shell/findController.ts`) and a debounce
+(`LIVE_SEARCH_DEBOUNCE_MS`). The **browser** bar's controller drives Chromium's
+`findInPage` over the AEM view: main resolves the logical target to a
+`WebContents`, and the `browser.find`/`stop-find` invokes plus the
+`browser:find-result` push carry it. The **chat** bar searches the transcript
+subtree directly (`chat/transcriptFind.ts`) and highlights with the CSS Custom
+Highlight API - Chromium's find cannot be scoped, so run on the shell document it
+also matched the query in the find bar's own field and the composer's placeholder
+and its stepping wandered between those and the transcript; the scoped search
+recomputes after a transcript repaint (`FindController.refresh`).
+`attachShortcutHandling` maps the neutral find key to `browser.find` for the AEM
+view or `app.find` for the shell, which routes by `document.activeElement` inside
+`mainShell.ts`. The browser bar is a control *of the page*: it opens only while a
+document is visible (no panel, no Home veil) and closes when a panel/veil opens.
+Shell page zoom is compensated where the reserved rectangle is reported
+(`browserController.setViewBounds` × `getZoomFactor`) so the native view never
+drifts. See `docs/verification/followons-2026-10.md` "Find-in-page and zoom …
+(2026-10-16)".
 
 `dev/` holds **dev-only modules** — manual previews/mocks that are never
 business logic and are unreachable in a packaged build (gated by
@@ -1058,7 +1085,39 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3302 passed / 14 skipped** (+16 against the
+Current baseline: **`npm run test` → 3358 passed / 14 skipped** (+4 against the
+3354 below - **the shell's zoom level persists**: it is stored as an optional
+`zoomLevel` in `window-state.json` (`windowState.ts`; omitted at 100%, clamped to
+the ±5 zoom bounds), restored on the shell's first `dom-ready` (after `index.ts`
+sets `'isolated'`), and saved - debounced - after each shell zoom step
+(`attachShortcutHandling`'s `onZoomChanged` → `BrowserControllerOptions.onShellZoomChanged`
+→ `scheduleWindowStateSave`) and on the existing close/resize events. The AEM
+view's zoom is deliberately **not** persisted. See `docs/verification/followons-2026-10.md`
+"The shell's zoom level persists (2026-10-16)"). Before that it was
+**3354 passed / 14 skipped** (+52 against the
+3302 below - **find-in-page and zoom**: one `Ctrl+F` find bar per pane
+(`shell/findBar.ts`) over a `FindController` and a 150ms debounce. The browser
+bar drives native `findInPage` over the AEM view (the same Chromium highlight);
+it refuses unless the page is visible and closes when a panel/Home veil opens,
+and only one bar is on screen at a time. The chat bar searches the transcript
+subtree directly (`chat/transcriptFind.ts`, CSS Custom Highlight API) because
+Chromium's find cannot be scoped - run on the shell document it matched the query
+in the bar's own field and the composer's placeholder, and its stepping wandered
+out of the transcript. `Ctrl+NumpadAdd`/`Ctrl+NumpadSubtract`/`Ctrl+0` zoom the
+focused pane (`src/main/zoom.ts`; both views in isolated mode, never manual - manual reports a new zoom factor without zooming the page - Ctrl+wheel is not a
+zoom gesture - the shell in page zoom with the reserved rectangle compensated by
+its zoom factor
+so the native view never drifts). New `browser.find`/`app.find` actions, three
+find channels (`browser:find`/`stop-find` invoke + `browser:find-result` push),
+and the built-app `tests/e2e/find-and-zoom.spec.ts` (2 cases, 6/6 under
+`--repeat-each=3`); Electron 44 only emits `found-in-page` for `findNext: true`,
+so the contract carries no `findNext`. +13 `shortcuts` (rewritten to the result
+union), +6 `zoom`, +4 `browserController`, +13 `findBar` (rewritten onto a
+controller), +12 `transcriptFind`, +6 `browserPane`, +1 `chatPane`, and shared
+`tests/support/e2e/aemView.ts` + `aemHost.ts`; three mutations caught - see
+`docs/verification/followons-2026-10.md` "Find-in-page and zoom ... (2026-10-16)").
+Before that it was
+**3302 passed / 14 skipped** (+16 against the
 3286 below - **application-wide keyboard shortcuts**: with no menu bar to carry
 an accelerator, main matches a keystroke in `before-input-event` on *both* the
 shell's and the AEM view's `WebContents` (`src/main/shortcuts.ts`) and pushes a
@@ -1080,7 +1139,7 @@ shortcuts ... (2026-10-16)"). Before that it was
 copy, CSS classes, icon tags or re-typed constants; those cases were deleted or
 turned into state checks, and elements are located by test-id hooks - see §9 and
 `docs/verification/followons-2026-10.md` "Test suite: no literal-certifying
-tests, test-id hooks, shared helpers (2026-10-16)"). Playwright: 140 tests; a
+tests, test-id hooks, shared helpers (2026-10-16)"). Playwright: 142 tests; a
 full run is 135 passed / 5 failed, the 5 being environment-bound `network-error`
 (4) and one load-correlated flake (`edit-mode-toggle` this run, 3/3 green in
 isolation); the new `shortcuts.spec.ts` passed inside that full run. Before that
@@ -1928,6 +1987,17 @@ build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/age
 ---
 
 ## 8. Verified API facts — do not re-derive these
+
+**`before-input-event`'s `input.code` can be empty for a real keystroke.** Measured
+live on Electron 44.3.0 / Windows: the numpad's `+` and `-` arrive as
+`{ key: '+', code: '' }` / `{ key: '-', code: '' }` (and `location: 0`), and
+`SendKeys`-injected letters likewise carried `code: ''`. So a key map that matches
+only `code` silently misses those keys — the letter shortcuts worked because a
+real keyboard *does* populate `code` for them, but the numpad's did not. The app's
+`resolveShortcut` (`src/main/shortcuts.ts`) therefore matches `code` **or** `key`
+(the `key` fallback is what makes `Ctrl+NumpadAdd`/`Ctrl+NumpadSubtract` work);
+`sendInputEvent` synthesizes a non-empty `code`, so an E2E built on it cannot
+catch this — only real OS input can.
 
 **Skills are not auto-injected (the bodies).** Activation needs bundled
 directories *and* exactly one built-in tool whose model-facing name is `skill`

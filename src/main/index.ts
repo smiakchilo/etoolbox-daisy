@@ -71,7 +71,12 @@ import { installWebContentsSecurityGuard } from './security';
 import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
 import { createSkillCatalog } from './skills/skillCatalog';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
-import { APP_USER_MODEL_ID, createMainWindow, getAppIconPath } from './windows';
+import {
+  APP_USER_MODEL_ID,
+  createMainWindow,
+  getAppIconPath,
+  scheduleWindowStateSave,
+} from './windows';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
@@ -342,6 +347,7 @@ if (!gotSingleInstanceLock) {
       window: mainWindow,
       aemPreloadPath,
       rendererWebContents: mainWindow.webContents,
+      onShellZoomChanged: () => scheduleWindowStateSave(mainWindow),
     });
 
     // Re-applies every persisted TLS exception to the live session before

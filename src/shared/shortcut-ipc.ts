@@ -18,9 +18,13 @@ import { z } from 'zod';
  */
 
 /**
- * Every action a shortcut can request. Deliberately small and closed: a
- * shortcut that needs no UI state (zoom, find-in-page) is not here - it is
- * acted on in main directly and never crosses the boundary.
+ * Every action a shortcut can request. Deliberately small and closed. Zoom is
+ * *not* here: it needs no renderer state, so it is acted on in main directly
+ * and never crosses the boundary (`src/main/zoom.ts`). Find-in-page does cross
+ * it - the find bar is renderer UI - so it has two entries, because the
+ * renderer cannot tell which pane the keystroke came from on its own:
+ * `browser.find` is pushed when the AEM view had focus (find the page) and
+ * `app.find` when the shell did (the renderer picks the focused surface).
  */
 export const APP_SHORTCUT_ACTIONS = [
   /** Refresh the AEM pane (the toolbar's Refresh control). */
@@ -33,6 +37,10 @@ export const APP_SHORTCUT_ACTIONS = [
   'browser.home',
   /** Focus and select the address bar. */
   'browser.focusAddress',
+  /** Open the AEM page's find bar. Sent when the keystroke came from the AEM view. */
+  'browser.find',
+  /** Open the focused shell surface's find bar. Sent when the keystroke came from the app shell. */
+  'app.find',
   /** Open the History panel. */
   'chat.history',
   /** Open the Settings panel. */

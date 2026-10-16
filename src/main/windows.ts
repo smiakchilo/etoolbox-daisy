@@ -11,6 +11,7 @@ import {
   attachWindowStatePersistence,
   fitWindowStateToWorkArea,
   readWindowState,
+  type WindowStatePersistence,
 } from './windowState';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
@@ -88,6 +89,17 @@ export function applyTaskbarAppDetails(window: BrowserWindow): void {
   });
 }
 
+const persistenceByWindow = new WeakMap<BrowserWindow, WindowStatePersistence>();
+
+/**
+ * Asks the window's state persistence to save soon. For a change no window
+ * event announces - the shell's zoom step - so the level survives an exit that
+ * never delivers `close`.
+ */
+export function scheduleWindowStateSave(window: BrowserWindow): void {
+  persistenceByWindow.get(window)?.scheduleSave();
+}
+
 /**
  * Options for {@link createMainWindow}.
  */
@@ -148,7 +160,26 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
 
   // Attached before the window can be shown. Saving is best-effort and
   // debounced; `close` flushes synchronously so the final size is never lost.
-  attachWindowStatePersistence(window, options.windowStateFilePath);
+  const persistence = attachWindowStatePersistence(
+    {
+      getNormalBounds: () => window.getNormalBounds(),
+      isMaximized: () => window.isMaximized(),
+      getZoomLevel: () => window.webContents.getZoomLevel(),
+      on: (event, listener) => (window as NodeJS.EventEmitter).on(event, listener),
+    },
+    options.windowStateFilePath,
+  );
+  persistenceByWindow.set(window, persistence);
+
+  // The shell's zoom is restored once its document exists. `index.ts` puts the
+  // view in 'isolated' zoom mode right after this function returns, so applying
+  // it any earlier could be undone by that mode switch.
+  const restoredZoomLevel = restored.zoomLevel;
+  if (restoredZoomLevel !== undefined) {
+    window.webContents.once('dom-ready', () => {
+      window.webContents.setZoomLevel(restoredZoomLevel);
+    });
+  }
 
   applyTaskbarAppDetails(window);
 

@@ -15,11 +15,12 @@ import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
 import { newProxyId, newServerId } from '../../../../src/shared';
 import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
 import { proxyConfigSchema, type ServerConfig } from '../../../../src/shared';
-import type { BrowserNavigationState } from '../../../../src/shared';
+import type { BrowserNavigationState, ViewBounds } from '../../../../src/shared';
 import {
   APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+  BROWSER_FIND_RESULT_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../../../src/shared';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
@@ -126,6 +127,7 @@ interface FakeAemViewControls {
   readonly webContents: FakeWebContents;
   readonly loadURL: ReturnType<typeof vi.fn>;
   readonly stop: ReturnType<typeof vi.fn>;
+  readonly setBounds: ReturnType<typeof vi.fn>;
   readonly closePopups: ReturnType<typeof vi.fn>;
   readonly destroy: ReturnType<typeof vi.fn>;
   loadURLImpl: (url: string) => Promise<void>;
@@ -156,12 +158,13 @@ function makeFakeAemView(): FakeAemViewControls {
   const stop = vi.fn();
   const destroy = vi.fn();
   const closePopups = vi.fn();
+  const setBounds = vi.fn();
   const windowOpenRouter: WindowOpenRouter = { attachTo: vi.fn(), closeAll: closePopups };
   const webContentsControls = createFakeWebContents();
   const view: AemBrowserView = {
     webContents: webContentsControls.webContents,
     windowOpenRouter,
-    setBounds: vi.fn(),
+    setBounds,
     getNavigationState: vi.fn((): BrowserNavigationState => ({
       url: navigationUrl,
       canGoBack: false,
@@ -181,6 +184,7 @@ function makeFakeAemView(): FakeAemViewControls {
     webContents: webContentsControls,
     loadURL,
     stop,
+    setBounds,
     closePopups,
     destroy,
     loadURLImpl: (url) => {
@@ -228,6 +232,7 @@ function makeFakeAemSession(): FakeAemSessionControls {
 /** A fake `WebContents` exposing only `send`, via `Reflect.set` on an empty-object cast rather than an `as unknown as` cast (project rule). */
 function makeFakeRendererWebContents(): {
   readonly webContents: WebContents;
+  readonly fake: FakeWebContents;
   readonly send: ReturnType<typeof vi.fn>;
   readonly emit: (event: string, ...args: unknown[]) => void;
 } {
@@ -237,13 +242,27 @@ function makeFakeRendererWebContents(): {
   fake.define('focus', vi.fn());
   return {
     webContents: fake.webContents,
+    fake,
     send,
     emit: (event: string, ...args: unknown[]) => fake.emit(event, ...args),
   };
 }
 
 /** Wires up a controller against a fresh scratch settings dir, with every collaborator fake by default. */
-function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
+function makeControllerHarness(
+  options: {
+    secretStore?: SecretStore;
+    /**
+     * Runs after the fakes exist and before the controller is constructed, so a
+     * test can graft spied methods (e.g. `setZoomMode`) that the constructor
+     * calls.
+     */
+    configureFakes?: (fakes: {
+      readonly aemView: FakeWebContents;
+      readonly renderer: FakeWebContents;
+    }) => void;
+  } = {},
+) {
   const settingsDir = createScratchRoot();
   const aemViewControls = makeFakeAemView();
   const aemSessionControls = makeFakeAemSession();
@@ -251,9 +270,12 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
   const secretStore = options.secretStore ?? makeFakeSecretStore();
   const {
     webContents: rendererWebContents,
+    fake: rendererFake,
     send: rendererSend,
     emit: rendererEmit,
   } = makeFakeRendererWebContents();
+
+  options.configureFakes?.({ aemView: aemViewControls.webContents, renderer: rendererFake });
 
   const controller = createBrowserController({
     settingsDir,
@@ -274,6 +296,7 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
     logger,
     loggerSpies,
     secretStore,
+    rendererFake,
     rendererSend,
     rendererEmit,
   };
@@ -1493,5 +1516,155 @@ describe('browserController application shortcuts', () => {
     );
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies a zoom key to the source view without pushing an action', () => {
+    const harness = makeControllerHarness();
+    const setZoomLevel = vi.fn();
+    harness.aemViewControls.webContents.define(
+      'getZoomLevel',
+      vi.fn(() => 0),
+    );
+    harness.aemViewControls.webContents.define('setZoomLevel', setZoomLevel);
+    harness.rendererSend.mockClear();
+
+    harness.aemViewControls.webContents.emit(
+      'before-input-event',
+      { preventDefault: vi.fn() },
+      makeInput('NumpadAdd', { control: true }),
+    );
+
+    expect(setZoomLevel).toHaveBeenCalledWith(1);
+    expect(harness.rendererSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('browserController zoom', () => {
+  it('puts each view in a zoom mode that actually zooms the page (manual and disabled do not)', () => {
+    const aemSetZoomMode = vi.fn();
+    const shellSetZoomMode = vi.fn();
+
+    makeControllerHarness({
+      configureFakes: (fakes) => {
+        fakes.aemView.define('setZoomMode', aemSetZoomMode);
+        fakes.renderer.define('setZoomMode', shellSetZoomMode);
+      },
+    });
+
+    expect(aemSetZoomMode).toHaveBeenCalledWith('isolated');
+    expect(shellSetZoomMode).toHaveBeenCalledWith('isolated');
+  });
+
+  it('converts the reserved-region rectangle from CSS pixels to DIP by the shell zoom factor', () => {
+    const harness = makeControllerHarness({
+      configureFakes: (fakes) =>
+        fakes.renderer.define(
+          'getZoomFactor',
+          vi.fn(() => 2),
+        ),
+    });
+    const bounds: ViewBounds = { x: 5, y: 10, width: 100, height: 200 };
+
+    harness.controller.setViewBounds(bounds);
+
+    expect(harness.aemViewControls.setBounds).toHaveBeenCalledWith({
+      x: 10,
+      y: 20,
+      width: 200,
+      height: 400,
+    });
+  });
+
+  it('passes the rectangle through unchanged at 100%', () => {
+    const harness = makeControllerHarness();
+    const bounds: ViewBounds = { x: 5, y: 10, width: 100, height: 200 };
+
+    harness.controller.setViewBounds(bounds);
+
+    expect(harness.aemViewControls.setBounds).toHaveBeenCalledWith(bounds);
+  });
+});
+
+describe('browserController find-in-page', () => {
+  it('routes a browser-target request to the AEM view and advances the session', () => {
+    const harness = makeControllerHarness();
+    const findInPage = vi.fn(() => 7);
+    harness.aemViewControls.webContents.define('findInPage', findInPage);
+
+    const result = harness.controller.find({ target: 'browser', text: 'needle', forward: true });
+
+    expect(result).toEqual({ ok: true });
+    // Electron 44 only emits `found-in-page` for `findNext: true`, so main always
+    // sends it; the changed/unchanged text is what starts vs. steps the session.
+    expect(findInPage).toHaveBeenCalledWith('needle', { forward: true, findNext: true });
+  });
+
+  it('routes a chat-target request to the shell document', () => {
+    const harness = makeControllerHarness();
+    const findInPage = vi.fn(() => 1);
+    harness.rendererFake.define('findInPage', findInPage);
+
+    harness.controller.find({ target: 'chat', text: 'needle', forward: false });
+
+    expect(findInPage).toHaveBeenCalledWith('needle', { forward: false, findNext: true });
+  });
+
+  it('pushes the match count for the request it issued, and drops a stale result', () => {
+    const harness = makeControllerHarness();
+    harness.aemViewControls.webContents.define(
+      'findInPage',
+      vi.fn(() => 7),
+    );
+    harness.rendererSend.mockClear();
+
+    harness.controller.find({ target: 'browser', text: 'needle', forward: true });
+    harness.aemViewControls.webContents.emit(
+      'found-in-page',
+      {},
+      { requestId: 7, matches: 4, activeMatchOrdinal: 2 },
+    );
+
+    expect(harness.rendererSend).toHaveBeenCalledWith(BROWSER_FIND_RESULT_CHANNEL, {
+      target: 'browser',
+      matches: 4,
+      activeMatchOrdinal: 2,
+    });
+
+    harness.rendererSend.mockClear();
+    harness.aemViewControls.webContents.emit(
+      'found-in-page',
+      {},
+      { requestId: 999, matches: 4, activeMatchOrdinal: 2 },
+    );
+    expect(harness.rendererSend).not.toHaveBeenCalled();
+  });
+
+  it('marks a shell-document result as the chat target', () => {
+    const harness = makeControllerHarness();
+    harness.rendererFake.define(
+      'findInPage',
+      vi.fn(() => 3),
+    );
+    harness.rendererSend.mockClear();
+
+    harness.controller.find({ target: 'chat', text: 'x', forward: true });
+    harness.rendererEmit('found-in-page', {}, { requestId: 3, matches: 1, activeMatchOrdinal: 1 });
+
+    expect(harness.rendererSend).toHaveBeenCalledWith(BROWSER_FIND_RESULT_CHANNEL, {
+      target: 'chat',
+      matches: 1,
+      activeMatchOrdinal: 1,
+    });
+  });
+
+  it("stopFind clears the target document's selection", () => {
+    const harness = makeControllerHarness();
+    const stopFindInPage = vi.fn();
+    harness.aemViewControls.webContents.define('stopFindInPage', stopFindInPage);
+
+    const result = harness.controller.stopFind({ target: 'browser' });
+
+    expect(result).toEqual({ ok: true });
+    expect(stopFindInPage).toHaveBeenCalledWith('clearSelection');
   });
 });

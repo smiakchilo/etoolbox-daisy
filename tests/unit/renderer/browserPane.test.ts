@@ -30,9 +30,12 @@ interface FakeDaisyBrowser {
   reload: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   navigate: ReturnType<typeof vi.fn>;
+  find: ReturnType<typeof vi.fn>;
+  stopFind: ReturnType<typeof vi.fn>;
   onStateChanged: ReturnType<typeof vi.fn>;
   onSwitchStateChanged: ReturnType<typeof vi.fn>;
   onAgentNavigation: ReturnType<typeof vi.fn>;
+  onFindResult: ReturnType<typeof vi.fn>;
   onCertificateBlocked: ReturnType<typeof vi.fn>;
 }
 
@@ -57,6 +60,8 @@ beforeEach(() => {
     reload: vi.fn(() => Promise.resolve({ ok: true })),
     stop: vi.fn(() => Promise.resolve({ ok: true })),
     navigate: vi.fn(() => Promise.resolve({ ok: true })),
+    find: vi.fn(() => Promise.resolve({ ok: true })),
+    stopFind: vi.fn(() => Promise.resolve({ ok: true })),
     onStateChanged: vi.fn((listener: (state: BrowserNavigationState) => void) => {
       stateListeners.push(listener);
       return () => {
@@ -77,6 +82,7 @@ beforeEach(() => {
         );
       };
     }),
+    onFindResult: vi.fn(() => () => undefined),
     onCertificateBlocked: vi.fn(() => () => undefined),
   };
   Reflect.set(dom.window, 'daisy', { browser });
@@ -729,5 +735,90 @@ describe('createBrowserPane agent-pane toggle', () => {
 
     pane.setAgentPaneOpen(true);
     expect(toggleOf(pane).getAttribute('title')).toBe(openTitle);
+  });
+});
+
+describe('createBrowserPane find bar', () => {
+  function bar(pane: ReturnType<typeof createBrowserPane>): HTMLElement {
+    const element = pane.element.querySelector<HTMLElement>(byTestId('browser-find'));
+    if (element === null) throw new Error('the find bar is missing');
+    return element;
+  }
+
+  function emitState(url: string): void {
+    for (const listener of stateListeners) {
+      listener({
+        url,
+        canGoBack: false,
+        canGoForward: false,
+        isLoading: false,
+        hasDocument: true,
+      });
+    }
+  }
+
+  it('refuses to open until a document is loaded', () => {
+    const pane = build();
+
+    expect(pane.openFind()).toBe(false);
+    expect(bar(pane).hidden).toBe(true);
+  });
+
+  it('opens over a loaded page, above the region the native view occupies', () => {
+    const pane = build();
+    emitState('https://author.example/content/page.html');
+
+    expect(pane.openFind()).toBe(true);
+    expect(bar(pane).hidden).toBe(false);
+    // Above the page panel, so the height it adds shrinks the reserved region
+    // and the composited native view can never cover it.
+    const children = Array.from(pane.element.children);
+    const pagePanel = pane.element.querySelector<HTMLElement>('.browser-page-panel');
+    expect(pagePanel).not.toBeNull();
+    expect(children.indexOf(bar(pane))).toBeLessThan(children.indexOf(pagePanel as HTMLElement));
+  });
+
+  it('closes when a whole-size panel opens, and refuses while one is up', () => {
+    const pane = build();
+    emitState('https://author.example/content/page.html');
+    pane.openFind();
+    expect(bar(pane).hidden).toBe(false);
+
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+
+    expect(bar(pane).hidden).toBe(true);
+    expect(pane.openFind()).toBe(false);
+  });
+
+  it('closes when Home veils the page, and refuses while it is up', () => {
+    const pane = build();
+    emitState('https://author.example/content/page.html');
+    pane.openFind();
+
+    pane.element.querySelector<HTMLElement>(byTestId('browser-home'))?.click();
+
+    expect(bar(pane).hidden).toBe(true);
+    expect(pane.openFind()).toBe(false);
+  });
+
+  it('closes when the page navigates (the session died with the old document)', () => {
+    const pane = build();
+    emitState('https://author.example/content/page.html');
+    pane.openFind();
+    expect(bar(pane).hidden).toBe(false);
+
+    emitState('https://author.example/content/other.html');
+
+    expect(bar(pane).hidden).toBe(true);
+  });
+
+  it('closeFind hides an open bar', () => {
+    const pane = build();
+    emitState('https://author.example/content/page.html');
+    pane.openFind();
+
+    pane.closeFind();
+
+    expect(bar(pane).hidden).toBe(true);
   });
 });

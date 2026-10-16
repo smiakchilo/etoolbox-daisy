@@ -137,6 +137,16 @@ export const BROWSER_AGENT_NAVIGATION_CHANNEL = 'browser:agent-navigation' as co
 export const BROWSER_SWITCH_STATE_CHANGED_CHANNEL = 'browser:switch-state-changed' as const;
 /** Push channel: main -> renderer, whenever a certificate error has no matching exception. */
 export const BROWSER_CERTIFICATE_BLOCKED_CHANNEL = 'browser:certificate-blocked' as const;
+/**
+ * Find-in-page. The renderer's find bar names a logical `target` (`browser` for
+ * the AEM view, `chat` for the shell document); main resolves it to a
+ * `WebContents` and calls `findInPage`/`stopFindInPage`. Matches come back on
+ * {@link BROWSER_FIND_RESULT_CHANNEL}. See src/shared/browser-ipc.ts.
+ */
+export const BROWSER_FIND_CHANNEL = 'browser:find' as const;
+export const BROWSER_STOP_FIND_CHANNEL = 'browser:stop-find' as const;
+/** Push channel: main -> renderer, one `found-in-page` result for a find target. */
+export const BROWSER_FIND_RESULT_CHANNEL = 'browser:find-result' as const;
 
 // Agent chat IPC surface (step 07) - see src/main/ipc/agentChat.ts and
 // src/shared/agent-chat-ipc.ts. Puts the `AgentService` behind IPC for a

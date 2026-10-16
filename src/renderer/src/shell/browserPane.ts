@@ -2,7 +2,9 @@ import { el } from '../lib/dom';
 import { createStatusBanner, type StatusBannerSink } from '../settings/statusBanner';
 import { createBrowserToolbar } from './browserToolbar';
 import { createBrowserViewHost } from './browserViewHost';
+import { createFindBar } from './findBar';
 import { createHomeScreen, type HomeScreen } from './homeScreen';
+import { createNativeFindController } from './nativeFind';
 import type { Panel } from './panel';
 import { createHostsPanel } from './hostsPanel';
 import type { HostOption } from './viewModel';
@@ -50,6 +52,17 @@ export interface BrowserPane {
    * least one server is configured.
    */
   openHostsPicker(): void;
+  /**
+   * Reveals the find-in-page bar for the AEM page and focuses its field.
+   * Refuses (returning `false`) when the page is not the visible layer - no
+   * document is loaded, the Home veil is up, or a whole-size panel covers the
+   * region - because the bar is a control *of the page*, and its highlight
+   * would otherwise be invisible. The other bar is left untouched by a refusal,
+   * so a caller can safely try both.
+   */
+  openFind(): boolean;
+  /** Hides the find bar and clears its highlight; a no-op when it is closed. */
+  closeFind(): void;
   /**
    * Navigates the pane to `url` exactly as a typed address or a picker
    * selection would. The shell routes a transcript link here so the browser
@@ -192,6 +205,10 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
   });
   const viewHost = createBrowserViewHost();
+  const findBar = createFindBar({
+    testIdPrefix: 'browser-find',
+    controller: createNativeFindController('browser'),
+  });
 
   const home = createHomeScreen({
     onOpenHosts(): void {
@@ -220,7 +237,14 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   // (app-preload.ts), so subscribing here alongside the toolbar's own is safe.
   // Only a `hasDocument` change moves the view/home/panel stack, so a push that
   // merely updates the address does not re-run the visibility logic.
+  let lastStateUrl: string | undefined;
   const unsubscribeState = window.daisy.browser.onStateChanged((state) => {
+    const urlChanged = state.url !== lastStateUrl;
+    lastStateUrl = state.url;
+    // A navigation replaces the document a find session was searching; the
+    // session dies with it, so the bar is closed rather than left showing a
+    // count that no longer describes what is on screen.
+    if (urlChanged && findBar.isOpen) findBar.close();
     if (state.hasDocument === hasDocument) return;
     hasDocument = state.hasDocument;
     updateViewVisibility();
@@ -294,6 +318,8 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
    */
   function showHome(): void {
     homeForced = true;
+    // The page is covered, so a find bar that belongs to it goes with it.
+    findBar.close();
     if (activePanel === undefined) updateViewVisibility();
     else closeActivePanel();
     syncHomeChrome();
@@ -336,6 +362,9 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   function openPanel(panel: Panel): void {
     if (activePanel === panel) return;
+    // A whole-size panel covers the page the find bar searches: the bar is a
+    // control of the page and is dismissed with it.
+    findBar.close();
     activePanel?.close();
     activePanel = panel;
     // Order matters (see file doc comment): the native view paints above the
@@ -365,7 +394,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   const element = el('section', {
     attrs: { class: 'pane browser-pane', 'aria-label': 'Browser' },
-    children: [toolbar.element, pagePanel],
+    children: [toolbar.element, findBar.element, pagePanel],
   });
 
   return {
@@ -379,6 +408,17 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     surfaceStatus,
     openHostsPicker(): void {
       openPanel(picker);
+    },
+    openFind(): boolean {
+      // The bar is a control *of the page*: it is refused while the page is not
+      // the visible layer (no document, the Home veil, or a covering panel), so
+      // the caller can fall through to the other pane's bar instead.
+      if (!hasDocument || homeForced || activePanel !== undefined) return false;
+      findBar.open();
+      return true;
+    },
+    closeFind(): void {
+      findBar.close();
     },
     navigate(url: string): void {
       toolbar.navigateTo(url);
@@ -416,6 +456,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       unsubscribeAgentNavigation();
       surfaceStatus.dispose();
       toolbar.dispose();
+      findBar.dispose();
       picker.dispose();
       viewHost.dispose();
     },

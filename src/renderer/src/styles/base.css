@@ -205,3 +205,95 @@ body.daisy-pane-resizing {
 .agent-item:focus-within {
   border-color: var(--spectrum-accent-background-color-default, #0265dc);
 }
+
+/*
+ * The find-in-page bar, shared by both panes (`shell/findBar.ts`). A fixed-height
+ * row in the pane's flex column: in the browser pane it sits above the reserved
+ * view slot, so its height shrinks the region the native view is positioned
+ * over; in the chat pane it sits above the transcript. Only one pane's bar is
+ * shown at a time. A `[hidden]` rule is explicit because a class rule would
+ * otherwise outrank the UA `[hidden]` rule.
+ */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  flex: 0 0 auto;
+}
+
+.find-bar[hidden] {
+  display: none;
+}
+
+/*
+ * The bordered search box: the text field and the match count share one frame,
+ * structurally like the address bar. The box owns the border/background, and
+ * the field inside is border-less and draws no focus frame (`--mod-textfield-*`
+ * overridden per the address bar's pattern, browser.css). The prev/next stepper
+ * and the close control sit outside it.
+ */
+.find-bar__box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-inline: 8px;
+  border: 1px solid var(--spectrum-gray-500);
+  border-radius: var(--spectrum-corner-radius-100, 4px);
+  background: #ffffff;
+}
+
+.find-bar__field {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* No frame of its own: the box draws the one border, and focus must not add
+     a second (the theme pins these to gray, so they are forced transparent). */
+  --mod-textfield-border-color: transparent;
+  --mod-textfield-border-color-hover: transparent;
+  --mod-textfield-border-color-focus: transparent;
+  --mod-textfield-border-color-keyboard-focus: transparent;
+  --mod-textfield-border-color-focus-hover: transparent;
+  --mod-textfield-background-color: transparent;
+  --mod-textfield-spacing-inline: 0;
+}
+
+/* The prev/next pair reads as one stepper: flush, with no row gap between. */
+.find-bar__stepper {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+/* Spectrum's small-cross close button defaults to a fully round backdrop (its
+   radius token is the control height). Square it to the app's 4px so its
+   hover/focus backdrop matches the chevrons' action buttons. */
+.find-bar__close {
+  --mod-closebutton-border-radius: var(--spectrum-corner-radius-100, 4px);
+}
+
+.find-bar__count {
+  flex: 0 0 auto;
+  min-width: 4ch;
+  text-align: right;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+/*
+ * The chat transcript's find highlights, applied with the CSS Custom Highlight
+ * API over range objects (the transcript DOM is never edited). The all-matches
+ * pair mirrors a browser's find colours; the active range is registered last so
+ * its fill paints over the all-matches fill of the same range.
+ */
+::highlight(daisy-find-match) {
+  background-color: #fff1a8;
+  color: inherit;
+}
+
+::highlight(daisy-find-current) {
+  background-color: #ffae00;
+  color: #101010;
+}

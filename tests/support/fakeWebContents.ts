@@ -39,6 +39,15 @@ export function createFakeWebContents(): FakeWebContents {
       return webContents;
     },
     isDestroyed: () => false,
+    // Zoom / find defaults, so a unit test that only needs the surrounding
+    // wiring to construct does not have to graft every method. A test that
+    // asserts on them overrides them through `define`.
+    setZoomMode: () => undefined,
+    getZoomLevel: () => 0,
+    setZoomLevel: () => undefined,
+    getZoomFactor: () => 1,
+    findInPage: () => 0,
+    stopFindInPage: () => undefined,
   } as unknown as WebContents;
   return {
     webContents,

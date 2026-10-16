@@ -33,7 +33,10 @@ import type {
   BrowserNavigationState,
   BrowserSwitchState,
   CertificateBlockedInfo,
+  FindRequest,
+  FindResult,
   OpenExternalRequest,
+  StopFindRequest,
   ViewBounds,
 } from './browser-ipc';
 import type {
@@ -226,6 +229,16 @@ export interface DaisyBrowserApi {
   onAgentNavigation(listener: () => void): () => void;
   /** Subscribes to `browser:certificate-blocked`; returns an unsubscribe function. */
   onCertificateBlocked(listener: (info: CertificateBlockedInfo) => void): () => void;
+  /**
+   * Runs a find-in-page request against the named document (`browser` for the
+   * AEM page, `chat` for the shell document the chat transcript lives in). The
+   * match count arrives asynchronously on {@link onFindResult}.
+   */
+  find(request: FindRequest): Promise<BrowserIpcVoidResult>;
+  /** Ends a find session and clears its highlight. */
+  stopFind(request: StopFindRequest): Promise<BrowserIpcVoidResult>;
+  /** Subscribes to `browser:find-result`; returns an unsubscribe function. */
+  onFindResult(listener: (result: FindResult) => void): () => void;
 }
 
 export interface DaisySettingsApi {
