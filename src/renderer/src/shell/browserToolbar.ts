@@ -141,6 +141,18 @@ export interface BrowserToolbar {
    * escape hatch: typing an origin there always opens that origin.
    */
   navigateToHost(origin: string): void;
+  /**
+   * Runs the Refresh control's action. The F5 / Ctrl+R shortcut's target: the
+   * renderer side of `app:shortcut` must go through the same body a click does,
+   * never a second navigation path (so the address-bar-differs behaviour and
+   * the error-row/reveal handling all apply unchanged).
+   */
+  refresh(): void;
+  /** Runs Back / Forward exactly as a click on the control would. */
+  goBack(): void;
+  goForward(): void;
+  /** Focuses and selects the address bar (the Ctrl+L shortcut's target). */
+  focusAddress(): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
   dispose(): void;
 }
@@ -227,6 +239,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // Home control; the pane owns what "home" means, including closing any open
   // panel. The button is never disabled - the home screen is always available.
   const homeButton = buildNavButton('browser-home', 'Home', 'sp-icon-home');
+  homeButton.setAttribute('aria-keyshortcuts', 'Alt+Home');
   homeButton.addEventListener('click', () => callbacks.onHomeClick());
 
   // "Back" reuses Forward's sp-icon-arrow400 glyph, rotated 180deg via CSS
@@ -236,6 +249,11 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   });
   const forwardButton = buildNavButton('browser-forward', 'Forward', 'sp-icon-arrow400');
   const refreshButton = buildNavButton('browser-refresh', 'Refresh', 'sp-icon-refresh');
+  // Advertised to assistive tech only (no tooltip text change, and no
+  // visual hint): the same key map `src/main/shortcuts.ts` binds.
+  backButton.setAttribute('aria-keyshortcuts', 'Alt+ArrowLeft');
+  forwardButton.setAttribute('aria-keyshortcuts', 'Alt+ArrowRight');
+  refreshButton.setAttribute('aria-keyshortcuts', 'F5 Control+R');
   // Nothing is loaded yet (no navigation state has been reported), so there
   // is nothing to go back/forward to until the first `onStateChanged` event.
   backButton.setAttribute('disabled', '');
@@ -736,27 +754,32 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       refreshButton.setAttribute('title', 'Refresh');
       refreshButton.setAttribute('aria-label', 'Refresh');
       refreshButton.setAttribute('data-testid', 'browser-refresh');
-      navClickHandler = () => {
-        // When the address bar shows a different URL than the loaded page,
-        // Refresh navigates to the address bar value instead of blindly
-        // reloading the stale page — matching normal browser behaviour where
-        // Refresh retries whatever the address bar shows. Crucially this also
-        // covers the case where NO page is loaded yet (`lastNavigationState`
-        // is null — e.g. a fresh profile whose first attempt was refused as
-        // unknown_origin before `loadURL` ever ran, so no state push fired):
-        // the only non-empty address then differs from "nothing", so Refresh
-        // re-requests it and re-triggers the prompt. `reload()` alone would
-        // reload the blank view and do nothing.
-        const value = resolveAddressSubmission((addressField.value ?? '').trim(), hostOptions);
-        const currentUrl = lastNavigationState?.url;
-        if (value !== '' && value !== currentUrl) {
-          performNavigate(value);
-        } else {
-          performReload();
-        }
-      };
+      // The same body the F5 / Ctrl+R shortcut runs (see `performRefresh`).
+      navClickHandler = performRefresh;
     }
     refreshButton.addEventListener('click', navClickHandler);
+  }
+
+  /**
+   * The Refresh control's action, and the F5 / Ctrl+R shortcut's target. When
+   * the address bar shows a different URL than the loaded page, Refresh
+   * navigates to the address bar value instead of blindly reloading the stale
+   * page — matching normal browser behaviour where Refresh retries whatever the
+   * address bar shows. Crucially this also covers the case where NO page is
+   * loaded yet (`lastNavigationState` is null — e.g. a fresh profile whose
+   * first attempt was refused as unknown_origin before `loadURL` ever ran, so
+   * no state push fired): the only non-empty address then differs from
+   * "nothing", so Refresh re-requests it and re-triggers the prompt. `reload()`
+   * alone would reload the blank view and do nothing.
+   */
+  function performRefresh(): void {
+    const value = resolveAddressSubmission((addressField.value ?? '').trim(), hostOptions);
+    const currentUrl = lastNavigationState?.url;
+    if (value !== '' && value !== currentUrl) {
+      performNavigate(value);
+    } else {
+      performReload();
+    }
   }
 
   // ── IPC result handler ───────────────────────────────────────────────────
@@ -980,6 +1003,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // navigation-state event arrives (see `hasLiveNavigationState` below).
       placeholder: 'Select a host or type an address',
       'aria-label': 'Address',
+      'aria-keyshortcuts': 'Control+L',
       'data-testid': 'browser-address',
     },
   }) as AddressField;
@@ -1507,6 +1531,23 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
             })
           : origin,
       );
+    },
+    refresh(): void {
+      performRefresh();
+    },
+    goBack(): void {
+      // Exactly what the Back control's own click handler does - no extra
+      // guard. The `disabled` attribute is not a reliable "can go back" signal
+      // (a click on the disabled control navigates anyway), so the shortcut
+      // must not invent a restriction the control does not have.
+      performHistory('back');
+    },
+    goForward(): void {
+      performHistory('forward');
+    },
+    focusAddress(): void {
+      addressField.focus();
+      selectAllAddressText();
     },
     dispose(): void {
       cancelLoadingBanner();

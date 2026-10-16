@@ -2,6 +2,7 @@ export * from './result';
 export * from './app-info';
 export * from './ipc-channels';
 export * from './app-api';
+export * from './shortcut-ipc';
 export * from './agent-auth';
 export * from './settings-ipc';
 export * from './browser-ipc';

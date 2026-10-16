@@ -57,6 +57,18 @@ export interface BrowserPane {
    * shows the pane's error row (with Reload) rather than a chat-pane error.
    */
   navigate(url: string): void;
+  /** Reveals the pane's home (welcome) screen over any loaded page (the Alt+Home shortcut). */
+  showHome(): void;
+  /**
+   * The browser-toolbar actions an application-wide shortcut dispatches to:
+   * Refresh, Back, Forward and focusing the address bar. Each runs the toolbar
+   * control's own body (so their guards and side effects apply) rather than a
+   * second navigation path.
+   */
+  refresh(): void;
+  goBack(): void;
+  goForward(): void;
+  focusAddress(): void;
   /**
    * Appends a panel's element to the pane's shared view slot (hidden until
    * `panelHost.open` reveals it). Used for panels the pane does not itself
@@ -370,6 +382,21 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
     navigate(url: string): void {
       toolbar.navigateTo(url);
+    },
+    showHome(): void {
+      showHome();
+    },
+    refresh(): void {
+      toolbar.refresh();
+    },
+    goBack(): void {
+      toolbar.goBack();
+    },
+    goForward(): void {
+      toolbar.goForward();
+    },
+    focusAddress(): void {
+      toolbar.focusAddress();
     },
     appendPanel(panel: Panel): void {
       viewSlot.append(panel.element);

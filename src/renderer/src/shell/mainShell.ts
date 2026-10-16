@@ -4,8 +4,9 @@ import { clearLastChat, loadLastChat, saveLastChat } from '../lib/lastChatStore'
 import { loadSettingsSnapshot } from '../lib/settingsClient';
 import {
   parseNavigationTarget,
-  type AppSettingsSnapshot,
   type AgentChatHistoryEntry,
+  type AppShortcutAction,
+  type AppSettingsSnapshot,
   type ServerId,
 } from '../../../shared';
 import { createBrowserPane } from './browserPane';
@@ -42,11 +43,20 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // starts with the agent pane open.
   let agentPaneVisible = true;
 
+  /**
+   * Shows/hides the chat pane. The browser toolbar's toggle is the only caller
+   * (there is deliberately no shortcut for it: `Ctrl+B` is bold in AEM's
+   * rich-text editor, so the remote page keeps that key).
+   */
+  function toggleAgentPane(): void {
+    agentPaneVisible = !agentPaneVisible;
+    splitView.setAgentPaneVisible(agentPaneVisible);
+    browserPane.setAgentPaneOpen(agentPaneVisible);
+  }
+
   const browserPane = createBrowserPane({
     onToggleAgentPane(): void {
-      agentPaneVisible = !agentPaneVisible;
-      splitView.setAgentPaneVisible(agentPaneVisible);
-      browserPane.setAgentPaneOpen(agentPaneVisible);
+      toggleAgentPane();
     },
     // The home screen's "Open settings" action. The shell owns the settings
     // panel, which is created just below; the callback closes over it and only
@@ -155,6 +165,43 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       clearLastChat();
     },
   });
+
+  // ── Application-wide keyboard shortcuts ──────────────────────────────────
+  // The app has no menu bar, so a shortcut is matched in main on the shell's
+  // *or* the AEM view's WebContents (`src/main/shortcuts.ts`) and pushed here as
+  // a semantic action. Each one runs the very handler its toolbar control runs -
+  // never a second navigation path - so the existing guards, banners and
+  // reveal-over-panel behaviour all apply unchanged.
+  function handleShortcut(action: AppShortcutAction): void {
+    switch (action) {
+      case 'browser.refresh':
+        browserPane.refresh();
+        return;
+      case 'browser.back':
+        browserPane.goBack();
+        return;
+      case 'browser.forward':
+        browserPane.goForward();
+        return;
+      case 'browser.home':
+        browserPane.showHome();
+        return;
+      case 'browser.focusAddress':
+        browserPane.focusAddress();
+        return;
+      case 'chat.history':
+        browserPane.panelHost.open(historyPanel);
+        return;
+      case 'chat.settings':
+        browserPane.panelHost.open(settingsPanel);
+        return;
+      case 'chat.newSession':
+        chatPane.startNewSession();
+        return;
+    }
+  }
+
+  const unsubscribeShortcuts = window.daisy.shortcuts.onAction(handleShortcut);
 
   /**
    * The origins of the currently configured hosts, kept current by
@@ -383,6 +430,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // observer/listener when this (single, app-lifetime) window actually closes.
   window.addEventListener('unload', () => {
     unsubscribeLastPage();
+    unsubscribeShortcuts();
     shellResizeObserver.disconnect();
     splitView.dispose();
     browserPane.dispose();

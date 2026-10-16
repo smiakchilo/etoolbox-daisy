@@ -19,6 +19,7 @@ import {
   AGENT_CHAT_SEND_MESSAGE_CHANNEL,
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
   APP_INFO_CHANNEL,
+  APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
@@ -79,6 +80,7 @@ import {
   parseAgentChatStatus,
   parseAgentChatVoidResult,
   parseAppInfo,
+  parseAppShortcutAction,
   agentAuthRequestSchema,
   parseAuthPresence,
   parseAuthStatus,
@@ -135,6 +137,7 @@ import {
   type AgentId,
   type ApproveCertificateExceptionRequest,
   type AppInfo,
+  type AppShortcutAction,
   type AuthPresence,
   type AuthStatus,
   type BrowserIpcVoidResult,
@@ -440,6 +443,17 @@ const daisyApi: DaisyAppApi = {
     async revealLast(): Promise<TableExportRevealResult> {
       const raw: unknown = await ipcRenderer.invoke(TABLE_EXPORT_REVEAL_LAST_CHANNEL);
       return parseTableExportRevealResult(raw);
+    },
+  },
+  shortcuts: {
+    onAction(listener: (action: AppShortcutAction) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {
+        listener(parseAppShortcutAction(raw));
+      };
+      ipcRenderer.on(APP_SHORTCUT_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(APP_SHORTCUT_CHANNEL, handler);
+      };
     },
   },
   browser: {

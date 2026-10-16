@@ -17,12 +17,15 @@ import { defaultAppSettings, type AppSettings } from '../../../../src/shared';
 import { proxyConfigSchema, type ServerConfig } from '../../../../src/shared';
 import type { BrowserNavigationState } from '../../../../src/shared';
 import {
+  APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../../../src/shared';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
 import { makeAuthorServer } from '../../../support/configFixtures';
+import { makeInput } from '../../../support/electronInput';
+import { createFakeWebContents, type FakeWebContents } from '../../../support/fakeWebContents';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
@@ -120,7 +123,7 @@ function makeFakeLogger(): {
 
 interface FakeAemViewControls {
   readonly view: AemBrowserView;
-  readonly webContents: FakeWebContentsControls;
+  readonly webContents: FakeWebContents;
   readonly loadURL: ReturnType<typeof vi.fn>;
   readonly stop: ReturnType<typeof vi.fn>;
   readonly closePopups: ReturnType<typeof vi.fn>;
@@ -138,53 +141,8 @@ interface FakeAemViewControls {
  * succeed for one call and reject for another (e.g. Task 1's network_error
  * path only kicks in for the second `switchServer` call).
  */
-interface FakeWebContentsControls {
-  readonly webContents: WebContents;
-  /** Drives a listener the production code registered, as Electron would. */
-  emit(event: string, ...args: unknown[]): void;
-  listenerCount(event: string): number;
-}
-
-/**
- * A minimal event-emitter-shaped `WebContents`. It exists because the
- * controller now attaches navigation-epoch tracking to the AEM view's
- * `webContents`, and an empty object literal cannot record listeners - but
- * more usefully, it lets a test *drive* a navigation and observe the epoch
- * move, which is the only way to check that the wiring is real rather than
- * merely present.
- */
-function makeFakeWebContents(): FakeWebContentsControls {
-  const listeners = new Map<string, Set<(...args: never[]) => void>>();
-  const add = (event: string, listener: (...args: never[]) => void): void => {
-    const existing = listeners.get(event) ?? new Set();
-    existing.add(listener);
-    listeners.set(event, existing);
-  };
-  const webContents = {
-    on: (event: string, listener: (...args: never[]) => void) => {
-      add(event, listener);
-      return webContents;
-    },
-    once: (event: string, listener: (...args: never[]) => void) => {
-      add(event, listener);
-      return webContents;
-    },
-    off: (event: string, listener: (...args: never[]) => void) => {
-      listeners.get(event)?.delete(listener);
-      return webContents;
-    },
-    isDestroyed: () => false,
-  } as unknown as WebContents;
-  return {
-    webContents,
-    emit: (event, ...args) => {
-      for (const listener of [...(listeners.get(event) ?? [])]) {
-        (listener as (...callArgs: unknown[]) => void)(...args);
-      }
-    },
-    listenerCount: (event) => listeners.get(event)?.size ?? 0,
-  };
-}
+// The event-emitter-shaped `WebContents` fake is shared - see
+// `tests/support/fakeWebContents.ts` (`createFakeWebContents`).
 
 function makeFakeAemView(): FakeAemViewControls {
   // The live document URL the fake reports. `loadURL` records the URL it was
@@ -199,7 +157,7 @@ function makeFakeAemView(): FakeAemViewControls {
   const destroy = vi.fn();
   const closePopups = vi.fn();
   const windowOpenRouter: WindowOpenRouter = { attachTo: vi.fn(), closeAll: closePopups };
-  const webContentsControls = makeFakeWebContents();
+  const webContentsControls = createFakeWebContents();
   const view: AemBrowserView = {
     webContents: webContentsControls.webContents,
     windowOpenRouter,
@@ -271,11 +229,17 @@ function makeFakeAemSession(): FakeAemSessionControls {
 function makeFakeRendererWebContents(): {
   readonly webContents: WebContents;
   readonly send: ReturnType<typeof vi.fn>;
+  readonly emit: (event: string, ...args: unknown[]) => void;
 } {
   const send = vi.fn();
-  const webContents = {} as WebContents;
-  Reflect.set(webContents, 'send', send);
-  return { webContents, send };
+  const fake = createFakeWebContents();
+  fake.define('send', send);
+  fake.define('focus', vi.fn());
+  return {
+    webContents: fake.webContents,
+    send,
+    emit: (event: string, ...args: unknown[]) => fake.emit(event, ...args),
+  };
 }
 
 /** Wires up a controller against a fresh scratch settings dir, with every collaborator fake by default. */
@@ -285,7 +249,11 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
   const aemSessionControls = makeFakeAemSession();
   const { logger, spies: loggerSpies } = makeFakeLogger();
   const secretStore = options.secretStore ?? makeFakeSecretStore();
-  const { webContents: rendererWebContents, send: rendererSend } = makeFakeRendererWebContents();
+  const {
+    webContents: rendererWebContents,
+    send: rendererSend,
+    emit: rendererEmit,
+  } = makeFakeRendererWebContents();
 
   const controller = createBrowserController({
     settingsDir,
@@ -307,6 +275,7 @@ function makeControllerHarness(options: { secretStore?: SecretStore } = {}) {
     loggerSpies,
     secretStore,
     rendererSend,
+    rendererEmit,
   };
 }
 
@@ -1476,5 +1445,53 @@ describe('browserController.openForAgent', () => {
 
     expect(result).toEqual({ kind: 'cancelled' });
     expect(changes).toContainEqual({ initiator: 'user' });
+  });
+});
+
+describe('browserController application shortcuts', () => {
+  it('pushes the semantic action for a keystroke on the shell', () => {
+    const harness = makeControllerHarness();
+    harness.rendererSend.mockClear();
+
+    harness.rendererEmit(
+      'before-input-event',
+      { preventDefault: vi.fn() },
+      makeInput('KeyH', { control: true }),
+    );
+
+    expect(harness.rendererSend).toHaveBeenCalledWith(APP_SHORTCUT_CHANNEL, 'chat.history');
+  });
+
+  it('pushes a browser-navigation action from the AEM view, but never a chat action', () => {
+    const harness = makeControllerHarness();
+    harness.rendererSend.mockClear();
+
+    harness.aemViewControls.webContents.emit(
+      'before-input-event',
+      { preventDefault: vi.fn() },
+      makeInput('ArrowLeft', { alt: true }),
+    );
+    expect(harness.rendererSend).toHaveBeenCalledWith(APP_SHORTCUT_CHANNEL, 'browser.back');
+
+    harness.rendererSend.mockClear();
+    harness.aemViewControls.webContents.emit(
+      'before-input-event',
+      { preventDefault: vi.fn() },
+      makeInput('KeyH', { control: true }),
+    );
+    expect(harness.rendererSend).not.toHaveBeenCalled();
+  });
+
+  it('consumes a claimed key so the page never also sees it', () => {
+    const harness = makeControllerHarness();
+    const preventDefault = vi.fn();
+
+    harness.aemViewControls.webContents.emit(
+      'before-input-event',
+      { preventDefault },
+      makeInput('F5'),
+    );
+
+    expect(preventDefault).toHaveBeenCalledTimes(1);
   });
 });

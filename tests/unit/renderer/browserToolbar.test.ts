@@ -2173,3 +2173,33 @@ describe('createBrowserToolbar host picker selection (navigateToHost)', () => {
     expect(browser.navigate).toHaveBeenCalledWith('https://acme.adobe.com');
   });
 });
+
+describe('createBrowserToolbar shortcut targets', () => {
+  it('Refresh runs the Refresh control action (reload when the address bar matches)', () => {
+    const toolbar = build();
+
+    toolbar.refresh();
+
+    expect(browser.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('Back and Forward run their control', () => {
+    const toolbar = build();
+
+    toolbar.goBack();
+    toolbar.goForward();
+
+    expect(browser.goBack).toHaveBeenCalledTimes(1);
+    expect(browser.goForward).toHaveBeenCalledTimes(1);
+  });
+
+  it('focuses the address bar', () => {
+    const toolbar = build();
+    const address = toolbar.element.querySelector('#browser-address-bar') as HTMLElement;
+    const focus = vi.spyOn(address, 'focus');
+
+    toolbar.focusAddress();
+
+    expect(focus).toHaveBeenCalledTimes(1);
+  });
+});

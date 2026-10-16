@@ -510,6 +510,23 @@ once the target has validated) that the app preload exposes as
 - it surfaces only as `browser:state-changed` - so a panel the user opened is
 left alone while the AEM page navigates itself.
 
+**Application-wide keyboard shortcuts have no menu to hang off.** `index.ts`
+clears the application menu, so a shortcut cannot be an accelerator - and the
+AEM pane is a `WebContentsView`, so a renderer key listener would do nothing
+while the AEM page has focus. Main therefore matches a keystroke in
+`before-input-event` on *both* the shell's and the AEM view's `WebContents`
+(`src/main/shortcuts.ts`, attached by `browserController.ts`, which holds both)
+and pushes a *semantic* action (`app:shortcut`, `src/shared/shortcut-ipc.ts`); a
+thin dispatcher in `shell/mainShell.ts` runs the very handler its toolbar or
+panel control runs, never a second navigation path. Chat actions (`Ctrl+H`,
+`Ctrl+,`, `Ctrl+N`) bind on the shell only, so the remote AEM page keeps its own
+`Ctrl+<letter>` editing shortcuts; `Ctrl+B` is deliberately unbound (bold in
+AEM's rich-text editor). Backspace-to-go-Back is deliberately **not** bound:
+whether the caret is in a text field is only knowable in the renderer, and
+Chrome removed the browser-wide form of it for exactly that data-loss reason -
+so there is no renderer-side shortcut at all. Zoom and in-page find are Pass 2
+(`docs/backlog.md`).
+
 `dev/` holds **dev-only modules** — manual previews/mocks that are never
 business logic and are unreachable in a packaged build (gated by
 `window.daisy.devTools`; see §9). The first is the ask-user preview: the pure
@@ -1041,14 +1058,33 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3286 passed / 14 skipped** (−59 against the
+Current baseline: **`npm run test` → 3302 passed / 14 skipped** (+16 against the
+3286 below - **application-wide keyboard shortcuts**: with no menu bar to carry
+an accelerator, main matches a keystroke in `before-input-event` on *both* the
+shell's and the AEM view's `WebContents` (`src/main/shortcuts.ts`) and pushes a
+*semantic* action over the new `app:shortcut` channel (`src/shared/shortcut-ipc.ts`),
+which the shell dispatches onto its existing toolbar/panel handlers - F5/Ctrl+R
+refresh, Alt+Left/Right back/forward, Alt+Home home, Ctrl+L focus the address
+bar, Ctrl+H History, Ctrl+, Settings, Ctrl+N New session. `Ctrl+B` (bold in AEM's
+rich-text editor) and Backspace-to-go-Back are deliberately unbound, and the
+chat actions bind on the shell only, so the AEM page keeps its own
+`Ctrl+<letter>` shortcuts; there is no renderer-side shortcut at all. New
+`tests/e2e/shortcuts.spec.ts` (1 case, 6/6 under `--repeat-each=6`) drives real
+keystrokes from both panes. +10 `shortcuts`, +3 `browserController`, +3
+`browserToolbar`, and a shared `tests/support/fakeWebContents.ts` +
+`electronInput.ts` (`makeInput` moved out of `devTools.test.ts`); two mutations
+caught - see `docs/verification/followons-2026-10.md` "Application-wide keyboard
+shortcuts ... (2026-10-16)"). Before that it was
+**3286 passed / 14 skipped** (−59 against the
 3345 below - **the test-literal cleanup**: tests no longer certify production-owned
 copy, CSS classes, icon tags or re-typed constants; those cases were deleted or
 turned into state checks, and elements are located by test-id hooks - see §9 and
 `docs/verification/followons-2026-10.md` "Test suite: no literal-certifying
-tests, test-id hooks, shared helpers (2026-10-16)"). Playwright: 133 passed / 6
-failed in a full run, the 6 being environment-bound `network-error` (4)
-and load-correlated flakes. Before that it was **3345 passed / 14 skipped** (+9 against the
+tests, test-id hooks, shared helpers (2026-10-16)"). Playwright: 140 tests; a
+full run is 135 passed / 5 failed, the 5 being environment-bound `network-error`
+(4) and one load-correlated flake (`edit-mode-toggle` this run, 3/3 green in
+isolation); the new `shortcuts.spec.ts` passed inside that full run. Before that
+it was **3345 passed / 14 skipped** (+9 against the
 3336 the working tree measured before this change - the 3333 recorded here
 earlier was stale - **contextual help on every Settings field**: each field's
 label row is now built by `settings/fieldHelp.ts`'s `labelledField(...)` - the

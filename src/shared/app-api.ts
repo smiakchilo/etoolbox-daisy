@@ -56,6 +56,7 @@ import type {
   AgentChatVoidResult,
 } from './agent-chat-ipc';
 import type { AgentEvent, AgentId } from './contracts';
+import type { AppShortcutAction } from './shortcut-ipc';
 
 /**
  * The command-line argument main passes to the renderer's `webPreferences` in
@@ -108,6 +109,20 @@ export interface DaisyAppApi {
    * writes the CSV the user names (`format_table`'s gutter Export action).
    */
   readonly tableExport: DaisyTableExportApi;
+  /**
+   * The application-wide keyboard shortcut surface: main resolves a keystroke
+   * to a semantic action (there is no menu bar to carry an accelerator) and
+   * pushes it here. See `src/shared/shortcut-ipc.ts`.
+   */
+  readonly shortcuts: DaisyShortcutApi;
+}
+
+export interface DaisyShortcutApi {
+  /**
+   * Subscribes to `app:shortcut`, the semantic action an application-wide
+   * keyboard shortcut resolved to. Returns an unsubscribe function.
+   */
+  onAction(listener: (action: AppShortcutAction) => void): () => void;
 }
 
 export interface DaisyTableExportApi {

@@ -5,6 +5,17 @@
  */
 export const APP_INFO_CHANNEL = 'app:get-app-info' as const;
 
+/**
+ * Push channel: main -> renderer, one application-wide keyboard shortcut. Main
+ * matches the keystroke via `before-input-event` on both the shell's and the AEM
+ * view's `WebContents` (the app has no menu bar, so a shortcut cannot be an
+ * accelerator - see `src/main/shortcuts.ts`) and pushes the resolved
+ * *semantic* action here; the shell renderer dispatches it onto its existing
+ * toolbar/panel handlers. The payload is an `AppShortcutAction`
+ * (`src/shared/shortcut-ipc.ts`).
+ */
+export const APP_SHORTCUT_CHANNEL = 'app:shortcut' as const;
+
 // Copilot sign-in/out surface, presented in the Settings panel's Agents tab
 // (src/renderer/src/settings/agentsSection.ts).
 export const AGENT_GET_AUTH_STATUS_CHANNEL = 'agent:get-auth-status' as const;

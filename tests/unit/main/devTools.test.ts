@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
+import { makeInput } from '../../support/electronInput';
 
 /**
  * `devTools.ts` is the app's only menu-less key binding. It imports nothing
@@ -15,21 +16,9 @@ const { attachDevToolsShortcut, isToggleDevToolsShortcut, openDetachedDevTools }
 
 const preventDefaultSpy = vi.fn();
 
-function makeInput(overrides: Partial<Electron.Input> = {}): Electron.Input {
-  return {
-    type: 'keyDown',
-    key: 'I',
-    code: 'KeyI',
-    isAutoRepeat: false,
-    isComposing: false,
-    shift: true,
-    control: true,
-    alt: false,
-    meta: false,
-    location: 0,
-    modifiers: ['control', 'shift'],
-    ...overrides,
-  };
+/** The DevTools combination, as an `Input` - `makeInput`'s neutral defaults plus Ctrl+Shift. */
+function makeDevToolsInput(overrides: Partial<Electron.Input> = {}): Electron.Input {
+  return makeInput('KeyI', { key: 'I', control: true, shift: true, ...overrides });
 }
 
 interface FakeWebContents {
@@ -73,20 +62,20 @@ beforeEach(() => {
 
 describe('isToggleDevToolsShortcut', () => {
   it('accepts a fresh Ctrl+Shift+I key-down regardless of keyboard layout', () => {
-    expect(isToggleDevToolsShortcut(makeInput())).toBe(true);
-    expect(isToggleDevToolsShortcut(makeInput({ key: 'i' }))).toBe(true);
+    expect(isToggleDevToolsShortcut(makeDevToolsInput())).toBe(true);
+    expect(isToggleDevToolsShortcut(makeDevToolsInput({ key: 'i' }))).toBe(true);
   });
 
   it('rejects key-up, auto-repeat, a missing/extra modifier, and other keys', () => {
     const rejected: Electron.Input[] = [
-      makeInput({ type: 'keyUp' }),
-      makeInput({ isAutoRepeat: true }),
-      makeInput({ control: false, shift: false }),
-      makeInput({ shift: false }),
-      makeInput({ control: false }),
-      makeInput({ alt: true }),
-      makeInput({ control: false, meta: true }),
-      makeInput({ code: 'KeyJ' }),
+      makeDevToolsInput({ type: 'keyUp' }),
+      makeDevToolsInput({ isAutoRepeat: true }),
+      makeDevToolsInput({ control: false, shift: false }),
+      makeDevToolsInput({ shift: false }),
+      makeDevToolsInput({ control: false }),
+      makeDevToolsInput({ alt: true }),
+      makeDevToolsInput({ control: false, meta: true }),
+      makeDevToolsInput({ code: 'KeyJ' }),
     ];
     for (const input of rejected) {
       expect(isToggleDevToolsShortcut(input)).toBe(false);
@@ -100,7 +89,7 @@ describe('attachDevToolsShortcut', () => {
     const target = makeFakeWebContents();
     attachDevToolsShortcut(source.webContents, target.webContents);
 
-    source.emitInput(makeInput());
+    source.emitInput(makeDevToolsInput());
 
     expect(target.toggleDevTools).toHaveBeenCalledTimes(1);
     expect(source.toggleDevTools).not.toHaveBeenCalled();
@@ -112,9 +101,9 @@ describe('attachDevToolsShortcut', () => {
     const target = makeFakeWebContents();
     attachDevToolsShortcut(source.webContents, target.webContents);
 
-    source.emitInput(makeInput({ code: 'KeyJ' }));
-    source.emitInput(makeInput({ type: 'keyUp' }));
-    source.emitInput(makeInput({ isAutoRepeat: true }));
+    source.emitInput(makeDevToolsInput({ code: 'KeyJ' }));
+    source.emitInput(makeDevToolsInput({ type: 'keyUp' }));
+    source.emitInput(makeDevToolsInput({ isAutoRepeat: true }));
 
     expect(target.toggleDevTools).not.toHaveBeenCalled();
     expect(preventDefaultSpy).not.toHaveBeenCalled();
@@ -124,7 +113,7 @@ describe('attachDevToolsShortcut', () => {
     const shell = makeFakeWebContents();
     attachDevToolsShortcut(shell.webContents, shell.webContents);
 
-    shell.emitInput(makeInput());
+    shell.emitInput(makeDevToolsInput());
 
     expect(shell.toggleDevTools).toHaveBeenCalledTimes(1);
   });

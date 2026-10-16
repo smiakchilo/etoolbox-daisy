@@ -82,6 +82,12 @@ export interface ChatPane {
    * re-open a chat whose storage is gone.
    */
   handleConversationDeleted(chatId: ChatId): void;
+  /**
+   * Starts a brand-new conversation - the chat toolbar's "New session" action,
+   * and the Ctrl+N shortcut's target. Runs the same body a click does, so its
+   * guards (no conversation yet, or one still opening) apply unchanged.
+   */
+  startNewSession(): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -1452,6 +1458,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     },
     openConversationFromHistory,
     handleConversationDeleted,
+    startNewSession,
     dispose(): void {
       unsubscribeEvents?.();
       unsubscribeStatus();

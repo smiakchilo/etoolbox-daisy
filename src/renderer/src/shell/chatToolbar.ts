@@ -33,7 +33,12 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
   const toolbar = el('div', { attrs: { class: 'toolbar chat-toolbar', role: 'toolbar' } });
 
   const newSessionButton = el('sp-action-button', {
-    attrs: { quiet: '', title: 'New session', 'data-testid': 'chat-new-session' },
+    attrs: {
+      quiet: '',
+      title: 'New session',
+      'aria-keyshortcuts': 'Control+N',
+      'data-testid': 'chat-new-session',
+    },
   });
   const newChatIcon = document.createElement('sp-icon-chat-add');
   newChatIcon.setAttribute('slot', 'icon');
@@ -51,6 +56,7 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
       class: 'chat-toolbar__end',
       title: 'History',
       'aria-label': 'History',
+      'aria-keyshortcuts': 'Control+H',
       'data-testid': 'chat-history',
     },
   });
@@ -66,6 +72,7 @@ export function createChatToolbar(callbacks: ChatToolbarCallbacks): ChatToolbar 
       quiet: '',
       title: 'Settings',
       'aria-label': 'Settings',
+      'aria-keyshortcuts': 'Control+,',
       'data-testid': 'chat-settings',
     },
   });

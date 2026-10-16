@@ -1,12 +1,14 @@
 import { app, shell } from 'electron';
 import type { BrowserWindow, WebContents } from 'electron';
 import {
+  APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../shared';
 import type {
+  AppShortcutAction,
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
@@ -24,6 +26,7 @@ import type { ProxyPlainCredentials } from '../aem';
 import { resolveEffectiveProxy } from '../aem';
 import type { SecretStore } from '../secretStore';
 import { toLoggableUrl, type DiagnosticCode, type Logger } from '../logger';
+import { attachShortcutHandling } from '../shortcuts';
 import {
   createAemBrowserView,
   type AemBrowserView,
@@ -265,6 +268,28 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     onNavigationStateChange: (state) => {
       rendererWebContents.send(BROWSER_STATE_CHANGED_CHANNEL, state);
     },
+  });
+
+  // Application-wide keyboard shortcuts, without a menu bar (`src/main/shortcuts.ts`).
+  // Attached to *both* `WebContents`: the AEM pane is a `WebContentsView`, so a
+  // keystroke there never reaches the shell document, and a renderer-only
+  // listener would silently do nothing while the AEM page has focus. Every
+  // resolved action is pushed to the shell renderer, which dispatches it onto
+  // its existing handlers; the chat-pane actions are bound on the shell only, so
+  // the remote authoring page keeps its own `Ctrl+<letter>` editing shortcuts.
+  const sendShortcut = (action: AppShortcutAction): void => {
+    rendererWebContents.send(APP_SHORTCUT_CHANNEL, action);
+  };
+  const focusShell = (): void => rendererWebContents.focus();
+  attachShortcutHandling(aemView.webContents, {
+    allowChatShortcuts: false,
+    send: sendShortcut,
+    focusShell,
+  });
+  attachShortcutHandling(rendererWebContents, {
+    allowChatShortcuts: true,
+    send: sendShortcut,
+    focusShell,
   });
 
   const navigationEpoch = createNavigationEpochTracker();
