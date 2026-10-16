@@ -24,6 +24,11 @@ import { CLOSE_ICON_TAG, registerCloseIcon } from './closeIcon';
  * technical `description`). A skill a user adds to that folder shows up here
  * automatically.
  *
+ * Beneath that list is a static **Shortcuts** section (`HOME_SHORTCUTS`), the
+ * app's useful keystrokes as prose. It is hand-maintained against the key map in
+ * `src/main/shortcuts.ts`; AGENTS.md requires it to be revised whenever a
+ * shortcut is added, edited or removed.
+ *
  * The screen is shown for two reasons: as the genuine empty state (no document
  * loaded - nothing to close) and as a *user-forced veil* over a loaded document
  * (the toolbar's Home button - here a close control returns to the page, since
@@ -62,6 +67,90 @@ export interface HomeScreenCallbacks {
 
 /** The product name shown before (and, defensively, if not replaced by) `getAppInfo`. */
 const FALLBACK_APP_NAME = 'EToolbox Daisy';
+
+/**
+ * One keystroke the home screen advertises, described exactly as
+ * `resolveShortcut` (`src/main/shortcuts.ts`) matches it: the physical `code`,
+ * the optional produced `key` (the empty-`code` numpad `+`/`-` fallback), and
+ * the modifier flags. The display label is derived from these fields - see
+ * {@link formatShortcut} - so the advertised text can never drift from the
+ * binding it names.
+ */
+export interface HomeKeystroke {
+  /** The physical key (`KeyboardEvent.code`), e.g. `KeyH`, `NumpadAdd`. */
+  readonly code: string;
+  /** The produced key, for the empty-`code` numpad fallback. */
+  readonly key?: string;
+  readonly control?: boolean;
+  readonly alt?: boolean;
+  readonly shift?: boolean;
+}
+
+/** One row of the home screen's "Shortcuts" section. */
+export interface HomeShortcut {
+  /** Alternative keystrokes that trigger the same behaviour (at least one). */
+  readonly keystrokes: readonly HomeKeystroke[];
+  /** What the keystroke does, in a short phrase. */
+  readonly description: string;
+}
+
+/**
+ * The keystrokes the home screen's "Shortcuts" section lists, beneath "Useful
+ * commands". This is hand-maintained prose (the app has no menu bar to derive it
+ * from), matched by hand to the key map in `src/main/shortcuts.ts`. AGENTS.md
+ * requires it to be revised whenever a shortcut is added, edited or deleted; a
+ * unit test cross-checks every entry against `resolveShortcut`, so an entry that
+ * no longer names a live binding fails the suite.
+ */
+export const HOME_SHORTCUTS: readonly HomeShortcut[] = [
+  { keystrokes: [{ code: 'ArrowLeft', alt: true }], description: 'Go back' },
+  { keystrokes: [{ code: 'ArrowRight', alt: true }], description: 'Go forward' },
+  { keystrokes: [{ code: 'Home', alt: true }], description: 'Show the home screen' },
+  {
+    keystrokes: [{ code: 'F5' }, { code: 'KeyR', control: true }],
+    description: 'Refresh the page',
+  },
+  { keystrokes: [{ code: 'KeyL', control: true }], description: 'Focus the address bar' },
+  { keystrokes: [{ code: 'KeyF', control: true }], description: 'Find on the page' },
+  { keystrokes: [{ code: 'NumpadAdd', control: true }], description: 'Zoom in' },
+  { keystrokes: [{ code: 'NumpadSubtract', control: true }], description: 'Zoom out' },
+  { keystrokes: [{ code: 'Digit0', control: true }], description: 'Reset the zoom' },
+  { keystrokes: [{ code: 'KeyH', control: true }], description: 'Open History' },
+  { keystrokes: [{ code: 'KeyN', control: true }], description: 'Start a new session' },
+  { keystrokes: [{ code: 'Comma', control: true }], description: 'Open Settings' },
+];
+
+/** Human labels for the physical keys the section names; an unknown code shows verbatim. */
+const KEY_LABELS: Readonly<Record<string, string>> = {
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  Comma: ',',
+  Digit0: '0',
+  F5: 'F5',
+  Home: 'Home',
+  KeyF: 'F',
+  KeyH: 'H',
+  KeyL: 'L',
+  KeyN: 'N',
+  KeyR: 'R',
+  NumpadAdd: 'Numpad +',
+  NumpadSubtract: 'Numpad \u2212',
+};
+
+/** `Ctrl`/`Alt`/`Shift` prefixes then the key label, e.g. `Ctrl+Numpad +`. */
+function formatKeystroke(keystroke: HomeKeystroke): string {
+  const parts: string[] = [];
+  if (keystroke.control) parts.push('Ctrl');
+  if (keystroke.alt) parts.push('Alt');
+  if (keystroke.shift) parts.push('Shift');
+  parts.push(KEY_LABELS[keystroke.code] ?? keystroke.code);
+  return parts.join('+');
+}
+
+/** All of a shortcut's alternative keystrokes, e.g. `F5 or Ctrl+R`. */
+function formatShortcut(shortcut: HomeShortcut): string {
+  return shortcut.keystrokes.map(formatKeystroke).join(' or ');
+}
 
 export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
   const name = el('h1', { attrs: { class: 'browser-home__name' }, text: FALLBACK_APP_NAME });
@@ -156,18 +245,56 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
     children: [toolsHeading, toolsStatus, toolsList],
   });
 
-  // The scrollable body. The scroll lives here, *not* on `.browser-home`, so
-  // the absolutely positioned close control (a sibling, outside this element)
-  // cannot shift by the scrollbar width when the tools list overflows - see
-  // home.css.
+  // The static "Shortcuts" section, beneath "Useful commands". It is built at
+  // construction (like the rest of the screen's fixed content) from
+  // HOME_SHORTCUTS, which is hand-maintained against the app's key map - see
+  // its own note.
+  const shortcuts = el('div', {
+    attrs: { class: 'browser-home__shortcuts', 'data-testid': 'home-shortcuts' },
+    children: [
+      el('h2', { attrs: { class: 'browser-home__section-title' }, text: 'Shortcuts' }),
+      el('ul', {
+        attrs: { class: 'browser-home__shortcut-list' },
+        children: HOME_SHORTCUTS.map((shortcut) =>
+          el('li', {
+            attrs: { class: 'browser-home__shortcut', 'data-testid': 'home-shortcut' },
+            children: [
+              el('span', {
+                attrs: { class: 'browser-home__shortcut-keys' },
+                text: formatShortcut(shortcut),
+              }),
+              el('span', {
+                attrs: { class: 'browser-home__shortcut-description' },
+                text: shortcut.description,
+              }),
+            ],
+          }),
+        ),
+      }),
+    ],
+  });
+
+  // The fixed header: the app icon/name and the three action buttons. It does
+  // *not* scroll, so the scrollable region (and its scrollbar) begins beneath
+  // the buttons and can never sit under the close control, which is pinned to
+  // the top-right of `.browser-home`.
+  const header = el('div', {
+    attrs: { class: 'browser-home__header' },
+    children: [hero, actions],
+  });
+
+  // The scrollable body: the "Useful commands" and "Shortcuts" sections. The
+  // scroll lives here, *not* on `.browser-home`, so the absolutely positioned
+  // close control (a sibling, outside this element) cannot shift by the
+  // scrollbar width - see home.css.
   const content = el('div', {
     attrs: { class: 'browser-home__scroll' },
-    children: [hero, actions, skills],
+    children: [skills, shortcuts],
   });
 
   const element = el('section', {
     attrs: { class: 'browser-home', 'aria-label': 'Welcome' },
-    children: [closeButton, content],
+    children: [closeButton, header, content],
   });
 
   return {

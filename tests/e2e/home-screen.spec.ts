@@ -71,6 +71,13 @@ test('a fresh install lands on the home screen, with no panel covering a gap', a
     // stored-conversations panel (the same one the chat toolbar's button opens).
     await expect(page.locator('.browser-home__action')).toHaveCount(3);
 
+    // Beneath "Useful commands" sits the static "Shortcuts" section, listing the
+    // app's useful keystrokes.
+    const shortcuts = page.locator(byTestId('home-shortcuts'));
+    await expect(shortcuts).toBeVisible();
+    await expect(shortcuts.locator('.browser-home__section-title')).toBeVisible();
+    await expect(page.locator(byTestId('home-shortcut')).first()).toBeVisible();
+
     await page.locator(byTestId('home-history')).click();
     await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 10_000 });
     await expect(page.locator('.history-panel__empty')).toBeVisible({ timeout: 10_000 });
@@ -191,6 +198,19 @@ test('the toolbar Home button reveals the home screen over a loaded page, and na
     // really registered (jsdom cannot prove a custom element is registered -
     // see AGENTS.md section 9).
     expect(await page.evaluate(() => Boolean(customElements.get('daisy-close-icon')))).toBe(true);
+
+    // Only the sections beneath the action buttons scroll, so the scrollbar
+    // starts below the buttons and never runs up under the close control's
+    // hover backdrop (the reported "too close to the scroll" defect).
+    const scrollBox = await page.locator('.browser-home__scroll').boundingBox();
+    const actionsBox = await page.locator('.browser-home__actions').boundingBox();
+    const closeBox = await close.boundingBox();
+    expect(scrollBox).not.toBeNull();
+    expect(actionsBox).not.toBeNull();
+    expect(closeBox).not.toBeNull();
+    const scrollTop = scrollBox?.y ?? 0;
+    expect(scrollTop).toBeGreaterThanOrEqual((actionsBox?.y ?? 0) + (actionsBox?.height ?? 0));
+    expect(scrollTop).toBeGreaterThanOrEqual((closeBox?.y ?? 0) + (closeBox?.height ?? 0));
 
     // Closing returns to the page it covered - the same page, no navigation -
     // with the address and Back control restored.

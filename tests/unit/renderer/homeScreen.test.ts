@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHomeScreen } from '../../../src/renderer/src/shell/homeScreen';
+import { resolveShortcut } from '../../../src/main/shortcuts';
+import { createHomeScreen, HOME_SHORTCUTS } from '../../../src/renderer/src/shell/homeScreen';
+import { makeInput } from '../../support/electronInput';
 import { installJsdomGlobals } from '../../support/jsdomGlobals';
 
 /**
@@ -115,5 +117,40 @@ describe('createHomeScreen', () => {
 
     home.setClosable(false);
     expect(close.hidden).toBe(true);
+  });
+
+  it('renders one Shortcuts row per advertised keystroke, each with a key and a description', () => {
+    const home = build();
+    const rows = [...home.element.querySelectorAll<HTMLElement>('.browser-home__shortcut')];
+    expect(rows).toHaveLength(HOME_SHORTCUTS.length);
+    for (const row of rows) {
+      expect(row.querySelector('.browser-home__shortcut-keys')?.textContent).toBeTruthy();
+      expect(row.querySelector('.browser-home__shortcut-description')?.textContent).toBeTruthy();
+    }
+  });
+});
+
+describe('HOME_SHORTCUTS', () => {
+  /**
+   * The home screen's "Shortcuts" section is hand-maintained prose, so AGENTS.md
+   * requires it to be revised whenever a shortcut changes. This makes that rule
+   * enforceable: every keystroke it advertises must be one the app's own key map
+   * (`resolveShortcut`, `src/main/shortcuts.ts`) actually claims - a rebind or a
+   * removal that the list was not updated for fails here instead of shipping a
+   * dead hint.
+   */
+  it('advertises only keystrokes the app actually claims', () => {
+    for (const { keystrokes } of HOME_SHORTCUTS) {
+      expect(keystrokes.length).toBeGreaterThan(0);
+      for (const { code, key, control, alt, shift } of keystrokes) {
+        const input = makeInput(code, {
+          key: key ?? '',
+          control: control ?? false,
+          alt: alt ?? false,
+          shift: shift ?? false,
+        });
+        expect(resolveShortcut(input)).not.toBeNull();
+      }
+    }
   });
 });

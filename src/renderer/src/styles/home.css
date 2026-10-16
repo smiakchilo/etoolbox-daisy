@@ -14,7 +14,7 @@
   flex-direction: column;
   /* NOT the scroll container: the scroll lives on `.browser-home__scroll` so
      the absolutely positioned close control (a sibling of it) cannot shift by
-     the scrollbar width when the tools list overflows. */
+     the scrollbar width when the scrollable sections overflow. */
   overflow: hidden;
   background: var(--spectrum-gray-75, #fbfbfb);
   color: var(--spectrum-gray-800, #333);
@@ -22,9 +22,25 @@
   position: relative;
 }
 
-/* The welcome body: the hero, actions and tools list, scrollable in the slot
-   the native view would occupy. Keeping this a separate (inner) scroll box is
-   what makes the close control's position stable - see `.browser-home`. */
+/* The fixed top of the home screen: the hero (icon, name, version) and the
+   action buttons. It does not scroll - the scrollable region starts beneath the
+   buttons - so the close control's position is stable and the scrollbar never
+   runs up under it. */
+.browser-home__header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 40px 32px 20px;
+  text-align: center;
+}
+
+/* The scrollable body: the "Useful commands" and "Shortcuts" sections, in the
+   slot the native view would occupy, beneath the fixed header. Keeping this a
+   separate (inner) scroll box is what makes the close control's position
+   stable and keeps its hover backdrop clear of the scrollbar - see
+   `.browser-home`. */
 .browser-home__scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -33,7 +49,7 @@
   flex-direction: column;
   align-items: center;
   gap: 20px;
-  padding: 40px 32px;
+  padding: 0 32px 40px;
   text-align: center;
 }
 
@@ -107,7 +123,8 @@
   gap: 12px;
 }
 
-.browser-home__skills {
+.browser-home__skills,
+.browser-home__shortcuts {
   width: 100%;
   max-width: 92ch;
   display: flex;
@@ -137,7 +154,8 @@
   display: none;
 }
 
-.browser-home__skill-list {
+.browser-home__skill-list,
+.browser-home__shortcut-list {
   margin: 0;
   padding: 0;
   list-style: none;
@@ -146,19 +164,32 @@
   gap: 10px;
 }
 
+/* A row's text wears the same styling in both sections - a bold name
+   ("/search", "Ctrl+H") and a gray description - but the layout differs: a
+   skill stacks its two lines, a shortcut puts them on one line. */
 .browser-home__skill {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 
-.browser-home__skill-name {
+.browser-home__shortcut {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.browser-home__skill-name,
+.browser-home__shortcut-keys {
   font-size: var(--spectrum-font-size-100, 14px);
   font-weight: 700;
   color: var(--spectrum-gray-900, #242424);
 }
 
-.browser-home__skill-description {
+.browser-home__skill-description,
+.browser-home__shortcut-description {
   font-size: var(--spectrum-font-size-100, 14px);
   color: var(--spectrum-gray-700, #505050);
 }

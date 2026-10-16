@@ -518,7 +518,18 @@ while the AEM page has focus. Main therefore matches a keystroke in
 (`src/main/shortcuts.ts`, attached by `browserController.ts`, which holds both)
 and pushes a *semantic* action (`app:shortcut`, `src/shared/shortcut-ipc.ts`); a
 thin dispatcher in `shell/mainShell.ts` runs the very handler its toolbar or
-panel control runs, never a second navigation path. Chat actions (`Ctrl+H`,
+panel control runs, never a second navigation path. The home screen advertises
+these keystrokes in a static **Shortcuts** section (`homeScreen.ts`'s
+`HOME_SHORTCUTS`, beneath "Useful commands"); that list is hand-maintained prose
+and **must be revised whenever a shortcut is added, edited or removed**, so it
+cannot drift from the key map. A unit test cross-checks every advertised
+keystroke against `resolveShortcut`, so an entry that no longer names a live
+binding fails the suite. The home screen's hero and action buttons are a **fixed
+header**; only the sections beneath them scroll (`homeScreen.ts`'s
+`browser-home__header` / `browser-home__scroll`), so the scrollbar starts below
+the buttons and never runs up under the close control's pinned top-right
+position and its hover backdrop - do not fold the header back into the scroll
+box. Chat actions (`Ctrl+H`,
 `Ctrl+,`, `Ctrl+N`) bind on the shell only, so the remote AEM page keeps its own
 `Ctrl+<letter>` editing shortcuts; `Ctrl+B` is deliberately unbound (bold in
 AEM's rich-text editor). Backspace-to-go-Back is deliberately **not** bound:
@@ -1085,7 +1096,23 @@ npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
 ```
 
-Current baseline: **`npm run test` → 3368 passed / 14 skipped** (+10 against the
+Current baseline: **`npm run test` → 3370 passed / 14 skipped** (+2 against the
+3368 below - **the home screen's Shortcuts section**: the browser pane's home
+screen gains a static **Shortcuts** section beneath "Useful commands"
+(`HOME_SHORTCUTS` in `homeScreen.ts`), listing the app's keystrokes. Each entry
+carries its machine binding (the `code`/`key`/modifier fields `resolveShortcut`
+reads) and the display label is derived from it, so the text cannot drift; the
+unit cross-check fails if an entry no longer names a live binding, which enforces
+AGENTS.md's "revise it when a shortcut changes" rule. The rows keep the skill
+rows' text styling but put the keystroke and its description on one line, and
+only the sections beneath the action buttons scroll (a fixed header keeps the
+scrollbar clear of the close control). +2 `homeScreen` cases, the built-app
+`home-screen.spec.ts` fresh-install and veil cases gained assertions, and
+mutations were caught (a rebind breaking the cross-check, dropping the section,
+and putting the header back inside the scroll container failing the E2E). See
+`docs/verification/followons-2026-10.md` "The home screen's Shortcuts section
+lists the app's keystrokes (2026-10-16)"). Before that it was
+**3368 passed / 14 skipped** (+10 against the
 3358 below - **the edit-mode toggle on AEM as a Cloud Service**: the page editor
 is served in two URL shapes and the toggle now recognises both. On-prem it leads
 the pathname (`/editor.html/content/site/page.html`, unchanged); AEMaaCS (and 6.5
