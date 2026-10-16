@@ -208,6 +208,99 @@ describe('describeToolCall - browser_navigate', () => {
   });
 });
 
+describe('describeToolCall - skill tools', () => {
+  it('skill: names the skill while pending and adds source and counts once it succeeded', () => {
+    const pending = describeToolCall('skill', { name: 'demo' });
+    const done = describeToolCall(
+      'skill',
+      { name: 'demo' },
+      { operation: 'skill', skill: 'demo', source: 'user', fileCount: 4, scriptCount: 2 },
+    );
+
+    expect(pending.summary).toContain('demo');
+    expect(pending.parameters).toHaveLength(1);
+    expect(done.parameters.length).toBeGreaterThan(pending.parameters.length);
+    expect(valuesOf(done)).toEqual(expect.arrayContaining(['demo', '4', '2']));
+  });
+
+  it('skill: omits the scripts row when the skill has none and tells built-in from user', () => {
+    const user = describeToolCall(
+      'skill',
+      { name: 'demo' },
+      { operation: 'skill', skill: 'demo', source: 'user', fileCount: 1, scriptCount: 0 },
+    );
+    const bundled = describeToolCall(
+      'skill',
+      { name: 'demo' },
+      { operation: 'skill', skill: 'demo', source: 'bundled', fileCount: 1, scriptCount: 0 },
+    );
+
+    expect(user.parameters).toHaveLength(3);
+    expect(valuesOf(user)).not.toEqual(valuesOf(bundled));
+  });
+
+  it('skill_resource: summarises the file and reads lines, size and entries from the result', () => {
+    const file = describeToolCall(
+      'skill_resource',
+      { skill: 'demo', path: 'references/a.md' },
+      {
+        operation: 'skill_resource',
+        kind: 'file',
+        size: 120,
+        startLine: 1,
+        endLine: 9,
+        totalLines: 9,
+      },
+    );
+    const listing = describeToolCall(
+      'skill_resource',
+      { skill: 'demo', path: '.' },
+      { operation: 'skill_resource', kind: 'directory', entryCount: 3 },
+    );
+    const pending = describeToolCall('skill_resource', { skill: 'demo', path: 'references/a.md' });
+
+    expect(file.summary).toContain('references/a.md');
+    expect(valuesOf(file)).toEqual(expect.arrayContaining(['1-9 of 9']));
+    expect(valuesOf(listing)).toContain('3');
+    expect(listing.summary).not.toBe(file.summary);
+    expect(pending.parameters).toHaveLength(2);
+  });
+
+  it('skill_script: shows the input at once and the result, logs and duration after success', () => {
+    const pending = describeToolCall('skill_script', {
+      skill: 'demo',
+      script: 'scripts/run.js',
+      input: { values: [1, 2] },
+    });
+    const done = describeToolCall(
+      'skill_script',
+      { skill: 'demo', script: 'scripts/run.js', input: { values: [1, 2] } },
+      { operation: 'skill_script', output: { total: 3 }, logs: 'saw 2 values', durationMs: 7 },
+    );
+
+    expect(pending.summary).toContain('scripts/run.js');
+    expect(valuesOf(pending)).toContain('{"values":[1,2]}');
+    expect(valuesOf(done)).toEqual(expect.arrayContaining(['7 ms', '{"total":3}', 'saw 2 values']));
+  });
+
+  it('skill_script: cuts a long input to a bounded preview', () => {
+    const details = describeToolCall('skill_script', {
+      skill: 'demo',
+      script: 'scripts/run.js',
+      input: { text: 'x'.repeat(1000) },
+    });
+    const input = valuesOf(details).find((value) => value.startsWith('{'));
+    expect(input?.length ?? 0).toBeLessThan(400);
+  });
+
+  it('falls back to the generic rows when a skill tool call has no usable arguments', () => {
+    for (const name of ['skill', 'skill_resource', 'skill_script']) {
+      const details = describeToolCall(name, { unexpected: 1 });
+      expect(details.parameters.length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('describeToolCall - aem_query_format_ask', () => {
   it('summarises the search terms and reads the totals from the finished result', () => {
     const details = describeToolCall(

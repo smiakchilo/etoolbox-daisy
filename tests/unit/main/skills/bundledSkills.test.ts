@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseSkillFrontMatter } from '../../../../src/main/skills/skillCatalog';
+import { parseSkillFrontMatter } from '../../../../src/main/skills/skillFrontMatter';
 
 /**
  * The Copilot runtime SILENTLY DROPS a skill whose front-matter `description`

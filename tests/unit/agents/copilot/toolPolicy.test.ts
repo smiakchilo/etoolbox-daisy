@@ -1,11 +1,9 @@
-import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createHardenedSession,
   denyAllPermissions,
   allowlistedToolPermissions,
   resumeHardenedSession,
-  SKILL_INVOCATION_TOOL,
   type HardenedSessionClient,
   type HardenedToolPolicy,
 } from '../../../../src/agents/copilot/toolPolicy';
@@ -309,76 +307,15 @@ describe('resumeHardenedSession', () => {
   });
 });
 
-describe('bundled skills', () => {
-  it('keeps skills disabled and the allowlist untouched when none are requested', async () => {
-    const session = makeFakeSession();
-    const { client, createSession } = makeFakeClient(session);
+describe('runtime skills', () => {
+  it('keeps the runtime-owned skills off and discovers none', async () => {
+    const { client, createSession } = makeFakeClient(makeFakeSession());
 
     await createHardenedSession(client, { availableTools: [] });
 
     const config = createSession.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(config['enableSkills']).toBe(false);
     expect(config['skillDirectories']).toBeUndefined();
-    expect(config['availableTools']).toEqual([]);
-  });
-
-  it('enables skills only for explicit absolute directories and grants only the skill tool', async () => {
-    const session = makeFakeSession();
-    const { client, createSession } = makeFakeClient(session);
-    const dir = path.resolve('/app/resources/skills');
-
-    await createHardenedSession(client, {
-      availableTools: [],
-      bundledSkillDirectories: [dir],
-    });
-
-    const config = createSession.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(config['enableSkills']).toBe(true);
-    expect(config['skillDirectories']).toEqual([dir]);
-    // Exactly one extra tool - no filesystem, shell, or Git capability.
-    expect(config['availableTools']).toEqual([SKILL_INVOCATION_TOOL]);
-    // Discovery of the user's own skills stays off.
     expect(config['enableConfigDiscovery']).toBe(false);
-  });
-
-  it('does not duplicate the skill tool when the caller already listed it', async () => {
-    const session = makeFakeSession();
-    const { client, createSession } = makeFakeClient(session);
-
-    await createHardenedSession(client, {
-      availableTools: [SKILL_INVOCATION_TOOL],
-      bundledSkillDirectories: [path.resolve('/app/resources/skills')],
-    });
-
-    const config = createSession.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(config['availableTools']).toEqual([SKILL_INVOCATION_TOOL]);
-  });
-
-  it('rejects a relative skill directory', async () => {
-    const session = makeFakeSession();
-    const { client } = makeFakeClient(session);
-
-    await expect(
-      createHardenedSession(client, {
-        availableTools: [],
-        bundledSkillDirectories: ['resources/skills'],
-      }),
-    ).rejects.toThrow(/absolute paths/);
-  });
-
-  it('applies the same skill configuration on resume', async () => {
-    const session = makeFakeSession();
-    const { client, resumeSession } = makeFakeClient(session);
-    const dir = path.resolve('/app/resources/skills');
-
-    await resumeHardenedSession(client, 'sid', {
-      availableTools: [],
-      bundledSkillDirectories: [dir],
-    });
-
-    const config = resumeSession.mock.calls[0]?.[1] as Record<string, unknown>;
-    expect(config['enableSkills']).toBe(true);
-    expect(config['skillDirectories']).toEqual([dir]);
-    expect(config['availableTools']).toEqual([SKILL_INVOCATION_TOOL]);
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   FORMAT_TABLE_TOOL_NAME,
   createFormatTableExecutor,
@@ -19,6 +20,7 @@ function makeHost(): ToolHost {
     },
     environmentFacts: () => undefined,
     configuredHosts: () => [],
+    skills: NO_SKILLS,
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
     clock: () => 1,

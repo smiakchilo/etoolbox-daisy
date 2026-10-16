@@ -57,6 +57,7 @@ import {
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  SKILLS_OPEN_FOLDER_CHANNEL,
   TABLE_EXPORT_REVEAL_LAST_CHANNEL,
   TABLE_EXPORT_SAVE_CSV_CHANNEL,
   addProjectRequestSchema,
@@ -99,6 +100,7 @@ import {
   parseLogoutResult,
   parseReorderServersResult,
   parseSettingsIpcVoidResult,
+  parseSkillsOpenFolderResult,
   parseTableExportRevealResult,
   parseTableExportSaveCsvResult,
   parseUpdateServerPresentationResult,
@@ -168,6 +170,7 @@ import {
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
+  type SkillsOpenFolderResult,
   type StopFindRequest,
   type TableExportRevealResult,
   type TableExportSaveCsvRequest,
@@ -452,6 +455,12 @@ const daisyApi: DaisyAppApi = {
     async revealLast(): Promise<TableExportRevealResult> {
       const raw: unknown = await ipcRenderer.invoke(TABLE_EXPORT_REVEAL_LAST_CHANNEL);
       return parseTableExportRevealResult(raw);
+    },
+  },
+  skills: {
+    async openFolder(): Promise<SkillsOpenFolderResult> {
+      const raw: unknown = await ipcRenderer.invoke(SKILLS_OPEN_FOLDER_CHANNEL);
+      return parseSkillsOpenFolderResult(raw);
     },
   },
   shortcuts: {

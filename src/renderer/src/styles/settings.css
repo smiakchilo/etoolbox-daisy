@@ -74,19 +74,6 @@
   gap: 8px;
 }
 
-/* Browser tab: the checkbox with its restart caveat directly beneath it. */
-.browser-section__group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.browser-section__hint {
-  margin: 0;
-  color: var(--spectrum-gray-600, #6e6e6e);
-  font-size: 12px;
-}
-
 /* The reusable multifield (lib/multifield.ts): one item per row, its fields
    full-width beneath an action strip in the row's top-right corner, and the
    "Add item" action underneath the whole list. */

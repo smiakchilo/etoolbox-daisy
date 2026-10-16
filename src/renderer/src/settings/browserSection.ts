@@ -21,9 +21,9 @@ import type { SaveOutcome, StatusBannerSink } from './statusBanner';
  *    the native Windows API, which is what raises the "Windows Security /
  *    Insert your security key" dialog on IdP login pages (see
  *    `src/main/index.ts`). Chromium reads its feature switches once, before the
- *    app is ready, so this value is consumed at the next launch - the helper
- *    text says so, and the checkbox deliberately reports the *stored* value,
- *    not a live effect.
+ *    app is ready, so this value is consumed at the next launch - the field's
+ *    contextual help says so, and the checkbox deliberately reports the *stored*
+ *    value, not a live effect.
  *
  * Both save immediately on change (there is nothing to debounce and no
  * dependent fields), through the panel's one save reporter, exactly like the
@@ -82,32 +82,24 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     text: 'Suppress the Windows security-key prompt',
   }) as HTMLElement & { checked: boolean };
 
-  const helper = el('p', {
-    attrs: { class: 'browser-section__hint' },
-    text: 'Takes effect after restarting the app',
-  });
-
   // The checkbox's own text is its label, so its help badge follows that text
-  // on the same line rather than sitting in a separate label row.
+  // on the same line rather than sitting in a separate label row. The restart
+  // caveat lives in that help: Chromium reads its feature switches once, before
+  // the app is ready, so the change is consumed at the next launch.
   const checkboxRow = el('div', {
     attrs: { class: 'field-label-row' },
     children: [
       checkbox,
       createContextualHelp(
-        'Asks browser to handle security keys autonomously, avoiding the Windows prompt',
+        'Asks browser to handle security keys autonomously, avoiding the Windows prompt. Takes effect after restarting the app',
         helpAccessibleName('Suppress the Windows security-key prompt'),
       ),
     ],
   });
 
-  const checkboxGroup = el('div', {
-    attrs: { class: 'browser-section__group' },
-    children: [checkboxRow, helper],
-  });
-
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
-    children: [proxyField, checkboxGroup],
+    children: [proxyField, checkboxRow],
   });
 
   const section = el('div', {

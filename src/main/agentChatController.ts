@@ -24,6 +24,7 @@ import {
   type SdkSessionId,
   type ServerId,
   type SessionStatus,
+  type SkillPromptResolution,
   type ToolCallId,
   type ToolError,
   type ToolErrorCode,
@@ -31,10 +32,12 @@ import {
   type UserInputAnswer,
   type UserInputRequest,
   type UserInputRequestId,
+  SKILL_TOOL_NAME,
   agentEventSchema,
   applyAgentEvent,
   canSendMessage,
   err,
+  newToolCallId,
   newTurnId,
   ok,
 } from '../shared';
@@ -136,15 +139,18 @@ export interface AgentChatControllerDeps {
    */
   readonly cancelAemRequests?: () => void;
   /**
-   * Rewrites a user prompt that begins with a bundled-skill reference (e.g.
-   * `/search ...`) into the model-facing text that makes the agent load that
-   * skill, returning the prompt unchanged for anything else. Optional
-   * so a unit test can construct a controller with no skill catalogue.
+   * Rewrites a user prompt that begins with a known skill reference (e.g.
+   * `/search ...`) into the model-facing text that already contains that
+   * skill's instructions, and names the skill it loaded. Returns the prompt
+   * unchanged for anything else. Optional so a unit test can construct a
+   * controller with no skills.
    *
    * Only the text the model reads is rewritten - the display prompt and the
-   * journal always keep the user's own text (see `sendMessage` below).
+   * journal always keep the user's own text (see `sendMessage` below) - and a
+   * loaded skill is journaled as a synthetic `skill` call so "was it loaded?"
+   * is answerable from the log.
    */
-  readonly resolveSkillPrompt?: (prompt: string) => string;
+  readonly resolveSkillPrompt?: (prompt: string) => SkillPromptResolution;
   /**
    * Reads every SDK session id a chat's journal recorded, so conversation
    * deletion can delete the SDK's stored data for each (`deleteSession`). A
@@ -698,7 +704,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const server = deps.currentAemServerContext();
     // The user's own text is kept for display and the journal; only the prompt
     // the model reads is rewritten for a leading `/skillname`.
-    const modelPrompt = deps.resolveSkillPrompt?.(request.prompt) ?? request.prompt;
+    const skillPrompt = deps.resolveSkillPrompt?.(request.prompt) ?? {
+      modelPrompt: request.prompt,
+    };
+    const modelPrompt = skillPrompt.modelPrompt;
     // Staged, not written: the journal flushes it immediately before the
     // turn's first event (the service emits `session.state.changed: sending`
     // synchronously inside `sendPrompt`), so the prompt precedes the turn's
@@ -723,6 +732,30 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       // something else has already moved `activeTurn` on in the meantime.
       if (activeTurn.turnId === turnId) activeTurn = undefined;
       return { ok: false, error: toAgentChatError(result.error) };
+    }
+    // The skill is already in the prompt; this pair only makes the load visible
+    // (journal, and the transcript's prose suppression for a search skill). It
+    // follows a successful send because a tool call is only legal once the turn
+    // has started.
+    if (skillPrompt.activatedSkill !== undefined) {
+      const toolCallId = newToolCallId(idGenerator);
+      recordNestedToolCall({
+        phase: 'started',
+        toolCallId,
+        toolName: SKILL_TOOL_NAME,
+        args: { name: skillPrompt.activatedSkill },
+      });
+      recordNestedToolCall({
+        phase: 'settled',
+        toolCallId,
+        outcome: ok({
+          ok: true,
+          operation: SKILL_TOOL_NAME,
+          skill: skillPrompt.activatedSkill,
+          activatedBy: 'user',
+          resultType: 'success',
+        }),
+      });
     }
     return { ok: true, turnId };
   }

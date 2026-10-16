@@ -10,6 +10,7 @@ import type {
   UserInputRequest,
 } from '../../contracts';
 import { type Result, err, ok } from '../../result';
+import type { SkillHost } from '../../skills';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
 import type { ConfiguredHostInfo, OpenPageOutcome, OpenPageTarget } from './navigation';
@@ -89,6 +90,13 @@ export interface ToolHost {
    * the turn is aborted or torn down before the user answers.
    */
   readonly requestUserInput: (request: UserInputRequest) => Promise<UserInputAnswer>;
+  /**
+   * The skills the application loaded (bundled and the user's): the one way a
+   * skill tool reaches a skill's body, its files or its scripts. The model
+   * names a skill and a path relative to it; the application resolves both and
+   * never lets either leave the skill's own folder.
+   */
+  readonly skills: SkillHost;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
   /**

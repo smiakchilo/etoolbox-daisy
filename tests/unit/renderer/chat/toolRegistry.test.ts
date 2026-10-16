@@ -87,6 +87,9 @@ describe('discovered renderers (the real src/tools folders)', () => {
       'browser_navigate',
       'environment_facts',
       'format_table',
+      'skill',
+      'skill_resource',
+      'skill_script',
     ]);
   });
 });

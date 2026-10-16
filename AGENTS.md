@@ -260,7 +260,7 @@ src/agents/<name>/
   `findProjectRoot`-style lookups).
 - Removing an agent: delete the folder and `tests/unit/agents/<name>/`, plus the
   `electron-builder.yml` filters and `package.json` deps. For Copilot also the
-  integration tests `proxy-login`, `agent-runtime`, `packaged-skill`,
+  integration tests `proxy-login`, `agent-runtime`,
   `proxy-runtime`, `live-github-auth`, `support/syntheticLogin.ts`.
 - Not lint-enforced but load-bearing: the eager `meta.ts` glob (main + renderer)
   and the lazy `agent.ts` glob (main) both need the folder to match
@@ -284,8 +284,9 @@ src/agents/<name>/
 - OpenRouter's files: `client.ts` (the only place the SDK is constructed; pins
   `serverURL` and injects a proxy `fetcher`), `toolMapping.ts` (toolkit JSON
   Schema → SDK tools), `agentService.ts` (event mapping, SDK-free),
-  `skill.ts` (the app-owned `skill` tool), `modelCatalog.ts`, `auth.ts`,
-  `runtime.ts`, `types.ts`. It is token-only: `meta.supportsInteractiveLogin`
+  `modelCatalog.ts`, `auth.ts`, `runtime.ts`, `types.ts` (skills are no longer
+  an agent concern: the three skill tools are ordinary tools, see
+  "`resources/skills/`"). It is token-only: `meta.supportsInteractiveLogin`
   is `false`, it has no `login`/`logout`, and `getAuthPresence` is its stored
   key.
 
@@ -317,7 +318,7 @@ src/agents/<name>/
    and hand it to `host.installService(service)`. It must emit normalized
    `AgentEvent`s only — no SDK type may cross the boundary. Map the tools from
    `host.toolkit()` (`toolHandlers`, `toolDescriptors`, `allowlistEntries`,
-   `instructions`, `bundledSkillDirectories`) onto the SDK. `allowlistEntries`
+   `instructions`) onto the SDK. `allowlistEntries`
    are in Copilot's `custom:<name>` form; translate if the SDK differs. **Do not
    import `src/tools` or `src/main`** — everything arrives through the host.
 6. **Hardening is per-agent.** Copilot's `toolPolicy.ts` denies every built-in
@@ -955,38 +956,77 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 - Cover it: `tests/unit/renderer/chat/toolCallDetails.test.ts`, plus an E2E
   when the composition hinges on a custom element (see §9).
 
-### `resources/skills/`
+### `resources/skills/` and the skill subsystem
 
 Six bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
 `search-component` and `navigate` (all user-invocable — they appear in the
 composer's `/` autocomplete), plus `daisy-conventions` and `query-results`
-(auxiliary — `user-invocable: false`, so the runtime still loads them for the
-model but the `/` menu does not list them; see
-`src/main/skills/skillCatalog.ts`).
-Application-owned only — never loaded from the user's home, a project
-directory, or an AEM response.
+(auxiliary — `user-invocable: false`, so the model still gets them in its
+catalogue but the `/` menu does not list them).
+
+**One app-owned mechanism, identical for every agent** (plan:
+`docs/skill-subsystem-plan.md`). No SDK ever sees a skill directory: Copilot's own
+skill loading is off and its built-in `skill` tool is replaced (every app tool sets
+`overridesBuiltInTool`), OpenRouter has no skill code of its own. Three ordinary
+tool plugins carry it — `skill` (`{ name }`: loads a skill's body), `skill_resource`
+(`{ skill, path, startLine? }`: reads a file or lists a folder of the skill) and
+`skill_script` (`{ skill, script, input? }`: runs a `scripts/**/*.js` module) —
+each through the new `ToolHost.skills: SkillHost`
+(`src/shared/skills/skillTypes.ts`). The model reaches a skill's files only through
+these tools, never by a filesystem path. Main owns the implementation:
+`src/main/skills/skillStore.ts` (indexes the two sources, validates), `skillHost.ts`
+(the `SkillHost`, error-code mapping), `skillFiles.ts`/`skillFrontMatter.ts`, and
+`sandbox/` (`runSkillScript`: a QuickJS-in-a-worker sandbox, 5 s deadline, 64 MB,
+no I/O, no network; the worker ships as `out/main/scriptWorker-<hash>.js`). The
+limits hold at the worker boundary too: the worker has its own heap cap
+(`workerHeapMb`, 192; exhaustion is a `memory` failure), console output and an
+oversized result are bounded *inside* the guest before they reach Node, and one
+turn's script runs go one at a time in call order (other turns run in parallel).
+`skill_resource` serves only files the startup index lists (a file that grew
+since is refused, not read) and `skill_script`'s `input` is any JSON value.
+Scripts are ES modules that `export default` a function of the input; relative
+imports work; **JS only** (a `.py` file is readable, not runnable).
+
+**Two sources, user wins.** Bundled skills come from `resources/skills/`; user
+skills from exactly `~\etoolbox-daisy\skills` (`appPaths.skills`), read **at
+startup only** (restart to apply). A user skill with a bundled skill's name
+**replaces** it (owner decision; plan D3 said the opposite), but a *rejected* user
+skill never displaces a bundled one. A skill needs a valid lowercase name and a
+non-empty `description`; limits: `SKILL.md` 64 KB, 200 files, 5 MB total, depth 4;
+dot-entries and symlinks are not indexed, a skill folder or `SKILL.md` that is a
+link/junction is rejected (`Links are not followed.`), and paths are real-path
+contained.
+Rejections log `SKILL_REJECTED`; a failed script logs `SKILL_SCRIPT_FAILED`.
+
+**Settings "Skills" tab** (after Agents) holds one action link, **Custom skills
+folder** (`skills:open-folder`, no payload: main creates the folder and opens it in
+the OS file manager), with contextual help. There is no reload button and no
+per-skill list. Test ids: `settings-tab-skills`, `skills-open-folder`.
 
 Every **new** bundled skill must carry a user-facing summary in its front
 matter: a `metadata.user-description` (one friendly phrase, no technical
-detail) alongside the model-facing `description`. `readSkillCatalog`
-(`src/main/skills/skillCatalog.ts`) scans `metadata.user-description` and falls
-back to `description` when it is absent, so the home screen and the composer's
-`/` list render the friendly text (`search` and `semantic-search` already carry
-one). This is a contract, not a preference: a skill without it ships its
-technical `description` to the user.
+detail) alongside the model-facing `description`. The store scans
+`metadata.user-description` and falls back to `description` when it is absent, so
+the home screen and the composer's `/` list render the friendly text (`search` and
+`semantic-search` already carry one). This is a contract, not a preference: a skill
+without it ships its technical `description` to the user.
 
 **Skills are auto-inferred from their descriptions, not only invoked by name.**
-The composition root composes the model-facing catalogue — every bundled skill
-with its technical `description` — onto the session instructions
+The composition root composes the model-facing catalogue — every skill (bundled
+and user) with its technical `description` — onto the session instructions
 (`renderSkillCatalogue` in `src/shared/skillInvocation.ts`, appended to
-`toolkit.instructions` in `src/main/index.ts` after `skillCatalog.load()`), so
+`toolkit.instructions` in `src/main/index.ts` once the store has loaded), so
 the model can choose a skill from its description the way other harnesses do;
 `user-invocable: false` skills are in that catalogue too (they are the
-agent-only ones). A model-chosen skill load is represented as the internal
-`skill` tool call (`SKILL_TOOL_NAME`): Copilot's runtime `skill.invoked` event
-is mapped onto it by `sdkAgentService.ts`, OpenRouter's own `skill` tool already
-emits it, and `transcriptStore.ts` renders it as nothing while using it to
-suppress a search skill's prose (below).
+agent-only ones). Loading is the `skill` tool call (`SKILL_TOOL_NAME`), and
+`transcriptStore.ts` renders it as nothing while using it to suppress a search
+skill's prose (below). An explicit `/name` is resolved by `resolveSkillPrompt`
+(`src/shared/skills/skillActivation.ts`), which frames the input and the
+controller journals a synthetic `skill` call pair after a successful send; the
+three skill tools' billets read `Load skill` / `Read <skill>/<path>` /
+`Run <skill>/<script>` (`getDetails()` compositions proposed in the plan, D7).
+`tests/live/skills.live.spec.ts` certifies the whole path live with the
+`skill-selftest` user skill.
 
 `/search <terms>` and `/semantic-search <text>` accept their argument as one
 plain string — no separate "comment" is required. The `/skillname` rewrite in
@@ -1087,7 +1127,10 @@ only**: how to read it is in `session.md`, once.
   an agent folder, `tests/unit/tools/` for tools, `tests/unit/main/agents/` for
   registry/hub). jsdom for renderer tests.
 - `tests/integration/**` — real sockets, real proxies, real CA, real runtime
-  (`proxy-runtime.test.ts`, `agent-runtime.test.ts`, `packaged-skill.test.ts`).
+  (`proxy-runtime.test.ts`, `agent-runtime.test.ts`).
+- `tests/live/**/*.live.spec.ts` — opt-in scenarios against the real app, real
+  AEM and the selected agent/model (`npm run test:live`, never in `verify`);
+  helpers in `tests/support/live/`, unit-tested in `tests/unit/support/live/`.
 - `tests/e2e/**` — Playwright driving the **built** Electron app, one spec per
   step.
 - `tests/support/**` — shared fakes (`fakeAgent`, `fakeBrowserSide`,
@@ -1112,9 +1155,27 @@ npm run test         # vitest only
 npm run test:e2e     # Playwright, against the BUILT app — build first
 npm run package:win  # NSIS x64 per-user installer
 npm run dev          # electron-vite dev
+npm run test:live    # opt-in: live scenarios against the BUILT app, real profile
 ```
 
-Current baseline: **`npm run test` → 3399 passed / 14 skipped** (+1 against the
+**Live tests (opt-in, never in `verify`).** `npm run test:live` runs
+`tests/live/**/*.live.spec.ts` (`playwright.live.config.ts`) against the *built*
+app with the user's REAL profile, the currently selected agent/model and real AEM
+hosts, and certifies behaviour from the app's own chat journal. Run
+`npm run build` and close any running EToolbox Daisy first (single-instance
+lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
+and `npm run test:e2e` never pick these specs up.
+
+Current baseline: **`npm run test` → 3610 passed / 13 skipped** (+17 against
+the 3593 below - the skill subsystem's review fixes: link rejection, indexed-only
+resource reads, module confinement, sandbox limits at the worker boundary, the
+per-turn script gate and JSON `input`; see `docs/verification/followons-2026-10.md`
+"The skill subsystem: review fixes (2026-10-17)"). Before that it was **3593 passed / 13 skipped** (the skill
+subsystem: one app-owned loader for both agents, user skills from
+`~\etoolbox-daisy\skills` that win over bundled ones, the three skill tools, the
+QuickJS script sandbox, the Settings "Skills" tab and the opt-in `npm run
+test:live` harness - see `docs/verification/followons-2026-10.md` "The skill
+subsystem ... (2026-10-17)"). Before that it was **3399 passed / 14 skipped** (+1 against the
 3398 below - **one set of search limit constants**: `aem_query` and both search
 composites take their limit range from `src/shared/tools/core/search.ts`;
 `aem_semantic_search`'s max page size is now 200, was 100 - see
@@ -2086,23 +2147,23 @@ real keyboard *does* populate `code` for them, but the numpad's did not. The app
 `sendInputEvent` synthesizes a non-empty `code`, so an E2E built on it cannot
 catch this — only real OS input can.
 
-**Skills are not auto-injected (the bodies).** Activation needs bundled
-directories *and* exactly one built-in tool whose model-facing name is `skill`
-(`execute_skill` is **not** a valid allowlist entry). With skills enabled but the
-tool withheld, **the model hallucinates plausible skill content instead of
-failing.** Verify only via `session.rpc.skills.list()` and
-`session.rpc.tools.getCurrentMetadata()` — never by reading a model answer.
-Proven live: no directory ⇒ `skills: []`, tools `[]`; directory supplied ⇒ 4
-skills (`source: "custom"`, `enabled: true`), tools exactly `["skill"]`;
-unchanged after resume. (The app now *does* inject the skill **catalogue** —
-names + descriptions — through its own session instructions so the model can
-pick a skill without a `/name`; that is the app's text, not the runtime's, and
-does not contradict this fact about the bodies.)
+**Skills are loaded by the app, not the SDK (supersedes "skills are not
+auto-injected").** Earlier the Copilot runtime loaded skill directories and
+needed exactly one built-in tool named `skill`; that path is gone. The app's own
+`skill`/`skill_resource`/`skill_script` tools serve both agents (see
+`resources/skills/` above). Proven live 2026-10-17 (Copilot, `mai-code-1.1-flash`):
+the app's `skill` tool (argument `name`) is the one the model calls - the SDK
+built-in never runs, so `overridesBuiltInTool` replaces it - and a `skill-selftest`
+turn loaded the skill, read its file and ran its script, in both an explicit
+`/name` turn and an inferred one (`docs/verification/followons-2026-10.md`). The
+description limit still applies to the **model-facing** catalogue: keep skill
+descriptions short (`docs/compatibility.md` §4.5).
 
-**Skills path resolution.** `electron-builder.yml` sets
-`extraResources: { from: resources, to: resources }`. Packaged →
-`path.join(process.resourcesPath, "resources", "skills")`. Unpackaged runs from
-`out/main` → `path.join(currentDir, "..", "..", "resources", "skills")`.
+**Resource paths.** `resources/skills` is shipped through `electron-builder.yml`'s
+`extraResources: { from: resources, to: resources }`; the store reads it from
+`path.join(process.resourcesPath, "resources", "skills")` when packaged and from
+`out/main/../../resources/skills` when not
+(`resolveBundledResourcesDirectory`).
 
 **`BrokerOutcome`** is `{ kind: "response", status, contentType, bodyText }` —
 not `kind: "ok"`, and the body is **not** parsed for you.
@@ -2291,6 +2352,18 @@ established the E2E was real. Relatedly: **jsdom cannot prove a custom element i
 registered** — it renders an unknown tag as `HTMLUnknownElement`, so a unit test
 passes against a missing import. Assert `customElements.get(...)` and a real
 `shadowRoot` in an E2E instead.
+
+**Live scenarios prove behaviour against the real world.** For anything fakes
+cannot show (a real model choosing a skill, a real AEM host), write a
+`*.live.spec.ts` using `tests/support/live/` (`launchLiveApp`,
+`startFreshConversation`/`sendAndWait`, `journal` queries, `liveAssertions`,
+`attachEvidence`). Assert on the journal (tool calls, results, errors), never on
+model prose. Evidence (redacted journal copy, `summary.json`, `transcript.md`)
+lands in `test-results/live/`. Keep prompts tiny, never write real settings,
+never delete chats you did not create (`LIVE_CLEANUP=1` removes only the run's
+own). The pure parts (journal reader, redaction, transcript) are unit-tested in
+`tests/unit/support/live/`. `tests/live/skills.live.spec.ts` is the worked
+example (the `skill-selftest` user skill, explicit and inferred).
 
 **A live RPC read is the proof for anything the model could fake.** Ask the
 model about a skill and it will invent the contents. `skills.list()` cannot.

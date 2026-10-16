@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   askUserArgsSchema,
   createAskUserExecutor,
@@ -20,6 +21,7 @@ function makeHost(
     },
     environmentFacts: () => undefined,
     configuredHosts: () => [],
+    skills: NO_SKILLS,
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: (request) => {
       capture?.(request);

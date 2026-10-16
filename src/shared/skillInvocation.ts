@@ -1,14 +1,9 @@
 /**
  * The `/skillname` reference a user may type at the very start of a chat
- * prompt, and the model-facing rewrite that makes the agent actually load the
- * skill.
- *
- * Skills are bundled `SKILL.md` directories the runtime only reads through its
- * built-in `skill` tool; a leading `/name` is therefore not something the
- * model interprets on its own. This module owns both halves of that
- * convention - the composer's autocomplete and the send-path rewrite - as pure
- * functions so both share one interpretation of "the leading token" (see
- * `src/shared`'s no-Electron/no-Node/no-browser-globals rule).
+ * prompt. This module owns the reading of that leading token as pure functions,
+ * so the composer's autocomplete and the send-path rewrite
+ * (`resolveSkillPrompt`, `skills/skillActivation.ts`) share one interpretation
+ * of it (see `src/shared`'s no-Electron/no-Node/no-browser-globals rule).
  *
  * It also owns the *catalogue* the model is shown in its session instructions
  * (`renderSkillCatalogue`), which is what lets the model choose a skill from a
@@ -17,11 +12,9 @@
  */
 
 /**
- * The model-facing name of the runtime helper tool that loads a skill. Both
- * agents expose a tool by this name (Copilot's is runtime-built; OpenRouter
- * ships its own - see `src/agents/openrouter/skill.ts`), and the transcript
- * store treats a call to it as internal plumbing rather than a user-visible
- * tool call.
+ * The model-facing name of the app's `skill` tool (`src/tools/skill/`), which
+ * loads a skill the same way for every agent. The transcript store treats a
+ * call to it as internal plumbing rather than a user-visible tool call.
  */
 export const SKILL_TOOL_NAME = 'skill';
 
@@ -76,30 +69,6 @@ export function filterSkillsByName<T extends { readonly name: string }>(
   return skills.filter((skill) => skill.name.toLowerCase().startsWith(needle));
 }
 
-/**
- * The one line the model reads when a known skill was explicitly invoked. It
- * names the exact tool and argument so activation cannot be mistaken for the
- * user merely mentioning a skill by name.
- *
- * When the user supplied trailing text, that text is framed explicitly as this
- * skill's input and the model is told not to ask the user to restate it. This
- * directive is the only place the two are joined: the model never sees the
- * literal `/skillname` token, and a bare appended word is otherwise read as an
- * unrelated remark. Observed live (2026-10-06): `/search Waldo` loaded the
- * `search` skill, then the model answered "What would you like to search for?".
- */
-export function renderSkillInvocationDirective(name: string, rest: string): string {
-  const directive =
-    `The user has explicitly invoked the "${name}" skill. Load it first by calling the ` +
-    `\`${SKILL_TOOL_NAME}\` tool with {"${SKILL_TOOL_NAME}":"${name}"}, then follow its guidance.`;
-  if (rest === '') return directive;
-  return (
-    `${directive}\n\n` +
-    `The text below is the user's input for this skill. Act on it directly; do not ` +
-    `ask the user to restate it.\n\n${rest}`
-  );
-}
-
 /** Where the skill list goes inside the catalogue template (`resources/instructions/skills.md`). */
 export const SKILL_CATALOGUE_PLACEHOLDER = '{{catalogue}}';
 
@@ -125,8 +94,8 @@ export const SKILL_TOOL_PLACEHOLDER = '{{skillTool}}';
  *
  * The wording is load-bearing: without "load it ... before acting" the model
  * reads the list as documentation and answers from its own knowledge instead
- * of loading the skill (the same failure `renderSkillInvocationDirective`
- * exists to prevent for the explicit `/name` path).
+ * of loading the skill (the failure the `/name` path's inlined activation
+ * exists to prevent).
  */
 export function renderSkillCatalogue(
   template: string,
@@ -143,18 +112,4 @@ export function renderSkillCatalogue(
     .replaceAll(SKILL_TOOL_PLACEHOLDER, SKILL_TOOL_NAME)
     .replace(SKILL_CATALOGUE_PLACEHOLDER, () => lines.join('\n'))
     .trim();
-}
-
-/**
- * Rewrites a prompt that begins with a *known* `/skillname` into the text the
- * model actually receives, and returns `prompt` unchanged for everything else -
- * a prompt with no leading token, or one whose token names no known skill. The
- * caller keeps the user's own text for display and the journal; only what the
- * model reads is rewritten.
- */
-export function resolveSkillPrompt(prompt: string, knownSkillNames: readonly string[]): string {
-  const token = readLeadingSkillToken(prompt);
-  if (token === undefined) return prompt;
-  if (!knownSkillNames.includes(token.name)) return prompt;
-  return renderSkillInvocationDirective(token.name, token.rest);
 }

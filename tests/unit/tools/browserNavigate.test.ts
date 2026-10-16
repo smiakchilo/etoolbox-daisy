@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   BROWSER_NAVIGATE_TOOL_NAME,
   browserNavigateArgsSchema,
@@ -61,6 +62,7 @@ function makeHost(options: {
             contentPriorityPaths: [],
           },
     configuredHosts: () => options.hosts ?? [HPE_DEV, STAGING],
+    skills: NO_SKILLS,
     openPage: (target) => {
       options.onOpen?.(target);
       return Promise.resolve(

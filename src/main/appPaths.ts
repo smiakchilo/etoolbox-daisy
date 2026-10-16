@@ -30,6 +30,8 @@ export interface AppPaths {
   readonly settings: string;
   /** Chat history - intentionally separate from settings/logs (plan step 04). */
   readonly chats: string;
+  /** The user's own skills, one folder per skill - read at startup (docs/skill-subsystem-plan.md). */
+  readonly skills: string;
   /** Diagnostic logs only: codes/timings/IDs, never prompts/payloads/secrets. */
   readonly logs: string;
   /** `%LOCALAPPDATA%\etoolbox-daisy` - the technical root nobody needs to open. */
@@ -145,6 +147,7 @@ export function resolveAppPaths(homeDir: string, localDataDir: string): AppPaths
     root,
     settings: path.join(root, 'settings'),
     chats: path.join(root, 'chats'),
+    skills: path.join(root, 'skills'),
     logs: path.join(root, 'logs'),
     dataRoot,
     secrets: path.join(dataRoot, 'secrets'),
@@ -166,6 +169,7 @@ export function ensureAppDirectories(paths: AppPaths): void {
     paths.root,
     paths.settings,
     paths.chats,
+    paths.skills,
     paths.logs,
     paths.dataRoot,
     paths.secrets,

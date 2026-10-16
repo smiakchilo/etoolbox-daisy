@@ -158,7 +158,7 @@ function skillRequested(sequence: number, skillName: string): AgentEvent {
     sequence,
     toolCallId: skillToolCallId,
     toolName: 'skill',
-    arguments: { skill: skillName },
+    arguments: { name: skillName },
   });
 }
 

@@ -64,13 +64,15 @@ import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
+import { registerSkillsIpcHandlers } from './ipc/skills';
 import { registerTableExportIpcHandlers } from './ipc/tableExport';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
 import { createSecretStore } from './secretStore';
 import { installWebContentsSecurityGuard } from './security';
 import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
-import { createSkillCatalog } from './skills/skillCatalog';
+import { createSkillHost } from './skills/skillHost';
+import { createSkillStore } from './skills/skillStore';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import {
   APP_USER_MODEL_ID,
@@ -536,6 +538,13 @@ if (!gotSingleInstanceLock) {
       mainWebContentsId: mainWindow.webContents.id,
     });
 
+    registerSkillsIpcHandlers({
+      directory: appPaths.skills,
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
+    });
+
     // --- AEM tool / agent chat wiring (implementation-plan.md step 07) ---
     //
     // Order matters: the bridge transport/broker must exist before the
@@ -604,12 +613,29 @@ if (!gotSingleInstanceLock) {
     const instructionResources = await loadInstructionResources(
       path.join(bundledResourcesDirectory, 'instructions'),
     );
+    // The one skill store: the bundled skills plus the user's own folder,
+    // read once (`skillStore.load()` below, before the agent starts). The
+    // tools reach it through `ToolHost.skills`.
+    const skillStore = createSkillStore({
+      bundledDirectory: path.join(bundledResourcesDirectory, 'skills'),
+      userDirectory: appPaths.skills,
+      onRejected: () => {
+        logger.warn('SKILL_REJECTED', { count: 1 });
+      },
+    });
+    const skillHost = createSkillHost({
+      store: skillStore,
+      onScriptFailed: () => {
+        logger.warn('SKILL_SCRIPT_FAILED', { count: 1 });
+      },
+    });
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
       loaders: discoverToolLoaders(),
       instructionsTemplate: instructionResources.sessionTemplate,
       host: {
+        skills: skillHost,
         bridge: aemBridgeBroker,
         currentContext: lateBoundAemToolContext.currentContext,
         environmentFacts,
@@ -653,13 +679,6 @@ if (!gotSingleInstanceLock) {
         },
       },
     });
-    const bundledSkillsDirectory = path.join(bundledResourcesDirectory, 'skills');
-    // The composer's `/` autocomplete reads this lazily, only once the renderer
-    // asks (after the pane reports ready), so its filesystem read never sits on
-    // the window's startup path. The send path consults `current()` - empty
-    // until that read lands, which simply means a leading `/name` is passed
-    // through unchanged until the catalogue is known.
-    const skillCatalog = createSkillCatalog(bundledSkillsDirectory);
 
     lateBoundAemToolContext.bind(agentChatController);
     lateBoundUserInput.bind(agentChatController);
@@ -699,12 +718,13 @@ if (!gotSingleInstanceLock) {
         shell.showItemInFolder(existsSync(filePath) ? filePath : appPaths.chats);
         return { ok: true };
       },
-      // The bundled skill catalogue, read on demand for the composer's `/`
-      // autocomplete. `readSkillCatalog` never rejects; the `ok: false` branch
-      // is a defence-in-depth backstop the renderer treats as "no autocomplete".
+      // The skill catalogue for the composer's `/` autocomplete, read on demand.
+      // `load()` never rejects; the `ok: false` branch is a backstop the
+      // renderer treats as "no autocomplete".
       listSkills: async () => {
         try {
-          return { ok: true, skills: [...(await skillCatalog.load())] };
+          await skillStore.load();
+          return { ok: true, skills: [...skillStore.invocable()] };
         } catch {
           return {
             ok: false,
@@ -811,7 +831,7 @@ if (!gotSingleInstanceLock) {
           createProxyFetch: (connection) => buildProxyFetch(connection.proxy),
           toolkit: () => {
             // The model-facing skill catalogue is composed onto the tool
-            // instructions here, where both catalogues are known. `skillCatalog`
+            // instructions here, where both catalogues are known. `skillStore`
             // is loaded before the agent starts (see `startAgentService` below),
             // so `modelCatalogue()` is populated by the time any agent reads
             // this - which is what makes the model able to load a skill from its
@@ -819,7 +839,7 @@ if (!gotSingleInstanceLock) {
             // `renderSkillCatalogue`).
             const skillCatalogue = renderSkillCatalogue(
               instructionResources.skillsTemplate,
-              skillCatalog.modelCatalogue(),
+              skillStore.modelCatalogue(),
             );
             return {
               allowlistEntries: toolRegistry.allowlistEntries,
@@ -829,7 +849,6 @@ if (!gotSingleInstanceLock) {
                   : `${toolRegistry.instructions}\n\n${skillCatalogue}`,
               toolHandlers: toolRegistry.toolHandlers,
               toolDescriptors: toolRegistry.descriptors,
-              bundledSkillDirectories: [bundledSkillsDirectory],
             };
           },
           // Step 09: read from the cache on every use, so a model chosen in
@@ -857,14 +876,14 @@ if (!gotSingleInstanceLock) {
               // the concurrency-1 slot immediately instead of running to its 90 s
               // deadline.
               cancelAemRequests: () => aemBridgeBroker.cancelAll(),
-              // A prompt that begins with a known `/skillname` becomes an explicit
-              // directive to load that skill; the user's own text is kept for the
-              // transcript and the journal by the controller.
+              // A prompt that begins with a known `/skillname` carries that skill's
+              // activation text; the user's own text is kept for the transcript and
+              // the journal by the controller.
               resolveSkillPrompt: (prompt) =>
-                resolveSkillPrompt(
-                  prompt,
-                  skillCatalog.current().map((skill) => skill.name),
-                ),
+                resolveSkillPrompt(prompt, (name) => {
+                  const activation = skillHost.activate(name);
+                  return activation.ok ? activation.value : undefined;
+                }),
               // Conversation deletion reads every SDK session id the journal
               // recorded (the header's first, plus one per runtime recycle) and
               // removes the journal file; both are plain filesystem facts main
@@ -900,13 +919,12 @@ if (!gotSingleInstanceLock) {
           return;
         },
         startAgentService: async () => {
-          // Load the bundled skill catalogue before the agent starts, so
+          // Load the skills before the agent starts, so
           // `toolkit().instructions` can carry the model-facing catalogue. This
           // is off the window's startup path: `startAgentRuntime` runs after the
-          // shell has painted (see `runAfterFrameLoad`). A failed read resolves
-          // to an empty catalogue, so this can never block the agent from
-          // starting.
-          await skillCatalog.load();
+          // shell has painted (see `runAfterFrameLoad`). The store never
+          // rejects, so this can never block the agent from starting.
+          await skillStore.load();
           await hub.start(storedSettings);
         },
         // No free-text field exists on `Logger` by design (see its own module

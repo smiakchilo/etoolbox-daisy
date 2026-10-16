@@ -49,7 +49,6 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
         policy: buildAemToolPolicy({
           allowlistEntries: toolkit.allowlistEntries,
           instructions: toolkit.instructions,
-          bundledSkillDirectories: toolkit.bundledSkillDirectories,
         }),
         // The SDK's raw `auth.getStatus` response carries no `apiVersion`;
         // `toAuthStatus` projects it onto this app's `AuthStatus` DTO.

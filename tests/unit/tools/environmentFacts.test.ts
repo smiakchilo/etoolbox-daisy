@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   createEnvironmentFactsExecutor,
   executeEnvironmentFacts,
@@ -51,6 +52,7 @@ function host(overrides: Partial<ToolHost> = {}): ToolHost {
     }),
     environmentFacts: () => undefined,
     configuredHosts: () => HOSTS,
+    skills: NO_SKILLS,
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
     clock: () => 42,

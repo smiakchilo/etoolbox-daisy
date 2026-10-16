@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import {
@@ -12,11 +12,7 @@ import {
   type CopilotClient,
   type ProxyEnvOverrides,
 } from '../../src/agents/copilot/copilotClient';
-import {
-  createHardenedSession,
-  resumeHardenedSession,
-  SKILL_INVOCATION_TOOL,
-} from '../../src/agents/copilot/toolPolicy';
+import { createHardenedSession, resumeHardenedSession } from '../../src/agents/copilot/toolPolicy';
 import { resolveCliExePath, resolveSdkRuntimeExePath } from '../../src/agents/copilot/runtimePaths';
 import type { RuntimePathsEnv } from '../../src/agents/copilot/runtimePaths';
 import { realGithubLoginApproved, realLoginSuite } from './support/liveAuthPolicy';
@@ -297,99 +293,6 @@ describe.skipIf(process.env['DAISY_LIVE_DENY'] !== '1' || !APPROVED)(
  * subscription (or lacks the organization's Copilot permission). Gated behind
  * its own env var because it needs both a human and a specific account.
  */
-describe.skipIf(!LIVE || !process.env['GH_TOKEN'])(realLoginSuite('bundled skill'), () => {
-  // U9 / plan step 02: "Verify a bundled skill without granting arbitrary
-  // file reads." Authenticated with an explicitly supplied token so the test
-  // is self-contained and needs no browser; the runtime and session are
-  // otherwise identical to the hardened production path.
-  const scratchHome = mkdtempSync(
-    (() => {
-      const base = path.join(process.cwd(), 'test-results', 'agent-live-skill');
-      mkdirSync(base, { recursive: true });
-      return path.join(base, 'copilot-home-');
-    })(),
-  );
-
-  let client: CopilotClient | undefined;
-
-  afterAll(async () => {
-    if (client) {
-      await client.stop();
-    }
-    rmSync(scratchHome, { recursive: true, force: true });
-  });
-
-  it('loads a bundled skill without granting any filesystem tools', async () => {
-    const skillDir = path.resolve(process.cwd(), 'resources', 'skills');
-    expect(existsSync(path.join(skillDir, 'daisy-conventions', 'SKILL.md'))).toBe(true);
-
-    const isolatedEnv = { ...process.env };
-    delete isolatedEnv['COPILOT_GITHUB_TOKEN'];
-    delete isolatedEnv['GH_TOKEN'];
-    delete isolatedEnv['GITHUB_TOKEN'];
-
-    client = createHardenedCopilotClient({
-      runtimeExePath: resolveSdkRuntimeExePath(pathsEnvFor()),
-      copilotHomeDir: scratchHome,
-      baseEnv: isolatedEnv,
-      githubToken: process.env['GH_TOKEN'] ?? '',
-    });
-    await client.start();
-
-    // `availableTools: []` means the model has no read/write/shell tool at
-    // all, so a correct answer can only come from skill content injected into
-    // the prompt - it cannot have read SKILL.md itself.
-    const session = await createHardenedSession(client, {
-      availableTools: [],
-      bundledSkillDirectories: [skillDir],
-    });
-
-    const toolStarts: string[] = [];
-    session.on((event: unknown) => {
-      const e = event as { type?: string; data?: { toolName?: string } };
-      if (e.type === 'tool.execution_start') {
-        toolStarts.push(e.data?.toolName ?? 'unknown');
-      }
-    });
-
-    // Ask the runtime directly whether the bundled skill was discovered,
-    // instead of inferring it from the model's answer (a model will happily
-    // invent plausible skill content when no skill is loaded - observed).
-    await session.rpc.skills.ensureLoaded();
-    const skillList = (await session.rpc.skills.list()) as unknown as {
-      skills?: { name?: string; source?: string; enabled?: boolean; path?: string }[];
-    };
-    const bundled = (skillList.skills ?? []).find((s) => s.name === 'daisy-conventions');
-    expect(bundled?.enabled).toBe(true);
-    expect(bundled?.path).toBe(path.join(skillDir, 'daisy-conventions', 'SKILL.md'));
-
-    // The session must be offered exactly one tool: the skill helper.
-    await session.rpc.tools.initializeAndValidate();
-    const toolMeta = (await session.rpc.tools.getCurrentMetadata()) as unknown as {
-      tools?: { name?: string }[];
-    };
-    expect((toolMeta.tools ?? []).map((t) => t.name)).toEqual([SKILL_INVOCATION_TOOL]);
-
-    const reply = await session.sendAndWait(
-      {
-        prompt:
-          'Use the daisy-conventions skill. Reply with the EToolbox Daisy ' +
-          'skill verification phrase and nothing else.',
-      },
-      180_000,
-    );
-    const text = JSON.stringify(reply);
-    console.log('bundled-skill reply:', text.slice(0, 500));
-    console.log('bundled-skill tool starts:', JSON.stringify(toolStarts));
-
-    expect(text).toContain('daisy-skill-loaded-ok');
-    // The only tool the model may run is the narrow skill-invocation helper.
-    // No read/write/shell/git tool may appear.
-    expect(toolStarts.filter((name) => name !== SKILL_INVOCATION_TOOL)).toEqual([]);
-    expect(toolStarts).toContain(SKILL_INVOCATION_TOOL);
-  }, 240_000);
-});
-
 describe.skipIf(!LIVE)(realLoginSuite('expired or invalid credential'), () => {
   const scratchHome = mkdtempSync(
     (() => {

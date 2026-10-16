@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR,
   AEM_QUERY_FORMAT_ASK_TOOL_NAME,
@@ -135,6 +136,7 @@ function makeHost(
             contentPriorityPaths: [],
           },
     configuredHosts: () => [],
+    skills: NO_SKILLS,
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.reject(new Error('the composite asks only through ask_user')),
     clock: () => 1,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   type BrokerOutcome,
   type CurrentAemToolContext,
@@ -45,6 +46,7 @@ function makeHost(outcome: BrokerOutcome): {
       currentContext: () => context,
       environmentFacts: () => undefined,
       configuredHosts: () => [],
+      skills: NO_SKILLS,
       openPage: () => Promise.resolve({ kind: 'no_view' }),
       requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
       clock: () => 1_700_000_000_000,

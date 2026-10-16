@@ -6,6 +6,7 @@ import { createProjectsSection } from '../settings/projectsSection';
 import { createProxiesSection } from '../settings/proxiesSection';
 import { createHostsSection } from '../settings/hostsSection';
 import { createBrowserSection } from '../settings/browserSection';
+import { createSkillsSection } from '../settings/skillsSection';
 import {
   createSaveReporter,
   reportSave,
@@ -51,7 +52,7 @@ export interface SettingsPanel extends Panel {
 }
 
 /** The Settings panel's tab ids, in strip order. */
-export type SettingsTab = 'hosts' | 'projects' | 'agents' | 'proxies' | 'browser';
+export type SettingsTab = 'hosts' | 'projects' | 'agents' | 'skills' | 'proxies' | 'browser';
 
 export interface CreateSettingsPanelOptions {
   /**
@@ -126,6 +127,8 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     onSettingsChanged: () => void reload(),
   });
 
+  const skillsSection = createSkillsSection({ status });
+
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
     if (!result.ok) {
@@ -176,6 +179,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     { value: 'hosts', label: 'Hosts', element: hostsSection.element },
     { value: 'projects', label: 'Projects', element: projectsSection.element },
     { value: 'agents', label: 'Agents', element: agentsSection.element },
+    { value: 'skills', label: 'Skills', element: skillsSection.element },
     // Browser sits ahead of Proxies: the default proxy is a property of the
     // browser pane, and a host's Proxy combobox offers "(Default)" which points
     // at it, so it reads naturally before the library it draws from.
@@ -251,6 +255,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       proxiesSection.dispose();
       projectsSection.dispose();
       agentsSection.dispose();
+      skillsSection.dispose();
       browserSection.dispose();
       panel.dispose();
     },

@@ -19,6 +19,7 @@ import {
   newToolCallId,
   newTurnId,
 } from '../../../src/shared';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import { createCountingIdGenerator } from '../../support/testIds';
 import {
   MINIMAL_SESSION_TEMPLATE,
@@ -38,6 +39,7 @@ const host: ToolHostServices = {
   }),
   environmentFacts: () => undefined,
   configuredHosts: () => [],
+  skills: NO_SKILLS,
   openPage: () => Promise.resolve({ kind: 'no_view' }),
   requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
   clock: () => 1,
@@ -477,6 +479,9 @@ describe('discovered tools (the real src/tools folders)', () => {
       'ask_user',
       'browser_navigate',
       'environment_facts',
+      'skill',
+      'skill_resource',
+      'skill_script',
     ]);
     expect(registry.internalNames).toEqual(['format_table']);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
@@ -488,6 +493,9 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:ask_user',
       'custom:browser_navigate',
       'custom:environment_facts',
+      'custom:skill',
+      'custom:skill_resource',
+      'custom:skill_script',
     ]);
   });
 });

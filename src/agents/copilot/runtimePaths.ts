@@ -66,28 +66,6 @@ export function resolveCliExePath(env: RuntimePathsEnv): string {
 }
 
 /**
- * Directory holding the application's own skills.
- *
- * Shipped as an electron-builder `extraResources` entry so it stays a plain
- * directory on disk (the runtime reads `SKILL.md` files itself and cannot see
- * inside an asar archive), and so it is never confused with the user's own
- * `~/.copilot/skills`. The `extraResources` mapping is `resources -> resources`,
- * hence the nested segment in the packaged branch.
- */
-export function resolveBundledSkillsDir(env: RuntimePathsEnv): string {
-  const dir = env.isPackaged
-    ? path.join(env.resourcesPath, 'resources', 'skills')
-    : path.join(env.devRootDir, 'resources', 'skills');
-  if (!existsSync(dir)) {
-    throw new Error(
-      `Bundled skills directory not found at "${dir}". It ships via the ` +
-        'electron-builder extraResources entry for resources/skills',
-    );
-  }
-  return dir;
-}
-
-/**
  * The nearest ancestor of `start` holding a `package.json`, else `start`. The
  * dev-mode runtime lives under the project's `node_modules`; the bundled
  * module's depth below `out/main` is a bundler detail, so it is searched for

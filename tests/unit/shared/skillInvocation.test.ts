@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type SkillActivation,
   SKILL_TOOL_NAME,
   filterSkillsByName,
   readLeadingSkillToken,
+  renderSkillActivation,
+  renderSkillAlreadyLoadedNote,
   renderSkillCatalogue,
-  renderSkillInvocationDirective,
   resolveSkillPrompt,
 } from '../../../src/shared';
 import { REAL_SKILLS_TEMPLATE } from '../../support/instructionResources';
@@ -68,20 +70,6 @@ describe('filterSkillsByName', () => {
   });
 });
 
-describe('renderSkillInvocationDirective', () => {
-  it('names the skill when there is no remainder', () => {
-    const directive = renderSkillInvocationDirective('aem-tool-selection', '');
-    expect(directive).toContain('aem-tool-selection');
-    expect(directive).not.toContain('\n\n');
-  });
-
-  it('appends the trailing text as the skill input after the plain directive', () => {
-    const directive = renderSkillInvocationDirective('query-results', 'why zero rows?');
-    expect(directive.startsWith(renderSkillInvocationDirective('query-results', ''))).toBe(true);
-    expect(directive.endsWith('why zero rows?')).toBe(true);
-  });
-});
-
 describe('renderSkillCatalogue', () => {
   const skill = { name: 'search', description: 'Find pages.' };
 
@@ -119,31 +107,51 @@ describe('renderSkillCatalogue', () => {
 });
 
 describe('resolveSkillPrompt', () => {
-  const known = ['aem-tool-selection', 'query-results'];
+  const activations = new Map<string, SkillActivation>([
+    ['search', { name: 'search', body: 'SEARCH-BODY', files: [] }],
+    ['query-results', { name: 'query-results', body: 'RESULTS-BODY', files: [] }],
+  ]);
+  const lookup = (name: string): SkillActivation | undefined => activations.get(name);
 
-  it('rewrites a known leading reference into the directive plus the request', () => {
-    expect(resolveSkillPrompt('/aem-tool-selection what tool?', known)).toBe(
-      `${renderSkillInvocationDirective('aem-tool-selection', 'what tool?')}`,
-    );
+  it('inlines the activation, the already-loaded note and the framed input', () => {
+    const resolution = resolveSkillPrompt('/search what tool?', lookup);
+    const search = activations.get('search') as SkillActivation;
+    expect(resolution.activatedSkill).toBe('search');
+    expect(resolution.modelPrompt).toContain(renderSkillActivation(search));
+    expect(resolution.modelPrompt).toContain(renderSkillAlreadyLoadedNote('search'));
+    expect(resolution.modelPrompt.trimEnd().endsWith('what tool?')).toBe(true);
   });
 
   it('leaves an unknown leading reference untouched', () => {
-    expect(resolveSkillPrompt('/content/wknd/us/en', known)).toBe('/content/wknd/us/en');
+    expect(resolveSkillPrompt('/content/wknd/us/en', lookup)).toEqual({
+      modelPrompt: '/content/wknd/us/en',
+    });
   });
 
   it('carries a bare search term through as this skill input (the /search Waldo case)', () => {
-    const prompt = resolveSkillPrompt('/search Waldo', ['search', 'semantic-search']);
-    expect(prompt).toContain('search');
-    expect(prompt.trimEnd().endsWith('Waldo')).toBe(true);
+    const { modelPrompt } = resolveSkillPrompt('/search Waldo', lookup);
+    expect(modelPrompt.trimEnd().endsWith('Waldo')).toBe(true);
     // The literal token is consumed, never shown to the model as a path to read.
-    expect(prompt).not.toContain('/search');
+    expect(modelPrompt).not.toContain('/search');
+  });
+
+  it('adds no input frame when the user typed only the name', () => {
+    const { modelPrompt, activatedSkill } = resolveSkillPrompt('/query-results', lookup);
+    expect(activatedSkill).toBe('query-results');
+    expect(modelPrompt.trimEnd().endsWith(renderSkillAlreadyLoadedNote('query-results'))).toBe(
+      true,
+    );
   });
 
   it('leaves ordinary text untouched', () => {
-    expect(resolveSkillPrompt('what is on this page?', known)).toBe('what is on this page?');
+    expect(resolveSkillPrompt('what is on this page?', lookup)).toEqual({
+      modelPrompt: 'what is on this page?',
+    });
   });
 
-  it('leaves a known reference untouched when the catalogue is empty', () => {
-    expect(resolveSkillPrompt('/aem-tool-selection hi', [])).toBe('/aem-tool-selection hi');
+  it('leaves a known-looking reference untouched when the skill cannot be loaded', () => {
+    expect(resolveSkillPrompt('/search hi', () => undefined)).toEqual({
+      modelPrompt: '/search hi',
+    });
   });
 });

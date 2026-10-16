@@ -108,6 +108,13 @@ export const TABLE_EXPORT_SAVE_CSV_CHANNEL = 'table-export:save-csv' as const;
  */
 export const TABLE_EXPORT_REVEAL_LAST_CHANNEL = 'table-export:reveal-last' as const;
 
+/**
+ * Opens the user's skills folder (`appPaths.skills`) in the OS file manager,
+ * creating it when missing. No request payload: main owns the path (see
+ * `src/shared/skills-ipc.ts`).
+ */
+export const SKILLS_OPEN_FOLDER_CHANNEL = 'skills:open-folder' as const;
+
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.
 export const BROWSER_GO_BACK_CHANNEL = 'browser:go-back' as const;

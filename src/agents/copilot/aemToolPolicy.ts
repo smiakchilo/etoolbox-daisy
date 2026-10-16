@@ -15,13 +15,6 @@ export interface AemToolPolicyInput {
   readonly allowlistEntries: readonly string[];
   /** The composed session instructions (shared framing plus each tool's fragment). */
   readonly instructions: string;
-  /**
-   * The application's own bundled skill directories. Omitting them leaves
-   * `enableSkills` at its hardened `false` default, so skills are never
-   * enabled by accident. The location depends on whether the app is packaged,
-   * which is composition knowledge that belongs in src/main.
-   */
-  readonly bundledSkillDirectories?: readonly string[];
 }
 
 /**
@@ -29,10 +22,8 @@ export interface AemToolPolicyInput {
  * tools it is given and supplies the base instruction through instructions.
  */
 export function buildAemToolPolicy(input: AemToolPolicyInput): HardenedToolPolicy {
-  const base = {
+  return {
     availableTools: [...input.allowlistEntries],
     instructions: input.instructions,
   };
-  const dirs = input.bundledSkillDirectories;
-  return dirs !== undefined && dirs.length > 0 ? { ...base, bundledSkillDirectories: dirs } : base;
 }

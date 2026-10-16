@@ -330,7 +330,7 @@ test.describe('deterministic search tables', () => {
           kind: 'toolCall',
           call: {
             toolName: 'skill',
-            arguments: { skill: 'search' },
+            arguments: { name: 'search' },
             decision: { kind: 'approved', outcome: { ok: true, data: {} } },
           },
         },

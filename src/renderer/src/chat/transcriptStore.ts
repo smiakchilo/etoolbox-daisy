@@ -419,7 +419,7 @@ export function createTranscriptStore(
           // runtime's `skill.invoked` event onto it, OpenRouter's own `skill`
           // tool already produces it (see `src/shared/skillInvocation.ts`).
           if (event.toolName === SKILL_TOOL_NAME) {
-            const skillName = event.arguments[SKILL_TOOL_NAME];
+            const skillName = event.arguments['name'];
             if (
               typeof skillName === 'string' &&
               DETERMINISTIC_TABLE_SKILLS.includes(skillName) &&

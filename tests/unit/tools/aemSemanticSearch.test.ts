@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR,
   AEM_SEMANTIC_SEARCH_TOOL_NAME,
@@ -98,6 +99,7 @@ function makeHost(
       contentPriorityPaths: [],
     }),
     configuredHosts: () => [],
+    skills: NO_SKILLS,
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.reject(new Error('asks only through ask_user')),
     clock: () => 1,

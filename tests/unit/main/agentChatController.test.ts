@@ -28,6 +28,7 @@ import {
   type SdkSessionId,
   type SendPromptRequest,
   type ServerId,
+  type SkillPromptResolution,
   type Unsubscribe,
   type UserInputAnswer,
   ok,
@@ -1401,20 +1402,21 @@ describe('agentChatController page context', () => {
 });
 
 describe('agentChatController skill prompt rewrite', () => {
+  const resolution = (prompt: string): SkillPromptResolution =>
+    prompt === '/search what tool?'
+      ? { modelPrompt: 'DIRECTIVE', activatedSkill: 'search' }
+      : { modelPrompt: prompt };
+
   it('rewrites only the model-facing prompt, keeping the user text for display', async () => {
     const leaky = createLeakyAgentService();
     const { controller } = buildController(leaky, {
       currentPageContext: () => 'CTX-BLOCK',
-      resolveSkillPrompt: (prompt) =>
-        prompt === '/aem-tool-selection what tool?' ? 'DIRECTIVE' : prompt,
+      resolveSkillPrompt: resolution,
     });
     const chatId = newChatId('chat-skill');
     await controller.openConversation({ chatId });
 
-    const sent = await controller.sendMessage({
-      chatId,
-      prompt: '/aem-tool-selection what tool?',
-    });
+    const sent = await controller.sendMessage({ chatId, prompt: '/search what tool?' });
     expect(sent.ok).toBe(true);
     if (!sent.ok) throw new Error('unreachable');
 
@@ -1422,14 +1424,57 @@ describe('agentChatController skill prompt rewrite', () => {
       chatId,
       turnId: sent.turnId,
       prompt: 'CTX-BLOCK\n\nDIRECTIVE',
-      displayPrompt: '/aem-tool-selection what tool?',
+      displayPrompt: '/search what tool?',
     });
+  });
+
+  it('journals the explicit activation as a settled skill call of the turn', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, {
+      chatJournal: journal,
+      resolveSkillPrompt: resolution,
+    });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+    const chatId = newChatId('chat-skill-call');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'done' }] });
+
+    await controller.sendMessage({ chatId, prompt: '/search what tool?' });
+
+    expect(received.find((event) => event.type === 'tool.call.requested')).toMatchObject({
+      toolName: 'skill',
+      arguments: { name: 'search' },
+    });
+    expect(received.find((event) => event.type === 'tool.result')).toMatchObject({
+      outcome: { ok: true },
+    });
+    const journaled = calls
+      .filter((call) => call.method === 'recordEvent')
+      .map((call) => (call.args as AgentEvent).type);
+    expect(journaled).toContain('tool.call.requested');
+    expect(journaled).toContain('tool.result');
+  });
+
+  it('journals no skill call for a prompt that activated nothing', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService, { resolveSkillPrompt: resolution });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+    const chatId = newChatId('chat-no-skill');
+    await controller.openConversation({ chatId });
+    agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'done' }] });
+
+    await controller.sendMessage({ chatId, prompt: 'plain question' });
+
+    expect(received.filter((event) => event.type === 'tool.call.requested')).toEqual([]);
   });
 
   it('passes an unrecognised prompt through unchanged', async () => {
     const leaky = createLeakyAgentService();
     const { controller } = buildController(leaky, {
-      resolveSkillPrompt: (prompt) => prompt,
+      resolveSkillPrompt: (prompt) => ({ modelPrompt: prompt }),
     });
     const chatId = newChatId('chat-skill');
     await controller.openConversation({ chatId });

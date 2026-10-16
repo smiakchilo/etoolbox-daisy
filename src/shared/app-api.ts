@@ -39,6 +39,7 @@ import type {
   StopFindRequest,
   ViewBounds,
 } from './browser-ipc';
+import type { SkillsOpenFolderResult } from './skills-ipc';
 import type {
   TableExportRevealResult,
   TableExportSaveCsvRequest,
@@ -112,6 +113,8 @@ export interface DaisyAppApi {
    * writes the CSV the user names (`format_table`'s gutter Export action).
    */
   readonly tableExport: DaisyTableExportApi;
+  /** The user-skills folder surface behind the Settings "Skills" tab. */
+  readonly skills: DaisySkillsApi;
   /**
    * The application-wide keyboard shortcut surface: main resolves a keystroke
    * to a semantic action (there is no menu bar to carry an accelerator) and
@@ -126,6 +129,14 @@ export interface DaisyShortcutApi {
    * keyboard shortcut resolved to. Returns an unsubscribe function.
    */
   onAction(listener: (action: AppShortcutAction) => void): () => void;
+}
+
+export interface DaisySkillsApi {
+  /**
+   * Opens the user's skills folder in the OS file manager, creating it first
+   * when missing. Takes no argument - main owns the path.
+   */
+  openFolder(): Promise<SkillsOpenFolderResult>;
 }
 
 export interface DaisyTableExportApi {

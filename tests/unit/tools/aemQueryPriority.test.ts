@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NO_SKILLS } from '../../support/fakeSkillHost';
 import { executeAemQuery } from '../../../src/tools/aem-query/aemQuery';
 import { type BrokerOutcome, type ToolHost } from '../../../src/shared';
 import { tool } from '../../../src/tools/aem-query/tool';
@@ -119,6 +120,7 @@ describe('aem_query tool priority wiring', () => {
       }),
       environmentFacts: facts,
       configuredHosts: () => [],
+      skills: NO_SKILLS,
       openPage: () => Promise.resolve({ kind: 'no_view' }),
       requestUserInput: () => Promise.reject(new Error('not used')),
       clock: () => 1,

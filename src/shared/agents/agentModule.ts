@@ -67,8 +67,6 @@ export interface AgentToolkit {
   readonly instructions: string;
   readonly toolHandlers: Readonly<Record<string, AemToolExecutor>>;
   readonly toolDescriptors: readonly ToolDescriptor[];
-  /** The application's own bundled skill directories. */
-  readonly bundledSkillDirectories: readonly string[];
 }
 
 /**

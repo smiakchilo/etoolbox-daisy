@@ -23,6 +23,7 @@ import {
   type SdkSessionId,
   type ServerConfig,
   type SessionStreamState,
+  type SkillPromptResolution,
   type ToolCallId,
   type UserInputAnswer,
   type UserInputRequest,
@@ -204,11 +205,9 @@ export function createBridgeCurrentContext(
  * loaded from: the skills (`skills/`) and the model-facing instructions
  * (`instructions/`).
  *
- * `toolPolicy.ts` only honours `bundledSkillDirectories` for *absolute*,
- * application-owned paths, so this must return an absolute path and must
- * derive it solely from the application's own install location - never from
- * settings, the user's home directory, the project directory, or anything an
- * AEM response could influence.
+ * It must be absolute and derive solely from the application's own install
+ * location - never from settings, the user's home directory, the project
+ * directory, or anything an AEM response could influence.
  *
  * Packaged builds get `resources/` copied next to the app by
  * electron-builder's `extraResources` (`from: resources`, `to: resources`),
@@ -453,7 +452,7 @@ export interface InstallAgentServiceDeps {
    * model-facing directive that loads that skill. Optional and passed through
    * verbatim to `createAgentChatController`; omitted means no rewrite.
    */
-  readonly resolveSkillPrompt?: (prompt: string) => string;
+  readonly resolveSkillPrompt?: (prompt: string) => SkillPromptResolution;
   /** Reads every SDK session id a chat's journal recorded, for conversation deletion. See `AgentChatControllerDeps`. */
   readonly readChatSessionIds?: (chatId: ChatId) => readonly SdkSessionId[];
   /** Removes a chat's stored journal file, for conversation deletion. See `AgentChatControllerDeps`. */

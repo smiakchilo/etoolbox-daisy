@@ -3,7 +3,6 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   findProjectRoot,
-  resolveBundledSkillsDir,
   resolveCliExePath,
   resolvePlatformPackageDir,
   resolveSdkRuntimeExePath,
@@ -89,35 +88,6 @@ describe('resolveCliExePath', () => {
     const devRootDir = createScratchRoot();
     const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir };
     expect(() => resolveCliExePath(env)).toThrow(/copilot\.exe/);
-  });
-});
-
-describe('resolveBundledSkillsDir', () => {
-  it('resolves the extraResources location in a packaged build', () => {
-    const root = createScratchRoot();
-    const packaged = path.join(root, 'resources', 'skills');
-    mkdirSync(packaged, { recursive: true });
-
-    expect(
-      resolveBundledSkillsDir({ isPackaged: true, resourcesPath: root, devRootDir: 'unused' }),
-    ).toBe(packaged);
-  });
-
-  it('resolves the project location in development', () => {
-    const root = createScratchRoot();
-    const dev = path.join(root, 'resources', 'skills');
-    mkdirSync(dev, { recursive: true });
-
-    expect(
-      resolveBundledSkillsDir({ isPackaged: false, resourcesPath: 'unused', devRootDir: root }),
-    ).toBe(dev);
-  });
-
-  it('fails loudly when the directory was not packaged', () => {
-    const root = createScratchRoot();
-    expect(() =>
-      resolveBundledSkillsDir({ isPackaged: true, resourcesPath: root, devRootDir: 'unused' }),
-    ).toThrow(/extraResources/);
   });
 });
 

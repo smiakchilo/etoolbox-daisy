@@ -13,7 +13,6 @@ import { authPresenceFromToken, authStatusFromToken } from './auth';
 import { createOpenRouterClient } from './client';
 import { meta } from './meta';
 import { loadOpenRouterModelCatalog } from './modelCatalog';
-import { createSkillToolSpec, listSkillNames } from './skill';
 import { buildOpenRouterTools } from './toolMapping';
 import type { OpenRouterClient, ToolSpec } from './types';
 
@@ -50,7 +49,7 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
   let currentSettings: AppSettings | undefined;
   let inFlight: Promise<void> = Promise.resolve();
 
-  async function buildSpecs(): Promise<ToolSpec[]> {
+  function buildSpecs(): ToolSpec[] {
     const toolkit = host.toolkit();
     const specs: ToolSpec[] = [];
     for (const descriptorOrSpec of toolkit.toolDescriptors) {
@@ -63,13 +62,6 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
         executor,
       });
     }
-    const directories = toolkit.bundledSkillDirectories;
-    const skillSpec = createSkillToolSpec(
-      directories,
-      await listSkillNames(directories),
-      randomUUID,
-    );
-    if (skillSpec !== undefined) specs.push(skillSpec);
     return specs;
   }
 
@@ -84,7 +76,7 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
         apiKey: nextToken,
         fetch: host.createProxyFetch(connection),
       });
-      const specs = await buildSpecs();
+      const specs = buildSpecs();
       await host.installService(
         createOpenRouterAgentService({
           client: nextClient,

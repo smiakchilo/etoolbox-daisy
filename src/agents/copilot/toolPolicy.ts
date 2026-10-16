@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import type {
   CopilotSession,
   PermissionHandler,
@@ -113,26 +111,6 @@ export interface HardenedToolPolicy {
   readonly availableTools: string[];
   readonly excludedTools?: string[];
   /**
-   * Opt-in, narrowly scoped skill loading: absolute paths to directories that
-   * ship *inside the application bundle*.
-   *
-   * Skills are disabled by default (`enableSkills: false`). Supplying this
-   * flips `enableSkills` on, but only ever alongside an explicit
-   * `skillDirectories` list - it never enables discovery. Every other guard
-   * stays in force: `enableConfigDiscovery` remains `false` (so the user's
-   * own `~/.copilot` skills are not picked up), `includedBuiltinSkills`
-   * remains `[]` (so runtime-bundled skills stay excluded), and
-   * `availableTools` is untouched - enabling a skill grants no filesystem or
-   * other tool access whatsoever.
-   *
-   * Relative paths are rejected, because a relative path would resolve
-   * against the runtime child process's working directory rather than the
-   * application bundle, which is exactly the ambiguity that could turn
-   * "bundled skills only" into "arbitrary directory".
-   */
-  readonly bundledSkillDirectories?: readonly string[];
-
-  /**
    * Instruction text appended to the system prompt after the SDK's own
    * sections. Used for the bundled base AEM instruction that describes a
    * read-only AEM assistant.
@@ -193,7 +171,7 @@ function allowlistEntryMatches(entry: string, toolName: string): boolean {
  * memory, and nothing is persisted to disk or remembered by the runtime.
  */
 export function allowlistedToolPermissions(policy: HardenedToolPolicy): PermissionHandler {
-  const allowlist = buildAllowlist(policy);
+  const allowlist = [...policy.availableTools];
   const rejectRequest = denyAllPermissions();
   return (request, invocation) => {
     if (request.kind !== 'custom-tool') {
@@ -242,75 +220,15 @@ type HardenedResumeOverrides = Omit<
 >;
 
 /**
- * The single runtime helper tool that skill activation requires.
- *
- * Verified against the runtime: skills are not injected into the prompt
- * automatically - they are invoked through a dedicated built-in tool. The
- * model-facing name is `skill` (the Rust implementation is
- * `execute_skill`/`src/runtime/src/tools/skill_tool.rs`, which is NOT a valid
- * allowlist entry); its entire parameter schema is `{ skill: string }`.
- * With an empty allowlist the model hallucinates skill content instead of
- * loading it, and `tools.getCurrentMetadata()` reports `{"tools":[]}`
- * (both observed live).
- *
- * Granting this one tool is therefore the narrowest possible way to satisfy
- * "verify a bundled skill without granting arbitrary file reads": it can only
- * name a skill from the session's own skill catalogue, and that catalogue is
- * restricted to the application-owned directories below. It confers no
- * filesystem, shell, network, or Git capability. For reference, the full
- * built-in inventory this is being selected out of is: `powershell`,
- * `read_powershell`, `stop_powershell`, `list_powershell`, `glob`, `grep`,
- * `create`, `edit`, `skill`, `view`, `web_fetch`, `task`, `read_agent`,
- * `list_agents`, `write_agent`.
+ * The runtime's own skill machinery stays off (`enableSkills: false`): a skill
+ * is loaded by the application's `skill` tool like any other app tool, listed in
+ * `availableTools` as `custom:skill`, so no runtime-side skill directory exists.
  */
-export const SKILL_INVOCATION_TOOL = 'skill';
-
-/**
- * Validates the opt-in bundled-skill directories and produces the session
- * fields that enable them. Returns an empty object when the caller did not
- * ask for skills, so `enableSkills: false` from the hardened defaults stands.
- */
-function buildBundledSkillConfig(
-  policy: HardenedToolPolicy,
-): { enableSkills: true; skillDirectories: string[] } | Record<string, never> {
-  const directories = policy.bundledSkillDirectories;
-  if (directories === undefined || directories.length === 0) {
-    return {};
-  }
-  for (const directory of directories) {
-    if (typeof directory !== 'string' || directory.length === 0 || !path.isAbsolute(directory)) {
-      throw new Error(
-        `HardenedToolPolicy.bundledSkillDirectories entries must be absolute paths to ` +
-          `directories inside the application bundle; received ${JSON.stringify(directory)}`,
-      );
-    }
-  }
-  return { enableSkills: true, skillDirectories: [...directories] };
-}
-
-/**
- * Adds the skill invocation tool to the allowlist when - and only when -
- * bundled skills were requested. Done here rather than left to the caller so
- * that enabling a skill cannot tempt a caller into widening the allowlist
- * more than necessary.
- */
-function buildAllowlist(policy: HardenedToolPolicy): string[] {
-  const tools = [...policy.availableTools];
-  const wantsSkills =
-    policy.bundledSkillDirectories !== undefined && policy.bundledSkillDirectories.length > 0;
-  if (wantsSkills && !tools.includes(SKILL_INVOCATION_TOOL)) {
-    tools.push(SKILL_INVOCATION_TOOL);
-  }
-  return tools;
-}
-
 function buildHardenedConfig<TOverrides extends object>(
   policy: HardenedToolPolicy,
   overrides: TOverrides,
 ): TOverrides &
-  Omit<typeof HARDENED_SESSION_CONFIG_DEFAULTS, 'enableSkills'> & {
-    enableSkills: boolean;
-    skillDirectories?: string[];
+  typeof HARDENED_SESSION_CONFIG_DEFAULTS & {
     availableTools: string[];
     onPermissionRequest: PermissionHandler;
     systemMessage: SystemMessageConfig;
@@ -319,11 +237,7 @@ function buildHardenedConfig<TOverrides extends object>(
   return {
     ...overrides,
     ...HARDENED_SESSION_CONFIG_DEFAULTS,
-    // Applied after the defaults so it can flip `enableSkills` on, but it is
-    // derived solely from the validated policy - a caller's `overrides`
-    // cannot reach these fields (they are `Omit`ted from the override types).
-    ...buildBundledSkillConfig(policy),
-    availableTools: buildAllowlist(policy),
+    availableTools: [...policy.availableTools],
     // `excludedTools` is typed `string[] | ToolSet` (no `undefined` member) on
     // the SDK's own config types, so under `exactOptionalPropertyTypes` the
     // key must be omitted entirely rather than set to `undefined` when the

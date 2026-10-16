@@ -566,30 +566,6 @@ describe('sdkAgentService - tool lifecycle', () => {
     expect(assertLegalSequence(events).state).toBe('streaming');
   });
 
-  it('maps the runtime skill.invoked event onto the internal skill tool call, so it can be hidden and drive search-prose suppression', async () => {
-    const ids = counterIdGenerator();
-    const sessionHandle = makeFakeSession();
-    const { service, chatId, events } = await setUpOpenConversation(sessionHandle, ids);
-    const turnId = newTurnId(ids);
-    await service.sendPrompt({ chatId, turnId, prompt: 'find pages about waldo' });
-
-    sessionHandle.emit({
-      type: 'skill.invoked',
-      id: '11111111-1111-4111-8111-111111111111',
-      data: { name: 'search', content: '# search', trigger: 'agent-invoked' },
-    });
-
-    // The built-in skill tool never produces an external_tool.requested, so
-    // this mapping is the only way the transcript learns which skill loaded.
-    expect(events.find((event) => event.type === 'tool.call.requested')).toMatchObject({
-      toolCallId: '11111111-1111-4111-8111-111111111111',
-      toolName: 'skill',
-      arguments: { skill: 'search' },
-    });
-    expect(events.some((event) => event.type === 'tool.call.approved')).toBe(true);
-    assertLegalSequence(events);
-  });
-
   it("accepts a tool call that is the turn's first activity, with no preceding assistant.message_start (the live sending -> runningTool case)", async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
