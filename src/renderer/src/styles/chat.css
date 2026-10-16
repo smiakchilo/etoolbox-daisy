@@ -456,6 +456,17 @@
   --mod-table-header-font-size: var(--spectrum-font-size-100, 14px);
 }
 
+/* Spectrum's `sp-table-row` defaults to `cursor: pointer` (it assumes a
+   clickable/selectable row), and `cursor` is inherited, so the link cursor
+   reached *every* cell - including a plain `Node` value (a page-relative
+   `jcr:content/...` path that is not a link) and the `#` index. These rows are
+   not clickable: the only interactive element is the `Path` cell's anchor,
+   which keeps its own pointer cursor, so the row resets to the ordinary
+   cursor. */
+.chat-table-message__table sp-table-row {
+  cursor: auto;
+}
+
 /* Spectrum lays each row out as a flex row whose cells default to `flex: 1`, so
    the `#` column and the content column split the width evenly. Pin the `#`
    column to a fixed, non-wrapping width - identical in every row and the header,

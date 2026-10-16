@@ -378,6 +378,18 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     await expect(nodeCells).toHaveCount(2, { timeout: 30_000 });
     // Plain text, not a second navigable link (the row's Path cell is the link).
     expect(await nodeCells.first().evaluate((element) => element.tagName)).toBe('SPAN');
+    // The row is not clickable, so a page-relative Node path must not wear the
+    // link cursor Spectrum puts on `sp-table-row` by default - while the real
+    // Path link still does.
+    expect(
+      await nodeCells.first().evaluate((element) => getComputedStyle(element).cursor),
+    ).not.toBe('pointer');
+    expect(
+      await shell
+        .locator(`${ASSISTANT} a[data-daisy-link]`)
+        .first()
+        .evaluate((element) => getComputedStyle(element).cursor),
+    ).toBe('pointer');
 
     // Hover the blanked-path row: its node hangs off the page the row above
     // rendered, and the popover offers the node's CRX and nothing else.
