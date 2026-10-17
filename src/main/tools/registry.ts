@@ -192,7 +192,7 @@ export async function buildToolRegistry(params: {
   readonly loaders: ToolModuleLoaders;
   readonly host: ToolHostServices;
   /**
-   * The session-instructions template (`resources/prompts/session.md`),
+   * The session-instructions template (`resources/rules/session.md`),
    * read by the composition root. A template without exactly one
    * `{{tools}}` placeholder makes this reject: the session must never start
    * without the policy the template carries.

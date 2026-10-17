@@ -69,7 +69,7 @@ export function filterSkillsByName<T extends { readonly name: string }>(
   return skills.filter((skill) => skill.name.toLowerCase().startsWith(needle));
 }
 
-/** Where the skill list goes inside the catalogue template (`resources/prompts/skills.md`). */
+/** Where the skill list goes inside the catalogue template (`resources/rules/skills.md`). */
 export const SKILL_CATALOGUE_PLACEHOLDER = '{{catalogue}}';
 
 /** Replaced, wherever it appears, with {@link SKILL_TOOL_NAME}, so the tool's name has one source. */
@@ -81,7 +81,7 @@ export const SKILL_TOOL_PLACEHOLDER = '{{skillTool}}';
  * that matches a skill's description is answered with that skill even when the
  * user never typed `/name`.
  *
- * The prose is the markdown resource `resources/prompts/skills.md`, handed
+ * The prose is the markdown resource `resources/rules/skills.md`, handed
  * in as `template` (this module is shared code and reads no files). It must
  * contain exactly one {@link SKILL_CATALOGUE_PLACEHOLDER}, replaced by the list
  * of skills; a template without one throws. {@link SKILL_TOOL_PLACEHOLDER} may

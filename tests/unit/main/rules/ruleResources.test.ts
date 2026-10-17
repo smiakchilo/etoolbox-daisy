@@ -2,13 +2,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { loadPromptResources } from '../../../../src/main/prompts/promptResources';
+import { loadRuleResources } from '../../../../src/main/rules/ruleResources';
 
-describe('loadPromptResources', () => {
+describe('loadRuleResources', () => {
   let directory: string;
 
   beforeEach(async () => {
-    directory = await mkdtemp(path.join(os.tmpdir(), 'daisy-prompts-'));
+    directory = await mkdtemp(path.join(os.tmpdir(), 'daisy-rules-'));
   });
 
   afterEach(async () => {
@@ -18,7 +18,7 @@ describe('loadPromptResources', () => {
   const REQUIRED = [
     'session.md',
     'skills.md',
-    'rules.md',
+    'user-rules.md',
     'project-rules.md',
     'project-rules-ended.md',
   ] as const;
@@ -31,10 +31,10 @@ describe('loadPromptResources', () => {
 
   it('reads every required template', async () => {
     await writeRequired();
-    const resources = await loadPromptResources(directory);
+    const resources = await loadRuleResources(directory);
     expect(resources.sessionTemplate).toBe('Content of session.md\n');
     expect(resources.skillsTemplate).toBe('Content of skills.md\n');
-    expect(resources.rulesTemplate).toBe('Content of rules.md\n');
+    expect(resources.rulesTemplate).toBe('Content of user-rules.md\n');
     expect(resources.projectRulesTemplate).toBe('Content of project-rules.md\n');
     expect(resources.projectRulesEndedText).toBe('Content of project-rules-ended.md');
   });
@@ -44,7 +44,7 @@ describe('loadPromptResources', () => {
     async (missing) => {
       await writeRequired();
       await rm(path.join(directory, missing));
-      await expect(loadPromptResources(directory)).rejects.toThrow(/ENOENT/);
+      await expect(loadRuleResources(directory)).rejects.toThrow(/ENOENT/);
     },
   );
 });

@@ -336,14 +336,14 @@ export function renderToolFailureForModel(error: ToolError): string {
 
 /**
  * Where the enabled tools' paragraphs go inside the session-instructions
- * template (`resources/prompts/session.md`): everything before it is the
+ * template (`resources/rules/session.md`): everything before it is the
  * shared framing and policy, everything after it the shared closing.
  */
 export const SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER = '{{tools}}';
 
 /**
  * Session instructions for a real AEM session. The shared prose lives in a
- * markdown resource the application reads (`resources/prompts/session.md`)
+ * markdown resource the application reads (`resources/rules/session.md`)
  * and hands in as `template`; this function only splices the enabled tools'
  * paragraphs (their instructions) in at the one {@link SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER}.
  * With no enabled tool the middle is empty and the template still states

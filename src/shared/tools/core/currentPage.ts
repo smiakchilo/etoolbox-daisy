@@ -197,7 +197,7 @@ export function deriveCurrentPageContext(
  *
  * The block is **facts only**. How the model should read "this page", "here" or
  * "this host" - and that the page is never a search scope - is said once, in
- * the always-on session instructions (`resources/prompts/session.md`,
+ * the always-on session instructions (`resources/rules/session.md`,
  * "Current page context"), not repeated here. A page that is not content says
  * so as a fact (`Content path: none`).
  */

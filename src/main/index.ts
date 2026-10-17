@@ -69,7 +69,7 @@ import { registerSkillsIpcHandlers } from './ipc/skills';
 import { registerTableExportIpcHandlers } from './ipc/tableExport';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
-import { loadPromptResources } from './prompts/promptResources';
+import { loadRuleResources } from './rules/ruleResources';
 import { normalizeProjectLabel } from './rules/ruleFrontMatter';
 import { renderGenericRules, renderProjectRules } from './rules/ruleRendering';
 import { createRuleStore } from './rules/ruleStore';
@@ -629,9 +629,7 @@ if (!gotSingleInstanceLock) {
       mainDir: currentDir,
       join: (...segments) => path.join(...segments),
     });
-    const promptResources = await loadPromptResources(
-      path.join(bundledResourcesDirectory, 'prompts'),
-    );
+    const ruleResources = await loadRuleResources(path.join(bundledResourcesDirectory, 'rules'));
     // The one skill store: the bundled skills plus the user's own folder,
     // read once (`skillStore.load()` below, before the agent starts). The
     // tools reach it through `ToolHost.skills`.
@@ -660,7 +658,7 @@ if (!gotSingleInstanceLock) {
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
       loaders: discoverToolLoaders(),
-      instructionsTemplate: promptResources.sessionTemplate,
+      instructionsTemplate: ruleResources.sessionTemplate,
       host: {
         skills: skillHost,
         bridge: aemBridgeBroker,
@@ -865,13 +863,13 @@ if (!gotSingleInstanceLock) {
             // description, not only from an explicit `/name` (see
             // `renderSkillCatalogue`).
             const skillCatalogue = renderSkillCatalogue(
-              promptResources.skillsTemplate,
+              ruleResources.skillsTemplate,
               skillStore.modelCatalogue(),
             );
             // The user's generic rules come last, so they win over everything
-            // the application itself says (see `resources/prompts/rules.md`).
+            // the application itself says (see `resources/rules/user-rules.md`).
             const genericRules = renderGenericRules(
-              promptResources.rulesTemplate,
+              ruleResources.rulesTemplate,
               ruleStore.generic(),
             );
             return {
@@ -932,10 +930,10 @@ if (!gotSingleInstanceLock) {
                 if (rules.length === 0) return undefined;
                 return {
                   key: normalizeProjectLabel(label),
-                  block: renderProjectRules(promptResources.projectRulesTemplate, label, rules),
+                  block: renderProjectRules(ruleResources.projectRulesTemplate, label, rules),
                 };
               },
-              projectRulesEndedNote: promptResources.projectRulesEndedText,
+              projectRulesEndedNote: ruleResources.projectRulesEndedText,
               gatedController: agentChatController,
             },
             service,

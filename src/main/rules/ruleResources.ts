@@ -10,20 +10,20 @@ import path from 'node:path';
  *    (`composeAssistantInstructions`);
  *  - `skills.md` - the preamble of the skill catalogue, with `{{skillTool}}`
  *    and `{{catalogue}}` placeholders (`renderSkillCatalogue`);
- *  - `rules.md` - the framing of the user's generic rules, with one `{{rules}}`
+ *  - `user-rules.md` - the framing of the user's generic rules, with one `{{rules}}`
  *    placeholder;
  *  - `project-rules.md` - the framing of a project's rules, with `{{project}}`
  *    and `{{rules}}` placeholders;
  *  - `project-rules-ended.md` - the note telling the model that the project
  *    rules it was given no longer apply.
  *
- * The directory is the application's own `resources/prompts` (resolved by
+ * The directory is the application's own `resources/rules` (resolved by
  * `resolveBundledResourcesDirectory`), never a user, project or AEM location
  * (the user's own rules live in `appPaths.rules`). Every file is required: the
  * session instructions carry the read-only policy, so a missing file rejects
  * here and the application does not start without it.
  */
-export interface PromptResources {
+export interface RuleResources {
   readonly sessionTemplate: string;
   readonly skillsTemplate: string;
   readonly rulesTemplate: string;
@@ -31,7 +31,7 @@ export interface PromptResources {
   readonly projectRulesEndedText: string;
 }
 
-export async function loadPromptResources(directory: string): Promise<PromptResources> {
+export async function loadRuleResources(directory: string): Promise<RuleResources> {
   const read = (name: string): Promise<string> => readFile(path.join(directory, name), 'utf8');
   const [
     sessionTemplate,
@@ -42,7 +42,7 @@ export async function loadPromptResources(directory: string): Promise<PromptReso
   ] = await Promise.all([
     read('session.md'),
     read('skills.md'),
-    read('rules.md'),
+    read('user-rules.md'),
     read('project-rules.md'),
     read('project-rules-ended.md'),
   ]);

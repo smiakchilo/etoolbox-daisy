@@ -228,7 +228,7 @@ export function createBridgeCurrentContext(
 /**
  * Resolves the one directory the application's own bundled resources may be
  * loaded from: the skills (`skills/`) and the model-facing instructions
- * (`prompts/`).
+ * (`rules/`).
  *
  * It must be absolute and derive solely from the application's own install
  * location - never from settings, the user's home directory, the project

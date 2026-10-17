@@ -5,7 +5,7 @@ import {
   renderGenericRules,
   renderProjectRules,
 } from '../../../../src/main/rules/ruleRendering';
-import { REAL_PROJECT_RULES_TEMPLATE, REAL_RULES_TEMPLATE } from '../../../support/promptResources';
+import { REAL_PROJECT_RULES_TEMPLATE, REAL_RULES_TEMPLATE } from '../../../support/ruleResources';
 
 const rule = (name: string, body: string) => ({ name, projects: [] as string[], body });
 

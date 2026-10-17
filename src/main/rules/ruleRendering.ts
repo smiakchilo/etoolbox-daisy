@@ -1,9 +1,9 @@
 import type { LoadedRule } from './ruleStore';
 
-/** Where the rules go in `resources/prompts/rules.md` and `project-rules.md`. */
+/** Where the rules go in `resources/rules/user-rules.md` and `project-rules.md`. */
 export const RULES_PLACEHOLDER = '{{rules}}';
 
-/** Where the project's label goes in `resources/prompts/project-rules.md`. */
+/** Where the project's label goes in `resources/rules/project-rules.md`. */
 export const PROJECT_PLACEHOLDER = '{{project}}';
 
 function renderRuleList(rules: readonly LoadedRule[]): string {
@@ -18,7 +18,7 @@ function requireOnce(template: string, placeholder: string): void {
 
 /**
  * The block appended to the session instructions for the user's generic rules
- * (`resources/prompts/rules.md`); `""` when there are none. A template without
+ * (`resources/rules/user-rules.md`); `""` when there are none. A template without
  * its one {@link RULES_PLACEHOLDER} throws even when there are no rules, so a
  * broken resource is found at startup rather than the day a rule is added.
  */
@@ -30,7 +30,7 @@ export function renderGenericRules(template: string, rules: readonly LoadedRule[
 
 /**
  * The block put before a prompt for the rules of one project
- * (`resources/prompts/project-rules.md`); `""` when the project has none. The
+ * (`resources/rules/project-rules.md`); `""` when the project has none. The
  * project label is substituted around the rules, never inside them, so a rule
  * that happens to contain a placeholder is left as written.
  */

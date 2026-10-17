@@ -1073,7 +1073,7 @@ whole answer. See the `format_table` bullet in the tools section above and
 
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**
-session instructions (`resources/prompts/session.md`, composed by
+session instructions (`resources/rules/session.md`, composed by
 `composeAssistantInstructions` in `src/shared/tools/core/toolModule.ts`): a
 skill is only read when the model chooses to load it, so it can never
 *guarantee* an invariant. Per-tool "when to use me" guidance stays in each
@@ -1081,35 +1081,37 @@ tool's own `instructions` and descriptor — never a central, tool-enumerating
 skill — which is what scales as the public-AEM-REST-API tool count grows.
 
 **A skill states only its own procedure.** What holds for every search or every
-skill is written once, in `resources/prompts/`: the scope rules, the
+skill is written once, in `resources/rules/`: the scope rules, the
 current-page rules, ambiguity, read-only, and "a skill's input is the user's whole
 request". Do not repeat them in a skill (the old "reached two ways", "write no
 prose", "Pass `roots` only when...", "Never call `aem_query` yourself" and
 `## Read-only` paragraphs were each copied across three or four skills and are
 gone).
 
-### `resources/prompts/`
+### `resources/rules/`
 
-The model-facing prose that is not a skill, as markdown so it reads as text in the
-repository. Application-owned, shipped with `resources/` (`extraResources`), read
-by main from the install location only (`resolveBundledResourcesDirectory`).
-(Renamed from `resources/instructions/` when user rules arrived, so "instructions"
-no longer names two things.)
+The application's own rules: the model-facing prose that is not a skill, as markdown
+so it reads as text in the repository. Application-owned, shipped with `resources/`
+(`extraResources`), read by main from the install location only
+(`resolveBundledResourcesDirectory`). It parallels `resources/skills/` (bundled) and
+`~\etoolbox-daisy\skills` (the user's); here `resources/rules/` is the bundled side
+of `~\etoolbox-daisy\rules`. (Renamed from `resources/instructions/` when user rules
+arrived, so the word "rules" is used throughout.)
 
 | File | Holds | Placeholders |
 | --- | --- | --- |
 | `session.md` | The always-on session instructions: current-page context, **Scope**, **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
 | `skills.md` | The skill-catalogue preamble, incl. "a skill's input is the whole request" | `{{skillTool}}` (any number), `{{catalogue}}` - exactly once (`renderSkillCatalogue`) |
-| `rules.md` | The frame around the user's generic rules, appended to the session instructions | `{{rules}}` - exactly once (`renderGenericRules`) |
+| `user-rules.md` | The frame around the user's generic rules, appended to the session instructions | `{{rules}}` - exactly once (`renderGenericRules`) |
 | `project-rules.md` | The frame around a project's rules, sent on the model prompt | `{{project}}` and `{{rules}}` - each exactly once (`renderProjectRules`) |
 | `project-rules-ended.md` | The one-line note sent when a chat moves from a project with rules to one without | none |
 
-`session.md` and `skills.md` carry the read-only policy, so `loadPromptResources`
-(`src/main/prompts/`) rejects at startup when either is missing and a template
+`session.md` and `skills.md` carry the read-only policy, so `loadRuleResources`
+(`src/main/rules/ruleResources.ts`) rejects at startup when either is missing and a template
 without its placeholder throws: **the application does not start without them**.
 The three rules templates are loaded the same way. `src/shared` reads no files,
 so the compose functions take the template as a parameter. Tests read the real
-files (`tests/support/promptResources.ts`).
+files (`tests/support/ruleResources.ts`).
 
 ### User rules (`~\etoolbox-daisy\rules`)
 
@@ -1213,7 +1215,7 @@ and `npm run test:e2e` never pick these specs up.
 Current baseline: **`npm run test` → 3668 passed / 13 skipped** (+58 against the
 3610 below - **user rules**: generic and per-project `*.md` rules from
 `~\etoolbox-daisy\rules`, the Settings "Custom rules folder" link, and the
-`resources/instructions/` → `resources/prompts/` rename; see
+`resources/instructions/` → `resources/rules/` rename; see
 `docs/verification/followons-2026-10.md` "User rules ... (2026-10-17)"). Before
 that it was **3610 passed / 13 skipped** (+17 against
 the 3593 below - the skill subsystem's review fixes: link rejection, indexed-only
@@ -1488,7 +1490,7 @@ emphasized-action class keyed on its label, `composer.ts`) - see
 the page budget (2026-10-14)"). Before that, 3227 (+85 against the
 3142 measured at the start of that work; the 3112 below is the older logged
 figure - **search scope and instruction resources**: the model-facing prose moved
-out of TypeScript into `resources/instructions/` (now `resources/prompts/`; `session.md`, `skills.md`)
+out of TypeScript into `resources/instructions/` (now `resources/rules/`; `session.md`, `skills.md`)
 (the small per-tool search prose stays inline in each tool), a search's `roots`
 accepts a path fragment that
 `resolveSearchScope` resolves (config, then one `cq:Page` lookup, then a question
@@ -2317,7 +2319,7 @@ setup, teardown, fixture builder, wait, fake or locator helper to a test file:
 - unit: `jsdomGlobals`, `memoryStorage`, `scratchDirs`, `asyncWaits`,
   `configFixtures`, `aemQueryEnvelope`, `fakeAemTransport`, `fakeAemFixtures`,
   `fakeBrowserSide`, `fakeAgent`, `testClock`, `testIds`, `toolUnions`,
-  `agentDefinitions`, `promptResources`, `ipcHandlerHarness`;
+  `agentDefinitions`, `ruleResources`, `ipcHandlerHarness`;
 - E2E: `env` (scratch environment), `profile` (settings/profile writing), `app`
   (launch/close), `composer` (wait-ready, send), `fakeAgent`.
 
