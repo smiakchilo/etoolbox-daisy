@@ -152,3 +152,96 @@ test('a failed load does not replace an open panel, and the error banner is visi
     hanging.close();
   }
 });
+
+/**
+ * Two banner rows can be on screen at once: the pane-owned surface-status row
+ * (a Settings confirmation here - the same row History's delete confirmation
+ * rides) directly above the browser's own error row. Both are neutral-variant
+ * banners of the same dark gray, so stacked they read as one continuous strip
+ * (the report behind `browser.css`'s seam rule). The seam - a light
+ * `border-block-start` on the lower row, keyed on *both* rows' `open`
+ * attributes - must appear only when both are showing: never a stray line
+ * against the page while the row above is idle. The `open` attribute, the
+ * sibling adjacency and the outer-document win over the component's `:host`
+ * `border` shorthand are shadow-DOM facts jsdom cannot prove, so this drives
+ * the built app and reads real computed styles.
+ */
+test('two stacked banner rows are separated only while both are showing', async () => {
+  test.setTimeout(120_000);
+
+  const hanging = await startHangingOrigin();
+  const { home, env } = createLaunchProfile(scratchBase);
+
+  const base = defaultAppSettings();
+  writeSettings(
+    home,
+    appSettingsSchema.parse({
+      ...base,
+      hosts: [
+        ...base.hosts,
+        {
+          id: randomUUID(),
+          label: 'Hanging',
+          origin: hanging.origin,
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+      ],
+    }),
+  );
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await app.firstWindow();
+    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 30_000 });
+
+    const errorRow = page.locator('sp-alert-banner.browser-toolbar-message');
+    const confirmRow = page.locator('.surface-status-banner[open]');
+    const borderTopWidth = () => errorRow.evaluate((node) => getComputedStyle(node).borderTopWidth);
+
+    // Startup hosts picker is open. Pick the hanging host: the picker closes
+    // and a load begins that never settles.
+    await expect(page.locator(byTestId('hosts-panel'))).toBeVisible({ timeout: 10_000 });
+    await page.locator(`${byTestId('hosts-item')}[data-origin="${hanging.origin}"]`).click();
+    await expect.poll(() => hanging.hits > 0, { timeout: 30_000 }).toBe(true);
+
+    // Open Settings, then let the pending load fail: the browser's own error
+    // row opens, and the surface-status row above it is still idle.
+    await page.locator(byTestId('chat-settings')).click();
+    await page.locator(byTestId('settings-panel')).waitFor({ state: 'visible', timeout: 30_000 });
+    hanging.fail();
+    await expect(errorRow).toContainText(hanging.origin, { timeout: 60_000 });
+    await expect(errorRow).toBeVisible();
+
+    // Only the lower row is showing: no seam. A rule keyed on the lower row
+    // alone would draw a line against the page here, which is the defect the
+    // `open` keying exists to prevent.
+    expect(await borderTopWidth()).toBe('0px');
+
+    // Raising the Settings removal confirmation (the pane's surface-status
+    // row) stacks a second banner above the error row: now the seam appears.
+    await page.locator('.multifield__item').first().locator(byTestId('multifield-remove')).click();
+    await expect(confirmRow).toBeVisible({ timeout: 60_000 });
+    await expect(confirmRow.locator(byTestId('banner-confirm'))).toBeVisible();
+    // Wait for the row's reveal animation to settle at its pinned height
+    // before measuring geometry (a mid-animation height would read as an
+    // overlap that does not exist at rest).
+    await expect
+      .poll(async () => (await confirmRow.boundingBox())?.height ?? 0, { timeout: 10_000 })
+      .toBeGreaterThanOrEqual(40);
+    expect(await borderTopWidth()).not.toBe('0px');
+
+    // The two rows are stacked, not overlapped: the error row starts at or
+    // below the confirmation's bottom edge - the seam sits between them.
+    const confirmBox = await confirmRow.boundingBox();
+    const errorBox = await errorRow.boundingBox();
+    expect(confirmBox).not.toBeNull();
+    expect(errorBox).not.toBeNull();
+    expect(errorBox?.y ?? 0).toBeGreaterThanOrEqual(
+      (confirmBox?.y ?? 0) + (confirmBox?.height ?? 0) - 1,
+    );
+  } finally {
+    await app.close();
+    hanging.close();
+  }
+});

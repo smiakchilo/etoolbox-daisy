@@ -191,6 +191,19 @@
    rules of its own and exists only to disambiguate the row for a Playwright
    locator. */
 
+/* When the pane-owned surface-status row above it is showing as well, the
+   browser's own row needs a light seam: two neutral-variant banners of the
+   same dark gray would otherwise read as one continuous strip (History's
+   delete confirmation above a navigation timeout, for example). Keyed on
+   both rows' `open` attributes - the single attribute the status slots
+   toggle (see `settings/statusBanner.ts`, `lib/alertBanner.ts`; an idle row
+   is `display: none`) - so the browser row stays flush under the page
+   whenever either row is idle, and no line is drawn against the page for a
+   row that is not there. */
+.surface-status-banner[open] + .browser-toolbar-message[open] {
+  border-block-start: 1px solid var(--spectrum-gray-200, #e6e6e6);
+}
+
 /* Wraps the loading text inside the loading row. */
 .browser-toolbar-message__loading {
   display: inline-flex;

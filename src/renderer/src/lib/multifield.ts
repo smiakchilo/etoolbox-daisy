@@ -227,6 +227,9 @@ export function createMultifield(options: MultifieldOptions): Multifield {
       'Remove item',
       'multifield__action multifield__action--remove',
     );
+    // Test hook (additive, behaviour-free): a spec locates the row's remove
+    // control by id, scoped to its `.multifield__item` row.
+    removeButton.setAttribute('data-testid', 'multifield-remove');
 
     upButton.addEventListener('click', () => move(item.key, -1));
     downButton.addEventListener('click', () => move(item.key, 1));
