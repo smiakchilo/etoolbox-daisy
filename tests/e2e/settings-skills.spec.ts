@@ -47,8 +47,8 @@ test('the Skills tab opens the custom skills folder through main', async () => {
     await shell.locator(byTestId('settings-tab-skills')).click();
     const panel = shell.locator('.settings-panel__tab-panel[selected]');
     const badge = panel.locator('sp-contextual-help');
-    await expect(badge).toHaveCount(1);
-    expect(await badge.evaluate((node) => node.shadowRoot !== null)).toBe(true);
+    await expect(badge).toHaveCount(2);
+    expect(await badge.first().evaluate((node) => node.shadowRoot !== null)).toBe(true);
 
     await panel.locator(byTestId('skills-open-folder')).click();
     await expect
@@ -62,6 +62,18 @@ test('the Skills tab opens the custom skills folder through main', async () => {
     );
     expect(path.basename(opened ?? '')).toBe('skills');
     expect(existsSync(opened ?? '')).toBe(true);
+
+    await panel.locator(byTestId('rules-open-folder')).click();
+    await expect
+      .poll(() =>
+        app.evaluate(() => (globalThis as Record<string, unknown>)['__openedPaths'] as string[]),
+      )
+      .toHaveLength(2);
+    const openedPaths = await app.evaluate(
+      () => (globalThis as Record<string, unknown>)['__openedPaths'] as string[],
+    );
+    expect(path.basename(openedPaths[1] ?? '')).toBe('rules');
+    expect(existsSync(openedPaths[1] ?? '')).toBe(true);
   } finally {
     await app.close();
   }

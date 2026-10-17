@@ -21,10 +21,7 @@ import {
 } from '../../../src/shared';
 import { NO_SKILLS } from '../../support/fakeSkillHost';
 import { createCountingIdGenerator } from '../../support/testIds';
-import {
-  MINIMAL_SESSION_TEMPLATE,
-  REAL_SESSION_TEMPLATE,
-} from '../../support/instructionResources';
+import { MINIMAL_SESSION_TEMPLATE, REAL_SESSION_TEMPLATE } from '../../support/promptResources';
 
 const ids = createCountingIdGenerator('reg');
 const host: ToolHostServices = {

@@ -168,6 +168,28 @@ export interface AgentChatControllerDeps {
    * like `readChatSessionIds`.
    */
   readonly removeChatJournal?: (chatId: ChatId) => boolean;
+  /**
+   * The user's rules for the project the browser pane is on right now, or
+   * `undefined` when that project (or no project) has none. `key` identifies
+   * the project; `block` is the model-facing text. Read fresh at send time.
+   * The controller hands the block to the model with a conversation's first
+   * prompt and again whenever the key changes - the model keeps what it was
+   * told, so repeating it every prompt would only cost tokens. Optional so a
+   * unit test can construct a controller with no rules.
+   */
+  readonly currentProjectRules?: () => ProjectRulesContext | undefined;
+  /**
+   * Said once when the pane leaves a project whose rules the model was given
+   * for a place that has none. Required for the leaving to be announced; without
+   * it the old rules would silently keep applying in the model's mind.
+   */
+  readonly projectRulesEndedNote?: string;
+}
+
+/** One project's user rules, as `AgentChatControllerDeps.currentProjectRules` reports them. */
+export interface ProjectRulesContext {
+  readonly key: string;
+  readonly block: string;
 }
 
 export interface AgentChatController {
@@ -313,10 +335,8 @@ function blockReasonError(reason: CanSendBlockReason): AgentChatError {
  * context as opaque: `agentComposition.ts` owns turning the browser's URL into
  * safe, model-facing text.
  */
-export function composeModelPrompt(pageContext: string | undefined, prompt: string): string {
-  return pageContext === undefined || pageContext.length === 0
-    ? prompt
-    : `${pageContext}\n\n${prompt}`;
+export function composeModelPrompt(context: string | undefined, prompt: string): string {
+  return context === undefined || context.length === 0 ? prompt : `${context}\n\n${prompt}`;
 }
 
 interface ActiveTurn {
@@ -354,6 +374,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 
   let activeChatId: ChatId | undefined;
   let activeTurn: ActiveTurn | undefined;
+  /** The key of the project whose rules the model was last given in this conversation; `undefined` for none. */
+  let projectRulesSent: string | undefined;
   let pendingInput: PendingInput | undefined;
   /**
    * Single-flight for `openConversation`. At most one
@@ -616,6 +638,9 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // is tagged with the previous chatId, which by then no longer matches
     // `activeChatId` - `isOwnedEvent` above excludes it without a race.
     activeChatId = request.chatId;
+    // A conversation opened (or reopened under a new SDK session) has not been
+    // told any project rules yet.
+    projectRulesSent = undefined;
     if (!isSameChat) {
       activeTurn = undefined;
       sessionStatus = { ...sessionStatus, state: 'idle' };
@@ -708,6 +733,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       modelPrompt: request.prompt,
     };
     const modelPrompt = skillPrompt.modelPrompt;
+    // Project rules go in front of the page context, only when they changed.
+    const projectRules = deps.currentProjectRules?.();
+    const projectRulesKey = projectRules?.key;
+    let rulesBlock: string | undefined;
+    if (projectRulesKey !== projectRulesSent) {
+      rulesBlock = projectRules?.block ?? deps.projectRulesEndedNote;
+    }
     // Staged, not written: the journal flushes it immediately before the
     // turn's first event (the service emits `session.state.changed: sending`
     // synchronously inside `sendPrompt`), so the prompt precedes the turn's
@@ -723,7 +755,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const result = await agentService.sendPrompt({
       chatId: request.chatId,
       turnId,
-      prompt: composeModelPrompt(pageContext, modelPrompt),
+      prompt: composeModelPrompt(rulesBlock, composeModelPrompt(pageContext, modelPrompt)),
       displayPrompt: request.prompt,
     });
     if (!result.ok) {
@@ -733,6 +765,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       if (activeTurn.turnId === turnId) activeTurn = undefined;
       return { ok: false, error: toAgentChatError(result.error) };
     }
+    // Only a prompt that reached the model counts as having told it the rules.
+    if (activeChatId === request.chatId) projectRulesSent = projectRulesKey;
     // The skill is already in the prompt; this pair only makes the load visible
     // (journal, and the transcript's prose suppression for a search skill). It
     // follows a successful send because a tool call is only legal once the turn

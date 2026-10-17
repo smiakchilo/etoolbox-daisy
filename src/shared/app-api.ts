@@ -39,6 +39,7 @@ import type {
   StopFindRequest,
   ViewBounds,
 } from './browser-ipc';
+import type { RulesOpenFolderResult } from './rules-ipc';
 import type { SkillsOpenFolderResult } from './skills-ipc';
 import type {
   TableExportRevealResult,
@@ -115,6 +116,8 @@ export interface DaisyAppApi {
   readonly tableExport: DaisyTableExportApi;
   /** The user-skills folder surface behind the Settings "Skills" tab. */
   readonly skills: DaisySkillsApi;
+  /** The user-rules folder surface behind the Settings "Skills" tab. */
+  readonly rules: DaisyRulesApi;
   /**
    * The application-wide keyboard shortcut surface: main resolves a keystroke
    * to a semantic action (there is no menu bar to carry an accelerator) and
@@ -129,6 +132,14 @@ export interface DaisyShortcutApi {
    * keyboard shortcut resolved to. Returns an unsubscribe function.
    */
   onAction(listener: (action: AppShortcutAction) => void): () => void;
+}
+
+export interface DaisyRulesApi {
+  /**
+   * Opens the user's rules folder in the OS file manager, creating it first
+   * when missing. Takes no argument - main owns the path.
+   */
+  openFolder(): Promise<RulesOpenFolderResult>;
 }
 
 export interface DaisySkillsApi {

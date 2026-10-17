@@ -1,0 +1,56 @@
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+/**
+ * The model-facing prose the application ships as markdown, so it reads as text
+ * in the repository instead of as string constants:
+ *
+ *  - `session.md` - the always-on session instructions, with one `{{tools}}`
+ *    placeholder where the enabled tools' paragraphs go
+ *    (`composeAssistantInstructions`);
+ *  - `skills.md` - the preamble of the skill catalogue, with `{{skillTool}}`
+ *    and `{{catalogue}}` placeholders (`renderSkillCatalogue`);
+ *  - `rules.md` - the framing of the user's generic rules, with one `{{rules}}`
+ *    placeholder;
+ *  - `project-rules.md` - the framing of a project's rules, with `{{project}}`
+ *    and `{{rules}}` placeholders;
+ *  - `project-rules-ended.md` - the note telling the model that the project
+ *    rules it was given no longer apply.
+ *
+ * The directory is the application's own `resources/prompts` (resolved by
+ * `resolveBundledResourcesDirectory`), never a user, project or AEM location
+ * (the user's own rules live in `appPaths.rules`). Every file is required: the
+ * session instructions carry the read-only policy, so a missing file rejects
+ * here and the application does not start without it.
+ */
+export interface PromptResources {
+  readonly sessionTemplate: string;
+  readonly skillsTemplate: string;
+  readonly rulesTemplate: string;
+  readonly projectRulesTemplate: string;
+  readonly projectRulesEndedText: string;
+}
+
+export async function loadPromptResources(directory: string): Promise<PromptResources> {
+  const read = (name: string): Promise<string> => readFile(path.join(directory, name), 'utf8');
+  const [
+    sessionTemplate,
+    skillsTemplate,
+    rulesTemplate,
+    projectRulesTemplate,
+    projectRulesEndedText,
+  ] = await Promise.all([
+    read('session.md'),
+    read('skills.md'),
+    read('rules.md'),
+    read('project-rules.md'),
+    read('project-rules-ended.md'),
+  ]);
+  return {
+    sessionTemplate,
+    skillsTemplate,
+    rulesTemplate,
+    projectRulesTemplate,
+    projectRulesEndedText: projectRulesEndedText.trim(),
+  };
+}

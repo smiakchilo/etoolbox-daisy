@@ -20,6 +20,7 @@ import {
   createConfiguredHosts,
   createCurrentAemServerContext,
   createCurrentPageContext,
+  createCurrentProjectLabel,
   createDeferredRuntimeRecycler,
   createEnvironmentFacts,
   createLateBoundAemToolContext,
@@ -58,16 +59,20 @@ import {
 } from './chatJournalReader';
 import { installContentSecurityPolicy } from './csp';
 import { mergeDisabledFeatures } from './disabledFeatures';
-import { loadInstructionResources } from './instructions/instructionResources';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
+import { registerRulesIpcHandlers } from './ipc/rules';
 import { registerSkillsIpcHandlers } from './ipc/skills';
 import { registerTableExportIpcHandlers } from './ipc/tableExport';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { createLogger } from './logger';
+import { loadPromptResources } from './prompts/promptResources';
+import { normalizeProjectLabel } from './rules/ruleFrontMatter';
+import { renderGenericRules, renderProjectRules } from './rules/ruleRendering';
+import { createRuleStore } from './rules/ruleStore';
 import { createSecretStore } from './secretStore';
 import { installWebContentsSecurityGuard } from './security';
 import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
@@ -545,6 +550,13 @@ if (!gotSingleInstanceLock) {
       mainWebContentsId: mainWindow.webContents.id,
     });
 
+    registerRulesIpcHandlers({
+      directory: appPaths.rules,
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
+    });
+
     // --- AEM tool / agent chat wiring (implementation-plan.md step 07) ---
     //
     // Order matters: the bridge transport/broker must exist before the
@@ -592,6 +604,13 @@ if (!gotSingleInstanceLock) {
       () => loadSettingsSync(appPaths.settings).hosts,
       () => loadSettingsSync(appPaths.settings).projects,
     );
+    // The label of the project the pane's host belongs to, for the user's
+    // project rules. Read fresh, like the facts above.
+    const currentProjectLabel = createCurrentProjectLabel(
+      () => browserController.currentDocumentUrl(),
+      () => loadSettingsSync(appPaths.settings).hosts,
+      () => loadSettingsSync(appPaths.settings).projects,
+    );
     // The model-facing host catalogue (labels + origins + roots) and the
     // agent's navigation capability. `openPage` resolves the origin from the
     // configured host itself, so no origin reaches the pane from a tool
@@ -610,8 +629,8 @@ if (!gotSingleInstanceLock) {
       mainDir: currentDir,
       join: (...segments) => path.join(...segments),
     });
-    const instructionResources = await loadInstructionResources(
-      path.join(bundledResourcesDirectory, 'instructions'),
+    const promptResources = await loadPromptResources(
+      path.join(bundledResourcesDirectory, 'prompts'),
     );
     // The one skill store: the bundled skills plus the user's own folder,
     // read once (`skillStore.load()` below, before the agent starts). The
@@ -621,6 +640,14 @@ if (!gotSingleInstanceLock) {
       userDirectory: appPaths.skills,
       onRejected: () => {
         logger.warn('SKILL_REJECTED', { count: 1 });
+      },
+    });
+    // The user's own rules, read once like the skills. Generic rules join the
+    // session instructions; project rules ride with a chat's prompts.
+    const ruleStore = createRuleStore({
+      directory: appPaths.rules,
+      onRejected: () => {
+        logger.warn('RULE_REJECTED', { count: 1 });
       },
     });
     const skillHost = createSkillHost({
@@ -633,7 +660,7 @@ if (!gotSingleInstanceLock) {
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
       loaders: discoverToolLoaders(),
-      instructionsTemplate: instructionResources.sessionTemplate,
+      instructionsTemplate: promptResources.sessionTemplate,
       host: {
         skills: skillHost,
         bridge: aemBridgeBroker,
@@ -838,15 +865,20 @@ if (!gotSingleInstanceLock) {
             // description, not only from an explicit `/name` (see
             // `renderSkillCatalogue`).
             const skillCatalogue = renderSkillCatalogue(
-              instructionResources.skillsTemplate,
+              promptResources.skillsTemplate,
               skillStore.modelCatalogue(),
+            );
+            // The user's generic rules come last, so they win over everything
+            // the application itself says (see `resources/prompts/rules.md`).
+            const genericRules = renderGenericRules(
+              promptResources.rulesTemplate,
+              ruleStore.generic(),
             );
             return {
               allowlistEntries: toolRegistry.allowlistEntries,
-              instructions:
-                skillCatalogue === ''
-                  ? toolRegistry.instructions
-                  : `${toolRegistry.instructions}\n\n${skillCatalogue}`,
+              instructions: [toolRegistry.instructions, skillCatalogue, genericRules]
+                .filter((part) => part !== '')
+                .join('\n\n'),
               toolHandlers: toolRegistry.toolHandlers,
               toolDescriptors: toolRegistry.descriptors,
             };
@@ -890,6 +922,20 @@ if (!gotSingleInstanceLock) {
               // owns, kept out of the controller.
               readChatSessionIds: (chatId) => readChatSessionIds(appPaths.chats, chatId),
               removeChatJournal: (chatId) => removeChatJournal(appPaths.chats, chatId),
+              // The rules of the project the pane's host belongs to, matched by
+              // label and read fresh, so a host switch (or a label edit in
+              // Settings) is seen on the very next prompt.
+              currentProjectRules: () => {
+                const label = currentProjectLabel();
+                if (label === undefined) return undefined;
+                const rules = ruleStore.forProject(label);
+                if (rules.length === 0) return undefined;
+                return {
+                  key: normalizeProjectLabel(label),
+                  block: renderProjectRules(promptResources.projectRulesTemplate, label, rules),
+                };
+              },
+              projectRulesEndedNote: promptResources.projectRulesEndedText,
               gatedController: agentChatController,
             },
             service,
@@ -924,7 +970,7 @@ if (!gotSingleInstanceLock) {
           // is off the window's startup path: `startAgentRuntime` runs after the
           // shell has painted (see `runAfterFrameLoad`). The store never
           // rejects, so this can never block the agent from starting.
-          await skillStore.load();
+          await Promise.all([skillStore.load(), ruleStore.load()]);
           await hub.start(storedSettings);
         },
         // No free-text field exists on `Logger` by design (see its own module

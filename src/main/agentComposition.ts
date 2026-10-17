@@ -2,6 +2,7 @@ import {
   createAgentChatController,
   type AgentChatController,
   type AemServerContext,
+  type ProjectRulesContext,
   type StartupGatedAgentChatController,
 } from './agentChatController';
 import type { FakeAgentService } from './agents/fakeAgentService';
@@ -145,6 +146,30 @@ export function createEnvironmentFacts(
 }
 
 /**
+ * Builds the provider of the label of the project the host the browser pane is
+ * on belongs to, for the user's project rules. Resolved the same way as
+ * {@link createEnvironmentFacts} (the live document URL matched against the
+ * configured hosts by origin, read fresh each call), then through the host's
+ * `projectId`. `undefined` when there is no document, the origin is not a
+ * configured host, or the host selects no project (or one that no longer exists).
+ */
+export function createCurrentProjectLabel(
+  getDocumentUrl: () => string | undefined,
+  getHosts: () => readonly ServerConfig[],
+  getProjects: () => readonly ProjectConfig[],
+): () => string | undefined {
+  return () => {
+    const documentUrl = getDocumentUrl();
+    if (documentUrl === undefined) return undefined;
+    const target = parseNavigationTarget(documentUrl);
+    if (!target.ok) return undefined;
+    const host = getHosts().find((candidate) => originsMatch(candidate.origin, target.origin));
+    if (host?.projectId === undefined) return undefined;
+    return getProjects().find((project) => project.id === host.projectId)?.label;
+  };
+}
+
+/**
  * Builds the model-facing host catalogue the `environment_facts` tool and the
  * `browser_navigate` tool read: every configured host as a label, an origin and
  * its effective roots (resolved through the host's selected project).
@@ -203,7 +228,7 @@ export function createBridgeCurrentContext(
 /**
  * Resolves the one directory the application's own bundled resources may be
  * loaded from: the skills (`skills/`) and the model-facing instructions
- * (`instructions/`).
+ * (`prompts/`).
  *
  * It must be absolute and derive solely from the application's own install
  * location - never from settings, the user's home directory, the project
@@ -457,6 +482,10 @@ export interface InstallAgentServiceDeps {
   readonly readChatSessionIds?: (chatId: ChatId) => readonly SdkSessionId[];
   /** Removes a chat's stored journal file, for conversation deletion. See `AgentChatControllerDeps`. */
   readonly removeChatJournal?: (chatId: ChatId) => boolean;
+  /** The user's rules for the pane's current project. See `AgentChatControllerDeps`. */
+  readonly currentProjectRules?: () => ProjectRulesContext | undefined;
+  /** Said once when the pane leaves a project that had rules. See `AgentChatControllerDeps`. */
+  readonly projectRulesEndedNote?: string;
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
@@ -494,6 +523,12 @@ export async function installAgentService(
       ? { readChatSessionIds: deps.readChatSessionIds }
       : {}),
     ...(deps.removeChatJournal !== undefined ? { removeChatJournal: deps.removeChatJournal } : {}),
+    ...(deps.currentProjectRules !== undefined
+      ? { currentProjectRules: deps.currentProjectRules }
+      : {}),
+    ...(deps.projectRulesEndedNote !== undefined
+      ? { projectRulesEndedNote: deps.projectRulesEndedNote }
+      : {}),
   });
   await deps.gatedController.replaceDelegate(controller);
 }

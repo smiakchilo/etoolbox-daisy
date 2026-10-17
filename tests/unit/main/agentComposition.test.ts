@@ -9,6 +9,7 @@ import {
   createConfiguredHosts,
   createCurrentAemServerContext,
   createCurrentPageContext,
+  createCurrentProjectLabel,
   createEnvironmentFacts,
   createLateBoundAemToolContext,
   createLateBoundUserInputActions,
@@ -306,6 +307,75 @@ describe('createConfiguredHosts', () => {
         damRoots: [DAM_ROOT_DEFAULT],
       },
     ]);
+  });
+});
+
+describe('createCurrentProjectLabel', () => {
+  const project = projectConfigSchema.parse({
+    id: newProjectId(() => 'project-acme'),
+    label: 'Acme',
+  });
+
+  function host(origin: string, projectId?: ProjectId): ServerConfig {
+    return serverConfigSchema.parse({
+      id: newServerId(counterIds('server')),
+      label: 'Host',
+      origin,
+      color: { kind: 'swatch', swatch: 'blue' },
+      ...(projectId !== undefined ? { projectId } : {}),
+      revision: 0,
+    });
+  }
+
+  it('returns the label of the project the open page’s host selects', () => {
+    const label = createCurrentProjectLabel(
+      () => 'https://acme.example/content/site/page.html',
+      () => [host('https://other.example'), host('https://acme.example', project.id)],
+      () => [project],
+    );
+    expect(label()).toBe('Acme');
+  });
+
+  it('reads the page fresh on every call', () => {
+    let url: string | undefined = 'https://acme.example/';
+    const label = createCurrentProjectLabel(
+      () => url,
+      () => [host('https://acme.example', project.id)],
+      () => [project],
+    );
+    expect(label()).toBe('Acme');
+    url = 'https://elsewhere.example/';
+    expect(label()).toBeUndefined();
+  });
+
+  it.each([
+    ['there is no document', undefined, [host('https://acme.example', project.id)], [project]],
+    [
+      'the document is not a URL',
+      'not a url',
+      [host('https://acme.example', project.id)],
+      [project],
+    ],
+    [
+      'the host selects no project',
+      'https://acme.example/',
+      [host('https://acme.example')],
+      [project],
+    ],
+    [
+      'the selected project no longer exists',
+      'https://acme.example/',
+      [host('https://acme.example', project.id)],
+      [],
+    ],
+  ])('is undefined when %s', (_label, url, hosts, projects) => {
+    expect(
+      createCurrentProjectLabel(
+        () => url,
+        () => hosts,
+        () => projects,
+      )(),
+    ).toBeUndefined();
   });
 });
 

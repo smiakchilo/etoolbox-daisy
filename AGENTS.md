@@ -998,10 +998,12 @@ link/junction is rejected (`Links are not followed.`), and paths are real-path
 contained.
 Rejections log `SKILL_REJECTED`; a failed script logs `SKILL_SCRIPT_FAILED`.
 
-**Settings "Skills" tab** (after Agents) holds one action link, **Custom skills
+**Settings "Skills" tab** (after Agents) holds two action links, **Custom skills
 folder** (`skills:open-folder`, no payload: main creates the folder and opens it in
-the OS file manager), with contextual help. There is no reload button and no
-per-skill list. Test ids: `settings-tab-skills`, `skills-open-folder`.
+the OS file manager) and **Custom rules folder** (`rules:open-folder`, same
+shape - see "User rules" below), each with contextual help. There is no reload
+button and no per-skill list. Test ids: `settings-tab-skills`, `skills-open-folder`,
+`rules-open-folder`.
 
 Every **new** bundled skill must carry a user-facing summary in its front
 matter: a `metadata.user-description` (one friendly phrase, no technical
@@ -1071,7 +1073,7 @@ whole answer. See the `format_table` bullet in the tools section above and
 
 The read-only / no-side-channel policy that used to live in the on-demand
 `aem-tool-selection` skill (deleted) now lives in the **always-injected**
-session instructions (`resources/instructions/session.md`, composed by
+session instructions (`resources/prompts/session.md`, composed by
 `composeAssistantInstructions` in `src/shared/tools/core/toolModule.ts`): a
 skill is only read when the model chooses to load it, so it can never
 *guarantee* an invariant. Per-tool "when to use me" guidance stays in each
@@ -1079,29 +1081,71 @@ tool's own `instructions` and descriptor — never a central, tool-enumerating
 skill — which is what scales as the public-AEM-REST-API tool count grows.
 
 **A skill states only its own procedure.** What holds for every search or every
-skill is written once, in `resources/instructions/`: the scope rules, the
+skill is written once, in `resources/prompts/`: the scope rules, the
 current-page rules, ambiguity, read-only, and "a skill's input is the user's whole
 request". Do not repeat them in a skill (the old "reached two ways", "write no
 prose", "Pass `roots` only when...", "Never call `aem_query` yourself" and
 `## Read-only` paragraphs were each copied across three or four skills and are
 gone).
 
-### `resources/instructions/`
+### `resources/prompts/`
 
 The model-facing prose that is not a skill, as markdown so it reads as text in the
 repository. Application-owned, shipped with `resources/` (`extraResources`), read
 by main from the install location only (`resolveBundledResourcesDirectory`).
+(Renamed from `resources/instructions/` when user rules arrived, so "instructions"
+no longer names two things.)
 
 | File | Holds | Placeholders |
 | --- | --- | --- |
 | `session.md` | The always-on session instructions: current-page context, **Scope**, **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
 | `skills.md` | The skill-catalogue preamble, incl. "a skill's input is the whole request" | `{{skillTool}}` (any number), `{{catalogue}}` - exactly once (`renderSkillCatalogue`) |
+| `rules.md` | The frame around the user's generic rules, appended to the session instructions | `{{rules}}` - exactly once (`renderGenericRules`) |
+| `project-rules.md` | The frame around a project's rules, sent on the model prompt | `{{project}}` and `{{rules}}` - each exactly once (`renderProjectRules`) |
+| `project-rules-ended.md` | The one-line note sent when a chat moves from a project with rules to one without | none |
 
-`session.md` and `skills.md` carry the read-only policy, so `loadInstructionResources`
-(`src/main/instructions/`) rejects at startup when either is missing and a template
+`session.md` and `skills.md` carry the read-only policy, so `loadPromptResources`
+(`src/main/prompts/`) rejects at startup when either is missing and a template
 without its placeholder throws: **the application does not start without them**.
-`src/shared` reads no files, so the compose functions take the
-template as a parameter. Tests read the real files (`tests/support/instructionResources.ts`).
+The three rules templates are loaded the same way. `src/shared` reads no files,
+so the compose functions take the template as a parameter. Tests read the real
+files (`tests/support/promptResources.ts`).
+
+### User rules (`~\etoolbox-daisy\rules`)
+
+The user's own standing instructions, as `*.md` files, merged with the bundled
+ones. Named **rules** (the Open Agent term), not "instructions". Mirrors the skill
+subsystem: read **at startup only** (restart to apply) by `src/main/rules/`
+(`ruleStore.ts`, `ruleFrontMatter.ts`, `ruleRendering.ts`), the folder is
+`appPaths.rules`, and the Settings **Skills** tab carries a second action link,
+**Custom rules folder** (`rules:open-folder`, test id `rules-open-folder`).
+
+- **Format.** A rule is one `.md` file; its file name is the rule's name. Optional
+  front matter with a single key, `project:` (a label or a list of labels, matched
+  trimmed and case-insensitively against a Settings **Project** label). No front
+  matter, or no `project` key, makes the rule **generic**. Subfolders, dot-entries
+  and links are ignored; an unreadable or malformed file is rejected
+  (`RULE_REJECTED`) and the rest still load.
+- **Limits.** One file 32 KB (`RULE_FILE_MAX_BYTES`); generic rules 64 KB in total
+  (`GENERIC_RULES_MAX_BYTES`); each project 16 KB (`PROJECT_RULES_MAX_BYTES`). A
+  rule that would overflow a budget is rejected whole, in name order.
+- **Generic rules** join the session instructions (`index.ts` composes
+  `toolRegistry.instructions`, the skill catalogue, then the generic rules **last**,
+  so they win on a conflict).
+- **Project rules** cannot join the session instructions: those are fixed when the
+  agent runtime starts, while a chat can change host - and so project - mid-conversation.
+  They ride on the **model prompt** instead (`agentChatController.sendMessage`): with
+  a chat's first prompt, again whenever the current project's rules differ from the
+  last ones sent, after any `openConversation`, and - once - an "ended" note when the
+  chat moves to a project with none. The project is resolved fresh per prompt from the
+  host the pane is on (`createCurrentProjectLabel`, `agentComposition.ts`). A failed
+  send does not count as sent. The block precedes the current-page block and is
+  **not journaled** (`user.prompt.pageContext` is capped at 8000 characters and a new
+  journal field would be a contract change - `docs/backlog.md` "User rules:
+  deferred follow-ups").
+- **Precedence.** User rules win over the bundled instructions on a conflict,
+  **except** the read-only policy (rule 7.4): a rule cannot grant an AEM write path,
+  and none exists to grant.
 
 **The roots are a convenience, not a boundary.** A user may search any path; the
 tools never refuse or question a full path outside the host's roots. What the model
@@ -1166,7 +1210,12 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3610 passed / 13 skipped** (+17 against
+Current baseline: **`npm run test` → 3668 passed / 13 skipped** (+58 against the
+3610 below - **user rules**: generic and per-project `*.md` rules from
+`~\etoolbox-daisy\rules`, the Settings "Custom rules folder" link, and the
+`resources/instructions/` → `resources/prompts/` rename; see
+`docs/verification/followons-2026-10.md` "User rules ... (2026-10-17)"). Before
+that it was **3610 passed / 13 skipped** (+17 against
 the 3593 below - the skill subsystem's review fixes: link rejection, indexed-only
 resource reads, module confinement, sandbox limits at the worker boundary, the
 per-turn script gate and JSON `input`; see `docs/verification/followons-2026-10.md`
@@ -1439,7 +1488,7 @@ emphasized-action class keyed on its label, `composer.ts`) - see
 the page budget (2026-10-14)"). Before that, 3227 (+85 against the
 3142 measured at the start of that work; the 3112 below is the older logged
 figure - **search scope and instruction resources**: the model-facing prose moved
-out of TypeScript into `resources/instructions/` (`session.md`, `skills.md`)
+out of TypeScript into `resources/instructions/` (now `resources/prompts/`; `session.md`, `skills.md`)
 (the small per-tool search prose stays inline in each tool), a search's `roots`
 accepts a path fragment that
 `resolveSearchScope` resolves (config, then one `cq:Page` lookup, then a question
@@ -2268,7 +2317,7 @@ setup, teardown, fixture builder, wait, fake or locator helper to a test file:
 - unit: `jsdomGlobals`, `memoryStorage`, `scratchDirs`, `asyncWaits`,
   `configFixtures`, `aemQueryEnvelope`, `fakeAemTransport`, `fakeAemFixtures`,
   `fakeBrowserSide`, `fakeAgent`, `testClock`, `testIds`, `toolUnions`,
-  `agentDefinitions`, `instructionResources`;
+  `agentDefinitions`, `promptResources`, `ipcHandlerHarness`;
 - E2E: `env` (scratch environment), `profile` (settings/profile writing), `app`
   (launch/close), `composer` (wait-ready, send), `fakeAgent`.
 

@@ -18,6 +18,7 @@ let restoreGlobals: () => void;
 let status: StatusBannerSink;
 
 const openFolder = vi.fn();
+const openRulesFolder = vi.fn();
 const showError = vi.fn();
 
 function openButton(element: HTMLElement): HTMLElement {
@@ -26,10 +27,18 @@ function openButton(element: HTMLElement): HTMLElement {
   return button;
 }
 
+function rulesButton(element: HTMLElement): HTMLElement {
+  const button = element.querySelector<HTMLElement>(byTestId('rules-open-folder'));
+  if (button === null) throw new Error('rules open-folder control not found');
+  return button;
+}
+
 beforeEach(() => {
   openFolder.mockReset();
+  openRulesFolder.mockReset();
   showError.mockReset();
   openFolder.mockResolvedValue({ ok: true });
+  openRulesFolder.mockResolvedValue({ ok: true });
   status = {
     showStatus: vi.fn(),
     showError,
@@ -38,7 +47,10 @@ beforeEach(() => {
     clear: vi.fn(),
   };
   ({ dom, restore: restoreGlobals } = installJsdomGlobals());
-  Reflect.set(dom.window, 'daisy', { skills: { openFolder } });
+  Reflect.set(dom.window, 'daisy', {
+    skills: { openFolder },
+    rules: { openFolder: openRulesFolder },
+  });
 });
 
 afterEach(() => {
@@ -46,10 +58,31 @@ afterEach(() => {
 });
 
 describe('createSkillsSection', () => {
-  it('carries the open-folder control and exactly one help badge', () => {
+  it('carries both open-folder controls, each with a help badge', () => {
     const section = createSkillsSection({ status });
-    expect(section.element.querySelectorAll('sp-contextual-help')).toHaveLength(1);
+    expect(section.element.querySelectorAll('sp-contextual-help')).toHaveLength(2);
     expect(openButton(section.element)).not.toBeNull();
+    expect(rulesButton(section.element)).not.toBeNull();
+  });
+
+  it('asks main to open the rules folder, and only that one', async () => {
+    const section = createSkillsSection({ status });
+    rulesButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(openRulesFolder).toHaveBeenCalledTimes(1);
+    expect(openFolder).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('shows the failure message when the rules folder cannot be opened', async () => {
+    openRulesFolder.mockResolvedValue({
+      ok: false,
+      error: { code: 'open_failed', message: 'no file manager' },
+    });
+    const section = createSkillsSection({ status });
+    rulesButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(showError).toHaveBeenCalledWith('no file manager');
   });
 
   it('asks main to open the folder and stays quiet on success', async () => {
@@ -79,11 +112,13 @@ describe('createSkillsSection', () => {
     expect(showError).toHaveBeenCalledWith('ipc gone');
   });
 
-  it('unhooks the click listener on dispose', async () => {
+  it('unhooks the click listeners on dispose', async () => {
     const section = createSkillsSection({ status });
     section.dispose();
     openButton(section.element).click();
+    rulesButton(section.element).click();
     await flushMicrotasks(4);
     expect(openFolder).not.toHaveBeenCalled();
+    expect(openRulesFolder).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,7 @@ import {
   renderSkillCatalogue,
   resolveSkillPrompt,
 } from '../../../src/shared';
-import { REAL_SKILLS_TEMPLATE } from '../../support/instructionResources';
+import { REAL_SKILLS_TEMPLATE } from '../../support/promptResources';
 
 describe('readLeadingSkillToken', () => {
   it('reads the name and the trimmed remainder', () => {

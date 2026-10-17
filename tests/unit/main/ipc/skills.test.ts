@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../../../src/main/logger';
 import { SKILLS_OPEN_FOLDER_CHANNEL } from '../../../../src/shared';
+import { ipcEventFrom, makeRecordingLogger } from '../../../support/ipcHandlerHarness';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
 const invokeHandlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -28,28 +29,6 @@ const RENDERER_DIST = path.join(process.cwd(), 'out', 'renderer');
 const TRUSTED_URL = pathToFileURL(path.join(RENDERER_DIST, 'index.html')).href;
 const MAIN_WEB_CONTENTS_ID = 7;
 
-type LogFn = Logger['warn'];
-
-function makeLogger(): {
-  info: Mock<LogFn>;
-  warn: Mock<LogFn>;
-  error: Mock<LogFn>;
-  getHealth: Logger['getHealth'];
-} {
-  return {
-    info: vi.fn<LogFn>(),
-    warn: vi.fn<LogFn>(),
-    error: vi.fn<LogFn>(),
-    getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
-  };
-}
-
-function eventFrom(url: string, webContentsId: number, topFrame = true): unknown {
-  const frame: { url: string; top: unknown } = { url, top: undefined };
-  frame.top = topFrame ? frame : {};
-  return { senderFrame: frame, sender: { id: webContentsId } };
-}
-
 beforeEach(() => {
   invokeHandlers.clear();
   openPath.mockReset();
@@ -63,7 +42,7 @@ afterEach(() => {
 describe('openSkillsFolder', () => {
   it('creates a missing folder and hands it to the file manager', async () => {
     const directory = path.join(scratch.create(), 'skills');
-    const logger = makeLogger();
+    const logger = makeRecordingLogger();
 
     const result = await openSkillsFolder({ directory, logger, openPath });
 
@@ -75,7 +54,7 @@ describe('openSkillsFolder', () => {
 
   it('reports open_failed when the OS refuses, logging no free text', async () => {
     openPath.mockResolvedValue('C:\\secret\\path: no handler');
-    const logger = makeLogger();
+    const logger = makeRecordingLogger();
 
     const result = await openSkillsFolder({
       directory: path.join(scratch.create(), 'skills'),
@@ -118,16 +97,16 @@ describe('registerSkillsIpcHandlers', () => {
   }
 
   it('opens the folder for a trusted sender', async () => {
-    const handler = register(makeLogger());
-    expect(await handler(eventFrom(TRUSTED_URL, MAIN_WEB_CONTENTS_ID))).toEqual({ ok: true });
+    const handler = register(makeRecordingLogger());
+    expect(await handler(ipcEventFrom(TRUSTED_URL, MAIN_WEB_CONTENTS_ID))).toEqual({ ok: true });
     expect(openPath).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a remote frame without touching the file manager', async () => {
-    const logger = makeLogger();
+    const logger = makeRecordingLogger();
     const handler = register(logger);
 
-    const result = await handler(eventFrom('https://aem.example/', MAIN_WEB_CONTENTS_ID));
+    const result = await handler(ipcEventFrom('https://aem.example/', MAIN_WEB_CONTENTS_ID));
 
     expect(result).toMatchObject({ ok: false, error: { code: 'untrusted_sender' } });
     expect(openPath).not.toHaveBeenCalled();
@@ -135,7 +114,7 @@ describe('registerSkillsIpcHandlers', () => {
   });
 
   it('refuses a call with no sender frame', async () => {
-    const handler = register(makeLogger());
+    const handler = register(makeRecordingLogger());
     const result = await handler({ senderFrame: null, sender: { id: MAIN_WEB_CONTENTS_ID } });
     expect(result).toMatchObject({ ok: false, error: { code: 'untrusted_sender' } });
     expect(openPath).not.toHaveBeenCalled();

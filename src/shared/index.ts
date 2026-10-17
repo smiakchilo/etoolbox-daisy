@@ -8,6 +8,7 @@ export * from './settings-ipc';
 export * from './browser-ipc';
 export * from './table-export-ipc';
 export * from './skills-ipc';
+export * from './rules-ipc';
 export * from './agent-chat-ipc';
 export * from './skillInvocation';
 export * from './skills';
