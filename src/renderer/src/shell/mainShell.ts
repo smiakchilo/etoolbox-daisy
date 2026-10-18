@@ -308,27 +308,44 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     publishLinkContext();
   }
 
+  // Counts History resumes, so a switch failure is reported only for the latest.
+  let latestResume = 0;
+
   /**
-   * Opens a stored conversation chosen in History. The browser is switched to
-   * the chat's host first (so the resumed conversation's AEM reads target the
-   * same server its transcript came from), then the chat pane repaints the
-   * transcript and resumes its session. A chat whose host was deleted (or that
-   * never had one) is opened without a switch - the pane keeps its current page.
+   * Opens a stored conversation chosen in History. The chat pane paints the
+   * transcript and resumes the session at once; the browser is moved to the
+   * chat's host *alongside*, so a host that is slow or unreachable never holds
+   * the transcript back (it is local, and readable offline). A chat whose host
+   * was deleted (or that never had one) is opened without a switch - the pane
+   * keeps its current page.
    *
-   * The switch is awaited so its failure (an unreachable/unknown host) is
-   * reported in the pane's status row and the conversation is *not* resumed
-   * against the wrong target.
+   * The chat pane holds a send until the switch settles, so a prompt is not
+   * answered against the previous page. A failed switch is reported in the
+   * pane's status row and the conversation is resumed anyway: its reads then fail
+   * the way any read against an unloaded page does. Only the latest resume's
+   * failure is reported, so a superseded click cannot raise a stale error.
    */
   async function resumeHistoryConversation(entry: AgentChatHistoryEntry): Promise<void> {
     browserPane.panelHost.close();
-    if (entry.serverId !== undefined && hosts.some((host) => host.id === entry.serverId)) {
+    latestResume += 1;
+    const resume = latestResume;
+    const hostSettled = switchToHistoryHost(entry, resume);
+    await chatPane.openConversationFromHistory(entry.chatId, { hostSettled });
+  }
+
+  /** Moves the browser to a history entry's host. Settles whether or not it loaded. */
+  async function switchToHistoryHost(entry: AgentChatHistoryEntry, resume: number): Promise<void> {
+    if (entry.serverId === undefined || !hosts.some((host) => host.id === entry.serverId)) return;
+    try {
       const switched = await window.daisy.browser.switchServer(entry.serverId);
-      if (!switched.ok) {
+      if (!switched.ok && resume === latestResume) {
         browserPane.surfaceStatus.showError(switched.error.message);
-        return;
+      }
+    } catch (error) {
+      if (resume === latestResume) {
+        browserPane.surfaceStatus.showError(error instanceof Error ? error.message : String(error));
       }
     }
-    await chatPane.openConversationFromHistory(entry.chatId);
   }
 
   /**

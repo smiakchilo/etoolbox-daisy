@@ -76,8 +76,16 @@ export interface ChatPane {
    * session: the user asked for this specific conversation, so the failure is
    * reported and the stored transcript is left on screen. The shell switches
    * the browser to the chat's host; this method only owns the chat pane.
+   *
+   * The transcript never waits for the host: `hostSettled` is the shell's host
+   * switch, running alongside, and settles (never rejects) whether the host
+   * loaded or not. The session is resumed regardless of its outcome, but a send
+   * waits for it, so a prompt is never answered against a page still loading.
    */
-  openConversationFromHistory(chatId: ChatId): Promise<HistoryResumeOutcome>;
+  openConversationFromHistory(
+    chatId: ChatId,
+    options?: HistoryResumeOptions,
+  ): Promise<HistoryResumeOutcome>;
   /**
    * Forgets a conversation deleted from History. If it is the pane's current
    * one, the pane starts a fresh conversation, so its own recovery cannot
@@ -169,6 +177,15 @@ type ConversationOpen =
  */
 export type HistoryResumeOutcome =
   { readonly ok: true } | { readonly ok: false; readonly message: string };
+
+export interface HistoryResumeOptions {
+  /**
+   * Settles when the browser pane has finished moving to the chat's host,
+   * successfully or not. It must never reject: the pane's own banner carries
+   * the host's failure, so this only says "the page is no longer changing".
+   */
+  readonly hostSettled?: Promise<void>;
+}
 
 /**
  * The right-hand chat pane: toolbar, transcript, and composer, wired to the
@@ -336,6 +353,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // reports `'superseded'` rather than a failure. See `ConversationOpen`.
   let pendingOpen:
     { readonly chatId: ChatId; readonly promise: Promise<ConversationOpen> } | undefined;
+  // The host switch a History resume runs alongside painting the transcript, for
+  // as long as it is still moving the AEM page. The transcript and the session do
+  // not wait for it (an unreachable host must not blank the pane), but a send
+  // does: the prompt's page context and every AEM read are taken from whatever
+  // the pane shows when it is sent. Cleared when the switch settles, or when the
+  // pane adopts another conversation (`adoptChatId`).
+  let hostSettling: Promise<void> | undefined;
   // Set once the toolbar exists (below). The pane derives "New session" from
   // whether it owns a conversation and no open is in flight (see
   // `updateNewSessionEnabled`), so the control is disabled both before any
@@ -1028,7 +1052,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * the header recorded. A failed resume is reported, never silently replaced
    * by a fresh session: the user picked this conversation deliberately.
    */
-  async function openConversationFromHistory(id: ChatId): Promise<HistoryResumeOutcome> {
+  async function openConversationFromHistory(
+    id: ChatId,
+    options: HistoryResumeOptions = {},
+  ): Promise<HistoryResumeOutcome> {
     const journal = await window.daisy.agentChat.readJournal({ chatId: id });
     if (!journal.ok) {
       statusBanner.showError(journal.error.message);
@@ -1037,6 +1064,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
     const sessionId = paintStoredConversation(id, journal.records);
     latestSdkSessionId = sessionId;
+    holdSendsUntil(options.hostSettled);
     const opened = await openConversation(id, sessionId);
     if (opened.outcome === 'failed') {
       statusBanner.showError(opened.error.message);
@@ -1045,6 +1073,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (opened.outcome === 'opened') persistActiveConversation();
     refreshSessionPresentation();
     return { ok: true };
+  }
+
+  /** Records `settled` as the host switch the next send must wait for. */
+  function holdSendsUntil(settled: Promise<void> | undefined): void {
+    if (settled === undefined) {
+      hostSettling = undefined;
+      return;
+    }
+    const tracked: Promise<void> = settled.then(() => {
+      if (hostSettling === tracked) hostSettling = undefined;
+    });
+    hostSettling = tracked;
   }
 
   /**
@@ -1065,6 +1105,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (target === undefined) {
       statusBanner.showError('Not connected to the agent');
       return { ok: false };
+    }
+    // A History resume's host switch is still moving the page: a prompt sent now
+    // would carry the previous page's context, so wait for the switch to settle.
+    const settling = hostSettling;
+    if (settling !== undefined) {
+      await settling;
+      if (chatId !== target) return { ok: false }; // a newer session replaced it
     }
     // Wait out an in-flight open for this chat before sending. Main registers
     // the conversation only once `openConversation` resolves, so sending first
@@ -1301,7 +1348,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * alone: the conversation the user was reading has not changed.
    */
   function adoptChatId(id: ChatId): void {
-    if (chatId !== id) statusBanner.clearError();
+    if (chatId !== id) {
+      statusBanner.clearError();
+      hostSettling = undefined;
+    }
     chatId = id;
     // Owning a conversation is what makes "New session" actionable; re-derive
     // it here so a conversation adopted without an open of our own (main already

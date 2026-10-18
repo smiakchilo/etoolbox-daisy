@@ -75,6 +75,7 @@ import {
   parseAgentChatByIdRequest,
   parseAgentChatEvent,
   parseAgentChatHistoryListResult,
+  parseAgentChatListConversationsRequest,
   parseAgentChatOpenConversationRequest,
   parseAgentChatOpenResult,
   parseAgentChatReadJournalRequest,
@@ -133,6 +134,7 @@ import {
   type AddServerResult,
   type AgentChatByIdRequest,
   type AgentChatHistoryListResult,
+  type AgentChatListConversationsRequest,
   type AgentChatOpenConversationRequest,
   type AgentChatOpenResult,
   type AgentChatReadJournalRequest,
@@ -418,8 +420,14 @@ const daisyApi: DaisyAppApi = {
       const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_LIST_SKILLS_CHANNEL);
       return parseAgentChatSkillsResult(raw);
     },
-    async listConversations(): Promise<AgentChatHistoryListResult> {
-      const raw: unknown = await ipcRenderer.invoke(AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL);
+    async listConversations(
+      request: AgentChatListConversationsRequest,
+    ): Promise<AgentChatHistoryListResult> {
+      const parsedRequest = parseAgentChatListConversationsRequest(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL,
+        parsedRequest,
+      );
       return parseAgentChatHistoryListResult(raw);
     },
     async deleteConversation(request: AgentChatByIdRequest): Promise<AgentChatVoidResult> {

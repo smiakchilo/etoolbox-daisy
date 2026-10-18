@@ -1,4 +1,4 @@
-import { readdirSync, rmSync } from 'node:fs';
+import { readdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import {
   type AgentChatHistoryEntry,
@@ -10,7 +10,7 @@ import { toChatFileName } from './chatJournalPaths';
 import { readChatJournal, type ChatJournalReadOutcome } from './chatJournalReader';
 
 /**
- * The browsable chat history, derived on demand from the append-only journals
+ * The browsable History list, derived on demand from the append-only journals
  * under `<home>/etoolbox-daisy/chats` (implementation-plan.md step 09's
  * "History contains a title derived from the beginning of the first user
  * message ... start date, server"). Kept Electron-free - the directory is a
@@ -25,6 +25,14 @@ import { readChatJournal, type ChatJournalReadOutcome } from './chatJournalReade
  * on every open; the alternative, a store that can drift from the journals it
  * describes, is strictly worse for a local single-user app.
  *
+ * That cost is paid a page at a time (`snapshotChatHistoryIds` +
+ * `readChatHistoryPage`, assembled by `chatHistoryPager.ts`): a large or
+ * slow-disk history still returns its first rows quickly enough for the panel
+ * to paint while the rest loads. The page order follows each journal's
+ * modification time - when a chat was last written is when its newest record
+ * was appended, so this matches the honest per-entry `updatedAt` ordering
+ * without having to read every journal to know it.
+ *
  * A journal that cannot be read (missing, unreadable, too large, torn) is
  * simply omitted from the list rather than failing the whole listing: one bad
  * file must never hide every conversation.
@@ -35,11 +43,103 @@ const CHAT_FILE_SUFFIX = '.jsonl';
 /** The schema's own bound (`chatTitleSchema`); a longer first prompt is truncated, never rejected. */
 const TITLE_MAX_LENGTH = 200;
 
-export interface ChatHistoryListOptions {
+/** Names in the chats directory that are not history at all. */
+function isChatFileName(name: string): boolean {
+  return (
+    name.endsWith(CHAT_FILE_SUFFIX) &&
+    chatIdSchema.safeParse(name.slice(0, name.length - CHAT_FILE_SUFFIX.length)).success
+  );
+}
+
+export interface ChatHistorySnapshotOptions {
   /** Injectable directory read; defaults to `readdirSync(dir)`. */
   readonly readDirectory?: (dir: string) => readonly string[];
-  /** Injectable single-journal read; defaults to `readChatJournal`. */
-  readonly readJournal?: (chatsDir: string, chatId: string) => ChatJournalReadOutcome;
+  /**
+   * Injectable per-file modification time; defaults to `statSync`'s `mtimeMs`.
+   * A file that cannot be stat'ed yields no scan entry at all - the journal is
+   * gone or unreadable, which the per-page reader would have skipped anyway.
+   */
+  readonly statMtimeMs?: (chatsDir: string, name: string) => number | undefined;
+}
+
+/**
+ * The chat whose journals can produce history entries, in panel order: most
+ * recently written first (a journal's write time is when its newest record was
+ * appended), ties broken by chat id so the order is stable across calls.
+ * Reading the *names* is cheap; each journal's contents are only read for the
+ * page that needs them.
+ */
+export function snapshotChatHistoryIds(
+  chatsDir: string,
+  options: ChatHistorySnapshotOptions = {},
+): readonly string[] {
+  const readDirectory = options.readDirectory ?? ((dir: string) => readdirSync(dir));
+  const statMtimeMs =
+    options.statMtimeMs ??
+    ((dir: string, name: string) => {
+      try {
+        return statSync(path.join(dir, name)).mtimeMs;
+      } catch {
+        return undefined;
+      }
+    });
+
+  let names: readonly string[];
+  try {
+    names = readDirectory(chatsDir);
+  } catch {
+    // No chats directory yet (a profile that never stored a conversation): an
+    // empty history, not an error.
+    return [];
+  }
+
+  const ids = [
+    ...new Set(
+      names
+        .filter(isChatFileName)
+        .map((name) => name.slice(0, name.length - CHAT_FILE_SUFFIX.length)),
+    ),
+  ];
+  const withTimes: { readonly id: string; readonly mtimeMs: number }[] = ids.flatMap((id) => {
+    const mtimeMs = statMtimeMs(chatsDir, `${id}${CHAT_FILE_SUFFIX}`);
+    return mtimeMs === undefined ? [] : [{ id, mtimeMs }];
+  });
+  withTimes.sort((left, right) => {
+    if (right.mtimeMs !== left.mtimeMs) return right.mtimeMs - left.mtimeMs;
+    return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+  });
+  return withTimes.map((item) => item.id);
+}
+
+/**
+ * One page of history entries. Unreadable journals and journals with no
+ * describable content are skipped silently - one bad file must not hide every
+ * conversation - and `hasMore` says whether a further page exists, based on
+ * the ids the snapshot named (no matter how many entries this page produced).
+ */
+export interface ChatHistoryPage {
+  readonly entries: readonly AgentChatHistoryEntry[];
+  readonly hasMore: boolean;
+}
+
+export function readChatHistoryPage(
+  chatsDir: string,
+  ids: readonly string[],
+  offset: number,
+  limit: number,
+  readJournal: (chatsDir: string, chatId: string) => ChatJournalReadOutcome = readChatJournal,
+): ChatHistoryPage {
+  const end = Math.min(offset + limit, ids.length);
+  const entries: AgentChatHistoryEntry[] = [];
+  for (let index = offset; index < end; index += 1) {
+    const chatId = ids[index];
+    if (chatId === undefined) continue;
+    const outcome = readJournal(chatsDir, chatId);
+    if (!outcome.ok) continue;
+    const entry = entryFromRecords(chatId as ChatId, outcome.records);
+    if (entry !== undefined) entries.push(entry);
+  }
+  return { entries, hasMore: end < ids.length };
 }
 
 /**
@@ -100,45 +200,6 @@ function entryFromRecords(
     ...(serverId !== undefined ? { serverId } : {}),
     ...(header.sdkSessionId !== undefined ? { sdkSessionId: header.sdkSessionId } : {}),
   };
-}
-
-/**
- * Lists every readable stored conversation, most recently used first. Ties
- * (equal `updatedAt`, e.g. two chats that resumed at the same millisecond) are
- * broken by `chatId` so the order is stable across calls.
- */
-export function listChatHistory(
-  chatsDir: string,
-  options: ChatHistoryListOptions = {},
-): readonly AgentChatHistoryEntry[] {
-  const readDirectory = options.readDirectory ?? ((dir: string) => readdirSync(dir));
-  const readJournal = options.readJournal ?? readChatJournal;
-
-  let names: readonly string[];
-  try {
-    names = readDirectory(chatsDir);
-  } catch {
-    // No chats directory yet (a profile that never stored a conversation): an
-    // empty history, not an error.
-    return [];
-  }
-
-  const entries: AgentChatHistoryEntry[] = [];
-  for (const name of names) {
-    if (!name.endsWith(CHAT_FILE_SUFFIX)) continue;
-    const chatId = name.slice(0, name.length - CHAT_FILE_SUFFIX.length);
-    if (!chatIdSchema.safeParse(chatId).success) continue;
-    const outcome = readJournal(chatsDir, chatId);
-    if (!outcome.ok) continue;
-    const entry = entryFromRecords(chatId as ChatId, outcome.records);
-    if (entry !== undefined) entries.push(entry);
-  }
-
-  entries.sort((left, right) => {
-    if (right.updatedAt !== left.updatedAt) return right.updatedAt - left.updatedAt;
-    return left.chatId < right.chatId ? -1 : left.chatId > right.chatId ? 1 : 0;
-  });
-  return entries;
 }
 
 /**

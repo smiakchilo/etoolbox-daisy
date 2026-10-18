@@ -16,12 +16,14 @@ import {
 } from '../../shared';
 import {
   agentChatByIdRequestSchema,
+  agentChatListConversationsRequestSchema,
   agentChatOpenConversationRequestSchema,
   agentChatReadJournalRequestSchema,
   agentChatRespondToInputRequestSchema,
   agentChatSendMessageRequestSchema,
   type AgentChatByIdRequest,
   type AgentChatHistoryListResult,
+  type AgentChatListConversationsRequest,
   type AgentChatOpenResult,
   type AgentChatReadJournalRequest,
   type AgentChatReadJournalResult,
@@ -136,6 +138,10 @@ function invalidPayloadSendResult(message: string): AgentChatSendResult {
   return { ok: false, error: { code: 'INVALID_ARGUMENT', message } };
 }
 
+function invalidPayloadHistoryListResult(message: string): AgentChatHistoryListResult {
+  return { ok: false, error: { code: 'INVALID_ARGUMENT', message } };
+}
+
 export interface AgentChatIpcDependencies {
   readonly controller: AgentChatController;
   readonly logger: Logger;
@@ -164,12 +170,14 @@ export interface AgentChatIpcDependencies {
    */
   readonly listSkills: () => Promise<AgentChatSkillsResult>;
   /**
-   * Lists the stored conversations for the History panel. Built in the
-   * composition root so this handler stays free of filesystem and path
+   * Serves one page of the stored conversations for the History panel. Built
+   * in the composition root so this handler stays free of filesystem and path
    * concerns; an unreadable chats directory is an `ok: false` result, never a
    * throw.
    */
-  readonly listConversations: () => AgentChatHistoryListResult;
+  readonly listConversations: (
+    request: AgentChatListConversationsRequest,
+  ) => AgentChatHistoryListResult;
 }
 
 /**
@@ -284,10 +292,17 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
     return deps.listSkills();
   });
 
-  ipcMain.handle(AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL, (event): AgentChatHistoryListResult => {
-    if (!checkSender(event)) return untrustedHistoryListResult();
-    return deps.listConversations();
-  });
+  ipcMain.handle(
+    AGENT_CHAT_LIST_CONVERSATIONS_CHANNEL,
+    (event, rawRequest: unknown): AgentChatHistoryListResult => {
+      if (!checkSender(event)) return untrustedHistoryListResult();
+      // A missing payload is a valid first request (an empty object), so an
+      // old bare `invoke` call behaves the same way.
+      const parsed = agentChatListConversationsRequestSchema.safeParse(rawRequest ?? {});
+      if (!parsed.success) return invalidPayloadHistoryListResult(parsed.error.message);
+      return deps.listConversations(parsed.data);
+    },
+  );
 
   const unsubscribeEvents = deps.controller.onEvent(
     createAgentChatEventForwarder(deps.rendererWebContents, AGENT_CHAT_EVENT_CHANNEL),

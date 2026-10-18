@@ -49,6 +49,7 @@ import type {
 import type {
   AgentChatByIdRequest,
   AgentChatHistoryListResult,
+  AgentChatListConversationsRequest,
   AgentChatOpenConversationRequest,
   AgentChatOpenResult,
   AgentChatReadJournalRequest,
@@ -198,11 +199,16 @@ export interface DaisyAgentChatApi {
    */
   listSkills(): Promise<AgentChatSkillsResult>;
   /**
-   * Lists the stored conversations for the History panel, newest first. Main
-   * derives each entry from its journal on demand; never throws - an
-   * unreadable directory comes back as `ok: false`.
+   * Lists one page of the stored conversations for the History panel, newest
+   * first. A first call (`{}`) starts a scan; passing the previous result's
+   * `next` cursor continues it until a result without `next`. Main reads one
+   * small batch of journals per call, so a large or slow history paints while
+   * it loads. Main derives each entry from its journal on demand; never
+   * throws - an unreadable directory comes back as `ok: false`.
    */
-  listConversations(): Promise<AgentChatHistoryListResult>;
+  listConversations(
+    request: AgentChatListConversationsRequest,
+  ): Promise<AgentChatHistoryListResult>;
   /**
    * Deletes one stored conversation. If it is the open one, its work is
    * stopped and its handle closed first; then its SDK session (when the agent

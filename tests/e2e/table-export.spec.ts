@@ -8,6 +8,7 @@ import { type ElectronApp, launchApp } from '../support/e2e/app';
 import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
 import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
 import { createScratchDirs } from '../support/e2e/profile';
+import { readRevealedPaths, stubShowItemInFolder } from '../support/e2e/shellStubs';
 import { byTestId } from '../support/selectors';
 
 /**
@@ -144,15 +145,7 @@ test.describe('format_table gutter: copy and export', () => {
 
     // ... and `shell.showItemInFolder` is replaced with a recorder, so the
     // "Open in folder" click never opens an Explorer window.
-    await app.evaluate(({ shell }) => {
-      const scope = globalThis as Record<string, unknown>;
-      scope['__revealedExport'] = [] as string[];
-      (shell as unknown as { showItemInFolder: (fullPath: string) => void }).showItemInFolder = (
-        fullPath,
-      ) => {
-        (scope['__revealedExport'] as string[]).push(fullPath);
-      };
-    });
+    await stubShowItemInFolder(app);
 
     await scriptTurn(app, { steps: [formatTableStep(TABLE_DATA)] });
     await sendViaComposer(shell, '/search waldo');
@@ -231,11 +224,7 @@ test.describe('format_table gutter: copy and export', () => {
     await expect(openInFolder).toBeVisible();
 
     await openInFolder.click();
-    await expect
-      .poll(() =>
-        app.evaluate(() => (globalThis as Record<string, unknown>)['__revealedExport'] as string[]),
-      )
-      .toEqual([exportPath]);
+    await expect.poll(() => readRevealedPaths(app)).toEqual([exportPath]);
     // Acting on the notice dismisses it.
     await expect(banner).not.toHaveAttribute('open', '');
   });

@@ -49,7 +49,8 @@ import {
 } from './appPaths';
 import { installAppProtocolHandler, registerAppProtocolPrivileges } from './browser/appProtocol';
 import { createBrowserController } from './browser/browserController';
-import { listChatHistory, removeChatJournal } from './chatHistory';
+import { removeChatJournal } from './chatHistory';
+import { createChatHistoryPager } from './chatHistoryPager';
 import { createChatJournal } from './chatJournal';
 import { toChatFileName } from './chatJournalPaths';
 import {
@@ -757,20 +758,11 @@ if (!gotSingleInstanceLock) {
           };
         }
       },
-      // The stored conversations, derived from the journals in the app's own
-      // `chats` directory. `listChatHistory` already tolerates a missing
-      // directory and a bad journal; this `ok: false` is a backstop the
-      // renderer shows as "history unavailable".
-      listConversations: () => {
-        try {
-          return { ok: true, entries: [...listChatHistory(appPaths.chats)] };
-        } catch {
-          return {
-            ok: false,
-            error: { code: 'STORAGE_ERROR', message: 'The conversation history could not be read' },
-          };
-        }
-      },
+      // One page of the stored conversations, derived from the journals in the
+      // app's own `chats` directory, in the small-batch scan `chatHistoryPager`
+      // owns. It already tolerates a missing directory and a bad journal; this
+      // `ok: false` is a backstop the renderer shows as "history unavailable".
+      listConversations: createChatHistoryPager({ chatsDir: appPaths.chats }),
     });
 
     // Milestone A criterion 6: a server switch (or any other navigation-

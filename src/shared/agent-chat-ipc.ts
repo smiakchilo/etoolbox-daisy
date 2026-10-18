@@ -280,6 +280,27 @@ export function parseAgentChatReadJournalResult(candidate: unknown): AgentChatRe
 // ---------------------------------------------------------------------------
 
 /**
+ * The `agent-chat:list-conversations` request. A first request carries nothing
+ * (or `{}`); a continuation carries the opaque `next` cursor the previous
+ * result returned. Main reads the chats directory's journals one small page at
+ * a time, so a large or slow history still paints its first rows while the
+ * rest loads (the panel shows a blank screen otherwise).
+ */
+export const agentChatListConversationsRequestSchema = z
+  .object({ next: z.string().optional() })
+  .strict();
+
+export type AgentChatListConversationsRequest = Readonly<
+  z.infer<typeof agentChatListConversationsRequestSchema>
+>;
+
+export function parseAgentChatListConversationsRequest(
+  candidate: unknown,
+): AgentChatListConversationsRequest {
+  return agentChatListConversationsRequestSchema.parse(candidate);
+}
+
+/**
  * One entry in the chat history list, derived on demand from a chat's journal
  * (`chatJournal.ts`) rather than from a second metadata store. `title` is the
  * beginning of the first user message - produced without a model request - and
@@ -307,8 +328,19 @@ export function parseAgentChatHistoryEntry(candidate: unknown): AgentChatHistory
   return agentChatHistoryEntrySchema.parse(candidate);
 }
 
+/**
+ * One page of the history list. `next` is present only while more pages
+ * remain (main's cursor into its scan of the chats directory): a first request
+ * without `next` starts a fresh scan; passing a result's `next` continues it.
+ */
 export const agentChatHistoryListResultSchema = z.discriminatedUnion('ok', [
-  z.object({ ok: z.literal(true), entries: z.array(agentChatHistoryEntrySchema) }).strict(),
+  z
+    .object({
+      ok: z.literal(true),
+      entries: z.array(agentChatHistoryEntrySchema),
+      next: z.string().optional(),
+    })
+    .strict(),
   z.object({ ok: z.literal(false), error: agentChatErrorSchema }).strict(),
 ]);
 

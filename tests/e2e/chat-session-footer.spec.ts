@@ -5,6 +5,7 @@ import { type ElectronApp, launchApp } from '../support/e2e/app';
 import { COMPOSER_FIELD, sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
 import { advanceFake, flushFake, scriptTurn } from '../support/e2e/fakeAgent';
 import { createScratchDirs } from '../support/e2e/profile';
+import { readRevealedPaths, stubShowItemInFolder } from '../support/e2e/shellStubs';
 import { byField, byTestId } from '../support/selectors';
 
 /**
@@ -20,9 +21,9 @@ import { byField, byTestId } from '../support/selectors';
  *    footer's summary is shown even for an empty conversation (the full-height
  *    composer), while the reveal icon waits for conversation content.
  *
- * `shell.showItemInFolder` is stubbed to a recorder so the reveal does not open
- * a real Explorer window - the same technique `message-links.spec.ts` uses for
- * `shell.openExternal`.
+ * `shell.showItemInFolder` is stubbed to a recorder (the shared
+ * `support/e2e/shellStubs` helper) so the reveal does not open a real Explorer
+ * window.
  *
  * Run against the BUILT app:
  *   npm run build
@@ -43,25 +44,6 @@ interface TestWindow {
   daisy: DaisyAppApi;
 }
 declare const window: TestWindow;
-
-/** Replaces main's `shell.showItemInFolder` with a recorder, so no Explorer window opens. */
-async function stubShowItemInFolder(app: ElectronApp): Promise<void> {
-  await app.evaluate(({ shell }) => {
-    const scope = globalThis as Record<string, unknown>;
-    scope['__revealedJournal'] = [] as string[];
-    (shell as unknown as { showItemInFolder: (fullPath: string) => void }).showItemInFolder = (
-      fullPath,
-    ) => {
-      (scope['__revealedJournal'] as string[]).push(fullPath);
-    };
-  });
-}
-
-function readRevealedJournal(app: ElectronApp): Promise<string[]> {
-  return app.evaluate(
-    () => ((globalThis as Record<string, unknown>)['__revealedJournal'] as string[]) ?? [],
-  );
-}
 
 test.describe('Chat transcript: session id footer and interruption notices', () => {
   let app: ElectronApp;
@@ -149,7 +131,7 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     await anchor.click();
 
     await expect
-      .poll(async () => readRevealedJournal(app))
+      .poll(async () => readRevealedPaths(app))
       .toContainEqual(expect.stringMatching(new RegExp(`${chatId as string}\\.jsonl$`)));
 
     // The summary opens Settings on the Agents tab.

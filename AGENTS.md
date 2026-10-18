@@ -202,7 +202,15 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent contract change is "a chat records its host when it is first
+> The most recent shared-surface change is the **paged History list**
+> (2026-10-18): `agent-chat-ipc.ts` gained
+> `agentChatListConversationsRequestSchema` (an optional opaque `next`) and an
+> optional `next` on the ok result of `agentChatHistoryListResultSchema`, and
+> `app-api.ts`'s `listConversations` now takes that request — so the panel can
+> append small pages instead of waiting for one whole scan — see
+> `docs/verification/followons-2026-10.md` "History opens in small batches, with
+> one set of actions and a Reveal in folder (2026-10-18)". The most recent
+> *contracts/* change is "a chat records its host when it is first
 > used" (2026-10-15): `contracts/chatJournal.ts`'s `user.prompt` record gained an
 > optional `serverId` (the host the pane was on when the prompt was sent), so a
 > chat opened before any host was restored still records the host it was first
@@ -354,8 +362,10 @@ active agent falls back to the first definition; with none the chat pane says
 `startAppRuntime`, `exposeFakeAgentServiceForTests`).
 
 `chatJournal.ts` (the append-only writer) and `chatJournalReader.ts` (a bounded,
-tolerant read) are accompanied by `chatHistory.ts`: `listChatHistory` derives the
-browsable History list on demand from the journals under `chats/` (title from the
+tolerant read) are accompanied by `chatHistory.ts`: `snapshotChatHistoryIds`
+lists the chats directory's observably present ids once (file names and mtimes
+only) and `readChatHistoryPage` reads one page of them - the browsable History
+list derived on demand from the journals under `chats/` (title from the
 first user prompt, date/server/session from the header) — there is deliberately
 no `ChatMetadata` store — plus `removeChatJournal` for single-chat deletion. The
 file-name guard `toChatFileName` lives in its own `chatJournalPaths.ts`, because
@@ -430,8 +440,37 @@ guarding that.
 **History is a whole-size panel, like Settings.** `shell/historyPanel.ts` lists
 the stored conversations (`window.daisy.agentChat.listConversations`, derived in
 main); each row is a title, a start date, and (only when the chat names a
-configured host) a host chip, with an icon **Resume** (the `sp-icon-replay`
-glyph) and a **Delete** that confirms in the pane's message alert banner. That
+configured host) a host chip. The list is **loaded in small batches**: the panel
+matches a real paged IPC - `listConversations({ next })` where `next` is an
+opaque cursor - and appends each page as it arrives, so a folder with many
+journals (or one on a slow disk, where every journal read is expensive) paints
+its first rows immediately instead of staying blank for the whole scan. The
+pager lives in main (`src/main/chatHistoryPager.ts`): the first call snapshots
+the chats directory's observably present ids once (cheap - file names and
+mtimes only), orders them newest-first by journal mtime, and serves 25 journals
+(`HISTORY_PAGE_SIZE`) per call, handing back a `next` only while more remain;
+an unknown/expired cursor (`CHAT_CURSOR_TTL_MS`, 5 min) starts a fresh scan,
+and an exhausted scan is dropped. The panel paints the first page at once but
+holds the later pages back and appends them together (`HISTORY_COALESCE_MS`,
+500 ms of the list standing still, or the end of the scan), because every
+append resizes the scrollbar thumb and a shrink per page read as jitter. A list
+already showing (a reopen, a delete's settle) is kept until its replacement is
+ready and swapped in whole - blanking and refilling it was the visible twitch.
+`listChatHistory` (one whole scan) is gone,
+replaced by `snapshotChatHistoryIds` + `readChatHistoryPage` in
+`src/main/chatHistory.ts`.
+
+The rows carry no buttons of their own: **one set of actions travels**. The
+panel builds `Resume` (the `sp-icon-replay` glyph), `Reveal in folder`
+(`sp-icon-file-txt`, the chat footer's own `revealJournal` call - main derives
+the journal path from the id) and `Delete` once, and re-parents that one element
+into whichever row the reader hovers or tabs to (`mouseenter`/`focusin`), so
+each row reserves the same strip and no row carries a second set; the click
+handlers read the currently-anchored conversation. Visibility is CSS -
+`visibility: hidden` until the anchored row's `:hover`/`:focus-within` - and
+because a hidden control cannot take focus, the panel reaches the row first and
+then the button when it restores the caret after a repaint. **Delete**
+confirms in the pane's message alert banner. That
 confirmation is the one shared destructive-confirm method
 (`confirmDestructiveAction`, `settings/statusBanner.ts`): a sticky, one-button
 `Press {action} to <phrase>` prompt in the pane-owned
@@ -441,10 +480,12 @@ sink (`browserPane.surfaceStatus`) rather than creating a banner of its own. The
 chat toolbar's History button and the
 browser pane's home screen (its "History" action, beside "Select a host" and
 "Settings") both open it through the same
-`BrowserPanelHost`; the shell owns resume (switch the browser to the chat's host
-via `browser.switchServer`, then `chatPane.openConversationFromHistory`, which
-paints the journal first for offline reading and reports a failed resume rather
-than silently starting fresh) and delete (`agentChat.deleteConversation`, then
+`BrowserPanelHost`; the shell owns resume (it starts `browser.switchServer` for
+the chat's host *alongside* `chatPane.openConversationFromHistory(id, { hostSettled })`,
+which paints the journal first - so a slow or unreachable host never holds the
+transcript back - resumes the session whatever the host did, holds a *send* until
+the switch settles, and reports a failed resume rather than silently starting
+fresh) and delete (`agentChat.deleteConversation`, then
 `chatPane.handleConversationDeleted` for the open chat and the last-chat pointer).
 
 **At most one "unfinished process" indicator is on screen.** A running tool-call
@@ -1212,7 +1253,39 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3668 passed / 13 skipped** (+58 against the
+Current baseline: **`npm run test` → 3710 passed / 13 skipped** (+5 against the
+3705 below: a History resume no longer waits for its host - the transcript paints
+and the session resumes at once, a send is held until the host switch settles;
+the new `chatPaneHistoryResume.test.ts` is 5, and a built-app `history.spec.ts`
+case brings Playwright to 148 tests; see `docs/verification/followons-2026-10.md`
+"History resume no longer waits for the host (2026-10-18)"). Before that it was
+**3705 passed / 13 skipped** (+2 against the
+3703 below: a History list already on screen is kept until its replacement is
+ready and swapped in whole, so a reopen no longer twitches - `historyPanel.test.ts`
++2; the built-app `history-scroll-stability.spec.ts` gained the reopen
+assertion, Playwright count unchanged at 147). Before that it was **3703 passed
+/ 13 skipped** (+2 against the
+3701 below: the History panel's later pages are appended together rather than
+per page, so the scrollbar changes once - `historyPanel.test.ts` +2, and a new
+built-app `history-scroll-stability.spec.ts`, Playwright 147 tests; see
+`docs/verification/followons-2026-10.md` "History opens in small batches ...
+(2026-10-18)", addendum). Before that it was **3701 passed / 13 skipped**
+(+33 against the
+3668 below - **the History panel's small-batch loading, its travelling actions
+and its Reveal action**: `agent-chat:list-conversations` takes an optional
+opaque `next` cursor and main serves 25 journals a page from a per-scan
+snapshot (`src/main/chatHistoryPager.ts`; `HISTORY_PAGE_SIZE`,
+`CHAT_CURSOR_TTL_MS`), the panel builds its Resume / Reveal in folder / Delete
+buttons **once** and re-parents the one set into the row the reader hovers or
+tabs to, and Reveal calls the chat footer's own `revealJournal` - a
+`src/shared/agent-chat-ipc.ts` + `app-api.ts` contract change. The +33 is
+`tests/unit/renderer/historyPanel.test.ts` (14, new),
+`tests/unit/main/chatHistoryPager.test.ts` (7, new), `tests/unit/main/chatHistory.test.ts`
+(+4, the snapshot/page seams replacing `listChatHistory`) and
+`tests/unit/shared/agentChatIpc.test.ts` (+8, the request schema and the `next`
+on the ok result); see `docs/verification/followons-2026-10.md` "History opens in
+small batches, with one set of actions and a Reveal in folder (2026-10-18)").
+Before that it was **3668 passed / 13 skipped** (+58 against the
 3610 below - **user rules**: generic and per-project `*.md` rules from
 `~\etoolbox-daisy\rules`, the Settings "Custom rules folder" link, and the
 `resources/instructions/` → `resources/rules/` rename; see
@@ -1939,8 +2012,21 @@ recovery, immediate prompt (2026-10-05)"; `proxy-login.test.ts`
 case 7 was fixed on 2026-09-30: the CLI validates the certificate chain after the
 TLS handshake, so the test now asserts "no request over the untrusted tunnel"
 instead of a proxy-side handshake error);
-**Playwright → 138 tests; a full run is typically 126 passed / 6 failed.** The
-latest +1 is `settings-context-help.spec.ts`, proving against the built app that
+**Playwright → 146 tests** (`npx playwright test --list`; +1 against the previous
+145). The latest +1 is a third `history.spec.ts` case, proving against the built
+app that the panel's Reveal action hands main the id of the row it acts on and
+main derives that chat's journal path and asks the OS file manager to reveal it
+(`shell.showItemInFolder` stubbed with the shared `support/e2e/shellStubs`
+recorder); the same spec's first case now also pins the built app's travelling
+actions (one `data-testid="history-actions"` element for the whole list, hidden
+by `visibility` until its row is hovered or focused, carried to the reached row)
+- two mutations were caught against the built app (removing the row-focus step
+before focusing the Resume, and making the actions always visible). A **full**
+run was not re-measured for this change; the touched specs (`history`,
+`home-screen`, `panel-closeability`, `chat-restore`, `chat-session-footer`,
+`table-export`, `message-links`) were run and passed, except the load-correlated
+`message-links` "moving the pointer swiftly" flake (green 3/3 in isolation). The
+previously-listed `settings-context-help.spec.ts` case, proving against the built app that
 every Settings field's `sp-contextual-help` badge is a genuinely registered
 element with a shadow root, sits immediately after its label, is styled as an
 understated marker (scale 0.8, opacity 0.7 rising to 1 on hover, no fill change),

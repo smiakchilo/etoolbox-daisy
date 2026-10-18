@@ -3,14 +3,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ChatId, ChatJournalRecord } from '../../../src/shared';
-import { deriveChatTitle, listChatHistory, removeChatJournal } from '../../../src/main/chatHistory';
+import {
+  deriveChatTitle,
+  readChatHistoryPage,
+  removeChatJournal,
+  snapshotChatHistoryIds,
+} from '../../../src/main/chatHistory';
 import type { ChatJournalReadOutcome } from '../../../src/main/chatJournalReader';
 
 /**
- * `chatHistory` derives the browsable History list from the journals on disk.
- * The list/title logic is exercised through the injectable directory/journal
- * seams; the delete path uses a real scratch directory, since `rmSync`'s
- * idempotence is exactly the behaviour under test.
+ * `chatHistory` derives the browsable History list from the journals on disk,
+ * one small page at a time: `snapshotChatHistoryIds` names the chats in panel
+ * order (newest first, ties by chat id), `readChatHistoryPage` reads just the
+ * journals one page covers. The logic is exercised through the injectable
+ * directory/mtime/journal seams; the delete path uses a real scratch
+ * directory, since `rmSync`'s idempotence is exactly the behaviour under test.
  */
 
 const CHATS_DIR = 'C:/home/etoolbox-daisy/chats';
@@ -76,20 +83,77 @@ describe('deriveChatTitle', () => {
   });
 });
 
-describe('listChatHistory', () => {
+describe('snapshotChatHistoryIds', () => {
+  it('orders by most recently written, breaking ties by chat id', () => {
+    const mtimes: Record<string, number> = {
+      'a.jsonl': 100,
+      'b.jsonl': 900,
+      'c.jsonl': 900,
+    };
+    const ids = snapshotChatHistoryIds(CHATS_DIR, {
+      readDirectory: () => ['a.jsonl', 'b.jsonl', 'c.jsonl', 'notes.txt'],
+      statMtimeMs: (_dir, name) => mtimes[name],
+    });
+    expect(ids).toEqual(['b', 'c', 'a']);
+  });
+
+  it('ignores names that are no chat journal', () => {
+    const ids = snapshotChatHistoryIds(CHATS_DIR, {
+      readDirectory: () => ['chat-1.jsonl', 'notes.txt', '.jsonl'],
+      statMtimeMs: () => 1,
+    });
+    expect(ids).toEqual(['chat-1']);
+  });
+
+  it('drops a file it cannot stat, without failing the snapshot', () => {
+    const ids = snapshotChatHistoryIds(CHATS_DIR, {
+      readDirectory: () => ['chat-1.jsonl', 'chat-2.jsonl'],
+      statMtimeMs: (_dir, name) => (name === 'chat-1.jsonl' ? 100 : undefined),
+    });
+    expect(ids).toEqual(['chat-1']);
+  });
+
+  it('returns an empty snapshot when the directory cannot be read', () => {
+    const ids = snapshotChatHistoryIds(CHATS_DIR, {
+      readDirectory: () => {
+        throw new Error('ENOENT');
+      },
+    });
+    expect(ids).toEqual([]);
+  });
+
+  it('stats the default way against a real directory with real files', () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), 'daisy-chats-'));
+    try {
+      writeFileSync(path.join(scratch, 'chat-1.jsonl'), '{}\n', 'utf8');
+      writeFileSync(path.join(scratch, 'chat-2.jsonl'), '{}\n', 'utf8');
+      writeFileSync(path.join(scratch, 'notes.txt'), 'x', 'utf8');
+      // mtime ordering is not asserted (too fine for different hosts); the
+      // default stat path succeeding on a real directory is the point.
+      expect(snapshotChatHistoryIds(scratch)).toHaveLength(2);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('readChatHistoryPage', () => {
   it('derives title, dates, server and session from the records', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl'],
-      readJournal: readerFor({
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['chat-1'],
+      0,
+      10,
+      readerFor({
         'chat-1': [
           header('chat-1', { serverId: 'server-9' }),
           userPrompt('chat-1', 'Where is the media library?'),
           closed('chat-1', 5000),
         ],
       }),
-    });
+    );
 
-    expect(entries).toEqual([
+    expect(page.entries).toEqual([
       {
         chatId: 'chat-1',
         title: 'Where is the media library?',
@@ -99,90 +163,100 @@ describe('listChatHistory', () => {
         sdkSessionId: 'sdk-chat-1',
       },
     ]);
+    expect(page.hasMore).toBe(false);
   });
 
   it('omits a title when the journal holds no user prompt', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl'],
-      readJournal: readerFor({ 'chat-1': [header('chat-1')] }),
-    });
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.title).toBeUndefined();
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['chat-1'],
+      0,
+      10,
+      readerFor({ 'chat-1': [header('chat-1')] }),
+    );
+    expect(page.entries).toHaveLength(1);
+    expect(page.entries[0]?.title).toBeUndefined();
   });
 
   it('falls back to the first prompt that named a host when the header names none', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl'],
-      readJournal: readerFor({
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['chat-1'],
+      0,
+      10,
+      readerFor({
         'chat-1': [
           header('chat-1'),
           userPrompt('chat-1', 'plain'),
           userPrompt('chat-1', 'on a host', { at: 3000, serverId: 'server-p' }),
         ],
       }),
-    });
-    expect(entries[0]?.serverId).toBe('server-p');
+    );
+    expect(page.entries[0]?.serverId).toBe('server-p');
   });
 
   it("prefers the header's host over a later prompt's", () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl'],
-      readJournal: readerFor({
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['chat-1'],
+      0,
+      10,
+      readerFor({
         'chat-1': [
           header('chat-1', { serverId: 'server-9' }),
           userPrompt('chat-1', 'later', { serverId: 'server-p' }),
         ],
       }),
-    });
-    expect(entries[0]?.serverId).toBe('server-9');
+    );
+    expect(page.entries[0]?.serverId).toBe('server-9');
   });
 
   it('stays host-less when neither the header nor any prompt named one', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl'],
-      readJournal: readerFor({
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['chat-1'],
+      0,
+      10,
+      readerFor({
         'chat-1': [header('chat-1'), userPrompt('chat-1', 'plain')],
       }),
-    });
-    expect(entries[0]?.serverId).toBeUndefined();
-    expect(entries[0]).not.toHaveProperty('serverId');
+    );
+    expect(page.entries[0]?.serverId).toBeUndefined();
+    expect(page.entries[0]).not.toHaveProperty('serverId');
   });
 
-  it('orders by most recently used, breaking ties by chat id', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['a.jsonl', 'b.jsonl', 'c.jsonl'],
-      readJournal: readerFor({
-        a: [header('a'), closed('a', 5000)],
-        b: [header('b'), closed('b', 9000)],
-        c: [header('c'), closed('c', 9000)],
-      }),
-    });
-    expect(entries.map((entry) => entry.chatId)).toEqual(['b', 'c', 'a']);
+  it('reads only the journals the page covers, and reports hasMore honestly', () => {
+    const read: string[] = [];
+    const reader = (_dir: string, chatId: string): ChatJournalReadOutcome => {
+      read.push(chatId);
+      return { ok: true, records: [header(chatId)] };
+    };
+    const page = readChatHistoryPage(CHATS_DIR, ['chat-1', 'chat-2', 'chat-3'], 0, 2, reader);
+    expect(read).toEqual(['chat-1', 'chat-2']);
+    expect(page.entries.map((entry) => entry.chatId)).toEqual(['chat-1', 'chat-2']);
+    expect(page.hasMore).toBe(true);
   });
 
-  it('ignores non-journal names and unreadable journals', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl', 'notes.txt', 'chat-2.jsonl'],
-      readJournal: readerFor({ 'chat-1': [header('chat-1')] }),
-    });
-    expect(entries.map((entry) => entry.chatId)).toEqual(['chat-1']);
+  it('skips an unreadable journal without losing the rest of the page', () => {
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['gone', 'chat-2'],
+      0,
+      10,
+      readerFor({ 'chat-2': [header('chat-2')] }),
+    );
+    expect(page.entries.map((entry) => entry.chatId)).toEqual(['chat-2']);
   });
 
   it('skips a journal with no header', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => ['chat-1.jsonl'],
-      readJournal: readerFor({ 'chat-1': [userPrompt('chat-1', 'orphan')] }),
-    });
-    expect(entries).toEqual([]);
-  });
-
-  it('returns an empty list when the directory cannot be read', () => {
-    const entries = listChatHistory(CHATS_DIR, {
-      readDirectory: () => {
-        throw new Error('ENOENT');
-      },
-    });
-    expect(entries).toEqual([]);
+    const page = readChatHistoryPage(
+      CHATS_DIR,
+      ['chat-1'],
+      0,
+      10,
+      readerFor({ 'chat-1': [userPrompt('chat-1', 'orphan')] }),
+    );
+    expect(page.entries).toEqual([]);
   });
 });
 

@@ -13,6 +13,7 @@ import {
 } from '../support/e2e/composer';
 import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
 import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
+import { readOpenedExternalPaths, stubOpenExternal } from '../support/e2e/shellStubs';
 import { byTestId } from '../support/selectors';
 
 /**
@@ -85,24 +86,6 @@ async function sendMessage(app: ElectronApp, shell: Page, text: string): Promise
   await shell.locator(COMPOSER_FIELD).fill('link please');
   await shell.locator(COMPOSER_SEND).click();
   await flushFake(app);
-}
-
-/** Replaces main's `shell.openExternal` with a recorder, so no real browser is launched. */
-async function stubOpenExternal(app: ElectronApp): Promise<void> {
-  await app.evaluate(({ shell }) => {
-    const scope = globalThis as Record<string, unknown>;
-    scope['__openedExternal'] = [] as string[];
-    (shell as unknown as { openExternal: (url: string) => Promise<void> }).openExternal = (url) => {
-      (scope['__openedExternal'] as string[]).push(url);
-      return Promise.resolve();
-    };
-  });
-}
-
-function readOpenedExternal(app: ElectronApp): Promise<string[]> {
-  return app.evaluate(
-    () => ((globalThis as Record<string, unknown>)['__openedExternal'] as string[]) ?? [],
-  );
 }
 
 test.describe('Message links open the AEM pane in edit mode', () => {
@@ -628,7 +611,9 @@ test.describe('Message links open the AEM pane in edit mode', () => {
 
     await link.click();
 
-    await expect.poll(() => readOpenedExternal(app)).toEqual(['https://external.example/page']);
+    await expect
+      .poll(() => readOpenedExternalPaths(app))
+      .toEqual(['https://external.example/page']);
     // No pane navigation, so no error banner.
     await expect(shell.locator(CHAT_STATUS_BANNER)).not.toHaveAttribute('open', '');
 
