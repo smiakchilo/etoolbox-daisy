@@ -29,7 +29,7 @@ export function headerRecord(at = 1_000, serverId?: string): Record<string, unkn
     recordType: 'header',
     schemaVersion: 1,
     chatId: CHAT,
-    sdkSessionId: 'session-1',
+    sessionId: 'session-1',
     startedAt: at,
     ...(serverId === undefined ? {} : { serverId }),
   };

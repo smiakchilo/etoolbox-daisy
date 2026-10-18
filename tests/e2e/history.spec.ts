@@ -57,7 +57,7 @@ function journalFiles(home: string): readonly string[] {
     .map((name) => path.join(dir, name));
 }
 
-/** Every `sdkSessionId` the live fake agent was asked to delete, in order. */
+/** Every `sessionId` the live fake agent was asked to delete, in order. */
 function readDeletedSessionIds(app: ElectronApplication): Promise<readonly string[]> {
   return app.evaluate((_electronNamespace, globalKey: string) => {
     const fake = (globalThis as Record<string, unknown>)[globalKey] as {
@@ -213,7 +213,7 @@ test.describe('History panel', () => {
         .map((line) => JSON.parse(line) as Record<string, unknown>);
       const header = records.find((record) => record['recordType'] === 'header');
       const chatId = header?.['chatId'];
-      const headerSession = header?.['sdkSessionId'];
+      const headerSession = header?.['sessionId'];
       if (typeof chatId !== 'string' || typeof headerSession !== 'string') {
         throw new Error('the journal has no header');
       }
@@ -230,7 +230,7 @@ test.describe('History panel', () => {
           recordType: 'session.opened',
           at: Date.now(),
           chatId,
-          sdkSessionId: recycledSession,
+          sessionId: recycledSession,
         }) + '\n',
         'utf8',
       );

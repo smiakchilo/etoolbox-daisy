@@ -25,7 +25,7 @@ import {
   type ChatId,
   type OpenConversationRequest,
   type Result,
-  type SdkSessionId,
+  type SessionId,
   type SendPromptRequest,
   type ServerId,
   type SkillPromptResolution,
@@ -726,7 +726,7 @@ describe('AgentChatController.onStatusChanged', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it('reports no sdkSessionId once the conversation is closed', async () => {
+  it('reports no sessionId once the conversation is closed', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller } = buildController(agentService);
     const chatId = newChatId('chat-1');
@@ -735,7 +735,7 @@ describe('AgentChatController.onStatusChanged', () => {
     await controller.closeConversation({ chatId });
 
     expect(controller.getStatus().activeChatId).toBeNull();
-    expect(controller.getStatus().sdkSessionId).toBeNull();
+    expect(controller.getStatus().sessionId).toBeNull();
   });
 
   it('stops notifying after the listener unsubscribes', () => {
@@ -841,7 +841,7 @@ describe('agentChatController chat journal', () => {
         method: 'openChat',
         args: {
           chatId,
-          sdkSessionId: 'fake-session-chat-1',
+          sessionId: 'fake-session-chat-1',
           serverId: 'server-a',
         },
       },
@@ -1177,7 +1177,7 @@ describe('agentChatController.deleteConversation', () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const removeChatJournal = vi.fn(() => true);
     const { controller } = buildController(agentService, {
-      readChatSessionIds: () => ['sdk-chat-1' as SdkSessionId],
+      readChatSessionIds: () => ['sdk-chat-1' as SessionId],
       removeChatJournal,
     });
 
@@ -1191,10 +1191,7 @@ describe('agentChatController.deleteConversation', () => {
   it('deletes every session the journal recorded, not only the header', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller } = buildController(agentService, {
-      readChatSessionIds: () => [
-        'sdk-chat-1' as SdkSessionId,
-        'sdk-chat-1-recycled' as SdkSessionId,
-      ],
+      readChatSessionIds: () => ['sdk-chat-1' as SessionId, 'sdk-chat-1-recycled' as SessionId],
       removeChatJournal: () => true,
     });
 
@@ -1210,7 +1207,7 @@ describe('agentChatController.deleteConversation', () => {
     try {
       const journal = createChatJournal(dir);
       const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-      let sessionId = 'sdk-1' as SdkSessionId;
+      let sessionId = 'sdk-1' as SessionId;
       const withSession: AgentService = { ...agentService, getOpenSessionId: () => sessionId };
       const { controller } = buildController(withSession, {
         chatJournal: journal,
@@ -1225,13 +1222,13 @@ describe('agentChatController.deleteConversation', () => {
       await controller.closeConversation({ chatId });
 
       // A first runtime recycle re-opens the same chat under a new session.
-      sessionId = 'sdk-2' as SdkSessionId;
+      sessionId = 'sdk-2' as SessionId;
       await controller.openConversation({ chatId });
       await controller.sendMessage({ chatId, prompt: 'two' });
       await controller.closeConversation({ chatId });
 
       // A second recycle mints yet another session for the same chat.
-      sessionId = 'sdk-3' as SdkSessionId;
+      sessionId = 'sdk-3' as SessionId;
       await controller.openConversation({ chatId });
 
       // Three sessions are recorded on disk before deletion.
@@ -1251,7 +1248,7 @@ describe('agentChatController.deleteConversation', () => {
   it('stops and closes an open chat before deleting it', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { controller } = buildController(agentService, {
-      readChatSessionIds: () => ['sdk-chat-1' as SdkSessionId],
+      readChatSessionIds: () => ['sdk-chat-1' as SessionId],
       removeChatJournal: () => true,
     });
 
@@ -1287,7 +1284,7 @@ describe('agentChatController.deleteConversation', () => {
     };
     const { controller } = buildController(failing, {
       logger,
-      readChatSessionIds: () => ['sdk-chat-1' as SdkSessionId],
+      readChatSessionIds: () => ['sdk-chat-1' as SessionId],
       removeChatJournal,
     });
 

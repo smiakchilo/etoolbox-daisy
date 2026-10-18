@@ -15,7 +15,7 @@ function header(overrides: Record<string, unknown> = {}): Record<string, unknown
     recordType: 'header',
     schemaVersion: CHAT_JOURNAL_SCHEMA_VERSION,
     chatId: CHAT_ID,
-    sdkSessionId: SDK_SESSION_ID,
+    sessionId: SDK_SESSION_ID,
     startedAt: 1_700_000_000_000,
     ...overrides,
   };
@@ -28,7 +28,7 @@ describe('chatJournalRecordSchema - header', () => {
       recordType: 'header',
       schemaVersion: 1,
       chatId: CHAT_ID,
-      sdkSessionId: SDK_SESSION_ID,
+      sessionId: SDK_SESSION_ID,
       startedAt: 1_700_000_000_000,
     });
   });
@@ -38,9 +38,9 @@ describe('chatJournalRecordSchema - header', () => {
     expect(parsed).toMatchObject({ serverId: 'server-a' });
   });
 
-  it('rejects a missing sdkSessionId', () => {
+  it('rejects a missing sessionId', () => {
     const candidate = header();
-    delete candidate['sdkSessionId'];
+    delete candidate['sessionId'];
     expect(chatJournalRecordSchema.safeParse(candidate).success).toBe(false);
   });
 
@@ -60,17 +60,17 @@ describe('chatJournalRecordSchema - session.opened', () => {
         recordType: 'session.opened',
         at: 1_700_000_000_500,
         chatId: CHAT_ID,
-        sdkSessionId: 'sdk-session-2',
+        sessionId: 'sdk-session-2',
       }),
     ).toEqual({
       recordType: 'session.opened',
       at: 1_700_000_000_500,
       chatId: CHAT_ID,
-      sdkSessionId: 'sdk-session-2',
+      sessionId: 'sdk-session-2',
     });
   });
 
-  it('rejects a missing sdkSessionId', () => {
+  it('rejects a missing sessionId', () => {
     expect(
       chatJournalRecordSchema.safeParse({
         recordType: 'session.opened',
@@ -86,7 +86,7 @@ describe('chatJournalRecordSchema - session.opened', () => {
         recordType: 'session.opened',
         at: 1,
         chatId: CHAT_ID,
-        sdkSessionId: 'sdk-session-2',
+        sessionId: 'sdk-session-2',
         extra: true,
       }).success,
     ).toBe(false);

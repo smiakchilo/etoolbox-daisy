@@ -15,7 +15,7 @@ import {
   type ModelPreference,
   type OpenConversationRequest,
   type Result,
-  type SdkSessionId,
+  type SessionId,
   type SendPromptRequest,
   type SessionStatus,
   type SessionStreamState,
@@ -42,7 +42,7 @@ import {
   parseAuthStatus,
   reasoningIdSchema,
   renderToolFailureForModel,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   toolCallIdSchema,
 } from '../../shared';
 import type { OpenRouterCall, OpenRouterClient, RunTool, ToolCallContext, ToolSpec } from './types';
@@ -175,7 +175,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
   let openState: unknown;
   /** Decides when a `model.changed` is reported for the open chat; diagnostics only. */
   const modelObserver = createModelObserver();
-  let openSessionId: SdkSessionId | undefined;
+  let openSessionId: SessionId | undefined;
   let streamState: SessionStreamState = 'idle';
   let currentTurn: CurrentTurn | undefined;
   /** Bumped to invalidate a completion path superseded by abort/teardown. */
@@ -587,7 +587,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       return authState;
     },
 
-    getOpenSessionId(): SdkSessionId | undefined {
+    getOpenSessionId(): SessionId | undefined {
       return openSessionId;
     },
 
@@ -612,7 +612,7 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         // open conversation.
         openState = client.createConversationState();
         modelObserver.reset();
-        openSessionId = sdkSessionIdSchema.parse(idGenerator());
+        openSessionId = sessionIdSchema.parse(idGenerator());
         openChatId = request.chatId;
         streamState = 'idle';
         currentTurn = undefined;

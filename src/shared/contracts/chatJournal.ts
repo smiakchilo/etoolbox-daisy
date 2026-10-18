@@ -5,7 +5,7 @@ import { epochMillisecondsSchema } from './chatMetadata';
 import {
   chatIdSchema,
   messageIdSchema,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   serverIdSchema,
   toolCallIdSchema,
   turnIdSchema,
@@ -30,7 +30,7 @@ import {
  * completion - there is no per-delta line (the plan forbids a synchronous write
  * per delta, and a per-token file would be enormous).
  *
- * `sdkSessionId` is recorded in the `header` (the file is keyed by the
+ * `sessionId` is recorded in the `header` (the file is keyed by the
  * application-owned `chatId`, which exists before any SDK session does). A chat
  * whose SDK session is never established therefore has no journal file at all.
  */
@@ -64,7 +64,7 @@ export const chatJournalHeaderRecordSchema = z
     recordType: z.literal('header'),
     schemaVersion: z.literal(CHAT_JOURNAL_SCHEMA_VERSION),
     chatId: chatIdSchema,
-    sdkSessionId: sdkSessionIdSchema,
+    sessionId: sessionIdSchema,
     serverId: serverIdSchema.optional(),
     startedAt: epochMillisecondsSchema,
   })
@@ -89,7 +89,7 @@ export const chatJournalSessionOpenedRecordSchema = z
     recordType: z.literal('session.opened'),
     at: epochMillisecondsSchema,
     chatId: chatIdSchema,
-    sdkSessionId: sdkSessionIdSchema,
+    sessionId: sessionIdSchema,
   })
   .strict();
 

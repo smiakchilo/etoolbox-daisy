@@ -5,7 +5,7 @@ import {
   saveLastChat,
   STORAGE_KEY,
 } from '../../../src/renderer/src/lib/lastChatStore';
-import type { ChatId, SdkSessionId, ServerId } from '../../../src/shared';
+import type { ChatId, SessionId, ServerId } from '../../../src/shared';
 import { createWindowStorageInstaller, memoryStorage } from '../../support/memoryStorage';
 
 /**
@@ -20,7 +20,7 @@ const installStorage = windowStorage.install;
 
 const record = {
   chatId: 'chat-1' as ChatId,
-  sdkSessionId: 'sdk-1' as SdkSessionId,
+  sessionId: 'sdk-1' as SessionId,
   serverId: 'server-1' as ServerId,
 };
 
@@ -55,7 +55,7 @@ describe('last chat persistence', () => {
   it('discards a record missing its server id', () => {
     installStorage(
       memoryStorage({
-        [STORAGE_KEY]: JSON.stringify({ chatId: 'chat-1', sdkSessionId: 'sdk-1' }),
+        [STORAGE_KEY]: JSON.stringify({ chatId: 'chat-1', sessionId: 'sdk-1' }),
       }),
     );
     expect(loadLastChat()).toBeUndefined();

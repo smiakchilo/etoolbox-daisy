@@ -12,7 +12,7 @@ import type {
   ChatJournalPartialMessageRecord,
   ChatJournalRecord,
   MessageId,
-  SdkSessionId,
+  SessionId,
   ServerId,
   ToolCallId,
   TurnId,
@@ -29,7 +29,7 @@ const header: ChatJournalHeaderRecord = {
   recordType: 'header',
   schemaVersion: 1,
   chatId: CHAT,
-  sdkSessionId: 'sdk-1' as SdkSessionId,
+  sessionId: 'sdk-1' as SessionId,
   serverId: 'server-1' as ServerId,
   startedAt: 1,
 };

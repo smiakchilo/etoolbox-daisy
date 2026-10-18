@@ -1,19 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { newChatId, newServerId, sdkSessionIdSchema } from '../../../../src/shared/contracts/ids';
 import {
   CHAT_STATUSES,
   chatMetadataSchema,
   isChatServerRevisionStale,
-} from '../../../../src/shared/contracts/chatMetadata';
+  newChatId,
+  newServerId,
+  sessionIdSchema,
+} from '../../../../src/shared';
 
 const chatId = newChatId(() => 'chat-1');
-const sdkSessionId = sdkSessionIdSchema.parse('sdk-session-1');
+const sessionId = sessionIdSchema.parse('sdk-session-1');
 const serverId = newServerId(() => 'server-1');
 
 function validChat() {
   return {
     chatId,
-    sdkSessionId,
+    sessionId,
     serverId,
     startedAt: 1_700_000_000_000,
     title: 'Investigating a broken component',

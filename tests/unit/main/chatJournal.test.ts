@@ -7,7 +7,7 @@ import type {
   ChatId,
   MessageId,
   ReasoningId,
-  SdkSessionId,
+  SessionId,
   ServerId,
   ToolCallId,
   TurnId,
@@ -48,7 +48,7 @@ function counterClock(start = 1000): () => number {
   return () => value++;
 }
 
-const SDK_SESSION_ID = 'sdk-session-1' as SdkSessionId;
+const SDK_SESSION_ID = 'sdk-session-1' as SessionId;
 const SERVER_ID = 'server-a' as ServerId;
 
 const stateChanged = (state: string, withTurn = true, turnId: TurnId = TURN_ID): AgentEvent =>
@@ -146,7 +146,7 @@ describe('createChatJournal - header', () => {
 
     journal.openChat({
       chatId: CHAT_ID,
-      sdkSessionId: SDK_SESSION_ID,
+      sessionId: SDK_SESSION_ID,
       serverId: SERVER_ID,
     });
 
@@ -164,7 +164,7 @@ describe('createChatJournal - header', () => {
 
     journal.openChat({
       chatId: CHAT_ID,
-      sdkSessionId: SDK_SESSION_ID,
+      sessionId: SDK_SESSION_ID,
       serverId: SERVER_ID,
     });
     journal.recordEvent(stateChanged('sending'));
@@ -174,7 +174,7 @@ describe('createChatJournal - header', () => {
       recordType: 'header',
       schemaVersion: 1,
       chatId: CHAT_ID,
-      sdkSessionId: 'sdk-session-1',
+      sessionId: 'sdk-session-1',
       serverId: 'server-a',
       startedAt: 1000,
     });
@@ -189,8 +189,8 @@ describe('createChatJournal - header', () => {
   it('does not write a second header when the same chat is opened again', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     const headers = readRecords(dir).filter(
       (record) => (record as { recordType: string }).recordType === 'header',
@@ -206,16 +206,16 @@ describe('createChatJournal - header', () => {
         recordType: 'header',
         schemaVersion: 1,
         chatId: CHAT_ID,
-        sdkSessionId: SDK_SESSION_ID,
+        sessionId: SDK_SESSION_ID,
         startedAt: 1,
       }) + '\n',
       'utf8',
     );
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     const records = readRecords(dir);
-    expect(records[0]).toMatchObject({ recordType: 'header', sdkSessionId: 'sdk-session-1' });
+    expect(records[0]).toMatchObject({ recordType: 'header', sessionId: 'sdk-session-1' });
     expect(
       records.filter((record) => (record as { recordType: string }).recordType === 'header'),
     ).toHaveLength(1);
@@ -225,7 +225,7 @@ describe('createChatJournal - header', () => {
   it('refuses an unsafe chat id and records the failure instead of throwing', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: '../escape' as ChatId, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: '../escape' as ChatId, sessionId: SDK_SESSION_ID });
     expect(journal.getHealth().lastFailureCode).toBe('UNSAFE_CHAT_ID');
   });
 });
@@ -235,7 +235,7 @@ describe("createChatJournal - the chat's host", () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
     // The startup chat: opened before any page/host was restored.
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({
       chatId: CHAT_ID,
       turnId: TURN_ID,
@@ -252,7 +252,7 @@ describe("createChatJournal - the chat's host", () => {
   it("keeps the open-time host over a later prompt's", () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID, serverId: SERVER_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID, serverId: SERVER_ID });
     journal.recordUserPrompt({
       chatId: CHAT_ID,
       turnId: TURN_ID,
@@ -269,7 +269,7 @@ describe("createChatJournal - the chat's host", () => {
   it('leaves the header host-less when no prompt named one, and records a later host on its prompt', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     // First send with no host: the header is flushed host-less.
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'plain' });
     journal.recordEvent(stateChanged('sending'));
@@ -297,7 +297,7 @@ describe("createChatJournal - the chat's host", () => {
 });
 
 describe('createChatJournal - later sessions (session.opened)', () => {
-  const SECOND_SESSION = 'sdk-session-2' as SdkSessionId;
+  const SECOND_SESSION = 'sdk-session-2' as SessionId;
 
   function recordTypes(dir: string): string[] {
     return readRecords(dir).map((record) => (record as { recordType: string }).recordType);
@@ -306,33 +306,33 @@ describe('createChatJournal - later sessions (session.opened)', () => {
   it('records a session.opened when an open chat is recycled to a new session', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     // A runtime recycle re-opens the same chat under a new session.
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SECOND_SESSION });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SECOND_SESSION });
     journal.recordEvent(stateChanged('idle'));
 
     const records = readRecords(dir);
     expect(
       records.filter((record) => (record as { recordType: string }).recordType === 'header'),
     ).toHaveLength(1);
-    expect(records[0]).toMatchObject({ recordType: 'header', sdkSessionId: 'sdk-session-1' });
+    expect(records[0]).toMatchObject({ recordType: 'header', sessionId: 'sdk-session-1' });
     const opened = records.filter(
       (record) => (record as { recordType: string }).recordType === 'session.opened',
     );
     expect(opened).toHaveLength(1);
     expect(opened[0]).toMatchObject({
       recordType: 'session.opened',
-      sdkSessionId: 'sdk-session-2',
+      sessionId: 'sdk-session-2',
     });
   });
 
   it('does not record a second session.opened for the same session', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('idle'));
     expect(recordTypes(dir)).toEqual(['header', 'agent.event', 'agent.event']);
   });
@@ -341,12 +341,12 @@ describe('createChatJournal - later sessions (session.opened)', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
     // Opened but never used: the header is still pending and no file exists.
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SECOND_SESSION });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SECOND_SESSION });
     journal.recordEvent(stateChanged('sending'));
 
     const records = readRecords(dir);
-    expect(records[0]).toMatchObject({ recordType: 'header', sdkSessionId: 'sdk-session-2' });
+    expect(records[0]).toMatchObject({ recordType: 'header', sessionId: 'sdk-session-2' });
     expect(recordTypes(dir)).toEqual(['header', 'agent.event']);
   });
 
@@ -358,18 +358,18 @@ describe('createChatJournal - later sessions (session.opened)', () => {
         recordType: 'header',
         schemaVersion: 1,
         chatId: CHAT_ID,
-        sdkSessionId: SDK_SESSION_ID,
+        sessionId: SDK_SESSION_ID,
         startedAt: 1,
       }) + '\n',
       'utf8',
     );
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SECOND_SESSION });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SECOND_SESSION });
 
     expect(recordTypes(dir)).toEqual(['header', 'session.opened']);
     expect(readRecords(dir)[1]).toMatchObject({
       recordType: 'session.opened',
-      sdkSessionId: 'sdk-session-2',
+      sessionId: 'sdk-session-2',
     });
   });
 
@@ -381,13 +381,13 @@ describe('createChatJournal - later sessions (session.opened)', () => {
         recordType: 'header',
         schemaVersion: 1,
         chatId: CHAT_ID,
-        sdkSessionId: SDK_SESSION_ID,
+        sessionId: SDK_SESSION_ID,
         startedAt: 1,
       }) + '\n',
       'utf8',
     );
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     expect(readRecords(dir)).toHaveLength(1);
   });
 });
@@ -405,7 +405,7 @@ describe('createChatJournal - events and prompts', () => {
   it('writes the staged prompt immediately before the first event carrying its turnId', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'Show me the page' });
     journal.recordEvent(stateChanged('sending'));
 
@@ -426,7 +426,7 @@ describe('createChatJournal - events and prompts', () => {
   it('writes the current-page block the model read on the prompt record, and only when there was one', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({
       chatId: CHAT_ID,
       turnId: TURN_ID,
@@ -448,7 +448,7 @@ describe('createChatJournal - events and prompts', () => {
   it('leaves pageContext out of the prompt record when the turn had no block', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'Find X' });
     journal.recordEvent(stateChanged('sending'));
 
@@ -457,7 +457,7 @@ describe('createChatJournal - events and prompts', () => {
   it('never writes a discarded prompt whose turn never started', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'never sent' });
     journal.discardUserPrompt(CHAT_ID, TURN_ID);
     journal.recordEvent(stateChanged('sending'));
@@ -469,7 +469,7 @@ describe('createChatJournal - events and prompts', () => {
   it('writes nothing on closeChat for a chat that was never used', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.closeChat(CHAT_ID);
     expect(readRecords(dir)).toEqual([]);
   });
@@ -477,7 +477,7 @@ describe('createChatJournal - events and prompts', () => {
   it('folds deltas and writes no per-delta line', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(messageStarted());
     journal.recordEvent(delta('Hello '));
     journal.recordEvent(delta('world'));
@@ -493,7 +493,7 @@ describe('createChatJournal - events and prompts', () => {
   it('never writes reasoning to the journal, and never lets it flush a pending prompt', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'hi' });
     journal.recordEvent(reasoningDelta('thinking'));
     journal.recordEvent(reasoningCompleted('thinking'));
@@ -517,7 +517,7 @@ describe('createChatJournal - events and prompts', () => {
   it('never writes a live-added question action to the journal, nor lets it flush a pending prompt', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'hi' });
     journal.recordEvent({
       type: 'user.input.actions.added',
@@ -534,7 +534,7 @@ describe('createChatJournal - events and prompts', () => {
   it('still flushes the staged prompt on the first non-reasoning event', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordUserPrompt({ chatId: CHAT_ID, turnId: TURN_ID, prompt: 'hi' });
     journal.recordEvent(reasoningDelta('thinking'));
     journal.recordEvent(messageStarted());
@@ -548,7 +548,7 @@ describe('createChatJournal - events and prompts', () => {
   it('writes a partial message when the turn ends before completion', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(messageStarted());
     journal.recordEvent(delta('Hello ', 2));
     journal.recordEvent(delta('wor', 3));
@@ -569,7 +569,7 @@ describe('createChatJournal - events and prompts', () => {
   it('writes no partial when the message completed', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(messageStarted());
     journal.recordEvent(delta('Hello'));
     journal.recordEvent(messageCompleted('Hello'));
@@ -589,7 +589,7 @@ describe('createChatJournal - events and prompts', () => {
   it('finalizes an unfinished message on closeChat and writes the closed marker last', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(messageStarted());
     journal.recordEvent(delta('partial'));
     journal.closeChat(CHAT_ID);
@@ -604,7 +604,7 @@ describe('createChatJournal - events and prompts', () => {
   it('ignores events for a chat after it was closed', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.closeChat(CHAT_ID);
     const before = readRecords(dir).length;
     journal.recordEvent(stateChanged('idle'));
@@ -617,7 +617,7 @@ describe('createChatJournal - abandoned tool calls', () => {
   it('records a tool call that never produced a result when the turn ends', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     journal.recordEvent(toolRequested());
     journal.recordEvent(toolApproved());
@@ -638,7 +638,7 @@ describe('createChatJournal - abandoned tool calls', () => {
   it('does not record an abandoned call once a result arrived', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     journal.recordEvent(toolRequested());
     journal.recordEvent(toolApproved());
@@ -655,7 +655,7 @@ describe('createChatJournal - abandoned tool calls', () => {
   it('does not record an abandoned call for a rejected call (already terminal)', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     journal.recordEvent(toolRequested());
     journal.recordEvent(toolRejected());
@@ -671,7 +671,7 @@ describe('createChatJournal - abandoned tool calls', () => {
   it('finalizes outstanding calls on closeChat, before the closed marker', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     journal.recordEvent(toolRequested());
     journal.closeChat(CHAT_ID);
@@ -686,7 +686,7 @@ describe('createChatJournal - interruption notices', () => {
   it('writes an interruption record carrying the reason, after the header', () => {
     const dir = createScratchRoot();
     const journal = createChatJournal(dir, { now: counterClock() });
-    journal.openChat({ chatId: CHAT_ID, sdkSessionId: SDK_SESSION_ID });
+    journal.openChat({ chatId: CHAT_ID, sessionId: SDK_SESSION_ID });
     journal.recordEvent(stateChanged('sending'));
     journal.recordEvent(stateChanged('cancelling'));
     journal.recordEvent(stateChanged('idle'));

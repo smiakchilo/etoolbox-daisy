@@ -1,10 +1,10 @@
 import { z } from 'zod';
 import {
   chatIdSchema,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   serverIdSchema,
   type ChatId,
-  type SdkSessionId,
+  type SessionId,
   type ServerId,
 } from '../../../shared';
 
@@ -18,7 +18,7 @@ import {
  * page pointer is global too, so "restore the remembered page and the
  * remembered chat" stays a single, conflict-free decision.
  *
- * `sdkSessionId` is stored alongside `chatId` because the journal header only
+ * `sessionId` is stored alongside `chatId` because the journal header only
  * records the session id at chat creation; a runtime recycle (a proxy or
  * active-provider change) mints a new SDK session for the same `chatId`, so the
  * live id from `AgentChatStatus` is the authoritative one to resume. The caller
@@ -46,14 +46,14 @@ const MAX_RAW_LENGTH = 1000;
 const lastChatRecordSchema = z
   .object({
     chatId: chatIdSchema,
-    sdkSessionId: sdkSessionIdSchema,
+    sessionId: sessionIdSchema,
     serverId: serverIdSchema,
   })
   .strict();
 
 export interface LastChatRecord {
   readonly chatId: ChatId;
-  readonly sdkSessionId: SdkSessionId;
+  readonly sessionId: SessionId;
   readonly serverId: ServerId;
 }
 
@@ -76,7 +76,7 @@ export function loadLastChat(): LastChatRecord | undefined {
   if (!record.success) return undefined;
   return {
     chatId: record.data.chatId,
-    sdkSessionId: record.data.sdkSessionId,
+    sessionId: record.data.sessionId,
     serverId: record.data.serverId,
   };
 }

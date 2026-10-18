@@ -36,7 +36,7 @@ test('a large history resizes its scrollable area once after the first batch', a
         recordType: 'header',
         schemaVersion: 1,
         chatId,
-        sdkSessionId: `sdk-${chatId}`,
+        sessionId: `sdk-${chatId}`,
         startedAt: 1000 + index,
       },
       {

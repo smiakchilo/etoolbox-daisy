@@ -21,7 +21,7 @@ import {
   type MessageId,
   type RequiredAction,
   type Result,
-  type SdkSessionId,
+  type SessionId,
   type ServerId,
   type SessionStatus,
   type SkillPromptResolution,
@@ -160,7 +160,7 @@ export interface AgentChatControllerDeps {
    * so a unit test can construct a controller without chat storage;
    * conversation deletion then deletes no SDK session.
    */
-  readonly readChatSessionIds?: (chatId: ChatId) => readonly SdkSessionId[];
+  readonly readChatSessionIds?: (chatId: ChatId) => readonly SessionId[];
   /**
    * Removes a chat's stored journal file (the app's own conversation storage).
    * Returns `false` when it could not be removed, which conversation deletion
@@ -616,7 +616,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       apiVersion: 1,
       auth: agentService.getAuthState(),
       activeChatId: activeChatId ?? null,
-      sdkSessionId: agentService.getOpenSessionId() ?? null,
+      sessionId: agentService.getOpenSessionId() ?? null,
       sessionState: sessionStatus.state,
       // This controller is only ever constructed once a real (or fake)
       // `AgentService` already exists and has been `initialize()`d - see
@@ -695,12 +695,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       activeTurn = undefined;
       return { ok: false, error: toAgentChatError(result.error) };
     }
-    const sdkSessionId = agentService.getOpenSessionId();
-    if (sdkSessionId !== undefined) {
+    const sessionId = agentService.getOpenSessionId();
+    if (sessionId !== undefined) {
       const server = deps.currentAemServerContext();
       chatJournal?.openChat({
         chatId: request.chatId,
-        sdkSessionId,
+        sessionId,
         ...(server !== undefined ? { serverId: server.serverId } : {}),
       });
     }
@@ -868,10 +868,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       if (!closed.ok) return closed;
     }
 
-    for (const sdkSessionId of deps.readChatSessionIds?.(chatId) ?? []) {
-      const deleted = await agentService.deleteSession(sdkSessionId);
+    for (const sessionId of deps.readChatSessionIds?.(chatId) ?? []) {
+      const deleted = await agentService.deleteSession(sessionId);
       if (!deleted.ok) {
-        logger.warn('AGENT_CHAT_DELETE_SESSION_FAILED', { ids: { chatId, sdkSessionId } });
+        logger.warn('AGENT_CHAT_DELETE_SESSION_FAILED', { ids: { chatId, sessionId } });
       }
     }
 
@@ -1121,7 +1121,7 @@ export function createStartupGatedAgentChatController(
       // before trusting `auth` at all.
       auth: { apiVersion: 1, isAuthenticated: false },
       activeChatId: null,
-      sdkSessionId: null,
+      sessionId: null,
       sessionState: 'idle',
       serviceState: unavailable ? 'unavailable' : 'starting',
     };

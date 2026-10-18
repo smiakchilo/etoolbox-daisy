@@ -12,7 +12,7 @@ import {
   type ReasoningId,
   type RequiredAction,
   type Result,
-  type SdkSessionId,
+  type SessionId,
   type SendPromptRequest,
   type SessionStatus,
   type SessionStreamState,
@@ -34,7 +34,7 @@ import {
   newToolCallId,
   newUserInputRequestId,
   ok,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   createAgentServiceError,
 } from '../../shared';
 
@@ -220,11 +220,11 @@ export interface FakeAgentService extends AgentService {
   setAuthState(state: AgentAuthState): void;
 
   /**
-   * The `sdkSessionId`s `deleteSession` has been called with, in order. This
+   * The `sessionId`s `deleteSession` has been called with, in order. This
    * fake holds no SDK session data, so it records the request rather than
    * removing anything - enough for a test to assert which session was named.
    */
-  deletedSessionIds(): readonly SdkSessionId[];
+  deletedSessionIds(): readonly SessionId[];
 }
 
 // ---------------------------------------------------------------------------
@@ -355,11 +355,11 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   let streamState: SessionStreamState = 'idle';
   let pendingTurn: PendingTurn | undefined;
   /**
-   * Every `sdkSessionId` passed to `deleteSession`, in call order. This fake
+   * Every `sessionId` passed to `deleteSession`, in call order. This fake
    * has no SDK session data to remove, so it records the request instead -
    * enough for a test or E2E to assert which session deletion named.
    */
-  const deletedSessions = new Set<SdkSessionId>();
+  const deletedSessions = new Set<SessionId>();
 
   function nextSequence(chatId: ChatId): number {
     const sequence = sequenceByChatId.get(chatId) ?? 0;
@@ -839,13 +839,13 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       return authState;
     },
 
-    getOpenSessionId(): SdkSessionId | undefined {
+    getOpenSessionId(): SessionId | undefined {
       if (openChatId === undefined) return undefined;
       // Deterministic, derived from the chat id: this fake has no real SDK
       // session, but the journal's header still needs a stable id. Truncated to
       // the identifier schema's bound so a very long chat id cannot make it
       // unparseable.
-      return sdkSessionIdSchema.parse(`fake-session-${openChatId}`.slice(0, 200));
+      return sessionIdSchema.parse(`fake-session-${openChatId}`.slice(0, 200));
     },
 
     onAuthStateChanged(listener: (state: AgentAuthState) => void): Unsubscribe {
@@ -995,10 +995,10 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       return Promise.resolve(ok(undefined));
     },
 
-    deleteSession(sdkSessionId: SdkSessionId): Promise<Result<void, AgentServiceError>> {
+    deleteSession(sessionId: SessionId): Promise<Result<void, AgentServiceError>> {
       // No SDK session data to remove; recording the id is this fake's whole
       // job here (see `deletedSessionIds`).
-      deletedSessions.add(sdkSessionId);
+      deletedSessions.add(sessionId);
       return Promise.resolve(ok(undefined));
     },
 
@@ -1025,7 +1025,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       for (const listener of authListeners) listener(state);
     },
 
-    deletedSessionIds(): readonly SdkSessionId[] {
+    deletedSessionIds(): readonly SessionId[] {
       return [...deletedSessions];
     },
   };

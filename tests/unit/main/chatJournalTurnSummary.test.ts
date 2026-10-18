@@ -8,7 +8,7 @@ import {
   type ChatId,
   type ChatJournalTurnSummaryRecord,
   type MessageId,
-  type SdkSessionId,
+  type SessionId,
   type ToolCallId,
   type TurnId,
 } from '../../../src/shared';
@@ -26,7 +26,7 @@ const TURN = 'turn-1' as TurnId;
 const TURN_2 = 'turn-2' as TurnId;
 const MESSAGE = 'message-1' as MessageId;
 const CALL = 'call-1' as ToolCallId;
-const SDK = 'sdk-1' as SdkSessionId;
+const SDK = 'sdk-1' as SessionId;
 
 function readRecords(dir: string): { recordType: string }[] {
   return readFileSync(path.join(dir, `${CHAT}.jsonl`), 'utf8')
@@ -117,7 +117,7 @@ function setUp(onTurnSummary?: (record: ChatJournalTurnSummaryRecord) => void) {
     now: () => t,
     ...(onTurnSummary !== undefined ? { onTurnSummary } : {}),
   });
-  journal.openChat({ chatId: CHAT, sdkSessionId: SDK });
+  journal.openChat({ chatId: CHAT, sessionId: SDK });
   return {
     dir,
     journal,

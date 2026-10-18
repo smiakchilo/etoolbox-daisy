@@ -4,7 +4,7 @@ import type {
   AgentEvent,
   ChatId,
   RequiredAction,
-  SdkSessionId,
+  SessionId,
   ToolErrorCode,
   TurnId,
   UserInputAnswer,
@@ -118,10 +118,10 @@ export interface OpenConversationRequest {
   readonly chatId: ChatId;
   /**
    * When present, resume the SDK session this chat was previously backed by
-   * (persisted as `ChatMetadata.sdkSessionId`) instead of starting a fresh
+   * (persisted as `ChatMetadata.sessionId`) instead of starting a fresh
    * one. Absent for a chat that has never had an SDK session.
    */
-  readonly resume?: { readonly sdkSessionId: SdkSessionId };
+  readonly resume?: { readonly sessionId: SessionId };
 }
 
 /**
@@ -168,7 +168,7 @@ export interface AgentService {
    * journal records it in its header (implementation-plan.md step 09). Never
    * blocks.
    */
-  getOpenSessionId(): SdkSessionId | undefined;
+  getOpenSessionId(): SessionId | undefined;
 
   /** Notifies `listener` on every subsequent change to `getAuthState()`. */
   onAuthStateChanged(listener: (state: AgentAuthState) => void): Unsubscribe;
@@ -246,7 +246,7 @@ export interface AgentService {
   closeConversation(chatId: ChatId): Promise<Result<void, AgentServiceError>>;
 
   /**
-   * Permanently deletes the SDK's stored session data for `sdkSessionId`
+   * Permanently deletes the SDK's stored session data for `sessionId`
    * (implementation-plan.md step 10's "use the supported SDK deletion API").
    * Used by conversation deletion from History, never by ordinary chat
    * operation.
@@ -260,7 +260,7 @@ export interface AgentService {
    * historical chat-to-session mapping - the caller reads it from the chat's
    * journal header.
    */
-  deleteSession(sdkSessionId: SdkSessionId): Promise<Result<void, AgentServiceError>>;
+  deleteSession(sessionId: SessionId): Promise<Result<void, AgentServiceError>>;
 
   /**
    * Releases everything this service owns (open conversation, subscriptions,

@@ -18,7 +18,7 @@ import { readChatJournal, type ChatJournalReadOutcome } from './chatJournalReade
  * like the writer and reader beside it.
  *
  * THERE IS NO SECOND METADATA STORE. The journal already holds everything the
- * list needs - the header's `startedAt`/`sdkSessionId`, the chat's host (the
+ * list needs - the header's `startedAt`/`sessionId`, the chat's host (the
  * header's `serverId`, or the first prompt's when the header names none) and the
  * first `user.prompt` - so an index would only be a second thing to keep in sync
  * with the file it summarizes. The cost is reading each (bounded, small) journal
@@ -198,7 +198,7 @@ function entryFromRecords(
     startedAt: header.startedAt,
     updatedAt,
     ...(serverId !== undefined ? { serverId } : {}),
-    ...(header.sdkSessionId !== undefined ? { sdkSessionId: header.sdkSessionId } : {}),
+    ...(header.sessionId !== undefined ? { sessionId: header.sessionId } : {}),
   };
 }
 

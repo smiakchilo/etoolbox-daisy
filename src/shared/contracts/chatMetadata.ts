@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { chatIdSchema, sdkSessionIdSchema, serverIdSchema } from './ids';
+import { chatIdSchema, sessionIdSchema, serverIdSchema } from './ids';
 import { isStaleRevision, serverRevisionSchema } from './serverConfig';
 import { modelIdSchema, reasoningEffortSchema } from './appSettings';
 
@@ -66,7 +66,7 @@ export const chatStatusSchema = z.enum(CHAT_STATUSES);
 export const chatMetadataSchema = z
   .object({
     chatId: chatIdSchema,
-    sdkSessionId: sdkSessionIdSchema,
+    sessionId: sessionIdSchema,
     serverId: serverIdSchema,
     startedAt: epochMillisecondsSchema,
     title: chatTitleSchema.optional(),

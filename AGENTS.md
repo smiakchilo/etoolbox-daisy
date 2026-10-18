@@ -202,15 +202,25 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change is the **paged History list**
+> The most recent shared-surface change is the **`sdkSessionId` → `sessionId`
+> rename** (2026-10-18): `contracts/ids.ts`'s `SdkSessionId` / `sdkSessionIdSchema`
+> became `SessionId` / `sessionIdSchema`, and every `sdkSessionId` property —
+> including the persisted journal `header` and `session.opened` key,
+> `AgentChatStatus.sessionId`, the open-conversation `resume` field and the log
+> id field — became `sessionId` (the active agent's session id, not "the SDK's").
+> The persisted key is renamed outright, so old journals' header records no
+> longer parse (skipped; no migration code, see §5) — see
+> `docs/verification/followons-2026-10.md` "`sdkSessionId` becomes `sessionId`,
+> and the `appPaths` `copilot` directory is confirmed already gone (2026-10-18)".
+> Before that the most recent shared-surface change was the **paged History list**
 > (2026-10-18): `agent-chat-ipc.ts` gained
 > `agentChatListConversationsRequestSchema` (an optional opaque `next`) and an
 > optional `next` on the ok result of `agentChatHistoryListResultSchema`, and
 > `app-api.ts`'s `listConversations` now takes that request — so the panel can
 > append small pages instead of waiting for one whole scan — see
 > `docs/verification/followons-2026-10.md` "History opens in small batches, with
-> one set of actions and a Reveal in folder (2026-10-18)". The most recent
-> *contracts/* change is "a chat records its host when it is first
+> one set of actions and a Reveal in folder (2026-10-18)". The *contracts/*
+> change before the rename is "a chat records its host when it is first
 > used" (2026-10-15): `contracts/chatJournal.ts`'s `user.prompt` record gained an
 > optional `serverId` (the host the pane was on when the prompt was sent), so a
 > chat opened before any host was restored still records the host it was first
@@ -221,7 +231,7 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > SDK session the chat minted — see `docs/verification.md` "Per-chat SDK session
 > history: deletion removes every session a chat minted (2026-10-15)". Before
 > that it was Step 09's history surface (2026-10-15):
-> `contracts/agentService`'s `AgentService` gained `deleteSession(sdkSessionId)`
+> `contracts/agentService`'s `AgentService` gained `deleteSession(sessionId)`
 > (implemented by both adapters and the fake; `HardenedSessionClient.deleteSession`
 > is optional) and `agent-chat-ipc.ts` / `ipc-channels.ts` gained the
 > `agent-chat:list-conversations` and `agent-chat:delete-conversation` surface —

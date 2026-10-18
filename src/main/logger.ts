@@ -5,7 +5,7 @@ import {
   type ChatId,
   type MessageId,
   type RequestId,
-  type SdkSessionId,
+  type SessionId,
   type ServerId,
   type ToolCallId,
   type ToolErrorCode,
@@ -14,7 +14,7 @@ import {
   messageIdSchema,
   parseOrigin,
   requestIdSchema,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   serverIdSchema,
   TOOL_ERROR_CODES,
   toolCallIdSchema,
@@ -195,7 +195,7 @@ export interface LogIds {
   readonly requestId?: RequestId;
   readonly chatId?: ChatId;
   readonly serverId?: ServerId;
-  readonly sdkSessionId?: SdkSessionId;
+  readonly sessionId?: SessionId;
   readonly turnId?: TurnId;
   readonly messageId?: MessageId;
   readonly toolCallId?: ToolCallId;
@@ -228,7 +228,7 @@ const logIdsSchema = z
     requestId: requestIdSchema.optional(),
     chatId: chatIdSchema.optional(),
     serverId: serverIdSchema.optional(),
-    sdkSessionId: sdkSessionIdSchema.optional(),
+    sessionId: sessionIdSchema.optional(),
     turnId: turnIdSchema.optional(),
     messageId: messageIdSchema.optional(),
     toolCallId: toolCallIdSchema.optional(),
@@ -277,7 +277,7 @@ function buildRecord(
     if (fields.ids.requestId !== undefined) ids['requestId'] = fields.ids.requestId;
     if (fields.ids.chatId !== undefined) ids['chatId'] = fields.ids.chatId;
     if (fields.ids.serverId !== undefined) ids['serverId'] = fields.ids.serverId;
-    if (fields.ids.sdkSessionId !== undefined) ids['sdkSessionId'] = fields.ids.sdkSessionId;
+    if (fields.ids.sessionId !== undefined) ids['sessionId'] = fields.ids.sessionId;
     if (fields.ids.turnId !== undefined) ids['turnId'] = fields.ids.turnId;
     if (fields.ids.messageId !== undefined) ids['messageId'] = fields.ids.messageId;
     if (fields.ids.toolCallId !== undefined) ids['toolCallId'] = fields.ids.toolCallId;

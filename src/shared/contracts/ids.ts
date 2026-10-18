@@ -53,8 +53,8 @@ export type ProxyId = Branded<'ProxyId'>;
 export type ProjectId = Branded<'ProjectId'>;
 /** Stable identifier of a conversation, owned by this application. */
 export type ChatId = Branded<'ChatId'>;
-/** Identifier of the Copilot SDK session backing a chat. Owned by the SDK. */
-export type SdkSessionId = Branded<'SdkSessionId'>;
+/** Identifier of the agent session backing a chat. Owned by the active agent. */
+export type SessionId = Branded<'SessionId'>;
 /** One user message and everything the agent does in response to it. */
 export type TurnId = Branded<'TurnId'>;
 /** A single assistant message within a turn. */
@@ -88,7 +88,7 @@ export const serverIdSchema = brandedSchema<ServerId>('serverId');
 export const proxyIdSchema = brandedSchema<ProxyId>('proxyId');
 export const projectIdSchema = brandedSchema<ProjectId>('projectId');
 export const chatIdSchema = brandedSchema<ChatId>('chatId');
-export const sdkSessionIdSchema = brandedSchema<SdkSessionId>('sdkSessionId');
+export const sessionIdSchema = brandedSchema<SessionId>('sessionId');
 export const turnIdSchema = brandedSchema<TurnId>('turnId');
 export const messageIdSchema = brandedSchema<MessageId>('messageId');
 export const toolCallIdSchema = brandedSchema<ToolCallId>('toolCallId');

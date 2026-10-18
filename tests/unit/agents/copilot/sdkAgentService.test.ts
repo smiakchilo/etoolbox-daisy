@@ -16,12 +16,12 @@ import {
   newChatId,
   newRequestId,
   newTurnId,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   type IdGenerator,
 } from '../../../../src/shared';
 import { applyAgentEvent, type SessionStatus } from '../../../../src/shared';
 import { err, ok } from '../../../../src/shared';
-import type { AuthStatus, SdkSessionId } from '../../../../src/shared';
+import type { AuthStatus, SessionId } from '../../../../src/shared';
 import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
 
 /** Mints reproducible `ChatId`/`TurnId` values - never SDK-facing ids, which the adapter adopts instead. */
@@ -1151,7 +1151,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
     expect((await service.initialize()).ok).toBe(true);
     const opened = await service.openConversation({
       chatId: newChatId(ids),
-      resume: { sdkSessionId: sdkSessionIdSchema.parse('previous-session') },
+      resume: { sessionId: sessionIdSchema.parse('previous-session') },
     });
     expect(opened.ok).toBe(true);
 
@@ -1193,7 +1193,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
       (
         await service.openConversation({
           chatId,
-          resume: { sdkSessionId: sdkSessionIdSchema.parse('previous-session') },
+          resume: { sessionId: sessionIdSchema.parse('previous-session') },
         })
       ).ok,
     ).toBe(true);
@@ -1222,7 +1222,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
       (
         await service.openConversation({
           chatId,
-          resume: { sdkSessionId: sdkSessionIdSchema.parse('previous-session') },
+          resume: { sessionId: sessionIdSchema.parse('previous-session') },
         })
       ).ok,
     ).toBe(true);
@@ -1348,7 +1348,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
       (
         await service.openConversation({
           chatId,
-          resume: { sdkSessionId: sdkSessionIdSchema.parse('previous') },
+          resume: { sessionId: sessionIdSchema.parse('previous') },
         })
       ).ok,
     ).toBe(true);
@@ -1375,7 +1375,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
       (
         await service.openConversation({
           chatId: first,
-          resume: { sdkSessionId: sdkSessionIdSchema.parse('one') },
+          resume: { sessionId: sessionIdSchema.parse('one') },
         })
       ).ok,
     ).toBe(true);
@@ -1390,7 +1390,7 @@ describe('sdkAgentService - model and reasoning-effort preference (step 09)', ()
       (
         await service.openConversation({
           chatId: second,
-          resume: { sdkSessionId: sdkSessionIdSchema.parse('two') },
+          resume: { sessionId: sessionIdSchema.parse('two') },
         })
       ).ok,
     ).toBe(true);
@@ -1433,7 +1433,7 @@ describe('sdkAgentService - deleteSession', () => {
       authSource: makeAuthSource().source,
     });
 
-    const result = await service.deleteSession('sdk-42' as SdkSessionId);
+    const result = await service.deleteSession('sdk-42' as SessionId);
 
     expect(result.ok).toBe(true);
     expect(deleteSession).toHaveBeenCalledWith('sdk-42');
@@ -1452,7 +1452,7 @@ describe('sdkAgentService - deleteSession', () => {
       authSource: makeAuthSource().source,
     });
 
-    expect((await service.deleteSession('sdk-42' as SdkSessionId)).ok).toBe(true);
+    expect((await service.deleteSession('sdk-42' as SessionId)).ok).toBe(true);
   });
 
   it('reports a storage error when the client refuses', async () => {
@@ -1465,7 +1465,7 @@ describe('sdkAgentService - deleteSession', () => {
       authSource: makeAuthSource().source,
     });
 
-    const result = await service.deleteSession('sdk-42' as SdkSessionId);
+    const result = await service.deleteSession('sdk-42' as SessionId);
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');

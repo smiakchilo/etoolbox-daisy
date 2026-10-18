@@ -32,7 +32,7 @@ function header(chatId: string, options: { readonly serverId?: string } = {}): C
     recordType: 'header',
     schemaVersion: 1,
     chatId,
-    sdkSessionId: `sdk-${chatId}`,
+    sessionId: `sdk-${chatId}`,
     startedAt: 1000,
     ...(options.serverId !== undefined ? { serverId: options.serverId } : {}),
   } as unknown as ChatJournalRecord;
@@ -160,7 +160,7 @@ describe('readChatHistoryPage', () => {
         startedAt: 1000,
         updatedAt: 5000,
         serverId: 'server-9',
-        sdkSessionId: 'sdk-chat-1',
+        sessionId: 'sdk-chat-1',
       },
     ]);
     expect(page.hasMore).toBe(false);

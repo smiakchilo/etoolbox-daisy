@@ -152,14 +152,14 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       browserPane.navigate(url);
     },
     resolveStartupConversation,
-    onConversationUsed(chatId, sdkSessionId) {
+    onConversationUsed(chatId, sessionId) {
       // The server-match gate reads this back: a chat is only worth remembering
       // when it was used against a configured host, and only that host's page
       // will restore it. No active host means no restore, matching "the page
       // wins".
       const serverId = activeServerId();
       if (serverId === undefined) return;
-      saveLastChat({ chatId, sdkSessionId, serverId });
+      saveLastChat({ chatId, sessionId, serverId });
     },
     onConversationUnavailable() {
       clearLastChat();
@@ -442,7 +442,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     const journal = await window.daisy.agentChat.readJournal({ chatId: record.chatId });
     if (!journal.ok) return undefined;
 
-    return { chatId: record.chatId, sdkSessionId: record.sdkSessionId, records: journal.records };
+    return { chatId: record.chatId, sessionId: record.sessionId, records: journal.records };
   }
 
   // The split view was created above (so the toolbar toggle could reach it);

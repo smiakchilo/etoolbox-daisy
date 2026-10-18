@@ -168,7 +168,7 @@ describe('createChatHistoryPager', () => {
         recordType: 'header',
         schemaVersion: 1,
         chatId: 'chat-1',
-        sdkSessionId: 'sdk-1',
+        sessionId: 'sdk-1',
         startedAt: 1000,
       } as unknown as ChatJournalRecord;
       const prompt: ChatJournalRecord = {

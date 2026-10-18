@@ -14,7 +14,7 @@ import {
   type InterruptionReason,
   type MessageId,
   renderFoldedText,
-  type SdkSessionId,
+  type SessionId,
   type ServerId,
   type ToolCallId,
   type TurnId,
@@ -52,7 +52,7 @@ import { toChatFileName } from './chatJournalPaths';
 
 export interface ChatJournalOpenParams {
   readonly chatId: ChatId;
-  readonly sdkSessionId: SdkSessionId;
+  readonly sessionId: SessionId;
   /** The AEM server the chat is bound to, if one was selected when it opened. */
   readonly serverId?: ServerId;
 }
@@ -181,7 +181,7 @@ interface OpenChat {
    * while this state is still held; comparing against this set is what turns
    * that into a `session.opened` record so deletion can remove every session.
    */
-  readonly recordedSessionIds: Set<SdkSessionId>;
+  readonly recordedSessionIds: Set<SessionId>;
   /** Folded deltas per assistant message, plus the turn each belongs to. */
   readonly foldsByMessageId: Map<MessageId, MessageFold>;
   readonly completedMessageIds: Set<MessageId>;
@@ -485,7 +485,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
     openChat(params) {
       const existing = openChats.get(params.chatId);
       if (existing !== undefined) {
-        if (existing.recordedSessionIds.has(params.sdkSessionId)) return;
+        if (existing.recordedSessionIds.has(params.sessionId)) return;
         const pendingHeader = existing.pendingHeader;
         if (pendingHeader !== undefined) {
           // Nothing is on disk yet, so this chat's `header` is still going to
@@ -493,9 +493,9 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
           // a second record. The earlier session it replaces was never used
           // (the header is written before a chat's first real record), so there
           // is nothing to keep.
-          existing.recordedSessionIds.delete(pendingHeader.sdkSessionId);
-          existing.recordedSessionIds.add(params.sdkSessionId);
-          existing.pendingHeader = { ...pendingHeader, sdkSessionId: params.sdkSessionId };
+          existing.recordedSessionIds.delete(pendingHeader.sessionId);
+          existing.recordedSessionIds.add(params.sessionId);
+          existing.pendingHeader = { ...pendingHeader, sessionId: params.sessionId };
           return;
         }
         // The chat already has a `header` on disk, so this is a runtime recycle
@@ -503,12 +503,12 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         // session exists on disk as soon as the open succeeded) so deletion can
         // remove this session's data too. One small line per recycle is
         // negligible and bounded by real use.
-        existing.recordedSessionIds.add(params.sdkSessionId);
+        existing.recordedSessionIds.add(params.sessionId);
         appendRecord(existing, {
           recordType: 'session.opened',
           at: now(),
           chatId: params.chatId,
-          sdkSessionId: params.sdkSessionId,
+          sessionId: params.sessionId,
         });
         return;
       }
@@ -538,25 +538,25 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         for (const id of readChatSessionIds(chatsDir, params.chatId)) {
           state.recordedSessionIds.add(id);
         }
-        if (!state.recordedSessionIds.has(params.sdkSessionId)) {
-          state.recordedSessionIds.add(params.sdkSessionId);
+        if (!state.recordedSessionIds.has(params.sessionId)) {
+          state.recordedSessionIds.add(params.sessionId);
           appendRecord(state, {
             recordType: 'session.opened',
             at: now(),
             chatId: params.chatId,
-            sdkSessionId: params.sdkSessionId,
+            sessionId: params.sessionId,
           });
         }
         return;
       }
       // A fresh chat defers its header until its first real record (see
       // `appendRecord`), so merely opening a conversation never creates a file.
-      state.recordedSessionIds.add(params.sdkSessionId);
+      state.recordedSessionIds.add(params.sessionId);
       state.pendingHeader = {
         recordType: 'header',
         schemaVersion: CHAT_JOURNAL_SCHEMA_VERSION,
         chatId: params.chatId,
-        sdkSessionId: params.sdkSessionId,
+        sessionId: params.sessionId,
         ...(params.serverId !== undefined ? { serverId: params.serverId } : {}),
         startedAt: now(),
       };

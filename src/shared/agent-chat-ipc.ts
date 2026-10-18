@@ -8,7 +8,7 @@ import {
   chatTitleSchema,
   epochMillisecondsSchema,
   requiredActionSchema,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   serverIdSchema,
   sessionStreamStateSchema,
   toolErrorCodeSchema,
@@ -117,7 +117,7 @@ export const agentChatStatusSchema = z
      * chat creation - a runtime recycle mints a new session for the same
      * `chatId`, so this live value is the authoritative one).
      */
-    sdkSessionId: sdkSessionIdSchema.nullable(),
+    sessionId: sessionIdSchema.nullable(),
     sessionState: sessionStreamStateSchema,
     serviceState: agentServiceLifecycleStateSchema,
   })
@@ -137,7 +137,7 @@ export function parseAgentChatStatus(candidate: unknown): AgentChatStatus {
 export const agentChatOpenConversationRequestSchema = z
   .object({
     chatId: chatIdSchema,
-    resume: z.object({ sdkSessionId: sdkSessionIdSchema }).strict().optional(),
+    resume: z.object({ sessionId: sessionIdSchema }).strict().optional(),
   })
   .strict();
 
@@ -306,7 +306,7 @@ export function parseAgentChatListConversationsRequest(
  * beginning of the first user message - produced without a model request - and
  * is absent for a chat whose journal holds no user prompt. `startedAt` and
  * `updatedAt` are epoch milliseconds; `updatedAt` is the newest record's time,
- * so the list can order by "most recently used". `sdkSessionId` is the session
+ * so the list can order by "most recently used". `sessionId` is the session
  * the journal's header recorded, offered so a caller can attempt a genuine
  * resume (a runtime recycle minted a later session the journal does not keep,
  * so this may be stale - the resume falls back to a fresh session).
@@ -318,7 +318,7 @@ export const agentChatHistoryEntrySchema = z
     startedAt: epochMillisecondsSchema,
     updatedAt: epochMillisecondsSchema,
     serverId: serverIdSchema.optional(),
-    sdkSessionId: sdkSessionIdSchema.optional(),
+    sessionId: sessionIdSchema.optional(),
   })
   .strict();
 

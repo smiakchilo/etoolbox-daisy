@@ -21,7 +21,7 @@ import {
   type ModelCatalogEntry,
   type ModelPreference,
   type ProjectConfig,
-  type SdkSessionId,
+  type SessionId,
   type ServerConfig,
   type SessionStreamState,
   type SkillPromptResolution,
@@ -479,7 +479,7 @@ export interface InstallAgentServiceDeps {
    */
   readonly resolveSkillPrompt?: (prompt: string) => SkillPromptResolution;
   /** Reads every SDK session id a chat's journal recorded, for conversation deletion. See `AgentChatControllerDeps`. */
-  readonly readChatSessionIds?: (chatId: ChatId) => readonly SdkSessionId[];
+  readonly readChatSessionIds?: (chatId: ChatId) => readonly SessionId[];
   /** Removes a chat's stored journal file, for conversation deletion. See `AgentChatControllerDeps`. */
   readonly removeChatJournal?: (chatId: ChatId) => boolean;
   /** The user's rules for the pane's current project. See `AgentChatControllerDeps`. */

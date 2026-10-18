@@ -19,7 +19,7 @@ const entry = {
   startedAt: 1000,
   updatedAt: 5000,
   serverId: 'server-1',
-  sdkSessionId: 'sdk-1',
+  sessionId: 'sdk-1',
 };
 
 describe('agentChatHistoryListResultSchema', () => {

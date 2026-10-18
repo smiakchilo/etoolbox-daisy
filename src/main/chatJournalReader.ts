@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { chatJournalRecordSchema, type ChatJournalRecord, type SdkSessionId } from '../shared';
+import { chatJournalRecordSchema, type ChatJournalRecord, type SessionId } from '../shared';
 import { toChatFileName } from './chatJournalPaths';
 
 /**
@@ -105,13 +105,13 @@ export function readChatSessionIds(
   chatsDir: string,
   chatId: string,
   options: ChatJournalReaderOptions = {},
-): readonly SdkSessionId[] {
+): readonly SessionId[] {
   const outcome = readChatJournal(chatsDir, chatId, options);
   if (!outcome.ok) return [];
-  const ids: SdkSessionId[] = [];
+  const ids: SessionId[] = [];
   for (const record of outcome.records) {
     if (record.recordType === 'header' || record.recordType === 'session.opened') {
-      ids.push(record.sdkSessionId);
+      ids.push(record.sessionId);
     }
   }
   return ids;

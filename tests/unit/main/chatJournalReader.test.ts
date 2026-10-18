@@ -14,7 +14,7 @@ const header = {
   recordType: 'header',
   schemaVersion: 1,
   chatId: 'chat-1',
-  sdkSessionId: 'sdk-1',
+  sessionId: 'sdk-1',
   serverId: 'server-1',
   startedAt: 1,
 };
@@ -51,7 +51,7 @@ const sessionOpened = {
   recordType: 'session.opened',
   at: 5,
   chatId: 'chat-1',
-  sdkSessionId: 'sdk-2',
+  sessionId: 'sdk-2',
 };
 
 function lines(...records: unknown[]): string {
@@ -153,7 +153,7 @@ describe('readChatSessionIds', () => {
       readText: () =>
         lines(header, userPrompt, sessionOpened, {
           ...sessionOpened,
-          sdkSessionId: 'sdk-3',
+          sessionId: 'sdk-3',
         }),
     });
     expect(ids).toEqual(['sdk-1', 'sdk-2', 'sdk-3']);

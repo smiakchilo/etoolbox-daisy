@@ -47,7 +47,7 @@ function readyStatus(): AgentChatStatus {
     apiVersion: 1,
     auth: { apiVersion: 1, isAuthenticated: true },
     activeChatId: null,
-    sdkSessionId: null,
+    sessionId: null,
     sessionState: 'idle',
     serviceState: 'ready',
   };

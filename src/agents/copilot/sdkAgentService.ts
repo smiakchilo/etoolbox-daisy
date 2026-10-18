@@ -22,7 +22,7 @@ import {
   type ModelPreference,
   type ReasoningId,
   type Result,
-  type SdkSessionId,
+  type SessionId,
   type SessionStatus,
   type SessionStreamState,
   type ToolCallId,
@@ -50,7 +50,7 @@ import {
   parseAuthStatus,
   renderFoldedText,
   renderToolFailureForModel,
-  sdkSessionIdSchema,
+  sessionIdSchema,
   toolCallIdSchema,
 } from '../../shared';
 import {
@@ -1260,10 +1260,10 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       return authState;
     },
 
-    getOpenSessionId(): SdkSessionId | undefined {
+    getOpenSessionId(): SessionId | undefined {
       const raw = openSession?.sessionId;
       if (raw === undefined) return undefined;
-      const parsed = sdkSessionIdSchema.safeParse(raw);
+      const parsed = sessionIdSchema.safeParse(raw);
       return parsed.success ? parsed.data : undefined;
     },
 
@@ -1298,12 +1298,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         // preserves that session's conversation history either way.
         const preference = readModelPreference();
         const session = request.resume
-          ? await resumeHardenedSession(
-              client,
-              request.resume.sdkSessionId,
-              policy,
-              sessionOverrides,
-            )
+          ? await resumeHardenedSession(client, request.resume.sessionId, policy, sessionOverrides)
           : await createHardenedSession(client, policy, {
               ...sessionOverrides,
               ...modelSessionConfig(preference),
@@ -1562,7 +1557,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       return ok(undefined);
     },
 
-    async deleteSession(sdkSessionId: SdkSessionId): Promise<Result<void, AgentServiceError>> {
+    async deleteSession(sessionId: SessionId): Promise<Result<void, AgentServiceError>> {
       // The client that persists no session state has no `deleteSession`; the
       // request is then already satisfied (there is nothing on disk to remove),
       // so it succeeds idempotently. `bind` keeps the real SDK method bound to
@@ -1571,7 +1566,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
       const remove = client.deleteSession?.bind(client);
       if (remove === undefined) return ok(undefined);
       try {
-        await remove(sdkSessionId);
+        await remove(sessionId);
         return ok(undefined);
       } catch (error) {
         // The caller (conversation deletion) treats this as a partial failure:

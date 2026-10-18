@@ -13,7 +13,7 @@ import type {
   AgentSettingsSnapshot,
   ChatId,
   ChatJournalRecord,
-  SdkSessionId,
+  SessionId,
   TurnId,
 } from '../../../src/shared';
 import { flushMicrotasks as flush } from '../../support/asyncWaits';
@@ -56,7 +56,7 @@ function definedStatus(overrides: Partial<AgentChatStatus> = {}): AgentChatStatu
     apiVersion: 1,
     auth: { apiVersion: 1, isAuthenticated: false },
     activeChatId: null,
-    sdkSessionId: null,
+    sessionId: null,
     sessionState: 'idle',
     serviceState: 'ready',
     ...overrides,
@@ -695,7 +695,7 @@ describe('createChatPane startup restore', () => {
 
   const rememberedConversation = {
     chatId: 'chat-remembered' as ChatId,
-    sdkSessionId: 'sdk-remembered' as SdkSessionId,
+    sessionId: 'sdk-remembered' as SessionId,
     records: [
       userPromptRecord('chat-remembered' as ChatId, 'turn-old', 'what did we say?'),
     ] satisfies readonly ChatJournalRecord[],
@@ -716,7 +716,7 @@ describe('createChatPane startup restore', () => {
     expect(openConversation).toHaveBeenCalledTimes(1);
     expect(openConversation.mock.calls[0]?.[0]).toEqual({
       chatId: 'chat-remembered',
-      resume: { sdkSessionId: 'sdk-remembered' },
+      resume: { sessionId: 'sdk-remembered' },
     });
     expect(onConversationUsed).toHaveBeenCalledWith('chat-remembered', 'sdk-remembered');
     expect(pane.element.querySelectorAll('.chat-message--user').length).toBe(1);
@@ -754,7 +754,7 @@ describe('createChatPane startup restore', () => {
     expect(openConversation).toHaveBeenCalledTimes(1);
     expect(openConversation.mock.calls[0]?.[0]).toEqual({
       chatId: 'chat-remembered',
-      resume: { sdkSessionId: 'sdk-remembered' },
+      resume: { sessionId: 'sdk-remembered' },
     });
     expect(onConversationUsed).toHaveBeenCalledWith('chat-remembered', 'sdk-remembered');
 
@@ -787,7 +787,7 @@ describe('createChatPane startup restore', () => {
     expect(openConversation).toHaveBeenCalledTimes(1);
     expect(openConversation.mock.calls[0]?.[0]).toEqual({
       chatId: 'chat-remembered',
-      resume: { sdkSessionId: 'sdk-remembered' },
+      resume: { sessionId: 'sdk-remembered' },
     });
 
     pane.dispose();
@@ -1384,7 +1384,7 @@ describe('createChatPane interruptions and session id', () => {
 describe('createChatPane conversation open serialization', () => {
   const rememberedConversation = {
     chatId: 'chat-remembered' as ChatId,
-    sdkSessionId: 'sdk-remembered' as SdkSessionId,
+    sessionId: 'sdk-remembered' as SessionId,
     records: [] as readonly ChatJournalRecord[],
   };
 
