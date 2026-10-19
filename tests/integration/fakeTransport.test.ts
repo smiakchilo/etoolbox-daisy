@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
-import { newChatId, newServerId, newTurnId, type IdGenerator } from '../../src/shared';
-import { serverConfigSchema, type ServerConfig } from '../../src/shared';
-import { WEBVIEW_REQUEST_TIMEOUT_MS } from '../../src/shared';
+import {
+  type IdGenerator,
+  type ServerConfig,
+  type ToolErrorResult,
+  SEARCH_PAGE_SIZE,
+  WEBVIEW_REQUEST_TIMEOUT_MS,
+  newChatId,
+  newServerId,
+  newTurnId,
+  serverConfigSchema,
+} from '../../src/shared';
 import { toolRequestEnvelopeSchema } from '../support/toolUnions';
-import { type ToolErrorResult } from '../../src/shared';
 import {
   parseToolResult,
   renderToolResultForModel,
@@ -141,9 +148,10 @@ describe('valid and invalid tool argument DTOs', () => {
     );
     const result = expectSuccess(outcome.deliver());
     if (result.operation === 'aem_query') {
-      // Confirms `aemQueryArgsSchema`'s `.default(50)`/`.default(0)` reached the
-      // built envelope unchanged - the fake transport never supplies its own.
-      expect(result.pagination.limit).toBe(50);
+      // Confirms `aemQueryArgsSchema`'s `.default(SEARCH_PAGE_SIZE)`/`.default(0)`
+      // reached the built envelope unchanged - the fake transport never supplies
+      // its own.
+      expect(result.pagination.limit).toBe(SEARCH_PAGE_SIZE);
       expect(result.pagination.offset).toBe(0);
     }
   });
@@ -521,7 +529,7 @@ describe('never return [] in place of an error', () => {
       expect(result.rows).toEqual([]);
       expect(result.pagination).toEqual({
         offset: 0,
-        limit: 50,
+        limit: SEARCH_PAGE_SIZE,
         returned: 0,
         hasMore: false,
         // Enumerated end to end (`hasMore: false`, `offset + returned === 0`),

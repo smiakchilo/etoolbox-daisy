@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SEARCH_PAGE_SIZE,
   WEBVIEW_REQUEST_TIMEOUT_MS,
   classifyStaleness,
   computeDeadline,
@@ -327,9 +328,9 @@ describe('aemGetJsonArgsSchema', () => {
 describe('aemQueryArgsSchema pagination', () => {
   const basePayload = { predicates: { path: '/content' } };
 
-  it('applies the default limit (50) and default offset (0) when absent', () => {
+  it('applies the one search page size and default offset (0) when absent', () => {
     const result = aemQueryArgsSchema.parse(basePayload);
-    expect(result.limit).toBe(50);
+    expect(result.limit).toBe(SEARCH_PAGE_SIZE);
     expect(result.offset).toBe(0);
   });
 

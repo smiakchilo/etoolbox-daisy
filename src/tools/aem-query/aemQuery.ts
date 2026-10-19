@@ -21,7 +21,6 @@ import {
   classifyAemResponse,
   createToolExecutor,
   DEFAULT_PROJECTION,
-  DEFAULT_QUERY_LIMIT,
   effectiveRoots,
   envelopeCommonShape,
   hasMoreSchema,
@@ -39,6 +38,7 @@ import {
   renderHasMore,
   renderSelection,
   requestIdSchema,
+  SEARCH_PAGE_SIZE,
   totalMatchesSchema,
 } from '../../shared';
 
@@ -71,7 +71,7 @@ export const queryLimitSchema = z
   .int('limit must be an integer')
   .min(MIN_QUERY_LIMIT, `limit must be at least ${String(MIN_QUERY_LIMIT)}`)
   .max(MAX_QUERY_LIMIT, `limit must be at most ${String(MAX_QUERY_LIMIT)}`)
-  .default(DEFAULT_QUERY_LIMIT);
+  .default(SEARCH_PAGE_SIZE);
 
 /**
  * The most `limit` a *nested* call (another tool through `ToolHost.invokeTool`)
@@ -84,7 +84,7 @@ const nestedQueryLimitSchema = z
   .int('limit must be an integer')
   .min(MIN_QUERY_LIMIT, `limit must be at least ${String(MIN_QUERY_LIMIT)}`)
   .max(LOAD_ALL_ROW_LIMIT, `limit must be at most ${String(LOAD_ALL_ROW_LIMIT)}`)
-  .default(DEFAULT_QUERY_LIMIT);
+  .default(SEARCH_PAGE_SIZE);
 
 export const queryOffsetSchema = z
   .number()
@@ -217,7 +217,7 @@ export const AEM_QUERY_TOOL_DESCRIPTOR: ToolDescriptor = {
     'Runs an AEM QueryBuilder search from an arbitrary map of QueryBuilder ' +
     'predicate keys and values in `predicates`, including customer-installed ' +
     'predicates - there is no fixed predicate list. Results are paginated: ' +
-    `\`limit\` defaults to ${String(DEFAULT_QUERY_LIMIT)} and may be at most ` +
+    `\`limit\` defaults to ${String(SEARCH_PAGE_SIZE)} and may be at most ` +
     `${String(MAX_QUERY_LIMIT)} per call; \`offset\` defaults to 0. Fetch further ` +
     'results with additional calls at a higher `offset`, never by requesting a ' +
     "larger `limit`. Do not put QueryBuilder's own output-control parameters " +
@@ -308,9 +308,9 @@ export type AemQueryResult = ToolOutcome<AemQuerySuccess>;
 
 /**
  * Renders the total alongside its accuracy in the same breath, never the bare
- * number. A model told "42 matches" after being handed 50 rows will report that
- * as a complete count; told "approximately 42", it has what it needs to qualify
- * the answer.
+ * number. A model told "42 matches" after being handed one page of rows will
+ * report that as a complete count; told "approximately 42", it has what it needs
+ * to qualify the answer.
  */
 function renderTotal(total: TotalMatches): string {
   switch (total.accuracy) {

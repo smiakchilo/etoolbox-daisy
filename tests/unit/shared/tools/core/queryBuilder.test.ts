@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildQueryUrl } from '../../../../../src/shared';
+import { buildQueryUrl, SEARCH_PAGE_SIZE } from '../../../../../src/shared';
 import { aemQueryArgsSchema } from '../../../../../src/tools/aem-query/aemQuery';
 
 const ORIGIN = 'https://author.example';
@@ -146,7 +146,7 @@ describe('buildQueryUrl - application-owned output parameters', () => {
 
   it('emits each application-owned parameter exactly once', () => {
     const url = urlOf(build({ path: '/content/site', 'p.limit ': '9' }));
-    expect(url.searchParams.getAll('p.limit')).toEqual(['50']);
+    expect(url.searchParams.getAll('p.limit')).toEqual([String(SEARCH_PAGE_SIZE)]);
     expect(url.searchParams.getAll('p.offset')).toEqual(['0']);
   });
 });
@@ -201,9 +201,9 @@ describe('buildQueryUrl - projection', () => {
 });
 
 describe('buildQueryUrl - pagination parameters', () => {
-  it('defaults limit to 50 and offset to 0', () => {
+  it('applies the one search page size and offset 0', () => {
     const url = urlOf(build({ path: '/content/site' }));
-    expect(url.searchParams.get('p.limit')).toBe('50');
+    expect(url.searchParams.get('p.limit')).toBe(String(SEARCH_PAGE_SIZE));
     expect(url.searchParams.get('p.offset')).toBe('0');
   });
 
@@ -261,7 +261,7 @@ describe('buildQueryUrl - encoding', () => {
     const url = urlOf(build({ path: '/content/site', fulltext: 'a&p.limit=999&b=c' }));
     expect(url.searchParams.get('fulltext')).toBe('a&p.limit=999&b=c');
     // The injected p.limit did not become a real parameter.
-    expect(url.searchParams.getAll('p.limit')).toEqual(['50']);
+    expect(url.searchParams.getAll('p.limit')).toEqual([String(SEARCH_PAGE_SIZE)]);
     expect(url.searchParams.get('b')).toBeNull();
   });
 

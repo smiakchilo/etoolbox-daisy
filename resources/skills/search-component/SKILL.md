@@ -68,13 +68,13 @@ one thing that lives under the component roots - the pages that use it, in step
     "property.value": "%<the phrase>%"
   },
   "roots": ["<the host's component roots>"],
-  "properties": ["jcr:title"],
-  "limit": 50
+  "properties": ["jcr:title"]
 }
 ```
 
 `property.operation=like` is `jcr:like`, so `%<the phrase>%` matches it anywhere
-in the title, ignoring spacing and case. Read the rows.
+in the title, ignoring spacing and case. Read the rows. Leave `limit` out: the
+application chooses the page size.
 
 **The resource type is the matched node's own path with its leading `/apps/` or
 `/libs/` removed** - `/apps/myproject/components/content/content-block` is
@@ -104,8 +104,7 @@ matched by **title or node name** in an OR group:
     "group.2_nodename": "%<word>%"
   },
   "roots": ["<the host's component roots>"],
-  "properties": ["jcr:title"],
-  "limit": 50
+  "properties": ["jcr:title"]
 }
 ```
 

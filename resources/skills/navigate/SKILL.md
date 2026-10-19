@@ -188,12 +188,11 @@ context block, or `environment_facts`):
     "group.3_nodename": "*Elastic*Browser*"
   },
   "roots": ["<the host's content roots>"],
-  "properties": ["jcr:content/jcr:title"],
-  "limit": 50
+  "properties": ["jcr:content/jcr:title"]
 }
 ```
 
-Run it once with `limit: 50`; do **not** page through it. The first call is
+Run it once with no `limit`; do **not** page through it. The first call is
 enough to tell one match from many, and the disambiguation step lists exactly
 the rows this call returned. Never use `fulltext` in Phase A: a full-text
 search finds pages that merely *mention* the words and is not the name search
@@ -229,8 +228,7 @@ case forms - one `group.N_property` triple each):
     "group.6_property.value": "%ELASTIC%BROWSER%"
   },
   "roots": ["<the host's content roots>"],
-  "properties": ["jcr:content/jcr:title", "jcr:content/pageTitle"],
-  "limit": 50
+  "properties": ["jcr:content/jcr:title", "jcr:content/pageTitle"]
 }
 ```
 
@@ -240,7 +238,7 @@ with any separator.
 
 **Phase C - full text** (only when the name and title found nothing). One
 `aem_query` with `"predicates": { "type": "cq:Page", "fulltext": "elastic browser" }`,
-the same roots, `"properties": ["jcr:content/jcr:title"]`, `limit: 50`. This is
+the same roots and `"properties": ["jcr:content/jcr:title"]`. This is
 the broadest phase - it matches pages that merely mention the words - so reach
 it only when the name and title searches found nothing.
 
@@ -252,14 +250,15 @@ host's **DAM roots** (from the current page context block; the default is
 
 - **The asset name** (always first): the name pattern in its case forms,
   `"predicates": { "type": "dam:Asset", "group.p.or": "true", "group.1_nodename": "*hero*jpg*", "group.2_nodename": "*Hero*Jpg*", "group.3_nodename": "*HERO*JPG*" }`,
-  `"properties": ["jcr:content/metadata/dc:title"]`, `limit: 50`.
+  `"properties": ["jcr:content/metadata/dc:title"]`.
 - **The asset title** (only when the name found nothing): the spaced phrase
   against the asset's title - `"property": "jcr:content/metadata/dc:title"`,
   `"property.operation": "like"`,
   `"property.value": "%<the phrase>%"` - once per case form, ORed in a
-  `group.p.or` as in Phase B - with `"type": "dam:Asset"`, the DAM roots, `"properties": ["jcr:content/metadata/dc:title"]`, `limit: 50`.
+  `group.p.or` as in Phase B - with `"type": "dam:Asset"`, the DAM roots and
+  `"properties": ["jcr:content/metadata/dc:title"]`.
 - **Asset full text** (only when both found nothing): `"type": "dam:Asset"`
-  with `"fulltext": "<the spaced phrase>"`, the DAM roots, `limit: 50`.
+  with `"fulltext": "<the spaced phrase>"` and the DAM roots.
 
 #### Disambiguation - never choose for the user
 

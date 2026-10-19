@@ -1,13 +1,24 @@
 /**
- * The search batch size: how many AEM hits a search composite
- * (`aem_query_format_ask`, `aem_semantic_search`) queries per page - and so per
- * "Load more" click - when the call does not set `limit`. The one place to
- * change it; descriptors and instructions are built from it.
+ * The page size of every search - how many AEM hits a plain `aem_query` returns,
+ * and how many rows a search composite (`aem_query_format_ask`,
+ * `aem_semantic_search`) queries per page, and so per "Load more" click.
+ *
+ * This is the **only** page-size definition in the application. Every tool's
+ * default, descriptor and instruction is built from it, and a bundled skill
+ * never sets a `limit` of its own. Change it here and the whole application
+ * follows.
  */
 export const SEARCH_PAGE_SIZE = 20;
 
-/** The default `limit` of a plain `aem_query` call that does not set one. */
-export const DEFAULT_QUERY_LIMIT = 50;
+/**
+ * The page size a call uses: the caller's explicit `limit` when one was given,
+ * otherwise the one application page size. The model-facing schemas apply the
+ * same default themselves; this is for executors that resolve an optional
+ * argument after parsing.
+ */
+export function resolveSearchPageSize(limit: number | undefined): number {
+  return limit ?? SEARCH_PAGE_SIZE;
+}
 
 /** The smallest `limit` any search tool accepts. */
 export const MIN_QUERY_LIMIT = 1;

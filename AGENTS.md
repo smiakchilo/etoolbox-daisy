@@ -850,11 +850,15 @@ src/tools/<name>/
   `aem_create_page` (`cq:Page`). A generic action takes no prefix —
   `environment_facts`, `browser_navigate`, `ask_user`, `format_table`.
 - **The search page size is one constant**: `SEARCH_PAGE_SIZE` (20) in
-  `src/shared/tools/core/search.ts` is the default `limit` of both search
-  composites; change it there. So are the other search limits -
-  `DEFAULT_QUERY_LIMIT` (50, `aem_query`'s default), `MIN_QUERY_LIMIT` (1),
-  `MAX_QUERY_LIMIT` (200, the model-facing cap of `aem_query` and both
-  composites) and `LOAD_ALL_ROW_LIMIT` - no tool keeps a private limit constant.
+  `src/shared/tools/core/search.ts` is the default `limit` of `aem_query` and
+  of both search composites; change it there. `resolveSearchPageSize` is the
+  one fallback for an optional parsed argument. The skills carry no page-size
+  number - `navigate` and `search-component` omit `limit`, and
+  `resources/rules/session.md` tells the model not to choose one; an explicit
+  `limit` remains a permitted override. So are the other search limits -
+  `MIN_QUERY_LIMIT` (1), `MAX_QUERY_LIMIT` (200, the model-facing cap of
+  `aem_query` and both composites) and `LOAD_ALL_ROW_LIMIT` - no tool keeps a
+  private limit constant.
 - **A tool result may end the turn.** A success payload carrying
   `TURN_COMPLETE_RESULT_KEY` (`'turnComplete'`,
   `src/shared/tools/core/turnCompletion.ts`) tells every adapter to end the
@@ -1366,7 +1370,18 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3859 passed / 13 skipped** (+5 against the
+Current baseline: **`npm run test` → 3871 passed / 13 skipped** (+12 against the
+3859 below - **one page size everywhere**: `DEFAULT_QUERY_LIMIT` (50) is gone;
+`SEARCH_PAGE_SIZE` (20) in `src/shared/tools/core/search.ts` is now the one
+default of `aem_query` and of both search composites, `resolveSearchPageSize`
+is the one post-parse fallback, the `navigate` and `search-component` skills no
+longer set `limit`, and `resources/rules/session.md` tells the model not to
+choose one (an explicit `limit` remains a permitted override). The new
+`tests/unit/tools/searchPageSize.test.ts` (12 cases: the three tools' defaults,
+the override, the descriptor's number, and one case per bundled skill) is the
++12; `npm run verify` is green - see `docs/verification/followons-2026-10.md`
+"One page size everywhere (2026-10-19)". Before that it was
+**3859 passed / 13 skipped** (+5 against the
 3854 below - **bundled skill summaries read as labels**: the five user-facing
 `metadata.user-description` values in `resources/skills/` lost their trailing
 periods, because the home veil and the composer's `/` popup render them verbatim
