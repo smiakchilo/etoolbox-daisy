@@ -151,6 +151,7 @@ describe('isDeterministicTablePrompt', () => {
     expect(isDeterministicTablePrompt('/search')).toBe(true);
     expect(isDeterministicTablePrompt('/semantic-search good waldo')).toBe(true);
     expect(isDeterministicTablePrompt('/search-component LM Content Block')).toBe(true);
+    expect(isDeterministicTablePrompt('/search-page Generic Page')).toBe(true);
   });
 
   it('does not suppress any other prompt', () => {

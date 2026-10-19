@@ -140,7 +140,7 @@ export function splitLeadingSkill(
 /**
  * The bundled skills whose answer is a deterministic, application-rendered
  * table rather than the model's own prose. A turn that invokes one of these
- * (`/search`, `/semantic-search`, `/search-component`) has its assistant text
+ * (`/search`, `/semantic-search`, `/search-component`, `/search-page`) has its assistant text
  * suppressed from the transcript: the `format_table` message is the whole
  * answer, so the model's surrounding prose ("here are the results...", an
  * explanation of the component, ad-hoc Markdown tables) would only duplicate or
@@ -152,7 +152,9 @@ export function splitLeadingSkill(
 export const DETERMINISTIC_TABLE_SKILLS: readonly string[] = [
   'search',
   'semantic-search',
+  'search-page',
   'search-component',
+  'search-page',
 ];
 
 /** Whether `prompt` invokes one of {@link DETERMINISTIC_TABLE_SKILLS}. */

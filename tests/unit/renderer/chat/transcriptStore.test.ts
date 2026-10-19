@@ -341,7 +341,7 @@ describe('createTranscriptStore', () => {
     });
 
     it('removes prose that arrived before the skill was loaded', () => {
-      for (const skillName of ['semantic-search', 'search-component']) {
+      for (const skillName of ['semantic-search', 'search-component', 'search-page']) {
         const store = createTranscriptStore();
         store.applyUserPrompt(turnId, 'text about Waldo, ranked by meaning');
         store.applyEvent(messageStarted(0));

@@ -1055,8 +1055,8 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 
 ### `resources/skills/` and the skill subsystem
 
-Seven bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
-`search-component`, `navigate` and `remember` (all user-invocable — they appear in the
+Eight bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
+`search-component`, `search-page`, `navigate` and `remember` (all user-invocable — they appear in the
 composer's `/` autocomplete), plus `daisy-conventions` and `query-results`
 (auxiliary — `user-invocable: false`, so the model still gets them in its
 catalogue but the `/` menu does not list them).
@@ -1189,8 +1189,16 @@ and its background honest count proves an exact total (see
 `docs/compatibility.md` §11.3). Its `description` is written to win the
 auto-inference race against `search`: a request that pairs looking/searching with
 a component belongs here, and `search`'s own description now defers such a
-request. The application suppresses the model's own prose for a `/search`,
-`/semantic-search` or `/search-component` turn two ways: at send for a turn whose
+request. `/search-page <template or page type>` finds the pages built on a
+template (path, name or title; static or editable) and/or a page resource type: it
+resolves a template name against `/conf` and `/apps`, limits the templates to the
+project by keeping those whose own page resource type
+(`structure/jcr:content/sling:resourceType` editable, `jcr:content/sling:resourceType`
+static) falls under the component roots, and makes one `aem_query_format_ask` call on
+`cq:Page` (`jcr:content/cq:template`, `jcr:content/sling:resourceType`); its query
+shapes are documented, not yet verified live (`docs/compatibility.md` §11.6). The
+template-limited `search-component` is deferred (`docs/backlog.md`). The application suppresses the model's own prose for a `/search`,
+`/semantic-search`, `/search-component` or `/search-page` turn two ways: at send for a turn whose
 prompt invokes one of them (`isDeterministicTablePrompt` in
 `src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model loads
 one on its own (`transcriptStore.ts`'s `skill` handling), so the table is the
@@ -1397,7 +1405,11 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3881 passed / 13 skipped** (+21 against the
+Current baseline: **`npm run test` → 3884 passed / 13 skipped** (+3 against the
+3881 below - **the `search-page` skill**: the bundled-skill front-matter checks pick
+up the new folder, and the deterministic-table cases cover it; no contract change -
+see `docs/verification/followons-2026-10.md` "The `search-page` skill (2026-10-20)").
+Before that it was **3881 passed / 13 skipped** (+21 against the
 3860 below - **an asset link previews and every asset path offers CRX**: AEM
 serves a DAM asset's own URL as `Content-Disposition: attachment`, so Chromium
 turned the link click into a download that the view session cancelled
