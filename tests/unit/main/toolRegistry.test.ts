@@ -460,7 +460,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
 });
 
 describe('discovered tools (the real src/tools folders)', () => {
-  it('enables exactly the shipped tools, keeps format_table internal and aem_create_page disabled', async () => {
+  it('enables exactly the shipped tools, keeps format_table and memo_reflection internal and aem_create_page disabled', async () => {
     const registry = await buildToolRegistry({
       instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
@@ -476,11 +476,12 @@ describe('discovered tools (the real src/tools folders)', () => {
       'ask_user',
       'browser_navigate',
       'environment_facts',
+      'memo',
       'skill',
       'skill_resource',
       'skill_script',
     ]);
-    expect(registry.internalNames).toEqual(['format_table']);
+    expect([...registry.internalNames].sort()).toEqual(['format_table', 'memo_reflection']);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
     expect([...registry.allowlistEntries].sort()).toEqual([
       'custom:aem_get_json',
@@ -490,6 +491,7 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:ask_user',
       'custom:browser_navigate',
       'custom:environment_facts',
+      'custom:memo',
       'custom:skill',
       'custom:skill_resource',
       'custom:skill_script',

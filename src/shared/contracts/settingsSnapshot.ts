@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   browserSettingsSchema,
+  memoSettingsSchema,
   modelIdSchema,
   reasoningEffortSchema,
   type AgentSettings,
@@ -151,6 +152,8 @@ export const appSettingsSnapshotSchema = z
      * rather than duplicated.
      */
     browser: browserSettingsSchema,
+    /** The self-learning flag; defaulted so a snapshot built without it still parses. */
+    memos: memoSettingsSchema.default({ enabled: true }),
   })
   .strict();
 
@@ -270,6 +273,7 @@ export function toAppSettingsSnapshot(
     proxies,
     agents,
     browser: settings.browser,
+    memos: settings.memos,
   };
 
   return appSettingsSnapshotSchema.parse(document);

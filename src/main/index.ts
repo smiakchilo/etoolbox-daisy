@@ -7,6 +7,7 @@ import {
   type AppSettings,
   type AuthStatus,
   err,
+  readLeadingSkillToken,
   renderSkillCatalogue,
   resolveSkillPrompt,
 } from '../shared';
@@ -65,6 +66,7 @@ import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerSettingsIpcHandlers } from './ipc/settings';
+import { registerMemosIpcHandlers } from './ipc/memos';
 import { registerRulesIpcHandlers } from './ipc/rules';
 import { registerSkillsIpcHandlers } from './ipc/skills';
 import { registerTableExportIpcHandlers } from './ipc/tableExport';
@@ -73,6 +75,9 @@ import { createLogger } from './logger';
 import { loadRuleResources } from './rules/ruleResources';
 import { normalizeProjectLabel } from './rules/ruleFrontMatter';
 import { renderGenericRules, renderProjectRules } from './rules/ruleRendering';
+import { createMemoHost } from './memos/memoHost';
+import { renderGenericMemos, renderReflectionPrompt } from './memos/memoRendering';
+import { createMemoStore } from './memos/memoStore';
 import { createRuleStore } from './rules/ruleStore';
 import { createSecretStore } from './secretStore';
 import { installWebContentsSecurityGuard } from './security';
@@ -655,6 +660,34 @@ if (!gotSingleInstanceLock) {
         logger.warn('SKILL_SCRIPT_FAILED', { count: 1 });
       },
     });
+    // Self-learning: the memo files, read fresh on every load, so a hand edit
+    // applies to the next conversation. The `memo` tool writes through
+    // `memoHost`, which reads the Settings switch fresh on every call.
+    const memoStore = createMemoStore({
+      directory: appPaths.memos,
+      isKnownSkill: (name) => skillStore.get(name) !== undefined,
+    });
+    const memoHost = createMemoHost({
+      store: memoStore,
+      skillMemosTemplate: ruleResources.skillMemosTemplate,
+      enabled: () => loadSettingsSync(appPaths.settings).memos.enabled,
+      currentChatId: () => {
+        try {
+          return lateBoundAemToolContext.currentContext().chatId;
+        } catch {
+          // No server or no turn: the memo is still written, without a chat id.
+          return undefined;
+        }
+      },
+      logger,
+    });
+    registerMemosIpcHandlers({
+      directory: appPaths.memos,
+      store: memoStore,
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
+    });
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
@@ -662,6 +695,7 @@ if (!gotSingleInstanceLock) {
       instructionsTemplate: ruleResources.sessionTemplate,
       host: {
         skills: skillHost,
+        memos: memoHost,
         bridge: aemBridgeBroker,
         currentContext: lateBoundAemToolContext.currentContext,
         environmentFacts,
@@ -901,11 +935,27 @@ if (!gotSingleInstanceLock) {
               // A prompt that begins with a known `/skillname` carries that skill's
               // activation text; the user's own text is kept for the transcript and
               // the journal by the controller.
-              resolveSkillPrompt: (prompt) =>
-                resolveSkillPrompt(prompt, (name) => {
-                  const activation = skillHost.activate(name);
-                  return activation.ok ? activation.value : undefined;
-                }),
+              // The skill's memos ride inside its activation, as with the
+              // `skill` tool.
+              resolveSkillPrompt: async (prompt) => {
+                const token = readLeadingSkillToken(prompt);
+                const memos = token === undefined ? '' : await memoHost.skillMemos(token.name);
+                return resolveSkillPrompt(
+                  prompt,
+                  (name) => {
+                    const activation = skillHost.activate(name);
+                    return activation.ok ? activation.value : undefined;
+                  },
+                  memos,
+                );
+              },
+              // Read fresh per conversation, so a memo written or hand-edited
+              // since is seen; `undefined` while self-learning is off.
+              currentMemos: async () => {
+                if (!memoHost.enabled()) return undefined;
+                const loaded = await memoStore.generic();
+                return renderGenericMemos(ruleResources.memosTemplate, loaded.memos);
+              },
               // Conversation deletion reads every SDK session id the journal
               // recorded (the header's first, plus one per runtime recycle) and
               // removes the journal file; both are plain filesystem facts main
@@ -926,6 +976,12 @@ if (!gotSingleInstanceLock) {
                 };
               },
               projectRulesEndedNote: ruleResources.projectRulesEndedText,
+              // The automatic reflection's prompt; `undefined` (no reflection)
+              // while self-learning is off.
+              reflectionPrompt: (signals) =>
+                memoHost.enabled()
+                  ? renderReflectionPrompt(ruleResources.reflectionTemplate, signals)
+                  : undefined,
               gatedController: agentChatController,
             },
             service,

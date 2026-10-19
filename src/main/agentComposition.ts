@@ -1,6 +1,7 @@
 import {
   createAgentChatController,
   type AgentChatController,
+  type AgentChatControllerDeps,
   type AemServerContext,
   type ProjectRulesContext,
   type StartupGatedAgentChatController,
@@ -24,7 +25,6 @@ import {
   type SessionId,
   type ServerConfig,
   type SessionStreamState,
-  type SkillPromptResolution,
   type ToolCallId,
   type UserInputAnswer,
   type UserInputRequest,
@@ -477,7 +477,7 @@ export interface InstallAgentServiceDeps {
    * model-facing directive that loads that skill. Optional and passed through
    * verbatim to `createAgentChatController`; omitted means no rewrite.
    */
-  readonly resolveSkillPrompt?: (prompt: string) => SkillPromptResolution;
+  readonly resolveSkillPrompt?: AgentChatControllerDeps['resolveSkillPrompt'];
   /** Reads every SDK session id a chat's journal recorded, for conversation deletion. See `AgentChatControllerDeps`. */
   readonly readChatSessionIds?: (chatId: ChatId) => readonly SessionId[];
   /** Removes a chat's stored journal file, for conversation deletion. See `AgentChatControllerDeps`. */
@@ -486,6 +486,10 @@ export interface InstallAgentServiceDeps {
   readonly currentProjectRules?: () => ProjectRulesContext | undefined;
   /** Said once when the pane leaves a project that had rules. See `AgentChatControllerDeps`. */
   readonly projectRulesEndedNote?: string;
+  /** The self-learning block for a conversation's first prompt. See `AgentChatControllerDeps`. */
+  readonly currentMemos?: AgentChatControllerDeps['currentMemos'];
+  /** The automatic reflection's prompt. See `AgentChatControllerDeps`. */
+  readonly reflectionPrompt?: AgentChatControllerDeps['reflectionPrompt'];
   /** Swapped in via `replaceDelegate` - see that method's own doc comment. */
   readonly gatedController: StartupGatedAgentChatController;
 }
@@ -529,6 +533,8 @@ export async function installAgentService(
     ...(deps.projectRulesEndedNote !== undefined
       ? { projectRulesEndedNote: deps.projectRulesEndedNote }
       : {}),
+    ...(deps.currentMemos !== undefined ? { currentMemos: deps.currentMemos } : {}),
+    ...(deps.reflectionPrompt !== undefined ? { reflectionPrompt: deps.reflectionPrompt } : {}),
   });
   await deps.gatedController.replaceDelegate(controller);
 }

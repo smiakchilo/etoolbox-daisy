@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { replayJournalIntoTranscript } from '../../../../src/renderer/src/chat/journalReplay';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
-import { agentEventSchema } from '../../../../src/shared';
+import { agentEventSchema, MEMO_REFLECTION_TOOL_NAME } from '../../../../src/shared';
 import type {
   ChatId,
   ChatJournalAbandonedToolCallRecord,
@@ -34,13 +34,14 @@ const header: ChatJournalHeaderRecord = {
   startedAt: 1,
 };
 
-function userPrompt(turnId: string, prompt: string): ChatJournalRecord {
+function userPrompt(turnId: string, prompt: string, origin?: 'reflection'): ChatJournalRecord {
   return {
     recordType: 'user.prompt',
     at: 2,
     chatId: CHAT,
     turnId: turnId as TurnId,
     prompt,
+    ...(origin !== undefined ? { origin } : {}),
   };
 }
 
@@ -73,6 +74,52 @@ describe('replayJournalIntoTranscript', () => {
     ]);
     expect(store.textForUserPrompt('turn-1' as TurnId)).toBe('hello');
     expect(store.textForMessage('msg-1' as MessageId)).toBe('hi there');
+  });
+
+  it("does not paint a reflection's prompt, and hides its prose behind the marker billet", () => {
+    const store = createTranscriptStore();
+    const reflectionPrompt = userPrompt('turn-2', 'Reflect on the previous turn', 'reflection');
+    const sending: ChatJournalRecord = {
+      recordType: 'agent.event',
+      at: 3,
+      event: {
+        type: 'session.state.changed',
+        chatId: CHAT,
+        sequence: 1,
+        turnId: 'turn-2' as TurnId,
+        state: 'sending',
+      },
+    };
+    const marker: ChatJournalRecord = {
+      recordType: 'agent.event',
+      at: 3,
+      event: {
+        type: 'tool.call.requested',
+        chatId: CHAT,
+        sequence: 2,
+        toolCallId: 'marker-1' as ToolCallId,
+        toolName: MEMO_REFLECTION_TOOL_NAME,
+        arguments: {},
+      },
+    };
+    replayJournalIntoTranscript(
+      [
+        header,
+        userPrompt('turn-1', 'hello'),
+        completedMessage('turn-1', 'msg-1', 'hi there'),
+        reflectionPrompt,
+        sending,
+        marker,
+        completedMessage('turn-2', 'msg-2', 'Nothing to remember.'),
+      ],
+      store,
+    );
+
+    expect(store.items()).toEqual([
+      { kind: 'userPrompt', turnId: 'turn-1' },
+      { kind: 'message', messageId: 'msg-1', turnId: 'turn-1' },
+      { kind: 'toolCall', toolCallId: 'marker-1' },
+    ]);
   });
 
   it('skips turn.summary records and journaled model diagnostics events', () => {

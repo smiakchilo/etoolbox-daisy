@@ -10,6 +10,7 @@ import type {
   UserInputRequest,
 } from '../../contracts';
 import { type Result, err, ok } from '../../result';
+import type { MemoHost } from '../../memos';
 import type { SkillHost } from '../../skills';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
@@ -97,6 +98,12 @@ export interface ToolHost {
    * never lets either leave the skill's own folder.
    */
   readonly skills: SkillHost;
+  /**
+   * Optional: the memo store - the `memo` tool writes a self-learning lesson
+   * through it. The application decides the file, the folder and the stamp;
+   * the tool supplies only the title, text, trigger and optional skill.
+   */
+  readonly memos?: MemoHost;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
   /**

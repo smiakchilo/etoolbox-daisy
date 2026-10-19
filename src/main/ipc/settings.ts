@@ -17,6 +17,7 @@ import {
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
+  SETTINGS_UPDATE_MEMO_SETTINGS_CHANNEL,
   SETTINGS_UPDATE_PROJECT_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
@@ -37,6 +38,7 @@ import {
   setModelPreferencesRequestSchema,
   setPasswordRequestSchema,
   updateBrowserSettingsRequestSchema,
+  updateMemoSettingsRequestSchema,
   updateProjectRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
@@ -69,6 +71,7 @@ import {
   type SettingsIpcError,
   type SettingsIpcVoidResult,
   type UpdateBrowserSettingsRequest,
+  type UpdateMemoSettingsRequest,
   type UpdateProjectRequest,
   type UpdateProxyRequest,
   type UpdateServerPresentationRequest,
@@ -96,6 +99,7 @@ import {
   addProxy as createProxyEntry,
   addServer as createServerEntry,
   applyBrowserSettingsChange,
+  applyMemoSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
@@ -1409,6 +1413,26 @@ export async function updateBrowserSettings(
   return { ok: true };
 }
 
+/**
+ * Implements `settings:update-memo-settings`: persists the Skills tab's
+ * **Self-learning** switch. Plain load -> patch -> save; the memo host reads the
+ * flag fresh from disk, so the change applies to the next tool call and prompt.
+ */
+export async function updateMemoSettings(
+  settingsDir: string,
+  request: UpdateMemoSettingsRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+  const saved = await persist(settingsDir, applyMemoSettingsChange(loaded.value, request.changes));
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Sender validation - the security core of this module
 // ---------------------------------------------------------------------------
@@ -1828,6 +1852,20 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
       return updateBrowserSettings(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_UPDATE_MEMO_SETTINGS_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = updateMemoSettingsRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return updateMemoSettings(deps.settingsDir, parsed.data);
     },
   );
 }

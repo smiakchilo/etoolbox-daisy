@@ -127,7 +127,11 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     onSettingsChanged: () => void reload(),
   });
 
-  const skillsSection = createSkillsSection({ status });
+  const skillsSection = createSkillsSection({
+    status,
+    reportSave: reportWith,
+    onSettingsChanged: () => void reload(),
+  });
 
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
@@ -148,6 +152,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     if (!proxiesSection.hasPendingEdits()) proxiesSection.update(result.snapshot.proxies);
     if (!projectsSection.hasPendingEdits()) projectsSection.update(result.snapshot.projects);
     browserSection.update(result.snapshot);
+    skillsSection.update(result.snapshot);
     // The Agents tab does its own IPC reads rather than rendering a projection
     // of the snapshot: it needs the live sign-in status and the active agent's
     // SDK catalogue. That first auth read starts the real Copilot runtime and

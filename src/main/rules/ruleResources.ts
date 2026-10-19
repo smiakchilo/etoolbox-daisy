@@ -15,7 +15,13 @@ import path from 'node:path';
  *  - `project-rules.md` - the framing of a project's rules, with `{{project}}`
  *    and `{{rules}}` placeholders;
  *  - `project-rules-ended.md` - the note telling the model that the project
- *    rules it was given no longer apply.
+ *    rules it was given no longer apply;
+ *  - `memos.md` - the memo guidance and the generic memos, with one `{{memos}}`
+ *    placeholder (`renderGenericMemos`);
+ *  - `skill-memos.md` - the framing of one skill's memos, with one `{{memos}}`
+ *    placeholder (`renderSkillMemos`);
+ *  - `memo-reflection.md` - the post-turn reflection prompt, with one
+ *    `{{signals}}` placeholder (`renderReflectionPrompt`).
  *
  * The directory is the application's own `resources/rules` (resolved by
  * `resolveBundledResourcesDirectory`), never a user, project or AEM location
@@ -29,6 +35,9 @@ export interface RuleResources {
   readonly rulesTemplate: string;
   readonly projectRulesTemplate: string;
   readonly projectRulesEndedText: string;
+  readonly memosTemplate: string;
+  readonly skillMemosTemplate: string;
+  readonly reflectionTemplate: string;
 }
 
 export async function loadRuleResources(directory: string): Promise<RuleResources> {
@@ -39,12 +48,18 @@ export async function loadRuleResources(directory: string): Promise<RuleResource
     rulesTemplate,
     projectRulesTemplate,
     projectRulesEndedText,
+    memosTemplate,
+    skillMemosTemplate,
+    reflectionTemplate,
   ] = await Promise.all([
     read('session.md'),
     read('skills.md'),
     read('user-rules.md'),
     read('project-rules.md'),
     read('project-rules-ended.md'),
+    read('memos.md'),
+    read('skill-memos.md'),
+    read('memo-reflection.md'),
   ]);
   return {
     sessionTemplate,
@@ -52,5 +67,8 @@ export async function loadRuleResources(directory: string): Promise<RuleResource
     rulesTemplate,
     projectRulesTemplate,
     projectRulesEndedText: projectRulesEndedText.trim(),
+    memosTemplate,
+    skillMemosTemplate,
+    reflectionTemplate,
   };
 }

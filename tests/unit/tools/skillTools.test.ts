@@ -143,6 +143,25 @@ describe('skill executor', () => {
     ).toBe('CANCELLED');
     expect(activate).not.toHaveBeenCalled();
   });
+  it("appends the skill's memos to its activation", async () => {
+    const skillMemos = vi.fn(() => Promise.resolve('DEMO-MEMOS'));
+    const execute = skillTool.createExecutor({
+      ...makeHost(
+        createFakeSkillHost({
+          list: () => [summary()],
+          activate: (name) => ok({ name, body: 'Do the thing.', files: [] }),
+        }),
+      ),
+      memos: { enabled: () => true, skillMemos, write: vi.fn() },
+    });
+
+    const text = String(
+      successPayload(await execute({ name: 'demo' }, callContext))['textResultForLlm'],
+    );
+
+    expect(skillMemos).toHaveBeenCalledWith('demo');
+    expect(text.indexOf('DEMO-MEMOS')).toBeGreaterThan(text.indexOf('Do the thing.'));
+  });
 });
 
 describe('skill_resource executor', () => {

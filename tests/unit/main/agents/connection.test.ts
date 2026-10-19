@@ -41,6 +41,7 @@ function settingsWith(proxyId: ProxyId | undefined): AppSettings {
       [AGENT]: proxyId === undefined ? { active: true } : { active: true, proxy: proxyId },
     },
     browser: { disableNativeWebAuthn: true },
+    memos: { enabled: true },
   };
 }
 

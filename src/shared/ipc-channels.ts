@@ -122,6 +122,26 @@ export const SKILLS_OPEN_FOLDER_CHANNEL = 'skills:open-folder' as const;
  */
 export const RULES_OPEN_FOLDER_CHANNEL = 'rules:open-folder' as const;
 
+/**
+ * Persists the self-learning flag (the Settings "Skills" tab's checkbox). A
+ * partial patch, like {@link SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL}.
+ */
+export const SETTINGS_UPDATE_MEMO_SETTINGS_CHANNEL = 'settings:update-memo-settings' as const;
+
+/**
+ * Opens the memos folder (`appPaths.memos`) in the OS file manager, creating it
+ * when missing. No request payload: main owns the path (see
+ * `src/shared/memos-ipc.ts`).
+ */
+export const MEMOS_OPEN_FOLDER_CHANNEL = 'memos:open-folder' as const;
+/**
+ * Reveals one memo file in the OS file manager. The request names the memo by
+ * its store-relative id; main derives and contains the path.
+ */
+export const MEMOS_REVEAL_CHANNEL = 'memos:reveal' as const;
+/** Deletes one memo file (the memo billet's Undo). Same request shape as reveal. */
+export const MEMOS_UNDO_CHANNEL = 'memos:undo' as const;
+
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.
 export const BROWSER_GO_BACK_CHANNEL = 'browser:go-back' as const;

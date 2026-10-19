@@ -53,10 +53,14 @@ import {
   SETTINGS_SET_MODEL_PREFERENCES_CHANNEL,
   SETTINGS_SET_PASSWORD_CHANNEL,
   SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL,
+  SETTINGS_UPDATE_MEMO_SETTINGS_CHANNEL,
   SETTINGS_UPDATE_PROJECT_CHANNEL,
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  MEMOS_OPEN_FOLDER_CHANNEL,
+  MEMOS_REVEAL_CHANNEL,
+  MEMOS_UNDO_CHANNEL,
   RULES_OPEN_FOLDER_CHANNEL,
   SKILLS_OPEN_FOLDER_CHANNEL,
   TABLE_EXPORT_REVEAL_LAST_CHANNEL,
@@ -121,11 +125,17 @@ import {
   switchServerRequestSchema,
   tableExportSaveCsvRequestSchema,
   updateBrowserSettingsRequestSchema,
+  updateMemoSettingsRequestSchema,
+  memoFileRequestSchema,
+  parseMemosIpcResult,
   updateProjectRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
   viewBoundsSchema,
+  type MemoFileRequest,
+  type MemosIpcResult,
+  type UpdateMemoSettingsRequest,
   type AddProjectRequest,
   type AddProjectResult,
   type AddProxyRequest,
@@ -361,6 +371,14 @@ const daisyApi: DaisyAppApi = {
       );
       return parseSettingsIpcVoidResult(raw);
     },
+    async updateMemoSettings(request: UpdateMemoSettingsRequest): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = updateMemoSettingsRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        SETTINGS_UPDATE_MEMO_SETTINGS_CHANNEL,
+        parsedRequest,
+      );
+      return parseSettingsIpcVoidResult(raw);
+    },
   },
   agentChat: {
     async getStatus(): Promise<AgentChatStatus> {
@@ -478,6 +496,22 @@ const daisyApi: DaisyAppApi = {
     async openFolder(): Promise<RulesOpenFolderResult> {
       const raw: unknown = await ipcRenderer.invoke(RULES_OPEN_FOLDER_CHANNEL);
       return parseRulesOpenFolderResult(raw);
+    },
+  },
+  memos: {
+    async openFolder(): Promise<MemosIpcResult> {
+      const raw: unknown = await ipcRenderer.invoke(MEMOS_OPEN_FOLDER_CHANNEL);
+      return parseMemosIpcResult(raw);
+    },
+    async reveal(request: MemoFileRequest): Promise<MemosIpcResult> {
+      const parsedRequest = memoFileRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(MEMOS_REVEAL_CHANNEL, parsedRequest);
+      return parseMemosIpcResult(raw);
+    },
+    async undo(request: MemoFileRequest): Promise<MemosIpcResult> {
+      const parsedRequest = memoFileRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(MEMOS_UNDO_CHANNEL, parsedRequest);
+      return parseMemosIpcResult(raw);
     },
   },
   shortcuts: {

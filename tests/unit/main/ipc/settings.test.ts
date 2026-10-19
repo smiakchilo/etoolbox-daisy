@@ -29,6 +29,7 @@ import {
   resolvePasswordSecretRef,
   setPassword,
   updateBrowserSettings,
+  updateMemoSettings,
   updateProject,
   updateProxy,
   updateServerPresentation,
@@ -90,6 +91,7 @@ function settingsWithProxy(secretRef: string, options: { username?: string } = {
     ],
     agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
+    memos: { enabled: true },
   };
 }
 
@@ -472,6 +474,7 @@ describe('reorderServers', () => {
       proxies: [],
       agents: { [TEST_AGENT_ID]: { active: true } },
       browser: { disableNativeWebAuthn: true },
+      memos: { enabled: true },
     };
   }
 
@@ -565,6 +568,33 @@ describe('updateBrowserSettings', () => {
     const result = await updateBrowserSettings(settingsDir, {
       changes: { disableNativeWebAuthn: false },
     });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('storage_error');
+  });
+});
+
+describe('updateMemoSettings', () => {
+  it('persists the self-learning flag and reads it back through the snapshot', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    expect(await updateMemoSettings(settingsDir, { changes: { enabled: false } })).toEqual({
+      ok: true,
+    });
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected a snapshot');
+    expect(snapshot.snapshot.memos.enabled).toBe(false);
+  });
+
+  it('reports a storage error when the settings file cannot be read', async () => {
+    const settingsDir = createScratchRoot();
+    writeFileSync(path.join(settingsDir, 'settings.json'), '{ not json', 'utf8');
+
+    const result = await updateMemoSettings(settingsDir, { changes: { enabled: false } });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');

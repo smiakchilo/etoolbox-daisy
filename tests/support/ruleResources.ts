@@ -22,5 +22,17 @@ export const REAL_PROJECT_RULES_TEMPLATE = readFileSync(
   'utf8',
 );
 
+export const REAL_MEMOS_TEMPLATE = readFileSync(path.join(RULES_DIRECTORY, 'memos.md'), 'utf8');
+
+export const REAL_SKILL_MEMOS_TEMPLATE = readFileSync(
+  path.join(RULES_DIRECTORY, 'skill-memos.md'),
+  'utf8',
+);
+
+export const REAL_REFLECTION_TEMPLATE = readFileSync(
+  path.join(RULES_DIRECTORY, 'memo-reflection.md'),
+  'utf8',
+);
+
 /** A minimal valid session template, for tests that are not about the prose. */
 export const MINIMAL_SESSION_TEMPLATE = 'Before.\n\n{{tools}}\n\nAfter.\n';

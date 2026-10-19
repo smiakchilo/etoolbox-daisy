@@ -14,9 +14,10 @@ import {
 } from '../../../src/main/agentChatController';
 import { createFakeAgentService } from '../../../src/main/agents/fakeAgentService';
 import { removeChatJournal } from '../../../src/main/chatHistory';
-import { type ChatJournal, createChatJournal } from '../../../src/main/chatJournal';
+import { createChatJournal } from '../../../src/main/chatJournal';
 import { readChatSessionIds } from '../../../src/main/chatJournalReader';
 import type { Logger } from '../../../src/main/logger';
+import { createRecordingJournal, methods } from '../../support/recordingJournal';
 import {
   type AgentAuthState,
   type AgentEvent,
@@ -802,30 +803,6 @@ describe('AgentChatController.onStatusChanged', () => {
 // ---------------------------------------------------------------------------
 // Chat journal integration (implementation-plan.md step 09)
 // ---------------------------------------------------------------------------
-
-interface JournalCall {
-  readonly method: string;
-  readonly args: unknown;
-}
-
-function createRecordingJournal(): { journal: ChatJournal; calls: JournalCall[] } {
-  const calls: JournalCall[] = [];
-  const journal: ChatJournal = {
-    openChat: (params) => calls.push({ method: 'openChat', args: params }),
-    recordUserPrompt: (params) => calls.push({ method: 'recordUserPrompt', args: params }),
-    discardUserPrompt: (chatId, turnId) =>
-      calls.push({ method: 'discardUserPrompt', args: { chatId, turnId } }),
-    recordEvent: (event) => calls.push({ method: 'recordEvent', args: event }),
-    recordInterruption: (params) => calls.push({ method: 'recordInterruption', args: params }),
-    closeChat: (chatId) => calls.push({ method: 'closeChat', args: chatId }),
-    getHealth: () => ({ writeFailureCount: 0, droppedRecordCount: 0, lastFailureCode: null }),
-  };
-  return { journal, calls };
-}
-
-function methods(calls: readonly JournalCall[]): string[] {
-  return calls.map((call) => call.method);
-}
 
 describe('agentChatController chat journal', () => {
   it('opens the journal with the SDK session id and the bound server after a successful open', async () => {

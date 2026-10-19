@@ -106,7 +106,9 @@ function agentProxyId(selection: ProxySelection): ProxyId | undefined {
 }
 
 export function createAgentsSection(options: AgentsSectionOptions): AgentsSection {
-  const group = el('div', { attrs: { class: 'agents-section__group' } });
+  // `.subsection-gap` widens the gap between cards (see settings.css), so each
+  // provider's card reads as its own section.
+  const group = el('div', { attrs: { class: 'agents-section__group subsection-gap' } });
   const commitSaver = createCommitSaver();
   const definitions = options.definitions ?? AGENT_DEFINITIONS;
 

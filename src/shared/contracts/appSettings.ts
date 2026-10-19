@@ -160,6 +160,20 @@ export const browserSettingsSchema = z
 
 export type BrowserSettings = Readonly<z.infer<typeof browserSettingsSchema>>;
 
+/**
+ * Self-learning settings (the Settings "Skills" tab). `enabled` defaults to
+ * `true`: memos are written, loaded into conversations and reflected on. When
+ * `false` nothing is loaded or reflected and the `memo` tool refuses. Read
+ * fresh on every prompt, so a change applies to the next one.
+ */
+export const memoSettingsSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
+export type MemoSettings = Readonly<z.infer<typeof memoSettingsSchema>>;
+
 export const appSettingsSchema = z
   .object({
     hosts: z.array(serverConfigSchema),
@@ -175,6 +189,7 @@ export const appSettingsSchema = z
     proxies: z.array(proxyConfigSchema),
     agents: z.record(agentIdSchema, agentSettingsSchema),
     browser: browserSettingsSchema.default({ disableNativeWebAuthn: true }),
+    memos: memoSettingsSchema.default({ enabled: true }),
   })
   .strict()
   .superRefine((settings, ctx) => {
@@ -321,6 +336,7 @@ export function defaultAppSettings(): AppSettings {
     proxies: [],
     agents: {},
     browser: {},
+    memos: {},
   });
 }
 

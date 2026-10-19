@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { mainEntry } from '../support/e2e/app';
+import { verticalGap } from '../support/e2e/layout';
 import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
 import { byField, byTestId } from '../support/selectors';
 
@@ -96,6 +97,16 @@ test('a model and reasoning effort chosen in Settings are persisted and shown ag
     // One picker pair per provider (Copilot and OpenRouter).
     await expect(section.locator(byField('agent-model'))).toHaveCount(2);
     await expect(section.locator(byField('agent-reasoning-effort'))).toHaveCount(2);
+
+    // The provider cards are separated by a doubled gap (a section boundary),
+    // while the fields inside one card keep the plain gap. Asserted relationally
+    // so neither exact value is pinned.
+    const cards = section.locator('.agent-item');
+    await expect(cards).toHaveCount(2);
+    const cardGap = await verticalGap(cards.nth(0), cards.nth(1));
+    const cardFields = cards.nth(0).locator('.host-field');
+    const fieldGap = await verticalGap(cardFields.nth(0), cardFields.nth(1));
+    expect(cardGap).toBeGreaterThan(fieldGap);
 
     // The catalogue arrived over the new IPC channel: "no preference" plus the
     // two fake models.

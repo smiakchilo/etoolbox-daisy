@@ -41,6 +41,7 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-open-in-light.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-file-txt.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-copy.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-export.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-undo.js';
 import '@spectrum-web-components/action-menu/sp-action-menu.js';
 import '@spectrum-web-components/menu/sp-menu.js';
 import '@spectrum-web-components/menu/sp-menu-item.js';

@@ -41,6 +41,8 @@ export function replayJournalIntoTranscript(
   for (const record of records) {
     switch (record.recordType) {
       case 'user.prompt':
+        // The application's own reflection prompt was never the user's message.
+        if (record.origin === 'reflection') break;
         transcriptStore.applyUserPrompt(record.turnId, record.prompt);
         // The suppression decision is re-derived from the replayed prompt, so a
         // search turn's prose stays hidden after a restart exactly as it was

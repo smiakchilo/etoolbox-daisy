@@ -190,3 +190,83 @@ describe('project rules on the model prompt', () => {
     expect(prompt.indexOf('PAGE-CONTEXT')).toBeLessThan(prompt.indexOf('one'));
   });
 });
+
+describe('memos on the model prompt', () => {
+  function withMemos(block: () => string | undefined): Harness {
+    return build({ currentMemos: () => Promise.resolve(block()) });
+  }
+
+  it('prepend the memo block to the first prompt only', async () => {
+    const harness = withMemos(() => 'MEMO-BLOCK');
+    await harness.controller.openConversation({ chatId });
+
+    await send(harness, 'one');
+    await send(harness, 'two');
+
+    expect(harness.prompts[0]).toContain('MEMO-BLOCK');
+    expect(harness.prompts[0]).toContain('one');
+    expect(harness.prompts[1]).toBe('two');
+  });
+
+  it('are sent again after the conversation is reopened', async () => {
+    const harness = withMemos(() => 'MEMO-BLOCK');
+    await harness.controller.openConversation({ chatId });
+    await send(harness, 'one');
+
+    await harness.controller.openConversation({ chatId });
+    await send(harness, 'two');
+
+    expect(harness.prompts[1]).toContain('MEMO-BLOCK');
+  });
+
+  it('send nothing while self-learning is off, and the block once it is switched on', async () => {
+    const memos: { block?: string } = {};
+    const harness = withMemos(() => memos.block);
+    await harness.controller.openConversation({ chatId });
+
+    await send(harness, 'one');
+    memos.block = 'MEMO-BLOCK';
+    await send(harness, 'two');
+
+    expect(harness.prompts[0]).toBe('one');
+    expect(harness.prompts[1]).toContain('MEMO-BLOCK');
+  });
+
+  it('are not counted as sent when the send fails', async () => {
+    const harness = withMemos(() => 'MEMO-BLOCK');
+    await harness.controller.openConversation({ chatId });
+
+    harness.failNextSend();
+    expect((await harness.controller.sendMessage({ chatId, prompt: 'one' })).ok).toBe(false);
+    await send(harness, 'two');
+
+    expect(harness.prompts[0]).toContain('MEMO-BLOCK');
+  });
+
+  it('come before the project rules and the current-page context', async () => {
+    const harness = build({
+      currentMemos: () => Promise.resolve('MEMO-BLOCK'),
+      currentPageContext: () => 'PAGE-CONTEXT',
+    });
+    harness.setRules(alpha);
+    await harness.controller.openConversation({ chatId });
+
+    await send(harness, 'one');
+
+    const prompt = harness.prompts[0] ?? '';
+    expect(prompt.indexOf('MEMO-BLOCK')).toBeGreaterThanOrEqual(0);
+    expect(prompt.indexOf('MEMO-BLOCK')).toBeLessThan(prompt.indexOf('ALPHA-RULES'));
+    expect(prompt.indexOf('ALPHA-RULES')).toBeLessThan(prompt.indexOf('PAGE-CONTEXT'));
+  });
+
+  it('accept an asynchronous skill-prompt resolution', async () => {
+    const harness = build({
+      resolveSkillPrompt: () => Promise.resolve({ modelPrompt: 'SKILL-FRAMED' }),
+    });
+    await harness.controller.openConversation({ chatId });
+
+    await send(harness, '/search x');
+
+    expect(harness.prompts[0]).toBe('SKILL-FRAMED');
+  });
+});

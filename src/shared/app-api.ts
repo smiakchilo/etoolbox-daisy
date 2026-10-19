@@ -20,6 +20,7 @@ import type {
   SetModelPreferencesRequest,
   SettingsIpcVoidResult,
   UpdateBrowserSettingsRequest,
+  UpdateMemoSettingsRequest,
   UpdateProjectRequest,
   UpdateProxyRequest,
   UpdateServerPresentationRequest,
@@ -39,6 +40,7 @@ import type {
   StopFindRequest,
   ViewBounds,
 } from './browser-ipc';
+import type { MemoFileRequest, MemosIpcResult } from './memos-ipc';
 import type { RulesOpenFolderResult } from './rules-ipc';
 import type { SkillsOpenFolderResult } from './skills-ipc';
 import type {
@@ -119,6 +121,8 @@ export interface DaisyAppApi {
   readonly skills: DaisySkillsApi;
   /** The user-rules folder surface behind the Settings "Skills" tab. */
   readonly rules: DaisyRulesApi;
+  /** The self-learning memos surface: the Settings folder link, and a memo billet's Reveal/Undo. */
+  readonly memos: DaisyMemosApi;
   /**
    * The application-wide keyboard shortcut surface: main resolves a keystroke
    * to a semantic action (there is no menu bar to carry an accelerator) and
@@ -141,6 +145,18 @@ export interface DaisyRulesApi {
    * when missing. Takes no argument - main owns the path.
    */
   openFolder(): Promise<RulesOpenFolderResult>;
+}
+
+export interface DaisyMemosApi {
+  /**
+   * Opens the memos folder in the OS file manager, creating it first when
+   * missing. Takes no argument - main owns the path.
+   */
+  openFolder(): Promise<MemosIpcResult>;
+  /** Reveals one memo file (named by its store-relative id) in the file manager. */
+  reveal(request: MemoFileRequest): Promise<MemosIpcResult>;
+  /** Deletes one memo file - a memo billet's Undo. `not_found` when already gone. */
+  undo(request: MemoFileRequest): Promise<MemosIpcResult>;
 }
 
 export interface DaisySkillsApi {
@@ -318,6 +334,12 @@ export interface DaisySettingsApi {
    * next launch.
    */
   updateBrowserSettings(request: UpdateBrowserSettingsRequest): Promise<SettingsIpcVoidResult>;
+  /**
+   * Persists the Settings "Skills" tab's **Self-learning** switch - see
+   * `SETTINGS_UPDATE_MEMO_SETTINGS_CHANNEL`. Applies to the next tool call and
+   * prompt; no restart.
+   */
+  updateMemoSettings(request: UpdateMemoSettingsRequest): Promise<SettingsIpcVoidResult>;
 }
 
 /** Sign-in surface, one call per agent - see gentAuthRequestSchema. */

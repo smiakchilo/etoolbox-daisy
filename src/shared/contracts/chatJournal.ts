@@ -120,6 +120,11 @@ export type ChatJournalSessionOpenedRecord = Readonly<
  * first prompt's `serverId` when the header names none (first known host wins).
  * Absent when the pane was on no configured host. Diagnostics, like
  * `pageContext` - the renderer never paints it.
+ *
+ * `origin: 'reflection'` marks a prompt the *application* sent after a turn
+ * that went wrong, asking the model to reflect and write a memo. The renderer
+ * paints such a turn as a quiet "Reflecting" billet rather than a user bubble,
+ * and suppresses its prose. Absent for every prompt the user typed.
  */
 export const chatJournalUserPromptRecordSchema = z
   .object({
@@ -130,6 +135,7 @@ export const chatJournalUserPromptRecordSchema = z
     prompt: z.string().min(1).max(PROMPT_MAX_LENGTH),
     pageContext: z.string().min(1).max(PAGE_CONTEXT_MAX_LENGTH).optional(),
     serverId: serverIdSchema.optional(),
+    origin: z.literal('reflection').optional(),
   })
   .strict();
 

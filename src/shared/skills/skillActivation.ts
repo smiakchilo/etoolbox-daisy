@@ -35,8 +35,11 @@ function describeFiles(files: readonly SkillFileEntry[]): string {
  *
  * A tool line appears only for what the skill actually has: nothing for a skill
  * with only a `SKILL.md`, no script line without a runnable script.
+ *
+ * `memos` - the skill's rendered memo block, if any - follows the body inside
+ * the `<skill>` element, so the lessons learned travel with the skill.
  */
-export function renderSkillActivation(activation: SkillActivation): string {
+export function renderSkillActivation(activation: SkillActivation, memos = ''): string {
   const lines = [`<skill name="${activation.name}">`];
   const example = activation.files[0];
   if (example !== undefined) {
@@ -56,7 +59,9 @@ export function renderSkillActivation(activation: SkillActivation): string {
       '',
     );
   }
-  lines.push(activation.body.trim(), '</skill>');
+  lines.push(activation.body.trim());
+  if (memos.trim() !== '') lines.push('', memos.trim());
+  lines.push('</skill>');
   return lines.join('\n');
 }
 
@@ -89,17 +94,22 @@ export interface SkillPromptResolution {
  *
  * Everything else - no leading token, or a token naming no loadable skill - is
  * returned unchanged. The caller keeps the user's own text for display and the
- * journal; only what the model reads is rewritten.
+ * journal; only what the model reads is rewritten. `memos` is the named
+ * skill's rendered memo block (see {@link renderSkillActivation}).
  */
 export function resolveSkillPrompt(
   prompt: string,
   lookup: SkillActivationLookup,
+  memos = '',
 ): SkillPromptResolution {
   const token = readLeadingSkillToken(prompt);
   if (token === undefined) return { modelPrompt: prompt };
   const activation = lookup(token.name);
   if (activation === undefined) return { modelPrompt: prompt };
-  const parts = [renderSkillActivation(activation), renderSkillAlreadyLoadedNote(activation.name)];
+  const parts = [
+    renderSkillActivation(activation, memos),
+    renderSkillAlreadyLoadedNote(activation.name),
+  ];
   if (token.rest !== '') {
     parts.push(
       "The text below is the user's input for this skill. Act on it directly; do not ask the " +

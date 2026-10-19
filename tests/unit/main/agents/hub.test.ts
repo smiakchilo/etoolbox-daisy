@@ -33,6 +33,7 @@ function settingsWithActive(id: AgentId | undefined): AppSettings {
       [BETA]: { active: id === BETA },
     },
     browser: { disableNativeWebAuthn: true },
+    memos: { enabled: true },
   };
 }
 

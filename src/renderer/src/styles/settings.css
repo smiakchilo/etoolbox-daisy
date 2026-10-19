@@ -74,6 +74,16 @@
   gap: 8px;
 }
 
+/* One spacing utility: a stack carrying it separates its direct children by the
+   **subsection gap** (24px - twice the 12px fields sit apart inside a
+   subsection), so a boundary between subsections reads while the fields inside
+   one keep the plain gap. The one absolute value is shared by all three stack
+   owners: `lib/multifield.ts` (Hosts/Projects/Proxies), `agentsSection.ts` and
+   `skillsSection.ts`. */
+.subsection-gap {
+  gap: 24px;
+}
+
 /* The reusable multifield (lib/multifield.ts): one item per row, its fields
    full-width beneath an action strip in the row's top-right corner, and the
    "Add item" action underneath the whole list. */
@@ -83,13 +93,16 @@
   gap: 12px;
 }
 
+/* One item per row; the doubled gap between items comes from `.subsection-gap`
+   (shared with the Agents cards), so each item reads as its own subsection while
+   the fields inside it keep the plain 12px. Hosts, Projects and Proxies share
+   this one list. */
 .multifield__list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 /* Two columns: the fields take the remaining width, the action buttons sit in
@@ -410,10 +423,12 @@
   background: var(--spectrum-accent-color-100, #e0f2ff);
 }
 
+/* One provider card per "section"; the doubled gap between cards comes from
+   `.subsection-gap`, so each card reads as its own block while the 12px fields
+   inside one card stay the plain spacing. */
 .agents-section__group {
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
 
 .agent-item__header {
@@ -455,4 +470,23 @@
 .agent-item__button {
   margin-left: auto;
   min-width: 7rem;
+}
+
+/* The Skills tab's three folder buttons line up as one column, so they carry
+   one width rather than each sizing to its own label (the same trick as
+   `.agent-item__button`). `min-width`, not `width`: a larger text size must
+   still fit the longest label - "Custom skills folder" - and the value clears
+   it with room to spare, so all three stay equal in practice. */
+.skills-section .field-label-row sp-action-button {
+  min-width: 12rem;
+}
+
+/* The Skills tab reads as three subsections - skills, rules, and the memos pair
+   (Self-learning + Memos folder). `.subsection-gap` sets the 24px boundaries
+   (the same gap the other tabs use); the two rows inside the memos pair keep the
+   section's own plain 8px. */
+.skills-section__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }

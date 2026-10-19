@@ -1,5 +1,6 @@
 import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
+import { type TurnSignalCollector, createTurnSignalCollector } from './memos/turnSignals';
 import {
   type AgentChatByIdRequest,
   type AgentChatError,
@@ -32,6 +33,7 @@ import {
   type UserInputAnswer,
   type UserInputRequest,
   type UserInputRequestId,
+  MEMO_REFLECTION_TOOL_NAME,
   SKILL_TOOL_NAME,
   agentEventSchema,
   applyAgentEvent,
@@ -150,7 +152,9 @@ export interface AgentChatControllerDeps {
    * loaded skill is journaled as a synthetic `skill` call so "was it loaded?"
    * is answerable from the log.
    */
-  readonly resolveSkillPrompt?: (prompt: string) => SkillPromptResolution;
+  readonly resolveSkillPrompt?: (
+    prompt: string,
+  ) => SkillPromptResolution | Promise<SkillPromptResolution>;
   /**
    * Reads every SDK session id a chat's journal recorded, so conversation
    * deletion can delete the SDK's stored data for each (`deleteSession`). A
@@ -184,6 +188,25 @@ export interface AgentChatControllerDeps {
    * it the old rules would silently keep applying in the model's mind.
    */
   readonly projectRulesEndedNote?: string;
+  /**
+   * The self-learning block - when to write a memo, and the generic memos
+   * themselves - or `undefined` when self-learning is switched off. Read
+   * fresh, so a memo written (or hand-edited) since is seen. Handed to the
+   * model with a conversation's first prompt and after every open, like the
+   * project rules. Optional so a unit test can construct a controller without
+   * memos.
+   */
+  readonly currentMemos?: () => Promise<string | undefined>;
+  /**
+   * The prompt for the application's own post-turn reflection over the given
+   * problems, or `undefined` when self-learning is switched off (no reflection
+   * then). A user turn that ended `idle` with problems observed (a failed tool,
+   * an error, a repeated call, a re-asked dismissed question), was not stopped
+   * and wrote no memo is followed by one reflection turn: the model reads this
+   * prompt and either writes a memo or replies that there is nothing to learn.
+   * Optional so a unit test can construct a controller without reflection.
+   */
+  readonly reflectionPrompt?: (signals: readonly string[]) => string | undefined;
 }
 
 /** One project's user rules, as `AgentChatControllerDeps.currentProjectRules` reports them. */
@@ -345,6 +368,18 @@ interface ActiveTurn {
   readonly toolCallIds: Set<ToolCallId>;
 }
 
+/** The application's own post-turn reflection, while its turn is in flight. */
+interface ReflectionTurn {
+  readonly turnId: TurnId;
+  /** The `memo_reflection` marker call that shows the reflection in the transcript. */
+  readonly toolCallId: ToolCallId;
+  readonly signals: readonly string[];
+  markerStarted: boolean;
+}
+
+/** How long after a turn ends its reflection starts: after the service has finished unwinding that turn. */
+const REFLECTION_DELAY_MS = 0;
+
 /** The `ask_user` question currently awaiting an answer, tracked so a late action can be attached to it. */
 interface PendingInput {
   readonly requestId: UserInputRequestId;
@@ -376,7 +411,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
   let activeTurn: ActiveTurn | undefined;
   /** The key of the project whose rules the model was last given in this conversation; `undefined` for none. */
   let projectRulesSent: string | undefined;
+  /** Whether the model was given the self-learning block in this conversation. */
+  let memosSent = false;
   let pendingInput: PendingInput | undefined;
+  /** Watches the user turn in flight for the problems a reflection is for. */
+  let turnSignals: TurnSignalCollector | undefined;
+  /** The application's reflection turn, while it is in flight. */
+  let reflection: ReflectionTurn | undefined;
   /**
    * Single-flight for `openConversation`. At most one
    * `agentService.openConversation` call may be in flight at a time, and
@@ -486,7 +527,111 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       sessionStatus.state === 'error'
     ) {
       activeTurn = undefined;
+      reflection = undefined;
     }
+  }
+
+  function isReflectionInFlight(): boolean {
+    return reflection !== undefined && activeTurn?.turnId === reflection.turnId;
+  }
+
+  /** Whether `event`, for the open chat, ends the turn it belongs to. */
+  function endsTurn(event: AgentEvent): boolean {
+    if (event.type === 'error') return true;
+    return (
+      event.type === 'session.state.changed' &&
+      (event.state === 'cancelling' ||
+        event.state === 'idle' ||
+        event.state === 'error' ||
+        event.state === 'closed')
+    );
+  }
+
+  /**
+   * Opens the reflection's marker billet once its turn has started (a tool call
+   * is only legal then), and settles it just before the turn's terminal event,
+   * so the transcript reads "reflecting" exactly while the reflection runs.
+   */
+  function trackReflectionMarker(event: AgentEvent, phase: 'before' | 'after'): void {
+    if (reflection === undefined || event.chatId !== activeChatId) return;
+    if (activeTurn?.turnId !== reflection.turnId) return;
+    if ('turnId' in event && event.turnId !== undefined && event.turnId !== reflection.turnId) {
+      return;
+    }
+    if (phase === 'after' && !reflection.markerStarted) {
+      if (event.type !== 'session.state.changed' || event.state !== 'sending') return;
+      reflection.markerStarted = true;
+      recordNestedToolCall({
+        phase: 'started',
+        toolCallId: reflection.toolCallId,
+        toolName: MEMO_REFLECTION_TOOL_NAME,
+        args: { signals: [...reflection.signals] },
+      });
+      return;
+    }
+    if (phase === 'before' && reflection.markerStarted && endsTurn(event)) {
+      reflection.markerStarted = false;
+      recordNestedToolCall({
+        phase: 'settled',
+        toolCallId: reflection.toolCallId,
+        outcome: ok({
+          ok: true,
+          operation: MEMO_REFLECTION_TOOL_NAME,
+          resultType: 'success',
+        }),
+      });
+    }
+  }
+
+  /**
+   * Starts the application's reflection on a finished user turn, unless the
+   * user has moved on in the meantime (another chat, another turn, a state
+   * that refuses a send). The reflection is an ordinary turn whose prompt the
+   * user did not type: journaled with `origin: 'reflection'` and never painted
+   * as the user's message.
+   */
+  async function startReflection(chatId: ChatId, signals: readonly string[]): Promise<void> {
+    if (activeChatId !== chatId || activeTurn !== undefined) return;
+    if (!canSendMessage(sessionStatus).canSend) return;
+    const prompt = deps.reflectionPrompt?.(signals);
+    if (prompt === undefined) return;
+    const turnId = newTurnId(idGenerator);
+    activeTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
+    reflection = { turnId, toolCallId: newToolCallId(idGenerator), signals, markerStarted: false };
+    chatJournal?.recordUserPrompt({ chatId, turnId, prompt, origin: 'reflection' });
+    const result = await agentService.sendPrompt({
+      chatId,
+      turnId,
+      prompt,
+      displayPrompt: prompt,
+    });
+    if (result.ok) return;
+    chatJournal?.discardUserPrompt(chatId, turnId);
+    if (activeTurn?.turnId === turnId) activeTurn = undefined;
+    if (reflection?.turnId === turnId) reflection = undefined;
+    logger.warn('MEMO_REFLECTION_FAILED', { ids: { chatId }, outcome: 'failure' });
+  }
+
+  /** Feeds the user turn's signal collector, and schedules a reflection when that turn ends `idle` with problems. */
+  function observeTurnSignals(event: AgentEvent, nested: boolean): void {
+    const collector = turnSignals;
+    if (collector === undefined || activeTurn?.turnId !== collector.turnId) return;
+    collector.observe(event, nested);
+    if (sessionStatus.state === 'closed' || sessionStatus.state === 'error') {
+      turnSignals = undefined;
+      return;
+    }
+    if (sessionStatus.state !== 'idle') return;
+    turnSignals = undefined;
+    const signals = collector.reflectionSignals();
+    if (signals.length === 0 || deps.reflectionPrompt === undefined) return;
+    const chatId = activeChatId;
+    if (chatId === undefined) return;
+    // Not synchronously: the service is still inside the event's emit, and
+    // finishes unwinding the turn that just ended before it accepts another.
+    setTimeout(() => {
+      void startReflection(chatId, signals);
+    }, REFLECTION_DELAY_MS);
   }
 
   const unsubscribeAuth = agentService.onAuthStateChanged((state) => {
@@ -500,8 +645,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // recorded, even though they are correctly never forwarded to the
     // renderer. The journal routes by `event.chatId` and drops events for a
     // chat it has no open file for.
+    trackReflectionMarker(event, 'before');
     chatJournal?.recordEvent(event);
     ingestOwnedEvent(event, false);
+    trackReflectionMarker(event, 'after');
   });
 
   /** The ownership-guarded half of the event pipe, shared by service events and nested tool calls. */
@@ -523,6 +670,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     }
     sessionStatus = applied.value;
     recordTurnMembership(event);
+    observeTurnSignals(event, nested);
     clearTurnIfTerminal();
     for (const listener of [...forwardListeners]) listener(event);
   }
@@ -641,6 +789,9 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // A conversation opened (or reopened under a new SDK session) has not been
     // told any project rules yet.
     projectRulesSent = undefined;
+    memosSent = false;
+    turnSignals = undefined;
+    reflection = undefined;
     if (!isSameChat) {
       activeTurn = undefined;
       sessionStatus = { ...sessionStatus, state: 'idle' };
@@ -711,6 +862,26 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     if (activeChatId === undefined || request.chatId !== activeChatId) {
       return { ok: false, error: notOpenConversationError(request.chatId) };
     }
+    // The asynchronous reads come first, before the gate: from the gate to
+    // sendPrompt nothing may await, or a second send could pass the same gate.
+    const skillPrompt = (await deps.resolveSkillPrompt?.(request.prompt)) ?? {
+      modelPrompt: request.prompt,
+    };
+    const memosBlock = memosSent ? undefined : await deps.currentMemos?.();
+    if (activeChatId === undefined || request.chatId !== activeChatId) {
+      return { ok: false, error: notOpenConversationError(request.chatId) };
+    }
+    // The user does not wait for the application's own reflection: a prompt
+    // sent while one runs stops it quietly (no interruption is recorded - the
+    // user stopped nothing of theirs) and goes ahead.
+    if (isReflectionInFlight()) {
+      cancelAemRequests?.();
+      const stopped = await agentService.abort(request.chatId);
+      if (!stopped.ok) return { ok: false, error: toAgentChatError(stopped.error) };
+      if (activeChatId === undefined || request.chatId !== activeChatId) {
+        return { ok: false, error: notOpenConversationError(request.chatId) };
+      }
+    }
     // OWN pre-flight gate - defense-in-depth. `agentService.sendPrompt`
     // enforces this exact rule again on its own ("Do not send a second
     // prompt over an unfinished turn" is not left to only one layer to
@@ -722,16 +893,14 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     }
     const turnId = newTurnId(idGenerator);
     activeTurn = { turnId, messageIds: new Set(), toolCallIds: new Set() };
+    turnSignals = createTurnSignalCollector(turnId);
     const pageContext = deps.currentPageContext();
     // Read fresh, exactly as the tool context is: the host the chat is first
     // *used* on is what its journal should record, which for the startup chat
     // (opened before any page was restored) is the only time a host is known.
     const server = deps.currentAemServerContext();
     // The user's own text is kept for display and the journal; only the prompt
-    // the model reads is rewritten for a leading `/skillname`.
-    const skillPrompt = deps.resolveSkillPrompt?.(request.prompt) ?? {
-      modelPrompt: request.prompt,
-    };
+    // the model reads is rewritten for a leading `/skillname` (resolved above).
     const modelPrompt = skillPrompt.modelPrompt;
     // Project rules go in front of the page context, only when they changed.
     const projectRules = deps.currentProjectRules?.();
@@ -755,7 +924,12 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const result = await agentService.sendPrompt({
       chatId: request.chatId,
       turnId,
-      prompt: composeModelPrompt(rulesBlock, composeModelPrompt(pageContext, modelPrompt)),
+      // Memos, then project rules, then the page: the more specific, the closer
+      // to the user's own words.
+      prompt: composeModelPrompt(
+        memosBlock,
+        composeModelPrompt(rulesBlock, composeModelPrompt(pageContext, modelPrompt)),
+      ),
       displayPrompt: request.prompt,
     });
     if (!result.ok) {
@@ -763,10 +937,14 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       // The turn never actually started - nothing to keep tracking, unless
       // something else has already moved `activeTurn` on in the meantime.
       if (activeTurn.turnId === turnId) activeTurn = undefined;
+      if (turnSignals?.turnId === turnId) turnSignals = undefined;
       return { ok: false, error: toAgentChatError(result.error) };
     }
     // Only a prompt that reached the model counts as having told it the rules.
-    if (activeChatId === request.chatId) projectRulesSent = projectRulesKey;
+    if (activeChatId === request.chatId) {
+      projectRulesSent = projectRulesKey;
+      if (memosBlock !== undefined) memosSent = true;
+    }
     // The skill is already in the prompt; this pair only makes the load visible
     // (journal, and the transcript's prose suppression for a search skill). It
     // follows a successful send because a tool call is only legal once the turn
@@ -808,7 +986,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // tool promises settle *after* that clear and their results are suppressed -
     // the same "no result for a cancelled turn" rule, now also freeing the
     // bridge's single concurrency slot instead of waiting out the deadline.
-    const hadTurn = activeTurn !== undefined;
+    const hadTurn = activeTurn !== undefined && !isReflectionInFlight();
     cancelAemRequests?.();
     const result = await agentService.abort(request.chatId);
     if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
@@ -831,6 +1009,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // resolved promise below is this call's actual acknowledgement.
     activeChatId = undefined;
     activeTurn = undefined;
+    turnSignals = undefined;
+    reflection = undefined;
     const result = await agentService.closeConversation(request.chatId);
     if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
     // The service's teardown has already cleared its turn, so a cancelled
@@ -905,6 +1085,9 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       return { ok: false, error: notOpenConversationError(request.chatId) };
     }
     if (pendingInput?.requestId === request.requestId) pendingInput = undefined;
+    if (request.answer.selections.length === 0 && request.answer.freeform === null) {
+      turnSignals?.noteDismissedInput();
+    }
     const result = await agentService.respondToInput(
       request.chatId,
       request.requestId,
@@ -951,6 +1134,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
 
   async function handleAemContextInvalidated(): Promise<void> {
     if (activeChatId === undefined || activeTurn === undefined) return;
+    // The reflection reads nothing from the page; a navigation leaves it running.
+    if (isReflectionInFlight()) return;
     const chatId = activeChatId;
     // Logged *before* aborting so an automatic cancellation is distinguishable
     // from a user Stop in `logs/app.log`: a Stop leaves no such line.

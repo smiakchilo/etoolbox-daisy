@@ -198,7 +198,11 @@ export function createComposer(callbacks: ComposerCallbacks): Composer {
   sendButton.append(el('sp-icon-send', { attrs: { slot: 'icon' } }));
 
   const stopButton = el('sp-action-button', {
-    attrs: { class: 'chat-composer__stop', 'aria-label': 'Stop' },
+    attrs: {
+      class: 'chat-composer__stop',
+      'aria-label': 'Stop',
+      'data-testid': 'chat-composer-stop',
+    },
   });
   stopButton.append(el('sp-icon-cross600', { attrs: { slot: 'icon' } }));
 

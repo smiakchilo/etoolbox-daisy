@@ -203,7 +203,14 @@ export function repairProxyEntries(raw: unknown): unknown {
  * introduces an unrecognised key (a typo, a leftover from an older shape) does
  * not fail the whole load.
  */
-const SETTINGS_DOCUMENT_KEYS = ['hosts', 'projects', 'proxies', 'agents', 'browser'] as const;
+const SETTINGS_DOCUMENT_KEYS = [
+  'hosts',
+  'projects',
+  'proxies',
+  'agents',
+  'browser',
+  'memos',
+] as const;
 const SERVER_ENTRY_KEYS = [
   'id',
   'label',
@@ -225,6 +232,7 @@ const PROJECT_ENTRY_KEYS = [
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
 const BROWSER_ENTRY_KEYS = ['disableNativeWebAuthn', 'proxy'] as const;
+const MEMO_ENTRY_KEYS = ['enabled'] as const;
 
 /** Matches the Settings UI default and a fresh entry's colour. */
 const DEFAULT_SERVER_COLOR: ServerColor = { kind: 'swatch', swatch: 'blue' };
@@ -550,12 +558,21 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
     browser['proxy'] = browserProxy.data;
   }
 
+  // Self-learning is one boolean; a non-boolean is dropped (default on).
+  const memoSource = pickKnownKeys(
+    isPlainObject(document['memos']) ? document['memos'] : {},
+    MEMO_ENTRY_KEYS,
+  );
+  const memos: Record<string, unknown> = {};
+  if (typeof memoSource['enabled'] === 'boolean') memos['enabled'] = memoSource['enabled'];
+
   return {
     hosts,
     projects,
     proxies,
     agents,
     browser,
+    memos,
   };
 }
 
@@ -678,6 +695,18 @@ export function applyBrowserSettingsChange(
   }
 
   return { ...settings, browser };
+}
+
+/**
+ * Applies a `settings:update-memo-settings` patch to a document and returns
+ * the updated document. Pure: the caller persists it.
+ */
+export function applyMemoSettingsChange(
+  settings: AppSettings,
+  changes: { readonly enabled?: boolean | undefined },
+): AppSettings {
+  if (changes.enabled === undefined) return settings;
+  return { ...settings, memos: { ...settings.memos, enabled: changes.enabled } };
 }
 
 // ---------------------------------------------------------------------------

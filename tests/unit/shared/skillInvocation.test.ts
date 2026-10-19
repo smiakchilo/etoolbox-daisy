@@ -154,4 +154,21 @@ describe('resolveSkillPrompt', () => {
       modelPrompt: '/search hi',
     });
   });
+
+  it('carries the skill memos inside the activation, after the body', () => {
+    const { modelPrompt } = resolveSkillPrompt('/search Waldo', lookup, '  SKILL-MEMOS  ');
+    const body = modelPrompt.indexOf('SEARCH-BODY');
+    const memos = modelPrompt.indexOf('SKILL-MEMOS');
+    expect(body).toBeGreaterThanOrEqual(0);
+    expect(memos).toBeGreaterThan(body);
+    expect(memos).toBeLessThan(modelPrompt.indexOf('</skill>'));
+  });
+});
+
+describe('renderSkillActivation', () => {
+  const search: SkillActivation = { name: 'search', body: 'SEARCH-BODY', files: [] };
+
+  it('is unchanged by empty memos', () => {
+    expect(renderSkillActivation(search, '   ')).toBe(renderSkillActivation(search));
+  });
 });

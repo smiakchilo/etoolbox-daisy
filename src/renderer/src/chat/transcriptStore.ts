@@ -9,6 +9,7 @@ import {
   type ToolCallId,
   type ToolError,
   type TurnId,
+  MEMO_REFLECTION_TOOL_NAME,
   SKILL_TOOL_NAME,
 } from '../../../shared';
 
@@ -229,6 +230,11 @@ export function createTranscriptStore(
   // ignore a late text event belonging to a previous turn when deciding
   // whether the current turn has produced text yet.
   let currentTurnId: TurnId | undefined;
+  // The turn the most recent turn-scoped event belonged to. Tool events carry
+  // no `turnId`, so a tool call is attributed to this turn - which is how the
+  // `memo_reflection` marker finds the application-started turn it opens (that
+  // turn has no `applyUserPrompt`, so `currentTurnId` never names it).
+  let lastEventTurnId: TurnId | undefined;
   // Whether the current turn still has no assistant text. Reset when the
   // user's prompt is recorded (a turn begins with no text) and cleared by the
   // first text event for that turn.
@@ -374,6 +380,7 @@ export function createTranscriptStore(
   return {
     applyEvent(event) {
       messageStream.applyEvent(event);
+      if ('turnId' in event && event.turnId !== undefined) lastEventTurnId = event.turnId;
       switch (event.type) {
         case 'assistant.message.started':
           ensureMessageItem(event.messageId, event.turnId);
@@ -428,6 +435,12 @@ export function createTranscriptStore(
               suppressTurn(currentTurnId);
             }
             return;
+          }
+          // An automatic reflection turn is the application's, not the user's:
+          // its billet stays (it is the reader's only sign the turn ran), but
+          // the model's prose in it is not an answer to anything they asked.
+          if (event.toolName === MEMO_REFLECTION_TOOL_NAME && lastEventTurnId !== undefined) {
+            suppressTurn(lastEventTurnId);
           }
           ensureToolCallItem(event.toolCallId);
           runningToolCalls.add(event.toolCallId);
@@ -602,6 +615,7 @@ export function createTranscriptStore(
       runningToolCalls.clear();
       suppressedTurns.clear();
       currentTurnId = undefined;
+      lastEventTurnId = undefined;
       awaitingAssistantText = false;
       turnInFlight = false;
       awaitingUserInput = false;

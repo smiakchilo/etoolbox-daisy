@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { describeToolCall } from '../../../../src/renderer/src/chat/toolCallDetails';
+import { toolRendererRegistry } from '../../../../src/renderer/src/chat/toolRegistry';
+import { MEMO_PREVIEW_MAX_LENGTH } from '../../../../src/tools/memo/renderer';
 
 type Details = ReturnType<typeof describeToolCall>;
 
@@ -361,6 +363,41 @@ describe('describeToolCall - aem_semantic_search', () => {
     expect(details.summary?.length).toBeGreaterThan(0);
     expect(details.summary).toContain('2');
     expect(valuesOf(details)).toEqual(['s-1', '3, 7']);
+  });
+});
+
+describe('describeToolCall - memo', () => {
+  const args = { title: 'Both paths', text: 'Show both paths.', trigger: 'correction' };
+  const saved = {
+    operation: 'memo',
+    id: 'skills/search/x.md',
+    title: 'Both paths',
+    fileName: 'x.md',
+    skill: 'search',
+  };
+
+  it('names the title and shows the scope, trigger, text and, once saved, the file', () => {
+    const pending = describeToolCall('memo', args);
+    expect(pending.summary).toContain('Both paths');
+    expect(valuesOf(pending)).toEqual(expect.arrayContaining(['Both paths', 'Show both paths.']));
+    expect(valuesOf(pending)).not.toContain('x.md');
+
+    const done = describeToolCall('memo', { ...args, skill: 'search' }, saved);
+    expect(done.summary).toContain('search');
+    expect(valuesOf(done)).toEqual(expect.arrayContaining(['search', 'x.md']));
+  });
+
+  it('cuts a long memo text to a bounded preview', () => {
+    const details = describeToolCall('memo', { ...args, text: 'x'.repeat(1000) });
+    const longest = Math.max(...valuesOf(details).map((value) => value.length));
+    expect(longest).toBe(MEMO_PREVIEW_MAX_LENGTH);
+  });
+
+  it('offers Reveal and Undo only for a saved memo, both aimed at its id', () => {
+    expect(toolRendererRegistry.readActions('memo', args, undefined)).toEqual([]);
+    const actions = toolRendererRegistry.readActions('memo', args, saved);
+    expect(actions.map((action) => action.kind).sort()).toEqual(['memo.reveal', 'memo.undo']);
+    expect(actions.every((action) => action.target === saved.id)).toBe(true);
   });
 });
 

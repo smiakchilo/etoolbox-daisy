@@ -173,7 +173,9 @@ function buildActionButton(iconTag: string, label: string, className: string): H
 }
 
 export function createMultifield(options: MultifieldOptions): Multifield {
-  const list = el('ul', { attrs: { class: 'multifield__list' } });
+  // `.subsection-gap` widens the gap between items (see settings.css), so each
+  // item reads as its own subsection rather than as another field of the one above.
+  const list = el('ul', { attrs: { class: 'multifield__list subsection-gap' } });
   const entries = new Map<string, Entry>();
   let disposed = false;
 

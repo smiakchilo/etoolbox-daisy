@@ -46,6 +46,7 @@ function validSettings() {
     proxies: [],
     agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
+    memos: { enabled: true },
   };
 }
 
@@ -91,6 +92,21 @@ describe('appSettingsSchema', () => {
   it('defaults a missing `disableNativeWebAuthn` flag to true', () => {
     const parsed = appSettingsSchema.parse({ ...validSettings(), browser: {} });
     expect(parsed.browser.disableNativeWebAuthn).toBe(true);
+  });
+
+  it('defaults a missing `memos` object to self-learning switched on', () => {
+    const withoutMemos: Record<string, unknown> = { ...validSettings() };
+    delete withoutMemos['memos'];
+    expect(appSettingsSchema.parse(withoutMemos).memos.enabled).toBe(true);
+  });
+
+  it('keeps self-learning switched off and rejects an unknown memos key', () => {
+    expect(
+      appSettingsSchema.parse({ ...validSettings(), memos: { enabled: false } }).memos.enabled,
+    ).toBe(false);
+    expect(() =>
+      appSettingsSchema.parse({ ...validSettings(), memos: { enabled: true, extra: 1 } }),
+    ).toThrow();
   });
 
   describe('server list integrity', () => {

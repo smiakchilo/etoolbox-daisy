@@ -1,9 +1,10 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { mainEntry } from '../support/e2e/app';
+import { verticalGap } from '../support/e2e/layout';
 import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
-import { byTestId } from '../support/selectors';
+import { byField, byTestId } from '../support/selectors';
 
 /**
  * The Settings "Skills" tab against the built app: the tab exists after Agents,
@@ -47,8 +48,36 @@ test('the Skills tab opens the custom skills folder through main', async () => {
     await shell.locator(byTestId('settings-tab-skills')).click();
     const panel = shell.locator('.settings-panel__tab-panel[selected]');
     const badge = panel.locator('sp-contextual-help');
-    await expect(badge).toHaveCount(2);
+    await expect(badge).toHaveCount(4);
     expect(await badge.first().evaluate((node) => node.shadowRoot !== null)).toBe(true);
+
+    // The three folder actions line up as one column: equal widths, and the
+    // Self-learning checkbox sits above the Memos folder action.
+    const folderButtonIds = [
+      'skills-open-folder',
+      'rules-open-folder',
+      'memos-open-folder',
+    ] as const;
+    const widths: number[] = [];
+    for (const id of folderButtonIds) {
+      const box = await panel.locator(byTestId(id)).boundingBox();
+      widths.push(Math.round(box?.width ?? 0));
+    }
+    expect(new Set(widths).size).toBe(1);
+
+    const selfLearningBox = await panel.locator(byField('memos-enabled')).boundingBox();
+    const memosBox = await panel.locator(byTestId('memos-open-folder')).boundingBox();
+    expect(selfLearningBox?.y ?? Number.NEGATIVE_INFINITY).toBeLessThan(
+      memosBox?.y ?? Number.POSITIVE_INFINITY,
+    );
+
+    // The three subsections (skills, rules, memos pair) are separated by a
+    // doubled gap; the pair's two rows keep the plain one. Asserted relationally
+    // so neither exact value is pinned.
+    const rows = panel.locator('.skills-section .field-label-row');
+    const pairGap = await verticalGap(rows.nth(2), rows.nth(3));
+    expect(await verticalGap(rows.nth(0), rows.nth(1))).toBeGreaterThan(pairGap);
+    expect(await verticalGap(rows.nth(1), rows.nth(2))).toBeGreaterThan(pairGap);
 
     await panel.locator(byTestId('skills-open-folder')).click();
     await expect
@@ -74,6 +103,26 @@ test('the Skills tab opens the custom skills folder through main', async () => {
     );
     expect(path.basename(openedPaths[1] ?? '')).toBe('rules');
     expect(existsSync(openedPaths[1] ?? '')).toBe(true);
+
+    await panel.locator(byTestId('memos-open-folder')).click();
+    await expect
+      .poll(() =>
+        app.evaluate(() => (globalThis as Record<string, unknown>)['__openedPaths'] as string[]),
+      )
+      .toHaveLength(3);
+    const withMemos = await app.evaluate(
+      () => (globalThis as Record<string, unknown>)['__openedPaths'] as string[],
+    );
+    expect(path.basename(withMemos[2] ?? '')).toBe('memos');
+    expect(existsSync(withMemos[2] ?? '')).toBe(true);
+
+    const selfLearning = panel.locator(byField('memos-enabled'));
+    await expect(selfLearning).toHaveJSProperty('checked', true);
+    await selfLearning.click();
+    const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+    await expect
+      .poll(() => (existsSync(settingsFile) ? readFileSync(settingsFile, 'utf8') : ''))
+      .toMatch(/"memos"\s*:\s*\{\s*"enabled"\s*:\s*false/);
   } finally {
     await app.close();
   }

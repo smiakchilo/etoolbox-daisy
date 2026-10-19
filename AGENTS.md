@@ -202,7 +202,17 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change is the **`sdkSessionId` → `sessionId`
+> The most recent shared-surface change is **self-learning memos** (2026-10-19):
+> `contracts/chatJournal.ts`'s `user.prompt` gained an optional
+> `origin: 'reflection'`; `appSettings.ts` / `settingsSnapshot.ts` /
+> `settings-ipc.ts` gained `memos.enabled` (and `updateMemoSettings`);
+> `ToolHost` gained an optional `memos: MemoHost` (`src/shared/memos/`);
+> `tools/core/toolRenderer.ts` gained `ToolCallAction` / `readActions`;
+> `renderSkillActivation` / `resolveSkillPrompt` take a `memos` argument; and
+> `memos-ipc.ts` + `ipc-channels.ts` carry `memos:open-folder` / `memos:reveal` /
+> `memos:undo` — see "Memos" below and `docs/verification/followons-2026-10.md`
+> "Self-learning memos ... (2026-10-19)".
+> Before that it was the **`sdkSessionId` → `sessionId`
 > rename** (2026-10-18): `contracts/ids.ts`'s `SdkSessionId` / `sdkSessionIdSchema`
 > became `SessionId` / `sessionIdSchema`, and every `sdkSessionId` property —
 > including the persisted journal `header` and `session.opened` key,
@@ -1009,8 +1019,8 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 
 ### `resources/skills/` and the skill subsystem
 
-Six bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
-`search-component` and `navigate` (all user-invocable — they appear in the
+Seven bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
+`search-component`, `navigate` and `remember` (all user-invocable — they appear in the
 composer's `/` autocomplete), plus `daisy-conventions` and `query-results`
 (auxiliary — `user-invocable: false`, so the model still gets them in its
 catalogue but the `/` menu does not list them).
@@ -1052,9 +1062,19 @@ Rejections log `SKILL_REJECTED`; a failed script logs `SKILL_SCRIPT_FAILED`.
 **Settings "Skills" tab** (after Agents) holds two action links, **Custom skills
 folder** (`skills:open-folder`, no payload: main creates the folder and opens it in
 the OS file manager) and **Custom rules folder** (`rules:open-folder`, same
-shape - see "User rules" below), each with contextual help. There is no reload
-button and no per-skill list. Test ids: `settings-tab-skills`, `skills-open-folder`,
-`rules-open-folder`.
+shape - see "User rules" below), each with contextual help, then the
+**Self-learning** checkbox (`memos.enabled`) and the **Memos folder** link
+(`memos:open-folder`) - see "Memos" below. The three folder buttons share one
+width so they line up as a column, and every help badge on the tab ends with the
+same ". Changes apply ..." formula (after restarting the app for skills and
+rules, on the next prompt for memos and the checkbox). The tab reads as three
+subsections (skills, rules, the memos pair), separated by the **one
+`.subsection-gap` utility** (24px, in `settings.css`, also on the
+Hosts/Projects/Proxies multifield list and the Agents provider cards) rather than
+a bespoke rule per tab. There is no reload button
+and no per-skill list. Test ids:
+`settings-tab-skills`, `skills-open-folder`, `rules-open-folder`,
+`memos-open-folder`, `data-field="memos-enabled"`.
 
 Every **new** bundled skill must carry a user-facing summary in its front
 matter: a `metadata.user-description` (one friendly phrase, no technical
@@ -1156,6 +1176,9 @@ arrived, so the word "rules" is used throughout.)
 | `user-rules.md` | The frame around the user's generic rules, appended to the session instructions | `{{rules}}` - exactly once (`renderGenericRules`) |
 | `project-rules.md` | The frame around a project's rules, sent on the model prompt | `{{project}}` and `{{rules}}` - each exactly once (`renderProjectRules`) |
 | `project-rules-ended.md` | The one-line note sent when a chat moves from a project with rules to one without | none |
+| `memos.md` | The frame around the generic memos plus the memo-writing guidance, sent on a conversation's first prompt | `{{memos}}` (`renderGenericMemos`) |
+| `skill-memos.md` | The frame around a skill's memos, appended to the `skill` tool's result | `{{memos}}` (`renderSkillMemos`) |
+| `memo-reflection.md` | The quiet reflection prompt sent after a turn with failure signals | `{{signals}}` (`renderReflectionPrompt`) |
 
 `session.md` and `skills.md` carry the read-only policy, so `loadRuleResources`
 (`src/main/rules/ruleResources.ts`) rejects at startup when either is missing and a template
@@ -1199,6 +1222,45 @@ subsystem: read **at startup only** (restart to apply) by `src/main/rules/`
 - **Precedence.** User rules win over the bundled instructions on a conflict,
   **except** the read-only policy (rule 7.4): a rule cannot grant an AEM write path,
   and none exists to grant.
+
+### Memos (`~\etoolbox-daisy\memos`) - self-learning
+
+The agent writes short lessons as `.md` files and the application reads them back
+into later conversations. The owner browses the folder and may fold memos into
+bundled prose by hand. Main owns it: `src/main/memos/` (`memoStore.ts`,
+`memoHost.ts`, `memoRendering.ts`, `turnSignals.ts`), `src/main/ipc/memos.ts`;
+the contract is `src/shared/memos/` (`MemoHost`, `MEMO_TRIGGERS`, limits).
+
+- **Layout.** `memos\generic\<yyyymmdd-hhmmss>-<slug>.md` or
+  `memos\skills\<skill>\...`; front matter `title`, `created`, `trigger`
+  (`request`/`correction`/`error`/`loop`), optional `chat`. The application picks
+  the folder and name; the model never supplies a path. A per-skill memo needs a
+  loaded skill, else the store refuses and the model writes a generic one.
+- **Writing** is the `memo` tool (`src/tools/memo/`, `{ title, text, trigger,
+  skill? }`, text ≤ 2 KB). Three paths: an explicit "remember/keep in mind" or
+  `/remember` (the bundled `remember` skill); a user correction (the always-sent
+  guidance `resources/rules/memos.md` asks for a memo in the same turn, `ask_user`
+  only when wording or scope is genuinely unclear); and an **automatic
+  reflection**: `turnSignals.ts` collects a turn's failed tool results (not
+  `CANCELLED`/`STALE_CONTEXT`/`AUTH_REQUIRED`), agent errors, a call repeated 3
+  times with identical arguments, a dismissed-then-re-asked question; nested calls
+  excluded. After such a turn (not cancelled, no memo already written, not itself
+  a reflection) the controller sends one quiet prompt
+  (`resources/rules/memo-reflection.md`), journaled as `user.prompt` with
+  `origin: 'reflection'` and never painted. The transcript shows only the internal
+  `memo_reflection` marker billet and any memo billet; prose is suppressed; Send
+  stays enabled (`ComposerStatus.reflecting`) and a user send aborts it quietly.
+- **Loading**, fresh from disk on use: generic memos ride on a conversation's first
+  prompt and after an open/resume (`memos.md`, newest first within 16 KB); a
+  skill's memos are appended to the `skill` tool's result (`skill-memos.md`, 8 KB),
+  for a model-chosen load and an explicit `/name` alike. Over-budget memos are
+  silently skipped (notice deferred, `docs/backlog.md` "Memos").
+- **The billet** reads `Memo saved: <title>` / `Memo for <skill>: <title>` and
+  offers **Reveal in folder** and **Undo** (deletes the file) through the
+  renderer's `readActions` and `memos:reveal` / `memos:undo` (main derives the path
+  from the memo id).
+- **Off switch.** Settings → Skills → Self-learning (`memos.enabled`, default on):
+  off stops loading, guidance and reflection, and the `memo` tool refuses.
 
 **The roots are a convenience, not a boundary.** A user may search any path; the
 tools never refuse or question a full path outside the host's roots. What the model
@@ -1263,7 +1325,33 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3710 passed / 13 skipped** (+5 against the
+Current baseline: **`npm run test` → 3853 passed / 13 skipped** (+1 against the
+3852 below - **the Skills tab's uniform help formula, order and button width**:
+the three folder buttons share one width so they line up as a column, the
+Self-learning checkbox sits above the Memos folder action, and every help badge
+on the tab now ends with the same ". Changes apply ..." formula (after
+restarting the app for skills and rules - both are read once at startup - and on
+the next prompt for memos and the checkbox, which are read fresh); the new
+`skillsSection.test.ts` order case is the +1, and the built-app
+`settings-skills.spec.ts` gained the equal-width and order assertions with its
+one case unchanged. The tab also reads as three subsections (skills, rules, the
+memos pair), and **one `.subsection-gap` utility** (`settings.css`) now sets the
+same 24px gap between subsections wherever it is applied - the Skills section,
+the Hosts/Projects/Proxies multifield list and the Agents provider cards - while
+the fields inside a subsection keep the plain gap; a new
+`tests/support/e2e/layout.ts` (`verticalGap`) lets `settings-skills`,
+`settings-hosts` and `step09-model-selection` assert that relationally, without
+pinning either gap's exact value (Playwright stays 150 tests) - see
+`docs/verification/followons-2026-10.md` "The Skills tab
+... (2026-10-19)"). Before that it was **3852 passed / 13 skipped** (+142 against the
+3710 below - **self-learning memos**: the memo store/host/rendering, turn signals,
+IPC, the `memo` tool, controller reflection, Settings and replay cases; one
+redundant `transcriptStore` reflection case deleted; Playwright **150 tests**,
+with the new built-app `memos.spec.ts` (2 cases, 48/48 under `--repeat-each=8`
+×3) and an extended `settings-skills.spec.ts`; the opt-in
+`tests/live/memos.live.spec.ts` is written but not yet run - see
+`docs/verification/followons-2026-10.md` "Self-learning memos ... (2026-10-19)").
+Before that it was **3710 passed / 13 skipped** (+5 against the
 3705 below: a History resume no longer waits for its host - the transcript paints
 and the session resumes at once, a send is held until the host switch settles;
 the new `chatPaneHistoryResume.test.ts` is 5, and a built-app `history.spec.ts`
@@ -2510,7 +2598,9 @@ lands in `test-results/live/`. Keep prompts tiny, never write real settings,
 never delete chats you did not create (`LIVE_CLEANUP=1` removes only the run's
 own). The pure parts (journal reader, redaction, transcript) are unit-tested in
 `tests/unit/support/live/`. `tests/live/skills.live.spec.ts` is the worked
-example (the `skill-selftest` user skill, explicit and inferred).
+example (the `skill-selftest` user skill, explicit and inferred);
+`tests/live/memos.live.spec.ts` certifies `/remember` writes a generic memo and
+removes only the file it created.
 
 **A live RPC read is the proof for anything the model could fake.** Ask the
 model about a skill and it will invent the contents. `skills.list()` cannot.

@@ -6,15 +6,16 @@ import {
   type ChatPane,
   type StartupConversation,
 } from '../../../src/renderer/src/shell/chatPane';
-import type {
-  AgentChatOpenResult,
-  AgentChatStatus,
-  AgentEvent,
-  AgentSettingsSnapshot,
-  ChatId,
-  ChatJournalRecord,
-  SessionId,
-  TurnId,
+import {
+  type AgentChatOpenResult,
+  type AgentChatStatus,
+  type AgentEvent,
+  type AgentSettingsSnapshot,
+  type ChatId,
+  type ChatJournalRecord,
+  type SessionId,
+  type TurnId,
+  MEMO_REFLECTION_TOOL_NAME,
 } from '../../../src/shared';
 import { flushMicrotasks as flush } from '../../support/asyncWaits';
 import { installJsdomGlobals } from '../../support/jsdomGlobals';
@@ -1070,6 +1071,40 @@ describe('createChatPane interruptions and session id', () => {
     expect(pane.element.querySelector('.chat-message--interruption')?.textContent).toBe(
       'Session interrupted by navigation',
     );
+
+    pane.dispose();
+  });
+
+  it('keeps Send during an automatic reflection and raises no notice when it is aborted', async () => {
+    const pane = await readyPane();
+    const chatId = currentChatId();
+
+    pushEvent(sessionState(chatId, 0, 'sending'));
+    pushEvent({
+      type: 'tool.call.requested',
+      chatId,
+      sequence: 1,
+      toolCallId: 'marker-1',
+      toolName: MEMO_REFLECTION_TOOL_NAME,
+      arguments: {},
+    } as AgentEvent);
+    await flush();
+    expect(sendButton(pane)).not.toBeNull();
+
+    pushEvent(sessionState(chatId, 2, 'cancelling'));
+    pushEvent(sessionState(chatId, 3, 'idle'));
+    // A later turn's message proves the transcript repainted after the abort.
+    pushEvent({
+      type: 'assistant.message.completed',
+      chatId,
+      sequence: 4,
+      turnId: 'turn-2',
+      messageId: 'msg-2',
+      content: 'Next answer',
+    } as AgentEvent);
+    await waitForAssistantMessage(pane);
+
+    expect(pane.element.querySelector('.chat-message--interruption')).toBeNull();
 
     pane.dispose();
   });

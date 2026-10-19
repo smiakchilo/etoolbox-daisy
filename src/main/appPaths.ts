@@ -34,6 +34,8 @@ export interface AppPaths {
   readonly skills: string;
   /** The user's own rules, one `.md` file per rule - read at startup. */
   readonly rules: string;
+  /** Self-learning memos, one `.md` file per lesson - read fresh, written by the `memo` tool. */
+  readonly memos: string;
   /** Diagnostic logs only: codes/timings/IDs, never prompts/payloads/secrets. */
   readonly logs: string;
   /** `%LOCALAPPDATA%\etoolbox-daisy` - the technical root nobody needs to open. */
@@ -151,6 +153,7 @@ export function resolveAppPaths(homeDir: string, localDataDir: string): AppPaths
     chats: path.join(root, 'chats'),
     skills: path.join(root, 'skills'),
     rules: path.join(root, 'rules'),
+    memos: path.join(root, 'memos'),
     logs: path.join(root, 'logs'),
     dataRoot,
     secrets: path.join(dataRoot, 'secrets'),

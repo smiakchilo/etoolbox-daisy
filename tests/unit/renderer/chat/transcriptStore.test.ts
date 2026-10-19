@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   agentEventSchema,
   chatIdSchema,
+  MEMO_REFLECTION_TOOL_NAME,
   messageIdSchema,
   reasoningIdSchema,
   requestIdSchema,
@@ -277,6 +278,71 @@ describe('createTranscriptStore', () => {
       const store = createTranscriptStore();
       store.applyEvent(skillRequested(0, 'search'));
       expect(store.items()).toEqual([]);
+    });
+  });
+
+  describe('automatic reflection turns', () => {
+    const reflectionTurnId: TurnId = turnIdSchema.parse('turn-reflection');
+    const markerCallId: ToolCallId = toolCallIdSchema.parse('marker-call-1');
+
+    function sending(sequence: number, id: TurnId): AgentEvent {
+      return agentEventSchema.parse({
+        type: 'session.state.changed',
+        chatId,
+        sequence,
+        turnId: id,
+        state: 'sending',
+      });
+    }
+
+    function markerRequested(sequence: number): AgentEvent {
+      return agentEventSchema.parse({
+        type: 'tool.call.requested',
+        chatId,
+        sequence,
+        toolCallId: markerCallId,
+        toolName: MEMO_REFLECTION_TOOL_NAME,
+        arguments: { signals: ['a tool failed'] },
+      });
+    }
+
+    function reflectionMessage(sequence: number, text: string): AgentEvent[] {
+      const id = messageIdSchema.parse('msg-reflection');
+      return [
+        agentEventSchema.parse({
+          type: 'assistant.message.started',
+          chatId,
+          sequence,
+          turnId: reflectionTurnId,
+          messageId: id,
+        }),
+        agentEventSchema.parse({
+          type: 'assistant.message.completed',
+          chatId,
+          sequence: sequence + 1,
+          turnId: reflectionTurnId,
+          messageId: id,
+          content: text,
+        }),
+      ];
+    }
+
+    it("keeps the marker billet but hides the reflection turn's prose", () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'find pages about Waldo');
+      store.applyEvent(messageStarted(0));
+      store.applyEvent(completed(1, 'Here they are.'));
+      store.applyEvent(sending(2, reflectionTurnId));
+      store.applyEvent(markerRequested(3));
+      for (const event of reflectionMessage(4, 'Nothing worth remembering.')) {
+        store.applyEvent(event);
+      }
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'message', messageId, turnId },
+        { kind: 'toolCall', toolCallId: markerCallId },
+      ]);
     });
   });
 

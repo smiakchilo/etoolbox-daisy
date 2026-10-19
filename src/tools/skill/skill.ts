@@ -44,7 +44,7 @@ export const SKILL_TOOL_DESCRIPTOR: ToolDescriptor = {
 };
 
 export function createSkillExecutor(host: ToolHost): AemToolExecutor {
-  return (rawArgs, context) => {
+  return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
     if (context.signal?.aborted === true) {
       return Promise.resolve(
@@ -75,6 +75,7 @@ export function createSkillExecutor(host: ToolHost): AemToolExecutor {
         err(createToolError(activation.error.code, activation.error.message, requestId)),
       );
     }
+    const memos = (await host.memos?.skillMemos(activation.value.name)) ?? '';
     const { files } = activation.value;
     const payload: Record<string, JsonValue> = {
       ok: true,
@@ -84,9 +85,9 @@ export function createSkillExecutor(host: ToolHost): AemToolExecutor {
       source: summary?.source ?? 'bundled',
       fileCount: files.length,
       scriptCount: files.filter((file) => isRunnableScriptPath(file.path)).length,
-      textResultForLlm: renderSkillActivation(activation.value),
+      textResultForLlm: renderSkillActivation(activation.value, memos),
       resultType: 'success',
     };
-    return Promise.resolve(ok(payload));
+    return ok(payload);
   };
 }

@@ -2,6 +2,7 @@ import { _electron as electron, expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { mainEntry } from '../support/e2e/app';
+import { verticalGap } from '../support/e2e/layout';
 import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
 import { byField, byTestId } from '../support/selectors';
 
@@ -372,6 +373,15 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     const page = await openSettings(second);
     const rows = page.locator('.multifield__item');
     await expect(rows).toHaveCount(2, { timeout: 60_000 });
+
+    // Multifield items are separated by a doubled gap (a subsection boundary),
+    // while the fields inside one item keep the plain gap. Asserted relationally
+    // so neither exact value is pinned - and this one `.multifield__list` rule
+    // is what Hosts, Projects and Proxies all share.
+    const itemGap = await verticalGap(rows.nth(0), rows.nth(1));
+    const fieldBlocks = rows.nth(0).locator('.host-field');
+    const fieldGap = await verticalGap(fieldBlocks.nth(0), fieldBlocks.nth(1));
+    expect(itemGap).toBeGreaterThan(fieldGap);
 
     const up = (index: number) => rows.nth(index).locator('.multifield__action--up');
     const down = (index: number) => rows.nth(index).locator('.multifield__action--down');

@@ -8,6 +8,7 @@ import {
   addServer,
   agentTokenSecretRef,
   applyBrowserSettingsChange,
+  applyMemoSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
   confirmOriginChange,
@@ -591,6 +592,15 @@ describe('applyBrowserSettingsChange', () => {
 
     // Omitted means unchanged.
     expect(applyBrowserSettingsChange(set, {}).browser.proxy).toBe(proxyEntry.id);
+  });
+});
+
+describe('applyMemoSettingsChange', () => {
+  it('replaces the self-learning flag when supplied and leaves it when omitted', () => {
+    const off = applyMemoSettingsChange(defaultAppSettings(), { enabled: false });
+    expect(off.memos.enabled).toBe(false);
+    expect(applyMemoSettingsChange(off, {}).memos.enabled).toBe(false);
+    expect(applyMemoSettingsChange(off, { enabled: true }).memos.enabled).toBe(true);
   });
 });
 

@@ -63,6 +63,8 @@ export interface ChatJournalUserPromptParams {
   readonly prompt: string;
   /** The current-page block the model read besides the prompt, when there was one. */
   readonly pageContext?: string | undefined;
+  /** `'reflection'` for the application's own post-turn reflection prompt (see the record schema). */
+  readonly origin?: 'reflection';
   /**
    * The AEM host the pane was on when this prompt was sent, if any. The first
    * prompt that names one is what gives a chat opened with no host its host (see
@@ -199,6 +201,7 @@ interface OpenChat {
     readonly prompt: string;
     readonly pageContext?: string;
     readonly serverId?: ServerId;
+    readonly origin?: 'reflection';
     readonly at: number;
   };
   /** The turn being timed, from its first event until its terminal one. */
@@ -327,6 +330,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
       prompt: pending.prompt,
       ...(pending.pageContext !== undefined ? { pageContext: pending.pageContext } : {}),
       ...(pending.serverId !== undefined ? { serverId: pending.serverId } : {}),
+      ...(pending.origin !== undefined ? { origin: pending.origin } : {}),
     });
   }
 
@@ -573,6 +577,7 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
         prompt: params.prompt,
         ...(params.pageContext !== undefined ? { pageContext: params.pageContext } : {}),
         ...(params.serverId !== undefined ? { serverId: params.serverId } : {}),
+        ...(params.origin !== undefined ? { origin: params.origin } : {}),
         at: now(),
       };
     },

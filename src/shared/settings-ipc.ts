@@ -648,3 +648,27 @@ export type UpdateBrowserSettingsRequest = Readonly<
 /** `settings:update-browser-settings` result - the same shape as every other settings mutation. */
 export const updateBrowserSettingsResultSchema = settingsIpcVoidResultSchema;
 export type UpdateBrowserSettingsResult = SettingsIpcVoidResult;
+
+// ---------------------------------------------------------------------------
+// Self-learning settings (the Skills tab's "Self-learning" checkbox)
+// ---------------------------------------------------------------------------
+
+/**
+ * `settings:update-memo-settings`. A partial patch with the same convention as
+ * {@link updateBrowserSettingsRequestSchema}. Read fresh on every prompt, so
+ * the change applies to the next one.
+ */
+export const updateMemoSettingsRequestSchema = z
+  .object({
+    changes: z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .strict()
+      .refine((changes) => Object.keys(changes).length > 0, {
+        message: 'at least one setting must be supplied',
+      }),
+  })
+  .strict();
+
+export type UpdateMemoSettingsRequest = Readonly<z.infer<typeof updateMemoSettingsRequestSchema>>;

@@ -21,6 +21,9 @@ describe('loadRuleResources', () => {
     'user-rules.md',
     'project-rules.md',
     'project-rules-ended.md',
+    'memos.md',
+    'skill-memos.md',
+    'memo-reflection.md',
   ] as const;
 
   async function writeRequired(): Promise<void> {
@@ -37,6 +40,9 @@ describe('loadRuleResources', () => {
     expect(resources.rulesTemplate).toBe('Content of user-rules.md\n');
     expect(resources.projectRulesTemplate).toBe('Content of project-rules.md\n');
     expect(resources.projectRulesEndedText).toBe('Content of project-rules-ended.md');
+    expect(resources.memosTemplate).toBe('Content of memos.md\n');
+    expect(resources.skillMemosTemplate).toBe('Content of skill-memos.md\n');
+    expect(resources.reflectionTemplate).toBe('Content of memo-reflection.md\n');
   });
 
   it.each(REQUIRED)(

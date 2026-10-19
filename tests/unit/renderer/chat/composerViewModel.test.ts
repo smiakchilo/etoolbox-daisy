@@ -88,6 +88,31 @@ describe('computeComposerButtonState', () => {
     });
   });
 
+  describe("an automatic reflection in flight ('reflecting')", () => {
+    for (const state of ['sending', 'streaming', 'runningTool'] as const) {
+      it(`keeps Send for session state "${state}", so the user is never made to stop it`, () => {
+        const result = computeComposerButtonState(
+          status({ reflecting: true, session: session({ state }) }),
+        );
+        expect(result).toEqual({ kind: 'send-enabled' });
+      });
+    }
+
+    it("shows 'agent-inactive' when no agent is active", () => {
+      const result = computeComposerButtonState(
+        status({ reflecting: true, agentActive: false, session: session({ state: 'streaming' }) }),
+      );
+      expect(result).toEqual({ kind: 'agent-inactive' });
+    });
+
+    it('a stale flag on a turn that is not running changes nothing', () => {
+      const result = computeComposerButtonState(
+        status({ reflecting: true, session: session({ state: 'error' }) }),
+      );
+      expect(result).toEqual({ kind: 'send-disabled', reason: 'session_error' });
+    });
+  });
+
   it("shows 'send-enabled' when idle and authenticated", () => {
     const result = computeComposerButtonState(status({ session: session({ state: 'idle' }) }));
     expect(result).toEqual({ kind: 'send-enabled' });

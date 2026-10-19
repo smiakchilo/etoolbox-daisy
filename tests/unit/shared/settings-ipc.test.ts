@@ -17,6 +17,7 @@ import {
   setPasswordRequestSchema,
   settingsIpcVoidResultSchema,
   updateBrowserSettingsRequestSchema,
+  updateMemoSettingsRequestSchema,
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
@@ -543,6 +544,18 @@ describe('updateBrowserSettingsRequestSchema', () => {
     expect(
       updateBrowserSettingsRequestSchema.safeParse({ changes: { proxy: proxyId, extra: 1 } })
         .success,
+    ).toBe(false);
+  });
+});
+
+describe('updateMemoSettingsRequestSchema', () => {
+  it('accepts the self-learning flag and rejects an empty patch or an unknown key', () => {
+    expect(updateMemoSettingsRequestSchema.safeParse({ changes: { enabled: false } }).success).toBe(
+      true,
+    );
+    expect(updateMemoSettingsRequestSchema.safeParse({ changes: {} }).success).toBe(false);
+    expect(
+      updateMemoSettingsRequestSchema.safeParse({ changes: { enabled: true, extra: 1 } }).success,
     ).toBe(false);
   });
 });

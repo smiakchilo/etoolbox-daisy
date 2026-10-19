@@ -35,6 +35,14 @@ export interface ComposerStatus {
    * have no concept of a resume need not supply it.
    */
   readonly resuming?: boolean;
+  /**
+   * Whether the turn in flight is the application's own automatic reflection
+   * (the `memo_reflection` marker is running), not one the user started. The
+   * user is never made to wait for it or to Stop it: Send stays available, and
+   * main quietly ends the reflection when a prompt arrives. Optional (defaults
+   * false).
+   */
+  readonly reflecting?: boolean;
 }
 
 export type ComposerButtonState =
@@ -87,7 +95,8 @@ export function isTurnInFlight(state: SessionStreamState): boolean {
  *    session fields are not yet meaningful, and no turn can be in flight.
  * 3. A turn in flight - `canSendMessage` has no notion of "Stop" at all (see
  *    below), so this composer-only concept has to be decided before
- *    delegating to it, not folded into its reason codes.
+ *    delegating to it, not folded into its reason codes. The one exception is
+ *    the application's own reflection turn (`reflecting`), which keeps Send.
  * 4. No usable agent selected (`agentActive` false) - nothing can be sent at
  *    all. This is checked before `canSendMessage` because the chat pane owns
  *    the message for it (its own banner), not the composer's inline notice;
@@ -115,6 +124,11 @@ export function computeComposerButtonState(status: ComposerStatus): ComposerButt
   // in-flight/Stop test because no turn can be running while the session that
   // would run it is not yet open.
   if (status.resuming === true) return { kind: 'connecting' };
+  // A reflection is background work the user did not ask for, so it neither
+  // offers Stop nor holds Send back (main ends it when a prompt arrives).
+  if (status.reflecting === true && isTurnInFlight(status.session.state)) {
+    return status.agentActive ? { kind: 'send-enabled' } : { kind: 'agent-inactive' };
+  }
   if (isTurnInFlight(status.session.state)) return { kind: 'stop' };
   if (!status.agentActive) return { kind: 'agent-inactive' };
 

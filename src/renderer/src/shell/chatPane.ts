@@ -19,6 +19,7 @@ import { createTranscriptView, type TranscriptView } from '../chat/transcriptVie
 import { isDeterministicTablePrompt } from '../chat/transcriptViewModel';
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { createTranscriptFollower } from '../chat/transcriptFollower';
+import type { ToolCallActionOutcome } from '../chat/toolCallActions';
 import {
   suggestTableExportFileName,
   tableToClipboardHtml,
@@ -38,11 +39,13 @@ import {
   type ChatId,
   type ChatJournalRecord,
   type ModelSelectionState,
+  MEMO_REFLECTION_TOOL_NAME,
   newChatId,
   resolveConfiguredAgentId,
   resolveEffectiveActiveAgentId,
   type SessionId,
   type SessionStatus,
+  type ToolCallAction,
   type UserInputAnswer,
   type UserInputRequestId,
 } from '../../../shared';
@@ -266,6 +269,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     onResume: () => resumeStoppedSession(),
     onCopyTable: (data) => copyTable(data),
     onExportTable: (data) => exportTable(data),
+    onToolCallAction: (action) => runToolCallAction(action),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -376,6 +380,10 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // event is the application's own AEM-context abort ("Session interrupted by
   // navigation"). See the event subscription below.
   let stopRequested = false;
+  // Whether the turn in flight is the application's own automatic reflection
+  // (its `memo_reflection` marker arrived). Such a turn keeps Send instead of
+  // Stop, and its quiet end - a user's prompt stops it - is no interruption.
+  let reflecting = false;
   // The most recent live SDK session id for `chatId`, learned from
   // `AgentChatStatus`. Persisted so a later launch resumes the *current*
   // session, not the one the journal recorded at chat creation (a runtime
@@ -450,6 +458,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       // to send to, exactly as while the service is starting - see
       // `computeComposerButtonState`. Its banner names the resume (below).
       resuming: pendingStartup !== undefined,
+      reflecting,
     });
     composer.setButtonState(buttonState);
     // Every composer-generated message goes to the banner's single standing
@@ -613,10 +622,20 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (
         event.type === 'session.state.changed' &&
         event.state === 'cancelling' &&
-        sessionStatus.state !== 'cancelling'
+        sessionStatus.state !== 'cancelling' &&
+        !reflecting
       ) {
         transcriptStore.addInterruption(stopRequested ? 'stopped' : 'navigation');
         stopRequested = false;
+      }
+      if (event.type === 'tool.call.requested' && event.toolName === MEMO_REFLECTION_TOOL_NAME) {
+        reflecting = true;
+      } else if (
+        event.type === 'error' ||
+        (event.type === 'session.state.changed' &&
+          (event.state === 'idle' || event.state === 'closed' || event.state === 'error'))
+      ) {
+        reflecting = false;
       }
       refreshEmptyState();
       const applied = applyAgentEvent(sessionStatus, event);
@@ -768,6 +787,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     adoptChatId(id);
     conversationHasMessage = false;
     stopRequested = false;
+    reflecting = false;
     resetInputMode();
     transcriptStore.clear();
     refreshEmptyState();
@@ -1002,6 +1022,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       (record) => record.recordType === 'user.prompt' || record.recordType === 'agent.event',
     );
     stopRequested = false;
+    reflecting = false;
     resetInputMode();
     refreshEmptyState();
     repaintTranscript();
@@ -1282,6 +1303,26 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
+   * Carries out a billet's hover action - a memo's Reveal in folder or Undo -
+   * through main, which resolves the memo id to its file. A memo that no longer
+   * exists reports `gone` (the billet then reads as removed); any other failure
+   * is reported in the pane's banner.
+   */
+  async function runToolCallAction(action: ToolCallAction): Promise<ToolCallActionOutcome> {
+    const request = { id: action.target };
+    const result = await (
+      action.kind === 'memo.reveal'
+        ? window.daisy.memos.reveal(request)
+        : window.daisy.memos.undo(request)
+    ).catch(() => undefined);
+    if (result === undefined) return 'failed';
+    if (result.ok) return 'done';
+    if (result.error.code === 'not_found') return 'gone';
+    statusBanner.showError(result.error.message);
+    return 'failed';
+  }
+
+  /**
    * Reveals the file the last export wrote in the OS file manager. The path is
    * main's, never the renderer's; a failure (no export yet, or a refused
    * reveal) is reported in the pane's banner.
@@ -1315,6 +1356,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     adoptChatId(id);
     conversationHasMessage = false;
     stopRequested = false;
+    reflecting = false;
     resetInputMode();
     transcriptStore.clear();
     sessionStatus = { ...sessionStatus, state: 'idle' };

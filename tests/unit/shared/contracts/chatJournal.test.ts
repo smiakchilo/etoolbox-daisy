@@ -137,6 +137,20 @@ describe('chatJournalRecordSchema - other record kinds', () => {
     expect(chatJournalRecordSchema.safeParse(prompt).success).toBe(true);
   });
 
+  it('accepts a reflection origin on a user.prompt and rejects any other origin', () => {
+    const prompt = {
+      recordType: 'user.prompt',
+      at: 5,
+      chatId: CHAT_ID,
+      turnId: TURN_ID,
+      prompt: 'Reflect',
+    };
+    expect(chatJournalRecordSchema.safeParse({ ...prompt, origin: 'reflection' }).success).toBe(
+      true,
+    );
+    expect(chatJournalRecordSchema.safeParse({ ...prompt, origin: 'user' }).success).toBe(false);
+  });
+
   it('rejects an empty serverId on a user.prompt', () => {
     expect(
       chatJournalRecordSchema.safeParse({

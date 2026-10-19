@@ -1,6 +1,7 @@
 import type { JsonValue } from '../../../shared';
 import {
   describeGenericArgs,
+  type ToolCallAction,
   type ToolCallDetails,
   type ToolConversationItem,
   type ToolPresentation,
@@ -40,6 +41,12 @@ export interface ToolRendererRegistry {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ): ToolTableMessage | undefined;
+  /** The hover actions a settled billet offers; empty when the tool offers none. */
+  readActions(
+    toolName: string,
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ): readonly ToolCallAction[];
   readonly toolNames: readonly string[];
 }
 
@@ -77,6 +84,15 @@ export function createToolRendererRegistry(
         return read(args, data);
       } catch {
         return undefined;
+      }
+    },
+    readActions(toolName, args, data) {
+      const read = byName.get(toolName)?.readActions;
+      if (read === undefined) return [];
+      try {
+        return read(args, data);
+      } catch {
+        return [];
       }
     },
     presentationOf(toolName) {
