@@ -54,14 +54,23 @@ describe('createMarkdownRenderer - AEM link rewriting (link context)', () => {
     expect(anchor?.textContent).toBe('Page');
   });
 
-  it('previews a relative /content/dam asset', () => {
+  it('previews a relative /content/dam asset and stamps Edit plus CRX', () => {
     const doc = parse(renderer.render('[Asset](/content/dam/x/y.jpg)', ACTIVE_CONTEXT));
-    expect(doc.querySelector('a')?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y.jpg`);
+    const anchor = doc.querySelector('a');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y.jpg`);
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'edit', href: `${AUTHOR}/assetdetails.html/content/dam/x/y.jpg` },
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/content/dam/x/y.jpg` },
+    ]);
   });
 
   it('opens a /content/dam non-asset raw (CRX popover only)', () => {
     const doc = parse(renderer.render('[Asset](/content/dam/x/y)', ACTIVE_CONTEXT));
-    expect(doc.querySelector('a')?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y`);
+    const anchor = doc.querySelector('a');
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y`);
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/content/dam/x/y` },
+    ]);
   });
 
   it('trims a jcr:content resource link to its owning page but keeps CRX on the resource', () => {

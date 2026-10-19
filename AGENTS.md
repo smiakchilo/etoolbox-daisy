@@ -412,7 +412,14 @@ persistent Electron session (proxy, TLS exceptions, cookie persistence),
 `proxyPolicy.ts` / `proxyAuth.ts` / `certificateExceptions.ts` /
 `proxyResolution.ts` are its network policy, `bridgeBroker.ts` +
 `bridgeTransport.ts` carry a fetch across the boundary, and `toolHttpLog.ts`
-writes `logs/tools.log`. None of it is AEM-specific.
+writes `logs/tools.log`. `responseHeaderFilter.ts` is the one rule list that
+rewrites a response's headers before Chromium classifies it - the default rule
+drops `Content-Disposition: attachment` from a renderable media type, because
+AEM serves a DAM asset URL that way and the link click would otherwise become a
+download the session cancels (so the asset previews instead of appearing dead).
+A host- or content-specific case is a new rule entry (`hosts`, `contentTypes`,
+`disposition`, remove/set mutations), never a branch in the session wiring.
+None of it is AEM-specific.
 
 `main/aem/` holds what is AEM-specific: `resourceUrl.ts` and `queryUrl.ts`
 build URLs, `responseValidation.ts` classifies HTTP responses,
@@ -1389,7 +1396,23 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3860 passed / 13 skipped** (+2 against the
+Current baseline: **`npm run test` → 3881 passed / 13 skipped** (+21 against the
+3860 below - **an asset link previews and every asset path offers CRX**: AEM
+serves a DAM asset's own URL as `Content-Disposition: attachment`, so Chromium
+turned the link click into a download that the view session cancelled
+(`VIEW_DOWNLOAD_BLOCKED` → `BROWSER_SWITCH_FAILED`, measured in the real app
+log) - the new rule-based `src/main/webview/responseHeaderFilter.ts` drops that
+header from a renderable response before Chromium classifies it, so the same
+bytes display. `classifyAemPath`'s asset branch now always offers **CRX** on the
+asset's own node (and Edit for DAM). The +21 is 16
+`tests/unit/main/webview/responseHeaderFilter.test.ts` cases (hosts, content
+types, dispositions, remove/set mutations, composition), +3
+`tests/unit/main/webview/session.test.ts` (the handler and the
+`responseHeaderRules` option) and +2 `transcriptView` asset-cell cases; the
+built-app `tests/e2e/asset-preview.spec.ts` is 2 cases (Playwright 152 tests) -
+see `docs/verification/followons-2026-10.md` "An asset link previews, and every
+asset path offers CRX ... (2026-10-19)". Before that it was
+**`npm run test` → 3860 passed / 13 skipped** (+2 against the
 3858 below - **a model-chosen skill load is a visible billet**:
 `transcriptStore.ts` no longer hides every `skill` tool call. A load the model
 chose becomes a normal tool billet on settle (the existing `skill` renderer's

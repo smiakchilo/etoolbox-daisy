@@ -88,17 +88,20 @@ describe('linkTargets - classifyAemPath', () => {
     );
   });
 
-  it('previews a DAM asset and offers Edit -> assetdetails', () => {
+  it('previews a DAM asset and offers Edit -> assetdetails and its own CRX', () => {
     expect(classifyAemPath(AUTHOR, '/content/dam/x/y.jpg')).toEqual(
       pane(`${AUTHOR}/content/dam/x/y.jpg`, [
         editAction(`${AUTHOR}/assetdetails.html/content/dam/x/y.jpg`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/dam/x/y.jpg`),
       ]),
     );
   });
 
-  it('previews a non-DAM asset with no actions', () => {
+  it('previews a non-DAM asset and offers its own CRX', () => {
     expect(classifyAemPath(AUTHOR, '/content/site/en/page.1.json')).toEqual(
-      pane(`${AUTHOR}/content/site/en/page.1.json`, []),
+      pane(`${AUTHOR}/content/site/en/page.1.json`, [
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/site/en/page.1.json`),
+      ]),
     );
   });
 
@@ -142,10 +145,11 @@ describe('linkTargets - classifyAemPath', () => {
         crxAction(`${AUTHOR}/crx/de/index.jsp#/apps/x/jcr%3Acontent/y`),
       ]),
     );
-    // A DAM asset preview and its assetdetails Edit both encode the path.
+    // A DAM asset preview, its assetdetails Edit, and its CRX all encode the path.
     expect(classifyAemPath(AUTHOR, '/content/dam/x/jcr:content/y.jpg')).toEqual(
       pane(`${AUTHOR}/content/dam/x/jcr%3Acontent/y.jpg`, [
         editAction(`${AUTHOR}/assetdetails.html/content/dam/x/jcr%3Acontent/y.jpg`),
+        crxAction(`${AUTHOR}/crx/de/index.jsp#/content/dam/x/jcr%3Acontent/y.jpg`),
       ]),
     );
     // Spaces and unicode are escaped too.

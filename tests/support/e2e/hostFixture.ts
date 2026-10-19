@@ -22,12 +22,37 @@ export interface FixtureServer {
   readonly requests: string[];
 }
 
+/** One non-HTML response a fixture path answers with (an asset, for instance). */
+export interface FixtureResponse {
+  readonly contentType: string;
+  readonly body: string | Buffer;
+  /** Extra response headers, e.g. a `content-disposition` the app must cope with. */
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
+export interface FixtureServerOptions {
+  /**
+   * Answers a request path with its own response instead of the HTML `render`.
+   * Return `undefined` to fall through to `render`.
+   */
+  readonly respond?: (url: string) => FixtureResponse | undefined;
+}
+
 /** A loopback server that answers every path with `render(url)` (recording the paths). */
-export async function startFixtureServer(render: (url: string) => string): Promise<FixtureServer> {
+export async function startFixtureServer(
+  render: (url: string) => string,
+  options: FixtureServerOptions = {},
+): Promise<FixtureServer> {
   const requests: string[] = [];
   const server = createServer((req, res) => {
     const url = req.url ?? '/';
     requests.push(url);
+    const override = options.respond?.(url);
+    if (override !== undefined) {
+      res.writeHead(200, { 'content-type': override.contentType, ...override.headers });
+      res.end(override.body);
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(render(url));
   });

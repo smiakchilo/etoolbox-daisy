@@ -871,6 +871,27 @@ describe('createTranscriptView - format_table message table', () => {
     expect(link?.hasAttribute('data-daisy-link')).toBe(false);
   });
 
+  it('offers Edit and CRX on a DAM asset cell', () => {
+    const data = { rows: [{ 'jcr:path': '/content/dam/x/y.jpg' }] };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
+    const anchor = element.querySelector('sp-table-body a[data-daisy-link]');
+    // The link itself previews the asset; the popover adds AEM's own views.
+    expect(anchor?.getAttribute('href')).toBe(`${AUTHOR}/content/dam/x/y.jpg`);
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'edit', href: `${AUTHOR}/assetdetails.html/content/dam/x/y.jpg` },
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/content/dam/x/y.jpg` },
+    ]);
+  });
+
+  it('offers CRX on an asset cell outside DAM', () => {
+    const data = { rows: [{ 'jcr:path': '/apps/x/y.json' }] };
+    const element = renderTable([requested(0, 1, { data }), result(1, 1, 1, 'new')]);
+    const anchor = element.querySelector('sp-table-body a[data-daisy-link]');
+    expect(actionsOf(anchor)).toEqual([
+      { id: 'crx', href: `${AUTHOR}/crx/de/index.jsp#/apps/x/y.json` },
+    ]);
+  });
+
   it('hangs a page-relative Node cell off the last full path, offering only its CRX', () => {
     const data = {
       rows: [

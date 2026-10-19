@@ -7,5 +7,6 @@ export * from './certificateExceptions';
 export * from './proxyPolicy';
 export * from './proxyAuth';
 export * from './proxyResolution';
+export * from './responseHeaderFilter';
 export * from './session';
 export * from './sessionCookiePersistence';

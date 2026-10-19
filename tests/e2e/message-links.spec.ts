@@ -12,6 +12,7 @@ import {
   waitForComposerReady,
 } from '../support/e2e/composer';
 import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
+import { clickPopoverAction } from '../support/e2e/hoverPopover';
 import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
 import { readOpenedExternalPaths, stubOpenExternal } from '../support/e2e/shellStubs';
 import { byTestId } from '../support/selectors';
@@ -380,25 +381,10 @@ test.describe('Message links open the AEM pane in edit mode', () => {
     const crx = shell.locator(byTestId('popover-crx'));
     await expect(crx).toBeVisible({ timeout: 30_000 });
     await expect(shell.locator(byTestId('popover-edit'))).toHaveCount(0);
-    // Spectrum positions the overlay a frame or two after it opens, so a click
-    // fired the instant it appears can land on the table cell underneath it.
-    // Wait until the button is the hit-test target before clicking.
-    await expect
-      .poll(() =>
-        shell.evaluate((selector) => {
-          const button = document.querySelector(selector);
-          if (button === null) return false;
-          const rect = button.getBoundingClientRect();
-          return (
-            document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) === button
-          );
-        }, byTestId('popover-crx')),
-      )
-      .toBe(true);
 
     // The button drives the node's own CRX in the pane (the unresolvable host
     // makes the resulting error banner the proof the URL reached navigation).
-    await crx.click();
+    await clickPopoverAction(shell, 'popover-crx');
     const banner = shell.locator(BROWSER_MESSAGE);
     await expect(banner).toHaveAttribute('open', '', { timeout: 60_000 });
     await expect(banner).toContainText(

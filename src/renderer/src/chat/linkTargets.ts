@@ -20,8 +20,12 @@ import { encodeAemPathname, normalizePathDashes, parseNavigationTarget } from '.
  * The AEM-native rules (owner decisions, 2026-09-23):
  *
  *  - A path with an extension other than `.html` is an asset: clicking it opens
- *    the raw asset URL in the pane (a preview, never a download). A path under
- *    `/content/dam` additionally offers **Edit** (`/assetdetails.html<path>`).
+ *    the raw asset URL in the pane (a preview, never a download - the view
+ *    session strips an `attachment` disposition from renderable responses, so
+ *    AEM's own asset URLs display instead of being cancelled as downloads). A
+ *    path under `/content/dam` additionally offers **Edit**
+ *    (`/assetdetails.html<path>`). **Every** asset path offers **CRX** on its
+ *    own repository node.
  *  - A `.html`/extensionless path is a Page when it is under `/content` (but not
  *    `/content/dam`) and names the page itself: it opens its rendered `.html`
  *    URL and offers **Edit** (`/editor.html<path>.html`) and **CRX**
@@ -230,11 +234,18 @@ export function classifyAemPath(origin: string, rawPathname: string): ResolvedLi
   const pathNoHtml = withoutHtmlExtension(path);
 
   if (hasNonHtmlExtension(path)) {
-    // An asset: preview it in the pane. A DAM asset also offers Edit.
+    // An asset: preview it in the pane. A DAM asset also offers Edit, and every
+    // asset path offers CRX on its own node (the path *with* its extension -
+    // that is where the asset lives in the repository).
     const encoded = encodeAemPathname(path);
     const actions: LinkAction[] = isDamPath(path)
       ? [{ id: 'edit', title: 'Edit', href: `${origin}/assetdetails.html${encoded}` }]
       : [];
+    actions.push({
+      id: 'crx',
+      title: 'CRX',
+      href: `${origin}/crx/de/index.jsp#${encoded}`,
+    });
     return { openIn: 'pane', href: `${origin}${encoded}`, actions };
   }
 

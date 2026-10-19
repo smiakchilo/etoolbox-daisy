@@ -1,7 +1,7 @@
 import { app, session } from 'electron';
 import type { Session } from 'electron';
 import type { ProxyConfig } from '../../shared';
-import type { Logger } from '../logger';
+import { type Logger, toLoggableUrl } from '../logger';
 import {
   createCertificateErrorListener,
   createCertificateExceptionStore,
@@ -9,6 +9,7 @@ import {
 } from './certificateExceptions';
 import { applyProxySwitch, applySessionProxy, type ProxySwitchOptions } from './proxyPolicy';
 import { createProxyLoginListener, type ProxyPlainCredentials } from './proxyAuth';
+import { createResponseHeaderFilter, type ResponseHeaderRule } from './responseHeaderFilter';
 import { buildPersistCookieDetails, shouldPersistSessionCookie } from './sessionCookiePersistence';
 
 /**
@@ -76,6 +77,13 @@ export interface ViewSession {
 export interface ViewSessionOptions {
   /** Optional diagnostics sink for a failed cookie promotion. */
   readonly logger?: Logger;
+  /**
+   * The response-header rules this session applies (`responseHeaderFilter.ts`).
+   * Omitted uses the default rule list; supplying one here is how a future
+   * host- or content-specific rule is switched on without touching the session
+   * wiring.
+   */
+  readonly responseHeaderRules?: readonly ResponseHeaderRule[];
 }
 
 /**
@@ -92,13 +100,39 @@ export interface ViewSessionOptions {
 export function createViewSession(options: ViewSessionOptions = {}): ViewSession {
   const viewSession = session.fromPartition(VIEW_SESSION_PARTITION);
   const certificateStore = createCertificateExceptionStore(viewSession);
+  const responseHeaderFilter = createResponseHeaderFilter(options.responseHeaderRules);
 
   // The browser pane is for reading and previewing, never for saving files (owner
   // decision: a DAM asset link is "a preview experience - not downloaded or
-  // offered to download"). A top-level navigation to a type Chromium cannot
-  // display - a `.zip`, or any `Content-Disposition: attachment` response -
-  // would otherwise silently start a download, so every download on this
-  // session is cancelled.
+  // offered to download"). Every rule that rewrites a response runs here, before
+  // Chromium decides whether the response is a document or a download; the
+  // default rule (`responseHeaderFilter.ts`) drops an `attachment` disposition
+  // from a renderable response, because AEM serves a DAM asset's own URL that way
+  // and the link would otherwise become a download this session cancels.
+  //
+  // Electron keeps one `onHeadersReceived` listener per session, so a future
+  // response rewrite must be a rule in that filter, never a second listener here.
+  viewSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = details.responseHeaders;
+    if (headers === undefined) {
+      callback({});
+      return;
+    }
+    const filtered = responseHeaderFilter.filter({
+      url: details.url,
+      responseHeaders: headers,
+    });
+    if (filtered === undefined) {
+      callback({});
+      return;
+    }
+    options.logger?.info('VIEW_RESPONSE_HEADERS_REWRITTEN', {
+      url: toLoggableUrl(details.url),
+      count: filtered.ruleIds.length,
+    });
+    callback({ responseHeaders: filtered.headers });
+  });
+
   viewSession.on('will-download', (event) => {
     options.logger?.info('VIEW_DOWNLOAD_BLOCKED');
     event.preventDefault();
