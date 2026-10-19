@@ -102,7 +102,14 @@ export const aemQueryFormatAskArgsSchema = z
       )
       .optional(),
     /** Which result fields come back per hit, as `aem_query`'s `properties`. */
-    properties: z.array(z.string().min(1)).optional(),
+    properties: z
+      .array(z.string().min(1))
+      .describe(
+        'Omit it unless the user asked to see particular fields: every field adds a column to ' +
+          'the table, whose first column is always `Path`. Name fields relative to the matched ' +
+          'node (e.g. "jcr:content/jcr:title"), never `path`.',
+      )
+      .optional(),
     /** Rows per page (per root, as with `aem_query`). */
     limit: z
       .number()
@@ -128,7 +135,8 @@ export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
     'string) or `predicates` (a hand-built QueryBuilder predicate map, exactly as for ' +
     'aem_query) - never both. A `predicates` search that carries its own `path` scopes itself: ' +
     'never combine `roots` with a `path` predicate. `properties` ' +
-    'optionally selects the fields per hit. ' +
+    'optionally selects the fields per hit - leave it out unless the user asked for particular ' +
+    'fields, since each one adds a table column. ' +
     'A search that matches a component by `sling:resourceType` shows each hit against its ' +
     'owning page, with the path within the page beside it. ' +
     'When it returns, the table is already on screen and the user has finished loading pages: ' +

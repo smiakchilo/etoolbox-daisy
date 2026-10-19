@@ -1,6 +1,6 @@
 ---
 name: search
-description: How to run an AEM search against a conventional AEM Author instance - construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return, and run the search (full text or hand-built) with the aem_query_format_ask tool. Use whenever the user asks to find, search for, look up, or list AEM content (pages, assets) by its own text or properties - including when they invoke `/search <terms>`. When the request is to find the pages that use or contain a component (a component named by title, name, or sling:resourceType), that is the `search-component` skill, not this one. Do not load it merely to explain a result that already came back; that is the query-results skill.
+description: How to run an AEM search against a conventional AEM Author instance - construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, and ordering, and run the search (full text or hand-built) with the aem_query_format_ask tool. Use whenever the user asks to find, search for, look up, or list AEM content (pages, assets) by its own text or properties - including when they invoke `/search <terms>`. When the request is to find the pages that use or contain a component (a component named by title, name, or sling:resourceType), that is the `search-component` skill, not this one. Do not load it merely to explain a result that already came back; that is the query-results skill.
 metadata:
   user-description: Find pages and assets by their content
 ---
@@ -62,8 +62,9 @@ one call with it as `predicates` instead of `terms`:
 ```
 
 `aem_query_format_ask` validates the map exactly as `aem_query` does and runs the
-same table and **Load more** loop. Pass `properties` to choose the columns, and
-the same `roots` discipline as above. Never pass both `terms` and `predicates`.
+same table and **Load more** loop, with the same `roots` discipline as above.
+Never pass both `terms` and `predicates`. Leave `properties` out (see "Leave the
+table's columns alone").
 
 ## Always scope
 
@@ -170,24 +171,21 @@ ordinary predicate keys and are always accepted.
 
 `p.limit`, `p.offset`, `p.hits`, `p.properties`, `p.nodedepth`, `p.guessTotal`
 and `p.facets` are reserved by the application. Putting one in `predicates` is
-rejected with an error telling you which real field to use instead. Use the
-tool's `properties` argument; paging is done by the application.
+rejected with an error telling you which real field to use instead. Selecting
+result fields is the `properties` argument, described below; paging is done by
+the application.
 
-## Ask for the properties you need
+## Leave the table's columns alone
 
-`properties` selects which fields come back per hit. Omit it and you get
-compact identifying fields — enough to tell hits apart and to follow up with
-`aem_get_json`, not the whole subtree.
+The table is the whole answer, and its first column is always `Path`. Do not pass
+`properties` on your own initiative: every field you add becomes another column,
+and a page property such as `jcr:content/jcr:title` arrives as a `jcr:content`
+column holding raw JSON.
 
-```json
-{
-  "predicates": { "path": "/content/wknd", "type": "cq:Page" },
-  "properties": ["jcr:content/jcr:title", "jcr:content/cq:lastModified"]
-}
-```
-
-Request a narrow projection deliberately. Asking for many properties across
-many hits is the main way a result becomes too large to return.
+Pass `properties` only when the user explicitly asks to see particular fields.
+Then name exactly those fields, relative to the matched node
+(`jcr:content/jcr:title`), and never `path` - the path is already the first
+column.
 
 ## Escaping and Unicode
 
