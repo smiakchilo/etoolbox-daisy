@@ -233,6 +233,10 @@ test.describe('deterministic search tables', () => {
     // The prose-suppressed turn left no ordinary assistant message (the table
     // message is itself an assistant message, so exclude it).
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
+    // An explicit `/name` turn names the skill in the user's own message, so the
+    // controller's load marker stays out of the transcript (only a load the
+    // model chose gets a billet).
+    await expect(shell.locator('.chat-tool-call').filter({ hasText: 'skill' })).toHaveCount(0);
 
     // The one-click action is visible; clicking it resumes the turn.
     await expect(shell.locator('.chat-ask__action')).toHaveText(/\S/);
@@ -311,12 +315,12 @@ test.describe('deterministic search tables', () => {
     await expect(semanticBillets).toHaveCount(2);
     await expect(semanticBillets.nth(1).locator('.chat-tool-call__summary')).toHaveText(/\S/);
   });
-  test('a skill the model chose on its own (no /name) hides its prose and keeps the table', async () => {
+  test('a skill the model chose on its own (no /name) hides its prose, keeps the table and shows the load', async () => {
     // A natural-language prompt: `isDeterministicTablePrompt` is false at send,
     // so the prose can only be suppressed retroactively, by the turn's own
-    // internal `skill` call (which the store hides). The leading delta proves
-    // the message item is removed even though it was created before the skill
-    // was loaded.
+    // `skill` call. The leading delta proves the message item is removed even
+    // though it was created before the skill was loaded. The load itself is a
+    // billet, so a reader can tell the model reached for a skill on its own.
     const AUTO_PATH = '/content/wknd/auto-inferred-only';
     const AUTO = {
       rows: [{ 'jcr:path': AUTO_PATH }],
@@ -351,10 +355,12 @@ test.describe('deterministic search tables', () => {
     });
     await expect(shell.locator('.chat-table-message').last()).toContainText(AUTO_PATH);
     // Every assistant message on screen is a table message: no auto-inferred
-    // search turn leaks prose around its table, and the internal `skill` call
-    // is not rendered as a billet.
+    // search turn leaks prose around its table.
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
-    await expect(shell.locator('.chat-tool-call').filter({ hasText: 'skill' })).toHaveCount(0);
+    // The model-chosen load is visible as its own billet, naming the skill.
+    const skillBillets = shell.locator('.chat-tool-call').filter({ hasText: 'skill' });
+    await expect(skillBillets).toHaveCount(1);
+    await expect(skillBillets.locator('.chat-tool-call__summary')).toHaveText('Load skill search');
   });
 
   test('a counting total shows a spinner, then updates in place without rebuilding the table', async () => {

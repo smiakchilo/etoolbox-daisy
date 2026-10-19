@@ -1134,11 +1134,17 @@ and user) with its technical `description` — onto the session instructions
 the model can choose a skill from its description the way other harnesses do;
 `user-invocable: false` skills are in that catalogue too (they are the
 agent-only ones). Loading is the `skill` tool call (`SKILL_TOOL_NAME`), and
-`transcriptStore.ts` renders it as nothing while using it to suppress a search
-skill's prose (below). An explicit `/name` is resolved by `resolveSkillPrompt`
+`transcriptStore.ts` shows it as a billet when the model chose it - so a reader
+(or an investigation into a session that went wrong) can tell whether a skill
+was loaded at all, and which one - while using it to suppress a search skill's
+prose (below). That call's billet is the existing `skill` renderer's (`Load
+skill <name>`, expanding to Source / Files / Scripts); a *failed* load is shown
+too, as a FAILED billet. An explicit `/name` is resolved by `resolveSkillPrompt`
 (`src/shared/skills/skillActivation.ts`), which frames the input and the
-controller journals a synthetic `skill` call pair after a successful send; the
-three skill tools' billets read `Load skill` / `Read <skill>/<path>` /
+controller journals a synthetic `skill` call pair after a successful send; its
+result says `activatedBy: 'user'`, which keeps it out of the transcript (the
+user's own message already names the skill). The three skill tools' billets
+read `Load skill` / `Read <skill>/<path>` /
 `Run <skill>/<script>` (`getDetails()` compositions proposed in the plan, D7).
 `tests/live/skills.live.spec.ts` certifies the whole path live with the
 `skill-selftest` user skill.
@@ -1383,7 +1389,23 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3858 passed / 13 skipped** (-13 against the
+Current baseline: **`npm run test` → 3860 passed / 13 skipped** (+2 against the
+3858 below - **a model-chosen skill load is a visible billet**:
+`transcriptStore.ts` no longer hides every `skill` tool call. A load the model
+chose becomes a normal tool billet on settle (the existing `skill` renderer's
+`Load skill <name>`, expanding to Source / Files / Scripts; a failed load shows
+as FAILED too), so an investigation can tell whether a skill was loaded and
+which. The controller's synthetic marker for an explicit `/name` prompt carries
+`activatedBy: 'user'` in its result and still paints nothing (the user's own
+message already names the skill); `skill.ts` now also records `activatedBy:
+'model'` on a real load. The skill block in `transcriptStore.test.ts` was
+rewritten from 5 cases (all "hidden") to 7 (a model-chosen billet, a failed
+load, the `/name` marker hidden, a load with no recorded prompt, and the three
+prose-suppression cases), a net +2; the built-app `search-tables.spec.ts` case
+now asserts the billet appears (Playwright stays 150 tests). See
+`docs/verification/followons-2026-10.md`
+"A model-chosen skill load is a visible billet (2026-10-19)". Before that it was
+**3858 passed / 13 skipped** (-13 against the
 3871 below - **the memo billet loses its hover toolbar**: `ToolCallAction` /
 `readActions` and `src/renderer/src/chat/toolCallActions.ts` are gone, the `memo`
 renderer offers no actions, and `memos:undo` (channel, IPC handler, preload/API,

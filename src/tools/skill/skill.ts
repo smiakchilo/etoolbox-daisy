@@ -82,6 +82,11 @@ export function createSkillExecutor(host: ToolHost): ToolExecutor {
       operation: SKILL_TOOL_NAME,
       requestId,
       skill: activation.value.name,
+      // Who loaded it. The transcript shows a billet only for a load the model
+      // chose; the controller's marker for an explicit `/name` prompt says
+      // `'user'` instead (see `agentChatController.ts` and
+      // `transcriptStore.ts`'s `revealSkillLoad`).
+      activatedBy: 'model',
       source: summary?.source ?? 'bundled',
       fileCount: files.length,
       scriptCount: files.filter((file) => isRunnableScriptPath(file.path)).length,

@@ -101,6 +101,7 @@ describe('skill executor', () => {
     expect(payload).toMatchObject({
       operation: 'skill',
       skill: 'demo',
+      activatedBy: 'model',
       source: 'user',
       fileCount: 3,
       scriptCount: 1,

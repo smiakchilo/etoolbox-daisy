@@ -11,6 +11,7 @@ import {
   type TurnId,
   MEMO_REFLECTION_TOOL_NAME,
   SKILL_TOOL_NAME,
+  asRecord,
 } from '../../../shared';
 
 /**
@@ -83,6 +84,9 @@ export interface ToolCallView {
    */
   readonly progress?: string;
 }
+
+/** The `tool.result` member of the agent-event union, for the settle-time helpers below. */
+type ToolResultEvent = Extract<AgentEvent, { type: 'tool.result' }>;
 
 export interface TranscriptStore {
   /** Feeds one normalized agent event into the transcript's view state. */
@@ -355,6 +359,35 @@ export function createTranscriptStore(
   }
 
   /**
+   * Decides, on settle, whether a `skill` call becomes a visible billet.
+   *
+   * A skill the model chose to load is real work: a reader investigating why a
+   * session went wrong must be able to tell whether one was loaded at all, and
+   * which. An explicit `/name` prompt is different - the user's own message
+   * already names the skill - so the controller records it as a synthetic
+   * `skill` call whose result says `activatedBy: 'user'` (see
+   * `agentChatController.ts`), and that call stays out of the transcript.
+   *
+   * The item is created here rather than on `requested` because the two are
+   * only distinguishable once the result arrives; nothing else is interleaved
+   * between a tool call's request and its result, so appending at settle keeps
+   * the transcript order intact.
+   */
+  function revealSkillLoad(event: ToolResultEvent): void {
+    const call = toolCalls.get(event.toolCallId);
+    if (call === undefined || call.toolName !== SKILL_TOOL_NAME) return;
+    const data = event.outcome.ok ? asRecord(event.outcome.data) : undefined;
+    if (data?.['activatedBy'] === 'user') {
+      // The application's own marker for an explicit `/name` turn: drop the
+      // call entirely so `toolCallFor` cannot hand the view something the
+      // transcript never shows.
+      toolCalls.delete(event.toolCallId);
+      return;
+    }
+    ensureToolCallItem(event.toolCallId);
+  }
+
+  /**
    * Marks `turnId` as text-suppressed, removing any assistant `message` item it
    * has already created. Idempotent: a second call (the pane's `markTurnSuppressed`
    * followed by the turn's own `skill` call, say) is a no-op.
@@ -416,15 +449,14 @@ export function createTranscriptStore(
           // A tool call ends the reasoning block that preceded it, exactly as
           // assistant text does.
           endReasoningBlock();
-          // The `skill` helper is internal plumbing, never a user-visible tool
-          // call: loading a skill is how the model reaches a task guide, not a
-          // read the reader needs to see. Its one transcript effect is that a
-          // skill whose answer *is* its own rendered output (a search skill's
-          // table) suppresses this turn's prose, so a skill the model chose on
-          // its own is handled exactly like `/search` (see `suppressTurn`). It
-          // is emitted by both agents under this exact name - Copilot maps its
-          // runtime's `skill.invoked` event onto it, OpenRouter's own `skill`
-          // tool already produces it (see `src/shared/skillInvocation.ts`).
+          // A skill load is a visible billet when the model chose it (see
+          // `revealSkillLoad`), so a reader can tell whether a skill was loaded
+          // and which one. Its one immediate transcript effect is that a skill
+          // whose answer *is* its own rendered output (a search skill's table)
+          // suppresses this turn's prose, so a skill the model chose on its own
+          // is handled exactly like `/search` (see `suppressTurn`). It is
+          // emitted by both agents under this exact name (see
+          // `src/shared/skillInvocation.ts`).
           if (event.toolName === SKILL_TOOL_NAME) {
             const skillName = event.arguments['name'];
             if (
@@ -434,6 +466,17 @@ export function createTranscriptStore(
             ) {
               suppressTurn(currentTurnId);
             }
+            // Recorded but not yet shown: whether this is a model-chosen load or
+            // the controller's marker for an explicit `/name` prompt is only
+            // known from its result.
+            runningToolCalls.add(event.toolCallId);
+            toolCalls.set(event.toolCallId, {
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              args: event.arguments,
+              status: { kind: 'requested' },
+            });
+            dirty = true;
             return;
           }
           // An automatic reflection turn is the application's, not the user's:
@@ -469,6 +512,7 @@ export function createTranscriptStore(
               ? { kind: 'succeeded', data: event.outcome.data }
               : { kind: 'failed', error: event.outcome.error },
           );
+          revealSkillLoad(event);
           return;
         case 'tool.call.progress':
           // A running-only status line - never its own transcript item, it just

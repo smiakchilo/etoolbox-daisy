@@ -14,8 +14,9 @@ import {
  * `skill`'s transcript composition: the collapsed line names the skill, and the
  * expanded rows say where it came from and what it brought with it. The source
  * and counts come from the succeeded payload, so they appear once the call has
- * completed. (The transcript hides this call entirely while a search skill's
- * table is the answer; this is what a reader sees otherwise.)
+ * completed. A model-chosen load is shown as this billet; the controller's
+ * marker for an explicit `/name` prompt is kept out of the transcript (see
+ * `transcriptStore.ts`'s `revealSkillLoad`).
  */
 function describeCall(
   args: Readonly<Record<string, JsonValue>>,

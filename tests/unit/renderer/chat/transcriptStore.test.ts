@@ -151,7 +151,7 @@ function toolProgress(sequence: number, text: string): AgentEvent {
 
 const skillToolCallId: ToolCallId = toolCallIdSchema.parse('skill-call-1');
 
-/** A `skill` tool call (the internal skill loader) for `skillName`. */
+/** A `skill` tool call (the skill loader) for `skillName`. */
 function skillRequested(sequence: number, skillName: string): AgentEvent {
   return agentEventSchema.parse({
     type: 'tool.call.requested',
@@ -160,6 +160,39 @@ function skillRequested(sequence: number, skillName: string): AgentEvent {
     toolCallId: skillToolCallId,
     toolName: 'skill',
     arguments: { name: skillName },
+  });
+}
+
+/** The settled result of {@link skillRequested}. */
+function skillResult(sequence: number, data: Record<string, unknown>): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.result',
+    chatId,
+    sequence,
+    toolCallId: skillToolCallId,
+    outcome: { ok: true, data },
+  });
+}
+
+/** A model-chosen load: the real executor names itself, with no user marker. */
+function modelSkillResult(sequence: number, skillName: string): AgentEvent {
+  return skillResult(sequence, {
+    ok: true,
+    operation: 'skill',
+    skill: skillName,
+    activatedBy: 'model',
+    resultType: 'success',
+  });
+}
+
+/** The controller's synthetic marker for a skill an explicit `/name` prompt loaded. */
+function userSkillResult(sequence: number, skillName: string): AgentEvent {
+  return skillResult(sequence, {
+    ok: true,
+    operation: 'skill',
+    skill: skillName,
+    activatedBy: 'user',
+    resultType: 'success',
   });
 }
 
@@ -226,24 +259,85 @@ describe('createTranscriptStore', () => {
     });
   });
 
-  describe('auto-inferred skill turns', () => {
-    it('hides the internal skill call, so loading a skill is never a visible tool call', () => {
+  describe('skill loads', () => {
+    it('shows a billet for a skill the model chose to load', () => {
       const store = createTranscriptStore();
       store.applyUserPrompt(turnId, 'find pages about Waldo');
       store.applyEvent(skillRequested(0, 'search'));
+      store.applyEvent(modelSkillResult(1, 'search'));
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'toolCall', toolCallId: skillToolCallId },
+      ]);
+      expect(store.toolCallFor(skillToolCallId)).toMatchObject({
+        toolName: 'skill',
+        status: { kind: 'succeeded' },
+      });
+    });
+
+    it('shows a failed skill load too, so an attempt is never invisible', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, 'find pages about Waldo');
+      store.applyEvent(skillRequested(0, 'ghost'));
+      store.applyEvent(
+        agentEventSchema.parse({
+          type: 'tool.result',
+          chatId,
+          sequence: 1,
+          toolCallId: skillToolCallId,
+          outcome: {
+            ok: false,
+            error: {
+              code: 'NOT_FOUND',
+              message: 'No such skill',
+              retryable: false,
+              requestId,
+              requiredAction: 'none',
+            },
+          },
+        }),
+      );
+
+      expect(store.items()).toContainEqual({ kind: 'toolCall', toolCallId: skillToolCallId });
+      expect(store.toolCallFor(skillToolCallId)).toMatchObject({
+        toolName: 'skill',
+        status: { kind: 'failed' },
+      });
+    });
+
+    it("keeps the controller's marker for an explicit /name prompt out of the transcript", () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, '/search Waldo');
+      store.applyEvent(skillRequested(0, 'search'));
+      store.applyEvent(userSkillResult(1, 'search'));
+
       expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
       expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+    });
+
+    it('shows a model-chosen load even when no prompt was recorded', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(skillRequested(0, 'search'));
+      store.applyEvent(modelSkillResult(1, 'search'));
+
+      expect(store.items()).toEqual([{ kind: 'toolCall', toolCallId: skillToolCallId }]);
     });
 
     it('suppresses a search turn the model chose on its own, exactly like /search', () => {
       const store = createTranscriptStore();
       store.applyUserPrompt(turnId, 'find pages about Waldo');
       store.applyEvent(skillRequested(0, 'search'));
-      store.applyEvent(messageStarted(1));
-      store.applyEvent(delta(2, 'I will search for that.'));
-      store.applyEvent(completed(3, 'I will search for that.'));
+      store.applyEvent(modelSkillResult(1, 'search'));
+      store.applyEvent(messageStarted(2));
+      store.applyEvent(delta(3, 'I will search for that.'));
+      store.applyEvent(completed(4, 'I will search for that.'));
       expect(store.items().some((item) => item.kind === 'message')).toBe(false);
-      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+      // The load stays visible; only the model's prose is suppressed.
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'toolCall', toolCallId: skillToolCallId },
+      ]);
     });
 
     it('removes prose that arrived before the skill was loaded', () => {
@@ -255,29 +349,28 @@ describe('createTranscriptStore', () => {
         expect(store.items().some((item) => item.kind === 'message')).toBe(true);
 
         store.applyEvent(skillRequested(2, skillName));
+        store.applyEvent(modelSkillResult(3, skillName));
 
-        expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
-        expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
+        expect(store.items()).toEqual([
+          { kind: 'userPrompt', turnId },
+          { kind: 'toolCall', toolCallId: skillToolCallId },
+        ]);
       }
     });
 
-    it('hides an auxiliary skill call but keeps the turn prose', () => {
+    it('keeps the turn prose around an auxiliary skill load', () => {
       const store = createTranscriptStore();
       store.applyUserPrompt(turnId, 'where do paths live?');
       store.applyEvent(skillRequested(0, 'daisy-conventions'));
-      store.applyEvent(messageStarted(1));
-      store.applyEvent(delta(2, 'Under /content by default.'));
+      store.applyEvent(modelSkillResult(1, 'daisy-conventions'));
+      store.applyEvent(messageStarted(2));
+      store.applyEvent(delta(3, 'Under /content by default.'));
       expect(store.items()).toEqual([
         { kind: 'userPrompt', turnId },
+        { kind: 'toolCall', toolCallId: skillToolCallId },
         { kind: 'message', messageId, turnId },
       ]);
-      expect(store.toolCallFor(skillToolCallId)).toBeUndefined();
-    });
-
-    it('hides the skill call even when no turn is in flight', () => {
-      const store = createTranscriptStore();
-      store.applyEvent(skillRequested(0, 'search'));
-      expect(store.items()).toEqual([]);
+      expect(store.toolCallFor(skillToolCallId)).toMatchObject({ toolName: 'skill' });
     });
   });
 

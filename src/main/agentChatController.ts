@@ -945,10 +945,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       projectRulesSent = projectRulesKey;
       if (memosBlock !== undefined) memosSent = true;
     }
-    // The skill is already in the prompt; this pair only makes the load visible
-    // (journal, and the transcript's prose suppression for a search skill). It
-    // follows a successful send because a tool call is only legal once the turn
-    // has started.
+    // The skill is already in the prompt; this pair only records the load
+    // (journal, and the transcript's prose suppression for a search skill). Its
+    // result says `activatedBy: 'user'`, which is what keeps it out of the
+    // transcript: an explicit `/name` already names the skill in the user's own
+    // message, so only a load the model chose gets a billet (see
+    // `transcriptStore.ts`'s `revealSkillLoad`). It follows a successful send
+    // because a tool call is only legal once the turn has started.
     if (skillPrompt.activatedSkill !== undefined) {
       const toolCallId = newToolCallId(idGenerator);
       recordNestedToolCall({

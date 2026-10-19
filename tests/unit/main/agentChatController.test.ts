@@ -1422,7 +1422,7 @@ describe('agentChatController skill prompt rewrite', () => {
       arguments: { name: 'search' },
     });
     expect(received.find((event) => event.type === 'tool.result')).toMatchObject({
-      outcome: { ok: true },
+      outcome: { ok: true, data: { activatedBy: 'user' } },
     });
     const journaled = calls
       .filter((call) => call.method === 'recordEvent')
