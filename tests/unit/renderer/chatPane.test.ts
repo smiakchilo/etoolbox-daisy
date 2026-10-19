@@ -16,6 +16,8 @@ import {
   type SessionId,
   type TurnId,
   MEMO_REFLECTION_TOOL_NAME,
+  MEMO_TOOL_NAME,
+  newToolCallId,
 } from '../../../src/shared';
 import { flushMicrotasks as flush } from '../../support/asyncWaits';
 import { installJsdomGlobals } from '../../support/jsdomGlobals';
@@ -48,6 +50,7 @@ const respondToInput = vi.fn();
 const navigate = vi.fn();
 const listSkills = vi.fn();
 const revealJournal = vi.fn();
+const revealMemo = vi.fn();
 const getModelSelection = vi.fn();
 let statusListener: ((status: AgentChatStatus) => void) | undefined;
 let eventListener: ((event: AgentEvent) => void) | undefined;
@@ -136,6 +139,8 @@ beforeEach(() => {
   listSkills.mockResolvedValue({ ok: true, skills: [] });
   revealJournal.mockReset();
   revealJournal.mockResolvedValue({ ok: true });
+  revealMemo.mockReset();
+  revealMemo.mockResolvedValue({ ok: true });
   getModelSelection.mockReset();
   getModelSelection.mockResolvedValue({
     ok: true,
@@ -189,6 +194,7 @@ beforeEach(() => {
       onFindResult: vi.fn(() => () => undefined),
     },
     settings: { getModelSelection },
+    memos: { reveal: revealMemo, openFolder: vi.fn() },
   });
 });
 
@@ -373,6 +379,42 @@ describe('createChatPane status push', () => {
     // re-enables Send instead of wedging it.
     pushEvent({ type: 'session.state.changed', chatId, sequence: 2, state: 'idle' });
     expect(sendButton(pane)?.hasAttribute('disabled')).toBe(false);
+
+    pane.dispose();
+  });
+
+  it('raises the memo notice when a memo is stored, and its Open action reveals that memo', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    const chatId = (openConversation.mock.calls[0]?.[0] as { chatId: ChatId }).chatId;
+    const memoId = 'generic/20261019-101530-a-lesson.md';
+    pushEvent({
+      type: 'tool.call.requested',
+      chatId,
+      sequence: 0,
+      toolCallId: newToolCallId(() => 'call-1'),
+      toolName: MEMO_TOOL_NAME,
+      arguments: { title: 'A lesson', text: 'Remember this', trigger: 'request' },
+    });
+    pushEvent({
+      type: 'tool.result',
+      chatId,
+      sequence: 1,
+      toolCallId: newToolCallId(() => 'call-1'),
+      outcome: { ok: true, data: { operation: MEMO_TOOL_NAME, id: memoId } },
+    });
+
+    const banner = agentBanner(pane);
+    expect(banner?.hasAttribute('open')).toBe(true);
+    const open = banner?.querySelector<HTMLElement>(byTestId('banner-open-memo-folder'));
+    expect(open).not.toBeNull();
+
+    open?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await flush();
+    expect(revealMemo).toHaveBeenCalledWith({ id: memoId });
 
     pane.dispose();
   });

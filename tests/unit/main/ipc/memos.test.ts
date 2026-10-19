@@ -3,11 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MemosIpcOperations } from '../../../../src/main/ipc/memos';
-import {
-  MEMOS_OPEN_FOLDER_CHANNEL,
-  MEMOS_REVEAL_CHANNEL,
-  MEMOS_UNDO_CHANNEL,
-} from '../../../../src/shared';
+import { MEMOS_OPEN_FOLDER_CHANNEL, MEMOS_REVEAL_CHANNEL } from '../../../../src/shared';
 import { ipcEventFrom, makeRecordingLogger } from '../../../support/ipcHandlerHarness';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
@@ -31,7 +27,7 @@ vi.mock('electron', () => ({
   session: {},
 }));
 
-const { openMemosFolder, registerMemosIpcHandlers, revealMemo, undoMemo } =
+const { openMemosFolder, registerMemosIpcHandlers, revealMemo } =
   await import('../../../../src/main/ipc/memos');
 
 const scratch = createScratchDirs('memos-ipc', 'memos-ipc-');
@@ -42,11 +38,10 @@ const MEMO_ID = 'generic/20261018-090507-a.md';
 const MEMO_PATH = 'C:\\memos\\generic\\20261018-090507-a.md';
 
 const locate = vi.fn<(id: string) => Promise<string | undefined>>();
-const remove = vi.fn<(id: string) => Promise<boolean>>();
 
 beforeEach(() => {
   invokeHandlers.clear();
-  for (const mock of [openPath, showItemInFolder, locate, remove]) mock.mockReset();
+  for (const mock of [openPath, showItemInFolder, locate]) mock.mockReset();
   openPath.mockResolvedValue('');
 });
 
@@ -57,7 +52,7 @@ afterEach(() => {
 function makeOps(overrides: Partial<MemosIpcOperations> = {}): MemosIpcOperations {
   return {
     directory: path.join(scratch.create(), 'memos'),
-    store: { locate, remove },
+    store: { locate },
     logger: makeRecordingLogger(),
     openPath,
     showItemInFolder,
@@ -117,38 +112,12 @@ describe('revealMemo', () => {
   );
 });
 
-describe('undoMemo', () => {
-  it('removes the memo by id', async () => {
-    remove.mockResolvedValue(true);
-
-    expect(await undoMemo(makeOps(), { id: MEMO_ID })).toEqual({ ok: true });
-    expect(remove).toHaveBeenCalledWith(MEMO_ID);
-  });
-
-  it('reports not_found when nothing was removed', async () => {
-    remove.mockResolvedValue(false);
-
-    expect(await undoMemo(makeOps(), { id: MEMO_ID })).toMatchObject({
-      ok: false,
-      error: { code: 'not_found' },
-    });
-  });
-
-  it('refuses an invalid payload without touching the store', async () => {
-    expect(await undoMemo(makeOps(), { id: 42 })).toMatchObject({
-      ok: false,
-      error: { code: 'invalid_payload' },
-    });
-    expect(remove).not.toHaveBeenCalled();
-  });
-});
-
 describe('registerMemosIpcHandlers', () => {
   function register(): ReturnType<typeof makeRecordingLogger> {
     const logger = makeRecordingLogger();
     registerMemosIpcHandlers({
       directory: path.join(scratch.create(), 'memos'),
-      store: { locate, remove },
+      store: { locate },
       logger,
       rendererDistDir: RENDERER_DIST,
       mainWebContentsId: MAIN_WEB_CONTENTS_ID,
@@ -162,18 +131,16 @@ describe('registerMemosIpcHandlers', () => {
     return (event, payload) => Promise.resolve(registered(event, payload));
   }
 
-  it('serves all three channels for a trusted sender', async () => {
+  it('serves both channels for a trusted sender', async () => {
     register();
     locate.mockResolvedValue(MEMO_PATH);
-    remove.mockResolvedValue(true);
     const trusted = ipcEventFrom(TRUSTED_URL, MAIN_WEB_CONTENTS_ID);
 
     expect(await handler(MEMOS_OPEN_FOLDER_CHANNEL)(trusted)).toEqual({ ok: true });
     expect(await handler(MEMOS_REVEAL_CHANNEL)(trusted, { id: MEMO_ID })).toEqual({ ok: true });
-    expect(await handler(MEMOS_UNDO_CHANNEL)(trusted, { id: MEMO_ID })).toEqual({ ok: true });
   });
 
-  it.each([MEMOS_OPEN_FOLDER_CHANNEL, MEMOS_REVEAL_CHANNEL, MEMOS_UNDO_CHANNEL])(
+  it.each([MEMOS_OPEN_FOLDER_CHANNEL, MEMOS_REVEAL_CHANNEL])(
     'refuses a remote frame on %s',
     async (channel) => {
       const logger = register();
@@ -186,7 +153,6 @@ describe('registerMemosIpcHandlers', () => {
       expect(result).toMatchObject({ ok: false, error: { code: 'untrusted_sender' } });
       expect(openPath).not.toHaveBeenCalled();
       expect(locate).not.toHaveBeenCalled();
-      expect(remove).not.toHaveBeenCalled();
       expect(logger.warn).toHaveBeenCalledWith('MEMOS_IPC_SENDER_REJECTED');
     },
   );

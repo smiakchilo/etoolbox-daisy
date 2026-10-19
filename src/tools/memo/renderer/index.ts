@@ -1,6 +1,5 @@
 import {
   type JsonValue,
-  type ToolCallAction,
   type ToolCallDetails,
   type ToolRendererModule,
   MEMO_TOOL_NAME,
@@ -34,8 +33,8 @@ function succeededRecord(data?: JsonValue): Readonly<Record<string, JsonValue>> 
 /**
  * `memo`'s transcript composition: the collapsed line says a memo was saved
  * (and for which skill); the rows show the title, scope, why it was written,
- * the text and the file. Hovering a saved memo's billet offers Reveal in folder
- * and Undo (`readActions`).
+ * the text and the file. The billet carries no actions of its own: the chat
+ * pane raises its "Memo was stored" notice, whose Open action reveals the file.
  */
 function describeCall(
   args: Readonly<Record<string, JsonValue>>,
@@ -59,20 +58,7 @@ function describeCall(
   };
 }
 
-function readActions(
-  _args: Readonly<Record<string, JsonValue>>,
-  data?: JsonValue,
-): readonly ToolCallAction[] {
-  const id = asText(succeededRecord(data)?.['id']);
-  if (id === undefined) return [];
-  return [
-    { kind: 'memo.reveal', target: id },
-    { kind: 'memo.undo', target: id, doneSummary: 'Memo removed' },
-  ];
-}
-
 export const renderer: ToolRendererModule = {
   toolName: MEMO_TOOL_NAME,
   describeCall,
-  readActions,
 };

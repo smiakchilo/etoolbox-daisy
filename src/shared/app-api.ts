@@ -121,7 +121,7 @@ export interface DaisyAppApi {
   readonly skills: DaisySkillsApi;
   /** The user-rules folder surface behind the Settings "Skills" tab. */
   readonly rules: DaisyRulesApi;
-  /** The self-learning memos surface: the Settings folder link, and a memo billet's Reveal/Undo. */
+  /** The self-learning memos surface: the Settings folder link and the notice's reveal. */
   readonly memos: DaisyMemosApi;
   /**
    * The application-wide keyboard shortcut surface: main resolves a keystroke
@@ -155,8 +155,6 @@ export interface DaisyMemosApi {
   openFolder(): Promise<MemosIpcResult>;
   /** Reveals one memo file (named by its store-relative id) in the file manager. */
   reveal(request: MemoFileRequest): Promise<MemosIpcResult>;
-  /** Deletes one memo file - a memo billet's Undo. `not_found` when already gone. */
-  undo(request: MemoFileRequest): Promise<MemosIpcResult>;
 }
 
 export interface DaisySkillsApi {

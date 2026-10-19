@@ -1,5 +1,5 @@
 import type { Dirent } from 'node:fs';
-import { lstat, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse, stringify } from 'yaml';
 import {
@@ -65,8 +65,6 @@ export interface MemoStoreOptions {
 
 export interface MemoStore {
   write(request: MemoWriteRequest, context?: MemoWriteContext): Promise<MemoOutcome<MemoRecord>>;
-  /** Deletes a memo by id; `false` when the id is invalid or the file is already gone. */
-  remove(id: string): Promise<boolean>;
   /** The absolute path of an existing memo; `undefined` for an invalid id or a missing file. */
   locate(id: string): Promise<string | undefined>;
   generic(): Promise<LoadedMemos>;
@@ -314,16 +312,6 @@ export function createMemoStore(options: MemoStoreOptions): MemoStore {
   return {
     write,
     locate,
-    async remove(id) {
-      const absolute = await locate(id);
-      if (absolute === undefined) return false;
-      try {
-        await unlink(absolute);
-        return true;
-      } catch {
-        return false;
-      }
-    },
     generic: () => loadScope(scopeDirectory(undefined), GENERIC_FOLDER, GENERIC_MEMOS_MAX_BYTES),
     forSkill(skill) {
       if (!SKILL_NAME_PATTERN.test(skill)) return Promise.resolve({ memos: [], skipped: 0 });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { describeToolCall } from '../../../../src/renderer/src/chat/toolCallDetails';
-import { toolRendererRegistry } from '../../../../src/renderer/src/chat/toolRegistry';
 import { MEMO_PREVIEW_MAX_LENGTH } from '../../../../src/tools/memo/renderer';
 
 type Details = ReturnType<typeof describeToolCall>;
@@ -391,13 +390,6 @@ describe('describeToolCall - memo', () => {
     const details = describeToolCall('memo', { ...args, text: 'x'.repeat(1000) });
     const longest = Math.max(...valuesOf(details).map((value) => value.length));
     expect(longest).toBe(MEMO_PREVIEW_MAX_LENGTH);
-  });
-
-  it('offers Reveal and Undo only for a saved memo, both aimed at its id', () => {
-    expect(toolRendererRegistry.readActions('memo', args, undefined)).toEqual([]);
-    const actions = toolRendererRegistry.readActions('memo', args, saved);
-    expect(actions.map((action) => action.kind).sort()).toEqual(['memo.reveal', 'memo.undo']);
-    expect(actions.every((action) => action.target === saved.id)).toBe(true);
   });
 });
 

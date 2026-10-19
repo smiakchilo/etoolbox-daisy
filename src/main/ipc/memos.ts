@@ -3,7 +3,6 @@ import { mkdir } from 'node:fs/promises';
 import {
   MEMOS_OPEN_FOLDER_CHANNEL,
   MEMOS_REVEAL_CHANNEL,
-  MEMOS_UNDO_CHANNEL,
   memoFileRequestSchema,
   type MemosIpcResult,
 } from '../../shared';
@@ -13,16 +12,16 @@ import { isTrustedSkillsIpcSender, type SkillsIpcSenderInfo } from './skills';
 
 /**
  * The memo IPC surface: the Settings **Memos folder** link (`memos:open-folder`,
- * no payload) and a memo billet's **Reveal in folder** / **Undo** actions
- * (`memos:reveal` / `memos:undo`, naming a memo by its store-relative id). The
- * renderer never sends a path: main resolves the id inside the memos folder.
- * Same sender guard as the skills and rules links.
+ * no payload) and the chat pane's **Memo was stored** notice, whose Open action
+ * reveals the memo's file (`memos:reveal`, naming a memo by its store-relative
+ * id). The renderer never sends a path: main resolves the id inside the memos
+ * folder. Same sender guard as the skills and rules links.
  */
 
 export interface MemosIpcOperations {
   /** The memos folder; created on demand. */
   readonly directory: string;
-  readonly store: Pick<MemoStore, 'locate' | 'remove'>;
+  readonly store: Pick<MemoStore, 'locate'>;
   readonly logger: Logger;
   /** `shell.openPath`: resolves to an error message, or `''` on success. */
   readonly openPath: (path: string) => Promise<string>;
@@ -68,15 +67,9 @@ export async function revealMemo(
   return { ok: true };
 }
 
-export async function undoMemo(ops: MemosIpcOperations, payload: unknown): Promise<MemosIpcResult> {
-  const request = memoFileRequestSchema.safeParse(payload);
-  if (!request.success) return INVALID_PAYLOAD;
-  return (await ops.store.remove(request.data.id)) ? { ok: true } : NOT_FOUND;
-}
-
 export interface MemosIpcDependencies {
   readonly directory: string;
-  readonly store: Pick<MemoStore, 'locate' | 'remove'>;
+  readonly store: Pick<MemoStore, 'locate'>;
   readonly logger: Logger;
   readonly rendererDistDir: string;
   readonly mainWebContentsId: number;
@@ -117,8 +110,5 @@ export function registerMemosIpcHandlers(deps: MemosIpcDependencies): void {
   ipcMain.handle(MEMOS_OPEN_FOLDER_CHANNEL, (event) => guarded(event, () => openMemosFolder(ops)));
   ipcMain.handle(MEMOS_REVEAL_CHANNEL, (event, payload: unknown) =>
     guarded(event, () => revealMemo(ops, payload)),
-  );
-  ipcMain.handle(MEMOS_UNDO_CHANNEL, (event, payload: unknown) =>
-    guarded(event, () => undoMemo(ops, payload)),
   );
 }

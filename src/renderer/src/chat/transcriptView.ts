@@ -1,4 +1,4 @@
-import type { JsonValue, ToolCallAction, ToolTableMessage } from '../../../shared';
+import type { JsonValue, ToolTableMessage } from '../../../shared';
 import { el } from '../lib/dom';
 import {
   EMPTY_AEM_LINKIFY_STATE,
@@ -30,7 +30,6 @@ import {
   splitLeadingSkill,
 } from './transcriptViewModel';
 import { describeToolCall } from './toolCallDetails';
-import { createToolCallActionState, type ToolCallActionRunner } from './toolCallActions';
 import { toolRendererRegistry } from './toolRegistry';
 import type {
   ToolCallStatus,
@@ -108,12 +107,6 @@ export interface TranscriptViewOptions {
    * inert.
    */
   readonly onExportTable?: (data: TableExportData) => void;
-  /**
-   * Carries out a billet's hover action (the `memo` tool's Reveal in folder /
-   * Undo) and reports how it went, so a final action can settle the billet.
-   * Absent (a unit test) means billets offer no actions.
-   */
-  readonly onToolCallAction?: ToolCallActionRunner;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -606,19 +599,6 @@ export function createTranscriptView(
   // The element the popover is currently shown for, so repeated `pointerover`
   // events over one of them do not rebuild its buttons.
   let hoveredAnchor: HTMLElement | undefined;
-  // The hover actions each rendered billet offers (read from its tool's
-  // renderer), and the targets whose final action has been carried out.
-  const toolCallActions = new WeakMap<HTMLElement, readonly ToolCallAction[]>();
-  const actionState = createToolCallActionState();
-
-  /** Writes a settled target's summary over the billet's own (see `toolCallActions.ts`). */
-  function applySettledSummary(shell: HTMLElement): void {
-    const actions = toolCallActions.get(shell);
-    const summary = actions === undefined ? undefined : actionState.settledSummary(actions);
-    if (summary === undefined) return;
-    const span = shell.querySelector<HTMLElement>('.chat-tool-call__summary');
-    if (span !== null && span.textContent !== summary) span.textContent = summary;
-  }
 
   /** The icon a pane link's popover action wears - Edit or CRX. */
   function linkActionIcon(id: 'edit' | 'crx'): keyof HTMLElementTagNameMap {
@@ -650,8 +630,6 @@ export function createTranscriptView(
   ): { anchor: HTMLElement; align: HoverActionAlignment } | undefined {
     const link = paneLinkFrom(target);
     if (link !== null) return { anchor: link, align: 'center' };
-    const toggle = (target as Element | null)?.closest?.<HTMLElement>('.chat-tool-call__toggle');
-    if (toggle !== null && toggle !== undefined) return { anchor: toggle, align: 'end' };
     const gutter = tableGutterFrom(target);
     return gutter === undefined ? undefined : { anchor: gutter.anchor, align: 'end' };
   }
@@ -673,17 +651,6 @@ export function createTranscriptView(
         icon: linkActionIcon(action.id),
         onActivate: () => options.onOpenLink?.(action.href),
       }));
-    }
-    const billet = anchor.matches('.chat-tool-call__toggle')
-      ? anchor.closest<HTMLElement>('.chat-tool-call')
-      : null;
-    if (billet !== null) {
-      const actions = toolCallActions.get(billet) ?? [];
-      return actionState.hoverActions(actions, options.onToolCallAction, () => {
-        popover?.hideNow();
-        hoveredAnchor = undefined;
-        applySettledSummary(billet);
-      });
     }
     const shell = anchor.closest<HTMLElement>('.chat-table-message');
     const table = shell === null ? undefined : renderedTables.get(shell);
@@ -1354,24 +1321,15 @@ export function createTranscriptView(
         // progress tick updates the existing line in place so the spinner keeps
         // spinning (see `renderedToolCallBodies`).
         if (view === undefined) {
-          toolCallActions.delete(shell);
           shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
           return;
         }
-        const data = succeededData(view);
-        toolCallActions.set(
-          shell,
-          data === undefined
-            ? []
-            : toolRendererRegistry.readActions(view.toolName, view.args, data),
-        );
         const bodyState = toolCallBodyState(view, expanded);
         if (!sameToolCallBody(renderedToolCallBodies.get(shell), bodyState)) {
           renderedToolCallBodies.set(shell, bodyState);
           shell.replaceChildren(...renderToolCallBody(view, item.toolCallId, expanded));
         }
         applyToolCallProgress(shell, view);
-        applySettledSummary(shell);
         return;
       }
       case 'thinking': {

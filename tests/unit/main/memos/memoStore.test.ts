@@ -218,18 +218,14 @@ describe('MemoStore loading', () => {
   });
 });
 
-describe('MemoStore.locate and remove', () => {
-  it('locates and removes a written memo', async () => {
+describe('MemoStore.locate', () => {
+  it('locates a written memo', async () => {
     const { store } = makeStore();
     const outcome = await store.write({ title: 't', text: 'x', trigger: 'request' });
     if (!outcome.ok) throw new Error(outcome.error.message);
 
     const located = await store.locate(outcome.value.id);
     expect(located !== undefined && existsSync(located)).toBe(true);
-
-    expect(await store.remove(outcome.value.id)).toBe(true);
-    expect(await store.locate(outcome.value.id)).toBeUndefined();
-    expect(await store.remove(outcome.value.id)).toBe(false);
   });
 
   it.each(['generic/../../outside.md', '../outside.md', 'generic/a.txt', 'other/a.md'])(
@@ -239,7 +235,6 @@ describe('MemoStore.locate and remove', () => {
       writeRaw(path.dirname(directory), 'outside.md', 'not a memo');
 
       expect(await store.locate(id)).toBeUndefined();
-      expect(await store.remove(id)).toBe(false);
     },
   );
 });

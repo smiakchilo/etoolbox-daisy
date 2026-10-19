@@ -89,28 +89,6 @@ export interface ToolConversationItem {
   readonly answer: string | undefined;
 }
 
-/**
- * The one-click actions a billet may offer on hover. The vocabulary is closed:
- * a tool *names* an action and its target, and the transcript's host maps the
- * kind onto an application handler (IPC to main) - a tool's renderer module is
- * pure data and can carry no code that reaches outside the renderer.
- */
-export const TOOL_CALL_ACTION_KINDS = ['memo.reveal', 'memo.undo'] as const;
-
-export type ToolCallActionKind = (typeof TOOL_CALL_ACTION_KINDS)[number];
-
-export interface ToolCallAction {
-  readonly kind: ToolCallActionKind;
-  /** What the action acts on - an opaque id main resolves (a memo id), never a path. */
-  readonly target: string;
-  /**
-   * Set on an action whose effect is final (Undo): once it has been carried
-   * out - or the target is found to be gone - the billet's summary reads this
-   * and the billet offers no actions for that target any more.
-   */
-  readonly doneSummary?: string;
-}
-
 export interface ToolRendererModule {
   /** Must equal the tool's `name`. */
   readonly toolName: string;
@@ -160,14 +138,6 @@ export interface ToolRendererModule {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ) => ToolTableMessage | undefined;
-  /**
-   * Optional, billets only: the hover actions a settled call offers (the
-   * `memo` tool's Reveal in folder / Undo). Empty or absent means none.
-   */
-  readonly readActions?: (
-    args: Readonly<Record<string, JsonValue>>,
-    data?: JsonValue,
-  ) => readonly ToolCallAction[];
 }
 
 /**

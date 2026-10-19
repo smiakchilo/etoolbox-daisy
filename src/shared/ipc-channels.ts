@@ -139,8 +139,6 @@ export const MEMOS_OPEN_FOLDER_CHANNEL = 'memos:open-folder' as const;
  * its store-relative id; main derives and contains the path.
  */
 export const MEMOS_REVEAL_CHANNEL = 'memos:reveal' as const;
-/** Deletes one memo file (the memo billet's Undo). Same request shape as reveal. */
-export const MEMOS_UNDO_CHANNEL = 'memos:undo' as const;
 
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.

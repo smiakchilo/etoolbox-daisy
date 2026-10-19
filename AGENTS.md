@@ -203,7 +203,16 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change is **self-learning memos** (2026-10-19):
+> The most recent shared-surface change **removes the memo billet's hover
+> actions** (2026-10-19): `tools/core/toolRenderer.ts` lost `ToolCallAction` /
+> `readActions` (as did the renderer registry), `src/renderer/src/chat/toolCallActions.ts`
+> is deleted, and `memos-ipc.ts` / `ipc-channels.ts` / `DaisyMemosApi` lost
+> `memos:undo`. A stored memo now raises the chat pane's sticky notice ("Memo was
+> stored. Press **Open** to view it in folder"), whose action calls `memos:reveal`;
+> the billet itself is action-free like every other billet - see "Memos" below
+> and `docs/verification/followons-2026-10.md` "A stored memo raises a notice ...
+> (2026-10-19)".
+> Before that it was **self-learning memos** (2026-10-19):
 > `contracts/chatJournal.ts`'s `user.prompt` gained an optional
 > `origin: 'reflection'`; `appSettings.ts` / `settingsSnapshot.ts` /
 > `settings-ipc.ts` gained `memos.enabled` (and `updateMemoSettings`);
@@ -1288,10 +1297,14 @@ the contract is `src/shared/memos/` (`MemoHost`, `MEMO_TRIGGERS`, limits).
   skill's memos are appended to the `skill` tool's result (`skill-memos.md`, 8 KB),
   for a model-chosen load and an explicit `/name` alike. Over-budget memos are
   silently skipped (notice deferred, `docs/backlog.md` "Memos").
-- **The billet** reads `Memo saved: <title>` / `Memo for <skill>: <title>` and
-  offers **Reveal in folder** and **Undo** (deletes the file) through the
-  renderer's `readActions` and `memos:reveal` / `memos:undo` (main derives the path
-  from the memo id).
+- **The stored-memo notice** is the pane's sticky `showNotice` row: "Memo was
+  stored. Press **Open** to view it in folder", whose action calls
+  `memos:reveal` (main derives the file from the memo id) so the OS file manager
+  highlights it - the same idea as the chat footer's reveal-log control. **The
+  billet** reads `Memo saved: <title>` / `Memo for <skill>: <title>` and shows
+  the title, scope, trigger, text and file; like every other billet it carries no
+  hover toolbar, and there is no Undo (`memos:undo`, `readActions` and
+  `toolCallActions.ts` were removed).
 - **Off switch.** Settings → Skills → Self-learning (`memos.enabled`, default on):
   off stops loading, guidance and reflection, and the `memo` tool refuses.
 
@@ -1370,7 +1383,21 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3871 passed / 13 skipped** (+12 against the
+Current baseline: **`npm run test` → 3858 passed / 13 skipped** (-13 against the
+3871 below - **the memo billet loses its hover toolbar**: `ToolCallAction` /
+`readActions` and `src/renderer/src/chat/toolCallActions.ts` are gone, the `memo`
+renderer offers no actions, and `memos:undo` (channel, IPC handler, preload/API,
+`MemoStore.remove`) was removed with its tests. A stored memo now raises the chat
+pane's sticky notice ("Memo was stored. Press **Open** to view it in folder"),
+whose Open action calls `memos:reveal` so Explorer highlights the file. The new
+`chatPane.test.ts` case is +1, while 7 deleted `toolCallActions` cases, 2 registry
+`readActions` cases, 1 `toolCallDetails` case, 3 IPC `undoMemo` cases, 1 IPC
+channel-iteration case and the deleted store `remove` assertions account for
+-14. The built-app `memos.spec.ts` first case was rewritten to the notice + Open
+flow (Playwright stays 150 tests; both cases green, and the built mutation failed
+it) - see `docs/verification/followons-2026-10.md` "A stored memo raises a
+notice ... (2026-10-19)". Before that it was
+**3871 passed / 13 skipped** (+12 against the
 3859 below - **one page size everywhere**: `DEFAULT_QUERY_LIMIT` (50) is gone;
 `SEARCH_PAGE_SIZE` (20) in `src/shared/tools/core/search.ts` is now the one
 default of `aem_query` and of both search composites, `resolveSearchPageSize`

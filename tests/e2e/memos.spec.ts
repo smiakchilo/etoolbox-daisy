@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { type ScriptedStep } from '../../src/main/agents/fakeAgentService';
@@ -12,9 +12,9 @@ import { byTestId } from '../support/selectors';
 
 /**
  * Self-learning memos against the BUILT app:
- *  - a `memo` billet offers Reveal in folder and Undo on hover; Reveal asks the
- *    OS file manager for the memo's own file (main derives the path from the
- *    id), and Undo deletes that file, after which the billet offers nothing;
+ *  - a stored memo raises the chat pane's notice ("Memo was stored"), whose
+ *    **Open** action reveals that memo's own file (main derives the path from
+ *    the id); the billet itself stays, and offers no hover toolbar;
  *  - a turn with a failed tool call is followed by the application's own
  *    reflection turn: its prompt is never painted as a user message, its prose
  *    is suppressed, and the transcript shows only the reflection marker and the
@@ -30,10 +30,8 @@ import { byTestId } from '../support/selectors';
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'memos-scratch');
 
-const OPEN_OVERLAY = `${byTestId('hover-popover')}[open]`;
-const REVEAL_BUTTON = `${OPEN_OVERLAY} ${byTestId('popover-memo.reveal')}`;
-const UNDO_BUTTON = `${OPEN_OVERLAY} ${byTestId('popover-memo.undo')}`;
 const TOOL_CALL = '.chat-tool-call';
+const HOVER_POPOVER = `${byTestId('hover-popover')}[open]`;
 const USER_MESSAGE = '.chat-message--user';
 const ASSISTANT_MESSAGE = '.chat-message--assistant';
 
@@ -100,20 +98,6 @@ async function flushUntilBillet(app: ElectronApp, shell: Page, title: string): P
     .toBe(1);
 }
 
-/** Hovers the billet's toggle until the popover holds `count` buttons (a settling scroll can close it). */
-async function hoverUntilActions(shell: Page, billet: Locator, count: number): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        await shell.mouse.move(1, 1);
-        await billet.locator('.chat-tool-call__toggle').hover();
-        return shell.locator(`${OPEN_OVERLAY} sp-action-button`).count();
-      },
-      { timeout: 15_000 },
-    )
-    .toBe(count);
-}
-
 test.describe('self-learning memos', () => {
   let app: ElectronApp;
   let shell: Page;
@@ -132,7 +116,7 @@ test.describe('self-learning memos', () => {
     await app.close();
   });
 
-  test('a memo billet reveals its file and Undo deletes it', async () => {
+  test('a stored memo raises a notice whose Open action reveals its file', async () => {
     const id = 'generic/20261019-101530-both-paths.md';
     const file = seedMemo(dirs, id);
     const title = 'Show both paths';
@@ -140,24 +124,20 @@ test.describe('self-learning memos', () => {
     await sendViaComposer(shell, 'You should have included both paths');
     await flushUntilBillet(app, shell, title);
 
+    // The billet stays, but it carries no hover toolbar - it used to be the one
+    // billet with one.
     const billet = memoBillet(shell, title);
-    const summary = billet.locator('.chat-tool-call__summary');
-    const savedSummary = await summary.textContent();
-
-    await hoverUntilActions(shell, billet, 2);
-    await shell.locator(REVEAL_BUTTON).click();
-    await expect.poll(() => readRevealedPaths(app)).toEqual([file]);
-    expect(existsSync(file)).toBe(true);
-
-    await hoverUntilActions(shell, billet, 2);
-    await shell.locator(UNDO_BUTTON).click();
-    await expect.poll(() => existsSync(file)).toBe(false);
-    await expect(summary).not.toHaveText(savedSummary ?? '');
-
-    // A settled memo offers no more actions.
-    await shell.mouse.move(1, 1);
+    await expect(billet).toBeVisible();
     await billet.locator('.chat-tool-call__toggle').hover();
-    await expect(shell.locator(OPEN_OVERLAY)).toHaveCount(0);
+    await expect(shell.locator(HOVER_POPOVER)).toHaveCount(0);
+
+    // The pane's one alert banner acknowledges the write; Open asks main to
+    // reveal the memo main itself derived from the id.
+    const banner = shell.locator('.chat-status-banner');
+    await expect(banner).toHaveAttribute('open', '');
+    await expect(banner).toContainText('Memo was stored');
+    await shell.locator(byTestId('banner-open-memo-folder')).click();
+    await expect.poll(() => readRevealedPaths(app)).toEqual([file]);
   });
 
   test('a failed turn is followed by a quiet reflection that writes a memo', async () => {
@@ -197,6 +177,9 @@ test.describe('self-learning memos', () => {
     ).toHaveCount(1);
     await expect(shell.locator(USER_MESSAGE)).toHaveCount(userMessages + 1);
     await expect(shell.locator(ASSISTANT_MESSAGE, { hasText: 'REFLECTION-PROSE' })).toHaveCount(0);
-    await waitForComposerReady(shell);
+    // The reflection's memo raises the same sticky notice; Send is still ready,
+    // so the banner being open is expected rather than a startup message.
+    await expect(shell.locator('.chat-status-banner')).toContainText('Memo was stored');
+    await waitForComposerReady(shell, { awaitBannerClosed: false });
   });
 });

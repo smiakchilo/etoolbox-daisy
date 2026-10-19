@@ -76,34 +76,6 @@ describe('createToolRendererRegistry', () => {
   });
 });
 
-describe('readActions', () => {
-  const action = { kind: 'memo.undo', target: 'a.md' } as const;
-
-  it('returns the actions the tool-owned renderer reads', () => {
-    const registry = createToolRendererRegistry({
-      './demo/renderer/index.ts': { renderer: rendererModule({ readActions: () => [action] }) },
-    });
-    expect(registry.readActions('demo_tool', {}, {})).toEqual([action]);
-  });
-
-  it('returns no actions for an unknown tool, a renderer without readActions, or a throwing one', () => {
-    const registry = createToolRendererRegistry({
-      './demo/renderer/index.ts': { renderer: rendererModule() },
-      './bad/renderer/index.ts': {
-        renderer: rendererModule({
-          toolName: 'bad_tool',
-          readActions: () => {
-            throw new Error('actions bug');
-          },
-        }),
-      },
-    });
-    expect(registry.readActions('unknown', {}, {})).toEqual([]);
-    expect(registry.readActions('demo_tool', {}, {})).toEqual([]);
-    expect(registry.readActions('bad_tool', {}, {})).toEqual([]);
-  });
-});
-
 describe('discovered renderers (the real src/tools folders)', () => {
   it('finds the shipped tools', () => {
     expect([...toolRendererRegistry.toolNames].sort()).toEqual([

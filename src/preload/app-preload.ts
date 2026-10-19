@@ -60,7 +60,6 @@ import {
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
   MEMOS_OPEN_FOLDER_CHANNEL,
   MEMOS_REVEAL_CHANNEL,
-  MEMOS_UNDO_CHANNEL,
   RULES_OPEN_FOLDER_CHANNEL,
   SKILLS_OPEN_FOLDER_CHANNEL,
   TABLE_EXPORT_REVEAL_LAST_CHANNEL,
@@ -506,11 +505,6 @@ const daisyApi: DaisyAppApi = {
     async reveal(request: MemoFileRequest): Promise<MemosIpcResult> {
       const parsedRequest = memoFileRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(MEMOS_REVEAL_CHANNEL, parsedRequest);
-      return parseMemosIpcResult(raw);
-    },
-    async undo(request: MemoFileRequest): Promise<MemosIpcResult> {
-      const parsedRequest = memoFileRequestSchema.parse(request);
-      const raw: unknown = await ipcRenderer.invoke(MEMOS_UNDO_CHANNEL, parsedRequest);
       return parseMemosIpcResult(raw);
     },
   },

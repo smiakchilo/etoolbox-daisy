@@ -1,6 +1,10 @@
 import { el } from '../lib/dom';
 import { AGENT_DEFINITIONS } from '../agents/agentCatalog';
-import { buildBannerCopy, createBannerActionButton } from '../lib/alertBanner';
+import {
+  BANNER_ACTION_MARKER,
+  buildBannerCopy,
+  createBannerActionButton,
+} from '../lib/alertBanner';
 import { createChatToolbar } from './chatToolbar';
 import { createFindBar } from './findBar';
 import { createTranscriptFindController } from '../chat/transcriptFind';
@@ -19,7 +23,6 @@ import { createTranscriptView, type TranscriptView } from '../chat/transcriptVie
 import { isDeterministicTablePrompt } from '../chat/transcriptViewModel';
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { createTranscriptFollower } from '../chat/transcriptFollower';
-import type { ToolCallActionOutcome } from '../chat/toolCallActions';
 import {
   suggestTableExportFileName,
   tableToClipboardHtml,
@@ -32,6 +35,7 @@ import {
   type AgentChatError,
   type AgentChatSkill,
   type AgentChatStatus,
+  type AgentEvent,
   type AgentId,
   type AgentServiceLifecycleState,
   type AgentSettingsSnapshot,
@@ -39,13 +43,15 @@ import {
   type ChatId,
   type ChatJournalRecord,
   type ModelSelectionState,
+  asRecord,
+  asText,
   MEMO_REFLECTION_TOOL_NAME,
+  MEMO_TOOL_NAME,
   newChatId,
   resolveConfiguredAgentId,
   resolveEffectiveActiveAgentId,
   type SessionId,
   type SessionStatus,
-  type ToolCallAction,
   type UserInputAnswer,
   type UserInputRequestId,
 } from '../../../shared';
@@ -269,7 +275,6 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     onResume: () => resumeStoppedSession(),
     onCopyTable: (data) => copyTable(data),
     onExportTable: (data) => exportTable(data),
-    onToolCallAction: (action) => runToolCallAction(action),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -591,6 +596,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (chatId !== undefined && event.chatId !== chatId) return;
 
       transcriptStore.applyEvent(event);
+      noticeStoredMemo(event);
       // An interactive question swaps the composer into its selection UI; the
       // matching answer is delivered by `onAnswer`. Any terminal turn state
       // clears it, so an aborted question cannot leave the composer stuck.
@@ -1303,23 +1309,29 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   }
 
   /**
-   * Carries out a billet's hover action - a memo's Reveal in folder or Undo -
-   * through main, which resolves the memo id to its file. A memo that no longer
-   * exists reports `gone` (the billet then reads as removed); any other failure
-   * is reported in the pane's banner.
+   * Raises the pane's one sticky notice when a `memo` call has just stored a
+   * file, with an **Open** action (which also dismisses the notice) that asks
+   * main to reveal that memo in the OS file manager. The id comes from the
+   * tool result main returned - never from a model-supplied path - and the
+   * billet itself stays action-free, like every other billet.
    */
-  async function runToolCallAction(action: ToolCallAction): Promise<ToolCallActionOutcome> {
-    const request = { id: action.target };
-    const result = await (
-      action.kind === 'memo.reveal'
-        ? window.daisy.memos.reveal(request)
-        : window.daisy.memos.undo(request)
-    ).catch(() => undefined);
-    if (result === undefined) return 'failed';
-    if (result.ok) return 'done';
-    if (result.error.code === 'not_found') return 'gone';
-    statusBanner.showError(result.error.message);
-    return 'failed';
+  function noticeStoredMemo(event: AgentEvent): void {
+    if (event.type !== 'tool.result' || !event.outcome.ok) return;
+    if (transcriptStore.toolCallFor(event.toolCallId)?.toolName !== MEMO_TOOL_NAME) return;
+    const id = asText(asRecord(event.outcome.data)?.['id']);
+    if (id === undefined) return;
+    statusBanner.showNotice(`Memo was stored. Press ${BANNER_ACTION_MARKER} to view it in folder`, {
+      label: 'Open',
+      testId: 'banner-open-memo-folder',
+      onActivate: () => revealMemo(id),
+    });
+  }
+
+  /** Reveals one stored memo in the OS file manager; a failure is reported. */
+  function revealMemo(id: string): void {
+    void window.daisy.memos.reveal({ id }).then((result) => {
+      if (!result.ok) statusBanner.showError(result.error.message);
+    });
   }
 
   /**
