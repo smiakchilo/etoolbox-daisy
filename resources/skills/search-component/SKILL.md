@@ -2,7 +2,7 @@
 name: search-component
 description: Find the pages that use a given AEM component - the component-usage search. Load this instead of the `search` skill whenever a request pairs looking or searching with a component, such as "search pages containing <component>", "which pages use <component>", "find pages with <component>" or "where is <component> used", or any phrase where a component title or name is the thing to find. Load it before acting - its body carries the exact resolution and search procedure (a plain phrase is a title to resolve against the component roots, never a resource type to invent), and the application then shows a two-column table (the owning page and the component's path within it) with no prose of your own. Use whenever the user asks which pages use, contain, or are built with a component, or where a component is used - including when they invoke `/search-component <what>`.
 metadata:
-  user-description: Find the pages that use a given component.
+  user-description: Find the pages that use a given component
 ---
 
 # Finding the pages that use a component

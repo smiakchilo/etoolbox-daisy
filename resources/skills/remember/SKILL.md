@@ -2,7 +2,7 @@
 name: remember
 description: Write down what the user asks you to remember, memoise or keep in mind as a memo for later conversations. Use for "remember that...", "keep in mind...", "memoise...", "from now on..." and /remember <what>.
 metadata:
-  user-description: Remember an instruction or a fact for later conversations.
+  user-description: Remember an instruction or a fact for later conversations
 ---
 
 # Remembering what the user asks

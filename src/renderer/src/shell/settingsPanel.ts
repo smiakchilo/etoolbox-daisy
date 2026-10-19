@@ -185,11 +185,11 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     { value: 'projects', label: 'Projects', element: projectsSection.element },
     { value: 'agents', label: 'Agents', element: agentsSection.element },
     { value: 'skills', label: 'Skills', element: skillsSection.element },
-    // Browser sits ahead of Proxies: the default proxy is a property of the
-    // browser pane, and a host's Proxy combobox offers "(Default)" which points
-    // at it, so it reads naturally before the library it draws from.
-    { value: 'browser', label: 'Browser', element: browserSection.element },
+    // Proxies sits ahead of Browser: the library is where entries are defined,
+    // and the browser's "(Default)" proxy points at one of them, so the
+    // definition reads naturally before the setting that consumes it.
     { value: 'proxies', label: 'Proxies', element: proxiesSection.element },
+    { value: 'browser', label: 'Browser', element: browserSection.element },
   ];
 
   const tabs = el('sp-tabs', {

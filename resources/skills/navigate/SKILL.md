@@ -2,7 +2,7 @@
 name: navigate
 description: MANDATORY for any request to open, load, go to, goto, navigate to, show, or take the user to a page, asset, or AEM place (any language) - load this skill BEFORE calling browser_navigate. Examples - Show news-library page, Load my-first-page, Go to package manager, Goto crx/de, Open bundles, Load this page in admin, Open my_page in sites console, Navigate to page properties, Open us/en/some-page on localhost in edit mode. Covers environment qualifiers (in Acme Dev, on localhost), display modes (edit, sites console or admin, crx, assets, properties) and standard places (crx/de, package manager, config manager, bundles, system console). Holds the rules you would otherwise get wrong - the words are a page NAME to search for, never a description of it, host is a configured label never a URL, admin means the sites console, and a page name is found with aem_query, never guessed as a path. Also used for /navigate <what>.
 metadata:
-  user-description: Open a page in the AEM browser pane.
+  user-description: Open a page in the AEM browser pane
 ---
 
 # Opening a page, asset, or place in the browser pane

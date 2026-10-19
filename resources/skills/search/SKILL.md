@@ -2,7 +2,7 @@
 name: search
 description: How to run an AEM search against a conventional AEM Author instance - construct QueryBuilder predicate maps for path/type/property predicates, nested AND/OR groups, date and range predicates, ordering, and choosing which properties to return, and run the search (full text or hand-built) with the aem_query_format_ask tool. Use whenever the user asks to find, search for, look up, or list AEM content (pages, assets) by its own text or properties - including when they invoke `/search <terms>`. When the request is to find the pages that use or contain a component (a component named by title, name, or sling:resourceType), that is the `search-component` skill, not this one. Do not load it merely to explain a result that already came back; that is the query-results skill.
 metadata:
-  user-description: Find pages and assets by their content.
+  user-description: Find pages and assets by their content
 ---
 
 # Running an AEM search

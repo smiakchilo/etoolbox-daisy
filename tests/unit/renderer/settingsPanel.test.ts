@@ -170,6 +170,22 @@ describe('createSettingsPanel dismissal', () => {
     expect(tabs?.getAttribute('selected')).toBe('agents');
   });
 
+  it('orders the strip so Proxies comes before Browser', () => {
+    const { settings } = build();
+    const values = [
+      ...settings.element.querySelectorAll<HTMLElement>('.settings-panel__tabs sp-tab'),
+    ].map((tab) => tab.getAttribute('value'));
+
+    // Proxies defines the library entries the Browser tab's "(Default)" proxy
+    // points at, so the definition reads before the setting that consumes it.
+    expect(values.indexOf('proxies')).toBe(values.indexOf('browser') - 1);
+    // The panels follow the same order as their tabs.
+    const panelValues = [
+      ...settings.element.querySelectorAll<HTMLElement>('.settings-panel__tab-panel'),
+    ].map((panel) => panel.getAttribute('value'));
+    expect(panelValues).toEqual(values);
+  });
+
   it('shares the pane-owned surface-status row and owns no banner of its own', () => {
     const { pane, settings } = build();
     // The pane owns exactly one surface-status row (the panel is handed it),

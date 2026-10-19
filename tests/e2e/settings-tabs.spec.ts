@@ -44,6 +44,13 @@ test('Settings tabs and contextual help are registered, switch panels and open',
     await expect(tabs).toHaveCount(1);
     const tabItems = tabs.locator('sp-tab');
     expect(await tabItems.first().evaluate((node) => node.shadowRoot !== null)).toBe(true);
+
+    // Proxies defines the library entries the Browser tab's default proxy
+    // points at, so the definition is listed first.
+    const tabValues = await tabItems.evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute('value')),
+    );
+    expect(tabValues.indexOf('proxies')).toBe(tabValues.indexOf('browser') - 1);
     expect(
       await tabs
         .locator('.settings-panel__tab-panel')

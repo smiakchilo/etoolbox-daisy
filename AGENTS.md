@@ -1084,6 +1084,19 @@ the home screen and the composer's `/` list render the friendly text (`search` a
 `semantic-search` already carry one). This is a contract, not a preference: a skill
 without it ships its technical `description` to the user.
 
+**A skill's displayed summary never ends with a period.** The home veil and the
+composer's `/` popup render that summary verbatim, so it reads as a label, not a
+sentence - exactly like the app's own banner copy (see §5, "Banner copy never
+ends with a period"): `Find pages and assets by their content`, never
+`Find pages and assets by their content.` This binds the `metadata.user-description`
+of every bundled skill **and** the technical `description` that is shown when a
+skill carries none (the store's fallback), so a skill added without a
+user-description still shows a period-free label. `?`/`!` are no substitute - the
+summary is a phrase, so it ends with neither. `tests/unit/main/skills/bundledSkills.test.ts`
+holds every bundled, user-invocable skill to this, reading the real files; user
+skills in `~\etoolbox-daisy\skills` are the owner's own text and are not
+rewritten by the application.
+
 **Skills are auto-inferred from their descriptions, not only invoked by name.**
 The composition root composes the model-facing catalogue — every skill (bundled
 and user) with its technical `description` — onto the session instructions
@@ -1325,7 +1338,30 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3853 passed / 13 skipped** (+1 against the
+Current baseline: **`npm run test` → 3859 passed / 13 skipped** (+5 against the
+3854 below - **bundled skill summaries read as labels**: the five user-facing
+`metadata.user-description` values in `resources/skills/` lost their trailing
+periods, because the home veil and the composer's `/` popup render them verbatim
+and the app's copy is a label, not a sentence. `AGENTS.md` section 5 records the
+rule ("A skill's displayed summary never ends with a period", binding the
+user-description and the technical-description fallback), and
+`tests/unit/main/skills/bundledSkills.test.ts` holds every bundled,
+user-invocable skill to it by reading the real files (the +5 is one case per
+user-invocable bundled skill); the built-app `skill-autocomplete` and
+`home-screen` specs were re-run green (Playwright stays 150 tests) - see
+`docs/verification/followons-2026-10.md` "Bundled skill summaries read as
+labels, with no trailing period (2026-10-19)". Before that it was
+**3854 passed / 13 skipped** (+1 against the
+3853 below - **the Settings strip's last two tabs swapped**: the order is now
+Hosts, Projects, Agents, Skills, **Proxies, Browser**, so the library that
+defines proxy entries reads before the Browser tab whose "Default proxy" points
+at one of them (`settingsPanel.ts`'s `tabSections` and the `SettingsTab` union
+reordered together; tab ids unchanged). The new `settingsPanel.test.ts` case
+"orders the strip so Proxies comes before Browser" is the +1, and the built-app
+`settings-tabs.spec.ts` gained the same order assertion inside its one case
+(Playwright stays 150 tests) - see `docs/verification/followons-2026-10.md`
+"The Settings strip puts Proxies before Browser (2026-10-19)". Before that it was
+**3853 passed / 13 skipped** (+1 against the
 3852 below - **the Skills tab's uniform help formula, order and button width**:
 the three folder buttons share one width so they line up as a column, the
 Self-learning checkbox sits above the Memos folder action, and every help badge
