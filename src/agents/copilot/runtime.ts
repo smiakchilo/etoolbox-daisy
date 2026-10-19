@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 
-import { buildAemToolPolicy } from './aemToolPolicy';
+import { buildToolAllowlistPolicy } from './toolAllowlistPolicy';
 import { getCopilotAuthPresence } from './authPresence';
 import {
   assertNoPlaintextCredentials,
@@ -46,7 +46,7 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
     await host.installService(
       createSdkAgentService({
         client,
-        policy: buildAemToolPolicy({
+        policy: buildToolAllowlistPolicy({
           allowlistEntries: toolkit.allowlistEntries,
           instructions: toolkit.instructions,
         }),

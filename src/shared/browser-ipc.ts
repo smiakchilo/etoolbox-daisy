@@ -44,7 +44,7 @@ export type ViewBounds = Readonly<z.infer<typeof viewBoundsSchema>>;
 // ---------------------------------------------------------------------------
 
 /**
- * Pushed on `browser:state-changed` whenever the AEM view's navigation state
+ * Pushed on `browser:state-changed` whenever the browser view's navigation state
  * changes. `url` is the live navigated URL - the renderer's own
  * `computeAddressBarValue` doc comment (`viewModel.ts`) explicitly describes
  * waiting for exactly this event before it can show anything but an empty
@@ -104,7 +104,7 @@ export function parseCertificateBlockedInfo(candidate: unknown): CertificateBloc
 
 /**
  * Which document a find request targets. Both are `WebContents` main owns: the
- * AEM pane's view, or the app shell's own document (which is where the chat
+ * browser pane's view, or the app shell's own document (which is where the chat
  * transcript lives). The renderer cannot address a `WebContents` directly, so
  * it names the logical target and main resolves it.
  */
@@ -171,7 +171,7 @@ export const BROWSER_IPC_ERROR_CODES = [
    * to add a server, and must never silently navigate or auto-create one.
    */
   'unknown_origin',
-  /** There is no AEM `WebContentsView` to act on right now. */
+  /** There is no browser `WebContentsView` to act on right now. */
   'no_active_view',
   /** No configured server has the given id. */
   'server_not_found',

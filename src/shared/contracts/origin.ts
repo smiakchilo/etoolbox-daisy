@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Canonical AEM origin handling (implementation-plan.md step 03,
+ * Canonical origin handling (implementation-plan.md step 03,
  * requirements-decisions.md section 3).
  *
  * An origin identifies *a server*, not *a page*. The plan is explicit that a

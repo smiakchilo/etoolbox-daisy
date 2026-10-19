@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import {
   type AemResponseOutcome,
-  type AemToolExecutor,
+  type ToolExecutor,
   type BrokerOutcome,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type IdGenerator,
   type JcrPathRejectionReason,
   type JsonObject,
@@ -386,9 +386,9 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   redirect_blocked: {
     code: 'REDIRECT_BLOCKED',
     retryable: false,
-    requiredAction: 'sign_in_to_aem',
+    requiredAction: 'sign_in_to_host',
   },
-  redirected: { code: 'REDIRECT_BLOCKED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  redirected: { code: 'REDIRECT_BLOCKED', retryable: false, requiredAction: 'sign_in_to_host' },
   no_view: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'select_server' },
   bridge_unavailable: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'none' },
   network_error: { code: 'NETWORK_ERROR', retryable: true, requiredAction: 'none' },
@@ -396,7 +396,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   timeout: { code: 'TIMEOUT', retryable: true, requiredAction: 'none' },
   stale_server_revision: { code: 'STALE_CONTEXT', retryable: true, requiredAction: 'none' },
   stale_navigation_epoch: { code: 'STALE_CONTEXT', retryable: true, requiredAction: 'none' },
-  unauthorized: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  unauthorized: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_host' },
   // The rule this module exists to get right: authenticated but not permitted.
   forbidden: { code: 'NOT_AUTHORIZED', retryable: false, requiredAction: 'none' },
   not_found: { code: 'NOT_FOUND', retryable: false, requiredAction: 'none' },
@@ -410,7 +410,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   server_error: { code: 'UNEXPECTED_RESPONSE', retryable: true, requiredAction: 'none' },
   unexpected_status: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   not_json_content_type: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
-  html_login_page: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  html_login_page: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_host' },
   html_error_page: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   empty_response: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   invalid_json: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
@@ -497,19 +497,19 @@ export interface AemGetJsonExecutorConfig<TRuntimeDeps extends Record<string, un
     deps: { readonly origin: string } & TRuntimeDeps,
   ) => Promise<AemGetJsonResult>;
   readonly runtimeDeps: TRuntimeDeps;
-  readonly currentContext: () => CurrentAemToolContext;
+  readonly currentContext: () => CurrentToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
 }
 
 /**
- * Builds the `AemToolExecutor` the SDK adapter registers for `aem_get_json`.
+ * Builds the `ToolExecutor` the SDK adapter registers for `aem_get_json`.
  * The shared order of operations (abort, validate args, bind context, re-validate
  * the envelope, execute, render) lives in `createToolExecutor`.
  */
 export function createAemGetJsonExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemGetJsonExecutorConfig<TRuntimeDeps>,
-): AemToolExecutor {
+): ToolExecutor {
   return createToolExecutor({
     operation: 'aem_get_json',
     argsSchema: aemGetJsonArgsSchema,

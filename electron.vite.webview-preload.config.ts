@@ -23,7 +23,7 @@ export default defineConfig({
       emptyOutDir: false,
       rollupOptions: {
         input: {
-          'aem-preload': path.resolve(__dirname, 'src/preload/aem-preload.ts'),
+          'webview-preload': path.resolve(__dirname, 'src/preload/webview-preload.ts'),
         },
       },
     },

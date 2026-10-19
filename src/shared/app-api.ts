@@ -250,7 +250,7 @@ export interface DaisyBrowserApi {
   navigate(value: string): Promise<BrowserIpcVoidResult>;
   /**
    * Opens a validated absolute http(s) URL in the OS default browser. Used for
-   * a transcript link whose origin is not a configured AEM host; main refuses
+   * a transcript link whose origin is not a configured host; main refuses
    * any other scheme.
    */
   openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult>;
@@ -275,7 +275,7 @@ export interface DaisyBrowserApi {
   onCertificateBlocked(listener: (info: CertificateBlockedInfo) => void): () => void;
   /**
    * Runs a find-in-page request against the named document (`browser` for the
-   * AEM page, `chat` for the shell document the chat transcript lives in). The
+   * page, `chat` for the shell document the chat transcript lives in). The
    * match count arrives asynchronously on {@link onFindResult}.
    */
   find(request: FindRequest): Promise<BrowserIpcVoidResult>;
@@ -356,11 +356,11 @@ export interface DaisyAgentAuthApi {
 }
 
 /**
- * The AEM preload deliberately exposes nothing to the page's main world, so
- * there is no `window.daisyAem` and no interface describing one
+ * The webview preload deliberately exposes nothing to the page's main world, so
+ * there is no `window.daisyBridge` and no interface describing one
  * (implementation-plan.md step 06). The bridge it provides is driven entirely
  * by the main process over IPC and lives in the isolated world; its wire
- * protocol is `src/shared/contracts/aemBridge.ts`. This note exists because
+ * protocol is `src/shared/contracts/webviewBridge.ts`. This note exists because
  * the absence of a type here is a deliberate design property, not an
  * oversight - do not reintroduce one without re-reading that decision.
  */

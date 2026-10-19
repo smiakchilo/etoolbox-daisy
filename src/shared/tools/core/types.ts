@@ -1,4 +1,4 @@
-import type { AemBridgeBlockReason } from '../../contracts/aemBridge';
+import type { WebviewBridgeBlockReason } from '../../contracts/webviewBridge';
 import type { JsonValue } from '../../contracts';
 import type { ToolError } from '../../contracts';
 import type { ChatId, ServerId, ToolCallId, TurnId } from '../../contracts';
@@ -18,7 +18,7 @@ import type { Result } from '../../result';
  * Lives in `src/shared` - not `src/agent` - so a tool module can own its own
  * executor without importing the SDK boundary (which `src/shared` may not do).
  */
-export type AemToolExecutor = (
+export type ToolExecutor = (
   args: Readonly<Record<string, JsonValue>>,
   context: {
     readonly toolCallId: ToolCallId;
@@ -40,7 +40,7 @@ export type AemToolExecutor = (
  * executor has a parameter that could carry an origin from tool arguments even
  * if a caller tried to supply one.
  */
-export interface CurrentAemToolContext {
+export interface CurrentToolContext {
   readonly origin: string;
   readonly serverId: ServerId;
   readonly serverRevision: number;
@@ -62,15 +62,15 @@ export type BrokerOutcome =
       readonly contentType: string | null;
       readonly bodyText: string;
     }
-  | { readonly kind: 'blocked'; readonly reason: AemBridgeBlockReason }
+  | { readonly kind: 'blocked'; readonly reason: WebviewBridgeBlockReason }
   | { readonly kind: 'network_error'; readonly message: string }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'timeout' }
   | { readonly kind: 'stale'; readonly status: 'stale_server_revision' | 'stale_navigation_epoch' }
   | { readonly kind: 'no_view' }
   /**
-   * The AEM view is live but its preload never announced it could answer
-   * fetches (`AEM_BRIDGE_READY_CHANNEL`), so no request could be delivered.
+   * The browser view is live but its preload never announced it could answer
+   * fetches (`WEBVIEW_BRIDGE_READY_CHANNEL`), so no request could be delivered.
    * Distinct from `no_view` - the pane is present; its bridge script is
    * missing or broken. This is an application build/packaging fault, never an
    * AEM one, and must not be reported as a timeout.

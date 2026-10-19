@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { performBridgeFetch, type BridgeFetchDeps } from '../../../src/preload/bridgeFetch';
-import type { AemBridgeFetchCommand } from '../../../src/shared/contracts/aemBridge';
+import type { WebviewBridgeFetchCommand } from '../../../src/shared/contracts/webviewBridge';
 
 const ORIGIN = 'https://author.example';
-const COMMAND: AemBridgeFetchCommand = {
+const COMMAND: WebviewBridgeFetchCommand = {
   requestId: 'req-1',
   url: `${ORIGIN}/content/site.0.json`,
 };

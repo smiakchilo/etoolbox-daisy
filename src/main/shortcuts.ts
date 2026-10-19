@@ -12,13 +12,13 @@ import { applyZoom, type ZoomDirection } from './zoom';
  *
  * Two things make this main-process work rather than a renderer key listener:
  *
- *  - the AEM pane is a `WebContentsView`, so its keystrokes land in a
+ *  - the browser pane is a `WebContentsView`, so its keystrokes land in a
  *    *different* `WebContents` from the shell's and never reach the shell
  *    document. A `document` keydown listener would therefore do nothing
- *    whenever the AEM page has focus - i.e. most of the time while browsing.
- *    So the handler is attached to both, and the AEM view's keystrokes are
+ *    whenever the page has focus - i.e. most of the time while browsing.
+ *    So the handler is attached to both, and the browser view's keystrokes are
  *    forwarded to the shell over IPC (`app:shortcut`).
- *  - a shortcut that acts on the AEM page itself needs `webContents` access,
+ *  - a shortcut that acts on the page itself needs `webContents` access,
  *    which only main has. Zoom is applied in main to whichever view the
  *    keystroke landed on (`applyZoom`); it never crosses the boundary. Find
  *    only opens renderer UI, so it *is* pushed - see {@link resolveShortcut}.
@@ -30,7 +30,7 @@ import { applyZoom, type ZoomDirection } from './zoom';
  */
 
 /**
- * Actions that are only bound while the *app shell* has focus. The AEM page is
+ * Actions that are only bound while the *app shell* has focus. The page is
  * remote authoring UI: a bare `Ctrl+<letter>` there can be the page's own
  * editing shortcut (Ctrl+B is bold in AEM's rich-text editor), so those keys
  * are left to the page. The browser-navigation shortcuts (Back/Forward/Home,
@@ -57,7 +57,7 @@ export function isChatShortcutAction(action: AppShortcutAction): boolean {
  *  - `find` - the app-wide find key. Which find bar it opens depends on the
  *    *source* view, which `resolveShortcut` cannot see (it is pure); the
  *    {@link attachShortcutHandling} wrapper resolves it to `browser.find` for
- *    the AEM view or `app.find` for the shell.
+ *    the browser view or `app.find` for the shell.
  */
 export type ShortcutResolution =
   | { readonly kind: 'action'; readonly action: AppShortcutAction }
@@ -133,9 +133,9 @@ export function resolveShortcut(input: Input): ShortcutResolution | null {
 export interface ShortcutHandlingOptions {
   /**
    * Whether the chat-pane actions are bound for this source. Only the app
-   * shell passes `true`; the AEM view passes `false` so the remote page keeps
+   * shell passes `true`; the browser view passes `false` so the remote page keeps
    * its own `Ctrl+<letter>` editing shortcuts (see {@link CHAT_SHORTCUT_ACTIONS}).
-   * It also resolves the find key: the shell pushes `app.find`, the AEM view
+   * It also resolves the find key: the shell pushes `app.find`, the browser view
    * pushes `browser.find`.
    */
   readonly allowChatShortcuts: boolean;

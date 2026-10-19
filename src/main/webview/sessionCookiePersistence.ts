@@ -1,6 +1,6 @@
 /**
- * Session-cookie persistence for the AEM pane (deliberate deviation from the
- * step-05 cookie contract; see docs/verification.md, "AEM session cookies for
+ * Session-cookie persistence for the browser pane (deliberate deviation from the
+ * step-05 cookie contract; see docs/verification.md, "browser session cookies for
  * non-TLS hosts now survive restart").
  *
  * Chromium writes a cookie to disk only when it carries an `Expires`/`Max-Age`

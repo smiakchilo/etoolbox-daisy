@@ -7,11 +7,11 @@ import {
   type InstallAgentServiceDeps,
   createBridgeCurrentContext,
   createConfiguredHosts,
-  createCurrentAemServerContext,
+  createCurrentHostContext,
   createCurrentPageContext,
   createCurrentProjectLabel,
   createEnvironmentFacts,
-  createLateBoundAemToolContext,
+  createLateBoundToolContext,
   createLateBoundUserInputActions,
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
@@ -22,7 +22,7 @@ import {
   wireNavigationEpochCancellation,
 } from '../../../src/main/agentComposition';
 import { createFakeAgentService } from '../../../src/main/agents/fakeAgentService';
-import type { ActiveAemServer } from '../../../src/main/browser/browserController';
+import type { ActiveHost } from '../../../src/main/browser/browserController';
 import type {
   NavigationEpochChange,
   NavigationEpochTracker,
@@ -31,7 +31,7 @@ import type { ChatJournal } from '../../../src/main/chatJournal';
 import type { Logger } from '../../../src/main/logger';
 import {
   type AgentService,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type ProjectConfig,
   type ProjectId,
   type ServerConfig,
@@ -73,23 +73,23 @@ function noopLogger(): { logger: Logger; spies: { info: Mock; warn: Mock; error:
 }
 
 // ---------------------------------------------------------------------------
-// createCurrentAemServerContext / createBridgeCurrentContext
+// createCurrentHostContext / createBridgeCurrentContext
 // ---------------------------------------------------------------------------
 
-describe('createCurrentAemServerContext', () => {
+describe('createCurrentHostContext', () => {
   it('returns undefined without fabricating an origin when no server is active', () => {
-    const provider = createCurrentAemServerContext(() => undefined);
+    const provider = createCurrentHostContext(() => undefined);
     expect(provider()).toBeUndefined();
   });
 
   it('reads the active server fresh on every call rather than capturing it once', () => {
     const ids = counterIds('server');
-    let current: ActiveAemServer | undefined = {
+    let current: ActiveHost | undefined = {
       serverId: newServerId(ids),
       origin: 'https://a.example',
       revision: 0,
     };
-    const provider = createCurrentAemServerContext(() => current);
+    const provider = createCurrentHostContext(() => current);
 
     const first = provider();
     current = { serverId: newServerId(ids), origin: 'https://b.example', revision: 5 };
@@ -105,7 +105,7 @@ describe('createCurrentAemServerContext', () => {
 });
 
 describe('createCurrentPageContext', () => {
-  function activeServer(origin: string): ActiveAemServer {
+  function activeServer(origin: string): ActiveHost {
     return { serverId: newServerId(counterIds('server')), origin, revision: 1 };
   }
 
@@ -382,7 +382,7 @@ describe('createCurrentProjectLabel', () => {
 describe('createBridgeCurrentContext', () => {
   it("reads the active server's revision and the navigation epoch fresh on every call", () => {
     const ids = counterIds('server');
-    let server: ActiveAemServer | undefined = {
+    let server: ActiveHost | undefined = {
       serverId: newServerId(ids),
       origin: 'https://a.example',
       revision: 0,
@@ -412,18 +412,18 @@ describe('createBridgeCurrentContext', () => {
 });
 
 // ---------------------------------------------------------------------------
-// createLateBoundAemToolContext
+// createLateBoundToolContext
 // ---------------------------------------------------------------------------
 
-describe('createLateBoundAemToolContext', () => {
+describe('createLateBoundToolContext', () => {
   it('throws if currentContext is read before bind, rather than returning a placeholder', () => {
-    const lateBound = createLateBoundAemToolContext();
+    const lateBound = createLateBoundToolContext();
     expect(() => lateBound.currentContext()).toThrow(/bound/);
   });
 
   it('delegates to the bound controller fresh on every call, not a value captured at bind time', () => {
     const ids = counterIds('ctx');
-    const contexts: CurrentAemToolContext[] = [
+    const contexts: CurrentToolContext[] = [
       {
         origin: 'https://a.example',
         serverId: newServerId(ids),
@@ -442,10 +442,10 @@ describe('createLateBoundAemToolContext', () => {
       },
     ];
     let call = 0;
-    const controller: Pick<AgentChatController, 'currentAemToolContext'> = {
-      currentAemToolContext: () => contexts[call++]!,
+    const controller: Pick<AgentChatController, 'currentToolContext'> = {
+      currentToolContext: () => contexts[call++]!,
     };
-    const lateBound = createLateBoundAemToolContext();
+    const lateBound = createLateBoundToolContext();
 
     lateBound.bind(controller);
 
@@ -496,9 +496,9 @@ describe('wireNavigationEpochCancellation', () => {
 
   it("cancels the chat controller's in-flight turn when a user-initiated navigation bumps", () => {
     const { navigationEpoch, subscribe, emit } = captureBumpListener();
-    const handleAemContextInvalidated = vi.fn(() => Promise.resolve());
-    const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
-      handleAemContextInvalidated,
+    const handleHostContextInvalidated = vi.fn(() => Promise.resolve());
+    const chatController: Pick<AgentChatController, 'handleHostContextInvalidated'> = {
+      handleHostContextInvalidated,
     };
 
     wireNavigationEpochCancellation(navigationEpoch, chatController, noopLogger().logger);
@@ -506,27 +506,27 @@ describe('wireNavigationEpochCancellation', () => {
 
     emit(USER_CHANGE);
 
-    expect(handleAemContextInvalidated).toHaveBeenCalledTimes(1);
+    expect(handleHostContextInvalidated).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT cancel the turn when the agent itself navigated', () => {
     const { navigationEpoch, emit } = captureBumpListener();
-    const handleAemContextInvalidated = vi.fn(() => Promise.resolve());
-    const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
-      handleAemContextInvalidated,
+    const handleHostContextInvalidated = vi.fn(() => Promise.resolve());
+    const chatController: Pick<AgentChatController, 'handleHostContextInvalidated'> = {
+      handleHostContextInvalidated,
     };
 
     wireNavigationEpochCancellation(navigationEpoch, chatController, noopLogger().logger);
     emit({ epoch: 2, reason: 'server_switch', initiator: 'agent' });
 
-    expect(handleAemContextInvalidated).not.toHaveBeenCalled();
+    expect(handleHostContextInvalidated).not.toHaveBeenCalled();
   });
 
   it("returns the tracker's own unsubscribe function", () => {
     const unsubscribe = vi.fn();
     const navigationEpoch = { subscribe: vi.fn(() => unsubscribe) };
-    const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
-      handleAemContextInvalidated: () => Promise.resolve(),
+    const chatController: Pick<AgentChatController, 'handleHostContextInvalidated'> = {
+      handleHostContextInvalidated: () => Promise.resolve(),
     };
 
     const returned = wireNavigationEpochCancellation(
@@ -540,8 +540,8 @@ describe('wireNavigationEpochCancellation', () => {
 
   it('logs rather than throws if a non-conformant AgentService rejects instead of resolving a Result', async () => {
     const { navigationEpoch, emit } = captureBumpListener();
-    const chatController: Pick<AgentChatController, 'handleAemContextInvalidated'> = {
-      handleAemContextInvalidated: () => Promise.reject(new Error('boom')),
+    const chatController: Pick<AgentChatController, 'handleHostContextInvalidated'> = {
+      handleHostContextInvalidated: () => Promise.reject(new Error('boom')),
     };
     const { logger, spies } = noopLogger();
 
@@ -622,7 +622,7 @@ function installDeps(
   return {
     logger: noopLogger().logger,
     idGenerator: counterIds('turn'),
-    currentAemServerContext: () => undefined,
+    currentHostContext: () => undefined,
     navigationEpoch: () => 0,
     currentPageContext: () => undefined,
     gatedController,
@@ -662,13 +662,13 @@ describe('installAgentService', () => {
     expect(gatedController.getStatus().serviceState).toBe('starting');
   });
 
-  it('threads cancelAemRequests and the chat journal into the controller it builds', async () => {
+  it('threads cancelBridgeRequests and the chat journal into the controller it builds', async () => {
     // Both are optional dependencies wired only here; a silent drop would leave
     // Stop not cancelling the AEM fetch and the journal never writing, with no
     // type error to catch it.
     const agentService = createFakeAgentService({ idGenerator: counterIds('fake') });
     const gatedController = createStartupGatedAgentChatController();
-    const cancelAemRequests = vi.fn();
+    const cancelBridgeRequests = vi.fn();
     const openChat = vi.fn();
     const chatJournal: ChatJournal = {
       openChat,
@@ -681,7 +681,7 @@ describe('installAgentService', () => {
     };
 
     await installAgentService(
-      installDeps(gatedController, { chatJournal, cancelAemRequests }),
+      installDeps(gatedController, { chatJournal, cancelBridgeRequests }),
       agentService,
     );
 
@@ -691,7 +691,7 @@ describe('installAgentService', () => {
     await gatedController.abort({ chatId });
 
     expect(openChat).toHaveBeenCalledTimes(1);
-    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+    expect(cancelBridgeRequests).toHaveBeenCalledTimes(1);
   });
 });
 

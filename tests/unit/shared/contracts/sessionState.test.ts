@@ -3,7 +3,7 @@ import { agentEventSchema, SESSION_STREAM_STATES } from '../../../../src/shared'
 import {
   applyAgentEvent,
   applyTransition,
-  canRunAemTool,
+  canRunTool,
   canSendMessage,
   canTransition,
   type SessionStatus,
@@ -332,7 +332,7 @@ describe('canSendMessage', () => {
   });
 });
 
-describe('canRunAemTool', () => {
+describe('canRunTool', () => {
   it.each([
     ['idle', true],
     ['sending', true],
@@ -344,44 +344,44 @@ describe('canRunAemTool', () => {
   ] as const)(
     'with browserReady=true and authenticated=true, state %s reports canRun=%s',
     (state, expectedCanRun) => {
-      const result = canRunAemTool({ state, authenticated: true, browserReady: true });
+      const result = canRunTool({ state, authenticated: true, browserReady: true });
       expect(result.canRun).toBe(expectedCanRun);
     },
   );
 
   it('blocks when the session is closed', () => {
-    const result = canRunAemTool({ state: 'closed', authenticated: true, browserReady: true });
+    const result = canRunTool({ state: 'closed', authenticated: true, browserReady: true });
     expect(result).toEqual({ canRun: false, reason: 'session_closed' });
   });
 
   it('blocks with its own reason while cancelling, distinct from session_closed - cancelling is transient teardown of in-flight AEM work (requirements-decisions.md line 167, lines 200-201), not the end of the session', () => {
-    const result = canRunAemTool({ state: 'cancelling', authenticated: true, browserReady: true });
+    const result = canRunTool({ state: 'cancelling', authenticated: true, browserReady: true });
     expect(result).toEqual({ canRun: false, reason: 'cancelling' });
   });
 
   it('does not permit a new AEM request to start while cancelling, even though browserReady is true - this is the regression the orchestrator caught', () => {
     const status: SessionStatus = { state: 'cancelling', authenticated: true, browserReady: true };
-    expect(canRunAemTool(status).canRun).toBe(false);
+    expect(canRunTool(status).canRun).toBe(false);
   });
 
   it('blocks with session_error while the session is in the error state, symmetrically with canSendMessage', () => {
-    const result = canRunAemTool({ state: 'error', authenticated: true, browserReady: true });
+    const result = canRunTool({ state: 'error', authenticated: true, browserReady: true });
     expect(result).toEqual({ canRun: false, reason: 'session_error' });
   });
 
   it('blocks when the browser is not ready, even though canSendMessage would allow sending in the same status', () => {
     const status: SessionStatus = { state: 'idle', authenticated: true, browserReady: false };
-    expect(canRunAemTool(status)).toEqual({ canRun: false, reason: 'browser_not_ready' });
+    expect(canRunTool(status)).toEqual({ canRun: false, reason: 'browser_not_ready' });
     expect(canSendMessage(status)).toEqual({ canSend: true });
   });
 
   it("is unaffected by authentication while streaming - only the bridge's own readiness and the cancelling/error/closed states matter", () => {
-    const result = canRunAemTool({ state: 'streaming', authenticated: false, browserReady: true });
+    const result = canRunTool({ state: 'streaming', authenticated: false, browserReady: true });
     expect(result).toEqual({ canRun: true });
   });
 
   it('allows the tool call when the session is open and the browser is ready', () => {
-    const result = canRunAemTool({ state: 'idle', authenticated: true, browserReady: true });
+    const result = canRunTool({ state: 'idle', authenticated: true, browserReady: true });
     expect(result).toEqual({ canRun: true });
   });
 });

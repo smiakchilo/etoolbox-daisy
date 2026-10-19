@@ -67,14 +67,14 @@ export function describeRequiredAction(action: RequiredAction): string | undefin
   switch (action) {
     case 'none':
       return undefined;
-    case 'sign_in_to_aem':
-      return 'Sign in to AEM in the browser pane, then try again';
+    case 'sign_in_to_host':
+      return 'Sign in to the site in the browser pane, then try again';
     case 'sign_in_to_agent':
       return 'Sign in to Copilot, then try again';
     case 'add_server':
-      return 'Add an AEM server in Settings';
+      return 'Add a host in Settings';
     case 'select_server':
-      return 'Select an AEM server first';
+      return 'Select a host first';
     case 'review_certificate':
       return 'Approve the untrusted certificate in the banner above the browser pane, then try again';
     case 'check_proxy_settings':

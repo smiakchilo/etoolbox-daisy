@@ -8,9 +8,9 @@
   "author": "EToolbox Daisy",
   "license": "MIT",
   "scripts": {
-    "dev": "npm run icons && npm run build:aem-preload && electron-vite dev",
-    "build": "npm run icons && electron-vite build && npm run build:aem-preload",
-    "build:aem-preload": "electron-vite build --config electron.vite.aem-preload.config.ts",
+    "dev": "npm run icons && npm run build:webview-preload && electron-vite dev",
+    "build": "npm run icons && electron-vite build && npm run build:webview-preload",
+    "build:webview-preload": "electron-vite build --config electron.vite.webview-preload.config.ts",
     "icons": "node scripts/generate-icons.mjs",
     "typecheck": "tsc --build --force",
     "lint": "eslint .",

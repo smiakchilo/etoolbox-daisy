@@ -11,7 +11,7 @@ import type { WebContents } from 'electron';
  *
  * The shortcut always targets the *app shell's* `WebContents` - the same target
  * the old menu role used (`focusedWindow.webContents`) - so it behaves
- * identically no matter which half of the window has focus. The AEM page's own
+ * identically no matter which half of the window has focus. The page's own
  * DevTools are reached through that pane's right-click "Inspect" item instead
  * (`contextMenu.ts`), which is why this module offers both.
  */
@@ -32,7 +32,7 @@ export function isToggleDevToolsShortcut(input: Electron.Input): boolean {
 /**
  * Binds `Ctrl+Shift+I` on `source` to toggle `target`'s DevTools.
  *
- * `source` and `target` are separate arguments because the AEM pane's
+ * `source` and `target` are separate arguments because the browser pane's
  * `WebContentsView` is where the keystroke lands while the shortcut still means
  * the shell's DevTools: the view attaches with `target` = its window's own
  * `WebContents`, the shell with `source === target`.
@@ -52,7 +52,7 @@ export function attachDevToolsShortcut(source: WebContents, target: WebContents)
 /**
  * Opens `webContents`' DevTools in their own window, unless already open.
  *
- * Detached is explicit on purpose: this is used for the AEM pane, whose remote
+ * Detached is explicit on purpose: this is used for the browser pane, whose remote
  * page must not reflow or cover the app's two-pane layout. The caller can then
  * `inspectElement(x, y)` to select the element the menu was invoked on.
  */

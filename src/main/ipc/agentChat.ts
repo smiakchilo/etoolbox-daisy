@@ -54,7 +54,7 @@ import { createAgentChatEventForwarder, type AgentChatController } from '../agen
  * `src/main/ipc/agent.ts`'s comment claiming to be "the only place in
  * `src/main` allowed to import `../../agent`" is now false: this module
  * imports `../agentChatController`, which imports `AgentService`/
- * `CurrentAemToolContext` types from `../../agent`. That comment has been
+ * `CurrentToolContext` types from `../../agent`. That comment has been
  * corrected there. No ESLint rule enforced the old claim (only
  * `@github/copilot-sdk`/`@github/copilot` imports are restricted, and only
  * to `src/agent/**` - see `eslint.config.mjs`), so nothing but the comment

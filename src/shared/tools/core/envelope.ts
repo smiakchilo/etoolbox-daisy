@@ -13,16 +13,16 @@ import type { ChatId, RequestId, ServerId, TurnId } from '../../contracts';
  */
 
 /**
- * Total budget for one AEM request, end to end, per requirements-decisions.md
+ * Total budget for one bridge request, end to end, per requirements-decisions.md
  * section 6.
  */
-export const AEM_REQUEST_TIMEOUT_MS = 90_000;
+export const WEBVIEW_REQUEST_TIMEOUT_MS = 90_000;
 
 /**
  * The budget for the one **honest count** a search may run in the background
  * (`aem_query_format_ask`): a full, un-guessed QueryBuilder count, which is
  * proportional to the result size and can legitimately take minutes. Longer
- * than {@link AEM_REQUEST_TIMEOUT_MS} on purpose - a count is not a page read,
+ * than {@link WEBVIEW_REQUEST_TIMEOUT_MS} on purpose - a count is not a page read,
  * and giving it the page deadline would time out the very request the total
  * line is waiting for. See docs/accurate-search-total.md.
  */
@@ -45,11 +45,14 @@ export type Clock = () => number;
  * deadline once, here, against a single clock reading is what makes
  * "90 seconds total" actually mean 90 seconds total.
  *
- * `timeoutMs` defaults to {@link AEM_REQUEST_TIMEOUT_MS}; the one caller that
+ * `timeoutMs` defaults to {@link WEBVIEW_REQUEST_TIMEOUT_MS}; the one caller that
  * passes a different value is the background count, which grants
  * {@link AEM_COUNT_TIMEOUT_MS} to a request that is expected to run long.
  */
-export function computeDeadline(clock: Clock, timeoutMs: number = AEM_REQUEST_TIMEOUT_MS): number {
+export function computeDeadline(
+  clock: Clock,
+  timeoutMs: number = WEBVIEW_REQUEST_TIMEOUT_MS,
+): number {
   return clock() + timeoutMs;
 }
 
@@ -93,7 +96,7 @@ export interface ToolEnvelopeBase extends ToolRequestEnvelopeCommon {
   readonly args: unknown;
 }
 
-export interface CurrentAemContext {
+export interface CurrentBridgeContext {
   readonly serverRevision: number;
   readonly navigationEpoch: number;
 }
@@ -124,8 +127,8 @@ export type StalenessStatus = 'fresh' | 'stale_server_revision' | 'stale_navigat
  * this generic module never has to import a concrete tool.
  */
 export function classifyStaleness(
-  envelope: CurrentAemContext,
-  current: CurrentAemContext,
+  envelope: CurrentBridgeContext,
+  current: CurrentBridgeContext,
 ): StalenessStatus {
   if (envelope.serverRevision !== current.serverRevision) return 'stale_server_revision';
   if (envelope.navigationEpoch !== current.navigationEpoch) return 'stale_navigation_epoch';

@@ -13,11 +13,11 @@ import { type AgentEvent, SESSION_STREAM_STATES, type SessionStreamState } from 
  * `SessionStreamState` itself:
  *
  * - Whether the user is signed in to Copilot.
- * - Whether the AEM browser pane is currently on the active server and ready
+ * - Whether the browser pane is currently on the active server and ready
  *   for a tool call to target it.
  *
  * Both can be true or false in combination with *any* streaming state - the
- * user can lose their AEM session mid-stream, or the browser can be mid
+ * user can lose their browser session mid-stream, or the browser can be mid
  * server-switch while a chat sits idle. Adding "notSignedIn" or
  * "browserNotReady" as extra members of the streaming enum would multiply
  * the state space by every combination of the two, most of them unreachable
@@ -26,7 +26,7 @@ import { type AgentEvent, SESSION_STREAM_STATES, type SessionStreamState } from 
  * separate fields on `SessionStatus` means each condition is set by the part
  * of the app that actually knows about it (auth flow, browser navigation)
  * independently of the agent event stream. `canSendMessage` and
- * `canRunAemTool` below each combine the fields relevant to the question
+ * `canRunTool` below each combine the fields relevant to the question
  * they answer into a single yes/no-with-reason result - deliberately two
  * functions, not one, because the two questions have different answers: see
  * their doc comments for why `browserReady` gates only the second.
@@ -112,7 +112,7 @@ export interface SessionStatus {
   readonly state: SessionStreamState;
   /** Whether the user currently has a usable Copilot sign-in. */
   readonly authenticated: boolean;
-  /** Whether the AEM browser pane is on the active server and ready for a tool call. */
+  /** Whether the browser pane is on the active server and ready for a tool call. */
   readonly browserReady: boolean;
 }
 
@@ -139,10 +139,10 @@ export type CanSendResult =
  * section 3 says "the bridge is unavailable during navigation, server
  * switching, or while the browser is on another origin" - that describes the
  * *tool bridge*, not the composer, and nothing in the docs disables the
- * message input for it. AEM navigation happens constantly; gating sending on
+ * message input for it. navigation happens constantly; gating sending on
  * it would disable the composer mid-sentence and would also stop the user
- * asking Copilot something that needs no AEM access at all. `browserReady`
- * still answers a real question - see `canRunAemTool` below - it just is not
+ * asking Copilot something that needs no browser access at all. `browserReady`
+ * still answers a real question - see `canRunTool` below - it just is not
  * this one.
  */
 export function canSendMessage(status: SessionStatus): CanSendResult {
@@ -153,20 +153,20 @@ export function canSendMessage(status: SessionStatus): CanSendResult {
   return { canSend: true };
 }
 
-export const AEM_TOOL_BLOCK_REASONS = [
+export const TOOL_BLOCK_REASONS = [
   'session_closed',
   'session_error',
   'cancelling',
   'browser_not_ready',
 ] as const;
 
-export type AemToolBlockReason = (typeof AEM_TOOL_BLOCK_REASONS)[number];
+export type ToolBlockReason = (typeof TOOL_BLOCK_REASONS)[number];
 
-export type CanRunAemToolResult =
-  { readonly canRun: true } | { readonly canRun: false; readonly reason: AemToolBlockReason };
+export type CanRunToolResult =
+  { readonly canRun: true } | { readonly canRun: false; readonly reason: ToolBlockReason };
 
 /**
- * Derives whether a tool call that targets the AEM browser pane may run right
+ * Derives whether a tool call that targets the browser pane may run right
  * now - the question requirements-decisions.md section 3 is actually about.
  * Separate from `canSendMessage`: authentication to Copilot and the
  * conversational turn state are irrelevant to whether the bridge can reach
@@ -178,9 +178,9 @@ export type CanRunAemToolResult =
  * `session_closed`: requirements-decisions.md line 167 ("Cancel queued
  * requests when stopping or switching context") and lines 200-201
  * ("Selecting another chat/server or New chat stops the current response
- * and cancels application-side AEM requests") both describe `cancelling` as
- * exactly the state whose entire purpose is tearing down in-flight AEM work.
- * Starting a *new* AEM request while that teardown is happening is the
+ * and cancels application-side requests") both describe `cancelling` as
+ * exactly the state whose entire purpose is tearing down in-flight bridge work.
+ * Starting a *new* request while that teardown is happening is the
  * opposite of the requirement. The reason is distinct from
  * `session_closed` because the caller needs to tell "this session is over"
  * (permanent) apart from "we are stopping current work" (transient -
@@ -189,7 +189,7 @@ export type CanRunAemToolResult =
  * `error` also blocks, for the same reason `canSendMessage` blocks on
  * `session_error`: this module's only defined recovery path out of `error`
  * is to `idle` (see the transition table above), specifically so a broken
- * turn cannot be resumed as if nothing happened. An AEM tool call that
+ * turn cannot be resumed as if nothing happened. An tool call that
  * reaches this gate is part of that same turn machinery (requested and
  * approved via the `tool.call.*` events, which only fire while
  * `streaming`/`runningTool`); letting it start anyway after the turn has
@@ -198,8 +198,8 @@ export type CanRunAemToolResult =
  * their disagreement over `browserReady`.
  *
  * `idle` is deliberately left permissive: nothing in requirements-decisions.md
- * restricts AEM tool calls to a particular streaming state, and a tool call
- * is not necessarily driven by the current chat turn - the AEM pane itself
+ * restricts tool calls to a particular streaming state, and a tool call
+ * is not necessarily driven by the current chat turn - the browser pane itself
  * can originate a read independently of whether a chat happens to be mid
  * turn. Note this does surface a real seam: `nextStreamStateForEvent` only
  * ever reaches `runningTool` *from* `sending` or `streaming` (see its doc
@@ -210,7 +210,7 @@ export type CanRunAemToolResult =
  * change, and is worth the next reader's attention if `idle`-time tool calls
  * turn out to need their own tracked state.
  */
-export function canRunAemTool(status: SessionStatus): CanRunAemToolResult {
+export function canRunTool(status: SessionStatus): CanRunToolResult {
   if (status.state === 'closed') return { canRun: false, reason: 'session_closed' };
   if (status.state === 'error') return { canRun: false, reason: 'session_error' };
   if (status.state === 'cancelling') return { canRun: false, reason: 'cancelling' };

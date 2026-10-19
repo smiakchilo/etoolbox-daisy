@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type ToolDescriptor,
   type ToolHost,
@@ -43,7 +43,7 @@ export const SKILL_TOOL_DESCRIPTOR: ToolDescriptor = {
   parameters: z.toJSONSchema(skillArgsSchema, { io: 'input' }),
 };
 
-export function createSkillExecutor(host: ToolHost): AemToolExecutor {
+export function createSkillExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
     if (context.signal?.aborted === true) {

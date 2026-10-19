@@ -16,12 +16,7 @@ import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
 import type { ConfiguredHostInfo, OpenPageOutcome, OpenPageTarget } from './navigation';
 import type { AemResponseOutcome } from './responseValidation';
-import type {
-  AemToolExecutor,
-  BrokerOutcome,
-  CurrentAemToolContext,
-  ToolDescriptor,
-} from './types';
+import type { ToolExecutor, BrokerOutcome, CurrentToolContext, ToolDescriptor } from './types';
 import { firstIssueMessage } from './validationIssue';
 
 /**
@@ -31,7 +26,7 @@ import { firstIssueMessage } from './validationIssue';
  */
 
 /** The per-call context the SDK hands an executor: its tool-call id and abort signal. */
-export type ToolExecutionContext = Parameters<AemToolExecutor>[1];
+export type ToolExecutionContext = Parameters<ToolExecutor>[1];
 
 /**
  * A closed vocabulary of semantic diagnostics a tool may report beyond a
@@ -51,14 +46,14 @@ export type ToolDiagnosticCode = 'AEM_COUNT_FAILED';
 export interface ToolHost {
   readonly bridge: {
     /**
-     * One authenticated read through the AEM pane. `envelope` is the request
+     * One authenticated read through the browser pane. `envelope` is the request
      * the broker guards (deadline, server revision, navigation epoch); `url`
      * is the same-origin path the tool built.
      */
     request(envelope: ToolEnvelopeBase, url: string): Promise<BrokerOutcome>;
   };
   /** Read fresh on every call; the model can never influence it. */
-  readonly currentContext: () => CurrentAemToolContext;
+  readonly currentContext: () => CurrentToolContext;
   /**
    * The facts of the host the browser pane is currently on - its origin and
    * its effective content/component/DAM roots - or `undefined` when the live URL
@@ -183,7 +178,7 @@ interface ToolModuleBase {
    * not listed is refused.
    */
   readonly uses?: readonly string[];
-  readonly createExecutor: (host: ToolHost) => AemToolExecutor;
+  readonly createExecutor: (host: ToolHost) => ToolExecutor;
 }
 
 /**
@@ -237,7 +232,7 @@ export interface ToolExecutorSpec<
     deps: { readonly origin: string } & TRuntimeDeps,
   ) => Promise<ToolOutcome<TSuccess>>;
   readonly runtimeDeps: TRuntimeDeps;
-  readonly currentContext: () => CurrentAemToolContext;
+  readonly currentContext: () => CurrentToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
   /** Message used when the executor throws something that is not an `Error`. */
@@ -257,7 +252,7 @@ export function createToolExecutor<
   TEnvelope extends ToolEnvelopeBase,
   TSuccess extends { readonly ok: true; readonly operation: string },
   TRuntimeDeps extends Record<string, unknown>,
->(spec: ToolExecutorSpec<TEnvelope, TSuccess, TRuntimeDeps>): AemToolExecutor {
+>(spec: ToolExecutorSpec<TEnvelope, TSuccess, TRuntimeDeps>): ToolExecutor {
   return async (args, context) => {
     if (context.signal?.aborted === true) {
       const requestId = newRequestId(spec.idGenerator);
@@ -296,7 +291,7 @@ export function createToolExecutor<
       return err(
         createToolError(
           'UNEXPECTED_RESPONSE',
-          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an AEM request'),
+          firstIssueMessage(parsedEnvelope.error.issues, 'Failed to build an bridge request'),
           requestId,
         ),
       );
@@ -335,7 +330,7 @@ export function createToolExecutor<
 /** How the model reads any tool's failure. Tool-agnostic: it renders the shared error taxonomy. */
 export function renderToolFailureForModel(error: ToolError): string {
   return (
-    `AEM tool error [${error.code}]: ${error.message} ` +
+    `Tool error [${error.code}]: ${error.message} ` +
     `(requestId=${error.requestId}, retryable=${String(error.retryable)}, ` +
     `requiredAction=${error.requiredAction})`
   );
@@ -349,7 +344,7 @@ export function renderToolFailureForModel(error: ToolError): string {
 export const SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER = '{{tools}}';
 
 /**
- * Session instructions for a real AEM session. The shared prose lives in a
+ * Session instructions for a real browser session. The shared prose lives in a
  * markdown resource the application reads (`resources/rules/session.md`)
  * and hands in as `template`; this function only splices the enabled tools'
  * paragraphs (their instructions) in at the one {@link SESSION_INSTRUCTIONS_TOOLS_PLACEHOLDER}.

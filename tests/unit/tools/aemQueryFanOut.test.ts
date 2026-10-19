@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createAemQueryExecutor, executeAemQuery } from '../../../src/tools/aem-query/aemQuery';
 import {
   type BrokerOutcome,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   newChatId,
   newServerId,
   newTurnId,
@@ -152,7 +152,7 @@ describe('executeAemQuery root fan-out', () => {
 });
 
 describe('aem_query executor root validation', () => {
-  function context(ids: ReturnType<typeof createCountingIdGenerator>): CurrentAemToolContext {
+  function context(ids: ReturnType<typeof createCountingIdGenerator>): CurrentToolContext {
     return {
       origin: ORIGIN,
       serverId: newServerId(ids),

@@ -12,8 +12,8 @@ import type { SecretStore } from '../secretStore';
  *
  * Why credentials are embedded in the URL rather than passed some other way:
  * the runtime is a separate child process that makes its own outbound
- * connections, so Electron's `login` event (which the AEM pane's proxy uses -
- * see `aem/proxyAuth.ts`) is not available to it. `HTTPS_PROXY`/
+ * connections, so Electron's `login` event (which the browser pane's proxy uses -
+ * see `webview/proxyAuth.ts`) is not available to it. `HTTPS_PROXY`/
  * `HTTP_PROXY` URLs carrying `user:pass@` are the only mechanism the runtime
  * understands. The password is read from `secretStore` by the caller and
  * never persisted anywhere else; this function only formats it.

@@ -63,10 +63,10 @@ export type AgentAuthState = AuthStatus;
  * rather than a second, parallel error vocabulary - the plan's instruction
  * for this file is explicit about that. What this type does NOT reuse is
  * `ToolError` itself: every `ToolError` is bound to a `RequestId`
- * ("`One application-issued AEM request, used end to end for correlation`",
+ * ("`One application-issued request, used end to end for correlation`",
  * per `src/shared/contracts/ids.ts`), and a failure at this level - "you
  * already have an open conversation", "a turn is in flight", "Copilot is not
- * signed in" - has no AEM request to correlate against; inventing one only
+ * signed in" - has no request to correlate against; inventing one only
  * to satisfy `ToolError`'s shape would be a fictitious id serving no actual
  * correlation purpose. `AgentServiceError` is therefore the minimal
  * projection of `ToolError` that still fits this boundary: the same `code`
@@ -109,7 +109,7 @@ export function createAgentServiceError(
  *   before the new conversation opens. This mirrors
  *   requirements-decisions.md's own description of the equivalent UI action
  *   ("Selecting another chat/server or New chat stops the current response
- *   and cancels application-side AEM requests"): switching conversations is
+ *   and cancels application-side requests"): switching conversations is
  *   defined to cancel, not to fail. A caller that wants the previous
  *   conversation's turn to run to completion first must not call
  *   `openConversation` again until it does.
@@ -142,7 +142,7 @@ export interface SendPromptRequest {
   readonly prompt: string;
   /**
    * The text to show in the conversation timeline in place of `prompt`, when
-   * the application prepends context (the current AEM page) the user did not
+   * the application prepends context (the current page) the user did not
    * type. `prompt` is always what the model reads; `displayPrompt` only
    * affects what the SDK records/shows as the user's own message. Omitted when
    * the two are identical.

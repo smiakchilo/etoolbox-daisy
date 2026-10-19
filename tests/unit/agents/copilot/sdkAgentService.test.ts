@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type AgentAuthStatusSource,
   createSdkAgentService,
   TOOL_DISPATCH_TIMEOUT_MS,
@@ -189,7 +189,7 @@ async function setUpOpenConversation(
   sessionHandle: FakeSessionHandle,
   ids: IdGenerator,
   authInitial?: AuthStatus,
-  toolHandlers?: Readonly<Record<string, AemToolExecutor>>,
+  toolHandlers?: Readonly<Record<string, ToolExecutor>>,
 ) {
   const { client, createSession, resumeSession } = makeFakeClient(sessionHandle.session);
   const { source: authSource, set: setAuth } = makeAuthSource(authInitial);
@@ -417,7 +417,7 @@ describe('sdkAgentService - tool lifecycle', () => {
   it("maps the guaranteed external_tool.requested pair, then emits tool.result from the registered executor's own resolution (not from any SDK round trip)", async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
-    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(ok({ ok: true })));
     const { service, chatId, events, createSession } = await setUpOpenConversation(
       sessionHandle,
       ids,
@@ -474,7 +474,7 @@ describe('sdkAgentService - tool lifecycle', () => {
   it('ends the turn at a turn-completing tool result, cancelling the runtime instead of resuming the model', async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
-    const executor = vi.fn<AemToolExecutor>(() =>
+    const executor = vi.fn<ToolExecutor>(() =>
       Promise.resolve(ok({ operation: 'aem_query_format_ask', turnComplete: true })),
     );
     const { service, chatId, events, createSession } = await setUpOpenConversation(
@@ -537,7 +537,7 @@ describe('sdkAgentService - tool lifecycle', () => {
   it('does not end the turn for a tool result without the turn-complete marker', async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
-    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(ok({ ok: true })));
     const { service, chatId, events, createSession } = await setUpOpenConversation(
       sessionHandle,
       ids,
@@ -569,7 +569,7 @@ describe('sdkAgentService - tool lifecycle', () => {
   it("accepts a tool call that is the turn's first activity, with no preceding assistant.message_start (the live sending -> runningTool case)", async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
-    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(ok({ ok: true })));
     const { service, chatId, events } = await setUpOpenConversation(sessionHandle, ids, undefined, {
       aem_get_json: executor,
     });
@@ -596,7 +596,7 @@ describe('sdkAgentService - tool lifecycle', () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
     const toolError: ToolError = createToolError('UNEXPECTED_RESPONSE', 'boom', newRequestId(ids));
-    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(err(toolError)));
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(err(toolError)));
     const { service, chatId, events, createSession } = await setUpOpenConversation(
       sessionHandle,
       ids,
@@ -640,7 +640,7 @@ describe('sdkAgentService - tool lifecycle', () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
     let resolveExecutor: (() => void) | undefined;
-    const executor = vi.fn<AemToolExecutor>(
+    const executor = vi.fn<ToolExecutor>(
       () =>
         new Promise((resolve) => {
           resolveExecutor = () => resolve(ok({ ok: true }));
@@ -691,7 +691,7 @@ describe('sdkAgentService - app tools versus runtime built-ins', () => {
   it('registers every app tool with overridesBuiltInTool, so a clashing built-in (ask_user) can never run in its place', async () => {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
-    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(ok({ ok: true })));
     const { createSession } = await setUpOpenConversation(sessionHandle, ids, undefined, {
       aem_get_json: executor,
       ask_user: executor,
@@ -709,7 +709,7 @@ describe('sdkAgentService - tool dispatch watchdog', () => {
   async function startTurnWithAppTool() {
     const ids = counterIdGenerator();
     const sessionHandle = makeFakeSession();
-    const executor = vi.fn<AemToolExecutor>(() => Promise.resolve(ok({ ok: true })));
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(ok({ ok: true })));
     const setup = await setUpOpenConversation(sessionHandle, ids, undefined, {
       ask_user: executor,
     });

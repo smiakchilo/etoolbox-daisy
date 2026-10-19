@@ -41,7 +41,7 @@ declare const brand: unique symbol;
 /** Attaches a compile-time-only tag to `string`; erased at runtime. */
 type Branded<TBrand extends string> = string & { readonly [brand]: TBrand };
 
-/** Stable identifier of a configured AEM server entry. */
+/** Stable identifier of a configured host entry. */
 export type ServerId = Branded<'ServerId'>;
 /** Stable identifier of a configured proxy entry. */
 export type ProxyId = Branded<'ProxyId'>;
@@ -63,13 +63,13 @@ export type MessageId = Branded<'MessageId'>;
 export type ToolCallId = Branded<'ToolCallId'>;
 /** One extended-thinking (reasoning) block emitted by the model within a turn. */
 export type ReasoningId = Branded<'ReasoningId'>;
-/** One application-issued AEM request, used end to end for correlation. */
+/** One application-issued request, used end to end for correlation. */
 export type RequestId = Branded<'RequestId'>;
 /**
  * One interactive question the agent asked the user, correlated with its
  * answer within a turn. Deliberately distinct from {@link RequestId}: that one
- * is documented as "one application-issued AEM request", and an ask-user
- * question is not an AEM request at all - reusing it would make two unrelated
+ * is documented as "one application-issued request", and an ask-user
+ * question is not an request at all - reusing it would make two unrelated
  * correlation domains indistinguishable in a log line.
  */
 export type UserInputRequestId = Branded<'UserInputRequestId'>;

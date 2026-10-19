@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type BrokerOutcome,
   type JsonValue,
   type RequestId,
@@ -348,7 +348,7 @@ function isAborted(context: ToolExecutionContext): boolean {
 // ---------------------------------------------------------------------------
 
 /** Builds the executor; the search state lives in its closure. */
-export function createAemSemanticSearchExecutor(host: ToolHost): AemToolExecutor {
+export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
   const searches = new Map<string, SearchState>();
 
   const remember = (searchId: string, state: SearchState): void => {

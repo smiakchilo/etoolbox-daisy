@@ -2,12 +2,12 @@ import {
   createAgentChatController,
   type AgentChatController,
   type AgentChatControllerDeps,
-  type AemServerContext,
+  type HostContext,
   type ProjectRulesContext,
   type StartupGatedAgentChatController,
 } from './agentChatController';
 import type { FakeAgentService } from './agents/fakeAgentService';
-import { type ActiveAemServer } from './browser/browserController';
+import { type ActiveHost } from './browser/browserController';
 import { type NavigationEpochTracker } from './browser/navigationEpoch';
 import type { ChatJournal } from './chatJournal';
 import type { Logger } from './logger';
@@ -15,8 +15,8 @@ import {
   type AgentService,
   type ChatId,
   type ConfiguredHostInfo,
-  type CurrentAemContext,
-  type CurrentAemToolContext,
+  type CurrentBridgeContext,
+  type CurrentToolContext,
   type EnvironmentFacts,
   type IdGenerator,
   type ModelCatalogEntry,
@@ -37,32 +37,32 @@ import {
 
 /**
  * The production composition root (`src/main/index.ts`) wires together every
- * component of the AEM-tool vertical slice - the bridge transport/broker
- * (`src/main/aem/**`), the SDK/fake `AgentService` adapters (`src/agent/**`),
+ * component of the tool vertical slice - the bridge transport/broker
+ * (`src/main/webview/**`), the SDK/fake `AgentService` adapters (`src/agent/**`),
  * and `agentChatController.ts` - but `index.ts` itself only runs inside
  * `app.whenReady()`, where nothing is independently callable by a test. This
  * module holds every piece of that wiring that has a decision worth testing
- * in isolation: which agent service to construct, how a `CurrentAemContext`/
- * `CurrentAemToolContext`/`AemServerContext` is derived from the browser
+ * in isolation: which agent service to construct, how a `CurrentBridgeContext`/
+ * `CurrentToolContext`/`HostContext` is derived from the browser
  * controller's live state, and how a request actually reaches the bridge
  * broker. `index.ts` only calls these functions inside `app.whenReady()`; it
  * adds no logic of its own on top of them.
  */
 
 // ---------------------------------------------------------------------------
-// Deriving "the current AEM server/document" for the tool pipeline
+// Deriving "the current host/document" for the tool pipeline
 // ---------------------------------------------------------------------------
 
 /**
- * Builds the `AgentChatControllerDeps.currentAemServerContext` provider from
+ * Builds the `AgentChatControllerDeps.currentHostContext` provider from
  * `BrowserController.activeServer`. Returns a closure - not a snapshot - so
  * every call re-reads `getActiveServer()`: a server switch between one tool
  * call and the next must be visible on the very next call, never only from
  * whatever server was active when this function ran.
  */
-export function createCurrentAemServerContext(
-  getActiveServer: () => ActiveAemServer | undefined,
-): () => AemServerContext | undefined {
+export function createCurrentHostContext(
+  getActiveServer: () => ActiveHost | undefined,
+): () => HostContext | undefined {
   return () => {
     const server = getActiveServer();
     if (server === undefined) return undefined;
@@ -75,7 +75,7 @@ export function createCurrentAemServerContext(
  * controller prepends to every prompt.
  *
  * Reads the active server and the live document URL fresh on every call - the
- * same closure-not-snapshot rule as {@link createCurrentAemServerContext} -
+ * same closure-not-snapshot rule as {@link createCurrentHostContext} -
  * because the user can navigate to a different page (or switch servers)
  * between one turn and the next, and the context has to describe where they
  * are now.
@@ -87,7 +87,7 @@ export function createCurrentAemServerContext(
  * no page context for that turn rather than an unsafe or misleading one.
  */
 export function createCurrentPageContext(
-  getActiveServer: () => ActiveAemServer | undefined,
+  getActiveServer: () => ActiveHost | undefined,
   getDocumentUrl: () => string | undefined,
   getEnvironmentFacts: () => EnvironmentFacts | undefined,
 ): () => string | undefined {
@@ -199,7 +199,7 @@ export function createConfiguredHosts(
 }
 
 /**
- * No server selected has to become a `CurrentAemContext` that makes
+ * No server selected has to become a `CurrentBridgeContext` that makes
  * `classifyStaleness` (`toolContracts.ts`) fail *closed* for any request
  * already in flight, never one that happens to let a stray reply through.
  * `serverRevisionSchema` (`serverConfig.ts`) is `z.number().int().nonnegative()`,
@@ -209,16 +209,16 @@ export function createConfiguredHosts(
 const NO_ACTIVE_SERVER_REVISION_SENTINEL = -1;
 
 /**
- * Builds the `BrokerDeps.currentContext` provider for `createAemBridgeBroker`.
+ * Builds the `BrokerDeps.currentContext` provider for `createWebviewBridgeBroker`.
  * Reads `getActiveServer()`/`navigationEpoch()` fresh on every call, for the
- * same reason as `createCurrentAemServerContext` above - the broker's own doc
+ * same reason as `createCurrentHostContext` above - the broker's own doc
  * comment requires this ("the live serverRevision + navigationEpoch, read
  * fresh at every decision point").
  */
 export function createBridgeCurrentContext(
-  getActiveServer: () => ActiveAemServer | undefined,
+  getActiveServer: () => ActiveHost | undefined,
   navigationEpoch: () => number,
-): () => CurrentAemContext {
+): () => CurrentBridgeContext {
   return () => ({
     serverRevision: getActiveServer()?.revision ?? NO_ACTIVE_SERVER_REVISION_SENTINEL,
     navigationEpoch: navigationEpoch(),
@@ -232,7 +232,7 @@ export function createBridgeCurrentContext(
  *
  * It must be absolute and derive solely from the application's own install
  * location - never from settings, the user's home directory, the project
- * directory, or anything an AEM response could influence.
+ * directory, or anything a response could influence.
  *
  * Packaged builds get `resources/` copied next to the app by
  * electron-builder's `extraResources` (`from: resources`, `to: resources`),
@@ -256,7 +256,7 @@ export function resolveBundledResourcesDirectory(params: {
 // is built from the tool executor.
 // ---------------------------------------------------------------------------
 
-export interface LateBoundAemToolContext {
+export interface LateBoundToolContext {
   /**
    * Passed to every tool executor (via `ToolHost.currentContext`). Throws if
    * called before `bind` - which would mean a tool call reached the
@@ -264,19 +264,19 @@ export interface LateBoundAemToolContext {
    * controller, a construction-order bug worth failing loudly on rather
    * than masking with a placeholder context.
    */
-  readonly currentContext: () => CurrentAemToolContext;
+  readonly currentContext: () => CurrentToolContext;
   /** Supplies the real provider once the chat controller exists. Call exactly once. */
-  readonly bind: (controller: Pick<AgentChatController, 'currentAemToolContext'>) => void;
+  readonly bind: (controller: Pick<AgentChatController, 'currentToolContext'>) => void;
 }
 
-export function createLateBoundAemToolContext(): LateBoundAemToolContext {
-  let bound: Pick<AgentChatController, 'currentAemToolContext'> | undefined;
+export function createLateBoundToolContext(): LateBoundToolContext {
+  let bound: Pick<AgentChatController, 'currentToolContext'> | undefined;
   return {
     currentContext: () => {
       if (bound === undefined) {
         throw new Error('Tool context requested before the chat controller was bound');
       }
-      return bound.currentAemToolContext();
+      return bound.currentToolContext();
     },
     bind: (controller) => {
       bound = controller;
@@ -286,7 +286,7 @@ export function createLateBoundAemToolContext(): LateBoundAemToolContext {
 
 /**
  * The tool host's interactive-question capability, late-bound for the same
- * reason as {@link LateBoundAemToolContext}: the tool registry (and its host)
+ * reason as {@link LateBoundToolContext}: the tool registry (and its host)
  * is built before the chat controller exists, and the controller is the only
  * thing that knows which conversation is active. Throws if called before
  * `bind` - which would mean an `ask_user` tool call reached its executor before
@@ -317,7 +317,7 @@ export function createLateBoundUserInput(): LateBoundUserInput {
 
 /**
  * The tool host's progress capability, late-bound for the same construction
- * order as {@link LateBoundAemToolContext} and {@link LateBoundUserInput}: the
+ * order as {@link LateBoundToolContext} and {@link LateBoundUserInput}: the
  * tool registry is built before the chat controller exists. Unlike those, an
  * early report is a silent no-op rather than a throw - a progress note is pure
  * UX, so losing one that raced startup must never fail a tool call.
@@ -369,7 +369,7 @@ export function createLateBoundUserInputActions(): LateBoundUserInputActions {
  * Subscribes to `navigationEpoch` and cancels the chat controller's in-flight
  * turn on every *user*-initiated bump (document navigation, server switch,
  * render-process-gone, view-destroyed - see `NavigationEpochBumpReason`), so an
- * AEM-context-invalidating event the user caused cancels in-flight agent work
+ * host-context-invalidating event the user caused cancels in-flight agent work
  * the same way pressing Stop does.
  *
  * An *agent*-initiated bump is deliberately ignored: the `browser_navigate`
@@ -379,7 +379,7 @@ export function createLateBoundUserInputActions(): LateBoundUserInputActions {
  * only the cancellation is skipped. Returns the unsubscribe function; the
  * composition root calls it alongside every other shutdown cleanup.
  *
- * `handleAemContextInvalidated()` already logs and swallows a `Result`-shaped
+ * `handleHostContextInvalidated()` already logs and swallows a `Result`-shaped
  * failure from `agentService.abort` internally (see its own doc comment) and
  * is documented never to throw for that case; the `.catch` here is
  * defense-in-depth against an `AgentService` implementation that violates its
@@ -388,12 +388,12 @@ export function createLateBoundUserInputActions(): LateBoundUserInputActions {
  */
 export function wireNavigationEpochCancellation(
   navigationEpoch: Pick<NavigationEpochTracker, 'subscribe'>,
-  chatController: Pick<AgentChatController, 'handleAemContextInvalidated'>,
+  chatController: Pick<AgentChatController, 'handleHostContextInvalidated'>,
   logger: Logger,
 ): () => void {
   return navigationEpoch.subscribe((change) => {
     if (change.initiator === 'agent') return;
-    chatController.handleAemContextInvalidated().catch(() => {
+    chatController.handleHostContextInvalidated().catch(() => {
       logger.error('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED');
     });
   });
@@ -464,14 +464,14 @@ export function exposeFakeAgentServiceForTests(fakeService: FakeAgentService): v
 export interface InstallAgentServiceDeps {
   readonly logger: Logger;
   readonly idGenerator: IdGenerator;
-  readonly currentAemServerContext: () => AemServerContext | undefined;
+  readonly currentHostContext: () => HostContext | undefined;
   readonly navigationEpoch: () => number;
   /** The model-facing "where the browser pane is" block prepended to each prompt. */
   readonly currentPageContext: () => string | undefined;
   /** Optional append-only chat journal (implementation-plan.md step 09). */
   readonly chatJournal?: ChatJournal;
-  /** Cancels in-flight AEM bridge requests when a turn is cancelled. */
-  readonly cancelAemRequests?: () => void;
+  /** Cancels in-flight bridge requests when a turn is cancelled. */
+  readonly cancelBridgeRequests?: () => void;
   /**
    * Rewrites a prompt that begins with a bundled-skill reference into the
    * model-facing directive that loads that skill. Optional and passed through
@@ -515,11 +515,13 @@ export async function installAgentService(
     agentService,
     logger: deps.logger,
     idGenerator: deps.idGenerator,
-    currentAemServerContext: deps.currentAemServerContext,
+    currentHostContext: deps.currentHostContext,
     navigationEpoch: deps.navigationEpoch,
     currentPageContext: deps.currentPageContext,
     ...(deps.chatJournal !== undefined ? { chatJournal: deps.chatJournal } : {}),
-    ...(deps.cancelAemRequests !== undefined ? { cancelAemRequests: deps.cancelAemRequests } : {}),
+    ...(deps.cancelBridgeRequests !== undefined
+      ? { cancelBridgeRequests: deps.cancelBridgeRequests }
+      : {}),
     ...(deps.resolveSkillPrompt !== undefined
       ? { resolveSkillPrompt: deps.resolveSkillPrompt }
       : {}),

@@ -62,7 +62,7 @@ describe('createLogger: normal diagnostic lines', () => {
     const logger = createLogger(dir);
     const requestId = newRequestId(() => '11111111-1111-4111-8111-111111111111');
 
-    logger.info('AEM_REQUEST_COMPLETED', {
+    logger.info('WEBVIEW_REQUEST_COMPLETED', {
       durationMs: 42,
       statusCode: 200,
       outcome: 'success',
@@ -74,7 +74,7 @@ describe('createLogger: normal diagnostic lines', () => {
     const parsed: unknown = JSON.parse(lines[0] ?? '');
     expect(parsed).toMatchObject({
       level: 'info',
-      code: 'AEM_REQUEST_COMPLETED',
+      code: 'WEBVIEW_REQUEST_COMPLETED',
       durationMs: 42,
       statusCode: 200,
       outcome: 'success',

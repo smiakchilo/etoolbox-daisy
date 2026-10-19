@@ -29,7 +29,7 @@ import { createScratchDirs } from '../support/e2e/profile';
  *    table the transcript shows.
  *
  * The search is scripted through `createFakeAgentService` rather than executed
- * against AEM: the AEM-side behaviour is covered by `tests/unit/main/aem/**`,
+ * against AEM: the AEM-side behaviour is covered by `tests/unit/main/webview/**`,
  * and a real AEM instance does not arrive until step 12.
  *
  * Run with:

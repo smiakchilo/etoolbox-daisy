@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type ConfiguredHostInfo,
   type JsonValue,
   type OpenPageOutcome,
@@ -574,7 +574,7 @@ function outcomeToResult(
   }
 }
 
-export function createBrowserNavigateExecutor(host: ToolHost): AemToolExecutor {
+export function createBrowserNavigateExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
 

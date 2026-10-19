@@ -8,7 +8,7 @@ import {
   MAX_NESTED_TOOL_DEPTH,
 } from '../../../src/main/tools/registry';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type InternalToolModule,
   type JsonValue,
   type ModelToolModule,
@@ -269,7 +269,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
   /** Builds a registry whose `caller` captures its host, plus the given callees. */
   async function setUp(params: {
     readonly uses: readonly string[];
-    readonly callees?: Readonly<Record<string, AemToolExecutor>>;
+    readonly callees?: Readonly<Record<string, ToolExecutor>>;
     readonly disabled?: readonly string[];
     readonly nestedCalls?: NestedToolCallObserver;
   }): Promise<ToolHost> {
@@ -312,7 +312,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
   });
 
   it('runs a declared, enabled tool registered after the caller and returns its result', async () => {
-    const callee = vi.fn<AemToolExecutor>(() =>
+    const callee = vi.fn<ToolExecutor>(() =>
       Promise.resolve({ ok: true, value: { echoed: true } }),
     );
     const toolHost = await setUp({ uses: ['callee'], callees: { callee } });
@@ -325,7 +325,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
   });
 
   it('passes the parent abort signal through and mints a fresh tool-call id', async () => {
-    const callee = vi.fn<AemToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
+    const callee = vi.fn<ToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
     const toolHost = await setUp({ uses: ['callee'], callees: { callee } });
     const controller = new AbortController();
     const parentId = newToolCallId(ids);
@@ -339,7 +339,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
   });
 
   it('refuses a tool missing from the caller uses list, without running it', async () => {
-    const callee = vi.fn<AemToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
+    const callee = vi.fn<ToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
     const toolHost = await setUp({ uses: [], callees: { callee } });
 
     const result = await toolHost.invokeTool('callee', {}, parent());
@@ -357,7 +357,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
   });
 
   it('answers NOT_FOUND for a declared tool that is disabled or absent', async () => {
-    const callee = vi.fn<AemToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
+    const callee = vi.fn<ToolExecutor>(() => Promise.resolve({ ok: true, value: null }));
     const toolHost = await setUp({
       uses: ['callee', 'absent'],
       callees: { callee },
@@ -373,7 +373,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
   });
 
   it('turns a throwing callee into a structured error', async () => {
-    const callee: AemToolExecutor = () => Promise.reject(new Error('kaboom'));
+    const callee: ToolExecutor = () => Promise.reject(new Error('kaboom'));
     const toolHost = await setUp({ uses: ['callee'], callees: { callee } });
     const result = await toolHost.invokeTool('callee', {}, parent());
     expect(result.ok).toBe(false);
@@ -391,7 +391,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
     const depthsReached: number[] = [];
     let depth = 0;
     const relay =
-      (getHost: () => ToolHost | undefined, next: string): AemToolExecutor =>
+      (getHost: () => ToolHost | undefined, next: string): ToolExecutor =>
       async (_args, context) => {
         depth += 1;
         depthsReached.push(depth);
@@ -434,7 +434,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
 
   it('tells the observer about a call that ran, in order, with its outcome', async () => {
     const seen: Array<{ phase: string; toolName?: string; outcome?: JsonValue }> = [];
-    const callee: AemToolExecutor = () => Promise.resolve({ ok: true, value: { n: 2 } });
+    const callee: ToolExecutor = () => Promise.resolve({ ok: true, value: { n: 2 } });
     const toolHost = await setUp({
       uses: ['callee'],
       callees: { callee },

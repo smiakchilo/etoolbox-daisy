@@ -124,12 +124,12 @@ test('G3: certificate exceptions are scoped to an exact origin and certificate',
         Reflect.set(globalThis, 'g3CertErrorCalls', certErrorCalls);
         Reflect.set(globalThis, 'g3Exceptions', exceptions);
 
-        const aemSession = session.fromPartition('persist:g3-probe');
+        const viewSession = session.fromPartition('persist:g3-probe');
 
         // Pure observation: always defer to Chromium, so this file measures
         // the `certificate-error` path in isolation. Recording Object.keys
         // shows whether a port is exposed here at all.
-        aemSession.setCertificateVerifyProc((request, callback) => {
+        viewSession.setCertificateVerifyProc((request, callback) => {
           verifyCalls.push({
             keys: Object.keys(request),
             hostname: request.hostname,
@@ -173,7 +173,7 @@ test('G3: certificate exceptions are scoped to an exact origin and certificate',
         const win = new BrowserWindow({ show: false, width: 900, height: 700 });
         const view = new View({
           webPreferences: {
-            session: aemSession,
+            session: viewSession,
             sandbox: true,
             contextIsolation: true,
             nodeIntegration: false,

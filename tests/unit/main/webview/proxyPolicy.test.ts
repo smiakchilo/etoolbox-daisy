@@ -6,7 +6,7 @@ import {
   buildProxyRules,
   extractProxyTarget,
   type ProxySwitchSession,
-} from '../../../../src/main/aem';
+} from '../../../../src/main/webview';
 import { newProxyId, proxyConfigSchema, type ProxyConfig } from '../../../../src/shared';
 
 function proxy(url: string): ProxyConfig {

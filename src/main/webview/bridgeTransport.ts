@@ -1,45 +1,45 @@
 import { ipcMain, type IpcMainEvent, type WebContents } from 'electron';
 import {
-  AEM_BRIDGE_CANCEL_CHANNEL,
-  AEM_BRIDGE_FETCH_CHANNEL,
-  AEM_BRIDGE_READY_CHANNEL,
-  AEM_BRIDGE_REPLY_CHANNEL,
-} from '../../shared/contracts/aemBridge';
+  WEBVIEW_BRIDGE_CANCEL_CHANNEL,
+  WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_READY_CHANNEL,
+  WEBVIEW_BRIDGE_REPLY_CHANNEL,
+} from '../../shared/contracts/webviewBridge';
 import type { BridgeReplyOrigin, BridgeTransport } from './bridgeBroker';
 
 /**
- * The Electron half of the AEM bridge: it moves commands and replies between
- * the main process and the AEM view's preload, and answers exactly one
+ * The Electron half of the bridge: it moves commands and replies between
+ * the main process and the browser view's preload, and answers exactly one
  * question of its own - did this reply come from the view we asked?
  *
  * That question is answered by comparing against
- * {@link AemBridgeTransportDeps.aemWebContents}, which is a *function*,
+ * {@link WebviewBridgeTransportDeps.viewWebContents}, which is a *function*,
  * resolved fresh on every send and every reply. This is not incidental. In
  * step 05 an IPC guard captured a `webContents.id` at registration time and
  * consequently could never authorize the Settings window, which is created
  * later - and every unit test passed regardless, because each test supplied
  * the id it expected. A capture here would be worse than useless in the same
- * way: the AEM view is replaced whenever the pane is rebuilt, so a captured
+ * way: the browser view is replaced whenever the pane is rebuilt, so a captured
  * id would either reject the live view or, after id reuse, accept something
  * that is not it.
  */
-export interface AemBridgeTransportDeps {
+export interface WebviewBridgeTransportDeps {
   /**
-   * The AEM view's live `WebContents`, or `undefined` when no view exists.
+   * The browser view's live `WebContents`, or `undefined` when no view exists.
    * Called at the moment of every decision - never cached by this module.
    */
-  readonly aemWebContents: () => WebContents | undefined;
+  readonly viewWebContents: () => WebContents | undefined;
 }
 
-export interface AemBridgeTransportHandle extends BridgeTransport {
+export interface WebviewBridgeTransportHandle extends BridgeTransport {
   /** Always implemented on the live transport, unlike the optional seam on {@link BridgeTransport}. */
   isReady(): boolean;
   /** Removes the reply listener. Safe to call more than once. */
   dispose(): void;
 }
 
-function liveTarget(deps: AemBridgeTransportDeps): WebContents | undefined {
-  const target = deps.aemWebContents();
+function liveTarget(deps: WebviewBridgeTransportDeps): WebContents | undefined {
+  const target = deps.viewWebContents();
   if (target === undefined || target.isDestroyed()) return undefined;
   return target;
 }
@@ -53,16 +53,18 @@ function liveTarget(deps: AemBridgeTransportDeps): WebContents | undefined {
  * answering, and treating the comparison as "undefined === undefined" would
  * turn the absence of a view into a pass.
  */
-function replyOrigin(event: IpcMainEvent, deps: AemBridgeTransportDeps): BridgeReplyOrigin {
+function replyOrigin(event: IpcMainEvent, deps: WebviewBridgeTransportDeps): BridgeReplyOrigin {
   const target = liveTarget(deps);
   const frame = event.senderFrame;
   return {
-    isTrustedAemView: target !== undefined && event.sender.id === target.id,
+    isTrustedView: target !== undefined && event.sender.id === target.id,
     isMainFrame: frame !== null && frame.top === frame,
   };
 }
 
-export function createAemBridgeTransport(deps: AemBridgeTransportDeps): AemBridgeTransportHandle {
+export function createWebviewBridgeTransport(
+  deps: WebviewBridgeTransportDeps,
+): WebviewBridgeTransportHandle {
   let replyListener: ((event: IpcMainEvent, payload: unknown) => void) | undefined;
 
   /**
@@ -88,20 +90,20 @@ export function createAemBridgeTransport(deps: AemBridgeTransportDeps): AemBridg
   // bridge ready.
   const readyListener = (event: IpcMainEvent): void => {
     const origin = replyOrigin(event, deps);
-    if (!origin.isTrustedAemView || !origin.isMainFrame) return;
+    if (!origin.isTrustedView || !origin.isMainFrame) return;
     readyWebContentsId = event.sender.id;
   };
-  ipcMain.on(AEM_BRIDGE_READY_CHANNEL, readyListener);
+  ipcMain.on(WEBVIEW_BRIDGE_READY_CHANNEL, readyListener);
 
   return {
     sendFetch(command) {
-      return send(AEM_BRIDGE_FETCH_CHANNEL, command);
+      return send(WEBVIEW_BRIDGE_FETCH_CHANNEL, command);
     },
     sendCancel(command) {
       // Nothing to report when the view is already gone: a view that no longer
       // exists has no fetch left to abort, and the broker has already settled
       // whatever prompted the cancel.
-      send(AEM_BRIDGE_CANCEL_CHANNEL, command);
+      send(WEBVIEW_BRIDGE_CANCEL_CHANNEL, command);
     },
     isReady() {
       const target = liveTarget(deps);
@@ -112,17 +114,17 @@ export function createAemBridgeTransport(deps: AemBridgeTransportDeps): AemBridg
         listener(payload, replyOrigin(event, deps));
       };
       replyListener = handler;
-      ipcMain.on(AEM_BRIDGE_REPLY_CHANNEL, handler);
+      ipcMain.on(WEBVIEW_BRIDGE_REPLY_CHANNEL, handler);
       return () => {
         if (replyListener !== handler) return;
-        ipcMain.removeListener(AEM_BRIDGE_REPLY_CHANNEL, handler);
+        ipcMain.removeListener(WEBVIEW_BRIDGE_REPLY_CHANNEL, handler);
         replyListener = undefined;
       };
     },
     dispose() {
-      ipcMain.removeListener(AEM_BRIDGE_READY_CHANNEL, readyListener);
+      ipcMain.removeListener(WEBVIEW_BRIDGE_READY_CHANNEL, readyListener);
       if (replyListener === undefined) return;
-      ipcMain.removeListener(AEM_BRIDGE_REPLY_CHANNEL, replyListener);
+      ipcMain.removeListener(WEBVIEW_BRIDGE_REPLY_CHANNEL, replyListener);
       replyListener = undefined;
     },
   };

@@ -11,20 +11,20 @@ import {
   renderSkillCatalogue,
   resolveSkillPrompt,
 } from '../shared';
-import { createAemSession } from './aem';
-import { createAemBridgeBroker } from './aem/bridgeBroker';
-import { createAemBridgeTransport } from './aem/bridgeTransport';
-import { createToolHttpLogger } from './aem/toolHttpLog';
+import { createViewSession } from './webview';
+import { createWebviewBridgeBroker } from './webview/bridgeBroker';
+import { createWebviewBridgeTransport } from './webview/bridgeTransport';
+import { createToolHttpLogger } from './webview/toolHttpLog';
 import { createStartupGatedAgentChatController } from './agentChatController';
 import {
   createBridgeCurrentContext,
   createConfiguredHosts,
-  createCurrentAemServerContext,
+  createCurrentHostContext,
   createCurrentPageContext,
   createCurrentProjectLabel,
   createDeferredRuntimeRecycler,
   createEnvironmentFacts,
-  createLateBoundAemToolContext,
+  createLateBoundToolContext,
   createLateBoundToolProgress,
   createLateBoundUserInput,
   createLateBoundUserInputActions,
@@ -94,7 +94,7 @@ import {
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const rendererDistDir = path.join(currentDir, '../renderer');
-const aemPreloadPath = path.join(currentDir, '../preload/aem-preload.js');
+const webviewPreloadPath = path.join(currentDir, '../preload/webview-preload.js');
 const isDev = Boolean(process.env['ELECTRON_RENDERER_URL']);
 
 /**
@@ -150,7 +150,7 @@ const appPaths = resolveAppPaths(getOsHomeDirectory(), getLocalDataDirectory());
 // By default Chromium on Windows forwards WebAuthn/FIDO2 requests to the
 // native Windows WebAuthn API, which raises the "Windows Security" security-key
 // dialog. Adobe's IMS login page (and other IdPs) fire a WebAuthn call as part
-// of signing in, so simply reaching the AEM login page and pressing "Sign in
+// of signing in, so simply reaching the sign-in page and pressing "Sign in
 // with Adobe" makes that dialog appear - labelled "unverified app" because the
 // calling process is an unsigned `electron.exe`. Electron has no in-app
 // WebAuthn UI and offers no per-session switch, so the native-API path is
@@ -292,9 +292,9 @@ if (!gotSingleInstanceLock) {
     // secrets live in the technical data root, away from `settings.json`.
     const logger = createLogger(appPaths.logs);
     // The tool HTTP log (`logs/tools.log`): the full request URL and the
-    // request/response headers for every AEM bridge round trip. Deliberately a
+    // request/response headers for every bridge round trip. Deliberately a
     // separate file from `app.log`, whose logger cannot carry free-form text -
-    // see `aem/toolHttpLog.ts` for why the diagnostic need justifies the split.
+    // see `webview/toolHttpLog.ts` for why the diagnostic need justifies the split.
     const toolLogger = createToolHttpLogger(appPaths.logs);
     // The append-only chat journal (implementation-plan.md step 09): one JSON
     // Lines file per chat under `<home>/etoolbox-daisy/chats`. Owned here for
@@ -347,25 +347,25 @@ if (!gotSingleInstanceLock) {
 
     const mainWindow = createMainWindow({ windowStateFilePath: appPaths.windowState });
 
-    // The single persistent AEM session (requirements-decisions.md section
+    // The single persistent browser session (requirements-decisions.md section
     // 3) - created once, for the app's lifetime, and handed to the browser
     // controller below. Certificate-error/login policy is wired inside
-    // `createAemSession` itself; nothing here duplicates it.
-    const aemSession = createAemSession({ logger });
+    // `createViewSession` itself; nothing here duplicates it.
+    const viewSession = createViewSession({ logger });
 
     const browserController = createBrowserController({
       settingsDir: appPaths.settings,
       secretStore,
       logger,
-      aemSession,
+      viewSession,
       window: mainWindow,
-      aemPreloadPath,
+      webviewPreloadPath,
       rendererWebContents: mainWindow.webContents,
       onShellZoomChanged: () => scheduleWindowStateSave(mainWindow),
     });
 
     // Re-applies every persisted TLS exception to the live session before
-    // anything can navigate the AEM view - a certificate approved in a
+    // anything can navigate the browser view - a certificate approved in a
     // previous run must not re-trigger the blocked-certificate prompt on the
     // very first load after restart.
     await browserController.hydrateCertificateExceptions();
@@ -563,22 +563,22 @@ if (!gotSingleInstanceLock) {
       mainWebContentsId: mainWindow.webContents.id,
     });
 
-    // --- AEM tool / agent chat wiring (implementation-plan.md step 07) ---
+    // --- bridge tool / agent chat wiring (implementation-plan.md step 07) ---
     //
     // Order matters: the bridge transport/broker must exist before the
     // `aem_get_json` executor can be built (it closes over the broker), the
     // executor must exist before it can be registered in `toolHandlers`
     // (needed to construct either `AgentService` adapter), and the chat
     // controller needs a constructed `AgentService`. The tool executor's
-    // own `currentContext` is late-bound (`createLateBoundAemToolContext`)
+    // own `currentContext` is late-bound (`createLateBoundToolContext`)
     // specifically to break that last cycle: the executor is built before
     // the chat controller exists, but only ever *called* once a real chat
     // turn is in flight, by which point `bind` below has already run.
-    const aemBridgeTransport = createAemBridgeTransport({
-      aemWebContents: () => browserController.aemView.webContents,
+    const webviewBridgeTransport = createWebviewBridgeTransport({
+      viewWebContents: () => browserController.hostView.webContents,
     });
-    const aemBridgeBroker = createAemBridgeBroker({
-      transport: aemBridgeTransport,
+    const webviewBridgeBroker = createWebviewBridgeBroker({
+      transport: webviewBridgeTransport,
       logger,
       toolLogger,
       clock: Date.now,
@@ -592,7 +592,7 @@ if (!gotSingleInstanceLock) {
       ),
     });
 
-    const lateBoundAemToolContext = createLateBoundAemToolContext();
+    const lateBoundToolContext = createLateBoundToolContext();
     // The `ask_user` tool's interactive-question capability, late-bound to the
     // chat controller for the same reason (see `createLateBoundUserInput`).
     const lateBoundUserInput = createLateBoundUserInput();
@@ -673,7 +673,7 @@ if (!gotSingleInstanceLock) {
       enabled: () => loadSettingsSync(appPaths.settings).memos.enabled,
       currentChatId: () => {
         try {
-          return lateBoundAemToolContext.currentContext().chatId;
+          return lateBoundToolContext.currentContext().chatId;
         } catch {
           // No server or no turn: the memo is still written, without a chat id.
           return undefined;
@@ -696,8 +696,8 @@ if (!gotSingleInstanceLock) {
       host: {
         skills: skillHost,
         memos: memoHost,
-        bridge: aemBridgeBroker,
-        currentContext: lateBoundAemToolContext.currentContext,
+        bridge: webviewBridgeBroker,
+        currentContext: lateBoundToolContext.currentContext,
         environmentFacts,
         configuredHosts,
         openPage: (target) => browserController.openForAgent(target),
@@ -740,7 +740,7 @@ if (!gotSingleInstanceLock) {
       },
     });
 
-    lateBoundAemToolContext.bind(agentChatController);
+    lateBoundToolContext.bind(agentChatController);
     lateBoundUserInput.bind(agentChatController);
     lateBoundToolProgress.bind(agentChatController);
     lateBoundUserInputActions.bind(agentChatController);
@@ -801,9 +801,9 @@ if (!gotSingleInstanceLock) {
 
     // Milestone A criterion 6: a server switch (or any other navigation-
     // epoch-bumping event - document navigation, render-process-gone, view
-    // destroyed) cancels whatever AEM tool call/turn is in flight, the same
+    // destroyed) cancels whatever tool call/turn is in flight, the same
     // way pressing Stop does. Safe to wire against the placeholder right
-    // away: `handleAemContextInvalidated` is a no-op until the real
+    // away: `handleHostContextInvalidated` is a no-op until the real
     // controller is bound in, since there is by construction no turn yet to
     // cancel.
     const unwireNavigationEpochCancellation = wireNavigationEpochCancellation(
@@ -817,8 +817,8 @@ if (!gotSingleInstanceLock) {
       unregisterAgentChatIpc();
       void agentChatController.dispose();
       void agentHub?.stop();
-      aemBridgeBroker.dispose();
-      aemBridgeTransport.dispose();
+      webviewBridgeBroker.dispose();
+      webviewBridgeTransport.dispose();
       browserController.destroy();
     });
 
@@ -917,9 +917,7 @@ if (!gotSingleInstanceLock) {
             {
               logger,
               idGenerator: randomUUID,
-              currentAemServerContext: createCurrentAemServerContext(() =>
-                browserController.activeServer(),
-              ),
+              currentHostContext: createCurrentHostContext(() => browserController.activeServer()),
               navigationEpoch: () => browserController.navigationEpoch.current(),
               currentPageContext: createCurrentPageContext(
                 () => browserController.activeServer(),
@@ -928,10 +926,10 @@ if (!gotSingleInstanceLock) {
               ),
               chatJournal,
               // Stop / chat switch / close / context change all cancel the bridge's
-              // in-flight and queued AEM requests, so a stopped tool call releases
+              // in-flight and queued requests, so a stopped tool call releases
               // the concurrency-1 slot immediately instead of running to its 90 s
               // deadline.
-              cancelAemRequests: () => aemBridgeBroker.cancelAll(),
+              cancelBridgeRequests: () => webviewBridgeBroker.cancelAll(),
               // A prompt that begins with a known `/skillname` carries that skill's
               // activation text; the user's own text is kept for the transcript and
               // the journal by the controller.

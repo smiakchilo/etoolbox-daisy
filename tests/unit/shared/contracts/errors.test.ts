@@ -32,7 +32,7 @@ describe('createToolError', () => {
     const timeout = createToolError('TIMEOUT', 'Timed out.', requestId);
     const auth = createToolError('AUTH_REQUIRED', 'Sign in.', requestId);
     expect([timeout.retryable, timeout.requiredAction]).toEqual([true, 'none']);
-    expect([auth.retryable, auth.requiredAction]).toEqual([false, 'sign_in_to_aem']);
+    expect([auth.retryable, auth.requiredAction]).toEqual([false, 'sign_in_to_host']);
   });
 
   it('routes each code to the action that would actually unblock it', () => {

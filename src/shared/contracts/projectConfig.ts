@@ -5,7 +5,7 @@ import { serverLabelSchema } from './serverConfig';
 /**
  * A configured project entry - a named bundle of *host-structure* facts that
  * several hosts may share. It carries no address, proxy or TLS material: a
- * project describes how the data in an AEM instance is laid out, not where or
+ * project describes how the content in a host is laid out, not where or
  * how that instance is reached, which stays on the host (`serverConfig.ts`).
  *
  * This exists because such facts repeat across the hosts of one environment

@@ -152,11 +152,11 @@ export const BROWSER_NAVIGATE_CHANNEL = 'browser:navigate' as const;
 export const BROWSER_OPEN_EXTERNAL_CHANNEL = 'browser:open-external' as const;
 export const BROWSER_SET_VIEW_BOUNDS_CHANNEL = 'browser:set-view-bounds' as const;
 export const BROWSER_SWITCH_SERVER_CHANNEL = 'browser:switch-server' as const;
-/** Stops any in-flight load in the AEM view (the toolbar's Refresh/Stop control). */
+/** Stops any in-flight load in the browser view (the toolbar's Refresh/Stop control). */
 export const BROWSER_STOP_CHANNEL = 'browser:stop' as const;
 export const BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL =
   'browser:approve-certificate-exception' as const;
-/** Push channel: main -> renderer, whenever the AEM view's navigation state changes. */
+/** Push channel: main -> renderer, whenever the browser view's navigation state changes. */
 export const BROWSER_STATE_CHANGED_CHANNEL = 'browser:state-changed' as const;
 /**
  * Push channel: main -> renderer, when the agent's `browser_navigate` tool
@@ -173,7 +173,7 @@ export const BROWSER_SWITCH_STATE_CHANGED_CHANNEL = 'browser:switch-state-change
 export const BROWSER_CERTIFICATE_BLOCKED_CHANNEL = 'browser:certificate-blocked' as const;
 /**
  * Find-in-page. The renderer's find bar names a logical `target` (`browser` for
- * the AEM view, `chat` for the shell document); main resolves it to a
+ * the browser view, `chat` for the shell document); main resolves it to a
  * `WebContents` and calls `findInPage`/`stopFindInPage`. Matches come back on
  * {@link BROWSER_FIND_RESULT_CHANNEL}. See src/shared/browser-ipc.ts.
  */

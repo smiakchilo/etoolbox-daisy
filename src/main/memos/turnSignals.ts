@@ -17,7 +17,7 @@ export const SIGNAL_TEXT_MAX_LENGTH = 300;
 
 /**
  * Failures that say nothing about how the agent worked: the user or the
- * application stopped the call, or the pane moved under it, or AEM wants a
+ * application stopped the call, or the pane moved under it, or the host wants a
  * sign-in. Reflecting on them would teach a lesson about nothing.
  */
 const UNINSTRUCTIVE_FAILURES: ReadonlySet<ToolErrorCode> = new Set<ToolErrorCode>([

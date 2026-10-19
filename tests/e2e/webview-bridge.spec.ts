@@ -11,30 +11,30 @@ import {
   type SsoIdp,
 } from '../integration/support/testAemServer';
 import {
-  AEM_BRIDGE_CANCEL_CHANNEL,
-  AEM_BRIDGE_FETCH_CHANNEL,
-  AEM_BRIDGE_REPLY_CHANNEL,
-  type AemBridgeCancelCommand,
-  type AemBridgeFetchCommand,
-  type AemBridgeReply,
-} from '../../src/shared/contracts/aemBridge';
+  WEBVIEW_BRIDGE_CANCEL_CHANNEL,
+  WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_REPLY_CHANNEL,
+  type WebviewBridgeCancelCommand,
+  type WebviewBridgeFetchCommand,
+  type WebviewBridgeReply,
+} from '../../src/shared/contracts/webviewBridge';
 import { type ElectronApp, launchApp } from '../support/e2e/app';
 import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * Step 06 "private bridge" success criteria, proven end-to-end against the
  * REAL shipped artefacts: the built `out/main/index.js` and
- * `out/preload/aem-preload.js`, driven by the real fixture AEM/SSO servers in
+ * `out/preload/webview-preload.js`, driven by the real fixture AEM/SSO servers in
  * `tests/integration/support/testAemServer.ts`. Nothing here re-implements
  * `src/preload/bridgeFetch.ts`'s decision logic; every assertion is made
  * against a reply the shipped preload actually produced.
  *
  * `src/main` does not yet wire anything onto the three bridge channels - that
- * is Step 07's job (`src/shared/contracts/aemBridge.ts` frames this bridge as
+ * is Step 07's job (`src/shared/contracts/webviewBridge.ts` frames this bridge as
  * strictly "main -> preload -> main", and no broker currently owns the main
  * side). So `ipcMain` is unopposed here: this file plays the role of "main"
- * directly, sending `aem-bridge:fetch` / `aem-bridge:cancel` and listening for
- * `aem-bridge:reply` from inside `application.evaluate()`, which runs in the
+ * directly, sending `webview-bridge:fetch` / `webview-bridge:cancel` and listening for
+ * `webview-bridge:reply` from inside `application.evaluate()`, which runs in the
  * real Electron main process with full `electron` access.
  *
  * Proven here, end-to-end, against the real preload:
@@ -62,7 +62,7 @@ import { createScratchDirs } from '../support/e2e/profile';
  *
  * Deliberately NOT proven here, because they are properties of the future
  * broker rather than of the preload/wire protocol, and are already proven
- * with injectable seams in `tests/unit/main/aem/`:
+ * with injectable seams in `tests/unit/main/webview/`:
  *  - the 90,000 ms per-request timeout (a unit test injects a fake clock
  *    rather than waiting 90 real seconds);
  *  - concurrency-exactly-1 queueing of multiple requests;
@@ -76,23 +76,23 @@ import { createScratchDirs } from '../support/e2e/profile';
  * fake clock and a fake sender - until then.
  *
  * Run with the BUILT app (this file never runs the build itself):
- *   npx playwright test tests/e2e/aem-bridge.spec.ts
+ *   npx playwright test tests/e2e/webview-bridge.spec.ts
  */
 
-const aemPreload = path.resolve(__dirname, '../../out/preload/aem-preload.js');
+const webviewPreload = path.resolve(__dirname, '../../out/preload/webview-preload.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'aem-bridge-scratch');
 
 /** Distinct partitions per scenario group so signed-in state never leaks between them. */
-const AUTH_PARTITION = 'persist:aem-bridge-auth';
-const UNAUTH_PARTITION = 'persist:aem-bridge-unauth';
-const SSO_PARTITION = 'persist:aem-bridge-sso';
-const NAV_PARTITION = 'persist:aem-bridge-nav';
+const AUTH_PARTITION = 'persist:webview-bridge-auth';
+const UNAUTH_PARTITION = 'persist:webview-bridge-unauth';
+const SSO_PARTITION = 'persist:webview-bridge-sso';
+const NAV_PARTITION = 'persist:webview-bridge-nav';
 
 /** Ample for a fixture that answers over localhost with no artificial delay. */
 const BRIDGE_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
-// View plumbing: create a real AEM WebContentsView (with the real shipped
+// View plumbing: create a real WebContentsView (with the real shipped
 // preload) inside the main process, and address it from later, independent
 // `application.evaluate()` calls.
 //
@@ -113,18 +113,18 @@ interface CreateViewArgs {
   readonly preload: string;
 }
 
-interface AemView {
+interface TestView {
   readonly webContentsId: number;
 }
 
-function createAemView(app: ElectronApp, args: CreateViewArgs): Promise<AemView> {
+function createView(app: ElectronApp, args: CreateViewArgs): Promise<TestView> {
   return app.evaluate(
     ({ session, BrowserWindow, WebContentsView: View }, input: CreateViewArgs) => {
-      const aemSession = session.fromPartition(input.partition);
+      const viewSession = session.fromPartition(input.partition);
       const host = new BrowserWindow({ show: false, width: 1024, height: 768 });
       const view = new View({
         webPreferences: {
-          session: aemSession,
+          session: viewSession,
           preload: input.preload,
           contextIsolation: true,
           sandbox: true,
@@ -302,7 +302,7 @@ async function readPageTypeofs(
 
 interface BridgeFetchArgs {
   readonly webContentsId: number;
-  readonly command: AemBridgeFetchCommand;
+  readonly command: WebviewBridgeFetchCommand;
   readonly timeoutMs: number;
   readonly fetchChannel: string;
   readonly replyChannel: string;
@@ -313,9 +313,9 @@ interface BridgeFetchTimeout {
 }
 
 /**
- * Drives the real, shipped `aem-preload.ts` exactly the way main eventually
- * will (Step 07): send `aem-bridge:fetch` at the target view, and await
- * exactly one `aem-bridge:reply` on `ipcMain`. Everything else in this file
+ * Drives the real, shipped `webview-preload.ts` exactly the way main eventually
+ * will (Step 07): send `webview-bridge:fetch` at the target view, and await
+ * exactly one `webview-bridge:reply` on `ipcMain`. Everything else in this file
  * that needs a single request/reply round trip goes through this helper.
  *
  * The `ipcMain.once` here is deliberately a ONE-SHOT listener registered
@@ -336,13 +336,13 @@ async function bridgeFetch(
     readonly requestId: string;
     readonly timeoutMs?: number;
   },
-): Promise<AemBridgeReply | BridgeFetchTimeout> {
+): Promise<WebviewBridgeReply | BridgeFetchTimeout> {
   const evalArgs: BridgeFetchArgs = {
     webContentsId: args.webContentsId,
     command: { requestId: args.requestId, url: args.url },
     timeoutMs: args.timeoutMs ?? BRIDGE_TIMEOUT_MS,
-    fetchChannel: AEM_BRIDGE_FETCH_CHANNEL,
-    replyChannel: AEM_BRIDGE_REPLY_CHANNEL,
+    fetchChannel: WEBVIEW_BRIDGE_FETCH_CHANNEL,
+    replyChannel: WEBVIEW_BRIDGE_REPLY_CHANNEL,
   };
 
   return app.evaluate(async ({ ipcMain, webContents }, input: BridgeFetchArgs) => {
@@ -351,7 +351,7 @@ async function bridgeFetch(
       throw new Error(`bridgeFetch: webContents ${input.webContentsId} no longer exists`);
     }
 
-    return new Promise<AemBridgeReply | BridgeFetchTimeout>((resolve) => {
+    return new Promise<WebviewBridgeReply | BridgeFetchTimeout>((resolve) => {
       let settled = false;
       const timer = setTimeout(() => {
         if (settled) return;
@@ -363,8 +363,8 @@ async function bridgeFetch(
       // channel after `send` below is unambiguously the answer to it. Several
       // requests racing on this channel at once (the broker's own
       // request/reply matching) is proven separately, with an injectable
-      // clock, in tests/unit/main/aem/.
-      ipcMain.once(input.replyChannel, (_event: unknown, reply: AemBridgeReply) => {
+      // clock, in tests/unit/main/webview/.
+      ipcMain.once(input.replyChannel, (_event: unknown, reply: WebviewBridgeReply) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -384,7 +384,7 @@ async function bridgeFetch(
 
 interface BridgeCommandEntry {
   readonly channel: 'fetch' | 'cancel';
-  readonly command: AemBridgeFetchCommand | AemBridgeCancelCommand;
+  readonly command: WebviewBridgeFetchCommand | WebviewBridgeCancelCommand;
 }
 
 interface CollectRepliesArgs {
@@ -398,14 +398,14 @@ interface CollectRepliesArgs {
 }
 
 interface CollectRepliesResult {
-  readonly replies: readonly AemBridgeReply[];
+  readonly replies: readonly WebviewBridgeReply[];
 }
 
 /**
  * Sends every command in `commands` to the target view synchronously,
  * back-to-back with no `await` between them, then (optionally) navigates the
  * view elsewhere, then waits `windowMs` collecting every reply that arrives
- * on `aem-bridge:reply`. Sending without awaiting in between is what makes
+ * on `webview-bridge:reply`. Sending without awaiting in between is what makes
  * the race deterministic: IPC dispatch and the preload's synchronous
  * bookkeeping (registering an `AbortController`, checking `inFlight`) run to
  * completion long before a real network round trip over localhost could
@@ -423,9 +423,9 @@ async function collectBridgeReplies(
 ): Promise<CollectRepliesResult> {
   const evalArgs: CollectRepliesArgs = {
     ...args,
-    fetchChannel: AEM_BRIDGE_FETCH_CHANNEL,
-    cancelChannel: AEM_BRIDGE_CANCEL_CHANNEL,
-    replyChannel: AEM_BRIDGE_REPLY_CHANNEL,
+    fetchChannel: WEBVIEW_BRIDGE_FETCH_CHANNEL,
+    cancelChannel: WEBVIEW_BRIDGE_CANCEL_CHANNEL,
+    replyChannel: WEBVIEW_BRIDGE_REPLY_CHANNEL,
   };
 
   return app.evaluate(async ({ ipcMain, webContents }, input: CollectRepliesArgs) => {
@@ -434,8 +434,8 @@ async function collectBridgeReplies(
       throw new Error(`collectBridgeReplies: webContents ${input.webContentsId} no longer exists`);
     }
 
-    const replies: AemBridgeReply[] = [];
-    const handler = (_event: unknown, reply: AemBridgeReply): void => {
+    const replies: WebviewBridgeReply[] = [];
+    const handler = (_event: unknown, reply: WebviewBridgeReply): void => {
       replies.push(reply);
     };
     ipcMain.on(input.replyChannel, handler);
@@ -495,7 +495,7 @@ function parseJsonArray(text: string): unknown[] {
 // per describe block below, each stopped/destroyed in its own `afterAll`.
 // ---------------------------------------------------------------------------
 
-test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
+test.describe('Step 06: private bridge (driven directly over IPC)', () => {
   let application: ElectronApp;
 
   test.beforeAll(async () => {
@@ -509,14 +509,14 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
 
   test.describe('authenticated bridge fetches', () => {
     let aem: AemOrigin;
-    let authView: AemView;
+    let authView: TestView;
 
     test.beforeAll(async () => {
       test.setTimeout(60_000);
       aem = await startAemOrigin();
-      authView = await createAemView(application, {
+      authView = await createView(application, {
         partition: AUTH_PARTITION,
-        preload: aemPreload,
+        preload: webviewPreload,
       });
       await loadUrl(application, {
         webContentsId: authView.webContentsId,
@@ -712,7 +712,7 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
         windowMs: 3_000,
       });
       // The preload deletes the in-flight entry BEFORE aborting (see
-      // aem-preload.ts), so the fetch's own `.then`/`.catch` finds no entry
+      // webview-preload.ts), so the fetch's own `.then`/`.catch` finds no entry
       // and stays silent - a cancelled id can never complete, not even with a
       // "cancelled"-kind reply.
       expect(replies).toEqual([]);
@@ -732,7 +732,7 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
 
     test('15. a duplicate requestId sent back-to-back is ignored, producing exactly one reply', async () => {
       const requestId = randomUUID();
-      const command: AemBridgeFetchCommand = {
+      const command: WebviewBridgeFetchCommand = {
         requestId,
         url: `${aem.origin}/content/site.0.json`,
       };
@@ -756,13 +756,13 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
 
   test.describe('unauthenticated access is refused', () => {
     let aemUnauth: AemOrigin;
-    let unauthView: AemView;
+    let unauthView: TestView;
 
     test.beforeAll(async () => {
       aemUnauth = await startAemOrigin();
-      unauthView = await createAemView(application, {
+      unauthView = await createView(application, {
         partition: UNAUTH_PARTITION,
-        preload: aemPreload,
+        preload: webviewPreload,
       });
       // Navigating (without signing in) lands on the login page, but stays on
       // the AEM origin - so the fetch below is still same-origin, and the
@@ -802,13 +802,16 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
     const sharedSecret = 'daisy-step06-bridge-secret';
     let idp: SsoIdp;
     let ssoAem: AemOrigin;
-    let ssoView: AemView;
+    let ssoView: TestView;
 
     test.beforeAll(async () => {
       test.setTimeout(60_000);
       idp = await startSsoIdp({ sharedSecret });
       ssoAem = await startAemOrigin({ sso: { origin: idp.origin, sharedSecret } });
-      ssoView = await createAemView(application, { partition: SSO_PARTITION, preload: aemPreload });
+      ssoView = await createView(application, {
+        partition: SSO_PARTITION,
+        preload: webviewPreload,
+      });
       await loadUrl(application, {
         webContentsId: ssoView.webContentsId,
         url: `${ssoAem.origin}/content/site`,
@@ -860,11 +863,14 @@ test.describe('Step 06: AEM private bridge (driven directly over IPC)', () => {
 
   test.describe('navigation destroys in-flight work', () => {
     let navAem: AemOrigin;
-    let navView: AemView;
+    let navView: TestView;
 
     test.beforeAll(async () => {
       navAem = await startAemOrigin();
-      navView = await createAemView(application, { partition: NAV_PARTITION, preload: aemPreload });
+      navView = await createView(application, {
+        partition: NAV_PARTITION,
+        preload: webviewPreload,
+      });
       await loadUrl(application, {
         webContentsId: navView.webContentsId,
         url: `${navAem.origin}/content/site`,

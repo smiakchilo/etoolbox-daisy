@@ -99,7 +99,7 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
     const error = expectError(await run(jsonResponse('nope', 401))).error;
 
     expect(error.code).toBe('AUTH_REQUIRED');
-    expect(error.requiredAction).toBe('sign_in_to_aem');
+    expect(error.requiredAction).toBe('sign_in_to_host');
   });
 
   it('treats a 200 HTML login page as a missing session, not as a successful response', async () => {
@@ -118,7 +118,7 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
     ).error;
 
     expect(error.code).toBe('AUTH_REQUIRED');
-    expect(error.requiredAction).toBe('sign_in_to_aem');
+    expect(error.requiredAction).toBe('sign_in_to_host');
   });
 
   it('does not treat a non-login HTML page as a request to sign in again', async () => {
@@ -204,7 +204,7 @@ describe('executeAemGetJson - what each transport verdict means to the agent', (
     const error = expectError(await run({ kind: 'blocked', reason: 'redirect_blocked' })).error;
 
     expect(error.code).toBe('REDIRECT_BLOCKED');
-    expect(error.requiredAction).toBe('sign_in_to_aem');
+    expect(error.requiredAction).toBe('sign_in_to_host');
     expect(error.retryable).toBe(false);
   });
 

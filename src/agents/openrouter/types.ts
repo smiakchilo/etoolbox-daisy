@@ -1,4 +1,4 @@
-import type { AemToolExecutor } from '../../shared';
+import type { ToolExecutor } from '../../shared';
 
 /**
  * Folder-local contracts for the OpenRouter agent.
@@ -18,7 +18,7 @@ export interface ToolSpec {
    * `ToolDescriptor.parameters`, or a hand-written schema for the skill tool).
    */
   readonly parameters: unknown;
-  readonly executor: AemToolExecutor;
+  readonly executor: ToolExecutor;
 }
 
 /** Per-call context the SDK supplies to a tool's `execute`. */

@@ -142,7 +142,7 @@ test('G3: proxy selection, switching and 407 apply to page-initiated fetch', asy
         Reflect.set(globalThis, 'g3LoginEvents', loginEvents);
         Reflect.set(globalThis, 'g3Creds', creds);
 
-        const aemSession = session.fromPartition('persist:g3-proxy');
+        const viewSession = session.fromPartition('persist:g3-proxy');
 
         // Approve exactly the https origin's self-signed certificate, so the
         // CONNECT experiment can complete instead of dying at the handshake.
@@ -182,7 +182,7 @@ test('G3: proxy selection, switching and 407 apply to page-initiated fetch', asy
         const win = new BrowserWindow({ show: false, width: 900, height: 700 });
         const view = new View({
           webPreferences: {
-            session: aemSession,
+            session: viewSession,
             sandbox: true,
             contextIsolation: true,
             nodeIntegration: false,
@@ -199,14 +199,14 @@ test('G3: proxy selection, switching and 407 apply to page-initiated fetch', asy
     const setProxy = (port: number, closeConnections: boolean): Promise<void> =>
       application.evaluate(
         async ({ session }, args) => {
-          const aemSession = session.fromPartition('persist:g3-proxy');
-          await aemSession.setProxy({
+          const viewSession = session.fromPartition('persist:g3-proxy');
+          await viewSession.setProxy({
             proxyRules: `http://127.0.0.1:${String(args.port)}`,
             // Without this, loopback targets never reach the proxy at all.
             proxyBypassRules: '<-loopback>',
           });
           if (args.closeConnections) {
-            await aemSession.closeAllConnections();
+            await viewSession.closeAllConnections();
           }
         },
         { port, closeConnections },
@@ -284,10 +284,10 @@ test('G3: proxy selection, switching and 407 apply to page-initiated fetch', asy
     // A view that already existed BEFORE the switch must also move over -
     // this is the "old windows use the wrong proxy" stop condition.
     await application.evaluate(({ session, WebContentsView: View }) => {
-      const aemSession = session.fromPartition('persist:g3-proxy');
+      const viewSession = session.fromPartition('persist:g3-proxy');
       const second = new View({
         webPreferences: {
-          session: aemSession,
+          session: viewSession,
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,

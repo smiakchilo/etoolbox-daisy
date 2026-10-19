@@ -293,7 +293,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
 
   // Shown when no agent exists at all (removed, disabled or failed to load).
   const unavailableContent: readonly Node[] = [
-    buildBannerCopy(['No agent available. Browsing AEM still works']),
+    buildBannerCopy(['No agent available. Browsing still works']),
   ];
 
   // Shown in place of the connecting row once a saved conversation's journal is
@@ -321,7 +321,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // report it, and `canSendMessage` - see `composerViewModel.ts` - never
   // reads it either); this placeholder is the only field on `SessionStatus`
   // this pane cannot populate from a real source. `sessionState.ts`'s own
-  // doc comment is explicit that `canRunAemTool`, not `canSendMessage`, is
+  // doc comment is explicit that `canRunTool`, not `canSendMessage`, is
   // the only consumer of this field, and that function is not used here.
   let sessionStatus: SessionStatus = { state: 'idle', authenticated: false, browserReady: false };
   let serviceState: AgentServiceLifecycleState = 'starting';
@@ -617,7 +617,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       }
       // An interruption notice is the pane's own; the store never infers one.
       // `cancelling` is only ever app-initiated (a Stop, or the controller's
-      // `handleAemContextInvalidated`), and only this pane knows which. Guard
+      // `handleHostContextInvalidated`), and only this pane knows which. Guard
       // on the previous state so a repeated `cancelling` cannot double-record.
       if (
         event.type === 'session.state.changed' &&

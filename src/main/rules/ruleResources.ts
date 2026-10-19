@@ -24,7 +24,7 @@ import path from 'node:path';
  *    `{{signals}}` placeholder (`renderReflectionPrompt`).
  *
  * The directory is the application's own `resources/rules` (resolved by
- * `resolveBundledResourcesDirectory`), never a user, project or AEM location
+ * `resolveBundledResourcesDirectory`), never a user, project or host location
  * (the user's own rules live in `appPaths.rules`). Every file is required: the
  * session instructions carry the read-only policy, so a missing file rejects
  * here and the application does not start without it.

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type SkillScriptResult,
   type ToolDescriptor,
@@ -55,7 +55,7 @@ function renderResult(script: string, result: SkillScriptResult): string {
   return lines.join('\n');
 }
 
-export function createSkillScriptExecutor(host: ToolHost): AemToolExecutor {
+export function createSkillScriptExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
     if (context.signal?.aborted === true) {

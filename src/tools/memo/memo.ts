@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type ToolDescriptor,
   type ToolHost,
@@ -67,7 +67,7 @@ export const MEMO_TOOL_DESCRIPTOR: ToolDescriptor = {
   parameters: z.toJSONSchema(memoArgsSchema, { io: 'input' }),
 };
 
-export function createMemoExecutor(host: ToolHost): AemToolExecutor {
+export function createMemoExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
     if (context.signal?.aborted === true) {

@@ -505,7 +505,7 @@ describe('createBrowserToolbar loading state machine', () => {
     expect(address.value).toBe('https://author.example/');
 
     // did-start-navigation now reports the navigation's destination (see
-    // `aemBrowserView.ts`), so the field keeps showing it while the load runs.
+    // `hostView.ts`), so the field keeps showing it while the load runs.
     stateListeners[0]?.({
       url: 'https://author.example/',
       canGoBack: false,

@@ -6,7 +6,7 @@ import { z } from 'zod';
  * The app has no native menu bar (`index.ts` clears the application menu), so
  * a keyboard shortcut cannot be an accelerator. It is instead matched on the
  * relevant `WebContents` via `before-input-event` (`src/main/shortcuts.ts`) -
- * on the shell's and on the AEM view's, because the AEM pane is a
+ * on the shell's and on the browser view's, because the browser pane is a
  * `WebContentsView` whose keystrokes never reach the shell's document.
  *
  * Main resolves a keystroke to one of these *semantic* actions and pushes it to
@@ -23,11 +23,11 @@ import { z } from 'zod';
  * and never crosses the boundary (`src/main/zoom.ts`). Find-in-page does cross
  * it - the find bar is renderer UI - so it has two entries, because the
  * renderer cannot tell which pane the keystroke came from on its own:
- * `browser.find` is pushed when the AEM view had focus (find the page) and
+ * `browser.find` is pushed when the browser view had focus (find the page) and
  * `app.find` when the shell did (the renderer picks the focused surface).
  */
 export const APP_SHORTCUT_ACTIONS = [
-  /** Refresh the AEM pane (the toolbar's Refresh control). */
+  /** Refresh the browser pane (the toolbar's Refresh control). */
   'browser.refresh',
   /** Back (the toolbar's Back control). */
   'browser.back',
@@ -37,7 +37,7 @@ export const APP_SHORTCUT_ACTIONS = [
   'browser.home',
   /** Focus and select the address bar. */
   'browser.focusAddress',
-  /** Open the AEM page's find bar. Sent when the keystroke came from the AEM view. */
+  /** Open the page's find bar. Sent when the keystroke came from the browser view. */
   'browser.find',
   /** Open the focused shell surface's find bar. Sent when the keystroke came from the app shell. */
   'app.find',

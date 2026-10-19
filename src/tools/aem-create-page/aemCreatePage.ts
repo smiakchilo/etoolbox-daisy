@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type BrokerOutcome,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type IdGenerator,
   type JsonValue,
   type RequestId,
@@ -413,12 +413,12 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   redirect_blocked: {
     code: 'REDIRECT_BLOCKED',
     retryable: false,
-    requiredAction: 'sign_in_to_aem',
+    requiredAction: 'sign_in_to_host',
   },
   create_redirected: {
     code: 'REDIRECT_BLOCKED',
     retryable: false,
-    requiredAction: 'sign_in_to_aem',
+    requiredAction: 'sign_in_to_host',
   },
   no_view: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'select_server' },
   bridge_unavailable: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'none' },
@@ -427,7 +427,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   timeout: { code: 'TIMEOUT', retryable: true, requiredAction: 'none' },
   stale_server_revision: { code: 'STALE_CONTEXT', retryable: true, requiredAction: 'none' },
   stale_navigation_epoch: { code: 'STALE_CONTEXT', retryable: true, requiredAction: 'none' },
-  unauthorized: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  unauthorized: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_host' },
   forbidden: { code: 'NOT_AUTHORIZED', retryable: false, requiredAction: 'none' },
   not_found: { code: 'NOT_FOUND', retryable: false, requiredAction: 'none' },
   bad_request: { code: 'INVALID_ARGUMENT', retryable: false, requiredAction: 'none' },
@@ -577,7 +577,7 @@ export interface AemCreatePageExecutorConfig<TRuntimeDeps extends Record<string,
     deps: { readonly origin: string } & TRuntimeDeps,
   ) => Promise<AemCreatePageResult>;
   readonly runtimeDeps: TRuntimeDeps;
-  readonly currentContext: () => CurrentAemToolContext;
+  readonly currentContext: () => CurrentToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
 }
@@ -603,7 +603,7 @@ function toSuccessPayload(result: AemCreatePageSuccess): JsonValue {
 
 export function createAemCreatePageExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemCreatePageExecutorConfig<TRuntimeDeps>,
-): AemToolExecutor {
+): ToolExecutor {
   return createToolExecutor({
     operation: 'aem_create_page',
     argsSchema: aemCreatePageArgsSchema,

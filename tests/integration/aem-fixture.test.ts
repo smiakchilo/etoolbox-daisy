@@ -159,11 +159,11 @@ describe('AEM fixture - SSO redirection to another origin and back', () => {
     const callback = await fetch(callbackUrl, { redirect: 'manual' });
     expect(callback.status).toBe(302);
     expect(callback.headers.get('location')).toBe('/content/site.html');
-    const aemSession = cookieValue(callback.headers.get('set-cookie'), AEM_SESSION_COOKIE);
-    expect(aemSession).toBeTruthy();
+    const viewSession = cookieValue(callback.headers.get('set-cookie'), AEM_SESSION_COOKIE);
+    expect(viewSession).toBeTruthy();
 
     const content = await fetch(aem.url('/content/site.html'), {
-      headers: { Cookie: `${AEM_SESSION_COOKIE}=${String(aemSession)}` },
+      headers: { Cookie: `${AEM_SESSION_COOKIE}=${String(viewSession)}` },
       redirect: 'manual',
     });
     expect(content.status).toBe(200);

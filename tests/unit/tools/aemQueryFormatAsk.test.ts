@@ -9,7 +9,7 @@ import { renderer } from '../../../src/tools/aem-query-format-ask/renderer';
 import { tool } from '../../../src/tools/aem-query-format-ask/tool';
 import {
   type BrokerOutcome,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type JsonValue,
   type Result,
   type ToolDiagnosticCode,
@@ -74,7 +74,7 @@ function lowerBoundPage(rows: number, hasMore: boolean | 'unknown', offset = 0):
 const tableOk: JsonValue = { operation: 'format_table', resultType: 'success' };
 const loadMore: JsonValue = { selections: ['Load more'], freeform: null };
 
-const COUNT_CONTEXT: CurrentAemToolContext = {
+const COUNT_CONTEXT: CurrentToolContext = {
   origin: 'https://aem.example',
   serverId: 'server-1' as never,
   serverRevision: 1,
@@ -94,7 +94,7 @@ function countResponse(total: number): BrokerOutcome {
 
 interface HostOptions {
   /** Supplied only in count tests; the default throws to prove no count ran. */
-  readonly currentContext?: () => CurrentAemToolContext;
+  readonly currentContext?: () => CurrentToolContext;
   readonly count?: (url: string) => BrokerOutcome | Promise<BrokerOutcome>;
   readonly onDiagnostic?: (code: ToolDiagnosticCode) => void;
   /** DAM roots the facts report; omitted means none, so a default-roots test can prove order. */

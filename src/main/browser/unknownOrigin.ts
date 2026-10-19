@@ -12,7 +12,7 @@ import type { ServerConfig } from '../../shared';
  * address. That is what makes it correct rather than merely convenient: an
  * SSO redirect chain or a popup request routed in place is page-driven
  * navigation happening on the already-loaded `WebContentsView` (see
- * `aemBrowserView.ts`'s navigation guard and `windowOpenRouter.ts`), which
+ * `hostView.ts`'s navigation guard and `windowOpenRouter.ts`), which
  * never calls this function at all - there is no redirect-chain heuristic to
  * get subtly wrong ("was this origin reached via N hops from a configured
  * server?"), because the two cases are distinguished by *how* the navigation

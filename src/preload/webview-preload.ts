@@ -1,20 +1,20 @@
 import { ipcRenderer } from 'electron';
 import {
-  AEM_BRIDGE_CANCEL_CHANNEL,
-  AEM_BRIDGE_FETCH_CHANNEL,
-  AEM_BRIDGE_READY_CHANNEL,
-  AEM_BRIDGE_REPLY_CHANNEL,
-  aemBridgeCancelCommandSchema,
-  aemBridgeFetchCommandSchema,
-} from '../shared/contracts/aemBridge';
+  WEBVIEW_BRIDGE_CANCEL_CHANNEL,
+  WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_READY_CHANNEL,
+  WEBVIEW_BRIDGE_REPLY_CHANNEL,
+  webviewBridgeCancelCommandSchema,
+  webviewBridgeFetchCommandSchema,
+} from '../shared/contracts/webviewBridge';
 import { performBridgeFetch } from './bridgeFetch';
 
 /**
- * Preload for the AEM view - the private bridge of implementation-plan.md
+ * Preload for the browser view - the private bridge of implementation-plan.md
  * step 06.
  *
  * It deliberately calls `contextBridge.exposeInMainWorld` **not at all**. The
- * page showing remote AEM content gets nothing: no bridge object, no version
+ * page showing remote content gets nothing: no bridge object, no version
  * probe, no capability to start or observe a tool fetch. Everything here is
  * driven by the main process over IPC and lives entirely in the isolated
  * world, which page script cannot reach. An earlier revision of this file
@@ -30,8 +30,8 @@ import { performBridgeFetch } from './bridgeFetch';
 /** Abort handles for in-flight fetches, keyed by the request id main assigned. */
 const inFlight = new Map<string, AbortController>();
 
-ipcRenderer.on(AEM_BRIDGE_FETCH_CHANNEL, (_event, rawCommand: unknown) => {
-  const parsed = aemBridgeFetchCommandSchema.safeParse(rawCommand);
+ipcRenderer.on(WEBVIEW_BRIDGE_FETCH_CHANNEL, (_event, rawCommand: unknown) => {
+  const parsed = webviewBridgeFetchCommandSchema.safeParse(rawCommand);
   // A malformed command is dropped in silence on purpose: there is no reply id
   // to answer with, and inventing one would let a garbled message complete
   // some unrelated pending request. Main's own deadline covers the case.
@@ -56,11 +56,11 @@ ipcRenderer.on(AEM_BRIDGE_FETCH_CHANNEL, (_event, rawCommand: unknown) => {
       // main is no longer waiting for this id, so replying could complete a
       // request that has since been superseded.
       if (!inFlight.delete(command.requestId)) return;
-      ipcRenderer.send(AEM_BRIDGE_REPLY_CHANNEL, reply);
+      ipcRenderer.send(WEBVIEW_BRIDGE_REPLY_CHANNEL, reply);
     })
     .catch((error: unknown) => {
       if (!inFlight.delete(command.requestId)) return;
-      ipcRenderer.send(AEM_BRIDGE_REPLY_CHANNEL, {
+      ipcRenderer.send(WEBVIEW_BRIDGE_REPLY_CHANNEL, {
         kind: 'network_error',
         requestId: command.requestId,
         message: error instanceof Error ? error.message : String(error),
@@ -68,8 +68,8 @@ ipcRenderer.on(AEM_BRIDGE_FETCH_CHANNEL, (_event, rawCommand: unknown) => {
     });
 });
 
-ipcRenderer.on(AEM_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {
-  const parsed = aemBridgeCancelCommandSchema.safeParse(rawCommand);
+ipcRenderer.on(WEBVIEW_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {
+  const parsed = webviewBridgeCancelCommandSchema.safeParse(rawCommand);
   if (!parsed.success) return;
   const controller = inFlight.get(parsed.data.requestId);
   if (controller === undefined) return;
@@ -83,6 +83,6 @@ ipcRenderer.on(AEM_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {
 // Announced only after both listeners are registered, so main never treats
 // "ready" as true for a document that could not yet answer a fetch. Main uses
 // this to fail a request immediately when the preload never loaded, instead of
-// letting it look like an AEM timeout. Sent once per document; a navigation
+// letting it look like a request timeout. Sent once per document; a navigation
 // re-runs this file, which re-registers and re-announces.
-ipcRenderer.send(AEM_BRIDGE_READY_CHANNEL, {});
+ipcRenderer.send(WEBVIEW_BRIDGE_READY_CHANNEL, {});

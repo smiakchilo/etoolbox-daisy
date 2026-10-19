@@ -1315,7 +1315,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // so it has no address, and `lastNavigationState` keeps the covered page's
     // live URL for when the veil is dismissed. Main reports the destination of
     // a main-frame navigation from `did-start-navigation` (see
-    // `aemBrowserView.ts`), so this shows an in-page link's target at the
+    // `hostView.ts`), so this shows an in-page link's target at the
     // moment the click starts the load - exactly as it shows a toolbar-typed
     // target - instead of waiting for the new document to commit.
     if (!homeShown) {

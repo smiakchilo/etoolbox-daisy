@@ -166,7 +166,7 @@ export function parseAgentChatOpenResult(candidate: unknown): AgentChatOpenResul
 // Send message (`agent-chat:send-message`)
 // ---------------------------------------------------------------------------
 
-/** Generous but bounded: a pasted AEM error log or long question, not an upload channel. */
+/** Generous but bounded: a pasted error log or long question, not an upload channel. */
 const PROMPT_MAX_LENGTH = 50_000;
 
 /**

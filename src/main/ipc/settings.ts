@@ -146,7 +146,7 @@ import { isAllowedAppNavigation } from '../security';
  *    the turn lock, and replace the stored model/reasoning-effort pair.
  *
  * There is deliberately no `settings:set-active-server` handler registered
- * here: choosing the active server is tied to actually switching the live AEM
+ * here: choosing the active server is tied to actually switching the live host
  * view (`browser:switch-server` in `ipc/browser.ts`), which this module must
  * not reach into (see that module's own `BrowserController`). The active host
  * is not persisted at all - it lives in the browser controller's memory - so
@@ -1476,7 +1476,7 @@ export interface TrustedSenderExpectation {
  * top-level frame of a {@link TrustedSenderExpectation.isTrustedWebContentsId}
  * window, showing a URL {@link isAllowedAppNavigation} recognizes as this
  * app's own local UI (the packaged `file://`/`app://` build, or the
- * electron-vite dev server) - never remote AEM content, and never a request
+ * electron-vite dev server) - never remote remote content, and never a request
  * whose sending frame has already navigated away or been destroyed (an absent
  * frame is treated as untrusted, not as a pass).
  */

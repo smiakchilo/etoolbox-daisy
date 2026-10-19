@@ -1,7 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createToolHttpLogger, type ToolHttpLogger } from '../../../../src/main/aem/toolHttpLog';
+import {
+  createToolHttpLogger,
+  type ToolHttpLogger,
+} from '../../../../src/main/webview/toolHttpLog';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**

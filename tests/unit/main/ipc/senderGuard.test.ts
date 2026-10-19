@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type { SecretCipher } from '../../../../src/main/secretStore';
 import type { BrowserController } from '../../../../src/main/browser/browserController';
-import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView';
+import type { HostView } from '../../../../src/main/browser/hostView';
 import type { NavigationEpochTracker } from '../../../../src/main/browser/navigationEpoch';
 import type { Logger } from '../../../../src/main/logger';
 import { err } from '../../../../src/shared';
@@ -154,12 +154,12 @@ beforeEach(() => {
 
   // The controller is a recorder, so "did the guard stop this?" is answered by
   // whether the controller was touched at all - not only by the returned
-  // error. `aemView` is a throwing getter rather than a cast: the IPC layer
+  // error. `hostView` is a throwing getter rather than a cast: the IPC layer
   // never reads it, and a getter keeps the object genuinely typed as a
   // `BrowserController` instead of asserting that it is one.
   const controller: BrowserController = {
-    get aemView(): AemBrowserView {
-      throw new Error('aemView must not be read by the IPC layer');
+    get hostView(): HostView {
+      throw new Error('hostView must not be read by the IPC layer');
     },
     get navigationEpoch(): NavigationEpochTracker {
       throw new Error('navigationEpoch must not be read by the IPC layer');

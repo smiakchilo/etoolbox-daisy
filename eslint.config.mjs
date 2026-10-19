@@ -181,7 +181,7 @@ export default tseslint.config(
     files: ['**/*.ts'],
     ignores: [
       'electron.vite.config.ts',
-      'electron.vite.aem-preload.config.ts',
+      'electron.vite.webview-preload.config.ts',
       'scripts/**',
       'vitest.config.ts',
       'playwright.config.ts',
@@ -205,7 +205,7 @@ export default tseslint.config(
     // tsconfig's `include`, so they are linted without type information.
     files: [
       'electron.vite.config.ts',
-      'electron.vite.aem-preload.config.ts',
+      'electron.vite.webview-preload.config.ts',
       'scripts/**/*.ts',
       'scripts/**/*.mjs',
       'vitest.config.ts',

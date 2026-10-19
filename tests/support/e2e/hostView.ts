@@ -14,7 +14,7 @@ import type { ElectronApp } from './app';
  */
 
 /** The AEM view's WebContents id, found by its committed origin. */
-export async function findAemViewId(app: ElectronApp, origin: string): Promise<number> {
+export async function findHostViewId(app: ElectronApp, origin: string): Promise<number> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const id = await app.evaluate(({ webContents }, prefix: string) => {
       return webContents.getAllWebContents().find((c) => c.getURL().startsWith(prefix))?.id ?? -1;
@@ -26,10 +26,10 @@ export async function findAemViewId(app: ElectronApp, origin: string): Promise<n
 }
 
 /** The AEM view's own `isLoading()` flag, read from main. */
-export function viewIsLoading(app: ElectronApp, aemViewId: number): Promise<boolean> {
+export function viewIsLoading(app: ElectronApp, hostViewId: number): Promise<boolean> {
   return app.evaluate(
     ({ webContents }, id: number) => webContents.fromId(id)?.isLoading() ?? false,
-    aemViewId,
+    hostViewId,
   );
 }
 
@@ -38,8 +38,8 @@ export function viewIsLoading(app: ElectronApp, aemViewId: number): Promise<bool
  * `did-start-navigation`, i.e. *before* the load settles, so a key pressed right
  * after an address assertion can otherwise land mid-load.
  */
-export async function waitForViewIdle(app: ElectronApp, aemViewId: number): Promise<void> {
-  await expect.poll(() => viewIsLoading(app, aemViewId), { timeout: 30_000 }).toBe(false);
+export async function waitForViewIdle(app: ElectronApp, hostViewId: number): Promise<void> {
+  await expect.poll(() => viewIsLoading(app, hostViewId), { timeout: 30_000 }).toBe(false);
 }
 
 /**
@@ -48,8 +48,8 @@ export async function waitForViewIdle(app: ElectronApp, aemViewId: number): Prom
  */
 export function pressOn(
   app: ElectronApp,
-  target: 'shell' | 'aem',
-  aemViewId: number,
+  target: 'shell' | 'host',
+  hostViewId: number,
   keyCode: string,
   modifiers: ('control' | 'alt' | 'shift' | 'meta')[],
 ): Promise<boolean> {
@@ -76,6 +76,6 @@ export function pressOn(
       contents.sendInputEvent({ type: 'keyUp', keyCode: args.keyCode, modifiers: args.modifiers });
       return contents.isFocused();
     },
-    { target, id: aemViewId, keyCode, modifiers },
+    { target, id: hostViewId, keyCode, modifiers },
   );
 }

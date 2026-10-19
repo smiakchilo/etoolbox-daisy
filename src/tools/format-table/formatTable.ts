@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type RequestId,
   type Result,
@@ -339,7 +339,7 @@ function invalidArgument(message: string, requestId: RequestId): Result<JsonValu
  * carrying the row count - the table itself is painted by the renderer from the
  * call's own arguments, so nothing large crosses back.
  */
-export function createFormatTableExecutor(host: ToolHost): AemToolExecutor {
+export function createFormatTableExecutor(host: ToolHost): ToolExecutor {
   return (rawArgs): Promise<Result<JsonValue, ToolError>> => {
     const requestId = newRequestId(host.idGenerator);
 

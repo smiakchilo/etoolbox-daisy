@@ -82,7 +82,7 @@ function build(overrides: Partial<AgentChatControllerDeps> = {}): Harness {
     agentService: fake,
     logger,
     idGenerator: counterIds('turn'),
-    currentAemServerContext: () => ({
+    currentHostContext: () => ({
       origin: 'https://author.example.com',
       serverId: 'server-a' as ServerId,
       serverRevision: 1,
@@ -284,7 +284,7 @@ describe('post-turn reflection', () => {
     await harness.controller.openConversation({ chatId });
     await runUserTurn(harness, [failingCall]);
 
-    await harness.controller.handleAemContextInvalidated();
+    await harness.controller.handleHostContextInvalidated();
 
     expect(harness.controller.getStatus().sessionState).not.toBe('idle');
   });

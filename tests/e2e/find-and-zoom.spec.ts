@@ -1,7 +1,11 @@
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { findAemViewId, pressOn, waitForViewIdle } from '../support/e2e/aemView';
-import { closeFixtureServer, seedHostAndLaunch, startFixtureServer } from '../support/e2e/aemHost';
+import { findHostViewId, pressOn, waitForViewIdle } from '../support/e2e/hostView';
+import {
+  closeFixtureServer,
+  seedHostAndLaunch,
+  startFixtureServer,
+} from '../support/e2e/hostFixture';
 import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
 import { flushFake, scriptTurn } from '../support/e2e/fakeAgent';
 import { byTestId } from '../support/selectors';
@@ -33,10 +37,13 @@ const PAGE_HTML =
   '<body><p>cinnamon</p><p>cinnamon roll</p></body></html>';
 
 /** The AEM view's current Electron zoom level, read from main. */
-function zoomLevelOf(app: Parameters<typeof findAemViewId>[0], aemViewId: number): Promise<number> {
+function zoomLevelOf(
+  app: Parameters<typeof findHostViewId>[0],
+  hostViewId: number,
+): Promise<number> {
   return app.evaluate(
     ({ webContents }, id: number) => webContents.fromId(id)?.getZoomLevel() ?? Number.NaN,
-    aemViewId,
+    hostViewId,
   );
 }
 
@@ -47,19 +54,19 @@ test('find-in-page and zoom work from both panes', async () => {
   const { app, page } = await seedHostAndLaunch(scratchBase, origin, 'Find fixture');
 
   try {
-    const aemViewId = await findAemViewId(app, origin);
+    const hostViewId = await findHostViewId(app, origin);
     await expect
       .poll(async () => await page.locator(`${byTestId('browser-address')} input`).inputValue(), {
         timeout: 30_000,
       })
       .toBe(`${origin}/`);
-    await waitForViewIdle(app, aemViewId);
+    await waitForViewIdle(app, hostViewId);
 
     // ── Ctrl+F on the AEM pane opens the browser find bar and finds matches ──
     // The press's return value is deliberately not asserted: the find action
     // moves keyboard focus to the shell (the bar's field lives there), so the
     // AEM view is no longer focused by the time it returns.
-    await pressOn(app, 'aem', aemViewId, 'F', ['control']);
+    await pressOn(app, 'host', hostViewId, 'F', ['control']);
     const browserBar = page.locator(byTestId('browser-find'));
     await expect(browserBar).toBeVisible();
     const browserField = page.locator(`${byTestId('browser-find-field')} input`);
@@ -73,18 +80,18 @@ test('find-in-page and zoom work from both panes', async () => {
     await expect(browserBar).toBeHidden();
 
     // ── Ctrl+numpad + / - / 0 zoom the AEM page ─────────────────────────────
-    expect(await pressOn(app, 'aem', aemViewId, 'numadd', ['control'])).toBe(true);
-    await expect.poll(() => zoomLevelOf(app, aemViewId)).toBe(1);
+    expect(await pressOn(app, 'host', hostViewId, 'numadd', ['control'])).toBe(true);
+    await expect.poll(() => zoomLevelOf(app, hostViewId)).toBe(1);
 
-    await pressOn(app, 'aem', aemViewId, 'numsub', ['control']);
-    await expect.poll(() => zoomLevelOf(app, aemViewId)).toBe(0);
+    await pressOn(app, 'host', hostViewId, 'numsub', ['control']);
+    await expect.poll(() => zoomLevelOf(app, hostViewId)).toBe(0);
 
-    await pressOn(app, 'aem', aemViewId, 'numadd', ['control']);
-    await pressOn(app, 'aem', aemViewId, 'numadd', ['control']);
-    await expect.poll(() => zoomLevelOf(app, aemViewId)).toBe(2);
+    await pressOn(app, 'host', hostViewId, 'numadd', ['control']);
+    await pressOn(app, 'host', hostViewId, 'numadd', ['control']);
+    await expect.poll(() => zoomLevelOf(app, hostViewId)).toBe(2);
 
-    await pressOn(app, 'aem', aemViewId, '0', ['control']);
-    await expect.poll(() => zoomLevelOf(app, aemViewId)).toBe(0);
+    await pressOn(app, 'host', hostViewId, '0', ['control']);
+    await expect.poll(() => zoomLevelOf(app, hostViewId)).toBe(0);
 
     // ── Ctrl+F on the shell (chat focused) opens the chat find bar ───────────
     await waitForComposerReady(page);
@@ -95,7 +102,7 @@ test('find-in-page and zoom work from both panes', async () => {
     // Put focus inside the chat pane, so the shell-sourced Ctrl+F routes there.
     await page.locator(byTestId('chat-composer-field')).click();
 
-    expect(await pressOn(app, 'shell', aemViewId, 'F', ['control'])).toBe(true);
+    expect(await pressOn(app, 'shell', hostViewId, 'F', ['control'])).toBe(true);
     const chatBar = page.locator(byTestId('chat-find'));
     await expect(chatBar).toBeVisible();
     const chatField = page.locator(`${byTestId('chat-find-field')} input`);

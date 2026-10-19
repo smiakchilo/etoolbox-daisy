@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 /**
- * `createAemSession` is mostly Electron-value wiring with no independently
+ * `createViewSession` is mostly Electron-value wiring with no independently
  * interesting decision logic (see its own module comment). The one behaviour
  * added here that a reader cannot verify by types alone is the **download
  * guard** (owner decision: a DAM asset link is "a preview experience - not
@@ -29,11 +29,11 @@ vi.mock('electron', () => ({
   session: { fromPartition: vi.fn(() => fakeSession) },
 }));
 
-import { createAemSession } from '../../../../src/main/aem';
+import { createViewSession } from '../../../../src/main/webview';
 
-describe('createAemSession - download guard', () => {
+describe('createViewSession - download guard', () => {
   it('cancels every download on the AEM session', () => {
-    createAemSession();
+    createViewSession();
 
     const registration = fakeSession.on.mock.calls.find(([event]) => event === 'will-download');
     expect(registration).toBeDefined();

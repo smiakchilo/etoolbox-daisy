@@ -5,18 +5,18 @@ import type { ProxyConfig } from '../../shared';
  * Proxy-vs-origin authentication disambiguation
  * (implementation-plan.md step 05; requirements-decisions.md section 4:
  * "supply proxy credentials only for the proxy challenge itself, never for
- * the AEM server's own login"; docs/verification.md "Step 05 prerequisite -
+ * the host's own login"; docs/verification.md "Step 05 prerequisite -
  * technical gate G3", finding 5).
  *
  * G3 proved this is reliably distinguishable at the Electron API level: a
  * `login` event's `authInfo` gives `isProxy`, `host`, `port`, `scheme`,
  * `realm`, and a real proxy 407 reported `isProxy:true, host:127.0.0.1,
- * port:<proxy port>` while a real AEM 401 on the very same machine reported
+ * port:<proxy port>` while a real host 401 on the very same machine reported
  * `isProxy:false, host:localhost, port:<origin port>`. This module turns
  * that observation into a policy that is deliberately conservative: it is
  * not enough for `isProxy` to be true, the challenge's host and port must
  * also match the *currently selected* proxy exactly. Requirements-decisions
- * section 4 explicitly calls out the case this guards against: an AEM
+ * section 4 explicitly calls out the case this guards against: a host
  * instance and the configured proxy happening to share a host but differ
  * only by port must never be confused for one another - matching `isProxy`
  * alone, without the host/port check, would not catch a compromised or
@@ -103,7 +103,7 @@ export interface ProxyLoginListenerDeps {
  * Builds the `app.on("login", ...)` listener. Only ever *decides* in the
  * supply direction: `event.preventDefault()` + `callback(username, password)`.
  *
- * Every other path - an AEM or IdP 401, or a proxy challenge for which no
+ * Every other path - an host or IdP 401, or a proxy challenge for which no
  * credentials are configured - simply returns, touching neither
  * `preventDefault()` nor `callback`. Per Electron's documented contract
  * ("The default behavior is to cancel all authentications. To override this

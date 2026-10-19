@@ -201,7 +201,7 @@ export function createMainWindow(options: CreateMainWindowOptions): BrowserWindo
 
   // Deny by default. A future "open in browser" affordance must go through a
   // narrow, reviewed IPC call that validates the target - never through this
-  // handler, which also fires for remote AEM content in later steps.
+  // handler, which also fires for remote remote content in later steps.
   window.webContents.setWindowOpenHandler(() => {
     return { action: 'deny' };
   });

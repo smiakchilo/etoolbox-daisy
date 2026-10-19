@@ -108,10 +108,10 @@ export type ChatJournalSessionOpenedRecord = Readonly<
  * roots, content path). It is diagnostics, not transcript: the renderer never
  * paints it, but without it a reader cannot tell what the model knew on this
  * turn - which host, which roots, which page - except by asking the model, whose
- * own account can be wrong. Absent when the pane was on no AEM page of the
+ * own account can be wrong. Absent when the pane was on no page of the
  * active server (so there was no block).
  *
- * `serverId` is the AEM host the pane was on when this prompt was sent. A chat
+ * `serverId` is the host the pane was on when this prompt was sent. A chat
  * is "bound to one server" by policy, and the header's `serverId` records the
  * host the chat *opened* on - but the startup chat opens before any page is
  * restored, so its header often names none. This field is what makes the host
@@ -209,7 +209,7 @@ export type ChatJournalAbandonedToolCallRecord = Readonly<
 
 /**
  * Why a turn was interrupted. `"stopped"` is a Stop the user pressed;
- * `"navigation"` is every other app-initiated abort (an AEM server switch, a
+ * `"navigation"` is every other app-initiated abort (an host switch, a
  * cross-origin navigation, a render-process-gone, a destroyed view).
  *
  * Declared in the contract layer (not in the renderer) because it is persisted
@@ -221,7 +221,7 @@ export type InterruptionReason = z.infer<typeof interruptionReasonSchema>;
 
 /**
  * A durable "this turn was interrupted" marker, written by main when it aborts a
- * turn in flight - a user Stop or an AEM-context-invalidating abort. The live
+ * turn in flight - a user Stop or an host-context-invalidating abort. The live
  * renderer paints its own notice from the resulting `cancelling` event - this
  * record exists so a resumed chat's transcript shows the notice too. A replayed
  * notice is *historical*: the renderer never offers its Resume action for it (see

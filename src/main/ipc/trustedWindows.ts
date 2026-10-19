@@ -9,7 +9,7 @@
  * never satisfy the guard, and every settings request it made was refused.
  *
  * Membership is explicit rather than inferred from `BrowserWindow.getAllWindows()`:
- * the AEM `WebContentsView` hosts remote content and must never be trusted, so
+ * the browser `WebContentsView` hosts remote content and must never be trusted, so
  * "a window this app happens to own" is not the same question as "our own
  * privileged local UI".
  */

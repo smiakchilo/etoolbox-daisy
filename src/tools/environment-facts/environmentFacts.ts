@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type RequestId,
   type Result,
@@ -195,7 +195,7 @@ export function executeEnvironmentFacts(
  * catalogue and the live pane's origin fresh on every call - the model never
  * supplies a host.
  */
-export function createEnvironmentFactsExecutor(host: ToolHost): AemToolExecutor {
+export function createEnvironmentFactsExecutor(host: ToolHost): ToolExecutor {
   return (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
     const parsed = environmentFactsArgsSchema.safeParse(rawArgs);

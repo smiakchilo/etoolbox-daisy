@@ -73,7 +73,7 @@ export const toolErrorCodeSchema = z.enum(TOOL_ERROR_CODES);
  */
 export const REQUIRED_ACTIONS = [
   'none',
-  'sign_in_to_aem',
+  'sign_in_to_host',
   'sign_in_to_agent',
   'add_server',
   'select_server',
@@ -125,10 +125,10 @@ const RETRYABLE_BY_DEFAULT: ReadonlySet<ToolErrorCode> = new Set<ToolErrorCode>(
 const REQUIRED_ACTION_BY_CODE: Readonly<Record<ToolErrorCode, RequiredAction>> = {
   INVALID_ARGUMENT: 'none',
   NOT_AUTHORIZED: 'none',
-  AUTH_REQUIRED: 'sign_in_to_aem',
+  AUTH_REQUIRED: 'sign_in_to_host',
   ACCESS_DENIED: 'none',
   NOT_FOUND: 'none',
-  REDIRECT_BLOCKED: 'sign_in_to_aem',
+  REDIRECT_BLOCKED: 'sign_in_to_host',
   UNEXPECTED_RESPONSE: 'none',
   NETWORK_ERROR: 'none',
   PROXY_ERROR: 'check_proxy_settings',

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type Result,
   type ToolCallId,
@@ -39,7 +39,7 @@ export interface ToolLoadFailure {
 
 export interface ToolRegistry {
   /** The model-callable tools' executors, keyed by tool name (no `internal` tool). */
-  readonly toolHandlers: Readonly<Record<string, AemToolExecutor>>;
+  readonly toolHandlers: Readonly<Record<string, ToolExecutor>>;
   readonly descriptors: readonly ToolDescriptor[];
   readonly allowlistEntries: readonly string[];
   /** The composed session instructions for exactly the model-callable tools. */
@@ -122,7 +122,7 @@ function describe(caught: unknown): string {
 function createInvokeTool(params: {
   readonly callerName: string;
   readonly uses: ReadonlySet<string>;
-  readonly handlers: Readonly<Record<string, AemToolExecutor>>;
+  readonly handlers: Readonly<Record<string, ToolExecutor>>;
   readonly depths: Map<string, number>;
   readonly host: ToolHostServices;
   readonly observer: NestedToolCallObserver | undefined;
@@ -210,9 +210,9 @@ export async function buildToolRegistry(params: {
   };
 
   // Every enabled tool, internal ones included: the `invokeTool` lookup table.
-  const handlers: Record<string, AemToolExecutor> = {};
+  const handlers: Record<string, ToolExecutor> = {};
   // Only what the model may call: handed to the agent.
-  const modelHandlers: Record<string, AemToolExecutor> = {};
+  const modelHandlers: Record<string, ToolExecutor> = {};
   const internalNames: string[] = [];
   const descriptors: ToolDescriptor[] = [];
   const allowlistEntries: string[] = [];
@@ -246,7 +246,7 @@ export async function buildToolRegistry(params: {
       fail(source, `Duplicate tool name '${tool.name}'`);
       continue;
     }
-    let executor: AemToolExecutor;
+    let executor: ToolExecutor;
     try {
       const uses = tool.uses ?? [];
       const host: ToolHost = {

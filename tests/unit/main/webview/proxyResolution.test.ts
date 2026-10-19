@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findProxyEntry, resolveEffectiveProxy } from '../../../../src/main/aem';
+import { findProxyEntry, resolveEffectiveProxy } from '../../../../src/main/webview';
 import {
   appSettingsSchema,
   defaultAppSettings,

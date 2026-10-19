@@ -7,7 +7,7 @@ import {
   composeModelPrompt,
   createAgentChatEventForwarder,
   createStartupGatedAgentChatController,
-  type AemServerContext,
+  type HostContext,
   type AgentChatController,
   type AgentChatControllerDeps,
   type AgentChatEventSink,
@@ -73,7 +73,7 @@ async function flushMicrotasks(): Promise<void> {
   for (let tick = 0; tick < 20; tick += 1) await Promise.resolve();
 }
 
-function serverContext(overrides: Partial<AemServerContext> = {}): AemServerContext {
+function serverContext(overrides: Partial<HostContext> = {}): HostContext {
   return {
     origin: 'https://author.example.com',
     serverId: 'server-a' as ServerId,
@@ -92,7 +92,7 @@ function buildController(
     agentService,
     logger,
     idGenerator: counterIdGenerator('turn'),
-    currentAemServerContext: () => serverContext(),
+    currentHostContext: () => serverContext(),
     navigationEpoch: () => 0,
     currentPageContext: () => undefined,
     ...overrides,
@@ -103,7 +103,7 @@ function buildController(
 
 /** Test-only helper to mutate the closures `buildController` captured, simulating a live server switch. */
 interface MutableServerSlot {
-  set(context: AemServerContext | undefined): void;
+  set(context: HostContext | undefined): void;
   bumpEpoch(): void;
 }
 
@@ -113,13 +113,13 @@ function buildControllerWithMutableServer(agentService: AgentService): {
   logger: Logger;
 } {
   const logger = noopLogger();
-  let current: AemServerContext | undefined = serverContext();
+  let current: HostContext | undefined = serverContext();
   let epoch = 0;
   const controller = createAgentChatController({
     agentService,
     logger,
     idGenerator: counterIdGenerator('turn'),
-    currentAemServerContext: () => current,
+    currentHostContext: () => current,
     navigationEpoch: () => epoch,
     currentPageContext: () => undefined,
   });
@@ -479,7 +479,7 @@ describe('agentChatController', () => {
       serverContext({ origin: 'https://author-b.example.com', serverId: 'server-b' as ServerId }),
     );
     server.bumpEpoch();
-    await controller.handleAemContextInvalidated();
+    await controller.handleHostContextInvalidated();
 
     expect(received.map((event) => event.type)).toEqual([
       'session.state.changed', // sending
@@ -493,7 +493,7 @@ describe('agentChatController', () => {
     agentService.scriptNextResponse({});
     const sentAfter = await controller.sendMessage({ chatId, prompt: 'again' });
     expect(sentAfter.ok).toBe(true);
-    const context = controller.currentAemToolContext();
+    const context = controller.currentToolContext();
     expect(context.origin).toBe('https://author-b.example.com');
     expect(context.serverId).toBe('server-b');
   });
@@ -508,7 +508,7 @@ describe('agentChatController', () => {
     const sent = await controller.sendMessage({ chatId, prompt: 'hi' });
     expect(sent.ok).toBe(true);
 
-    const before = controller.currentAemToolContext();
+    const before = controller.currentToolContext();
     expect(before.origin).toBe('https://author.example.com');
 
     // Mutate the underlying server context directly (no cancel, no new
@@ -519,7 +519,7 @@ describe('agentChatController', () => {
     );
     server.bumpEpoch();
 
-    const after = controller.currentAemToolContext();
+    const after = controller.currentToolContext();
     expect(after.origin).toBe('https://author-b.example.com');
     expect(after.serverId).toBe('server-b');
     expect(after.navigationEpoch).toBe(1);
@@ -595,14 +595,14 @@ describe('createStartupGatedAgentChatController', () => {
     });
   });
 
-  it('throws a clear error from currentAemToolContext before a delegate is installed, rather than fabricating one', () => {
+  it('throws a clear error from currentToolContext before a delegate is installed, rather than fabricating one', () => {
     const gated = createStartupGatedAgentChatController();
-    expect(() => gated.currentAemToolContext()).toThrow(/starting/);
+    expect(() => gated.currentToolContext()).toThrow(/starting/);
   });
 
-  it('is a no-op for handleAemContextInvalidated/dispose before a delegate is installed', async () => {
+  it('is a no-op for handleHostContextInvalidated/dispose before a delegate is installed', async () => {
     const gated = createStartupGatedAgentChatController();
-    await expect(gated.handleAemContextInvalidated()).resolves.toBeUndefined();
+    await expect(gated.handleHostContextInvalidated()).resolves.toBeUndefined();
     await expect(gated.dispose()).resolves.toBeUndefined();
   });
 
@@ -632,7 +632,7 @@ describe('createStartupGatedAgentChatController', () => {
     // The turn is still in flight here (not yet flushed), so the AEM tool
     // context can still bind to it - proving `gated` delegates this call to
     // the real controller too, not just the request/response ones above.
-    expect(gated.currentAemToolContext().origin).toBe('https://author.example.com');
+    expect(gated.currentToolContext().origin).toBe('https://author.example.com');
 
     agentService.flush();
     expect(received.length).toBeGreaterThan(0);
@@ -878,10 +878,10 @@ describe('agentChatController chat journal', () => {
   it('journals the host the chat is used on, read fresh at send time', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
     const { journal, calls } = createRecordingJournal();
-    let server: AemServerContext | undefined = serverContext({ serverId: 'server-a' as ServerId });
+    let server: HostContext | undefined = serverContext({ serverId: 'server-a' as ServerId });
     const { controller } = buildController(agentService, {
       chatJournal: journal,
-      currentAemServerContext: () => server,
+      currentHostContext: () => server,
     });
 
     const chatId = newChatId('chat-1');
@@ -901,7 +901,7 @@ describe('agentChatController chat journal', () => {
     const { journal, calls } = createRecordingJournal();
     const { controller } = buildController(agentService, {
       chatJournal: journal,
-      currentAemServerContext: () => undefined,
+      currentHostContext: () => undefined,
     });
 
     const chatId = newChatId('chat-1');
@@ -1031,7 +1031,7 @@ describe('agentChatController chat journal', () => {
     await controller.sendMessage({ chatId, prompt: 'hi' });
     calls.length = 0;
 
-    await controller.handleAemContextInvalidated();
+    await controller.handleHostContextInvalidated();
 
     expect(calls.at(-1)).toEqual({
       method: 'recordInterruption',
@@ -1077,8 +1077,8 @@ describe('agentChatController chat journal', () => {
 describe('agentChatController AEM-request cancellation', () => {
   it('cancels in-flight AEM requests on Stop', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-    const cancelAemRequests = vi.fn();
-    const { controller } = buildController(agentService, { cancelAemRequests });
+    const cancelBridgeRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelBridgeRequests });
 
     const chatId = newChatId('chat-1');
     await controller.openConversation({ chatId });
@@ -1086,35 +1086,35 @@ describe('agentChatController AEM-request cancellation', () => {
     await controller.sendMessage({ chatId, prompt: 'hi' });
 
     await controller.abort({ chatId });
-    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+    expect(cancelBridgeRequests).toHaveBeenCalledTimes(1);
   });
 
   it('cancels in-flight AEM requests when the conversation is closed', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-    const cancelAemRequests = vi.fn();
-    const { controller } = buildController(agentService, { cancelAemRequests });
+    const cancelBridgeRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelBridgeRequests });
 
     const chatId = newChatId('chat-1');
     await controller.openConversation({ chatId });
     await controller.closeConversation({ chatId });
 
-    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+    expect(cancelBridgeRequests).toHaveBeenCalledTimes(1);
   });
 
   it('cancels in-flight AEM requests when switching to another chat', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-    const cancelAemRequests = vi.fn();
-    const { controller } = buildController(agentService, { cancelAemRequests });
+    const cancelBridgeRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelBridgeRequests });
 
     await controller.openConversation({ chatId: newChatId('chat-a') });
     await controller.openConversation({ chatId: newChatId('chat-b') });
 
-    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+    expect(cancelBridgeRequests).toHaveBeenCalledTimes(1);
   });
 
   it('cancels AEM requests and logs the cause on an AEM-context invalidation', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-    const cancelAemRequests = vi.fn();
+    const cancelBridgeRequests = vi.fn();
     const info = vi.fn();
     const logger: Logger = {
       info,
@@ -1122,16 +1122,16 @@ describe('agentChatController AEM-request cancellation', () => {
       error: vi.fn(),
       getHealth: () => ({ writeFailureCount: 0, lastFailureCode: null, rotationCount: 0 }),
     };
-    const { controller } = buildController(agentService, { cancelAemRequests, logger });
+    const { controller } = buildController(agentService, { cancelBridgeRequests, logger });
 
     const chatId = newChatId('chat-1');
     await controller.openConversation({ chatId });
     agentService.scriptNextResponse({ steps: [{ kind: 'delta', text: 'slow' }] });
     await controller.sendMessage({ chatId, prompt: 'hi' });
 
-    await controller.handleAemContextInvalidated();
+    await controller.handleHostContextInvalidated();
 
-    expect(cancelAemRequests).toHaveBeenCalledTimes(1);
+    expect(cancelBridgeRequests).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE', {
       ids: { chatId },
     });
@@ -1139,13 +1139,13 @@ describe('agentChatController AEM-request cancellation', () => {
 
   it('does nothing on a context invalidation when no turn is in flight', async () => {
     const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
-    const cancelAemRequests = vi.fn();
-    const { controller } = buildController(agentService, { cancelAemRequests });
+    const cancelBridgeRequests = vi.fn();
+    const { controller } = buildController(agentService, { cancelBridgeRequests });
 
     await controller.openConversation({ chatId: newChatId('chat-1') });
-    await controller.handleAemContextInvalidated();
+    await controller.handleHostContextInvalidated();
 
-    expect(cancelAemRequests).not.toHaveBeenCalled();
+    expect(cancelBridgeRequests).not.toHaveBeenCalled();
   });
 });
 

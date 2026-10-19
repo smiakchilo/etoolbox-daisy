@@ -25,18 +25,18 @@ import type { AppSettings } from '../../shared';
 import type { ProxyConfig, ServerId } from '../../shared';
 import { buildNavigationUrl, parseNavigationTarget, validateBrowserPath } from '../../shared';
 import { applyServerTargetingChange, loadSettings, saveSettings } from '../settingsStore';
-import type { AemSession } from '../aem';
-import type { ProxyPlainCredentials } from '../aem';
-import { resolveEffectiveProxy } from '../aem';
+import type { ViewSession } from '../webview';
+import type { ProxyPlainCredentials } from '../webview';
+import { resolveEffectiveProxy } from '../webview';
 import type { SecretStore } from '../secretStore';
 import { toLoggableUrl, type DiagnosticCode, type Logger } from '../logger';
 import { attachShortcutHandling } from '../shortcuts';
 import {
-  createAemBrowserView,
-  type AemBrowserView,
-  type AemBrowserViewOptions,
+  createHostView,
+  type HostView,
+  type HostViewOptions,
   type ChromeNavigationOutcome,
-} from './aemBrowserView';
+} from './hostView';
 import { ServerSwitchController } from './serverSwitch';
 import { describeNetworkError } from './networkErrorCopy';
 import { decideAddressNavigation } from './unknownOrigin';
@@ -74,49 +74,49 @@ const NAVIGATION_LOG_CODE_BY_REASON: Readonly<Record<NavigationEpochBumpReason, 
  * decision logic worth testing directly (`navigate`/`switchServer`'s
  * dispatch to the right `BrowserIpcError`, certificate-exception
  * persistence) - see `tests/unit/main/browser/browserController.test.ts`,
- * which exercises it through the `createAemView` seam below instead of a
+ * which exercises it through the `createView` seam below instead of a
  * real `WebContentsView`/`screen`.
  */
 export interface BrowserControllerOptions {
   readonly settingsDir: string;
   readonly secretStore: SecretStore;
   readonly logger: Logger;
-  readonly aemSession: AemSession;
+  readonly viewSession: ViewSession;
   readonly window: BrowserWindow;
-  readonly aemPreloadPath: string;
+  readonly webviewPreloadPath: string;
   /** The app's own chat-pane renderer `WebContents` - the only trusted push target. */
   readonly rendererWebContents: WebContents;
-  /** Called after the user zoomed the app shell (not the AEM page), to persist its level. */
+  /** Called after the user zoomed the app shell (not the browser page), to persist its level. */
   readonly onShellZoomChanged?: () => void;
   /**
-   * Test seam: overrides how the AEM `WebContentsView` is constructed.
-   * Defaults to the real {@link createAemBrowserView}. Unit tests inject a
-   * fake `AemBrowserView` here so this module's own orchestration logic -
+   * Test seam: overrides how the browser `WebContentsView` is constructed.
+   * Defaults to the real {@link createHostView}. Unit tests inject a
+   * fake `HostView` here so this module's own orchestration logic -
    * decision dispatch, settings persistence, certificate handling - can be
    * exercised without a real Electron `WebContentsView`/`screen`/
    * `BrowserWindow`.
    */
-  readonly createAemView?: (viewOptions: AemBrowserViewOptions) => AemBrowserView;
+  readonly createView?: (viewOptions: HostViewOptions) => HostView;
 }
 
 /**
- * The identity of the AEM server the view is currently showing - the
- * "where do requests go" fact the AEM tool pipeline (`src/main/index.ts`)
+ * The identity of the host the view is currently showing - the
+ * "where do requests go" fact the tool pipeline (`src/main/index.ts`)
  * binds every `aem_get_json` call to. Deliberately a narrower projection of
  * `ServerConfig` than the full config: only the fields a tool request needs
- * to address and stamp itself (`bridgeBroker.ts`'s `CurrentAemContext`,
- * `aemTool.ts`'s `CurrentAemToolContext`), never proxy/TLS/label/colour.
+ * to address and stamp itself (`bridgeBroker.ts`'s `CurrentBridgeContext`,
+ * `toolModule.ts`'s `CurrentToolContext`), never proxy/TLS/label/colour.
  */
-export interface ActiveAemServer {
+export interface ActiveHost {
   readonly serverId: ServerId;
   readonly origin: string;
   readonly revision: number;
 }
 
 export interface BrowserController {
-  readonly aemView: AemBrowserView;
+  readonly hostView: HostView;
   /**
-   * Which document the AEM view is currently showing. The tool broker stamps
+   * Which document the browser view is currently showing. The tool broker stamps
    * every outgoing request with `current()` and refuses any reply that no
    * longer matches, so that a result produced by a page the user has since
    * navigated away from is never presented as describing the page they are
@@ -124,7 +124,7 @@ export interface BrowserController {
    */
   readonly navigationEpoch: NavigationEpochTracker;
   /**
-   * The server the AEM view is currently showing, or `undefined` when none
+   * The server the browser view is currently showing, or `undefined` when none
    * has been selected yet (no server configured, or the view has not
    * switched to one in this run). Reflects the settings this controller
    * itself most recently read or wrote via `switchServer`/`navigate` or a
@@ -134,9 +134,9 @@ export interface BrowserController {
    * back into this controller; that is a pre-existing gap in cross-module
    * settings sync, not something this accessor papers over.
    */
-  activeServer(): ActiveAemServer | undefined;
+  activeServer(): ActiveHost | undefined;
   /**
-   * The URL of the document the AEM view is currently showing, or `undefined`
+   * The URL of the document the browser view is currently showing, or `undefined`
    * when it has none (no page loaded yet, an empty `about:blank` start, or a
    * destroyed view). Read fresh on every call: this is what the agent's
    * per-prompt page context is derived from, so it must describe where the
@@ -164,11 +164,11 @@ export interface BrowserController {
   goBack(): Promise<BrowserIpcVoidResult>;
   goForward(): Promise<BrowserIpcVoidResult>;
   reload(): Promise<BrowserIpcVoidResult>;
-  /** Stops any in-flight load in the AEM view (the toolbar's Stop control while a navigation is loading). */
+  /** Stops any in-flight load in the browser view (the toolbar's Stop control while a navigation is loading). */
   stop(): BrowserIpcVoidResult;
   setViewBounds(bounds: ViewBounds): void;
   /**
-   * Runs a `findInPage` request against the named document (`browser` = the AEM
+   * Runs a `findInPage` request against the named document (`browser` = the host
    * view, `chat` = the shell document). The match count is not returned here; it
    * arrives asynchronously on the target's `found-in-page` event, which is
    * pushed to the shell renderer as `browser:find-result`.
@@ -179,7 +179,7 @@ export interface BrowserController {
   approveCertificateException(
     request: ApproveCertificateExceptionRequest,
   ): Promise<BrowserIpcVoidResult>;
-  /** Re-applies every persisted TLS exception to the live session. Call once at startup, before the AEM view loads anything. */
+  /** Re-applies every persisted TLS exception to the live session. Call once at startup, before the browser view loads anything. */
   hydrateCertificateExceptions(): Promise<void>;
   destroy(): void;
 }
@@ -194,7 +194,7 @@ function storageError(message: string): BrowserIpcError {
   return { code: 'storage_error', message };
 }
 
-function toActiveServer(server: AppSettings['hosts'][number]): ActiveAemServer {
+function toActiveServer(server: AppSettings['hosts'][number]): ActiveHost {
   return { serverId: server.id, origin: server.origin, revision: server.revision };
 }
 
@@ -218,7 +218,7 @@ function scaleBounds(bounds: ViewBounds, factor: number): ViewBounds {
  * Resolves a proxy-library entry's password into plaintext, if one is
  * configured. `secretStore.get` is async, which is why this exists as its own
  * step run *before* `ServerSwitchController.switchTo` rather than inline in
- * `resolveProxyCredentials` below - `AemSession.switchProxy`'s
+ * `resolveProxyCredentials` below - `ViewSession.switchProxy`'s
  * `resolveCredentials` parameter must be callable synchronously (Electron's
  * `login` event callback is synchronous), so the plaintext value has to
  * already be sitting in memory by the time that closure is invoked.
@@ -235,7 +235,7 @@ async function resolveProxyCredentials(
 }
 
 export function createBrowserController(options: BrowserControllerOptions): BrowserController {
-  const { settingsDir, secretStore, logger, aemSession, window, rendererWebContents } = options;
+  const { settingsDir, secretStore, logger, viewSession, window, rendererWebContents } = options;
 
   // Holds the most recently resolved plaintext credentials for whichever
   // server is currently selected. `switchProxy` stores the closure below,
@@ -249,7 +249,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // switch mechanism, not settings-mutation IPC.
   let currentCredentials: ProxyPlainCredentials | undefined;
 
-  // The proxy-library entry currently applied to the AEM session, or
+  // The proxy-library entry currently applied to the browser session, or
   // `undefined` for a direct connection. `switchProxy`/`applyProxy` store the
   // credentials closure, not the value, so this cell is what that closure
   // reads; it is also what `resolveProxy` hands to `ServerSwitchController`.
@@ -270,14 +270,14 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // target is never retried after the user has moved on.
   let certificateRetryTarget: { readonly url: string; readonly origin: string } | undefined;
 
-  // The server the AEM view is currently showing, or `undefined` before the
+  // The server the browser view is currently showing, or `undefined` before the
   // first successful `switchServer`/`navigate` in this run. Updated here -
   // not re-derived from disk on every read - because `activeServer()` must
-  // be synchronous (it backs `AgentChatControllerDeps.currentAemServerContext`,
+  // be synchronous (it backs `AgentChatControllerDeps.currentHostContext`,
   // itself read fresh on every tool call - see that interface's doc comment)
   // while settings I/O is not. See `BrowserController.activeServer`'s own doc
   // comment for what this does and does not track.
-  let activeServerState: ActiveAemServer | undefined;
+  let activeServerState: ActiveHost | undefined;
 
   /**
    * Set only while `openForAgent` is deliberately moving the pane for the
@@ -290,11 +290,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    */
   let agentNavigation: { readonly targetOrigin: string } | undefined;
 
-  const buildAemView = options.createAemView ?? createAemBrowserView;
-  const aemView = buildAemView({
+  const buildView = options.createView ?? createHostView;
+  const hostView = buildView({
     window,
-    aemSession: aemSession.session,
-    aemPreloadPath: options.aemPreloadPath,
+    viewSession: viewSession.session,
+    webviewPreloadPath: options.webviewPreloadPath,
     logger,
     onNavigationStateChange: (state) => {
       rendererWebContents.send(BROWSER_STATE_CHANGED_CHANNEL, state);
@@ -302,9 +302,9 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   // Application-wide keyboard shortcuts, without a menu bar (`src/main/shortcuts.ts`).
-  // Attached to *both* `WebContents`: the AEM pane is a `WebContentsView`, so a
+  // Attached to *both* `WebContents`: the browser pane is a `WebContentsView`, so a
   // keystroke there never reaches the shell document, and a renderer-only
-  // listener would silently do nothing while the AEM page has focus. Every
+  // listener would silently do nothing while the browser page has focus. Every
   // resolved action is pushed to the shell renderer, which dispatches it onto
   // its existing handlers; the chat-pane actions are bound on the shell only, so
   // the remote authoring page keeps its own `Ctrl+<letter>` editing shortcuts.
@@ -312,7 +312,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     rendererWebContents.send(APP_SHORTCUT_CHANNEL, action);
   };
   const focusShell = (): void => rendererWebContents.focus();
-  attachShortcutHandling(aemView.webContents, {
+  attachShortcutHandling(hostView.webContents, {
     allowChatShortcuts: false,
     send: sendShortcut,
     focusShell,
@@ -332,7 +332,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // factor but never zooms the page, so the factor-scaled view bounds drifted
   // away from an unzoomed layout. Ctrl+wheel is deliberately not a zoom
   // gesture; Electron only emits `zoom-changed` for it and this app ignores it.
-  aemView.webContents.setZoomMode('isolated');
+  hostView.webContents.setZoomMode('isolated');
   rendererWebContents.setZoomMode('isolated');
 
   // ── Find-in-page ────────────────────────────────────────────────────────
@@ -341,7 +341,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // target's `found-in-page` results are forwarded to the shell renderer, which
   // routes them to the matching find bar.
   const findTargetContents = (target: FindTarget): WebContents =>
-    target === 'browser' ? aemView.webContents : rendererWebContents;
+    target === 'browser' ? hostView.webContents : rendererWebContents;
   // The most recent request id issued per target, so a late result from a
   // superseded request is dropped rather than overwriting a newer count.
   let browserFindRequestId = -1;
@@ -351,7 +351,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     readonly matches: number;
     readonly activeMatchOrdinal: number;
   }
-  const onAemFoundInPage = (_event: unknown, result: FoundInPageResult): void => {
+  const onFoundInPage = (_event: unknown, result: FoundInPageResult): void => {
     if (result.requestId !== browserFindRequestId) return;
     rendererWebContents.send(BROWSER_FIND_RESULT_CHANNEL, {
       target: 'browser',
@@ -367,7 +367,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       activeMatchOrdinal: result.activeMatchOrdinal,
     });
   };
-  aemView.webContents.on('found-in-page', onAemFoundInPage);
+  hostView.webContents.on('found-in-page', onFoundInPage);
   rendererWebContents.on('found-in-page', onShellFoundInPage);
 
   function find(request: FindRequest): BrowserIpcVoidResult {
@@ -398,8 +398,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   const navigationEpoch = createNavigationEpochTracker();
 
   /**
-   * Whether `url` is on the active AEM server's own origin. A same-origin
-   * navigation changes the page but not the AEM context, so it must not
+   * Whether `url` is on the active host's own origin. A same-origin
+   * navigation changes the page but not the page context, so it must not
    * invalidate in-flight tool requests or cancel the agent's turn - see
    * `NavigationEpochTrackingOptions`. `false` when no server is active, which
    * makes every navigation invalidate (the safe direction: there is no
@@ -417,7 +417,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   }
 
   const detachNavigationEpoch = attachNavigationEpochTracking(
-    aemView.webContents,
+    hostView.webContents,
     navigationEpoch,
     {
       isSameOriginNavigation,
@@ -443,15 +443,16 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   // the view observes the proxy that matches the origin of the current request
   // (a configured host's own selection, or the `browser.proxy` default for an
   // origin that is not a host, e.g. Adobe's IMS).
-  const detachProxyReconciliation = attachProxyReconciliation(aemView.webContents, (url) => {
+  const detachProxyReconciliation = attachProxyReconciliation(hostView.webContents, (url) => {
     reconcileProxyForUrl(url);
   });
 
   const switchController = new ServerSwitchController({
-    getView: () => aemView,
-    closePopups: () => aemView.windowOpenRouter.closeAll(),
-    aemSession: {
-      switchProxy: (proxy, resolveCredentials) => aemSession.switchProxy(proxy, resolveCredentials),
+    getView: () => hostView,
+    closePopups: () => hostView.windowOpenRouter.closeAll(),
+    viewSession: {
+      switchProxy: (proxy, resolveCredentials) =>
+        viewSession.switchProxy(proxy, resolveCredentials),
     },
     resolveProxy: () => currentProxy,
     resolveProxyCredentials: () => () => currentCredentials,
@@ -463,8 +464,8 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   });
 
   const certificateBlockedListener = createCertificateBlockedListener({
-    aemSession: aemSession.session,
-    listExceptions: () => aemSession.listCertificateExceptions(),
+    viewSession: viewSession.session,
+    listExceptions: () => viewSession.listCertificateExceptions(),
     onBlocked: (info, url) => {
       logger.warn('BROWSER_CERTIFICATE_BLOCKED');
       certificateRetryTarget = { url, origin: info.origin };
@@ -472,7 +473,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     },
   });
   // A second, purely observational `certificate-error` listener alongside
-  // the AEM session's own decisive one - see `certificatePrompt.ts`'s module
+  // the browser session's own decisive one - see `certificatePrompt.ts`'s module
   // comment for why registering a second listener is safe here.
   app.on('certificate-error', certificateBlockedListener);
 
@@ -510,7 +511,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     currentProxy = proxy;
     currentCredentials = credentials;
     try {
-      await aemSession.applyProxy(proxy, () => currentCredentials);
+      await viewSession.applyProxy(proxy, () => currentCredentials);
       appliedProxyKey = key;
     } catch {
       // Unknown state: force the next navigation to re-apply rather than
@@ -621,7 +622,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     appliedProxyKey = currentProxy?.id ?? '';
 
     // A same-origin navigation - a transcript link, a CRX/Edit popover, a typed
-    // same-host address, a host re-select - changes the page, not the AEM
+    // same-host address, a host re-select - changes the page, not the page's
     // context (same origin, same session, same request target), so it must
     // neither invalidate in-flight tool requests nor cancel the agent's turn.
     // This is the *same* rule the Chromium `did-start-navigation` listener
@@ -693,7 +694,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
           errorCode: outcome.errorCode,
         });
       }
-      return fail({ code: 'no_active_view', message: 'no AEM view is available' });
+      return fail({ code: 'no_active_view', message: 'no browser view is available' });
     }
     activeServerState = toActiveServer(server);
     appliedProxyKey = currentProxy?.id ?? '';
@@ -833,7 +834,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     // exception that would not survive a restart.
     const persisted = await withPersistedTlsException(request.serverId, request.exception);
     if (!persisted.ok) return persisted;
-    await aemSession.approveCertificateException(request.exception);
+    await viewSession.approveCertificateException(request.exception);
     // Auto-retry the navigation that was blocked, if the approval covers the
     // origin it was for (a stale target whose origin differs is dropped, not
     // reused). `navigate` clears the target itself, so it is captured first.
@@ -859,7 +860,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    * from this raw value, so nothing is normalized or filtered here.
    */
   function currentDocumentUrl(): string | undefined {
-    const url = aemView.getNavigationState().url;
+    const url = hostView.getNavigationState().url;
     return url.length > 0 ? url : undefined;
   }
 
@@ -876,7 +877,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     }
     for (const server of settings.hosts) {
       if (server.tlsException) {
-        await aemSession.approveCertificateException(server.tlsException);
+        await viewSession.approveCertificateException(server.tlsException);
       }
     }
   }
@@ -888,7 +889,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    * Before this existed, these three commands always returned `ok()`
    * immediately and a failure surfacing later via `did-fail-load` was never
    * reported at all - see `ChromeNavigationOutcome`'s doc comment
-   * (`aemBrowserView.ts`) for the bug this closes: a dismissed error banner
+   * (`hostView.ts`) for the bug this closes: a dismissed error banner
    * from an earlier failed navigation never reappeared on a same-cause
    * reload/back/forward, because nothing set `errorText` again.
    */
@@ -961,17 +962,17 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
    * this the active server only changed through `switchServer` and history
    * commands, so a host switch whose load was cancelled by an SSO redirect, or
    * a login that returned to the host on its own, left it unset while the page
-   * was plainly an AEM host - and every tool call then failed with "no AEM
-   * server is currently selected". A commit during a switch is skipped: the
+   * was plainly a host - and every tool call then failed with "no host
+   * is currently selected". A commit during a switch is skipped: the
    * switch writes the result itself when it settles.
    */
   const onMainFrameCommitted = (): void => {
     if (mainFrameLoadFailed || switchController.getState() === 'switching') return;
     void refreshActiveServerFromView();
   };
-  aemView.webContents.on('did-start-navigation', onMainFrameNavigationStart);
-  aemView.webContents.on('did-fail-load', onMainFrameLoadFailed);
-  aemView.webContents.on('did-navigate', onMainFrameCommitted);
+  hostView.webContents.on('did-start-navigation', onMainFrameNavigationStart);
+  hostView.webContents.on('did-fail-load', onMainFrameLoadFailed);
+  hostView.webContents.on('did-navigate', onMainFrameCommitted);
 
   /** A chrome history command that also re-derives the active server on success. */
   async function settleHistoryCommand(
@@ -984,18 +985,18 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   async function goBack(): Promise<BrowserIpcVoidResult> {
     agentNavigation = undefined;
-    return settleHistoryCommand(await aemView.goBack());
+    return settleHistoryCommand(await hostView.goBack());
   }
   async function goForward(): Promise<BrowserIpcVoidResult> {
     agentNavigation = undefined;
-    return settleHistoryCommand(await aemView.goForward());
+    return settleHistoryCommand(await hostView.goForward());
   }
   async function reload(): Promise<BrowserIpcVoidResult> {
     agentNavigation = undefined;
-    return settleHistoryCommand(await aemView.reload());
+    return settleHistoryCommand(await hostView.reload());
   }
   function stop(): BrowserIpcVoidResult {
-    aemView.stop();
+    hostView.stop();
     return ok();
   }
 
@@ -1007,20 +1008,20 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     detachNavigationEpoch();
     detachNavigationLog();
     detachProxyReconciliation();
-    if (!aemView.webContents.isDestroyed()) {
-      aemView.webContents.off('did-start-navigation', onMainFrameNavigationStart);
-      aemView.webContents.off('did-fail-load', onMainFrameLoadFailed);
-      aemView.webContents.off('did-navigate', onMainFrameCommitted);
-      aemView.webContents.off('found-in-page', onAemFoundInPage);
+    if (!hostView.webContents.isDestroyed()) {
+      hostView.webContents.off('did-start-navigation', onMainFrameNavigationStart);
+      hostView.webContents.off('did-fail-load', onMainFrameLoadFailed);
+      hostView.webContents.off('did-navigate', onMainFrameCommitted);
+      hostView.webContents.off('found-in-page', onFoundInPage);
     }
     if (!rendererWebContents.isDestroyed()) {
       rendererWebContents.off('found-in-page', onShellFoundInPage);
     }
-    aemView.destroy();
+    hostView.destroy();
   }
 
   return {
-    aemView,
+    hostView,
     navigationEpoch,
     activeServer: () => activeServerState,
     currentDocumentUrl,
@@ -1036,7 +1037,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       // The renderer reports CSS pixels; the native view is positioned in DIP.
       // They coincide only at 100% shell zoom (see `scaleBounds`).
       const factor = rendererWebContents.getZoomFactor();
-      aemView.setBounds(factor === 1 ? bounds : scaleBounds(bounds, factor));
+      hostView.setBounds(factor === 1 ? bounds : scaleBounds(bounds, factor));
     },
     find,
     stopFind,

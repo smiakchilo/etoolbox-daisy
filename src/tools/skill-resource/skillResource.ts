@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type SkillResource,
   type ToolDescriptor,
@@ -91,7 +91,7 @@ function toPayload(requestId: string, skill: string, resource: SkillResource): J
   return base;
 }
 
-export function createSkillResourceExecutor(host: ToolHost): AemToolExecutor {
+export function createSkillResourceExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
     if (context.signal?.aborted === true) {

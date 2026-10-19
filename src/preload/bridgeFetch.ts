@@ -1,13 +1,13 @@
 import {
-  AEM_BRIDGE_REQUEST_HEADERS,
-  type AemBridgeFetchCommand,
-  type AemBridgeHeader,
-  type AemBridgeReply,
-} from '../shared/contracts/aemBridge';
+  WEBVIEW_BRIDGE_REQUEST_HEADERS,
+  type WebviewBridgeFetchCommand,
+  type WebviewBridgeHeader,
+  type WebviewBridgeReply,
+} from '../shared/contracts/webviewBridge';
 
 /**
- * The entire decision logic of the AEM preload bridge, extracted from
- * `aem-preload.ts` so it can be unit-tested without an Electron renderer.
+ * The entire decision logic of the webview preload bridge, extracted from
+ * `webview-preload.ts` so it can be unit-tested without an Electron renderer.
  * The preload file itself is then only wiring: receive, call this, reply.
  *
  * Everything security-relevant about the bridge lives here, so the rules are
@@ -16,7 +16,7 @@ import {
  * - The request is issued with the document's own ambient credentials
  *   (`credentials: "same-origin"`). The bridge never reads `document.cookie`,
  *   never constructs an `Authorization` header, and never handles a token. It
- *   cannot: the AEM session cookie is HttpOnly, and this code never asks for
+ *   cannot: the browser session cookie is HttpOnly, and this code never asks for
  *   it. The session is used, not obtained.
  * - The URL is re-checked against the document's origin here, not only in
  *   main. Main builds the URL and is trusted to build it correctly, but a bug
@@ -38,10 +38,10 @@ export interface BridgeFetchDeps {
 }
 
 export async function performBridgeFetch(
-  command: AemBridgeFetchCommand,
+  command: WebviewBridgeFetchCommand,
   deps: BridgeFetchDeps,
   signal: AbortSignal,
-): Promise<AemBridgeReply> {
+): Promise<WebviewBridgeReply> {
   const { requestId } = command;
 
   let target: URL;
@@ -71,7 +71,7 @@ export async function performBridgeFetch(
       // Asking for JSON explicitly gives a well-behaved SSO gateway the chance
       // to answer 401 instead of an HTML login page - a far more actionable
       // result. Safe to send on a same-origin request: it triggers no preflight.
-      headers: { ...AEM_BRIDGE_REQUEST_HEADERS },
+      headers: { ...WEBVIEW_BRIDGE_REQUEST_HEADERS },
       signal,
     });
   } catch (error) {
@@ -123,10 +123,10 @@ export async function performBridgeFetch(
  * Flattens a `Headers` object to the array main logs. Only *readable* headers
  * are obtainable: `Set-Cookie` (and `Set-Cookie2`) are browser-forbidden
  * response-header names, filtered out by the fetch implementation before this
- * code ever sees them, so the AEM session cookie cannot be reported here even
+ * code ever sees them, so the browser session cookie cannot be reported here even
  * if something upstream tried to. Iteration order and duplicate handling are
  * whatever the `Headers` object gives - this does not re-combine or sort.
  */
-function readableHeaders(headers: Headers): AemBridgeHeader[] {
+function readableHeaders(headers: Headers): WebviewBridgeHeader[] {
   return [...headers].map(([name, value]) => ({ name, value }));
 }

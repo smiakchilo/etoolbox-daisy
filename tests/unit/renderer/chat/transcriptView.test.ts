@@ -159,7 +159,7 @@ function toolResult(sequence: number, ok: boolean): AgentEvent {
             message: 'The requested page does not exist.',
             requestId,
             retryable: false,
-            requiredAction: 'sign_in_to_aem',
+            requiredAction: 'sign_in_to_host',
           },
         },
   });
@@ -323,7 +323,9 @@ describe('createTranscriptView', () => {
       expect(toolNode?.className).not.toBe(succeededNode?.className);
       expect(toolNode?.textContent).not.toBe(succeededNode?.textContent);
       expect(toolNode?.textContent).toContain('The requested page does not exist.');
-      expect(toolNode?.textContent).toContain('Sign in to AEM in the browser pane, then try again');
+      expect(toolNode?.textContent).toContain(
+        'Sign in to the site in the browser pane, then try again',
+      );
     });
 
     it('shows a spinner on a running call and a different, static icon once it settles', () => {

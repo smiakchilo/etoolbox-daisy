@@ -40,7 +40,7 @@ export interface NavigationEpochTracker {
 }
 
 /**
- * Tracks which *document* the AEM view is currently showing
+ * Tracks which *document* the browser view is currently showing
  * (implementation-plan.md step 06).
  *
  * The epoch is the mechanism that stops a late reply from a page that has
@@ -82,10 +82,10 @@ export function createNavigationEpochTracker(initialEpoch = 0): NavigationEpochT
 export interface NavigationEpochTrackingOptions {
   /**
    * Whether a main-frame document navigation stays on the currently active
-   * AEM server's origin.
+   * host's origin.
    *
    * A same-origin navigation (for example following a link inside the AEM
-   * authoring UI, or a reload) changes the *page*, not the AEM *context*: the
+   * authoring UI, or a reload) changes the *page*, not the page's *context*: the
    * origin, the authenticated session and therefore the target of any in-flight
    * tool request are unchanged. Such a navigation must neither invalidate an
    * in-flight tool request nor cancel the agent's turn, so it does not bump the

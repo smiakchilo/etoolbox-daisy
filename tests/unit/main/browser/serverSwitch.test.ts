@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ServerSwitchController,
   extractChromiumErrorCode,
-  type AemSwitchSession,
-  type SwitchableAemView,
+  type SwitchableSession,
+  type SwitchableView,
 } from '../../../../src/main/browser/serverSwitch';
 import { newProxyId } from '../../../../src/shared';
 import { type ServerConfig } from '../../../../src/shared';
@@ -22,7 +22,7 @@ const makeServer = (overrides: Partial<Record<string, unknown>> = {}): ServerCon
 function makeRecordingHarness() {
   const calls: string[] = [];
 
-  const view: SwitchableAemView = {
+  const view: SwitchableView = {
     stop() {
       calls.push('view.stop');
     },
@@ -32,9 +32,9 @@ function makeRecordingHarness() {
     },
   };
 
-  const aemSession: AemSwitchSession = {
+  const viewSession: SwitchableSession = {
     async switchProxy(proxy, resolveCredentials) {
-      calls.push(`aemSession.switchProxy:${proxy ? proxy.url : 'none'}`);
+      calls.push(`viewSession.switchProxy:${proxy ? proxy.url : 'none'}`);
       // Exercise the resolver the way real code would, without asserting on it directly.
       resolveCredentials();
       await Promise.resolve();
@@ -45,7 +45,7 @@ function makeRecordingHarness() {
     calls.push('closePopups');
   };
 
-  return { calls, view, aemSession, closePopups };
+  return { calls, view, viewSession, closePopups };
 }
 
 describe('ServerSwitchController', () => {
@@ -54,7 +54,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -66,7 +66,7 @@ describe('ServerSwitchController', () => {
     expect(harness.calls).toEqual([
       'view.stop',
       'closePopups',
-      'aemSession.switchProxy:none',
+      'viewSession.switchProxy:none',
       'view.loadURL:https://second.example',
     ]);
   });
@@ -76,7 +76,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -91,7 +91,7 @@ describe('ServerSwitchController', () => {
     expect(harness.calls).toEqual([
       'view.stop',
       'closePopups',
-      'aemSession.switchProxy:none',
+      'viewSession.switchProxy:none',
       'view.loadURL:https://second.example/editor.html/content/site.html',
     ]);
   });
@@ -101,7 +101,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -121,7 +121,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () =>
         proxyConfigSchema.parse({
@@ -137,7 +137,7 @@ describe('ServerSwitchController', () => {
     expect(harness.calls).toEqual([
       'view.stop',
       'closePopups',
-      'aemSession.switchProxy:https://proxy.example',
+      'viewSession.switchProxy:https://proxy.example',
       'view.loadURL:https://proxied.example',
     ]);
   });
@@ -147,7 +147,7 @@ describe('ServerSwitchController', () => {
     const states: string[] = [];
     let capturedMidSwitchState: string | undefined;
 
-    const aemSession: AemSwitchSession = {
+    const viewSession: SwitchableSession = {
       async switchProxy() {
         capturedMidSwitchState = controller.getState();
         await Promise.resolve();
@@ -157,7 +157,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession,
+      viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
       onStateChange: (state) => states.push(state),
@@ -175,20 +175,20 @@ describe('ServerSwitchController', () => {
     const harness = makeRecordingHarness();
     let releaseFirstSwitchProxy: (() => void) | undefined;
     let switchProxyCalls = 0;
-    const aemSession: AemSwitchSession = {
+    const viewSession: SwitchableSession = {
       switchProxy(_proxy, resolveCredentials) {
         switchProxyCalls += 1;
         resolveCredentials();
         if (switchProxyCalls === 1) {
-          harness.calls.push('aemSession.switchProxy:first:start');
+          harness.calls.push('viewSession.switchProxy:first:start');
           return new Promise((resolve) => {
             releaseFirstSwitchProxy = () => {
-              harness.calls.push('aemSession.switchProxy:first:end');
+              harness.calls.push('viewSession.switchProxy:first:end');
               resolve();
             };
           });
         }
-        harness.calls.push(`aemSession.switchProxy:${String(switchProxyCalls)}`);
+        harness.calls.push(`viewSession.switchProxy:${String(switchProxyCalls)}`);
         return Promise.resolve();
       },
     };
@@ -196,7 +196,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession,
+      viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -228,7 +228,7 @@ describe('ServerSwitchController', () => {
   it('reports a superseded switch whose own load is stopped as superseded, not as a network error', async () => {
     const harness = makeRecordingHarness();
     let rejectFirstLoad: ((error: Error) => void) | undefined;
-    const view: SwitchableAemView = {
+    const view: SwitchableView = {
       stop() {
         harness.calls.push('view.stop');
         // A superseding switch stops the pane, which aborts the in-flight
@@ -249,7 +249,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => view,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -272,7 +272,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => undefined,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -284,7 +284,7 @@ describe('ServerSwitchController', () => {
 
   it('returns to idle even when switchProxy rejects, so a failed switch does not leave tools permanently disabled', async () => {
     const harness = makeRecordingHarness();
-    const aemSession: AemSwitchSession = {
+    const viewSession: SwitchableSession = {
       switchProxy() {
         throw new Error('boom');
       },
@@ -293,7 +293,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession,
+      viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -304,7 +304,7 @@ describe('ServerSwitchController', () => {
 
   it('reports a rejected loadURL (a down server / bad certificate / etc.) as a structured network_error outcome, not a thrown rejection', async () => {
     const harness = makeRecordingHarness();
-    const rejectingView: SwitchableAemView = {
+    const rejectingView: SwitchableView = {
       stop: () => {
         harness.calls.push('view.stop');
       },
@@ -322,7 +322,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => rejectingView,
       closePopups: harness.closePopups,
-      aemSession: harness.aemSession,
+      viewSession: harness.viewSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });
@@ -343,7 +343,7 @@ describe('ServerSwitchController', () => {
 
   it('reports a rejected switchProxy (a bad proxy address, unreachable proxy, etc.) as a structured network_error outcome', async () => {
     const harness = makeRecordingHarness();
-    const rejectingSession: AemSwitchSession = {
+    const rejectingSession: SwitchableSession = {
       switchProxy() {
         throw new Error("ERR_PROXY_CONNECTION_FAILED (-130) setting proxy 'https://proxy.example'");
       },
@@ -352,7 +352,7 @@ describe('ServerSwitchController', () => {
     const controller = new ServerSwitchController({
       getView: () => harness.view,
       closePopups: harness.closePopups,
-      aemSession: rejectingSession,
+      viewSession: rejectingSession,
       resolveProxyCredentials: () => () => undefined,
       resolveProxy: () => undefined,
     });

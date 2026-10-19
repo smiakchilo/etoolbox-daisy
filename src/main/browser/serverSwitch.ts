@@ -1,10 +1,10 @@
 import type { ProxyConfig, ServerConfig } from '../../shared';
 import { originsMatch, parseNavigationTarget } from '../../shared';
-import type { ProxyPlainCredentials } from '../aem';
+import type { ProxyPlainCredentials } from '../webview';
 
 /**
  * The server-switch state machine (implementation-plan.md step
- * 05; requirements-decisions.md section 4: "AEM server switching is
+ * 05; requirements-decisions.md section 4: "host switching is
  * sequential: enter a switching state, stop in-flight operations, close
  * auxiliary windows, apply the new proxy configuration, close previous
  * connections, and then load the new address."). "Auxiliary windows" here
@@ -26,22 +26,22 @@ import type { ProxyPlainCredentials } from '../aem';
  * later step's tool-call gate) can ask "are we mid-switch?" as a plain read
  * instead of reconstructing it from timing.
  *
- * This module knows nothing about Electron: `AemSwitchSession`/
- * `SwitchableAemView` are narrowed to exactly the capabilities this state
+ * This module knows nothing about Electron: `SwitchableSession`/
+ * `SwitchableView` are narrowed to exactly the capabilities this state
  * machine calls, so a unit test can pass a plain recorder object instead of
- * a real `WebContentsView`/`AemSession`.
+ * a real `WebContentsView`/`ViewSession`.
  */
 
-/** The one `AemSession` capability this module needs - already sequential internally (`proxyPolicy.ts`'s `applyProxySwitch`: awaits `setProxy` then `closeAllConnections`). */
-export interface AemSwitchSession {
+/** The one `ViewSession` capability this module needs - already sequential internally (`proxyPolicy.ts`'s `applyProxySwitch`: awaits `setProxy` then `closeAllConnections`). */
+export interface SwitchableSession {
   switchProxy(
     proxy: ProxyConfig | undefined,
     resolveCredentials: () => ProxyPlainCredentials | undefined,
   ): Promise<void>;
 }
 
-/** The AEM `WebContentsView`'s `webContents`, narrowed to what a switch needs. */
-export interface SwitchableAemView {
+/** The browser `WebContentsView`'s `webContents`, narrowed to what a switch needs. */
+export interface SwitchableView {
   /** Stops any in-flight navigation/load on the *previous* server before anything else happens. */
   stop(): void;
   /** Loads the new server's origin. Called last, only after the proxy switch has fully resolved. */
@@ -71,7 +71,7 @@ const CHROMIUM_ERROR_CODE_PATTERN = /\bERR_[A-Z0-9_]+\b/;
 /**
  * Extracts the Chromium `ERR_*` code embedded in an arbitrary text, if any.
  * Shared by `extractChromiumErrorCode` below (a rejected promise's message)
- * and `aemBrowserView.ts`'s `did-fail-load` handling (Chromium's own
+ * and `hostView.ts`'s `did-fail-load` handling (Chromium's own
  * `errorDescription` string, e.g. `"ERR_CONNECTION_REFUSED (-102)"`) - both
  * are the same closed `net::Error` vocabulary, just observed at two
  * different call sites.
@@ -94,11 +94,11 @@ export function extractChromiumErrorCode(error: unknown): string | undefined {
 }
 
 export interface ServerSwitchDeps {
-  /** Returns the current AEM view, or `undefined` if none exists yet (e.g. window not created). */
-  readonly getView: () => SwitchableAemView | undefined;
+  /** Returns the current browser view, or `undefined` if none exists yet (e.g. window not created). */
+  readonly getView: () => SwitchableView | undefined;
   /** Closes every open popup window (login/SSO dialogs) - see `windowOpenRouter.ts`. Must not itself touch the pane view or session. */
   readonly closePopups: () => void;
-  readonly aemSession: AemSwitchSession;
+  readonly viewSession: SwitchableSession;
   /**
    * Resolves the proxy-library entry (or `undefined` for a direct connection)
    * that applies to `server`, by combining the host's `proxyId` selection with
@@ -108,7 +108,7 @@ export interface ServerSwitchDeps {
    * cell that the switch itself is what updates.
    */
   readonly resolveProxy: (server: ServerConfig) => ProxyConfig | undefined;
-  /** Resolves the plaintext proxy credentials for `server`, if any are configured. Never called eagerly - see `AemSession.switchProxy`'s own doc comment on why the resolver, not a snapshot, is what gets stored. */
+  /** Resolves the plaintext proxy credentials for `server`, if any are configured. Never called eagerly - see `ViewSession.switchProxy`'s own doc comment on why the resolver, not a snapshot, is what gets stored. */
   readonly resolveProxyCredentials: (
     server: ServerConfig,
   ) => () => ProxyPlainCredentials | undefined;
@@ -215,7 +215,7 @@ export class ServerSwitchController {
   private async run(
     server: ServerConfig,
     targetUrl: string | undefined,
-    view: SwitchableAemView,
+    view: SwitchableView,
     myGeneration: number,
     previous: Promise<void>,
   ): Promise<ServerSwitchOutcome> {
@@ -243,10 +243,10 @@ export class ServerSwitchController {
       this.deps.closePopups();
 
       // 3. Apply the new proxy configuration and close previous connections
-      //    - `AemSession.switchProxy` itself awaits `setProxy` then
+      //    - `ViewSession.switchProxy` itself awaits `setProxy` then
       //    `closeAllConnections`, in that order (proxyPolicy.ts), and this
       //    step does not return until both have resolved.
-      await this.deps.aemSession.switchProxy(
+      await this.deps.viewSession.switchProxy(
         this.deps.resolveProxy(server),
         this.deps.resolveProxyCredentials(server),
       );
@@ -276,7 +276,7 @@ export class ServerSwitchController {
       if (myGeneration !== this.generation) {
         return { ok: false, reason: 'superseded' };
       }
-      // `switchProxy`/`loadURL` reject constantly in real use - a down AEM
+      // `switchProxy`/`loadURL` reject constantly in real use - a down host
       // server, a mistyped address, a bad proxy, an untrusted certificate
       // are all Electron rejecting with a Chromium `ERR_*` message, not an
       // edge case (implementation-plan.md step 05's "network errors are

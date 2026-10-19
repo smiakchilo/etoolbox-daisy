@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import {
   type AemResponseOutcome,
-  type AemToolExecutor,
+  type ToolExecutor,
   type BrokerOutcome,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type HasMore,
   type IdGenerator,
   type JsonValue,
@@ -486,9 +486,9 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   redirect_blocked: {
     code: 'REDIRECT_BLOCKED',
     retryable: false,
-    requiredAction: 'sign_in_to_aem',
+    requiredAction: 'sign_in_to_host',
   },
-  redirected: { code: 'REDIRECT_BLOCKED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  redirected: { code: 'REDIRECT_BLOCKED', retryable: false, requiredAction: 'sign_in_to_host' },
   no_view: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'select_server' },
   bridge_unavailable: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'none' },
   network_error: { code: 'NETWORK_ERROR', retryable: true, requiredAction: 'none' },
@@ -496,7 +496,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   timeout: { code: 'TIMEOUT', retryable: true, requiredAction: 'none' },
   stale_server_revision: { code: 'STALE_CONTEXT', retryable: true, requiredAction: 'none' },
   stale_navigation_epoch: { code: 'STALE_CONTEXT', retryable: true, requiredAction: 'none' },
-  unauthorized: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  unauthorized: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_host' },
   forbidden: { code: 'NOT_AUTHORIZED', retryable: false, requiredAction: 'none' },
   not_found: { code: 'NOT_FOUND', retryable: false, requiredAction: 'none' },
   bad_request: { code: 'INVALID_ARGUMENT', retryable: false, requiredAction: 'none' },
@@ -512,7 +512,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   server_error: { code: 'UNEXPECTED_RESPONSE', retryable: true, requiredAction: 'none' },
   unexpected_status: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   not_json_content_type: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
-  html_login_page: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_aem' },
+  html_login_page: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_host' },
   html_error_page: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   empty_response: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
   invalid_json: { code: 'UNEXPECTED_RESPONSE', retryable: false, requiredAction: 'none' },
@@ -921,13 +921,13 @@ export interface AemQueryExecutorConfig<TRuntimeDeps extends Record<string, unkn
     deps: { readonly origin: string } & TRuntimeDeps,
   ) => Promise<AemQueryResult>;
   readonly runtimeDeps: TRuntimeDeps;
-  readonly currentContext: () => CurrentAemToolContext;
+  readonly currentContext: () => CurrentToolContext;
   readonly clock: () => number;
   readonly idGenerator: IdGenerator;
 }
 
 /**
- * Builds the `AemToolExecutor` the SDK adapter registers for `aem_query`.
+ * Builds the `ToolExecutor` the SDK adapter registers for `aem_query`.
  * Structurally identical to `aem_get_json`'s, via the shared
  * `createToolExecutor`, with one addition: a `toPayload` that keeps the
  * structured result (`rows`, `pagination`, `selection`) alongside the rendered
@@ -937,7 +937,7 @@ export interface AemQueryExecutorConfig<TRuntimeDeps extends Record<string, unkn
  */
 export function createAemQueryExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemQueryExecutorConfig<TRuntimeDeps>,
-): AemToolExecutor {
+): ToolExecutor {
   const forModel = createQueryExecutor(config, aemQueryArgsSchema, aemQueryRequestSchema);
   const forNested = createQueryExecutor(
     config,
@@ -952,7 +952,7 @@ function createQueryExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemQueryExecutorConfig<TRuntimeDeps>,
   argsSchema: z.ZodType,
   requestSchema: z.ZodType<AemQueryRequest>,
-): AemToolExecutor {
+): ToolExecutor {
   return createToolExecutor({
     operation: 'aem_query',
     argsSchema,

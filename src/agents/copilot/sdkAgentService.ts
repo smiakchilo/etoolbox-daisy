@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type AgentEvent,
   type AssistantTextDeltaEvent,
   type CanSendBlockReason,
@@ -135,7 +135,7 @@ import {
  *    that meant the single most important thing the tool step renders
  *    depended on an event this adapter could not prove fires and could not
  *    test deterministically. Since we are the executor, we already know the
- *    outcome exactly - see `AemToolExecutor`/`wrapToolExecutor` below:
+ *    outcome exactly - see `ToolExecutor`/`wrapToolExecutor` below:
  *    `tool.result` is emitted directly from the registered handler's own
  *    settle (resolve/reject), never from any SDK event.
  *    `tool.execution_start`/`tool.execution_complete`/`external_tool.completed`
@@ -157,7 +157,7 @@ import {
  *    `availableTools` allowlist, deny-all otherwise (every non-custom-tool
  *    permission kind - shell, read, write, mcp, url, memory, hook, extension
  *    management - is still unconditionally rejected). This resolved what
- *    was originally a gap: a registered `AemToolExecutor` now runs
+ *    was originally a gap: a registered `ToolExecutor` now runs
  *    end-to-end live without needing `skipPermission: true` on its `Tool`
  *    declaration. Consequently, the later task that supplies the real
  *    handler (s07-tool) must NOT set `skipPermission: true` - doing so
@@ -190,7 +190,7 @@ export interface AgentAuthStatusSource {
  * executor without importing this SDK boundary; re-exported here because this
  * adapter's own options and wrapper name it.
  */
-export type { AemToolExecutor };
+export type { ToolExecutor };
 
 export interface SdkAgentServiceOptions {
   readonly client: HardenedSessionClient;
@@ -216,7 +216,7 @@ export interface SdkAgentServiceOptions {
    * `skipPermission` - approval is decided solely by `toolPolicy.ts`'s
    * allowlist (see finding 5), and s07-tool must keep it that way.
    */
-  readonly toolHandlers?: Readonly<Record<string, AemToolExecutor>>;
+  readonly toolHandlers?: Readonly<Record<string, ToolExecutor>>;
   /**
    * The model-facing `description`/`parameters` for each registered tool,
    * supplied by the composition root from the tool registry (this adapter
@@ -707,7 +707,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   }
 
   /**
-   * Wraps one `AemToolExecutor` into the SDK's own `Tool.handler` shape, so
+   * Wraps one `ToolExecutor` into the SDK's own `Tool.handler` shape, so
    * the SDK calls straight into this adapter's process instead of a runtime
    * round trip - see finding 3. `tool.result` is emitted from here, not from
    * `handleSdkEvent`, on the executor's own settle (resolve or reject), and
@@ -733,7 +733,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
    * ever calling `applyAndEmit` with a chat/state combination `sessionState.ts`
    * would reject as illegal (for example after the chat has moved to `idle`).
    */
-  function wrapToolExecutor(executor: AemToolExecutor): NonNullable<Tool['handler']> {
+  function wrapToolExecutor(executor: ToolExecutor): NonNullable<Tool['handler']> {
     return async (rawArgs: unknown, invocation: ToolInvocation): Promise<unknown> => {
       const turnAtInvocation = currentTurn;
       const toolCallId = toolCallIdSchema.parse(invocation.toolCallId);
@@ -813,7 +813,7 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
   );
 
   /**
-   * Every registered `AemToolExecutor`, wrapped once at construction time
+   * Every registered `ToolExecutor`, wrapped once at construction time
    * (not per `openConversation`) since only one conversation is ever open at
    * a time and the wrapper reads `currentTurn`/`openChatId` fresh on each
    * invocation rather than capturing a chat at build time.

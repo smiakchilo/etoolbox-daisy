@@ -1,7 +1,7 @@
 import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from '../agent-auth';
 import type { AgentDefinition, AgentId, AppSettings, ModelCatalogEntry } from '../contracts';
 import type { Result } from '../result';
-import type { AemToolExecutor, ToolDescriptor } from '../tools';
+import type { ToolExecutor, ToolDescriptor } from '../tools';
 import type { AgentService } from './agentService';
 
 /**
@@ -65,7 +65,7 @@ export interface AgentToolkit {
   readonly allowlistEntries: readonly string[];
   /** The composed session instructions (shared framing plus each tool's fragment). */
   readonly instructions: string;
-  readonly toolHandlers: Readonly<Record<string, AemToolExecutor>>;
+  readonly toolHandlers: Readonly<Record<string, ToolExecutor>>;
   readonly toolDescriptors: readonly ToolDescriptor[];
 }
 

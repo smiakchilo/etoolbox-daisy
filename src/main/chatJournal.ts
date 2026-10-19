@@ -53,7 +53,7 @@ import { toChatFileName } from './chatJournalPaths';
 export interface ChatJournalOpenParams {
   readonly chatId: ChatId;
   readonly sessionId: SessionId;
-  /** The AEM server the chat is bound to, if one was selected when it opened. */
+  /** The host the chat is bound to, if one was selected when it opened. */
   readonly serverId?: ServerId;
 }
 
@@ -66,7 +66,7 @@ export interface ChatJournalUserPromptParams {
   /** `'reflection'` for the application's own post-turn reflection prompt (see the record schema). */
   readonly origin?: 'reflection';
   /**
-   * The AEM host the pane was on when this prompt was sent, if any. The first
+   * The host the pane was on when this prompt was sent, if any. The first
    * prompt that names one is what gives a chat opened with no host its host (see
    * the record schema's own doc), and it is stored on the record as diagnostics.
    */
@@ -112,7 +112,7 @@ export interface ChatJournal {
   recordEvent(event: AgentEvent): void;
   /**
    * Journals a durable "this turn was interrupted" notice for a Stop or an
-   * AEM-context abort. Written by the controller once it has observed the
+   * host-context abort. Written by the controller once it has observed the
    * turn's own `cancelling`/`idle` events, so the notice lands after them and a
    * resumed chat replays it in order. Dropped when the chat has no open file.
    */

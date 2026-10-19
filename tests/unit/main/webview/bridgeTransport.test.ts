@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IpcMainEvent, WebContents } from 'electron';
 import {
-  AEM_BRIDGE_CANCEL_CHANNEL,
-  AEM_BRIDGE_FETCH_CHANNEL,
-  AEM_BRIDGE_READY_CHANNEL,
-  AEM_BRIDGE_REPLY_CHANNEL,
-} from '../../../../src/shared/contracts/aemBridge';
-import type { BridgeReplyOrigin } from '../../../../src/main/aem/bridgeBroker';
+  WEBVIEW_BRIDGE_CANCEL_CHANNEL,
+  WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_READY_CHANNEL,
+  WEBVIEW_BRIDGE_REPLY_CHANNEL,
+} from '../../../../src/shared/contracts/webviewBridge';
+import type { BridgeReplyOrigin } from '../../../../src/main/webview/bridgeBroker';
 
 const ipcListeners = new Map<string, Set<(event: IpcMainEvent, payload: unknown) => void>>();
 
@@ -26,7 +26,8 @@ vi.mock('electron', () => ({
   },
 }));
 
-const { createAemBridgeTransport } = await import('../../../../src/main/aem/bridgeTransport');
+const { createWebviewBridgeTransport } =
+  await import('../../../../src/main/webview/bridgeTransport');
 
 interface FakeViewControls {
   readonly webContents: WebContents;
@@ -64,13 +65,13 @@ function subFrameEvent(senderId: number): IpcMainEvent {
 }
 
 function fireReply(event: IpcMainEvent, payload: unknown): void {
-  for (const listener of [...(ipcListeners.get(AEM_BRIDGE_REPLY_CHANNEL) ?? [])]) {
+  for (const listener of [...(ipcListeners.get(WEBVIEW_BRIDGE_REPLY_CHANNEL) ?? [])]) {
     listener(event, payload);
   }
 }
 
 function fireReady(event: IpcMainEvent): void {
-  for (const listener of [...(ipcListeners.get(AEM_BRIDGE_READY_CHANNEL) ?? [])]) {
+  for (const listener of [...(ipcListeners.get(WEBVIEW_BRIDGE_READY_CHANNEL) ?? [])]) {
     listener(event, {});
   }
 }
@@ -79,10 +80,10 @@ beforeEach(() => {
   ipcListeners.clear();
 });
 
-describe('createAemBridgeTransport - delivering commands', () => {
+describe('createWebviewBridgeTransport - delivering commands', () => {
   it('sends a fetch command to the live AEM view and reports that it went out', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     const sent = transport.sendFetch({
       requestId: 'req-a',
@@ -92,14 +93,14 @@ describe('createAemBridgeTransport - delivering commands', () => {
     expect(sent).toBe(true);
     expect(view.sent).toEqual([
       {
-        channel: AEM_BRIDGE_FETCH_CHANNEL,
+        channel: WEBVIEW_BRIDGE_FETCH_CHANNEL,
         payload: { requestId: 'req-a', url: 'https://author.example/x.0.json' },
       },
     ]);
   });
 
   it('reports that a fetch did not go out when there is no view, rather than pretending it did', () => {
-    const transport = createAemBridgeTransport({ aemWebContents: () => undefined });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => undefined });
 
     expect(transport.sendFetch({ requestId: 'req-a', url: 'https://author.example/x' })).toBe(
       false,
@@ -109,7 +110,7 @@ describe('createAemBridgeTransport - delivering commands', () => {
   it('treats a destroyed view as no view at all', () => {
     const view = makeFakeView(7);
     view.destroyed = true;
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     expect(transport.sendFetch({ requestId: 'req-a', url: 'https://author.example/x' })).toBe(
       false,
@@ -119,12 +120,12 @@ describe('createAemBridgeTransport - delivering commands', () => {
 
   it('sends a cancel command on its own channel so the preload can abort the fetch', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     transport.sendCancel({ requestId: 'req-a' });
 
     expect(view.sent).toEqual([
-      { channel: AEM_BRIDGE_CANCEL_CHANNEL, payload: { requestId: 'req-a' } },
+      { channel: WEBVIEW_BRIDGE_CANCEL_CHANNEL, payload: { requestId: 'req-a' } },
     ]);
   });
 
@@ -132,7 +133,7 @@ describe('createAemBridgeTransport - delivering commands', () => {
     // The pane can be rebuilt underneath the transport. A target captured once
     // would keep addressing a view the user is no longer looking at.
     let view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
     transport.sendFetch({ requestId: 'req-a', url: 'https://author.example/a' });
 
     const replacement = makeFakeView(99);
@@ -143,15 +144,15 @@ describe('createAemBridgeTransport - delivering commands', () => {
   });
 });
 
-describe('createAemBridgeTransport - deciding who may answer', () => {
-  function captureOrigin(deps: { aemWebContents: () => WebContents | undefined }): {
+describe('createWebviewBridgeTransport - deciding who may answer', () => {
+  function captureOrigin(deps: { viewWebContents: () => WebContents | undefined }): {
     origins: BridgeReplyOrigin[];
     payloads: unknown[];
     dispose: () => void;
   } {
     const origins: BridgeReplyOrigin[] = [];
     const payloads: unknown[] = [];
-    const transport = createAemBridgeTransport(deps);
+    const transport = createWebviewBridgeTransport(deps);
     transport.onReply((payload, origin) => {
       payloads.push(payload);
       origins.push(origin);
@@ -161,58 +162,58 @@ describe('createAemBridgeTransport - deciding who may answer', () => {
 
   it('trusts a main-frame reply whose sender is the live AEM view', () => {
     const view = makeFakeView(7);
-    const captured = captureOrigin({ aemWebContents: () => view.webContents });
+    const captured = captureOrigin({ viewWebContents: () => view.webContents });
 
     fireReply(mainFrameEvent(7), { kind: 'cancelled', requestId: 'req-a' });
 
-    expect(captured.origins).toEqual([{ isTrustedAemView: true, isMainFrame: true }]);
+    expect(captured.origins).toEqual([{ isTrustedView: true, isMainFrame: true }]);
   });
 
   it('does not trust a reply from any other WebContents, however well-formed', () => {
     const view = makeFakeView(7);
-    const captured = captureOrigin({ aemWebContents: () => view.webContents });
+    const captured = captureOrigin({ viewWebContents: () => view.webContents });
 
     fireReply(mainFrameEvent(8), { kind: 'cancelled', requestId: 'req-a' });
 
-    expect(captured.origins[0]?.isTrustedAemView).toBe(false);
+    expect(captured.origins[0]?.isTrustedView).toBe(false);
   });
 
   it('does not trust a reply from a sub-frame of the AEM view', () => {
     // Remote AEM content can embed iframes; only the frame our preload runs in
     // may answer.
     const view = makeFakeView(7);
-    const captured = captureOrigin({ aemWebContents: () => view.webContents });
+    const captured = captureOrigin({ viewWebContents: () => view.webContents });
 
     fireReply(subFrameEvent(7), { kind: 'cancelled', requestId: 'req-a' });
 
-    expect(captured.origins[0]).toEqual({ isTrustedAemView: true, isMainFrame: false });
+    expect(captured.origins[0]).toEqual({ isTrustedView: true, isMainFrame: false });
   });
 
   it('does not trust any reply while there is no live view, instead of matching absence to absence', () => {
-    const captured = captureOrigin({ aemWebContents: () => undefined });
+    const captured = captureOrigin({ viewWebContents: () => undefined });
 
     fireReply(mainFrameEvent(7), { kind: 'cancelled', requestId: 'req-a' });
 
-    expect(captured.origins[0]?.isTrustedAemView).toBe(false);
+    expect(captured.origins[0]?.isTrustedView).toBe(false);
   });
 
   it('re-reads the trusted identity on every reply, so the old view stops being trusted once replaced', () => {
     // This is the step 05 bug in its bridge form: an identity captured when the
     // listener was registered would still name the view that has since gone.
     let view = makeFakeView(7);
-    const captured = captureOrigin({ aemWebContents: () => view.webContents });
+    const captured = captureOrigin({ viewWebContents: () => view.webContents });
 
     fireReply(mainFrameEvent(7), { kind: 'cancelled', requestId: 'req-a' });
     view = makeFakeView(99);
     fireReply(mainFrameEvent(7), { kind: 'cancelled', requestId: 'req-b' });
     fireReply(mainFrameEvent(99), { kind: 'cancelled', requestId: 'req-c' });
 
-    expect(captured.origins.map((origin) => origin.isTrustedAemView)).toEqual([true, false, true]);
+    expect(captured.origins.map((origin) => origin.isTrustedView)).toEqual([true, false, true]);
   });
 
   it('hands the payload through untouched, leaving validation to the broker', () => {
     const view = makeFakeView(7);
-    const captured = captureOrigin({ aemWebContents: () => view.webContents });
+    const captured = captureOrigin({ viewWebContents: () => view.webContents });
 
     fireReply(mainFrameEvent(7), { anything: 'at all' });
 
@@ -220,17 +221,17 @@ describe('createAemBridgeTransport - deciding who may answer', () => {
   });
 });
 
-describe('createAemBridgeTransport - preload readiness', () => {
+describe('createWebviewBridgeTransport - preload readiness', () => {
   it('is not ready before the preload has announced itself', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     expect(transport.isReady()).toBe(false);
   });
 
   it('is ready once the trusted view main frame announces, and stays ready', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     fireReady(mainFrameEvent(7));
 
@@ -239,7 +240,7 @@ describe('createAemBridgeTransport - preload readiness', () => {
 
   it('does not become ready from another WebContents, however well-formed', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     fireReady(mainFrameEvent(8));
 
@@ -248,7 +249,7 @@ describe('createAemBridgeTransport - preload readiness', () => {
 
   it('does not become ready from a sub-frame of the AEM view', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     fireReady(subFrameEvent(7));
 
@@ -259,7 +260,7 @@ describe('createAemBridgeTransport - preload readiness', () => {
     // A rebuilt pane is a new WebContents whose preload has not run yet; a
     // readiness captured once would wrongly report the new view as usable.
     let view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
     fireReady(mainFrameEvent(7));
     expect(transport.isReady()).toBe(true);
 
@@ -270,36 +271,36 @@ describe('createAemBridgeTransport - preload readiness', () => {
 
   it('removes the ready listener on dispose', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
 
     transport.dispose();
 
-    expect(ipcListeners.get(AEM_BRIDGE_READY_CHANNEL)?.size ?? 0).toBe(0);
+    expect(ipcListeners.get(WEBVIEW_BRIDGE_READY_CHANNEL)?.size ?? 0).toBe(0);
   });
 });
 
-describe('createAemBridgeTransport - teardown', () => {
+describe('createWebviewBridgeTransport - teardown', () => {
   it('stops receiving replies once the subscription is released', () => {
     const view = makeFakeView(7);
     const received: unknown[] = [];
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
     const unsubscribe = transport.onReply((payload) => received.push(payload));
 
     unsubscribe();
     fireReply(mainFrameEvent(7), { kind: 'cancelled', requestId: 'req-a' });
 
     expect(received).toEqual([]);
-    expect(ipcListeners.get(AEM_BRIDGE_REPLY_CHANNEL)?.size ?? 0).toBe(0);
+    expect(ipcListeners.get(WEBVIEW_BRIDGE_REPLY_CHANNEL)?.size ?? 0).toBe(0);
   });
 
   it('leaves no listener behind after dispose, and tolerates being disposed twice', () => {
     const view = makeFakeView(7);
-    const transport = createAemBridgeTransport({ aemWebContents: () => view.webContents });
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
     transport.onReply(() => {});
 
     transport.dispose();
     expect(() => transport.dispose()).not.toThrow();
 
-    expect(ipcListeners.get(AEM_BRIDGE_REPLY_CHANNEL)?.size ?? 0).toBe(0);
+    expect(ipcListeners.get(WEBVIEW_BRIDGE_REPLY_CHANNEL)?.size ?? 0).toBe(0);
   });
 });

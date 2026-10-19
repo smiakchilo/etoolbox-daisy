@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { toolErrorSchema } from '../../contracts';
 
 /**
- * Result pieces shared by every AEM tool: property selection, the pagination
+ * Result pieces shared by every bridge tool: property selection, the pagination
  * "is there more" signal, and the error arm. Tool-specific success shapes
  * (children metadata for get-json, pagination totals for query) and the
  * assembled result union live with the tool that owns them.

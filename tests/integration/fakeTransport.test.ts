@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { newChatId, newServerId, newTurnId, type IdGenerator } from '../../src/shared';
 import { serverConfigSchema, type ServerConfig } from '../../src/shared';
-import { AEM_REQUEST_TIMEOUT_MS } from '../../src/shared';
+import { WEBVIEW_REQUEST_TIMEOUT_MS } from '../../src/shared';
 import { toolRequestEnvelopeSchema } from '../support/toolUnions';
 import { type ToolErrorResult } from '../../src/shared';
 import {
@@ -18,7 +18,7 @@ import {
   FakeMainTransport,
   type IssueToolCallOutcome,
   type StartTurnOutcome,
-} from '../support/fakeAemTransport';
+} from '../support/fakeBridgeTransport';
 import { createManualClock } from '../support/testClock';
 import { createCountingIdGenerator } from '../support/testIds';
 
@@ -218,7 +218,7 @@ describe('session-state transitions', () => {
 
     expect(transport.illegalTransitions.length).toBeGreaterThan(0);
     expect(transport.illegalTransitions[0]).toMatchObject({ from: 'idle', to: 'runningTool' });
-    // `canRunAemTool` only checks `closed`/`browserReady` (sessionState.ts), so
+    // `canRunTool` only checks `closed`/`browserReady` (sessionState.ts), so
     // the call still runs to completion despite the illegal transition above -
     // the two are deliberately decoupled, see the report for this finding.
     const result = expectSuccess(outcome.deliver());
@@ -495,7 +495,7 @@ describe('deadline expiry', () => {
     const outcome = expectIssued(
       transport.issueToolCall({ chatId, turnId, call: aemGetJsonCall({ path: '/content/site' }) }),
     );
-    clock.advanceMs(AEM_REQUEST_TIMEOUT_MS);
+    clock.advanceMs(WEBVIEW_REQUEST_TIMEOUT_MS);
 
     const result = expectError(outcome.deliver());
     expect(result.error.code).toBe('TIMEOUT');
@@ -540,7 +540,7 @@ describe('never return [] in place of an error', () => {
     const outcome = expectIssued(
       transport.issueToolCall({ chatId, turnId, call: aemQueryCall({ predicates: {} }) }),
     );
-    clock.advanceMs(AEM_REQUEST_TIMEOUT_MS);
+    clock.advanceMs(WEBVIEW_REQUEST_TIMEOUT_MS);
     const result = expectError(outcome.deliver());
 
     expect(result.ok).toBe(false);
@@ -574,7 +574,7 @@ describe('ToolResult round trip and model-facing rendering', () => {
     const outcome = expectIssued(
       transport.issueToolCall({ chatId, turnId, call: aemGetJsonCall({ path: '/content/site' }) }),
     );
-    clock.advanceMs(AEM_REQUEST_TIMEOUT_MS);
+    clock.advanceMs(WEBVIEW_REQUEST_TIMEOUT_MS);
     const original = expectError(outcome.deliver());
 
     const parsed = parseToolResult(serializeToolResult(original));
@@ -610,7 +610,7 @@ describe('ToolResult round trip and model-facing rendering', () => {
     const outcome = expectIssued(
       transport.issueToolCall({ chatId, turnId, call: aemGetJsonCall({ path: '/content/site' }) }),
     );
-    clock.advanceMs(AEM_REQUEST_TIMEOUT_MS);
+    clock.advanceMs(WEBVIEW_REQUEST_TIMEOUT_MS);
     const rendered = renderToolResultForModel(outcome.deliver());
     expect(rendered).not.toBe('');
     expect(rendered).not.toBe('[]');

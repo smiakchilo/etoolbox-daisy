@@ -4,7 +4,7 @@ import {
   SESSION_COOKIE_PERSISTENCE_MAX_AGE_SECONDS,
   shouldPersistSessionCookie,
   type SessionCookieCandidate,
-} from '../../../../src/main/aem';
+} from '../../../../src/main/webview';
 
 /** A plain-HTTP AEM `login-token` as Chromium reports it to `cookies.on('changed')`. */
 function sessionCookie(overrides: Partial<SessionCookieCandidate> = {}): SessionCookieCandidate {

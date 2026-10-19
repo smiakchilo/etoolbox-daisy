@@ -748,8 +748,8 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
    * failure - modelling it as one would make the UI show a failure banner
    * for a successful, deliberate action. It would also force a `ToolError`
    * onto the event, which needs a `RequestId` documented
-   * (`src/shared/contracts/ids.ts`) as "One application-issued AEM request,
-   * used end to end for correlation": a user-initiated Stop is not an AEM
+   * (`src/shared/contracts/ids.ts`) as "One application-issued request,
+   * used end to end for correlation": a user-initiated Stop is not a bridge
    * request, and inventing one only to satisfy the schema would be a
    * correlation id pointing at nothing. `cancelling` exists in
    * `sessionState.ts` for exactly this: "cancellation is initiated by the

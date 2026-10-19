@@ -26,7 +26,7 @@ import {
   requestIdSchema,
   type IdGenerator,
 } from '../../../src/shared';
-import { createToolError, type CurrentAemToolContext } from '../../../src/shared';
+import { createToolError, type CurrentToolContext } from '../../../src/shared';
 import type { JsonValue } from '../../../src/shared';
 
 /** Mints reproducible ids, mirroring `sdkAgentService.test.ts`'s identically-named helper. */
@@ -39,8 +39,8 @@ const BOUND_ORIGIN = 'https://aem-author.example.com';
 
 function makeContext(
   ids: IdGenerator,
-  overrides: Partial<CurrentAemToolContext> = {},
-): CurrentAemToolContext {
+  overrides: Partial<CurrentToolContext> = {},
+): CurrentToolContext {
   return {
     origin: BOUND_ORIGIN,
     serverId: newServerId(ids),
@@ -98,7 +98,7 @@ function makeConfig(
     envelope: AemGetJsonRequestEnvelope,
     deps: { readonly origin: string } & RuntimeDeps,
   ) => Promise<AemGetJsonResult>,
-  context: () => CurrentAemToolContext,
+  context: () => CurrentToolContext,
 ): AemGetJsonExecutorConfig<RuntimeDeps> {
   return {
     execute,
@@ -322,7 +322,7 @@ describe('aemTool - createAemQueryExecutor', () => {
       envelope: AemQueryRequestEnvelope,
       deps: { readonly origin: string } & RuntimeDeps,
     ) => Promise<AemQueryResult>,
-    context: () => CurrentAemToolContext,
+    context: () => CurrentToolContext,
   ) {
     return {
       execute,

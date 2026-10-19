@@ -68,7 +68,7 @@ function build(overrides: Partial<AgentChatControllerDeps> = {}): Harness {
     agentService: service,
     logger: noopLogger(),
     idGenerator: counterIds('turn'),
-    currentAemServerContext: () => ({
+    currentHostContext: () => ({
       origin: 'https://author.example.com',
       serverId: 'server-a' as ServerId,
       serverRevision: 1,

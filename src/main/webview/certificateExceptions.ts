@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { tlsExceptionSchema, type TlsException } from '../../shared';
 
 /**
- * Certificate-exception policy for the AEM session (implementation-plan.md
+ * Certificate-exception policy for the browser session (implementation-plan.md
  * step 05; requirements-decisions.md section 4;
  * docs/verification.md "Step 05 prerequisite - technical gate G3").
  *
@@ -153,7 +153,7 @@ export interface CertificateExceptionStore {
   decide(input: CertificateDecisionInput): CertificateDecision;
 }
 
-/** Creates an in-memory exception store bound to one AEM session's connection-closing capability. */
+/** Creates an in-memory exception store bound to one browser session's connection-closing capability. */
 export function createCertificateExceptionStore(
   closer: ConnectionCloser,
 ): CertificateExceptionStore {
@@ -197,9 +197,9 @@ export function createCertificateExceptionStore(
  * - a unit test can pass a plain object literal instead of constructing (or
  *   casting to) a full Electron `Certificate`/`WebContents`/`Event`.
  *
- * `aemSession` is typed `unknown` for the same reason: this module never
+ * `viewSession` is typed `unknown` for the same reason: this module never
  * calls anything on it, it only compares it by reference against
- * `webContents.session` to confirm the error belongs to the AEM session
+ * `webContents.session` to confirm the error belongs to the browser session
  * (never the app's own local UI session).
  */
 export interface CertificateErrorEventLike {
@@ -222,7 +222,7 @@ export type CertificateErrorListener = (
 ) => void;
 
 export interface CertificateErrorListenerDeps {
-  readonly aemSession: unknown;
+  readonly viewSession: unknown;
   readonly store: Pick<CertificateExceptionStore, 'decide'>;
 }
 
@@ -230,7 +230,7 @@ export interface CertificateErrorListenerDeps {
  * Builds the `app.on("certificate-error", ...)` listener. Only ever *decides*
  * in the approve direction: `event.preventDefault()` + `callback(true)`.
  *
- * Every rejection path - a non-AEM session, or a session whose certificate
+ * Every rejection path - a non-pane session, or a session whose certificate
  * the store denies - simply returns, touching neither `preventDefault()` nor
  * `callback`. Per Electron's documented contract ("to trust the certificate
  * you should prevent the default behavior with `event.preventDefault()` and
@@ -252,7 +252,7 @@ export function createCertificateErrorListener(
   deps: CertificateErrorListenerDeps,
 ): CertificateErrorListener {
   return (event, webContents, url, error, certificate, callback) => {
-    if (webContents.session !== deps.aemSession) {
+    if (webContents.session !== deps.viewSession) {
       return;
     }
     const decision = deps.store.decide({ url, error, certificatePem: certificate.data });

@@ -11,7 +11,7 @@ import { extractChromiumErrorCodeFromText } from './serverSwitch';
 import { clampViewBounds } from './viewBounds';
 
 /**
- * The AEM pane's `WebContentsView` (implementation-plan.md step 05;
+ * The browser pane's `WebContentsView` (implementation-plan.md step 05;
  * requirements-decisions.md section 8's two-pane layout).
  *
  * Positioning is entirely driven by the renderer's own reserved-region
@@ -36,10 +36,10 @@ import { clampViewBounds } from './viewBounds';
  *    above is unwound, and is required to be called exactly once when the
  *    owning window closes.
  */
-export interface AemBrowserViewOptions {
+export interface HostViewOptions {
   readonly window: BrowserWindow;
-  readonly aemSession: Session;
-  readonly aemPreloadPath: string;
+  readonly viewSession: Session;
+  readonly webviewPreloadPath: string;
   /** Pushed to the renderer as `browser:state-changed` on every navigation-state change. */
   readonly onNavigationStateChange: (state: BrowserNavigationState) => void;
   /** Optional diagnostics sink for a preload that is missing or fails to evaluate. */
@@ -61,7 +61,7 @@ export type ChromeNavigationOutcome =
   | { readonly ok: true }
   | { readonly ok: false; readonly errorCode: string; readonly failedUrl: string };
 
-export interface AemBrowserView {
+export interface HostView {
   readonly webContents: WebContents;
   /** The popup/tab policy for this view's new-window requests; `closeAll` is what a server switch closes popups through. */
   readonly windowOpenRouter: WindowOpenRouter;
@@ -70,18 +70,18 @@ export interface AemBrowserView {
   goBack(): Promise<ChromeNavigationOutcome>;
   goForward(): Promise<ChromeNavigationOutcome>;
   reload(): Promise<ChromeNavigationOutcome>;
-  /** Stops in-flight loading. Also required by `serverSwitch.ts`'s `SwitchableAemView`. */
+  /** Stops in-flight loading. Also required by `serverSwitch.ts`'s `SwitchableView`. */
   stop(): void;
   loadURL(url: string): Promise<void>;
   /** Removes the view, closes its WebContents, and unregisters every listener this module attached. Idempotent. */
   destroy(): void;
 }
 
-export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowserView {
+export function createHostView(options: HostViewOptions): HostView {
   const view = new WebContentsView({
     webPreferences: {
-      session: options.aemSession,
-      preload: options.aemPreloadPath,
+      session: options.viewSession,
+      preload: options.webviewPreloadPath,
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -97,14 +97,14 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   // broker's readiness handshake turns that into an immediate, distinctly
   // classified failure, but the *cause* is only visible here - at construction
   // for a missing file, and on `preload-error` for one that fails to evaluate.
-  // Both are application build/packaging faults, not AEM faults, so they are
+  // Both are application build/packaging faults, not host faults, so they are
   // logged as such rather than left to be inferred from a wall of timeouts.
-  if (!existsSync(options.aemPreloadPath)) {
-    options.logger?.error('AEM_PRELOAD_MISSING');
+  if (!existsSync(options.webviewPreloadPath)) {
+    options.logger?.error('WEBVIEW_PRELOAD_MISSING');
   }
 
   const onPreloadError = (): void => {
-    options.logger?.error('AEM_PRELOAD_ERROR');
+    options.logger?.error('WEBVIEW_PRELOAD_ERROR');
   };
   view.webContents.on('preload-error', onPreloadError);
 
@@ -113,7 +113,7 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
   // links and bare/`noopener` `window.open` calls load in this same view so
   // the chat pane always describes what the one authenticated view is showing
   // (see `windowOpenPolicy.ts` / `windowOpenRouter.ts`).
-  const windowOpenRouter = createWindowOpenRouter(options.aemSession);
+  const windowOpenRouter = createWindowOpenRouter(options.viewSession);
   windowOpenRouter.attachTo(view.webContents);
 
   // Remote content gets the Chrome-shaped right-click menu (the app has no
@@ -122,9 +122,9 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     openLink: (url) => openUrlInView(view.webContents, url),
   });
 
-  // Ctrl+Shift+I must keep working while the AEM pane has focus - the menu
+  // Ctrl+Shift+I must keep working while the browser pane has focus - the menu
   // accelerator it replaces was window-scoped, not webContents-scoped. It still
-  // toggles the *shell's* DevTools (the menu role's own target); the AEM page's
+  // toggles the *shell's* DevTools (the menu role's own target); the browser page's
   // DevTools are reached through the context menu's "Inspect" instead.
   attachDevToolsShortcut(view.webContents, options.window.webContents);
 
@@ -297,9 +297,9 @@ export function createAemBrowserView(options: AemBrowserViewOptions): AemBrowser
     });
   }
 
-  // Top-level navigation guard for the AEM view itself: http(s) only. Cross-
+  // Top-level navigation guard for the browser view itself: http(s) only. Cross-
   // *origin* http(s) navigation is deliberately still allowed here (an SSO
-  // redirect chain legitimately leaves the AEM origin for an IdP origin and
+  // redirect chain legitimately leaves the host origin for an IdP origin and
   // comes back), matching `decideAllowedUrl`'s own scheme-only (not origin)
   // restriction - reused here rather than duplicated so every entry point into
   // the view enforces identically the one rule that actually matters for this

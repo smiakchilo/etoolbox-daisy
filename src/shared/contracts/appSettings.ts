@@ -52,9 +52,9 @@ export const reasoningEffortSchema = z.string().min(1).max(REASONING_EFFORT_MAX_
  * One configured proxy entry in the proxies library. Hosts, the active agent
  * and the browser default all select an entry from this one library by id
  * (requirements-decisions.md section 4: a proxy is never implicitly inherited
- * between the AEM side and the Copilot side), and each selection accepts the
+ * between the browser side and the Copilot side), and each selection accepts the
  * same credential-reference shape. It has no
- * `tlsException` field: unlike an AEM server, proxy TLS only ever accepts
+ * `tlsException` field: unlike an host, proxy TLS only ever accepts
  * correctly trusted certificates, so there is nothing here for an exception
  * to apply to.
  *
@@ -145,7 +145,7 @@ export type AgentSettings = Readonly<z.infer<typeof agentSettingsSchema>>;
  * next launch.
  *
  * `proxy` is the **default proxy** - the entry of the `proxies` library the
- * AEM pane uses for any origin that is not one of the configured hosts (for
+ * browser pane uses for any origin that is not one of the configured hosts (for
  * example Adobe's IMS login origin during an SSO redirect). It is a library
  * entry id; absent means "no default proxy" (direct). A host can override it
  * per-origin with its own `proxyId` (see `serverConfig.ts`): a host with an

@@ -3,7 +3,7 @@ import {
   createProxyLoginListener,
   decideProxyAuth,
   type ProxyLoginChallenge,
-} from '../../../../src/main/aem';
+} from '../../../../src/main/webview';
 import { newProxyId, proxyConfigSchema, type ProxyConfig } from '../../../../src/shared';
 
 function proxy(url: string): ProxyConfig {

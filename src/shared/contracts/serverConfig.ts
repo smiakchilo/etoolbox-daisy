@@ -3,11 +3,11 @@ import { type ProjectId, projectIdSchema, proxyIdSchema, serverIdSchema } from '
 import { originSchema } from './origin';
 
 /**
- * A configured AEM server entry (implementation-plan.md step 03,
+ * A configured host entry (implementation-plan.md step 03,
  * requirements-decisions.md sections 3 and 4).
  *
  * Every field here is what the application needs to decide *where* and *how*
- * to reach one AEM instance. It deliberately excludes anything that would let
+ * to reach one host. It deliberately excludes anything that would let
  * this double as a login-form URL or a credential store - those are the
  * mistakes requirements-decisions.md section 3 and 8 call out by name.
  */
@@ -133,8 +133,8 @@ export const sha256FingerprintSchema = z.string().transform((value, ctx) => {
  * certificate (requirements-decisions.md section 4).
  *
  * This lives on `ServerConfig` itself, as a sibling of `proxyId`, rather than
- * nested inside it: a self-signed AEM certificate is a property of the AEM
- * server's own origin and applies to a direct HTTPS connection just as much
+ * nested inside it: a self-signed certificate is a property of that host's
+ * own origin and applies to a direct HTTPS connection just as much
  * as a proxied one, so it must stay expressible with no proxy configured at
  * all. Carrying its own `origin` (rather than implicitly reusing the
  * server's) is defence in depth against ever matching the wrong origin, but
@@ -204,7 +204,7 @@ export const serverConfigSchema = z
     origin: originSchema,
     color: serverColorSchema,
     /**
-     * Which entry of the settings `proxies` library this host reaches AEM
+     * Which entry of the settings `proxies` library this host reaches its origin
      * through, by id (the Settings "Hosts" multifield's Proxy combobox stores
      * this; the label is only ever a display concern). The three states are:
      *
@@ -229,7 +229,7 @@ export const serverConfigSchema = z
      * here, because only the whole document can see the library.
      *
      * Presentation, not targeting: it steers what the agent is told about the
-     * host's layout, not how a request reaches AEM, so changing it never bumps
+     * host's layout, not how a request reaches the host, so changing it never bumps
      * `revision` (the per-turn context block re-reads it).
      */
     projectId: projectIdSchema.optional(),
@@ -251,7 +251,7 @@ export type ServerConfig = Readonly<z.infer<typeof serverConfigSchema>>;
  *
  * The project reference is presentation rather than targeting: it steers what
  * the agent is told about the host's content and component layout, not how a
- * request reaches AEM, and the per-turn context block re-reads it, so changing
+ * request reaches the host, and the per-turn context block re-reads it, so changing
  * it must not invalidate an in-flight bridge request.
  */
 export interface ServerPresentationChanges {
@@ -270,7 +270,7 @@ export interface ServerPresentationChanges {
 
 /**
  * Updates the presentation-only fields (label/colour/project). `revision` is
- * left untouched on purpose: it exists solely so an in-flight AEM request can
+ * left untouched on purpose: it exists solely so an in-flight request can
  * detect that its *targeting* information (origin/proxy/TLS trust) is stale,
  * and none of these changes that. The project reference is presentation too -
  * it steers what the agent is told about the host's content/component layout,

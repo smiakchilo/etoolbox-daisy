@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type RequestId,
   type Result,
@@ -250,7 +250,7 @@ function unexpected(message: string, requestId: RequestId): Result<JsonValue, To
  * error; a cancelled or declined "Load more" ends the search normally. A
  * background count (see the module doc) updates the total line in place.
  */
-export function createAemQueryFormatAskExecutor(host: ToolHost): AemToolExecutor {
+export function createAemQueryFormatAskExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
 

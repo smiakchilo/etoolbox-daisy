@@ -2,9 +2,9 @@ import type { ProxyConfig as ElectronProxyConfig } from 'electron';
 import type { ProxyConfig } from '../../shared';
 
 /**
- * AEM proxy configuration and the sequential-switch requirement
+ * host proxy configuration and the sequential-switch requirement
  * (implementation-plan.md step 05; requirements-decisions.md section 4:
- * "AEM server switching is sequential: ... apply the new proxy
+ * "host switching is sequential: ... apply the new proxy
  * configuration, close previous connections, and then load the new
  * address"; docs/verification.md "Step 05 prerequisite - technical gate
  * G3", proxy half).
@@ -18,7 +18,7 @@ import type { ProxyConfig } from '../../shared';
 export interface ProxySwitchOptions {
   /**
    * Chromium bypasses the proxy for loopback targets (127.0.0.1/localhost)
-   * by default. A real corporate AEM instance is essentially never on
+   * by default. A real corporate host is essentially never on
    * loopback, so leaving Chromium's default in place is correct there; the
    * project's own G3 loopback E2E matrix (`tests/e2e/g3-proxy-scope.spec.ts`)
    * is entirely loopback-only, and needs the opposite - every proxy traffic
@@ -32,7 +32,7 @@ export interface ProxySwitchOptions {
   readonly bypassLoopbackForTesting?: boolean;
 }
 
-/** The raw `proxyRules` string for one AEM proxy. Pure, so it is unit-testable without Electron. */
+/** The raw `proxyRules` string for one host proxy. Pure, so it is unit-testable without Electron. */
 export function buildProxyRules(proxy: ProxyConfig): string {
   // No scheme prefix: an un-prefixed rule applies to every URL scheme,
   // including HTTPS via CONNECT, matching requirements-decisions.md section 4

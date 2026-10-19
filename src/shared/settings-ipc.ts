@@ -484,7 +484,7 @@ export function parseUpdateServerTargetingResult(candidate: unknown): UpdateServ
  * unknown) before writing - see `reorderServers` in `settingsStore.ts`.
  *
  * Order is presentation, not targeting: it never bumps a `revision`, so a
- * reorder cannot interrupt an in-flight request or the live AEM view. This is
+ * reorder cannot interrupt an in-flight request or the live browser view. This is
  * why it is a dedicated channel rather than a use of
  * `settings:update-server-presentation` (which takes label/colour only).
  */
@@ -624,7 +624,7 @@ export function parseSetAgentSettingsResult(candidate: unknown): SetAgentSetting
  * `disableNativeWebAuthn` is persisted immediately but only takes effect on
  * the next launch, because Chromium reads its feature switches once, before
  * the app is ready. `proxy` is the default proxy - a library entry id, or
- * `null` to clear it - and takes effect on the AEM pane's next navigation
+ * `null` to clear it - and takes effect on the browser pane's next navigation
  * (see `browserController.ts`).
  */
 export const updateBrowserSettingsRequestSchema = z

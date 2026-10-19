@@ -340,7 +340,7 @@ describe('executeAemQuery - transport and HTTP failures', () => {
         "<html lang='en'><head><title>AEM Sign In</title></head>" +
         "<body><form action='/j_security_check'></form></body></html>",
     });
-    expect(expectError(result).error.requiredAction).toBe('sign_in_to_aem');
+    expect(expectError(result).error.requiredAction).toBe('sign_in_to_host');
   });
 
   it('does not treat a non-login HTML page as a request to sign in again', async () => {

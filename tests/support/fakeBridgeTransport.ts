@@ -3,7 +3,7 @@ import {
   computeDeadline,
   isDeadlineExpired,
   type Clock,
-  type CurrentAemContext,
+  type CurrentBridgeContext,
 } from '../../src/shared';
 import { toolRequestEnvelopeSchema, type ToolRequestEnvelope } from './toolUnions';
 import { createToolError } from '../../src/shared';
@@ -27,7 +27,7 @@ import {
 } from '../../src/shared';
 import {
   applyAgentEvent,
-  canRunAemTool,
+  canRunTool,
   canSendMessage,
   type CanSendBlockReason,
   type IllegalTransitionError,
@@ -200,7 +200,7 @@ export class FakeMainTransport {
    * the same `ToolRequestEnvelope` the real main process would build (main
    * attaches `requestId`/`chatId`/`turnId`/`serverId`/`serverRevision`/
    * `navigationEpoch`/an absolute deadline - the agent never supplies any of
-   * them), then gates on `canRunAemTool` before ever contacting the browser.
+   * them), then gates on `canRunTool` before ever contacting the browser.
    */
   issueToolCall(params: {
     readonly chatId: ChatId;
@@ -251,7 +251,7 @@ export class FakeMainTransport {
     }
 
     const envelope = parsedEnvelope.data;
-    const gate = canRunAemTool(this.getChatStatus(chatId));
+    const gate = canRunTool(this.getChatStatus(chatId));
     if (!gate.canRun) {
       const message = `AEM tool blocked: ${gate.reason}`;
       const result: ToolErrorResult = {
@@ -325,7 +325,7 @@ export class FakeMainTransport {
       };
     }
 
-    const current: CurrentAemContext = {
+    const current: CurrentBridgeContext = {
       serverRevision: this.server.revision,
       navigationEpoch: this.navigationEpoch,
     };

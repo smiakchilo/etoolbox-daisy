@@ -1147,7 +1147,7 @@ export function reorderServers(
 /**
  * Deterministic `secretRef` for one proxy-library entry's credentials. Unlike
  * the old single fixed key, each entry needs its own: scoping it by the
- * entry's permanent id (mirroring how a server's AEM proxy is scoped by the
+ * entry's permanent id (mirroring how a server's host proxy is scoped by the
  * server id) keeps it stable across label/address edits and reorders, and
  * means a freshly-created entry can name its secret before any password is
  * stored.

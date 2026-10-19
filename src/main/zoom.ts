@@ -5,9 +5,9 @@ import type { WebContents } from 'electron';
  * (`shortcuts.ts`): the numpad's `+` / `-` (`Ctrl+NumpadAdd` /
  * `Ctrl+NumpadSubtract`) step the level, and `Ctrl+0` returns it to 100%.
  *
- * The AEM view and the app shell are separate `WebContents`, so "zoom the
+ * The browser view and the app shell are separate `WebContents`, so "zoom the
  * focused pane" falls out of applying the change to whichever view the keystroke
- * landed on - the AEM page when its view has focus, the shell document otherwise
+ * landed on - the page when its view has focus, the shell document otherwise
  * (see `attachShortcutHandling` and `browserController.ts`). Ctrl+wheel is
  * deliberately not a zoom gesture (Electron only emits `zoom-changed` for it, which
  * nothing handles; both views are in 'isolated' zoom mode, never 'manual', which
@@ -15,7 +15,7 @@ import type { WebContents } from 'electron';
  *
  * The level is Electron's own unit (`scale := 1.2 ^ level`), so a step is a
  * ±20% change and the bounds below span roughly 40%-250%. The app shell's level
- * is remembered across launches (`windowState.ts`); the AEM page starts at 100%
+ * is remembered across launches (`windowState.ts`); the page starts at 100%
  * on every launch, and `Ctrl+0` returns a view to it.
  */
 export type ZoomDirection = 'in' | 'out' | 'reset';

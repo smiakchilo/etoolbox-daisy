@@ -90,7 +90,7 @@ test('Ctrl+Shift+I toggles the app shell DevTools from either pane, with no menu
           BrowserWindow.getAllWindows()[0]?.webContents.isDevToolsOpened() ?? false,
       );
 
-    const pressCtrlShiftIOn = (target: 'shell' | 'aem', id = -1) =>
+    const pressCtrlShiftIOn = (target: 'shell' | 'host', id = -1) =>
       app.evaluate(
         ({ BrowserWindow, webContents }, args: { target: string; id: number }) => {
           const win = BrowserWindow.getAllWindows()[0];
@@ -119,17 +119,17 @@ test('Ctrl+Shift+I toggles the app shell DevTools from either pane, with no menu
 
     // Now from the AEM pane: the keystroke lands in the view's WebContents, but
     // the command still means the *shell's* DevTools (the old menu role).
-    let aemViewId = -1;
-    for (let attempt = 0; attempt < 40 && aemViewId === -1; attempt += 1) {
-      aemViewId = await app.evaluate(({ webContents }, prefix: string) => {
+    let hostViewId = -1;
+    for (let attempt = 0; attempt < 40 && hostViewId === -1; attempt += 1) {
+      hostViewId = await app.evaluate(({ webContents }, prefix: string) => {
         const view = webContents.getAllWebContents().find((c) => c.getURL().startsWith(prefix));
         return view?.id ?? -1;
       }, origin);
-      if (aemViewId === -1) await page.waitForTimeout(500);
+      if (hostViewId === -1) await page.waitForTimeout(500);
     }
-    if (aemViewId === -1) throw new Error('AEM view not found');
+    if (hostViewId === -1) throw new Error('AEM view not found');
 
-    expect(await pressCtrlShiftIOn('aem', aemViewId)).toBe(true);
+    expect(await pressCtrlShiftIOn('host', hostViewId)).toBe(true);
     await expect.poll(shellDevToolsOpened, { timeout: 15_000 }).toBe(true);
   } finally {
     await app.close();

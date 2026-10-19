@@ -75,8 +75,9 @@ commit unless the user asks.**
 ┌─────────────────────────── Electron main ────────────────────────────┐
 │  src/main/                                                           │
 │    index.ts ............ composition root (wires everything)         │
-│    browser/ ............ the AEM pane, navigation, origin switching  │
-│    aem/ ................ URL building, response validation, broker   │
+│    browser/ ............ the browser pane, navigation, origin switch │
+│    webview/ ............ session, proxy/TLS/cookies, bridge, HTTP log│
+│    aem/ ................ AEM URL building, response validation       │
 │    ipc/ ................ typed IPC handlers, sender guards           │
 │    settingsStore / secretStore / logger / appPaths                   │
 │    (appPaths: visible ~\etoolbox-daisy = settings, chats, logs;      │
@@ -91,7 +92,7 @@ commit unless the user asks.**
 ┌──────────┴───────────┐            ┌──────────┴─────────────────────┐
 │ src/preload/         │            │  copilot-runtime.exe (bundled) │
 │  app-preload ........ chat + settings bridge                        │
-│  aem-preload ........ runs INSIDE the AEM page; the private fetch   │
+│  webview-preload .... runs INSIDE the remote page; the private fetch│
 │  bridgeFetch ........ the actual authenticated read                 │
 └──────────┬───────────┘            └────────────────────────────────┘
            │
@@ -116,8 +117,8 @@ model calls aem_get_json / aem_query
                                  src/shared/tools/core): validate args, build envelope
   → src/main/tools/registry.ts   discovered + isolated; hands each tool a ToolHost
                                  whose bridge is bridgeBroker.request
-  → src/main/aem/bridgeBroker.ts  policy, deadlines, navigation-epoch checks
-  → src/main/aem/bridgeTransport.ts  IPC to the AEM pane
+  → src/main/webview/bridgeBroker.ts  policy, deadlines, navigation-epoch checks
+  → src/main/webview/bridgeTransport.ts  IPC to the browser pane
   → src/preload/bridgeFetch.ts    the fetch, inside the authenticated page
   → src/main/aem/responseValidation.ts  classify HTTP + content type
   → src/main/aem/queryResponse.ts  QueryBuilder success flag, totals
@@ -141,7 +142,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/ids.ts` | Branded ID primitives (`RequestId`, `ChatId`, `TurnId`, `ServerId`) |
 | `contracts/errors.ts` | The error taxonomy and `requiredAction` values |
 | `contracts/origin.ts` | Origin normalization and comparison |
-| `contracts/serverConfig.ts` | An AEM server entry (id, label, colour, address, optional `projectId`, revision) |
+| `contracts/serverConfig.ts` | A host entry (id, label, colour, address, optional `projectId`, revision) |
 | `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component/DAM roots, content priority paths) shared by several hosts, referenced by a host's optional `projectId` |
 | `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
@@ -149,7 +150,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | *(moved)* | Tool argument/result schemas, `paginationMetadataSchema`, `totalMatchesSchema`, `renderTotal()` now live with their tool: `src/tools/<name>/<name>.ts`; the plugin contract is `src/shared/tools/core/` |
 | `contracts/agentEvents.ts` | The normalized event stream the renderer consumes |
 | `contracts/sessionState.ts` | Session/turn state machines |
-| `contracts/aemBridge.ts` | The preload↔main bridge envelope |
+| `contracts/webviewBridge.ts` | The preload↔main bridge envelope |
 
 Non-contract shared files: `result.ts` (the `Result` type), `ipc-channels.ts`,
 and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
@@ -306,7 +307,7 @@ src/agents/<name>/
   are documented in `src/shared/contracts/agentEvents.ts`.
 - Copilot's files: `copilotClient.ts` (`createHardenedCopilotClient`),
   `runtimePaths.ts` (+ `findProjectRoot`), `toolPolicy.ts`
-  (**the hardening core**), `aemToolPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
+  (**the hardening core**), `toolAllowlistPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
   `authPresence.ts` (cheap non-starting `getAuthPresence` from `config.json`),
   `modelCatalog.ts`, `runtimeManager.ts`, `runtime.ts`.
 - OpenRouter's files: `client.ts` (the only place the SDK is constructed; pins
@@ -397,21 +398,36 @@ recorded (best-effort per session), remove the journal. A runtime recycle
 re-opens the same chat under a new SDK session, so the journal records each one
 (a `session.opened` record after the header) and deletion removes them all.
 
-`main/aem/` splits deliberately: `resourceUrl.ts` and `queryUrl.ts` build URLs,
-`responseValidation.ts` classifies HTTP responses, `queryResponse.ts` reads
-QueryBuilder semantics, `getJsonProjection.ts` / `queryProjection.ts` shrink
-results, `aemGetJson.ts` / `aemQuery.ts` orchestrate, `bridgeBroker.ts` +
-`bridgeTransport.ts` carry it across the boundary. `proxyPolicy.ts`,
-`proxyAuth.ts`, `certificateExceptions.ts` and `session.ts` handle network
-scoping.
+`main/webview/` is the browser pane's runtime: `session.ts` owns the single
+persistent Electron session (proxy, TLS exceptions, cookie persistence),
+`proxyPolicy.ts` / `proxyAuth.ts` / `certificateExceptions.ts` /
+`proxyResolution.ts` are its network policy, `bridgeBroker.ts` +
+`bridgeTransport.ts` carry a fetch across the boundary, and `toolHttpLog.ts`
+writes `logs/tools.log`. None of it is AEM-specific.
 
-`main/browser/` owns the AEM pane: `browserController.ts` (the state machine),
+`main/aem/` holds what is AEM-specific: `resourceUrl.ts` and `queryUrl.ts`
+build URLs, `responseValidation.ts` classifies HTTP responses,
+`queryResponse.ts` reads QueryBuilder semantics, `getJsonProjection.ts` /
+`queryProjection.ts` shrink results, `aemGetJson.ts` / `aemQuery.ts`
+orchestrate.
+
+`main/browser/` owns the browser pane: `browserController.ts` (the state machine),
+`hostView.ts` (the `WebContentsView` and its preload/session wiring),
 `navigationEpoch.ts` (**how a late result from a previous page is rejected** —
 central to correctness), `serverSwitch.ts`, `certificatePrompt.ts`,
 `urlPolicy.ts` + `windowOpenPolicy.ts` + `windowOpenRouter.ts` (http(s)-only URL
 policy; new-window requests classified as popups - `window.open` with window
 features, left as real windows for SSO - vs tabs, loaded in the same view),
 `viewBounds.ts`.
+
+**Names describe what a thing is: `AEM` only for AEM-specific behaviour.**
+The browser pane, its preload (`webview-preload`), its persistent session
+(`main/webview/session.ts`, partition `persist:webview`), the bridge
+(`contracts/webviewBridge.ts`) and host switching are generic - a configured
+host may be any web application, not only AEM. The `aem_` prefix and the AEM
+vocabulary belong to what genuinely speaks AEM's own APIs: `aem_query`,
+`aem_get_json`, `aem_create_page`, the semantic search, the JCR path linkifier,
+and AEM's editor/shell URL shapes. Do not name a generic component after AEM.
 
 ### `src/renderer/`
 
@@ -579,9 +595,9 @@ left alone while the AEM page navigates itself.
 
 **Application-wide keyboard shortcuts have no menu to hang off.** `index.ts`
 clears the application menu, so a shortcut cannot be an accelerator - and the
-AEM pane is a `WebContentsView`, so a renderer key listener would do nothing
+browser pane is a `WebContentsView`, so a renderer key listener would do nothing
 while the AEM page has focus. Main therefore matches a keystroke in
-`before-input-event` on *both* the shell's and the AEM view's `WebContents`
+`before-input-event` on *both* the shell's and the browser view's `WebContents`
 (`src/main/shortcuts.ts`, attached by `browserController.ts`, which holds both)
 and pushes a *semantic* action (`app:shortcut`, `src/shared/shortcut-ipc.ts`); a
 thin dispatcher in `shell/mainShell.ts` runs the very handler its toolbar or
@@ -597,7 +613,7 @@ header**; only the sections beneath them scroll (`homeScreen.ts`'s
 the buttons and never runs up under the close control's pinned top-right
 position and its hover backdrop - do not fold the header back into the scroll
 box. Chat actions (`Ctrl+H`,
-`Ctrl+,`, `Ctrl+N`) bind on the shell only, so the remote AEM page keeps its own
+`Ctrl+,`, `Ctrl+N`) bind on the shell only, so the remote page keeps its own
 `Ctrl+<letter>` editing shortcuts; `Ctrl+B` is deliberately unbound (bold in
 AEM's rich-text editor). Backspace-to-go-Back is deliberately **not** bound:
 whether the caret is in a text field is only knowable in the renderer, and
@@ -615,7 +631,7 @@ worked - see §8. Find (`Ctrl+F`) does cross it, for the AEM page: the bar is re
 (`shell/findBar.ts`, one instance per pane, only one open at a time) over a
 `FindController` (`shell/findController.ts`) and a debounce
 (`LIVE_SEARCH_DEBOUNCE_MS`). The **browser** bar's controller drives Chromium's
-`findInPage` over the AEM view: main resolves the logical target to a
+`findInPage` over the browser view: main resolves the logical target to a
 `WebContents`, and the `browser.find`/`stop-find` invokes plus the
 `browser:find-result` push carry it. The **chat** bar searches the transcript
 subtree directly (`chat/transcriptFind.ts`) and highlights with the CSS Custom
@@ -694,7 +710,7 @@ src/tools/<name>/
 - `ask_user` is not an AEM read: it puts a choice to the user and blocks the turn
   until they answer, through `ToolHost.requestUserInput` (resolved from the live
   turn, never from model input). It deliberately does **not** use
-  `createToolExecutor` (that builder requires a live AEM server), and it renders
+  `createToolExecutor` (that builder requires a live host), and it renders
   as a conversation rather than a billet: its renderer sets
   `presentation: 'conversation'` and supplies `readConversation`, so the
   transcript paints the question as an assistant message and the answer as a
@@ -902,7 +918,7 @@ src/tools/<name>/
   makes ONE nested `aem_query` with `limit` = the remainder and the current
   offset, appended as a single `format_table` block, with no further question.
   That larger `limit` is accepted only for a *nested* call: the bridge
-  (`createInvokeTool`) stamps `nested: true` on the `AemToolExecutor` context
+  (`createInvokeTool`) stamps `nested: true` on the `ToolExecutor` context
   (`types.ts`; adapters never set it), and `aemQuery.ts` then validates against
   `nestedAemQueryArgsSchema` (cap 2000) instead of the model's (cap 200).
   `p.limit=-1` stays inexpressible and the descriptor still advertises 200.
@@ -960,7 +976,7 @@ src/tools/<name>/
    the model when to use it; it is composed into the session prompt only while
    the tool is enabled. Copy `src/tools/aem-get-json/tool.ts`.
 4. Network access only via `host.bridge.request(envelope, url)` (GET through the
-   AEM pane). **No write path exists** (§7.4); a POST-capable tool needs an
+   browser pane). **No write path exists** (§7.4); a POST-capable tool needs an
    owner decision and a bridge change — ask.
 5. `src/tools/<name>/renderer/index.ts` — `export const renderer:
    ToolRendererModule` with `toolName`, `describeCall` and optionally
@@ -1306,7 +1322,7 @@ only**: how to read it is in `session.md`, once.
 - `tests/e2e/**` — Playwright driving the **built** Electron app, one spec per
   step.
 - `tests/support/**` — shared fakes (`fakeAgent`, `fakeBrowserSide`,
-  `fakeAemTransport`, `testClock`, `testIds`, `agentDefinitions` — the agent
+  `fakeBridgeTransport`, `testClock`, `testIds`, `agentDefinitions` — the agent
   definitions used where a real `meta.ts` glob is not wanted, `toolUnions`).
 - `tests/fixtures/eslint-violations/**` — files that **must** fail lint; they
   prove the architectural boundary rules are actually switched on.
@@ -1322,7 +1338,7 @@ are reserved by the plan; nothing lives there yet.
 
 ```bash
 npm run verify       # typecheck + lint + format:check + vitest   ← the gate
-npm run build        # electron-vite build + the separate aem-preload build
+npm run build        # electron-vite build + the separate webview-preload build
 npm run test         # vitest only
 npm run test:e2e     # Playwright, against the BUILT app — build first
 npm run package:win  # NSIS x64 per-user installer
@@ -1442,7 +1458,7 @@ constants (2026-10-16)"). Before that it was **3398 passed / 14 skipped** (+5 ag
 3393 below - **"Load all" is one request**: a click makes a single nested
 `aem_query` for the proven remainder (at most `LOAD_ALL_ROW_LIMIT`, 2000, which
 replaces `LOAD_ALL_PAGE_LIMIT`) instead of paging. The wider `limit` is accepted
-only for a nested call - a new optional `nested` flag on the `AemToolExecutor`
+only for a nested call - a new optional `nested` flag on the `ToolExecutor`
 context, stamped by `createInvokeTool` (a shared-surface change); the model's own
 cap stays 200 and `p.limit=-1` stays inexpressible - see
 `docs/verification/followons-2026-10.md` "\"Load all\" is one request, not a
@@ -1503,7 +1519,7 @@ view's zoom is deliberately **not** persisted. See `docs/verification/followons-
 **3354 passed / 14 skipped** (+52 against the
 3302 below - **find-in-page and zoom**: one `Ctrl+F` find bar per pane
 (`shell/findBar.ts`) over a `FindController` and a 150ms debounce. The browser
-bar drives native `findInPage` over the AEM view (the same Chromium highlight);
+bar drives native `findInPage` over the browser view (the same Chromium highlight);
 it refuses unless the page is visible and closes when a panel/Home veil opens,
 and only one bar is on screen at a time. The chat bar searches the transcript
 subtree directly (`chat/transcriptFind.ts`, CSS Custom Highlight API) because
@@ -1520,7 +1536,7 @@ and the built-app `tests/e2e/find-and-zoom.spec.ts` (2 cases, 6/6 under
 so the contract carries no `findNext`. +13 `shortcuts` (rewritten to the result
 union), +6 `zoom`, +4 `browserController`, +13 `findBar` (rewritten onto a
 controller), +12 `transcriptFind`, +6 `browserPane`, +1 `chatPane`, and shared
-`tests/support/e2e/aemView.ts` + `aemHost.ts`; three mutations caught - see
+`tests/support/e2e/hostView.ts` + `hostFixture.ts`; three mutations caught - see
 `docs/verification/followons-2026-10.md` "Find-in-page and zoom ... (2026-10-16)").
 Before that it was
 **3302 passed / 14 skipped** (+16 against the
@@ -1628,7 +1644,7 @@ the journal's `user.prompt` record gains an optional `serverId`, so a chat's hos
 is observed at first *use*, not only at open - the startup chat opens before any
 page is restored, so its header often named none. `chatJournal.ts`'s
 `flushPendingPrompt` fills a still-deferred header's absent `serverId` from the
-prompt's, `sendMessage` supplies it from `currentAemServerContext()` (read
+prompt's, `sendMessage` supplies it from `currentHostContext()` (read
 fresh), and `chatHistory` falls back to the first prompt that named a host
 (first known host wins). Contract change: `contracts/chatJournal.ts`'s
 `user.prompt` gains `serverId`. +2 contract cases, +3 `chatJournal`, +3
@@ -2344,7 +2360,7 @@ billet). (The Session "Authentication"/"Models"
 on — see `docs/verification.md`.) **`npm run verify`** typechecks cleanly (the old red WIP file is now the
 registered-but-disabled `src/tools/aem-create-page/`); it is red only on
 pre-existing lint errors in
-`tests/unit/main/aem/session.test.ts:12` and `tests/e2e/aem-session.spec.ts`
+`tests/unit/main/webview/session.test.ts:12` and `tests/e2e/view-session.spec.ts`
 (prefer-const).
 The repository now has **commits** (HEAD `eab74e6`), so `git status`/`git log`
 work again; the older "zero commits" notes are stale. One **pre-existing,
@@ -2367,8 +2383,8 @@ orphaned banner collapse timer detached the OK button mid-click) and
 fixed on 2026-09-22; see `docs/verification.md` "Fix the three knowingly-failing
 E2E tests".
 
-`aem-preload` has its **own** build config (`electron.vite.aem-preload.config.ts`)
-because it is injected into a remote AEM page and cannot share the app preload's
+`webview-preload` has its **own** build config (`electron.vite.webview-preload.config.ts`)
+because it is injected into remote content and cannot share the app preload's
 privileges. `npm run build` runs both. TypeScript is a **project-references
 build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/agent/test.json (`agent` covers `src/agents/**`)`).
 
@@ -2537,7 +2553,7 @@ handoff. Playwright specs must not import from `src/renderer`.
 setup, teardown, fixture builder, wait, fake or locator helper to a test file:
 
 - unit: `jsdomGlobals`, `memoryStorage`, `scratchDirs`, `asyncWaits`,
-  `configFixtures`, `aemQueryEnvelope`, `fakeAemTransport`, `fakeAemFixtures`,
+  `configFixtures`, `aemQueryEnvelope`, `fakeBridgeTransport`, `fakeAemFixtures`,
   `fakeBrowserSide`, `fakeAgent`, `testClock`, `testIds`, `toolUnions`,
   `agentDefinitions`, `ruleResources`, `ipcHandlerHarness`;
 - E2E: `env` (scratch environment), `profile` (settings/profile writing), `app`
@@ -2625,7 +2641,7 @@ passes against a missing import. Assert `customElements.get(...)` and a real
 `shadowRoot` in an E2E instead.
 
 **Live scenarios prove behaviour against the real world.** For anything fakes
-cannot show (a real model choosing a skill, a real AEM host), write a
+cannot show (a real model choosing a skill, a real host), write a
 `*.live.spec.ts` using `tests/support/live/` (`launchLiveApp`,
 `startFreshConversation`/`sendAndWait`, `journal` queries, `liveAssertions`,
 `attachEvidence`). Assert on the journal (tool calls, results, errors), never on
@@ -2696,7 +2712,7 @@ file).
 | Two Copilot clients | **Design fixed.** `src/agents/copilot/runtimeManager.ts` owns one `CopilotClient` for auth and chat (`replaceDelegate`), replacing `ipc/agent.ts`'s separate `cachedClient`; fake mode answers auth from the fake, so it spawns no runtime at all. The **real-path process count is still unmeasured** — measure before Step 10's shutdown work. Plan: `docs/backlog.md` "Real-path Copilot runtime process count and quit cleanup". |
 | `before-quit` / `will-quit` cleanup | Not implemented; Step 10 scope. No leak measured either way — tracked in `docs/backlog.md` (same entry). |
 | U10 residual gap | No preload fetch has been driven through a proxy or a certificate exception. Step 12 territory — see `docs/backlog.md` "Milestones B and C". |
-| Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live AEM session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/aem/proxyResolution.ts`). |
+| Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live browser session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/webview/proxyResolution.ts`). |
 | `address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |

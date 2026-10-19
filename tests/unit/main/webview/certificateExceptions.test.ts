@@ -7,7 +7,7 @@ import {
   decideCertificateTrust,
   type CertificateExceptionRecord,
   type ConnectionCloser,
-} from '../../../../src/main/aem';
+} from '../../../../src/main/webview';
 import { tlsExceptionSchema } from '../../../../src/shared';
 import { issueUntrustedLeafCert } from '../../../integration/support/testCa';
 
@@ -228,7 +228,7 @@ describe('createCertificateExceptionStore', () => {
 });
 
 describe('createCertificateErrorListener', () => {
-  const aemSession = { id: 'aem' };
+  const viewSession = { id: 'host' };
   const otherSession = { id: 'other' };
 
   function callbackCapture(): { calls: boolean[]; callback: (isTrusted: boolean) => void } {
@@ -238,13 +238,13 @@ describe('createCertificateErrorListener', () => {
 
   it('approves and calls preventDefault when the store allows and the session is the AEM session', () => {
     const store = { decide: () => ({ allow: true as const }) };
-    const listener = createCertificateErrorListener({ aemSession, store });
+    const listener = createCertificateErrorListener({ viewSession, store });
     const { calls, callback } = callbackCapture();
     let prevented = false;
 
     listener(
       { preventDefault: () => (prevented = true) },
-      { session: aemSession },
+      { session: viewSession },
       ORIGIN_A + '/x',
       ERROR_SELF_SIGNED,
       { data: 'pem' },
@@ -257,13 +257,13 @@ describe('createCertificateErrorListener', () => {
 
   it('leaves the default rejection in place when the store denies, without consuming the one-time callback', () => {
     const store = { decide: () => ({ allow: false as const, reason: 'no_matching_exception' }) };
-    const listener = createCertificateErrorListener({ aemSession, store });
+    const listener = createCertificateErrorListener({ viewSession, store });
     const { calls, callback } = callbackCapture();
     let prevented = false;
 
     listener(
       { preventDefault: () => (prevented = true) },
-      { session: aemSession },
+      { session: viewSession },
       ORIGIN_A + '/x',
       ERROR_SELF_SIGNED,
       { data: 'pem' },
@@ -282,7 +282,7 @@ describe('createCertificateErrorListener', () => {
         return { allow: true as const };
       },
     };
-    const listener = createCertificateErrorListener({ aemSession, store });
+    const listener = createCertificateErrorListener({ viewSession, store });
     const { calls, callback } = callbackCapture();
 
     listener(

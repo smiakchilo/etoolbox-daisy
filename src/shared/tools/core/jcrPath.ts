@@ -91,7 +91,7 @@ function containsSlingSelectorToken(candidate: string): boolean {
 /**
  * Validates a candidate JCR/Sling path without rewriting it. A bad path must be
  * rejected, not sanitised: silently stripping `..` or a scheme would make the
- * eventual AEM request address something other than what the agent (and the
+ * eventual request address something other than what the agent (and the
  * user reading its answer) believes was asked for.
  *
  * CONTRACT FOR CALLERS: every structural check runs against the

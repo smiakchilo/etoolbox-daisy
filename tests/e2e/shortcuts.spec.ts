@@ -1,7 +1,11 @@
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { findAemViewId, pressOn, waitForViewIdle } from '../support/e2e/aemView';
-import { closeFixtureServer, seedHostAndLaunch, startFixtureServer } from '../support/e2e/aemHost';
+import { findHostViewId, pressOn, waitForViewIdle } from '../support/e2e/hostView';
+import {
+  closeFixtureServer,
+  seedHostAndLaunch,
+  startFixtureServer,
+} from '../support/e2e/hostFixture';
 import { byTestId } from '../support/selectors';
 
 /**
@@ -37,19 +41,19 @@ test('application shortcuts work from both panes', async () => {
   const rootUrl = `${origin}/`;
 
   try {
-    const aemViewId = await findAemViewId(app, origin);
+    const hostViewId = await findHostViewId(app, origin);
     await expect
       .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
       .toBe(rootUrl);
-    await waitForViewIdle(app, aemViewId);
+    await waitForViewIdle(app, hostViewId);
 
     // ── F5 on the AEM pane refreshes it ────────────────────────────────────
     const beforeRefresh = requests.filter((url) => url === '/').length;
-    expect(await pressOn(app, 'aem', aemViewId, 'F5', [])).toBe(true);
+    expect(await pressOn(app, 'host', hostViewId, 'F5', [])).toBe(true);
     await expect
       .poll(() => requests.filter((url) => url === '/').length, { timeout: 30_000 })
       .toBeGreaterThan(beforeRefresh);
-    await waitForViewIdle(app, aemViewId);
+    await waitForViewIdle(app, hostViewId);
 
     // ── Alt+Left on the AEM pane goes Back ─────────────────────────────────
     await addressInput.fill(`${origin}/other.html`);
@@ -57,27 +61,27 @@ test('application shortcuts work from both panes', async () => {
     await expect
       .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
       .toBe(`${origin}/other.html`);
-    await waitForViewIdle(app, aemViewId);
+    await waitForViewIdle(app, hostViewId);
 
-    expect(await pressOn(app, 'aem', aemViewId, 'Left', ['alt'])).toBe(true);
+    expect(await pressOn(app, 'host', hostViewId, 'Left', ['alt'])).toBe(true);
     await expect
       .poll(async () => await addressInput.inputValue(), { timeout: 30_000 })
       .toBe(rootUrl);
 
     // ── Ctrl+H on the shell opens History ──────────────────────────────────
-    await pressOn(app, 'shell', aemViewId, 'H', ['control']);
+    await pressOn(app, 'shell', hostViewId, 'H', ['control']);
     await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 15_000 });
     await page.locator(byTestId('history-panel-close')).click();
     await expect(page.locator(byTestId('history-panel'))).toBeHidden();
 
     // ── Ctrl+, on the shell opens Settings ─────────────────────────────────
-    await pressOn(app, 'shell', aemViewId, ',', ['control']);
+    await pressOn(app, 'shell', hostViewId, ',', ['control']);
     await expect(page.locator(byTestId('settings-panel'))).toBeVisible({ timeout: 15_000 });
     await page.locator(byTestId('settings-panel-close')).click();
     await expect(page.locator(byTestId('settings-panel'))).toBeHidden();
 
     // ── Ctrl+L focuses the address bar, from the AEM pane ──────────────────
-    await pressOn(app, 'aem', aemViewId, 'L', ['control']);
+    await pressOn(app, 'host', hostViewId, 'L', ['control']);
     await expect(addressInput).toBeFocused({ timeout: 15_000 });
   } finally {
     await app.close();

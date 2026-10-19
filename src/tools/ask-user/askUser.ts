@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type JsonValue,
   type RequestId,
   type Result,
@@ -158,7 +158,7 @@ function invalidArgument(message: string, requestId: RequestId): Result<JsonValu
  * An empty answer - the user dismissed the question via the composer's cancel -
  * is likewise reported as `CANCELLED`, since no choice was made.
  */
-export function createAskUserExecutor(host: ToolHost): AemToolExecutor {
+export function createAskUserExecutor(host: ToolHost): ToolExecutor {
   return async (rawArgs, context) => {
     const requestId = newRequestId(host.idGenerator);
 

@@ -34,15 +34,15 @@ export default defineConfig({
     // than share it: `manualChunks` cannot place one module in two chunks,
     // and `experimentalMinChunkSize` declines to merge an entry-shared
     // chunk. Both were tried and both still emitted `chunks/`. So the second
-    // preload is built by its own pass, `electron.vite.aem-preload.config.ts`,
+    // preload is built by its own pass, `electron.vite.webview-preload.config.ts`,
     // where it is once again the only entry and is therefore self-contained.
     plugins: [externalizeDepsPlugin({ exclude: ['zod'] }), assertSelfContainedPreloads()],
     build: {
-      // `emptyOutDir: false` is load-bearing and mirrors the aem-preload pass.
+      // `emptyOutDir: false` is load-bearing and mirrors the webview-preload pass.
       // `out/preload` is written by TWO passes - this one and
-      // `electron.vite.aem-preload.config.ts` - and Vite empties an outDir
+      // `electron.vite.webview-preload.config.ts` - and Vite empties an outDir
       // inside the project root before writing. Leaving this at the default
-      // deleted `aem-preload.js`, which the `dev` script had just built (and
+      // deleted `webview-preload.js`, which the `dev` script had just built (and
       // which the `build` script builds only afterwards), so the AEM view's
       // preload silently failed to load and every bridge fetch waited out the
       // full 90 s deadline. Neither pass may clear the shared directory.

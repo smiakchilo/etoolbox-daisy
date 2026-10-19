@@ -12,14 +12,14 @@ import { createProxyLoginListener, type ProxyPlainCredentials } from './proxyAut
 import { buildPersistCookieDetails, shouldPersistSessionCookie } from './sessionCookiePersistence';
 
 /**
- * The single persistent AEM session (implementation-plan.md step 05;
+ * The single persistent browser session (implementation-plan.md step 05;
  * requirements-decisions.md section 3: "one shared, persistent Electron
- * session/profile for all AEM connections - not one partition per server").
+ * session/profile for all host connections - not one partition per server").
  * A single shared profile, not one per configured server, is what lets a
  * proxy or certificate exception decision made for one server stay in effect
  * when the user switches to another server on the same origin, and is what
  * keeps `session.closeAllConnections()` (see `certificateExceptions.ts`,
- * `proxyPolicy.ts`) meaningfully scoped to "every AEM connection" rather than
+ * `proxyPolicy.ts`) meaningfully scoped to "every host connection" rather than
  * needing to be replayed across N partitions.
  *
  * This module is intentionally the only one of the four that imports real
@@ -32,10 +32,10 @@ import { buildPersistCookieDetails, shouldPersistSessionCookie } from './session
  * `windows.ts`/`security.ts`/`csp.ts`, none of which have a dedicated unit
  * test file either.
  */
-export const AEM_SESSION_PARTITION = 'persist:aem';
+export const VIEW_SESSION_PARTITION = 'persist:webview';
 
-/** The small API the window layer uses to route AEM connections through this session's proxy/certificate policy. */
-export interface AemSession {
+/** The small API the window layer uses to route host connections through this session's proxy/certificate policy. */
+export interface ViewSession {
   /** The underlying Electron session. The app's own UI must load from a different session, never this one - see requirements-decisions.md section 3. */
   readonly session: Session;
 
@@ -73,13 +73,13 @@ export interface AemSession {
   listCertificateExceptions(): readonly CertificateExceptionRecord[];
 }
 
-export interface AemSessionOptions {
+export interface ViewSessionOptions {
   /** Optional diagnostics sink for a failed cookie promotion. */
   readonly logger?: Logger;
 }
 
 /**
- * Creates the one AEM session for the app's lifetime and wires the
+ * Creates the one browser session for the app's lifetime and wires the
  * `certificate-error`/`login` policy onto it. Must be called at most once;
  * calling it twice would register two listener pairs on `app` for the same
  * partition, double-invoking every decision.
@@ -89,22 +89,22 @@ export interface AemSessionOptions {
  * instance mints AEM's `login-token` without an expiry, so without this a
  * developer re-authenticates on every launch.
  */
-export function createAemSession(options: AemSessionOptions = {}): AemSession {
-  const aemSession = session.fromPartition(AEM_SESSION_PARTITION);
-  const certificateStore = createCertificateExceptionStore(aemSession);
+export function createViewSession(options: ViewSessionOptions = {}): ViewSession {
+  const viewSession = session.fromPartition(VIEW_SESSION_PARTITION);
+  const certificateStore = createCertificateExceptionStore(viewSession);
 
-  // The AEM pane is for reading and previewing, never for saving files (owner
+  // The browser pane is for reading and previewing, never for saving files (owner
   // decision: a DAM asset link is "a preview experience - not downloaded or
   // offered to download"). A top-level navigation to a type Chromium cannot
   // display - a `.zip`, or any `Content-Disposition: attachment` response -
   // would otherwise silently start a download, so every download on this
   // session is cancelled.
-  aemSession.on('will-download', (event) => {
-    options.logger?.info('AEM_DOWNLOAD_BLOCKED');
+  viewSession.on('will-download', (event) => {
+    options.logger?.info('VIEW_DOWNLOAD_BLOCKED');
     event.preventDefault();
   });
 
-  aemSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
+  viewSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
     if (!shouldPersistSessionCookie(cookie, removed)) return;
     const details = buildPersistCookieDetails(cookie, Date.now());
     if (details === undefined) return;
@@ -113,9 +113,9 @@ export function createAemSession(options: AemSessionOptions = {}): AemSession {
     // ignored here, so this cannot recurse. A rejection is non-fatal: the
     // login still works for this run, it just will not survive the next
     // launch - so it is logged, not thrown.
-    void aemSession.cookies
+    void viewSession.cookies
       .set(details)
-      .catch(() => options.logger?.warn('AEM_SESSION_COOKIE_PERSIST_FAILED'));
+      .catch(() => options.logger?.warn('VIEW_SESSION_COOKIE_PERSIST_FAILED'));
   });
 
   let currentProxy: ProxyConfig | undefined;
@@ -123,7 +123,7 @@ export function createAemSession(options: AemSessionOptions = {}): AemSession {
 
   app.on(
     'certificate-error',
-    createCertificateErrorListener({ aemSession, store: certificateStore }),
+    createCertificateErrorListener({ viewSession, store: certificateStore }),
   );
 
   app.on(
@@ -141,16 +141,16 @@ export function createAemSession(options: AemSessionOptions = {}): AemSession {
   );
 
   return {
-    session: aemSession,
+    session: viewSession,
 
     async switchProxy(proxy, resolveCredentials, options) {
-      await applyProxySwitch(aemSession, proxy, options);
+      await applyProxySwitch(viewSession, proxy, options);
       currentProxy = proxy;
       currentResolveCredentials = resolveCredentials;
     },
 
     async applyProxy(proxy, resolveCredentials, options) {
-      await applySessionProxy(aemSession, proxy, options);
+      await applySessionProxy(viewSession, proxy, options);
       currentProxy = proxy;
       currentResolveCredentials = resolveCredentials;
     },

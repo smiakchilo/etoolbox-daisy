@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AEM_REQUEST_TIMEOUT_MS,
+  WEBVIEW_REQUEST_TIMEOUT_MS,
   classifyStaleness,
   computeDeadline,
   isDeadlineExpired,
@@ -508,7 +508,7 @@ describe('toolRequestEnvelopeSchema', () => {
 describe('deadline handling', () => {
   it('computes an absolute deadline from an injected clock, not a duration', () => {
     const clock = () => 1_000;
-    expect(computeDeadline(clock)).toBe(1_000 + AEM_REQUEST_TIMEOUT_MS);
+    expect(computeDeadline(clock)).toBe(1_000 + WEBVIEW_REQUEST_TIMEOUT_MS);
   });
 
   it('reports a deadline as not yet expired before it elapses', () => {

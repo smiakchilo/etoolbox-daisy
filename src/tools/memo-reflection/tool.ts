@@ -1,5 +1,5 @@
 import {
-  type AemToolExecutor,
+  type ToolExecutor,
   type InternalToolModule,
   MEMO_REFLECTION_TOOL_NAME,
   createToolError,
@@ -20,7 +20,7 @@ import {
  */
 function createMemoReflectionExecutor(
   host: Parameters<InternalToolModule['createExecutor']>[0],
-): AemToolExecutor {
+): ToolExecutor {
   return () =>
     Promise.resolve(
       err(

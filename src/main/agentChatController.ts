@@ -16,7 +16,7 @@ import {
   type AgentServiceError,
   type CanSendBlockReason,
   type ChatId,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type IdGenerator,
   type JsonValue,
   type MessageId,
@@ -87,15 +87,15 @@ import {
  */
 
 /**
- * The AEM server context this controller needs to bind
- * `CurrentAemToolContext.origin`/`serverId`/`serverRevision` - a superset of
- * `bridgeBroker.ts`'s `CurrentAemContext`, adding the two identity fields
+ * The host context this controller needs to bind
+ * `CurrentToolContext.origin`/`serverId`/`serverRevision` - a superset of
+ * `bridgeBroker.ts`'s `CurrentBridgeContext`, adding the two identity fields
  * that module does not carry. Supplied by the composition root
  * (`src/main/index.ts`), sourced from the same settings/browser state the
  * bridge broker itself reads - not a second, competing notion of "the
  * current server".
  */
-export interface AemServerContext {
+export interface HostContext {
   readonly origin: string;
   readonly serverId: ServerId;
   readonly serverRevision: number;
@@ -107,13 +107,13 @@ export interface AgentChatControllerDeps {
   /** Mints every `TurnId` this controller needs (never `ChatId` - always caller-supplied, per `agentService.ts`). */
   readonly idGenerator: IdGenerator;
   /**
-   * The currently selected AEM server, or `undefined` if none is selected.
-   * Called fresh every time `currentAemToolContext()` is invoked - never
+   * The currently selected host, or `undefined` if none is selected.
+   * Called fresh every time `currentToolContext()` is invoked - never
    * cached by this controller - so a server switch mid-turn is reflected in
    * the very next tool call.
    */
-  readonly currentAemServerContext: () => AemServerContext | undefined;
-  /** `NavigationEpochTracker.current`, read fresh for the same reason as `currentAemServerContext`. */
+  readonly currentHostContext: () => HostContext | undefined;
+  /** `NavigationEpochTracker.current`, read fresh for the same reason as `currentHostContext`. */
   readonly navigationEpoch: () => number;
   /**
    * The model-facing "where the browser pane is" block the application
@@ -133,13 +133,13 @@ export interface AgentChatControllerDeps {
    */
   readonly chatJournal?: ChatJournal;
   /**
-   * Cancels every in-flight/queued AEM bridge request. Called whenever the
-   * current turn is cancelled - Stop, an AEM-context change, a chat switch, or
+   * Cancels every in-flight/queued bridge request. Called whenever the
+   * current turn is cancelled - Stop, an host-context change, a chat switch, or
    * closing - so a stopped tool call releases the bridge's single concurrency
    * slot immediately instead of occupying it until its 90 s deadline. Optional
    * so a unit test can construct a controller without a bridge.
    */
-  readonly cancelAemRequests?: () => void;
+  readonly cancelBridgeRequests?: () => void;
   /**
    * Rewrites a user prompt that begins with a known skill reference (e.g.
    * `/search ...`) into the model-facing text that already contains that
@@ -277,23 +277,23 @@ export interface AgentChatController {
   onStatusChanged(listener: () => void): () => void;
   /**
    * Builds the `currentContext` provider `createAemGetJsonExecutor` needs.
-   * Reads the AEM server context and the active chat/turn fresh on every
+   * Reads the host context and the active chat/turn fresh on every
    * call - never captured once - so a server switch or a chat switch mid-turn
    * is reflected in the very next tool call. Throws if there is currently no
-   * AEM server selected or no active chat/turn to bind to; the SDK adapter's
+   * host selected or no active chat/turn to bind to; the SDK adapter's
    * `wrapToolExecutor` catches an executor-level failure and renders it as an
    * ordinary tool error, so failing loudly here is safe.
    */
-  currentAemToolContext(): CurrentAemToolContext;
+  currentToolContext(): CurrentToolContext;
   /**
    * Cancels the in-flight turn on the active chat, if any. Wired by the
    * composition root to the browser's `NavigationEpochTracker` subscription
    * (server switch, navigation, render-process-gone, view-destroyed all bump
-   * it) so AEM-context-invalidating events cancel in-flight agent work the
+   * it) so host-context-invalidating events cancel in-flight agent work the
    * same way pressing Stop does, per implementation-plan.md's "switching AEM
    * server" criterion. A no-op when no turn is in flight.
    */
-  handleAemContextInvalidated(): Promise<void>;
+  handleHostContextInvalidated(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -405,7 +405,7 @@ export type NestedToolCallEvent =
 export function createAgentChatController(deps: AgentChatControllerDeps): AgentChatController {
   const { agentService, idGenerator, logger } = deps;
   const chatJournal = deps.chatJournal;
-  const cancelAemRequests = deps.cancelAemRequests;
+  const cancelBridgeRequests = deps.cancelBridgeRequests;
 
   let activeChatId: ChatId | undefined;
   let activeTurn: ActiveTurn | undefined;
@@ -832,10 +832,10 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // attempting the new one), so its journal is closed - after the await, so
     // its teardown events above are still recorded.
     if (previousChatId !== undefined && previousChatId !== request.chatId) {
-      // The service has torn the previous chat down by now, so any AEM request
+      // The service has torn the previous chat down by now, so any request
       // it still had in flight is cancelled into an abandoned record rather
       // than left to occupy the bridge until its deadline.
-      cancelAemRequests?.();
+      cancelBridgeRequests?.();
       chatJournal?.closeChat(previousChatId);
     }
     if (!result.ok) {
@@ -848,7 +848,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     }
     const sessionId = agentService.getOpenSessionId();
     if (sessionId !== undefined) {
-      const server = deps.currentAemServerContext();
+      const server = deps.currentHostContext();
       chatJournal?.openChat({
         chatId: request.chatId,
         sessionId,
@@ -875,7 +875,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // sent while one runs stops it quietly (no interruption is recorded - the
     // user stopped nothing of theirs) and goes ahead.
     if (isReflectionInFlight()) {
-      cancelAemRequests?.();
+      cancelBridgeRequests?.();
       const stopped = await agentService.abort(request.chatId);
       if (!stopped.ok) return { ok: false, error: toAgentChatError(stopped.error) };
       if (activeChatId === undefined || request.chatId !== activeChatId) {
@@ -898,7 +898,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // Read fresh, exactly as the tool context is: the host the chat is first
     // *used* on is what its journal should record, which for the startup chat
     // (opened before any page was restored) is the only time a host is known.
-    const server = deps.currentAemServerContext();
+    const server = deps.currentHostContext();
     // The user's own text is kept for display and the journal; only the prompt
     // the model reads is rewritten for a leading `/skillname` (resolved above).
     const modelPrompt = skillPrompt.modelPrompt;
@@ -981,13 +981,13 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // `onEvent` pipe as anything else. No `error` `AgentEvent` is ever
     // synthesised for a user-initiated Stop.
     //
-    // The AEM bridge is cancelled first. `agentService.abort` clears its
+    // The bridge is cancelled first. `agentService.abort` clears its
     // `currentTurn` synchronously before it awaits, so the bridge's resolved
     // tool promises settle *after* that clear and their results are suppressed -
     // the same "no result for a cancelled turn" rule, now also freeing the
     // bridge's single concurrency slot instead of waiting out the deadline.
     const hadTurn = activeTurn !== undefined && !isReflectionInFlight();
-    cancelAemRequests?.();
+    cancelBridgeRequests?.();
     const result = await agentService.abort(request.chatId);
     if (!result.ok) return { ok: false, error: toAgentChatError(result.error) };
     // After the await, so the turn's own `cancelling`/`idle` events (and any
@@ -1016,7 +1016,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // The service's teardown has already cleared its turn, so a cancelled
     // bridge request settles with its result suppressed - recorded as an
     // abandoned tool call rather than a late success.
-    cancelAemRequests?.();
+    cancelBridgeRequests?.();
     chatJournal?.closeChat(request.chatId);
     return { ok: true };
   }
@@ -1111,16 +1111,16 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     };
   }
 
-  function currentAemToolContext(): CurrentAemToolContext {
+  function currentToolContext(): CurrentToolContext {
     // Read fresh on every call - see this function's doc comment on
     // `AgentChatController` for why capturing any of this once would be
     // wrong.
-    const server = deps.currentAemServerContext();
+    const server = deps.currentHostContext();
     if (server === undefined) {
-      throw new Error('AemToolContext requested with no AEM server currently selected');
+      throw new Error('ToolContext requested with no host currently selected');
     }
     if (activeChatId === undefined || activeTurn === undefined) {
-      throw new Error('AemToolContext requested with no active chat/turn to bind to');
+      throw new Error('ToolContext requested with no active chat/turn to bind to');
     }
     return {
       origin: server.origin,
@@ -1132,7 +1132,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     };
   }
 
-  async function handleAemContextInvalidated(): Promise<void> {
+  async function handleHostContextInvalidated(): Promise<void> {
     if (activeChatId === undefined || activeTurn === undefined) return;
     // The reflection reads nothing from the page; a navigation leaves it running.
     if (isReflectionInFlight()) return;
@@ -1140,7 +1140,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     // Logged *before* aborting so an automatic cancellation is distinguishable
     // from a user Stop in `logs/app.log`: a Stop leaves no such line.
     logger.info('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE', { ids: { chatId } });
-    cancelAemRequests?.();
+    cancelBridgeRequests?.();
     const result = await agentService.abort(chatId);
     if (!result.ok) {
       logger.error('AGENT_CHAT_ABORT_ON_CONTEXT_CHANGE_FAILED', { ids: { chatId } });
@@ -1173,8 +1173,8 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     recordUserInputActionsAdded,
     onEvent,
     onStatusChanged,
-    currentAemToolContext,
-    handleAemContextInvalidated,
+    currentToolContext,
+    handleHostContextInvalidated,
     dispose,
   };
 }
@@ -1215,7 +1215,7 @@ function agentUnavailableError(): AgentChatError {
  * agent startup finishes, and again whenever the agent runtime is recycled
  * (a proxy or active-provider change; see `agents/copilot/runtimeManager.ts`) -
  * without the IPC handlers (`ipc/agentChat.ts`) or the tool-context binding
- * (`agentComposition.ts`'s `createLateBoundAemToolContext`) ever having to be
+ * (`agentComposition.ts`'s `createLateBoundToolContext`) ever having to be
  * re-wired: they were already pointed at this same object.
  */
 export interface StartupGatedAgentChatController extends AgentChatController {
@@ -1394,16 +1394,16 @@ export function createStartupGatedAgentChatController(
     };
   }
 
-  function currentAemToolContext(): CurrentAemToolContext {
+  function currentToolContext(): CurrentToolContext {
     if (!real) {
-      throw new Error('AemToolContext requested before the agent service finished starting up');
+      throw new Error('ToolContext requested before the agent service finished starting up');
     }
-    return real.currentAemToolContext();
+    return real.currentToolContext();
   }
 
-  async function handleAemContextInvalidated(): Promise<void> {
+  async function handleHostContextInvalidated(): Promise<void> {
     if (!real) return;
-    return real.handleAemContextInvalidated();
+    return real.handleHostContextInvalidated();
   }
 
   async function dispose(): Promise<void> {
@@ -1464,8 +1464,8 @@ export function createStartupGatedAgentChatController(
     recordUserInputActionsAdded,
     onEvent,
     onStatusChanged,
-    currentAemToolContext,
-    handleAemContextInvalidated,
+    currentToolContext,
+    handleHostContextInvalidated,
     dispose,
     replaceDelegate,
     markUnavailable,

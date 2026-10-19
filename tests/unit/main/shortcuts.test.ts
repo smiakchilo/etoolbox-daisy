@@ -191,35 +191,35 @@ describe('attachShortcutHandling', () => {
 
   it('binds the chat actions on the shell only, leaving the AEM page its own letters', () => {
     const shell = attachHarness(true);
-    const aemView = attachHarness(false);
+    const hostView = attachHarness(false);
 
     shell.press(makeInput('KeyH', { control: true }));
     expect(shell.send).toHaveBeenCalledWith('chat.history');
 
-    aemView.press(makeInput('KeyH', { control: true }));
-    expect(aemView.send).not.toHaveBeenCalled();
+    hostView.press(makeInput('KeyH', { control: true }));
+    expect(hostView.send).not.toHaveBeenCalled();
     // Not consumed either, so the page still sees the keystroke.
     expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
   });
 
   it('still binds the shared browser-navigation keys on the AEM view', () => {
-    const aemView = attachHarness(false);
+    const hostView = attachHarness(false);
 
-    aemView.press(makeInput('ArrowLeft', { alt: true }));
+    hostView.press(makeInput('ArrowLeft', { alt: true }));
 
-    expect(aemView.send).toHaveBeenCalledWith('browser.back');
+    expect(hostView.send).toHaveBeenCalledWith('browser.back');
     expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
   });
 
   it('resolves find to the source pane: browser.find from the AEM view, app.find from the shell', () => {
     const shell = attachHarness(true);
-    const aemView = attachHarness(false);
+    const hostView = attachHarness(false);
 
     shell.press(makeInput('KeyF', { control: true }));
     expect(shell.send).toHaveBeenCalledWith('app.find');
 
-    aemView.press(makeInput('KeyF', { control: true }));
-    expect(aemView.send).toHaveBeenCalledWith('browser.find');
+    hostView.press(makeInput('KeyF', { control: true }));
+    expect(hostView.send).toHaveBeenCalledWith('browser.find');
   });
 
   it('moves focus to the shell before asking it to focus the address bar', () => {
@@ -260,11 +260,11 @@ describe('attachShortcutHandling', () => {
   });
 
   it('binds zoom on the AEM view too', () => {
-    const aemView = attachHarness(false);
+    const hostView = attachHarness(false);
 
-    aemView.press(makeInput('NumpadSubtract', { control: true }));
+    hostView.press(makeInput('NumpadSubtract', { control: true }));
 
-    expect(aemView.setZoomLevel).toHaveBeenCalledWith(-1);
+    expect(hostView.setZoomLevel).toHaveBeenCalledWith(-1);
   });
 
   it('reports an applied zoom step through onZoomChanged, and not other shortcuts', () => {

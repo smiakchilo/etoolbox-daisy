@@ -64,7 +64,7 @@ export function createBrowserViewHost(): BrowserViewHost {
     }
     lastReported = bounds;
     // `host.getBoundingClientRect()` is already CSS pixels relative to the
-    // viewport, which is what `aemBrowserView.ts` expects: it feeds this
+    // viewport, which is what `hostView.ts` expects: it feeds this
     // rectangle straight to `WebContentsView.setBounds()` against a
     // same-origin `window.getContentBounds()` rectangle whose own (0,0) is
     // the window's content-area top-left. `base.css` guarantees the

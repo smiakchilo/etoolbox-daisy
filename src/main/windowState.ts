@@ -31,7 +31,7 @@ export interface WindowState {
   readonly maximized: boolean;
   /**
    * The app shell's own zoom level (Electron's unit, see `zoom.ts`); omitted at
-   * 100%. Only the shell is remembered: the AEM page is remote content and
+   * 100%. Only the shell is remembered: the page is remote content and
    * starts at 100% on every launch.
    */
   readonly zoomLevel?: number;

@@ -7,7 +7,7 @@ import { APP_PROTOCOL_HOST, APP_PROTOCOL_SCHEME } from './browser/appProtocol';
  * Returns true when navigating to `targetUrl` should be allowed inside an app
  * BrowserWindow. Only the packaged app's own local UI (the `app://` scheme -
  * step 05 - or, in dev, the electron-vite dev server on localhost) is
- * permitted. Everything else - including AEM/remote pages - must open in the
+ * permitted. Everything else - including remote pages - must open in the
  * system browser via `shell.openExternal`, never inside a window that has our
  * preload attached.
  *
@@ -55,16 +55,16 @@ export function isAllowedAppNavigation(targetUrl: string, rendererDistDir: strin
  *
  * Scoped to `session.defaultSession` webContents only (step 05): the AEM
  * `WebContentsView` deliberately uses a *different* session
- * (`AEM_SESSION_PARTITION`, `src/main/aem/session.ts`) and has its own,
+ * (`VIEW_SESSION_PARTITION`, `src/main/webview/session.ts`) and has its own,
  * separately reviewed navigation/window-open policy
- * (`src/main/browser/aemBrowserView.ts`, `windowOpenRouter.ts`) - reusing
+ * (`src/main/browser/hostView.ts`, `windowOpenRouter.ts`) - reusing
  * *this* deny-everything guard for it would not "extend" that policy, it
  * would replace it, since only one `setWindowOpenHandler` can be active per
  * `WebContents` at a time and this app-wide listener would otherwise
  * overwrite whichever handler was attached second. Checking `.session`
  * (identity, not partition name) is what tells "our own local UI" apart from
- * "AEM content" without needing this module to know anything about
- * the AEM session's existence beyond importing `session.defaultSession`
+ * "remote content" without needing this module to know anything about
+ * the browser session's existence beyond importing `session.defaultSession`
  * itself.
  */
 export function installWebContentsSecurityGuard(rendererDistDir: string): void {

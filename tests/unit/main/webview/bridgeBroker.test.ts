@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createAemBridgeBroker,
+  createWebviewBridgeBroker,
   type BridgeReplyOrigin,
   type BridgeTransport,
   type BrokerDeps,
   type BrokerOutcome,
-} from '../../../../src/main/aem/bridgeBroker';
-import { type CurrentAemContext } from '../../../../src/shared';
+} from '../../../../src/main/webview/bridgeBroker';
+import { type CurrentBridgeContext } from '../../../../src/shared';
 import { toolRequestEnvelopeSchema, type ToolRequestEnvelope } from '../../../support/toolUnions';
 import type { Logger } from '../../../../src/main/logger';
 import type {
   ToolHttpLogger,
   ToolHttpRequestRecord,
   ToolHttpResponseRecord,
-} from '../../../../src/main/aem/toolHttpLog';
+} from '../../../../src/main/webview/toolHttpLog';
 
 /** A logger double that records every line's code and fields. */
 function recordingLogger(): { logger: Logger; lines: { code: string; fields: unknown }[] } {
@@ -43,7 +43,7 @@ function recordingToolLogger(): {
   return { toolLogger, requests, responses };
 }
 
-const TRUSTED_ORIGIN: BridgeReplyOrigin = { isTrustedAemView: true, isMainFrame: true };
+const TRUSTED_ORIGIN: BridgeReplyOrigin = { isTrustedView: true, isMainFrame: true };
 
 function makeEnvelope(
   requestId: string,
@@ -81,7 +81,7 @@ function createHarness(options: { readonly maxConcurrentRequests?: number } = {}
   const timers: FakeTimer[] = [];
   let replyListener: ((rawReply: unknown, origin: BridgeReplyOrigin) => void) | undefined;
   let now = 0;
-  let context: CurrentAemContext = { serverRevision: 0, navigationEpoch: 0 };
+  let context: CurrentBridgeContext = { serverRevision: 0, navigationEpoch: 0 };
   const blockedRequestIds = new Set<string>();
   let ready = true;
 
@@ -127,7 +127,7 @@ function createHarness(options: { readonly maxConcurrentRequests?: number } = {}
     setNow: (value: number) => {
       now = value;
     },
-    setContext: (next: CurrentAemContext) => {
+    setContext: (next: CurrentBridgeContext) => {
       context = next;
     },
     blockRequestId: (requestId: string) => {
@@ -175,10 +175,10 @@ function okReply(requestId: string) {
   };
 }
 
-describe('createAemBridgeBroker', () => {
+describe('createWebviewBridgeBroker', () => {
   it('rule 1: does not send a second request until the first settles, and sends it in FIFO order once it does', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const second = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
@@ -204,7 +204,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 2: does not send a queued request that went stale while it waited', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const second = trackOutcome(
@@ -229,7 +229,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 2: ignores a reply for a request that has since gone stale, rather than honouring it', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     expect(harness.sendFetchCalls).toEqual(['req-a']);
@@ -246,7 +246,7 @@ describe('createAemBridgeBroker', () => {
   it('rule 3: resolves timeout immediately, without ever sending, when the deadline has already passed', async () => {
     const harness = createHarness();
     harness.setNow(1_000);
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(
       broker.request(makeEnvelope('req-a', { deadlineMs: 500 }), 'https://a.example'),
@@ -259,7 +259,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 3: resolves timeout when the injected deadline elapses, sends a cancel command, and moves on to the next queued request', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const second = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
@@ -282,15 +282,15 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 4: ignores a forged reply carrying the correct requestId from an untrusted origin, leaving the request pending', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
 
     // Carries the exact requestId the broker is waiting for, but did not
     // arrive from the trusted AEM view's main frame - this is the case that a
     // registration-time-only identity check would have wrongly authorized.
-    harness.fireReply(okReply('req-a'), { isTrustedAemView: false, isMainFrame: true });
-    harness.fireReply(okReply('req-a'), { isTrustedAemView: true, isMainFrame: false });
+    harness.fireReply(okReply('req-a'), { isTrustedView: false, isMainFrame: true });
+    harness.fireReply(okReply('req-a'), { isTrustedView: true, isMainFrame: false });
     await flushMicrotasks();
 
     expect(outcome.isSettled()).toBe(false);
@@ -303,7 +303,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 5: ignores a reply that fails schema validation, exactly like an untrusted origin', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
 
@@ -318,7 +318,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 6: ignores a well-formed reply whose requestId does not match the in-flight request', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
 
@@ -333,7 +333,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 6: a late reply for a request that already timed out cannot complete the next queued request', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const second = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
@@ -355,7 +355,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 7: cancelAll resolves the in-flight and every queued request as cancelled, sending a cancel command only for the in-flight one', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const second = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
@@ -372,7 +372,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 7: a late reply after cancelAll changes nothing', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     broker.cancelAll();
@@ -386,7 +386,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 8: resolves no_view and proceeds to the next queued request when there is no live view to send to', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const blocker = trackOutcome(broker.request(makeEnvelope('req-blocker'), 'https://a.example'));
     harness.blockRequestId('req-a');
@@ -408,7 +408,7 @@ describe('createAemBridgeBroker', () => {
   it('rule 13: resolves bridge_unavailable without sending when the view is live but its preload never announced ready', async () => {
     const harness = createHarness();
     harness.setReady(false);
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     await flushMicrotasks();
@@ -423,7 +423,7 @@ describe('createAemBridgeBroker', () => {
   it('rule 13: sends normally once the preload has announced ready', async () => {
     const harness = createHarness();
     harness.setReady(false);
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     harness.setReady(true);
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
@@ -436,7 +436,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 9: cancels the pending timer once a request settles via a reply', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     void broker.request(makeEnvelope('req-a'), 'https://a.example');
     expect(harness.timers).toHaveLength(1);
@@ -450,7 +450,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 10: dispose unsubscribes the reply listener and cancels the in-flight and queued requests', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const first = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const second = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
@@ -466,7 +466,7 @@ describe('createAemBridgeBroker', () => {
 
   it("rule 11: passes the envelope's requestId through to the transport as-is, never inventing one", () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     void broker.request(makeEnvelope('my-exact-request-id'), 'https://a.example');
     expect(harness.sendFetchCalls).toEqual(['my-exact-request-id']);
@@ -477,7 +477,7 @@ describe('createAemBridgeBroker', () => {
 
   it('rule 12: settles once and emits no spurious cancel when a reply, a duplicate reply, and a late timeout callback all arrive for the same request', async () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
 
     const outcome = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const timer = harness.timers[0];
@@ -503,11 +503,11 @@ describe('createAemBridgeBroker', () => {
   });
 });
 
-describe('createAemBridgeBroker - concurrency', () => {
+describe('createWebviewBridgeBroker - concurrency', () => {
   /** A two-slot broker with three requests issued, so the third waits in the queue. */
   function twoSlotBroker() {
     const harness = createHarness({ maxConcurrentRequests: 2 });
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
     const a = trackOutcome(broker.request(makeEnvelope('req-a'), 'https://a.example'));
     const b = trackOutcome(broker.request(makeEnvelope('req-b'), 'https://b.example'));
     const c = trackOutcome(broker.request(makeEnvelope('req-c'), 'https://c.example'));
@@ -552,25 +552,25 @@ describe('createAemBridgeBroker - concurrency', () => {
   });
 });
 
-describe('createAemBridgeBroker - request diagnostics', () => {
-  it('logs AEM_REQUEST_STARTED on send and AEM_REQUEST_COMPLETED with status/outcome/duration on reply', async () => {
+describe('createWebviewBridgeBroker - request diagnostics', () => {
+  it('logs WEBVIEW_REQUEST_STARTED on send and WEBVIEW_REQUEST_COMPLETED with status/outcome/duration on reply', async () => {
     const harness = createHarness();
     const { logger, lines } = recordingLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, logger });
 
     harness.setNow(1000);
     trackOutcome(
       broker.request(makeEnvelope('req-1'), 'https://aem.example.com/bin/querybuilder.json'),
     );
-    expect(lines.map((line) => line.code)).toEqual(['AEM_REQUEST_STARTED']);
+    expect(lines.map((line) => line.code)).toEqual(['WEBVIEW_REQUEST_STARTED']);
 
     harness.setNow(1250);
     harness.fireReply(okReply('req-1'));
     await flushMicrotasks();
 
     expect(lines.map((line) => line.code)).toEqual([
-      'AEM_REQUEST_STARTED',
-      'AEM_REQUEST_COMPLETED',
+      'WEBVIEW_REQUEST_STARTED',
+      'WEBVIEW_REQUEST_COMPLETED',
     ]);
     expect(lines[1]?.fields).toMatchObject({
       durationMs: 250,
@@ -582,7 +582,7 @@ describe('createAemBridgeBroker - request diagnostics', () => {
   it('reports a non-2xx response as outcome failure, with its status', async () => {
     const harness = createHarness();
     const { logger, lines } = recordingLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, logger });
 
     trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
     harness.fireReply({
@@ -600,7 +600,7 @@ describe('createAemBridgeBroker - request diagnostics', () => {
   it('reports a deadline expiry as outcome timeout', async () => {
     const harness = createHarness();
     const { logger, lines } = recordingLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, logger });
 
     trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
     harness.setNow(100_000);
@@ -610,23 +610,23 @@ describe('createAemBridgeBroker - request diagnostics', () => {
     expect(lines.at(-1)?.fields).toMatchObject({ outcome: 'timeout' });
   });
 
-  it('reports an unavailable bridge as outcome failure, and never logs AEM_REQUEST_STARTED', async () => {
+  it('reports an unavailable bridge as outcome failure, and never logs WEBVIEW_REQUEST_STARTED', async () => {
     const harness = createHarness();
     harness.setReady(false);
     const { logger, lines } = recordingLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, logger });
 
     trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
     await flushMicrotasks();
 
-    expect(lines.map((line) => line.code)).toEqual(['AEM_REQUEST_COMPLETED']);
+    expect(lines.map((line) => line.code)).toEqual(['WEBVIEW_REQUEST_COMPLETED']);
     expect(lines[0]?.fields).toMatchObject({ outcome: 'failure' });
   });
 
   it('reports a cancelled request as outcome cancelled', async () => {
     const harness = createHarness();
     const { logger, lines } = recordingLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, logger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, logger });
 
     trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
     broker.cancelAll();
@@ -637,16 +637,16 @@ describe('createAemBridgeBroker - request diagnostics', () => {
 
   it('does not log when no logger is supplied', () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
     expect(() => broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x')).not.toThrow();
   });
 });
 
-describe('createAemBridgeBroker - tool HTTP log', () => {
+describe('createWebviewBridgeBroker - tool HTTP log', () => {
   it('logs the full request URL with its headers on send, and the response with headers on reply', async () => {
     const harness = createHarness();
     const { toolLogger, requests, responses } = recordingToolLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, toolLogger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, toolLogger });
     const url = 'https://aem.example.com/bin/querybuilder.json?path=/content/foo&type=cq:Page';
 
     harness.setNow(1000);
@@ -684,7 +684,7 @@ describe('createAemBridgeBroker - tool HTTP log', () => {
   it('logs a deadline expiry with a null status and no headers', async () => {
     const harness = createHarness();
     const { toolLogger, responses } = recordingToolLogger();
-    const broker = createAemBridgeBroker({ ...harness.deps, toolLogger });
+    const broker = createWebviewBridgeBroker({ ...harness.deps, toolLogger });
 
     trackOutcome(broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x'));
     harness.setNow(100_000);
@@ -702,7 +702,7 @@ describe('createAemBridgeBroker - tool HTTP log', () => {
 
   it('does not require a tool logger', () => {
     const harness = createHarness();
-    const broker = createAemBridgeBroker(harness.deps);
+    const broker = createWebviewBridgeBroker(harness.deps);
     expect(() => broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x')).not.toThrow();
   });
 });

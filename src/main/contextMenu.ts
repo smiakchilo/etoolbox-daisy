@@ -21,7 +21,7 @@ import { openDetachedDevTools } from './devTools';
  *    is a selection. Undo/Redo are deliberately left off: they stay on their
  *    keyboard accelerators, and a disabled editing menu over a transcript is
  *    noise.
- *  - {@link buildChromeTemplate} - remote AEM content in the pane's
+ *  - {@link buildChromeTemplate} - remote remote content in the pane's
  *    `WebContentsView`. This is a genuine web page, so it mirrors Chrome's menu
  *    for the element under the cursor (editable field, link, image, selection)
  *    plus page navigation.
@@ -31,7 +31,7 @@ import { openDetachedDevTools } from './devTools';
  * actions. Actions with no Electron equivalent (Cast, Translate, Create QR
  * code, View page source) are intentionally absent rather than faked. If this
  * still proves too broad, the clipboard template is the intended fallback for
- * the AEM view too - the two builders share their editable/selection handling
+ * the browser view too - the two builders share their editable/selection handling
  * for that reason.
  *
  * "Inspect" is the one entry with no keyboard partner: the app has no menu
@@ -40,13 +40,13 @@ import { openDetachedDevTools } from './devTools';
  * under the cursor, matching Chrome's own Inspect.
  *
  * Every action is bound to the `WebContents` the menu was built for, rather
- * than using menu roles. The AEM pane is a `WebContentsView` in the same window
+ * than using menu roles. The browser pane is a `WebContentsView` in the same window
  * as the shell, so a role-based item would act on whichever `WebContents` is
  * focused - which is not necessarily the one that was right-clicked.
  */
 
 export interface ChromeContextMenuTarget {
-  /** Loads an http(s) URL in the AEM pane's own view (never a second window - see `browser/windowOpenRouter.ts`). */
+  /** Loads an http(s) URL in the browser pane's own view (never a second window - see `browser/windowOpenRouter.ts`). */
   openLink(url: string): void;
 }
 
@@ -107,7 +107,7 @@ function inspectItem(
 }
 
 /**
- * The Chrome-shaped menu, for remote content in the AEM pane and its auxiliary
+ * The Chrome-shaped menu, for remote content in the browser pane and its auxiliary
  * windows. Ordering follows Chrome: element-specific actions first (editable
  * field, link, image), then the selection, then page navigation - which is
  * always present so the menu is never empty over a bare page - and Inspect
@@ -191,7 +191,7 @@ export function buildChromeTemplate(
 
 /**
  * Pops `template` on `window`. The owner window is passed explicitly rather
- * than looked up from `webContents`: the AEM pane's `WebContentsView` is not a
+ * than looked up from `webContents`: the browser pane's `WebContentsView` is not a
  * window's own webContents, and `Menu.popup` needs a window to anchor to.
  */
 function popup(window: BrowserWindow, template: MenuItemConstructorOptions[]): void {
@@ -208,7 +208,7 @@ export function attachClipboardContextMenu(webContents: WebContents, window: Bro
   });
 }
 
-/** Attaches the Chrome-shaped menu to a remote-content surface (the AEM pane). */
+/** Attaches the Chrome-shaped menu to a remote-content surface (the browser pane). */
 export function attachChromeContextMenu(
   webContents: WebContents,
   window: BrowserWindow,

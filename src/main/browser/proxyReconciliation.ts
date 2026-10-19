@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron';
 
 /**
- * Wires the AEM view's main-frame navigations to a per-origin proxy
+ * Wires the browser view's main-frame navigations to a per-origin proxy
  * reconciliation (implementation-plan.md step 05; requirements-decisions.md
  * section 4).
  *
@@ -9,7 +9,7 @@ import type { WebContents } from 'electron';
  * applies to the current request" is answered by re-applying the session proxy
  * whenever the view's main frame heads to a new origin. `did-start-navigation`
  * fires as the frame begins the navigation, and `will-redirect` fires before a
- * server-side redirect is followed, so a cross-origin SSO hop (an AEM host to
+ * server-side redirect is followed, so a cross-origin SSO hop (an host to
  * Adobe's IMS) is seen even though it is part of one logical load.
  *
  * This is deliberately a *separate* listener from

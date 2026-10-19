@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { createBrowserController } from '../../../../src/main/browser/browserController';
 import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
-import type { AemBrowserView } from '../../../../src/main/browser/aemBrowserView';
+import type { HostView } from '../../../../src/main/browser/hostView';
 import type { WindowOpenRouter } from '../../../../src/main/browser/windowOpenRouter';
-import type { AemSession } from '../../../../src/main/aem';
-import type { CertificateExceptionRecord } from '../../../../src/main/aem';
-import { computeCertificateFingerprintHex } from '../../../../src/main/aem';
+import type { ViewSession } from '../../../../src/main/webview';
+import type { CertificateExceptionRecord } from '../../../../src/main/webview';
+import { computeCertificateFingerprintHex } from '../../../../src/main/webview';
 import type { SecretStore } from '../../../../src/main/secretStore';
 import type { Logger } from '../../../../src/main/logger';
 import { saveSettings, loadSettings } from '../../../../src/main/settingsStore';
@@ -33,9 +33,9 @@ import { createScratchDirs } from '../../../support/scratchDirs';
  * `createBrowserController` unconditionally calls `app.on("certificate-error", ...)`
  * at construction and `app.removeListener` in `destroy()` - the only real
  * Electron *value* this module itself touches. Everything else it imports
- * from `electron` (`WebContentsView`/`screen` via `aemBrowserView.ts`) is only
+ * from `electron` (`WebContentsView`/`screen` via `hostView.ts`) is only
  * referenced inside function bodies this suite never calls, since every test
- * injects a fake `AemBrowserView` through the `createAemView` seam instead of
+ * injects a fake `HostView` through the `createView` seam instead of
  * letting the real factory run. `electron`'s own package resolves to a bare
  * path string
  * outside a real Electron process (`node_modules/electron/index.js`), so
@@ -123,7 +123,7 @@ function makeFakeLogger(): {
 }
 
 interface FakeAemViewControls {
-  readonly view: AemBrowserView;
+  readonly view: HostView;
   readonly webContents: FakeWebContents;
   readonly loadURL: ReturnType<typeof vi.fn>;
   readonly stop: ReturnType<typeof vi.fn>;
@@ -136,7 +136,7 @@ interface FakeAemViewControls {
 }
 
 /**
- * Builds a fake `AemBrowserView` plus a `createAemView` factory that always
+ * Builds a fake `HostView` plus a `createView` factory that always
  * returns it, so `createBrowserController` never touches a real
  * `WebContentsView`/`screen`/`BrowserWindow`. `loadURLImpl` is mutable so a
  * single instance can be reused across a test body that needs `loadURL` to
@@ -161,7 +161,7 @@ function makeFakeAemView(): FakeAemViewControls {
   const setBounds = vi.fn();
   const windowOpenRouter: WindowOpenRouter = { attachTo: vi.fn(), closeAll: closePopups };
   const webContentsControls = createFakeWebContents();
-  const view: AemBrowserView = {
+  const view: HostView = {
     webContents: webContentsControls.webContents,
     windowOpenRouter,
     setBounds,
@@ -198,29 +198,29 @@ function makeFakeAemView(): FakeAemViewControls {
   return controls;
 }
 
-interface FakeAemSessionControls {
-  readonly aemSession: AemSession;
+interface FakeViewSessionControls {
+  readonly viewSession: ViewSession;
   readonly switchProxy: ReturnType<typeof vi.fn>;
   readonly applyProxy: ReturnType<typeof vi.fn>;
   readonly approveCertificateException: ReturnType<typeof vi.fn>;
   switchProxyImpl: () => Promise<void>;
 }
 
-function makeFakeAemSession(): FakeAemSessionControls {
+function makeFakeViewSession(): FakeViewSessionControls {
   const switchProxy = vi.fn(async () => {
     await controls.switchProxyImpl();
   });
   const applyProxy = vi.fn(() => Promise.resolve());
   const approveCertificateException = vi.fn(() => Promise.resolve());
-  const aemSession: AemSession = {
+  const viewSession: ViewSession = {
     session: {} as Session,
     switchProxy,
     applyProxy,
     approveCertificateException,
     listCertificateExceptions: vi.fn((): readonly CertificateExceptionRecord[] => []),
   };
-  const controls: FakeAemSessionControls = {
-    aemSession,
+  const controls: FakeViewSessionControls = {
+    viewSession,
     switchProxy,
     applyProxy,
     approveCertificateException,
@@ -258,14 +258,14 @@ function makeControllerHarness(
      * calls.
      */
     configureFakes?: (fakes: {
-      readonly aemView: FakeWebContents;
+      readonly hostView: FakeWebContents;
       readonly renderer: FakeWebContents;
     }) => void;
   } = {},
 ) {
   const settingsDir = createScratchRoot();
-  const aemViewControls = makeFakeAemView();
-  const aemSessionControls = makeFakeAemSession();
+  const hostViewControls = makeFakeAemView();
+  const viewSessionControls = makeFakeViewSession();
   const { logger, spies: loggerSpies } = makeFakeLogger();
   const secretStore = options.secretStore ?? makeFakeSecretStore();
   const {
@@ -275,24 +275,24 @@ function makeControllerHarness(
     emit: rendererEmit,
   } = makeFakeRendererWebContents();
 
-  options.configureFakes?.({ aemView: aemViewControls.webContents, renderer: rendererFake });
+  options.configureFakes?.({ hostView: hostViewControls.webContents, renderer: rendererFake });
 
   const controller = createBrowserController({
     settingsDir,
     secretStore,
     logger,
-    aemSession: aemSessionControls.aemSession,
+    viewSession: viewSessionControls.viewSession,
     window: {} as BrowserWindow,
-    aemPreloadPath: 'preload.js',
+    webviewPreloadPath: 'preload.js',
     rendererWebContents,
-    createAemView: () => aemViewControls.view,
+    createView: () => hostViewControls.view,
   });
 
   return {
     settingsDir,
     controller,
-    aemViewControls,
-    aemSessionControls,
+    hostViewControls,
+    viewSessionControls,
     logger,
     loggerSpies,
     secretStore,
@@ -353,7 +353,7 @@ describe('browserController.navigate', () => {
     // loaded address is the origin plus a trailing slash. That is the same
     // resource; the assertion is exact rather than loose so that a future
     // change which appended anything else to a typed bare origin would fail.
-    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(`${server.origin}/`);
+    expect(harness.hostViewControls.loadURL).toHaveBeenCalledWith(`${server.origin}/`);
   });
 
   it('navigates to the full path of a pasted deep link rather than the server root', async () => {
@@ -366,7 +366,7 @@ describe('browserController.navigate', () => {
     );
 
     expect(result).toEqual({ ok: true });
-    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(
+    expect(harness.hostViewControls.loadURL).toHaveBeenCalledWith(
       `${server.origin}/editor.html/content/site/en.html`,
     );
   });
@@ -394,7 +394,7 @@ describe('browserController.navigate', () => {
     expect(result.error.origin).toBe('https://unconfigured.example');
     // The point of the requirement: nothing was switched to and no server
     // was persisted.
-    expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
+    expect(harness.hostViewControls.loadURL).not.toHaveBeenCalled();
     const reloaded = await loadSettings(harness.settingsDir);
     expect(reloaded.ok && reloaded.value.settings.hosts).toEqual([]);
   });
@@ -422,7 +422,7 @@ describe('browserController.stop', () => {
     const result = harness.controller.stop();
 
     expect(result).toEqual({ ok: true });
-    expect(harness.aemViewControls.stop).toHaveBeenCalledTimes(1);
+    expect(harness.hostViewControls.stop).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -430,7 +430,7 @@ describe('browserController.reload / goBack / goForward', () => {
   /**
    * The bug this pins: before `ChromeNavigationOutcome` existed, `reload()`
    * (and `goBack`/`goForward`) always returned `ok()` immediately, so a
-   * `did-fail-load` observed later by `aemBrowserView.ts` was never reported
+   * `did-fail-load` observed later by `hostView.ts` was never reported
    * to the renderer at all - a dismissed error banner from an earlier failed
    * navigation never reappeared on a same-cause reload. These three now
    * await the AEM view's real outcome and map a failure to the identical
@@ -438,7 +438,7 @@ describe('browserController.reload / goBack / goForward', () => {
    */
   it('reload maps a failed AEM-view outcome to a structured network_error result', async () => {
     const harness = makeControllerHarness();
-    harness.aemViewControls.view.reload = vi.fn(() =>
+    harness.hostViewControls.view.reload = vi.fn(() =>
       Promise.resolve({
         ok: false,
         errorCode: 'ERR_CONNECTION_REFUSED',
@@ -460,7 +460,7 @@ describe('browserController.reload / goBack / goForward', () => {
 
   it('goBack maps a failed AEM-view outcome to a structured network_error result', async () => {
     const harness = makeControllerHarness();
-    harness.aemViewControls.view.goBack = vi.fn(() =>
+    harness.hostViewControls.view.goBack = vi.fn(() =>
       Promise.resolve({
         ok: false,
         errorCode: 'ERR_NAME_NOT_RESOLVED',
@@ -482,7 +482,7 @@ describe('browserController.reload / goBack / goForward', () => {
 
   it('goForward reports ok when the AEM view resolves the navigation without a real failure', async () => {
     const harness = makeControllerHarness();
-    harness.aemViewControls.view.goForward = vi.fn(() => Promise.resolve({ ok: true as const }));
+    harness.hostViewControls.view.goForward = vi.fn(() => Promise.resolve({ ok: true as const }));
 
     const result = await harness.controller.goForward();
 
@@ -495,14 +495,14 @@ describe('browserController.reload / goBack / goForward', () => {
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
     // The history restore committed a page on the configured host, but the
     // failed switch that preceded it had cleared the active server.
-    harness.aemViewControls.view.getNavigationState = vi.fn(() => ({
+    harness.hostViewControls.view.getNavigationState = vi.fn(() => ({
       url: 'https://a.example/content/page.html',
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
       hasDocument: true,
     }));
-    harness.aemViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
+    harness.hostViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
 
     const result = await harness.controller.goBack();
 
@@ -518,14 +518,14 @@ describe('browserController.reload / goBack / goForward', () => {
     const server = makeServer({ origin: 'https://a.example' });
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemViewControls.view.getNavigationState = vi.fn(() => ({
+    harness.hostViewControls.view.getNavigationState = vi.fn(() => ({
       url: 'https://ims.example/oauth',
       canGoBack: true,
       canGoForward: false,
       isLoading: false,
       hasDocument: true,
     }));
-    harness.aemViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
+    harness.hostViewControls.view.goBack = vi.fn(() => Promise.resolve({ ok: true as const }));
 
     await harness.controller.goBack();
 
@@ -541,8 +541,8 @@ describe('browserController active server follows the pane', () => {
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
     expect(harness.controller.activeServer()).toBeUndefined();
 
-    harness.aemViewControls.setNavigationUrl('https://a.example/content/page.html');
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.setNavigationUrl('https://a.example/content/page.html');
+    harness.hostViewControls.webContents.emit(
       'did-navigate',
       {},
       'https://a.example/content/page.html',
@@ -563,8 +563,8 @@ describe('browserController active server follows the pane', () => {
     await harness.controller.switchServer(server.id);
     expect(harness.controller.activeServer()).toBeDefined();
 
-    harness.aemViewControls.setNavigationUrl('https://ims.example/oauth');
-    harness.aemViewControls.webContents.emit('did-navigate', {}, 'https://ims.example/oauth');
+    harness.hostViewControls.setNavigationUrl('https://ims.example/oauth');
+    harness.hostViewControls.webContents.emit('did-navigate', {}, 'https://ims.example/oauth');
 
     await vi.waitFor(() => {
       expect(harness.controller.activeServer()).toBeUndefined();
@@ -574,7 +574,7 @@ describe('browserController active server follows the pane', () => {
   it('does not adopt the error page a failed main-frame load left behind', async () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    const { webContents } = harness.aemViewControls;
+    const { webContents } = harness.hostViewControls;
 
     webContents.emit('did-start-navigation', {
       url: 'https://a.example/',
@@ -589,7 +589,7 @@ describe('browserController active server follows the pane', () => {
       'https://a.example/',
       true,
     );
-    harness.aemViewControls.setNavigationUrl('https://a.example/');
+    harness.hostViewControls.setNavigationUrl('https://a.example/');
     webContents.emit('did-navigate', {}, 'https://a.example/');
     await new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -599,8 +599,8 @@ describe('browserController active server follows the pane', () => {
   it('reads the server back from the pane when a switch load is cancelled by a redirect', async () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemViewControls.loadURLImpl = () => {
-      harness.aemViewControls.setNavigationUrl('https://a.example/content/page.html');
+    harness.hostViewControls.loadURLImpl = () => {
+      harness.hostViewControls.setNavigationUrl('https://a.example/content/page.html');
       return Promise.reject(new Error("ERR_ABORTED (-3) loading 'https://a.example/'"));
     };
 
@@ -617,8 +617,8 @@ describe('browserController active server follows the pane', () => {
   it('still reports no active server when a switch load really failed', async () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemViewControls.loadURLImpl = () => {
-      harness.aemViewControls.setNavigationUrl('https://a.example/');
+    harness.hostViewControls.loadURLImpl = () => {
+      harness.hostViewControls.setNavigationUrl('https://a.example/');
       return Promise.reject(
         new Error("ERR_CONNECTION_REFUSED (-102) loading 'https://a.example/'"),
       );
@@ -653,7 +653,7 @@ describe('browserController.switchServer', () => {
 
     let loadURLCalls = 0;
     let rejectFirstLoad: ((error: Error) => void) | undefined;
-    harness.aemViewControls.loadURLImpl = () => {
+    harness.hostViewControls.loadURLImpl = () => {
       loadURLCalls += 1;
       if (loadURLCalls === 1) {
         // The first switch's load never settles on its own; only the
@@ -665,7 +665,7 @@ describe('browserController.switchServer', () => {
       }
       return Promise.resolve();
     };
-    harness.aemViewControls.stop.mockImplementation(() => {
+    harness.hostViewControls.stop.mockImplementation(() => {
       rejectFirstLoad?.(new Error("ERR_ABORTED (-3) loading 'https://a.example'"));
     });
 
@@ -697,14 +697,14 @@ describe('browserController.switchServer', () => {
       origin: 'https://b.example',
       revision: serverB.revision,
     });
-    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(serverB.origin);
+    expect(harness.hostViewControls.loadURL).toHaveBeenCalledWith(serverB.origin);
   });
 
   // NOTE: no test for the "no_active_view" outcome exists in this file,
   // deliberately. `createBrowserController` unconditionally assigns
-  // `const aemView = buildAemView(...)` and passes `getView: () => aemView`
-  // to `ServerSwitchController` - `aemView` is a plain, non-optional
-  // `AemBrowserView` (the `createAemView` seam's return type has no
+  // `const hostView = buildView(...)` and passes `getView: () => hostView`
+  // to `ServerSwitchController` - `hostView` is a plain, non-optional
+  // `HostView` (the `createView` seam's return type has no
   // `| undefined`), so that closure can never return `undefined` through
   // this module's public API, no matter what `switchServer`/`navigate` are
   // called with. The "no_active_view" branch is real - `switchServer` maps
@@ -712,7 +712,7 @@ describe('browserController.switchServer', () => {
   // the `ServerSwitchController` level, where it already has a direct test
   // (`serverSwitch.test.ts`, `"reports no_active_view without touching the
   // session when there is no view yet"`). Forcing it open here would require
-  // either loosening `createAemView`'s return type to accept `undefined` (a
+  // either loosening `createView`'s return type to accept `undefined` (a
   // production-code change out of this task's scope) or an `as unknown as`
   // cast this project's rules ban - so this is reported as a finding rather
   // than faked with a placeholder assertion.
@@ -721,7 +721,7 @@ describe('browserController.switchServer', () => {
     const server = makeServer();
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemViewControls.loadURLImpl = () => {
+    harness.hostViewControls.loadURLImpl = () => {
       throw new Error("ERR_CERT_AUTHORITY_INVALID (-202) loading 'https://localhost:53158/nav'");
     };
 
@@ -739,7 +739,7 @@ describe('browserController.switchServer', () => {
     // "always returns to idle" - a second switch right after must not be
     // rejected as still-in-progress (it succeeds once `loadURL` is no
     // longer failing, proving the state machine is not stuck).
-    harness.aemViewControls.loadURLImpl = () => Promise.resolve();
+    harness.hostViewControls.loadURLImpl = () => Promise.resolve();
     const secondResult = await harness.controller.switchServer(server.id);
     expect(secondResult.ok).toBe(true);
   });
@@ -748,7 +748,7 @@ describe('browserController.switchServer', () => {
     const server = makeServer();
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemSessionControls.switchProxyImpl = () => {
+    harness.viewSessionControls.switchProxyImpl = () => {
       throw new Error("ERR_PROXY_CONNECTION_FAILED (-130) setting proxy 'https://proxy.example'");
     };
 
@@ -762,14 +762,14 @@ describe('browserController.switchServer', () => {
         errorCode: 'ERR_PROXY_CONNECTION_FAILED',
       },
     });
-    expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
+    expect(harness.hostViewControls.loadURL).not.toHaveBeenCalled();
   });
 
   it('rethrows an unexpected programmer error (no Chromium ERR_* code) rather than misreporting it as a network_error', async () => {
     const server = makeServer();
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemViewControls.loadURLImpl = () => {
+    harness.hostViewControls.loadURLImpl = () => {
       throw new TypeError("Cannot read properties of undefined (reading 'foo')");
     };
 
@@ -796,7 +796,7 @@ describe('browserController certificate exceptions persist through the settings 
     });
 
     expect(result).toEqual({ ok: true });
-    expect(harness.aemSessionControls.approveCertificateException).toHaveBeenCalledWith(exception);
+    expect(harness.viewSessionControls.approveCertificateException).toHaveBeenCalledWith(exception);
     const reloaded = await loadSettings(harness.settingsDir);
     if (!reloaded.ok) throw new Error('expected settings to reload');
     expect(reloaded.value.settings.hosts[0]?.tlsException).toEqual(exception);
@@ -828,7 +828,7 @@ describe('browserController certificate exceptions persist through the settings 
 
     expect(result).toEqual({ ok: true });
     // The blocked deep link, not the server root, was re-requested.
-    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(blockedUrl);
+    expect(harness.hostViewControls.loadURL).toHaveBeenCalledWith(blockedUrl);
   });
 
   it('does not re-navigate after approval when the blocked origin differs from the approved exception', async () => {
@@ -853,7 +853,7 @@ describe('browserController certificate exceptions persist through the settings 
     });
 
     expect(result).toEqual({ ok: true });
-    expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
+    expect(harness.hostViewControls.loadURL).not.toHaveBeenCalled();
   });
 
   it('does not re-navigate after approval once a newer navigation has cleared the retry target', async () => {
@@ -879,8 +879,8 @@ describe('browserController certificate exceptions persist through the settings 
     expect(result).toEqual({ ok: true });
     // Only the manual navigate's load happened; the stale blocked URL was
     // not re-requested.
-    expect(harness.aemViewControls.loadURL).toHaveBeenCalledTimes(1);
-    expect(harness.aemViewControls.loadURL).toHaveBeenCalledWith(`${server.origin}/`);
+    expect(harness.hostViewControls.loadURL).toHaveBeenCalledTimes(1);
+    expect(harness.hostViewControls.loadURL).toHaveBeenCalledWith(`${server.origin}/`);
   });
 });
 
@@ -915,7 +915,7 @@ function driveCertificateError(
   }
   listener(
     { preventDefault: () => undefined },
-    { session: harness.aemSessionControls.aemSession.session },
+    { session: harness.viewSessionControls.viewSession.session },
     url,
     errorClass,
     { data: certificatePem },
@@ -936,7 +936,7 @@ describe('browserController navigation epoch', () => {
     const harness = makeControllerHarness();
     const before = harness.controller.navigationEpoch.current();
 
-    harness.aemViewControls.webContents.emit('did-start-navigation', {
+    harness.hostViewControls.webContents.emit('did-start-navigation', {
       isMainFrame: true,
       isSameDocument: false,
     });
@@ -948,7 +948,7 @@ describe('browserController navigation epoch', () => {
     const harness = makeControllerHarness();
     const before = harness.controller.navigationEpoch.current();
 
-    harness.aemViewControls.webContents.emit('did-start-navigation', {
+    harness.hostViewControls.webContents.emit('did-start-navigation', {
       isMainFrame: true,
       isSameDocument: true,
     });
@@ -971,7 +971,7 @@ describe('browserController navigation epoch', () => {
     const server = makeServer();
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithOneServer(server));
-    harness.aemViewControls.loadURLImpl = () =>
+    harness.hostViewControls.loadURLImpl = () =>
       Promise.reject(new Error('net::ERR_CONNECTION_REFUSED'));
     const before = harness.controller.navigationEpoch.current();
 
@@ -998,7 +998,7 @@ describe('browserController navigation epoch', () => {
     const afterDestroy = harness.controller.navigationEpoch.current();
     expect(afterDestroy).toBeGreaterThan(0);
 
-    harness.aemViewControls.webContents.emit('did-start-navigation', {
+    harness.hostViewControls.webContents.emit('did-start-navigation', {
       isMainFrame: true,
       isSameDocument: false,
     });
@@ -1039,7 +1039,7 @@ describe('browserController per-origin proxy reconciliation', () => {
     harness: ReturnType<typeof makeControllerHarness>,
     url: string,
   ): void {
-    harness.aemViewControls.webContents.emit('did-start-navigation', {
+    harness.hostViewControls.webContents.emit('did-start-navigation', {
       isMainFrame: true,
       isSameDocument: false,
       url,
@@ -1053,7 +1053,7 @@ describe('browserController per-origin proxy reconciliation', () => {
     driveMainFrameNavigation(harness, 'https://ims.example/oauth');
 
     await vi.waitFor(() => {
-      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+      expect(harness.viewSessionControls.applyProxy).toHaveBeenCalledWith(
         fallback,
         expect.any(Function),
       );
@@ -1066,7 +1066,7 @@ describe('browserController per-origin proxy reconciliation', () => {
 
     driveMainFrameNavigation(harness, 'https://a.example/editor.html');
     await vi.waitFor(() => {
-      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+      expect(harness.viewSessionControls.applyProxy).toHaveBeenCalledWith(
         corporate,
         expect.any(Function),
       );
@@ -1074,7 +1074,7 @@ describe('browserController per-origin proxy reconciliation', () => {
 
     driveMainFrameNavigation(harness, 'https://b.example/editor.html');
     await vi.waitFor(() => {
-      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+      expect(harness.viewSessionControls.applyProxy).toHaveBeenCalledWith(
         undefined,
         expect.any(Function),
       );
@@ -1087,28 +1087,28 @@ describe('browserController per-origin proxy reconciliation', () => {
 
     driveMainFrameNavigation(harness, 'https://ims.example/one');
     await vi.waitFor(() => {
-      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledTimes(1);
+      expect(harness.viewSessionControls.applyProxy).toHaveBeenCalledTimes(1);
     });
 
     driveMainFrameNavigation(harness, 'https://other-ims.example/two');
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledTimes(1);
+    expect(harness.viewSessionControls.applyProxy).toHaveBeenCalledTimes(1);
   });
 
   it('follows a cross-origin redirect through will-redirect', async () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, settingsWithProxies);
 
-    harness.aemViewControls.webContents.emit('will-redirect', {
+    harness.hostViewControls.webContents.emit('will-redirect', {
       isMainFrame: true,
       isSameDocument: false,
       url: 'https://ims.example/after-redirect',
     });
 
     await vi.waitFor(() => {
-      expect(harness.aemSessionControls.applyProxy).toHaveBeenCalledWith(
+      expect(harness.viewSessionControls.applyProxy).toHaveBeenCalledWith(
         fallback,
         expect.any(Function),
       );
@@ -1120,7 +1120,7 @@ describe('browserController per-origin proxy reconciliation', () => {
     await writeSettings(harness.settingsDir, settingsWithProxies);
 
     await harness.controller.switchServer(serverA.id);
-    expect(harness.aemSessionControls.switchProxy).toHaveBeenCalledWith(
+    expect(harness.viewSessionControls.switchProxy).toHaveBeenCalledWith(
       corporate,
       expect.any(Function),
     );
@@ -1129,7 +1129,7 @@ describe('browserController per-origin proxy reconciliation', () => {
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(harness.aemSessionControls.applyProxy).not.toHaveBeenCalled();
+    expect(harness.viewSessionControls.applyProxy).not.toHaveBeenCalled();
   });
 });
 
@@ -1166,7 +1166,7 @@ describe('browserController.activeServer', () => {
     });
     await harness.controller.switchServer(serverA.id);
     expect(harness.controller.activeServer()?.serverId).toBe(serverA.id);
-    harness.aemViewControls.loadURLImpl = () =>
+    harness.hostViewControls.loadURLImpl = () =>
       Promise.reject(new Error('net::ERR_CONNECTION_REFUSED'));
 
     const result = await harness.controller.switchServer(serverB.id);
@@ -1241,7 +1241,7 @@ describe('browserController same-origin navigation and invalidation logging', ()
     await harness.controller.switchServer(server.id);
     const before = harness.controller.navigationEpoch.current();
 
-    harness.aemViewControls.webContents.emit('did-start-navigation', {
+    harness.hostViewControls.webContents.emit('did-start-navigation', {
       isMainFrame: true,
       isSameDocument: false,
       url: 'https://author.example/content/other.html',
@@ -1258,7 +1258,7 @@ describe('browserController same-origin navigation and invalidation logging', ()
     await harness.controller.switchServer(server.id);
     const before = harness.controller.navigationEpoch.current();
 
-    harness.aemViewControls.webContents.emit('did-start-navigation', {
+    harness.hostViewControls.webContents.emit('did-start-navigation', {
       isMainFrame: true,
       isSameDocument: false,
       url: 'https://ims.example/oauth',
@@ -1344,7 +1344,7 @@ describe('browserController.openForAgent', () => {
       url: 'https://author.example/content/wknd.html',
       switched: false,
     });
-    expect(harness.aemViewControls.loadURL).toHaveBeenLastCalledWith(
+    expect(harness.hostViewControls.loadURL).toHaveBeenLastCalledWith(
       'https://author.example/content/wknd.html',
     );
   });
@@ -1425,7 +1425,7 @@ describe('browserController.openForAgent', () => {
     });
 
     expect(result).toEqual({ kind: 'invalid_path' });
-    expect(harness.aemViewControls.loadURL).not.toHaveBeenCalled();
+    expect(harness.hostViewControls.loadURL).not.toHaveBeenCalled();
   });
 
   it('reports an unknown server', async () => {
@@ -1454,7 +1454,7 @@ describe('browserController.openForAgent', () => {
     await harness.controller.switchServer(serverA.id);
     // The load never commits the new document (a page-initiated navigation
     // raced it), so the pane is still on server A after the switch.
-    harness.aemViewControls.loadURLImpl = () => Promise.resolve();
+    harness.hostViewControls.loadURLImpl = () => Promise.resolve();
 
     const changes: Array<{ initiator: string }> = [];
     harness.controller.navigationEpoch.subscribe((change) => {
@@ -1489,7 +1489,7 @@ describe('browserController application shortcuts', () => {
     const harness = makeControllerHarness();
     harness.rendererSend.mockClear();
 
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.webContents.emit(
       'before-input-event',
       { preventDefault: vi.fn() },
       makeInput('ArrowLeft', { alt: true }),
@@ -1497,7 +1497,7 @@ describe('browserController application shortcuts', () => {
     expect(harness.rendererSend).toHaveBeenCalledWith(APP_SHORTCUT_CHANNEL, 'browser.back');
 
     harness.rendererSend.mockClear();
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.webContents.emit(
       'before-input-event',
       { preventDefault: vi.fn() },
       makeInput('KeyH', { control: true }),
@@ -1509,7 +1509,7 @@ describe('browserController application shortcuts', () => {
     const harness = makeControllerHarness();
     const preventDefault = vi.fn();
 
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.webContents.emit(
       'before-input-event',
       { preventDefault },
       makeInput('F5'),
@@ -1521,14 +1521,14 @@ describe('browserController application shortcuts', () => {
   it('applies a zoom key to the source view without pushing an action', () => {
     const harness = makeControllerHarness();
     const setZoomLevel = vi.fn();
-    harness.aemViewControls.webContents.define(
+    harness.hostViewControls.webContents.define(
       'getZoomLevel',
       vi.fn(() => 0),
     );
-    harness.aemViewControls.webContents.define('setZoomLevel', setZoomLevel);
+    harness.hostViewControls.webContents.define('setZoomLevel', setZoomLevel);
     harness.rendererSend.mockClear();
 
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.webContents.emit(
       'before-input-event',
       { preventDefault: vi.fn() },
       makeInput('NumpadAdd', { control: true }),
@@ -1546,7 +1546,7 @@ describe('browserController zoom', () => {
 
     makeControllerHarness({
       configureFakes: (fakes) => {
-        fakes.aemView.define('setZoomMode', aemSetZoomMode);
+        fakes.hostView.define('setZoomMode', aemSetZoomMode);
         fakes.renderer.define('setZoomMode', shellSetZoomMode);
       },
     });
@@ -1567,7 +1567,7 @@ describe('browserController zoom', () => {
 
     harness.controller.setViewBounds(bounds);
 
-    expect(harness.aemViewControls.setBounds).toHaveBeenCalledWith({
+    expect(harness.hostViewControls.setBounds).toHaveBeenCalledWith({
       x: 10,
       y: 20,
       width: 200,
@@ -1581,7 +1581,7 @@ describe('browserController zoom', () => {
 
     harness.controller.setViewBounds(bounds);
 
-    expect(harness.aemViewControls.setBounds).toHaveBeenCalledWith(bounds);
+    expect(harness.hostViewControls.setBounds).toHaveBeenCalledWith(bounds);
   });
 });
 
@@ -1589,7 +1589,7 @@ describe('browserController find-in-page', () => {
   it('routes a browser-target request to the AEM view and advances the session', () => {
     const harness = makeControllerHarness();
     const findInPage = vi.fn(() => 7);
-    harness.aemViewControls.webContents.define('findInPage', findInPage);
+    harness.hostViewControls.webContents.define('findInPage', findInPage);
 
     const result = harness.controller.find({ target: 'browser', text: 'needle', forward: true });
 
@@ -1611,14 +1611,14 @@ describe('browserController find-in-page', () => {
 
   it('pushes the match count for the request it issued, and drops a stale result', () => {
     const harness = makeControllerHarness();
-    harness.aemViewControls.webContents.define(
+    harness.hostViewControls.webContents.define(
       'findInPage',
       vi.fn(() => 7),
     );
     harness.rendererSend.mockClear();
 
     harness.controller.find({ target: 'browser', text: 'needle', forward: true });
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.webContents.emit(
       'found-in-page',
       {},
       { requestId: 7, matches: 4, activeMatchOrdinal: 2 },
@@ -1631,7 +1631,7 @@ describe('browserController find-in-page', () => {
     });
 
     harness.rendererSend.mockClear();
-    harness.aemViewControls.webContents.emit(
+    harness.hostViewControls.webContents.emit(
       'found-in-page',
       {},
       { requestId: 999, matches: 4, activeMatchOrdinal: 2 },
@@ -1660,7 +1660,7 @@ describe('browserController find-in-page', () => {
   it("stopFind clears the target document's selection", () => {
     const harness = makeControllerHarness();
     const stopFindInPage = vi.fn();
-    harness.aemViewControls.webContents.define('stopFindInPage', stopFindInPage);
+    harness.hostViewControls.webContents.define('stopFindInPage', stopFindInPage);
 
     const result = harness.controller.stopFind({ target: 'browser' });
 

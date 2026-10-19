@@ -16,9 +16,9 @@ import { createScratchDirs } from '../support/e2e/profile';
 
 /**
  * Step 05 success criteria, executed against the REAL shipped artefacts:
- * the built `out/main/index.js`, the built `out/preload/aem-preload.js`, and
- * the app's own AEM partition name (`persist:aem`, from
- * `src/main/aem/session.ts`). Nothing here re-implements app logic.
+ * the built `out/main/index.js`, the built `out/preload/webview-preload.js`, and
+ * the app's own AEM partition name (`persist:webview`, from
+ * `src/main/webview/session.ts`). Nothing here re-implements app logic.
  *
  * The plan requires: "Electron E2E fixtures cover the login form and HttpOnly
  * session, SSO redirection to another origin and back, popup flow, ... and two
@@ -35,11 +35,11 @@ import { createScratchDirs } from '../support/e2e/profile';
  *   npm run build && npx playwright test tests/e2e/aem-session.spec.ts
  */
 
-const aemPreload = path.resolve(__dirname, '../../out/preload/aem-preload.js');
+const webviewPreload = path.resolve(__dirname, '../../out/preload/webview-preload.js');
 const scratchBase = path.resolve(__dirname, '../../test-results', 'aem-session-scratch');
 
-/** The partition `src/main/aem/session.ts` really uses. A different value here would silently test nothing. */
-const AEM_PARTITION = 'persist:aem';
+/** The partition `src/main/webview/session.ts` really uses. A different value here would silently test nothing. */
+const VIEW_PARTITION = 'persist:webview';
 
 interface EvaluateArgs {
   readonly partition: string;
@@ -77,8 +77,8 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
 
     const profile = createScratchDirs(scratchBase);
     const args: EvaluateArgs = {
-      partition: AEM_PARTITION,
-      preload: aemPreload,
+      partition: VIEW_PARTITION,
+      preload: webviewPreload,
       aemOrigin: aem.origin,
       ssoAemOrigin: ssoAem.origin,
       siblingPortOrigin: sibling.origin,
@@ -116,12 +116,12 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
         };
 
         try {
-          const aemSession = session.fromPartition(input.partition);
+          const viewSession = session.fromPartition(input.partition);
 
           const host = new BrowserWindow({ show: false, width: 1024, height: 768 });
           const view = new View({
             webPreferences: {
-              session: aemSession,
+              session: viewSession,
               preload: input.preload,
               contextIsolation: true,
               sandbox: true,
@@ -193,7 +193,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
           // The fixture page itself reports LEAKED if document.cookie can see it.
           const scriptVisibility = await text('#cookie-visible-to-script');
           const rawDocumentCookie: unknown = await wc.executeJavaScript('document.cookie');
-          const cookiesViaPrivilegedApi = await aemSession.cookies.get({
+          const cookiesViaPrivilegedApi = await viewSession.cookies.get({
             name: input.sessionCookieName,
           });
 
@@ -236,7 +236,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
             overrideBrowserWindowOptions: {
               show: false,
               webPreferences: {
-                session: aemSession,
+                session: viewSession,
                 contextIsolation: true,
                 sandbox: true,
                 nodeIntegration: false,
@@ -268,7 +268,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
           const bridgeValue: unknown =
             await popupWindow.webContents.executeJavaScript(`typeof window.daisy`);
           const popupBridge = typeof bridgeValue === 'string' ? bridgeValue : '(non-string)';
-          const popupCookies = await aemSession.cookies.get({ name: input.popupCookieName });
+          const popupCookies = await viewSession.cookies.get({ name: input.popupCookieName });
           popupWindow.destroy();
 
           // -- G. A sibling origin on a DIFFERENT PORT, same hostname -------------
@@ -293,7 +293,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
           const primaryHeadingRestored = await text('#aem-heading');
 
           const cookieHostsForSession = (
-            await aemSession.cookies.get({ name: input.sessionCookieName })
+            await viewSession.cookies.get({ name: input.sessionCookieName })
           ).map((cookie) => ({
             domain: cookie.domain,
             path: cookie.path,
@@ -410,11 +410,11 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
     const second = await launchApp(profile);
     const afterRestart = await second.evaluate(
       async ({ session, BrowserWindow, WebContentsView: View }, input: EvaluateArgs) => {
-        const aemSession = session.fromPartition(input.partition);
+        const viewSession = session.fromPartition(input.partition);
         const host = new BrowserWindow({ show: false, width: 800, height: 600 });
         const view = new View({
           webPreferences: {
-            session: aemSession,
+            session: viewSession,
             preload: input.preload,
             contextIsolation: true,
             sandbox: true,
@@ -424,8 +424,8 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
         host.contentView.addChildView(view);
         const wc = view.webContents;
 
-        const persisted = await aemSession.cookies.get({ name: input.rememberCookieName });
-        const sessionScoped = await aemSession.cookies.get({ name: input.sessionCookieName });
+        const persisted = await viewSession.cookies.get({ name: input.rememberCookieName });
+        const sessionScoped = await viewSession.cookies.get({ name: input.sessionCookieName });
 
         await wc.loadURL(`${input.aemOrigin}/content/after-restart`);
         const url = wc.getURL();
@@ -456,7 +456,7 @@ test.describe('Step 05: AEM session, authentication and cookie semantics', () =>
     // required.
     //
     // Deliberate deviation from Chromium's default (see
-    // `src/main/aem/sessionCookiePersistence.ts` and docs/verification.md,
+    // `src/main/webview/sessionCookiePersistence.ts` and docs/verification.md,
     // "AEM session cookies for non-TLS hosts now survive restart"): the
     // fixture's *session* cookie is set over plain HTTP and carries no
     // `Max-Age`, so Chromium would normally discard it on exit. The app now

@@ -2,7 +2,7 @@ import {
   computeCertificateFingerprintHex,
   decideCertificateTrust,
   type CertificateExceptionRecord,
-} from '../aem';
+} from '../webview';
 import type { CertificateBlockedInfo } from '../../shared';
 
 /**
@@ -10,24 +10,24 @@ import type { CertificateBlockedInfo } from '../../shared';
  * (implementation-plan.md step 05; requirements-decisions.md section 4: "a
  * human can approve an exception after inspecting the origin and
  * certificate"). The *approval* half (`approveCertificateException`) already
- * exists on `AemSession` and is called from the browser IPC handler;
+ * exists on `ViewSession` and is called from the browser IPC handler;
  * approving also auto-retries the blocked navigation (in
  * `browserController.ts`), so the human's decision is honoured immediately
  * rather than requiring them to re-navigate by hand.
  *
  * This module registers a second, purely *observational* `app.on(
- * "certificate-error", ...)` listener alongside the AEM session's own
- * decisive one (`createAemSession`, `certificateExceptions.ts`). It never
+ * "certificate-error", ...)` listener alongside the browser session's own
+ * decisive one (`createViewSession`, `certificateExceptions.ts`). It never
  * calls `event.preventDefault()` or the trust `callback` - Electron passes
  * every registered listener the same callback for one event, and only the
- * AEM session's own listener is meant to actually resolve it; this listener
+ * browser session's own listener is meant to actually resolve it; this listener
  * exists purely to notice a *denied* certificate and forward enough detail
  * for a human to review it, which is not something the existing decisive
  * listener's job (deciding trust) has any reason to also do.
  *
  * Reusing {@link decideCertificateTrust} (rather than re-deriving "was this
  * denied" from some other signal) means this listener's notion of "blocked"
- * is always in lockstep with the AEM session's actual decision - both read
+ * is always in lockstep with the browser session's actual decision - both read
  * the same `listCertificateExceptions()` snapshot for the same request.
  */
 export interface CertificateBlockedEventLike {
@@ -50,7 +50,7 @@ export type CertificateBlockedListener = (
 ) => void;
 
 export interface CertificateBlockedListenerDeps {
-  readonly aemSession: unknown;
+  readonly viewSession: unknown;
   readonly listExceptions: () => readonly CertificateExceptionRecord[];
   /**
    * Fired with the blocked certificate's `CertificateBlockedInfo` and the
@@ -65,7 +65,7 @@ export interface CertificateBlockedListenerDeps {
 
 /**
  * Builds the observational listener. Silently ignores anything not on the
- * AEM session, anything the certificate data cannot be fingerprinted from
+ * browser session, anything the certificate data cannot be fingerprinted from
  * (mirrors the decisive listener's own failure handling - there is nothing
  * meaningful to show a human for an unparseable certificate), and anything
  * already trusted; calls `onBlocked` exactly once per denied request, with
@@ -77,7 +77,7 @@ export function createCertificateBlockedListener(
   deps: CertificateBlockedListenerDeps,
 ): CertificateBlockedListener {
   return (_event, webContents, url, error, certificate) => {
-    if (webContents.session !== deps.aemSession) {
+    if (webContents.session !== deps.viewSession) {
       return;
     }
     const decision = decideCertificateTrust(

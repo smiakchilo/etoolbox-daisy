@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { NO_SKILLS } from '../../support/fakeSkillHost';
 import {
   type BrokerOutcome,
-  type CurrentAemToolContext,
+  type CurrentToolContext,
   type ModelToolModule,
   type ToolEnvelopeBase,
   type ToolHost,
@@ -26,7 +26,7 @@ function makeHost(outcome: BrokerOutcome): {
 } {
   const ids = createCountingIdGenerator('id');
   const calls: Array<{ envelope: ToolEnvelopeBase; url: string }> = [];
-  const context: CurrentAemToolContext = {
+  const context: CurrentToolContext = {
     origin: 'https://aem.example.com',
     serverId: newServerId(ids),
     serverRevision: 1,

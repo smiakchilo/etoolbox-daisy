@@ -59,12 +59,12 @@ export const DIAGNOSTIC_CODES = [
   'SETTINGS_FILE_CORRUPT',
   'SECRET_STORAGE_UNAVAILABLE',
   'SETTINGS_IPC_SENDER_REJECTED',
-  'AEM_REQUEST_STARTED',
-  'AEM_REQUEST_COMPLETED',
-  'AEM_PRELOAD_MISSING',
-  'AEM_PRELOAD_ERROR',
-  'AEM_SESSION_COOKIE_PERSIST_FAILED',
-  'AEM_DOWNLOAD_BLOCKED',
+  'WEBVIEW_REQUEST_STARTED',
+  'WEBVIEW_REQUEST_COMPLETED',
+  'WEBVIEW_PRELOAD_MISSING',
+  'WEBVIEW_PRELOAD_ERROR',
+  'VIEW_SESSION_COOKIE_PERSIST_FAILED',
+  'VIEW_DOWNLOAD_BLOCKED',
   'COPILOT_AUTH_STARTED',
   'COPILOT_AUTH_COMPLETED',
   'OAUTH_CALLBACK_RECEIVED',
@@ -331,7 +331,7 @@ const DEFAULT_MAX_LOG_BYTES = 5 * 1024 * 1024;
  *
  * Exported for reuse by purpose-built JSON Lines sinks that need the same
  * durability and bounded-growth behaviour but not this module's closed
- * field vocabulary - currently `aem/toolHttpLog.ts`. Keeping the writer here
+ * field vocabulary - currently `webview/toolHttpLog.ts`. Keeping the writer here
  * rather than duplicating it is deliberate: two independent rotation
  * implementations would eventually disagree about the bound.
  */

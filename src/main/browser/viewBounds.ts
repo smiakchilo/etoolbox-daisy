@@ -1,5 +1,5 @@
 import type { Rectangle } from 'electron';
-import type { ViewBounds } from '../../shared/browser-ipc';
+import type { ViewBounds } from '../../shared';
 
 /**
  * Clamps a renderer-reported `.browser-view-host` rectangle to the window's
@@ -14,7 +14,7 @@ import type { ViewBounds } from '../../shared/browser-ipc';
  * partly or fully outside the window does not fail loudly - Chromium simply
  * renders (and still accepts input for) the overhanging portion off-window,
  * which is a confusing, hard-to-notice state rather than a crash. Clamping
- * here means the AEM view can never visually or interactively escape the
+ * here means the browser view can never visually or interactively escape the
  * window, regardless of what the IPC message contains.
  */
 export function clampViewBounds(bounds: ViewBounds, container: Rectangle): Rectangle {
