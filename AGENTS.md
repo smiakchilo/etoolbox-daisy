@@ -1144,14 +1144,15 @@ agent-only ones). Loading is the `skill` tool call (`SKILL_TOOL_NAME`), and
 `transcriptStore.ts` shows it as a billet when the model chose it - so a reader
 (or an investigation into a session that went wrong) can tell whether a skill
 was loaded at all, and which one - while using it to suppress a search skill's
-prose (below). That call's billet is the existing `skill` renderer's (`Load
-skill <name>`, expanding to Source / Files / Scripts); a *failed* load is shown
+prose (below). That call's billet is the existing `skill` renderer's (the
+collapsed summary is the bare skill name - the header already says `skill` -
+expanding to Source / Files / Scripts); a *failed* load is shown
 too, as a FAILED billet. An explicit `/name` is resolved by `resolveSkillPrompt`
 (`src/shared/skills/skillActivation.ts`), which frames the input and the
 controller journals a synthetic `skill` call pair after a successful send; its
 result says `activatedBy: 'user'`, which keeps it out of the transcript (the
 user's own message already names the skill). The three skill tools' billets
-read `Load skill` / `Read <skill>/<path>` /
+read `<skill>` / `Read <skill>/<path>` /
 `Run <skill>/<script>` (`getDetails()` compositions proposed in the plan, D7).
 `tests/live/skills.live.spec.ts` certifies the whole path live with the
 `skill-selftest` user skill.
@@ -1415,8 +1416,9 @@ asset path offers CRX ... (2026-10-19)". Before that it was
 **`npm run test` → 3860 passed / 13 skipped** (+2 against the
 3858 below - **a model-chosen skill load is a visible billet**:
 `transcriptStore.ts` no longer hides every `skill` tool call. A load the model
-chose becomes a normal tool billet on settle (the existing `skill` renderer's
-`Load skill <name>`, expanding to Source / Files / Scripts; a failed load shows
+chose becomes a normal tool billet on settle (the existing `skill` renderer's,
+whose collapsed summary is the bare skill name, expanding to Source / Files /
+Scripts; a failed load shows
 as FAILED too), so an investigation can tell whether a skill was loaded and
 which. The controller's synthetic marker for an explicit `/name` prompt carries
 `activatedBy: 'user'` in its result and still paints nothing (the user's own

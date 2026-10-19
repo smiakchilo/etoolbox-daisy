@@ -218,7 +218,8 @@ describe('describeToolCall - skill tools', () => {
       { operation: 'skill', skill: 'demo', source: 'user', fileCount: 4, scriptCount: 2 },
     );
 
-    expect(pending.summary).toContain('demo');
+    expect(pending.summary).toBe('demo');
+    expect(done.summary).toBe('demo');
     expect(pending.parameters).toHaveLength(1);
     expect(done.parameters.length).toBeGreaterThan(pending.parameters.length);
     expect(valuesOf(done)).toEqual(expect.arrayContaining(['demo', '4', '2']));

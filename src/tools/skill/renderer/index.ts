@@ -30,7 +30,7 @@ function describeCall(
   const source = succeeded ? asText(record['source']) : undefined;
   const scripts = succeeded ? asCount(record['scriptCount']) : undefined;
   return {
-    summary: `Load skill ${name}`,
+    summary: name,
     parameters: parameterRows([
       ['Skill', name],
       [

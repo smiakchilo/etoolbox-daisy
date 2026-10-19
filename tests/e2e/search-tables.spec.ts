@@ -360,7 +360,7 @@ test.describe('deterministic search tables', () => {
     // The model-chosen load is visible as its own billet, naming the skill.
     const skillBillets = shell.locator('.chat-tool-call').filter({ hasText: 'skill' });
     await expect(skillBillets).toHaveCount(1);
-    await expect(skillBillets.locator('.chat-tool-call__summary')).toHaveText('Load skill search');
+    await expect(skillBillets.locator('.chat-tool-call__summary')).toHaveText('search');
   });
 
   test('a counting total shows a spinner, then updates in place without rebuilding the table', async () => {
