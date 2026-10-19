@@ -138,6 +138,7 @@ describe('createCurrentPageContext', () => {
     expect(context).toContain('/content/wknd/us/en');
     expect(context).toContain(CONTENT_ROOT_DEFAULT);
     expect(context).toContain(COMPONENT_ROOT_DEFAULT);
+    expect(context).toContain(DAM_ROOT_DEFAULT);
   });
 
   it("renders the host's configured roots from the environment facts", () => {
@@ -148,13 +149,14 @@ describe('createCurrentPageContext', () => {
         origin: 'https://author.example',
         contentRoots: ['/content/a', '/content/b'],
         componentRoots: ['/apps/a'],
-        damRoots: ['/content/dam'],
+        damRoots: ['/content/dam/a'],
         contentPriorityPaths: [],
       }),
     );
     const context = provider();
     expect(context).toContain('/content/a, /content/b');
     expect(context).toContain('/apps/a');
+    expect(context).toContain('/content/dam/a');
   });
 
   it('reads the live URL fresh on every call, so navigation between turns is reflected', () => {

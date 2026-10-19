@@ -22,14 +22,23 @@ request has no searchable terms at all, then - and only then - ask what to
 search for with a normal `ask_user` question (options or free input), not with
 `actions`.
 
-**Make exactly one call: `aem_query_format_ask`, with the search string as `terms`.**
+**Make exactly one call: `aem_query_format_ask`, with the search string as `terms`
+and the roots its subject calls for as `roots`** (the Scope rules in your
+instructions name the family):
 
 ```json
-{ "terms": "<search string>" }
+{ "terms": "<search string>", "roots": ["<the host's content roots>"] }
 ```
 
-If the request names a scope ("... under us/en"), keep it out of the search string and
-add it as `roots`, exactly as the user wrote it:
+`/search Waldo` names no kind of content, so it searches the **content roots**
+(pages and their content). When the request is about **files or assets**, pass
+the host's **DAM roots** instead; when it asks for both kinds, pass both
+families. The host's content, component and DAM roots are all listed in the
+current-page context block at the start of the prompt - never invent or complete
+one.
+
+If the request names a scope ("... under us/en"), keep it out of the search string
+and use it as `roots` instead of the family, exactly as the user wrote it:
 `{ "terms": "<search string>", "roots": ["us/en"] }`. The Scope rules in your
 instructions cover the rest.
 
@@ -46,18 +55,22 @@ predicate map yourself as the rest of this skill describes, and make the same
 one call with it as `predicates` instead of `terms`:
 
 ```json
-{ "predicates": { "type": "cq:Page", "fulltext": "<search string>" } }
+{
+  "predicates": { "type": "cq:Page", "fulltext": "<search string>" },
+  "roots": ["<the host's content roots>"]
+}
 ```
 
 `aem_query_format_ask` validates the map exactly as `aem_query` does and runs the
-same table and **Load more** loop. Pass `properties` to choose the columns. Never
-pass both `terms` and `predicates`.
+same table and **Load more** loop. Pass `properties` to choose the columns, and
+the same `roots` discipline as above. Never pass both `terms` and `predicates`.
 
 ## Always scope
 
-An unscoped query scans the whole repository and is slow enough to time out.
-`aem_query_format_ask` applies the default scope itself, and the Scope rules in
-your instructions decide when to pass `roots` or a `path` yourself.
+An unscoped query scans the whole repository and is slow enough to time out, so
+always give a scope: the `roots` the subject calls for (the Scope rules in your
+instructions name the family), or a `path` predicate. `aem_query_format_ask` has
+a default, but it is broader than most searches need.
 
 Several roots are covered in one call - one query per root, rows merged:
 

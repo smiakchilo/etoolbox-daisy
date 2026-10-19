@@ -247,7 +247,7 @@ it only when the name and title searches found nothing.
 #### Asset phases
 
 The same three phases over **assets** - `dam:Asset` nodes - scoped to the
-host's **DAM roots** (from `environment_facts`; the default is
+host's **DAM roots** (from the current page context block; the default is
 `/content/dam`):
 
 - **The asset name** (always first): the name pattern in its case forms,

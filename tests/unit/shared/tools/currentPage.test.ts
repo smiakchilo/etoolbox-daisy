@@ -47,6 +47,7 @@ describe('deriveCurrentPageContext', () => {
       jcrPath: '/content/wknd/us/en',
       contentRoots: ['/content'],
       componentRoots: ['/apps'],
+      damRoots: ['/content/dam'],
     });
   });
 
@@ -57,6 +58,7 @@ describe('deriveCurrentPageContext', () => {
         activeOrigin: AUTHOR,
         contentRoots: ['/content/wknd', '/content/shared'],
         componentRoots: ['/apps/wknd'],
+        damRoots: ['/content/dam/wknd'],
       }),
     ).toEqual({
       origin: AUTHOR,
@@ -64,6 +66,7 @@ describe('deriveCurrentPageContext', () => {
       jcrPath: '/content/wknd',
       contentRoots: ['/content/wknd', '/content/shared'],
       componentRoots: ['/apps/wknd'],
+      damRoots: ['/content/dam/wknd'],
     });
   });
 
@@ -92,6 +95,7 @@ describe('deriveCurrentPageContext', () => {
       jcrPath: '/content/hpe/country/us/en/about',
       contentRoots: ['/content'],
       componentRoots: ['/apps'],
+      damRoots: ['/content/dam'],
     });
     expect(derive(`${AUTHOR}/ui#/aem/sites.html/content/wknd/us/en`)?.jcrPath).toBe(
       '/content/wknd/us/en',
@@ -110,6 +114,7 @@ describe('deriveCurrentPageContext', () => {
       jcrPath: undefined,
       contentRoots: ['/content'],
       componentRoots: ['/apps'],
+      damRoots: ['/content/dam'],
     });
     expect(derive(`${AUTHOR}/libs/granite/core/content/login.html`)?.jcrPath).toBeUndefined();
   });
@@ -167,6 +172,7 @@ describe('renderCurrentPageContextForModel', () => {
     jcrPath: '/content/wknd/us/en',
     contentRoots: ['/content'],
     componentRoots: ['/apps'],
+    damRoots: ['/content/dam'],
   };
 
   it('includes the host, URL, roots and content path values', () => {
@@ -175,6 +181,7 @@ describe('renderCurrentPageContextForModel', () => {
     expect(rendered).toContain(`${AUTHOR}/content/wknd/us/en.html`);
     expect(rendered).toContain('/content/wknd/us/en');
     expect(rendered).toContain('/apps');
+    expect(rendered).toContain('/content/dam');
   });
 
   it('reports the roots, and a different rendering when no content path was derived', () => {
@@ -184,9 +191,11 @@ describe('renderCurrentPageContextForModel', () => {
       jcrPath: undefined,
       contentRoots: ['/content/a', '/content/b'],
       componentRoots: ['/apps'],
+      damRoots: ['/content/dam/a'],
     });
     expect(rendered).toContain(AUTHOR);
     expect(rendered).toContain('/content/a, /content/b');
+    expect(rendered).toContain('/content/dam/a');
     expect(rendered).not.toBe(renderCurrentPageContextForModel(withPath));
   });
 });

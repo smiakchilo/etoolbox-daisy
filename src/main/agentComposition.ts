@@ -99,7 +99,11 @@ export function createCurrentPageContext(
       documentUrl: getDocumentUrl(),
       activeOrigin: server.origin,
       ...(facts !== undefined
-        ? { contentRoots: facts.contentRoots, componentRoots: facts.componentRoots }
+        ? {
+            contentRoots: facts.contentRoots,
+            componentRoots: facts.componentRoots,
+            damRoots: facts.damRoots,
+          }
         : {}),
     });
     return context === undefined ? undefined : renderCurrentPageContextForModel(context);
@@ -109,7 +113,7 @@ export function createCurrentPageContext(
 /**
  * Builds the "environment facts" provider the tool host and the page-context
  * block both read: the origin of the host the browser pane is on right now,
- * and that host's effective content/component roots.
+ * and that host's effective content/component/DAM roots.
  *
  * Matches the live document URL against the configured hosts by origin
  * (`parseNavigationTarget` + `originsMatch`, the same idiom the address bar and

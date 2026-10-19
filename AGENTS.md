@@ -1307,7 +1307,19 @@ corrective message. `aem_query` itself still takes full paths only
 (content, then DAM) fan-out is silently cut to it - `docs/backlog.md`.
 
 The per-turn current-page block (`renderCurrentPageContextForModel`) is **facts
-only**: how to read it is in `session.md`, once.
+only**: how to read it is in `session.md`, once. It now names all three root
+families the skills scope with - the host's **content roots**, **component roots**
+and **DAM roots** - so a page/component search can pass the content roots and an
+asset/file search the DAM roots in its single call, without a second
+`environment_facts` call.
+
+**Which root family a search uses is a prose decision, not a code branch.** The
+subject decides, and the skill passes the family explicitly: content roots for a
+**page** or **component**, DAM roots for a **file** or **asset**, both when both
+are asked for, content roots when neither is named - `resources/rules/session.md`
+"Scope". The search composites' deterministic `resolveSearchRoots` default
+(content then DAM, collapsed) is kept only as a fallback for a call that passes
+no `roots`; the skills are told not to rely on it.
 
 ### `tests/`
 

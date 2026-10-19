@@ -33,15 +33,26 @@ search with a normal `ask_user` question (options or free input).
 
 ## 2. Start the search
 
-Make one call:
+Make one call, with the roots its subject calls for:
 
 ```json
-{ "terms": "Waldo", "context": "Waldo is good, benevolent, upstanding" }
+{
+  "terms": "Waldo",
+  "context": "Waldo is good, benevolent, upstanding",
+  "roots": ["<the host's content roots>"]
+}
 ```
 
+A semantic search is usually about pages and their content, so it searches the
+**content roots** unless the request is about **files or assets** - then pass the
+host's **DAM roots** - or asks for both kinds, when you pass both families. The
+host's content, component and DAM roots are listed in the current-page context
+block at the start of the prompt; never invent or complete one.
+
 If the request names a scope ("... under us/en"), it belongs in neither `terms` nor
-`context`: add it as `roots`, exactly as the user wrote it (`{ ..., "roots": ["us/en"] }`).
-The Scope rules in your instructions cover the rest.
+`context`: use it as `roots` instead of the family, exactly as the user wrote it
+(`{ ..., "roots": ["us/en"] }`). The Scope rules in your instructions cover the
+rest.
 
 ## 3. Judge every candidate, and call back
 

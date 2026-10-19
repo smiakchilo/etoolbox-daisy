@@ -55,7 +55,9 @@ Go to step 2.
 
 You **must** resolve it; this step is not optional and not skippable. One
 `aem_query` scans the host's **component roots** (from the current page context
-block, default `/apps`) for a `cq:Component`:
+block, default `/apps`) for a `cq:Component`. A component's *definition* is the
+one thing that lives under the component roots - the pages that use it, in step
+2, live under the content roots:
 
 ```json
 {
@@ -133,13 +135,16 @@ call:
     "property": "sling:resourceType",
     "property.1_value": "myproject/components/content/content-block",
     "property.2_value": "/apps/myproject/components/content/content-block"
-  }
+  },
+  "roots": ["<the host's content roots>"]
 }
 ```
 
-If the request names a scope ("... under us/en"), add it as `roots`, exactly as the
-user wrote it: `"roots": ["us/en"]`. The Scope rules in your instructions cover the
-rest.
+This step looks for component *instances*, which live on pages: it searches the
+host's **content roots** (never the DAM roots - an asset is not a component
+instance). If the request names a scope ("... under us/en"), use it as `roots`
+instead, exactly as the user wrote it: `"roots": ["us/en"]`. The Scope rules in
+your instructions cover the rest.
 
 Pass **no** `properties`, and no other output argument. The table is exactly two
 columns - **`Path`** (the owning page) and **`Node`** (the component node's path

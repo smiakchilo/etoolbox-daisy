@@ -86,17 +86,19 @@ export const aemQueryFormatAskArgsSchema = z
     predicates: z.record(z.string(), z.string()).optional(),
     /**
      * Where to search: full paths as the user wrote them, or path fragments the
-     * application resolves (`resolveSearchScope`). Omitted means the current host's
-     * content roots (or the `path` predicate).
+     * application resolves (`resolveSearchScope`). Omitted falls back to the
+     * host's content roots followed by its DAM roots; the Scope rules tell the
+     * model to pass the family the subject needs instead.
      */
     roots: searchRootsSchema
       .describe(
         'JCR paths or path fragments to search under, exactly as the user wrote them: a full ' +
           'path ("/content/site/us/en") or a fragment ("us/en"). The application resolves a ' +
           'fragment to a full path. Never build or complete a path yourself - not from the ' +
-          'current page, not from another path you have seen. Omit this argument for the ' +
-          "default scope (the host's content roots, then its DAM roots). See Scope in your " +
-          'instructions.',
+          'current page, not from another path you have seen. When the user names no path, pass ' +
+          "the root family the subject needs (the host's content roots for pages and components, " +
+          'its DAM roots for files and assets, both when both are asked for), as listed in the ' +
+          'current-page context block. See Scope in your instructions.',
       )
       .optional(),
     /** Which result fields come back per hit, as `aem_query`'s `properties`. */

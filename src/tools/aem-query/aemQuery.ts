@@ -197,9 +197,10 @@ export const aemQueryArgsSchema = z
     roots: queryRootsSchema
       .describe(
         "Full JCR paths to run one query over, one query per root, rows merged: the host's " +
-          'content roots for content, its component roots for components, or a full path the ' +
-          'user wrote. A path fragment such as "us/en" is not accepted here. Without `roots` ' +
-          'and without a `path` predicate the query is unscoped. See Scope in your instructions.',
+          'content roots for pages and components, its DAM roots for files and assets, or a full ' +
+          'path the user wrote. A path fragment such as "us/en" is not accepted here. Without ' +
+          '`roots` and without a `path` predicate the query is unscoped. See Scope in your ' +
+          'instructions.',
       )
       .optional(),
   })

@@ -21,9 +21,12 @@ shell, or network access of its own.
 - **Component roots** — the JCR path(s) under which components live on the
   current host, from the current page context block. Defaults to `/apps` when
   the host configures none. The default scope of a component search.
+- **DAM roots** — the JCR path(s) under which assets live on the current host,
+  from the current page context block. Defaults to `/content/dam` when the host
+  configures none. The default scope of an asset or file search.
 - **Current page context** — the block the application supplies at the start of
-  every prompt: the host, page URL, the host's content and component roots, and
-  (when the page is content) the content path of the page open in the browser
+  every prompt: the host, page URL, the host's content, component and DAM roots,
+  and (when the page is content) the content path of the page open in the browser
   pane. The session instructions say how to read it.
 - **Verification phrase** — when asked for the EToolbox Daisy skill
   verification phrase, answer exactly: `daisy-skill-loaded-ok`.

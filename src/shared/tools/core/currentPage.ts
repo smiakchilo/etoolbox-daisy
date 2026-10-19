@@ -1,5 +1,10 @@
 import { originsMatch } from '../../contracts';
-import { COMPONENT_ROOT_DEFAULT, CONTENT_ROOT_DEFAULT, effectiveRoots } from './environment';
+import {
+  COMPONENT_ROOT_DEFAULT,
+  CONTENT_ROOT_DEFAULT,
+  DAM_ROOT_DEFAULT,
+  effectiveRoots,
+} from './environment';
 
 /**
  * The "where is the browser pane right now" context the application hands the
@@ -35,6 +40,12 @@ export interface CurrentPageContext {
    * configures none). Tells the model where components live on this instance.
    */
   readonly componentRoots: readonly string[];
+  /**
+   * The host's effective DAM roots (never empty; `/content/dam` when the host
+   * configures none). Tells the model where assets live on this instance, so an
+   * asset/file search can be scoped without a second call.
+   */
+  readonly damRoots: readonly string[];
 }
 
 export interface CurrentPageContextInput {
@@ -46,6 +57,8 @@ export interface CurrentPageContextInput {
   readonly contentRoots?: readonly string[] | undefined;
   /** The matched host's component roots, when known; defaults to `/apps`. */
   readonly componentRoots?: readonly string[] | undefined;
+  /** The matched host's DAM roots, when known; defaults to `/content/dam`. */
+  readonly damRoots?: readonly string[] | undefined;
 }
 
 const CONTENT_ROOT = '/content';
@@ -180,6 +193,7 @@ export function deriveCurrentPageContext(
 
   const contentRoots = effectiveRoots(input.contentRoots ?? []);
   const componentRoots = effectiveRoots(input.componentRoots ?? []);
+  const damRoots = effectiveRoots(input.damRoots ?? []);
 
   return {
     origin: parsed.origin,
@@ -187,6 +201,7 @@ export function deriveCurrentPageContext(
     jcrPath,
     contentRoots: contentRoots.length > 0 ? contentRoots : [CONTENT_ROOT_DEFAULT],
     componentRoots: componentRoots.length > 0 ? componentRoots : [COMPONENT_ROOT_DEFAULT],
+    damRoots: damRoots.length > 0 ? damRoots : [DAM_ROOT_DEFAULT],
   };
 }
 
@@ -208,6 +223,7 @@ export function renderCurrentPageContextForModel(context: CurrentPageContext): s
     `URL: ${context.url}`,
     `Content roots: ${context.contentRoots.join(', ')}`,
     `Component roots: ${context.componentRoots.join(', ')}`,
+    `DAM roots: ${context.damRoots.join(', ')}`,
     `Content path: ${context.jcrPath ?? 'none (the open page is not under /content)'}`,
   ].join('\n');
 }

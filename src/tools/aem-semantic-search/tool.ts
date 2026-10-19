@@ -20,6 +20,8 @@ export const tool: ModelToolModule = {
     '`{ terms, context }`. Every time it returns candidates, judge EVERY one of them against the ' +
     'context and call it again with `{ searchId, matches }` - nothing else in between. Keep doing ' +
     'that until the result says the search is finished, then end your turn without writing text. ' +
+    "Choose `roots` by what is searched: the host's content roots for pages and components, its " +
+    'DAM roots for files and assets, both when both are asked for. ' +
     "Never call 'aem_query', 'aem_get_json' or 'ask_user' yourself for such a search. " +
     'The table this tool puts on screen is the whole answer, and the application hides your own ' +
     'text for the turn: write no summary, explanation or list of results around it.',
