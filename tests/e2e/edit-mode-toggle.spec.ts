@@ -98,7 +98,15 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
     const addressBar = page.locator(byTestId('browser-address'));
     const addressInput = addressBar.locator('input').first();
 
+    // The address field is overwritten by every navigation-state push, so a
+    // fresh typed address is only safe once the previous load has settled
+    // (the Refresh control is a Stop while one is in flight).
+    const waitForIdle = async (): Promise<void> => {
+      await expect(page.locator(byTestId('browser-refresh'))).toBeVisible();
+    };
+
     // A `/content` `.html` page in the web-content view: shown, off.
+    await waitForIdle();
     await addressInput.fill(`${origin}/content/site/page.html`);
     await addressInput.press('Enter');
     await expect
@@ -107,6 +115,33 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
     await expect(toggle).toBeVisible();
     await expect(toggle).not.toHaveAttribute('selected', '');
     await expect(toggle).toHaveAttribute('title', 'Edit mode');
+
+    // Spectrum's hold affordance marks the long press. Driving a real pointer
+    // hold and waiting for the navigation it triggers (rather than sleeping)
+    // proves the 300ms threshold fired before the pointer came up.
+    await expect(toggle).toHaveAttribute('hold-affordance', '');
+    const longPress = async (): Promise<void> => {
+      const box = await toggle.boundingBox();
+      if (box === null) throw new Error('the edit-mode toggle has no box');
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      try {
+        await expect(addressInput).toHaveValue(
+          `${origin}/content/site/page.html?wcmmode=disabled`,
+          { timeout: 10_000 },
+        );
+      } finally {
+        await page.mouse.up();
+      }
+      // The release's click is swallowed: had it been delivered, it would have
+      // flipped the page straight into the editor.
+      await expect(addressInput).toHaveValue(`${origin}/content/site/page.html?wcmmode=disabled`);
+    };
+
+    // A long press from the web-content view asks for the visitor view, where a
+    // click would have opened the editor instead.
+    await longPress();
+    await expect(toggle).not.toHaveAttribute('selected', '');
 
     // Toggle on: the page editor, and no `wcmmode` on the URL.
     await toggle.click();
@@ -117,8 +152,8 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
     await expect(toggle).toHaveAttribute('title', 'Exit edit mode');
     await expect(addressInput).toHaveValue(`${origin}/editor.html/content/site/page.html`);
 
-    // Toggle off: the web-content visitor view carries `wcmmode=disabled`.
-    await toggle.click();
+    // A long press from the editor lands on the same visitor view a click does.
+    await longPress();
     await expect(toggle).not.toHaveAttribute('selected', '');
     await expect(addressInput).toHaveValue(`${origin}/content/site/page.html?wcmmode=disabled`);
 
@@ -127,9 +162,16 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
     await expect(toggle).toHaveAttribute('selected', '');
     await expect(addressInput).toHaveValue(`${origin}/editor.html/content/site/page.html`);
 
+    // Toggle off with a plain click, which still works right after a long press
+    // (the swallowed click only covered the long press's own release).
+    await toggle.click();
+    await expect(toggle).not.toHaveAttribute('selected', '');
+    await expect(addressInput).toHaveValue(`${origin}/content/site/page.html?wcmmode=disabled`);
+
     // AEM as a Cloud Service serves the editor behind its shell route, with the
     // real UI path in the fragment: the toggle must recognise it and, on a
     // click, leave the shell for the plain web-content view.
+    await waitForIdle();
     await addressInput.fill(`${origin}/ui#/aem/editor.html/content/site/page.html`);
     await addressInput.press('Enter');
     await expect.poll(() => state.paths.includes('/ui'), { timeout: 30_000 }).toBe(true);
@@ -144,6 +186,7 @@ test('the edit-mode toggle follows the open page and flips /editor.html', async 
     await expect(addressInput).toHaveValue(`${origin}/content/site/page.html?wcmmode=disabled`);
 
     // A non-page URL (the host root, no `.html`) hides the control again.
+    await waitForIdle();
     await addressInput.fill(`${origin}/`);
     await addressInput.press('Enter');
     await expect(toggle).toBeHidden();

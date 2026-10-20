@@ -1479,7 +1479,17 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3983 passed / 1 failed / 13 skipped** (+23
+Current baseline: **`npm run test` → 3991 passed / 1 failed / 13 skipped** (+8
+against the 3983 below - **the edit-mode toggle's long press** (2026-10-20): the
+control carries Spectrum's `hold-affordance` and its `longpress` navigates the
+open page to the `wcmmode=disabled` web-content view from either state, while a
+click still toggles; `EditModeTarget` gained `webContentViewUrl` and the click
+Spectrum still delivers after a long press is swallowed. The +8 is 2
+`shellViewModel` and 6 `browserToolbar` cases; the same pre-existing
+`searchPageSize` failure remains. See
+`docs/verification/followons-2026-10.md` "The edit-mode toggle's long press asks
+for the web-content view (2026-10-20)"). Before that it was **3983 passed / 1
+failed / 13 skipped** (+23
 against the 3960 below - **the publication filter** (2026-10-20): 22 new cases in
 `publication.test.ts`, `aemQueryFormatAsk.test.ts` and
 `aemSemanticSearch.test.ts`. The rest of the gap comes from other working-tree

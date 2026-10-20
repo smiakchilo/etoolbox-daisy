@@ -2038,6 +2038,97 @@ describe('createBrowserToolbar edit-mode toggle', () => {
     expect(addressValue(toolbar)).toBe('https://author.example/editor.html/content/site/page.html');
   });
 
+  it('carries the hold affordance for its long press', () => {
+    const toolbar = build();
+    expect(editButton(toolbar).hasAttribute('hold-affordance')).toBe(true);
+  });
+
+  it('opens the web-content visitor view on a long press from the web-content view', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html');
+
+    button.dispatchEvent(new dom.window.CustomEvent('longpress', { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledWith(
+        'https://author.example/content/site/page.html?wcmmode=disabled',
+      );
+    });
+    expect(addressValue(toolbar)).toBe(
+      'https://author.example/content/site/page.html?wcmmode=disabled',
+    );
+  });
+
+  it('opens the web-content visitor view on a long press from the editor', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/editor.html/content/site/page.html');
+
+    button.dispatchEvent(new dom.window.CustomEvent('longpress', { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledWith(
+        'https://author.example/content/site/page.html?wcmmode=disabled',
+      );
+    });
+  });
+
+  it('swallows the click that follows a long press, then toggles on the next click', async () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html');
+
+    button.dispatchEvent(new dom.window.CustomEvent('longpress', { bubbles: true }));
+    // Spectrum still delivers the release's click; it must not re-toggle.
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(1);
+    });
+    expect(browser.navigate).toHaveBeenCalledWith(
+      'https://author.example/content/site/page.html?wcmmode=disabled',
+    );
+
+    // The page has landed on the visitor view; the next ordinary click toggles
+    // into the editor as usual.
+    pushPage('https://author.example/content/site/page.html?wcmmode=disabled');
+    button.click();
+
+    await vi.waitFor(() => {
+      expect(browser.navigate).toHaveBeenCalledTimes(2);
+    });
+    expect(browser.navigate).toHaveBeenLastCalledWith(
+      'https://author.example/editor.html/content/site/page.html',
+    );
+  });
+
+  it('treats a later click as a click when the long press had no release on it', () => {
+    const toolbar = build();
+    const button = editButton(toolbar);
+    pushPage('https://author.example/content/site/page.html');
+
+    // The pointer was carried off the button before it came up, so no click
+    // followed the long press; the next interaction starts with pointerdown.
+    button.dispatchEvent(new dom.window.CustomEvent('longpress', { bubbles: true }));
+    button.dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
+    button.click();
+
+    // The long press's own navigation plus this click's toggle.
+    expect(browser.navigate).toHaveBeenCalledTimes(2);
+    expect(browser.navigate).toHaveBeenLastCalledWith(
+      'https://author.example/editor.html/content/site/page.html',
+    );
+  });
+
+  it('does nothing on a long press while hidden', () => {
+    const toolbar = build();
+
+    editButton(toolbar).dispatchEvent(new dom.window.CustomEvent('longpress', { bubbles: true }));
+
+    expect(browser.navigate).not.toHaveBeenCalled();
+  });
+
   it('hides for a DAM asset, a non-.html resource, or no page at all', () => {
     const toolbar = build();
     const button = editButton(toolbar);

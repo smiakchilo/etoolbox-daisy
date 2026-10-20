@@ -365,6 +365,7 @@ describe('resolveEditModeTarget', () => {
       enabled: true,
       editing: false,
       toggledUrl: 'https://author.example/editor.html/content/site/page.html',
+      webContentViewUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
     });
   });
 
@@ -375,6 +376,7 @@ describe('resolveEditModeTarget', () => {
       enabled: true,
       editing: true,
       toggledUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
+      webContentViewUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
     });
   });
 
@@ -388,6 +390,26 @@ describe('resolveEditModeTarget', () => {
         'http://staging.internal:4502/editor.html/content/site/page.html?a=1#frag',
       )?.toggledUrl,
     ).toBe('http://staging.internal:4502/content/site/page.html?a=1&wcmmode=disabled#frag');
+  });
+
+  it('offers the web-content visitor view from the web-content view too', () => {
+    // The long press asks for `wcmmode=disabled` whatever the current state is,
+    // so this URL must not depend on which rendering is open now.
+    expect(
+      resolveEditModeTarget('https://author.example/content/site/page.html?a=1#frag')
+        .webContentViewUrl,
+    ).toBe('https://author.example/content/site/page.html?a=1&wcmmode=disabled#frag');
+    expect(
+      resolveEditModeTarget('https://author.example/editor.html/content/site/page.html?a=1#frag')
+        .webContentViewUrl,
+    ).toBe('https://author.example/content/site/page.html?a=1&wcmmode=disabled#frag');
+  });
+
+  it('replaces any other wcmmode with wcmmode=disabled for the visitor view', () => {
+    expect(
+      resolveEditModeTarget('https://author.example/content/site/page.html?wcmmode=edit')
+        .webContentViewUrl,
+    ).toBe('https://author.example/content/site/page.html?wcmmode=disabled');
   });
 
   it('sets wcmmode=disabled when untoggling, replacing any other wcmmode', () => {
@@ -454,6 +476,7 @@ describe('resolveEditModeTarget', () => {
       enabled: true,
       editing: true,
       toggledUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
+      webContentViewUrl: 'https://author.example/content/site/page.html?wcmmode=disabled',
     });
   });
 
@@ -485,6 +508,8 @@ describe('resolveEditModeTarget', () => {
     expect(resolveEditModeTarget('javascript:alert(1)').enabled).toBe(false);
     expect(resolveEditModeTarget('not a url').enabled).toBe(false);
     expect(resolveEditModeTarget('').enabled).toBe(false);
+    // A disabled control offers no navigation of either kind.
+    expect(resolveEditModeTarget('').webContentViewUrl).toBeUndefined();
   });
 });
 

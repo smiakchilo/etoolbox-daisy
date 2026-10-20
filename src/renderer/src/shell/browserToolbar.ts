@@ -1205,11 +1205,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   // the page is open in the editor. It is **hidden** unless the pane is showing
   // an editable `/content` page (see `resolveEditModeTarget`), so it never
   // offers a switch AEM would refuse; `title`/`aria-label` name the action, like
-  // the agent-pane toggle.
+  // the agent-pane toggle. Spectrum's `hold-affordance` marks the long press
+  // that asks for the web-content visitor view (`wcmmode=disabled`) from
+  // *either* state, where a click merely flips between the two renderings.
   const editModeButton = el('sp-action-button', {
     attrs: {
       quiet: '',
       class: 'browser-toolbar__edit-toggle',
+      'hold-affordance': '',
       title: 'Edit mode',
       'aria-label': 'Edit mode',
       'data-testid': 'browser-edit-mode',
@@ -1219,7 +1222,29 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   const editModeIcon = document.createElement('sp-icon-edit');
   editModeIcon.setAttribute('slot', 'icon');
   editModeButton.append(editModeIcon);
+
+  // Spectrum dispatches `longpress` while the pointer is still down (or on a
+  // Space / Alt+ArrowDown keyup) but does not cancel the click that follows the
+  // release, so a long press must swallow that click - otherwise it would
+  // re-toggle from the state the long press just navigated away from. A fresh
+  // pointer or keyboard interaction clears the flag, so a long press whose
+  // release lands outside the button cannot swallow the next ordinary click.
+  let editModeLongPressHandled = false;
+  editModeButton.addEventListener('pointerdown', () => {
+    editModeLongPressHandled = false;
+  });
+  editModeButton.addEventListener('keydown', () => {
+    editModeLongPressHandled = false;
+  });
+  editModeButton.addEventListener('longpress', () => {
+    editModeLongPressHandled = true;
+    performEditModeShowContentView();
+  });
   editModeButton.addEventListener('click', () => {
+    if (editModeLongPressHandled) {
+      editModeLongPressHandled = false;
+      return;
+    }
     performEditModeToggle();
   });
 
@@ -1430,9 +1455,10 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
    * Re-derives the edit-mode toggle from the page the pane is showing (see the
    * interface doc). **Hidden** (not merely disabled) unless the page is an
    * editable `/content` page, `selected` while it is open in the editor, and
-   * always labelled with the action a click performs. The forced home veil
-   * reads as "no page": it acts on the covered page rather than what is on
-   * screen, so it hides the control the way it disables Back/Forward.
+   * always labelled with the action a click performs (a long press always asks
+   * for the web-content view). The forced home veil reads as "no page": it acts
+   * on the covered page rather than what is on screen, so it hides the control
+   * the way it disables Back/Forward.
    */
   function refreshEditMode(): void {
     const target = resolveEditModeTarget(homeShown ? '' : currentDisplayedUrl());
@@ -1454,6 +1480,17 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     const target = resolveEditModeTarget(homeShown ? '' : currentDisplayedUrl());
     if (!target.enabled || target.toggledUrl === undefined) return;
     navigateToUrl(target.toggledUrl);
+  }
+
+  /**
+   * Runs the long press: navigates the open page to its web-content visitor
+   * view (`wcmmode=disabled`) from either state. A no-op when the control is
+   * hidden, so a stray long press can never invent a navigation.
+   */
+  function performEditModeShowContentView(): void {
+    const target = resolveEditModeTarget(homeShown ? '' : currentDisplayedUrl());
+    if (!target.enabled || target.webContentViewUrl === undefined) return;
+    navigateToUrl(target.webContentViewUrl);
   }
 
   // The chip's width clamp depends on the field's live width, which changes
