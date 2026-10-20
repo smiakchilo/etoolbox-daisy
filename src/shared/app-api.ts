@@ -27,6 +27,7 @@ import type {
   UpdateServerPresentationResult,
   UpdateServerTargetingRequest,
   UpdateServerTargetingResult,
+  UpdateUpdateSettingsRequest,
 } from './settings-ipc';
 import type {
   ApproveCertificateExceptionRequest,
@@ -42,6 +43,7 @@ import type {
 } from './browser-ipc';
 import type { MemoFileRequest, MemosIpcResult } from './memos-ipc';
 import type { RulesOpenFolderResult } from './rules-ipc';
+import type { UpdateStatus, UpdatesIpcResult } from './updates-ipc';
 import type { SkillsOpenFolderResult } from './skills-ipc';
 import type {
   TableExportRevealResult,
@@ -123,6 +125,8 @@ export interface DaisyAppApi {
   readonly rules: DaisyRulesApi;
   /** The self-learning memos surface: the Settings folder link and the notice's reveal. */
   readonly memos: DaisyMemosApi;
+  /** The updater surface: check, apply and a status push (Settings "Updates", notice, home link). */
+  readonly updates: DaisyUpdatesApi;
   /**
    * The application-wide keyboard shortcut surface: main resolves a keystroke
    * to a semantic action (there is no menu bar to carry an accelerator) and
@@ -145,6 +149,17 @@ export interface DaisyRulesApi {
    * when missing. Takes no argument - main owns the path.
    */
   openFolder(): Promise<RulesOpenFolderResult>;
+}
+
+export interface DaisyUpdatesApi {
+  /** The updater's current status. */
+  getStatus(): Promise<UpdatesIpcResult>;
+  /** Checks the update sources now (custom URL first, then the built-ins). */
+  check(): Promise<UpdatesIpcResult>;
+  /** Downloads, verifies and swaps in the pending update, then restarts the app. */
+  apply(): Promise<UpdatesIpcResult>;
+  /** Subscribes to status changes pushed by main. Returns an unsubscribe function. */
+  onStatusChanged(listener: (status: UpdateStatus) => void): () => void;
 }
 
 export interface DaisyMemosApi {
@@ -338,6 +353,12 @@ export interface DaisySettingsApi {
    * prompt; no restart.
    */
   updateMemoSettings(request: UpdateMemoSettingsRequest): Promise<SettingsIpcVoidResult>;
+  /**
+   * Persists the Updates tab's custom update URL and startup-check flag - a
+   * partial patch; `url: null` clears the custom folder. Read fresh by every
+   * check, so no restart.
+   */
+  updateUpdateSettings(request: UpdateUpdateSettingsRequest): Promise<SettingsIpcVoidResult>;
 }
 
 /** Sign-in surface, one call per agent - see gentAuthRequestSchema. */

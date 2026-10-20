@@ -47,6 +47,7 @@ function validSettings() {
     agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
     memos: { enabled: true },
+    updates: { checkOnStartup: false },
   };
 }
 

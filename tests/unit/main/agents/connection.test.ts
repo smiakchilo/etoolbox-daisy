@@ -42,6 +42,7 @@ function settingsWith(proxyId: ProxyId | undefined): AppSettings {
     },
     browser: { disableNativeWebAuthn: true },
     memos: { enabled: true },
+    updates: { checkOnStartup: false },
   };
 }
 

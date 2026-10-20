@@ -11,6 +11,7 @@ import {
   applyMemoSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
+  applyUpdateSettingsChange,
   confirmOriginChange,
   configuredAgentId,
   loadSettings,
@@ -601,6 +602,45 @@ describe('applyMemoSettingsChange', () => {
     expect(off.memos.enabled).toBe(false);
     expect(applyMemoSettingsChange(off, {}).memos.enabled).toBe(false);
     expect(applyMemoSettingsChange(off, { enabled: true }).memos.enabled).toBe(true);
+  });
+});
+
+describe('applyUpdateSettingsChange', () => {
+  const FOLDER = 'https://github.com/o/r/tree/main/updates';
+
+  it('sets, keeps and clears the custom URL, and toggles the startup check', () => {
+    const withUrl = applyUpdateSettingsChange(defaultAppSettings(), { url: FOLDER });
+    expect(withUrl.updates.url).toBe(FOLDER);
+    expect(applyUpdateSettingsChange(withUrl, {}).updates.url).toBe(FOLDER);
+    expect(applyUpdateSettingsChange(withUrl, { checkOnStartup: true }).updates).toEqual({
+      url: FOLDER,
+      checkOnStartup: true,
+    });
+    expect('url' in applyUpdateSettingsChange(withUrl, { url: null }).updates).toBe(false);
+  });
+
+  it('refuses a custom URL that is not https', () => {
+    expect(() =>
+      applyUpdateSettingsChange(defaultAppSettings(), { url: 'http://x.example/u' }),
+    ).toThrow();
+  });
+
+  it('is unchecked by default', () => {
+    expect(defaultAppSettings().updates.checkOnStartup).toBe(false);
+  });
+});
+
+describe('normalizeSettingsDocument updates', () => {
+  it('keeps a valid custom URL and flag, and drops unusable values instead of failing the load', () => {
+    const keep = normalizeSettingsDocument({
+      updates: { url: 'https://x.example/u', checkOnStartup: true, extra: 1 },
+    }) as Record<string, unknown>;
+    expect(keep['updates']).toEqual({ url: 'https://x.example/u', checkOnStartup: true });
+
+    const drop = normalizeSettingsDocument({
+      updates: { url: 'http://x.example/u', checkOnStartup: 'yes' },
+    }) as Record<string, unknown>;
+    expect(drop['updates']).toEqual({});
   });
 });
 

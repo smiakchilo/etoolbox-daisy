@@ -7,6 +7,7 @@ import { createProxiesSection } from '../settings/proxiesSection';
 import { createHostsSection } from '../settings/hostsSection';
 import { createBrowserSection } from '../settings/browserSection';
 import { createSkillsSection } from '../settings/skillsSection';
+import { createUpdatesSection } from '../settings/updatesSection';
 import {
   createSaveReporter,
   reportSave,
@@ -52,7 +53,8 @@ export interface SettingsPanel extends Panel {
 }
 
 /** The Settings panel's tab ids, in strip order. */
-export type SettingsTab = 'hosts' | 'projects' | 'agents' | 'skills' | 'proxies' | 'browser';
+export type SettingsTab =
+  'hosts' | 'projects' | 'agents' | 'skills' | 'proxies' | 'browser' | 'updates';
 
 export interface CreateSettingsPanelOptions {
   /**
@@ -133,6 +135,12 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     onSettingsChanged: () => void reload(),
   });
 
+  const updatesSection = createUpdatesSection({
+    status,
+    reportSave: reportWith,
+    onSettingsChanged: () => void reload(),
+  });
+
   async function reload(): Promise<void> {
     const result = await loadSettingsSnapshot();
     if (!result.ok) {
@@ -153,6 +161,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     if (!projectsSection.hasPendingEdits()) projectsSection.update(result.snapshot.projects);
     browserSection.update(result.snapshot);
     skillsSection.update(result.snapshot);
+    updatesSection.update(result.snapshot);
     // The Agents tab does its own IPC reads rather than rendering a projection
     // of the snapshot: it needs the live sign-in status and the active agent's
     // SDK catalogue. That first auth read starts the real Copilot runtime and
@@ -190,6 +199,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     // definition reads naturally before the setting that consumes it.
     { value: 'proxies', label: 'Proxies', element: proxiesSection.element },
     { value: 'browser', label: 'Browser', element: browserSection.element },
+    { value: 'updates', label: 'Updates', element: updatesSection.element },
   ];
 
   const tabs = el('sp-tabs', {
@@ -262,6 +272,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       agentsSection.dispose();
       skillsSection.dispose();
       browserSection.dispose();
+      updatesSection.dispose();
       panel.dispose();
     },
   };

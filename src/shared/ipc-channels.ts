@@ -140,6 +140,21 @@ export const MEMOS_OPEN_FOLDER_CHANNEL = 'memos:open-folder' as const;
  */
 export const MEMOS_REVEAL_CHANNEL = 'memos:reveal' as const;
 
+/**
+ * Persists the Updates tab's custom update URL and startup-check flag. A
+ * partial patch, like {@link SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL}.
+ */
+export const SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL = 'settings:update-update-settings' as const;
+
+/** Reads the updater's current status (see `src/shared/updates-ipc.ts`). */
+export const UPDATES_GET_STATUS_CHANNEL = 'updates:get-status' as const;
+/** Checks the update sources now; resolves with the resulting status. No payload. */
+export const UPDATES_CHECK_CHANNEL = 'updates:check' as const;
+/** Downloads, verifies and swaps in the pending update, then restarts the app. No payload. */
+export const UPDATES_APPLY_CHANNEL = 'updates:apply' as const;
+/** Push channel: main -> renderer, whenever the updater's status changes. */
+export const UPDATES_STATUS_CHANGED_CHANNEL = 'updates:status-changed' as const;
+
 // Browser shell IPC surface (step 05) - see src/main/ipc/browser.ts and
 // src/shared/browser-ipc.ts.
 export const BROWSER_GO_BACK_CHANNEL = 'browser:go-back' as const;

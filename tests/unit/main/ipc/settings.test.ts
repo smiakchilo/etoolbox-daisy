@@ -30,6 +30,7 @@ import {
   setPassword,
   updateBrowserSettings,
   updateMemoSettings,
+  updateUpdateSettings,
   updateProject,
   updateProxy,
   updateServerPresentation,
@@ -92,6 +93,7 @@ function settingsWithProxy(secretRef: string, options: { username?: string } = {
     agents: { [TEST_AGENT_ID]: { active: true } },
     browser: { disableNativeWebAuthn: true },
     memos: { enabled: true },
+    updates: { checkOnStartup: false },
   };
 }
 
@@ -475,6 +477,7 @@ describe('reorderServers', () => {
       agents: { [TEST_AGENT_ID]: { active: true } },
       browser: { disableNativeWebAuthn: true },
       memos: { enabled: true },
+      updates: { checkOnStartup: false },
     };
   }
 
@@ -595,6 +598,38 @@ describe('updateMemoSettings', () => {
     writeFileSync(path.join(settingsDir, 'settings.json'), '{ not json', 'utf8');
 
     const result = await updateMemoSettings(settingsDir, { changes: { enabled: false } });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('storage_error');
+  });
+});
+
+describe('updateUpdateSettings', () => {
+  it('persists the custom URL and startup flag and reads them back through the snapshot', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    expect(
+      await updateUpdateSettings(settingsDir, {
+        changes: { url: 'https://github.com/o/r/tree/main/updates', checkOnStartup: true },
+      }),
+    ).toEqual({ ok: true });
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected a snapshot');
+    expect(snapshot.snapshot.updates).toEqual({
+      url: 'https://github.com/o/r/tree/main/updates',
+      checkOnStartup: true,
+    });
+  });
+
+  it('reports a storage error when the settings file cannot be read', async () => {
+    const settingsDir = createScratchRoot();
+    writeFileSync(path.join(settingsDir, 'settings.json'), '{ not json', 'utf8');
+
+    const result = await updateUpdateSettings(settingsDir, { changes: { checkOnStartup: true } });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected an error result');

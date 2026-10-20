@@ -45,6 +45,7 @@ function settingsWith(overrides: { active?: AgentId; proxy?: ProxyId } = {}): Ap
     },
     browser: { disableNativeWebAuthn: true },
     memos: { enabled: true },
+    updates: { checkOnStartup: false },
   };
 }
 

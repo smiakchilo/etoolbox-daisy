@@ -34,6 +34,7 @@ function settingsWithActive(id: AgentId | undefined): AppSettings {
     },
     browser: { disableNativeWebAuthn: true },
     memos: { enabled: true },
+    updates: { checkOnStartup: false },
   };
 }
 

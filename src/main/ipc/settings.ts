@@ -22,6 +22,7 @@ import {
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
 } from '../../shared';
 import {
   addProjectRequestSchema,
@@ -43,6 +44,7 @@ import {
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
+  updateUpdateSettingsRequestSchema,
   type AddProjectRequest,
   type AddProjectResult,
   type AddProxyRequest,
@@ -78,6 +80,7 @@ import {
   type UpdateServerPresentationResult,
   type UpdateServerTargetingRequest,
   type UpdateServerTargetingResult,
+  type UpdateUpdateSettingsRequest,
 } from '../../shared';
 import { toAppSettingsSnapshot, type ServerSnapshot } from '../../shared';
 import { defaultAppSettings, type AppSettings } from '../../shared';
@@ -102,6 +105,7 @@ import {
   applyMemoSettingsChange,
   applyServerPresentationChange,
   applyServerTargetingChange,
+  applyUpdateSettingsChange,
   confirmOriginChange,
   loadSettings,
   removeProject as deleteProjectEntry,
@@ -1433,6 +1437,29 @@ export async function updateMemoSettings(
   return { ok: true };
 }
 
+/**
+ * Implements `settings:update-update-settings`: persists the Updates tab's
+ * custom update URL and startup-check flag. Plain load -> patch -> save; the
+ * updater reads both fresh from disk on every check.
+ */
+export async function updateUpdateSettings(
+  settingsDir: string,
+  request: UpdateUpdateSettingsRequest,
+): Promise<SettingsIpcVoidResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+  const saved = await persist(
+    settingsDir,
+    applyUpdateSettingsChange(loaded.value, request.changes),
+  );
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // Sender validation - the security core of this module
 // ---------------------------------------------------------------------------
@@ -1866,6 +1893,20 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
         return { ok: false, error: invalidPayloadError(parsed.error.message) };
       }
       return updateMemoSettings(deps.settingsDir, parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
+    async (event, rawRequest: unknown): Promise<SettingsIpcVoidResult> => {
+      if (!checkSender(event)) {
+        return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+      }
+      const parsed = updateUpdateSettingsRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) {
+        return { ok: false, error: invalidPayloadError(parsed.error.message) };
+      }
+      return updateUpdateSettings(deps.settingsDir, parsed.data);
     },
   );
 }

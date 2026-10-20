@@ -58,6 +58,8 @@ import {
 import { createAskUserPreviewTrigger } from '../dev/askUserPreviewTrigger';
 import { buildDevHelpMessage, matchDevHelp } from '../dev/devCommands';
 import { parseOpenChatById, type OpenChatByIdCommand } from '../dev/openChatById';
+import { parseUpdatePreview } from '../dev/updatePreview';
+import { injectUpdateStatus } from '../lib/updateStatusFeed';
 
 export interface ChatPane {
   readonly element: HTMLElement;
@@ -114,6 +116,12 @@ export interface ChatPane {
   openFind(): void;
   /** Hides the chat find bar and clears its highlight. */
   closeFind(): void;
+  /**
+   * Raises the pane's sticky notice that an update is pending, with a **Details**
+   * action that opens Settings on the Updates tab. The shell calls it once per
+   * newly available version.
+   */
+  noticeUpdateAvailable(version: string): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -964,7 +972,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * `!!open ?`; `!!?` lists them all) through the shared registry in
    * `src/renderer/src/dev/devCommands.ts` - checked first, so `?` is never read
    * as a command's own argument. `!!ask ...` paints the local ask-user preview,
-   * `!!open <chatId>` opens a stored conversation by id. All of their logic
+   * `!!open <chatId>` opens a stored conversation by id, `!!update <version>`
+   * (or `off`) previews a pending update on every update surface. All of their logic
    * lives in `src/renderer/src/dev/`; this factory plus `onAnswer`/
    * `resetInputMode`/`onStop`/`openStoredConversation` are the pane's only
    * coupling to it.
@@ -987,6 +996,17 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     const openCommand = parseOpenChatById(input);
     if (openCommand !== undefined) {
       void openStoredConversation(openCommand);
+      return true;
+    }
+    const updateCommand = parseUpdatePreview(input);
+    if (updateCommand !== undefined) {
+      if (updateCommand.kind === 'invalid') {
+        statusBanner.showError(
+          `Dev: "!!update <version>" needs a version (got "${updateCommand.raw}")`,
+        );
+      } else {
+        injectUpdateStatus(updateCommand.status);
+      }
       return true;
     }
     return false;
@@ -1591,6 +1611,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     },
     closeFind(): void {
       findBar.close();
+    },
+    noticeUpdateAvailable(version: string): void {
+      statusBanner.showNotice(`Update ${version} is available`, {
+        label: 'Details',
+        testId: 'banner-update-details',
+        onActivate: () => options.onOpenSettings('updates'),
+      });
     },
     dispose(): void {
       unsubscribeEvents?.();

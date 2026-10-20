@@ -40,6 +40,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits. | Read before adding, removing or restructuring an agent/SDK. |
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained. | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
+| `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox). | Read before changing the updater or cutting a release. |
 
 ---
 
@@ -677,7 +678,12 @@ in the pane. The second is the **open-by-id trigger**: the pure parser
 `openStoredConversation`, which reads that chat's journal, paints it, and
 opens/resumes it (the header's session id first, else a fresh session under the
 same id) — the only way to reach a chat the last-used pointer and its host gate
-can never select. A third module, `dev/devCommands.ts`, is the one **command
+can never select. The **update preview** is `dev/updatePreview.ts`
+(`!!update <version>` / `!!update off`): it injects a synthetic `UpdateStatus`
+through `lib/updateStatusFeed.ts` (the one subscription point that
+`mainShell.ts` and the Updates tab use, beside main's push), so the chat
+notice, the Home link and the Settings button all show a pending update with no
+manifest or IPC. A fourth module, `dev/devCommands.ts`, is the one **command
 registry**: each command exports its `[form, description]` usage lines, and the
 registry answers a lone `?`/`help` argument for all of them (`!!ask ?`,
 `!!open ?`; `!!?` lists every command), printing the usage into the transcript
@@ -1360,6 +1366,48 @@ are asked for, content roots when neither is named - `resources/rules/session.md
 (content then DAM, collapsed) is kept only as a fallback for a call that passes
 no `roots`; the skills are told not to rely on it.
 
+### In-app updates (`src/main/updates/`)
+
+The app swaps only `resources/app.asar` (17 MB; the install is 648 MB), driven
+by a hand-rolled `update.json` in plain GitHub folders - no `electron-updater`.
+Full description and the release procedure: `docs/updates.md`.
+
+- **Places.** The Settings **Updates** tab's `updates.url` (https only) is tried
+  first, then `updates.urls` in `package.json`. A `github.com/.../tree/<ref>/<path>`
+  URL is rewritten to `raw.githubusercontent.com`. The first strictly newer
+  manifest with a `<platform>-<arch>` entry wins; `minInstalled` above the
+  install's `updates.runtimeGeneration` means "installer required", not a swap.
+- **Modules.** `manifest.ts` (parse/validate, file-name and sha512 rules),
+  `updater.ts` (single-flight check, download + verify + stage, status),
+  `applier.ts` (swap script, `.bak` kept), `proxy.ts` (reuses the browser's
+  default proxy, else the active agent's), `composition.ts` (the sandbox
+  switch); `ipc/updates.ts` carries `updates:check` / `updates:apply` /
+  `updates:get-status` and the `updates:status-changed` push. Main owns the
+  status; the renderer only renders it.
+- **UI.** The **Updates** tab (last in Settings): Check and, on the same line,
+  Update (visible only while an update is pending, confirmed through the shared
+  `confirmDestructiveAction`-style prompt) with no help badge on the buttons;
+  then, after a subsection gap, the **Check for updates on startup** checkbox
+  (`updates.checkOnStartup`, default
+  off; a startup check is silent) and the **Custom update URL**. A found update raises the chat pane's sticky
+  notice once per version (Details → Settings → Updates) and puts an accent-blue
+  "Update X available" `sp-action-button` (`home-update-link`; the shared
+  `.action-button--primary` class in `base.css`, also on Settings' **Update**) on the Home screen's version
+  line (a `.browser-home__meta` row; a hidden button or empty row takes no
+  space); the button starts the update itself, after the same confirmation as
+  the Settings tab's **Update**. `!!update <version>` previews all of it (dev only).
+- **Sandbox.** `EDAISY_UPDATE_SANDBOX` (a folder holding `resources/app.asar`) is
+  honoured only when `!app.isPackaged`: the swap runs in-process, keeps `.bak`,
+  does not restart. This is how QA and `settings-updates.spec.ts` run the whole
+  flow.
+- **Contract changes (2026-10-21).** `contracts/appSettings.ts` gained the
+  `updates` group (`url?`, `checkOnStartup`), `settingsSnapshot.ts` and
+  `settings-ipc.ts` follow (`updateUpdateSettings`), `app-api.ts` gained
+  `DaisyUpdatesApi`, and `updates-ipc.ts` is new. Existing settings fixtures
+  gained `updates: { checkOnStartup: false }`.
+- **Unproven / deferred.** macOS runtime and the never-run CI workflow:
+  `docs/backlog.md` "In-app updates: macOS runtime and unrun CI".
+
 ### `tests/`
 
 - `tests/unit/**` — mirrors `src/` one-for-one (`tests/unit/agents/<name>/` for
@@ -1405,7 +1453,15 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3884 passed / 13 skipped** (+3 against the
+Current baseline: **`npm run test` → 3960 passed / 1 failed / 13 skipped** (+76
+against the 3884 below - **in-app updates** (2026-10-21): see "In-app updates"
+in §5 and `docs/updates.md`. The one failure is pre-existing and not caused by
+it: `tests/unit/tools/searchPageSize.test.ts` "search-page leaves the page size
+to the application", because `resources/skills/search-page/SKILL.md` contains
+`"limit": 200`. Playwright is **153 tests** (+1, `settings-updates.spec.ts`);
+a full run had only the known environment-bound `network-error` cases and
+load-correlated flakes (`agent-chat.spec.ts:410`, `settings-tabs`), green in
+isolation). Before that it was **3884 passed / 13 skipped** (+3 against the
 3881 below - **the `search-page` skill**: the bundled-skill front-matter checks pick
 up the new folder, and the deterministic-table cases cover it; no contract change -
 see `docs/verification/followons-2026-10.md` "The `search-page` skill (2026-10-20)").

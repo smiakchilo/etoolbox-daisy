@@ -39,6 +39,8 @@ export interface HomeScreen {
   readonly element: HTMLElement;
   /** Fills the app name/version; the static fallback name is already shown. */
   setAppInfo(info: AppInfo): void;
+  /** Shows the button that starts the pending update, naming its version; `undefined` hides it. */
+  setUpdateAvailable(version: string | undefined): void;
   /** Replaces the tool list with the user-invocable catalogue (empty ⇒ an honest "none" state). */
   setSkills(skills: readonly AgentChatSkill[]): void;
   /** Enables/disables the "Choose a host" affordance; there is nothing to pick with zero hosts. */
@@ -57,6 +59,8 @@ export interface HomeScreenCallbacks {
   /** Opens the app's History (stored conversations) panel. */
   readonly onOpenHistory: () => void;
   readonly onOpenSettings: () => void;
+  /** Starts the pending update (the accent "Update X available" button). */
+  readonly onApplyUpdate: () => void;
   /**
    * Fired by the close control: the user is done with the forced home screen and
    * wants the page back. The owning pane reveals the page the veil was covering
@@ -156,6 +160,26 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
   const name = el('h1', { attrs: { class: 'browser-home__name' }, text: FALLBACK_APP_NAME });
   const version = el('p', { attrs: { class: 'browser-home__version' } });
   version.hidden = true;
+  const updateLink = el('sp-action-button', {
+    attrs: {
+      class: 'browser-home__update action-button--primary',
+      size: 's',
+      'data-testid': 'home-update-link',
+    },
+  });
+  updateLink.hidden = true;
+  updateLink.addEventListener('click', () => callbacks.onApplyUpdate());
+
+  // The version and the update link share one line; the line is itself hidden
+  // when both are, so an empty row never takes a slot in the hero's column.
+  const meta = el('div', {
+    attrs: { class: 'browser-home__meta' },
+    children: [version, updateLink],
+  });
+  const syncMeta = (): void => {
+    meta.hidden = version.hidden && updateLink.hidden;
+  };
+  syncMeta();
 
   // The close control: shown only when the home screen was forced over a
   // loaded document (`setClosable`). It is not a browser Back - it dismisses
@@ -187,7 +211,7 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
 
   const hero = el('div', {
     attrs: { class: 'browser-home__hero' },
-    children: [icon, name, version],
+    children: [icon, name, meta],
   });
 
   const hostsButton = el('sp-action-button', {
@@ -303,6 +327,12 @@ export function createHomeScreen(callbacks: HomeScreenCallbacks): HomeScreen {
       name.textContent = info.name === '' ? FALLBACK_APP_NAME : info.name;
       version.textContent = info.version === '' ? '' : `Version ${info.version}`;
       version.hidden = info.version === '';
+      syncMeta();
+    },
+    setUpdateAvailable(pending: string | undefined): void {
+      updateLink.hidden = pending === undefined;
+      updateLink.textContent = pending === undefined ? '' : `Update ${pending} available`;
+      syncMeta();
     },
     setSkills(catalogue: readonly AgentChatSkill[]): void {
       toolsStatus.hidden = true;

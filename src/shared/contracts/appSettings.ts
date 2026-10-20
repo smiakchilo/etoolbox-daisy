@@ -174,6 +174,36 @@ export const memoSettingsSchema = z
 
 export type MemoSettings = Readonly<z.infer<typeof memoSettingsSchema>>;
 
+/** A custom update source is a folder URL and must be `https:`. */
+export const updateUrlSchema = z
+  .string()
+  .max(2048)
+  .refine(
+    (value) => {
+      try {
+        return new URL(value).protocol === 'https:';
+      } catch {
+        return false;
+      }
+    },
+    { message: 'must be an https URL' },
+  );
+
+/**
+ * Update settings (the Settings "Updates" tab). `url` is the optional custom
+ * update folder, checked before the built-in sources; absent means built-ins
+ * only. `checkOnStartup` (default `false`) makes the app look for an update
+ * silently once the shell has painted.
+ */
+export const updateSettingsSchema = z
+  .object({
+    url: updateUrlSchema.optional(),
+    checkOnStartup: z.boolean().default(false),
+  })
+  .strict();
+
+export type UpdateSettings = Readonly<z.infer<typeof updateSettingsSchema>>;
+
 export const appSettingsSchema = z
   .object({
     hosts: z.array(serverConfigSchema),
@@ -190,6 +220,7 @@ export const appSettingsSchema = z
     agents: z.record(agentIdSchema, agentSettingsSchema),
     browser: browserSettingsSchema.default({ disableNativeWebAuthn: true }),
     memos: memoSettingsSchema.default({ enabled: true }),
+    updates: updateSettingsSchema.default({ checkOnStartup: false }),
   })
   .strict()
   .superRefine((settings, ctx) => {

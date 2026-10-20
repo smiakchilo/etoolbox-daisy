@@ -2,16 +2,19 @@ import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLay
 import { isHostPageUrl, loadLastPageUrl, saveLastPageUrl } from '../lib/lastPageStore';
 import { clearLastChat, loadLastChat, saveLastChat } from '../lib/lastChatStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
+import { subscribeUpdateStatus } from '../lib/updateStatusFeed';
 import {
   parseNavigationTarget,
   type AgentChatHistoryEntry,
   type AppShortcutAction,
   type AppSettingsSnapshot,
   type ServerId,
+  type UpdateStatus,
 } from '../../../shared';
 import { createBrowserPane } from './browserPane';
 import { createChatPane, type StartupConversation } from './chatPane';
 import { createHistoryPanel, type HistoryPanel } from './historyPanel';
+import { confirmDestructiveAction } from '../settings/statusBanner';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
@@ -68,6 +71,26 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     // History button opens.
     onOpenHistory(): void {
       browserPane.panelHost.open(historyPanel);
+    },
+    // The home screen's "Update X available" button: the same confirmed apply
+    // the Settings tab's Update button runs, reported in the pane's status row.
+    onApplyUpdate(): void {
+      confirmDestructiveAction(
+        browserPane.surfaceStatus,
+        'install the update and restart the app',
+        () => {
+          void window.daisy.updates
+            .apply()
+            .then((result) => {
+              if (!result.ok) browserPane.surfaceStatus.showError(result.error.message);
+            })
+            .catch((error: unknown) => {
+              browserPane.surfaceStatus.showError(
+                error instanceof Error ? error.message : String(error),
+              );
+            });
+        },
+      );
     },
   });
 
@@ -165,6 +188,30 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       clearLastChat();
     },
   });
+
+  // ── Updates ──────────────────────────────────────────────────────────────
+  // Main owns the updater's status. A newly available version raises the chat
+  // pane's one-shot notice (once per version) and the home screen's link; any
+  // other status clears the link. Both are best-effort: a failed read leaves
+  // the Settings tab as the only surface.
+  let announcedUpdateVersion: string | undefined;
+  function applyUpdateStatus(status: UpdateStatus): void {
+    if (status.kind !== 'available') {
+      browserPane.home.setUpdateAvailable(undefined);
+      return;
+    }
+    browserPane.home.setUpdateAvailable(status.version);
+    if (announcedUpdateVersion === status.version) return;
+    announcedUpdateVersion = status.version;
+    chatPane.noticeUpdateAvailable(status.version);
+  }
+  subscribeUpdateStatus(applyUpdateStatus);
+  void window.daisy.updates
+    .getStatus()
+    .then((result) => {
+      if (result.ok) applyUpdateStatus(result.status);
+    })
+    .catch(() => undefined);
 
   // ── Application-wide keyboard shortcuts ──────────────────────────────────
   // The app has no menu bar, so a shortcut is matched in main on the shell's

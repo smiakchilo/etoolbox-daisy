@@ -1,0 +1,62 @@
+name: Publish update
+
+# Builds app.asar on each OS and commits the merged update.json plus the archives
+# to update/ on the default branch, where installed apps read them. Run it by
+# hand after bumping `version` in package.json. If a release changes native
+# dependencies or the Electron version, bump `updates.runtimeGeneration` too, so
+# older installs are told to reinstall instead of loading an incompatible asar.
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: Release notes shown in Settings -> Updates (optional)
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run icons
+      - run: npx electron-builder --dir
+      - run: node scripts/package-update.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-${{ matrix.os }}
+          path: release/update/*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+          merge-multiple: true
+      - name: Merge manifests
+        env:
+          UPDATE_NOTES: ${{ inputs.notes }}
+        run: node scripts/package-update.mjs --merge incoming
+      - name: Commit update/
+        run: |
+          rm -rf update
+          mkdir update
+          cp incoming/app-*.asar incoming/update.json update/
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add update
+          git commit -m "Publish update" || echo "Nothing to publish"
+          git push

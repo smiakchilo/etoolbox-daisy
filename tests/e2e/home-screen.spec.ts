@@ -4,7 +4,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 import { mainEntry } from '../support/e2e/app';
-import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
+import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
+import {
+  createLaunchProfile,
+  createScratchDirs,
+  scratchEnv,
+  writeSettings,
+} from '../support/e2e/profile';
 import { byTestId } from '../support/selectors';
 
 /**
@@ -83,6 +89,54 @@ test('a fresh install lands on the home screen, with no panel covering a gap', a
     await expect(page.locator('.history-panel__empty')).toBeVisible({ timeout: 10_000 });
     await page.locator(byTestId('history-panel-close')).click();
     await expect(page.locator(byTestId('history-panel'))).toBeHidden();
+  } finally {
+    await app.close();
+  }
+});
+
+test('a pending update shows beside the version without moving it, and a hidden link takes no space', async () => {
+  test.setTimeout(120_000);
+
+  const app = await electron.launch({
+    args: [mainEntry],
+    env: scratchEnv(createScratchDirs(scratchBase), { fakeAgent: true }),
+  });
+  try {
+    const page = await app.firstWindow();
+    await waitForComposerReady(page);
+    const version = page.locator('.browser-home__version');
+    const link = page.locator(byTestId('home-update-link'));
+    await expect(version).toBeVisible({ timeout: 10_000 });
+    await expect(link).toBeHidden();
+    const hero = await page.locator('.browser-home__meta').boundingBox();
+    const versionBefore = await version.boundingBox();
+    // Hidden, the link is no slot: the meta row is exactly as wide as the version.
+    expect(Math.abs((hero?.width ?? 0) - (versionBefore?.width ?? 1))).toBeLessThan(2);
+
+    await sendViaComposer(page, '!!update 99.0.0');
+    await expect(link).toBeVisible();
+    // A primary fill (the accent blue: blue dominates red) on a square action button.
+    const fill = await link.evaluate((node) => getComputedStyle(node).backgroundColor);
+    const [red = 0, , blue = 0] = (fill.match(/\d+/g) ?? []).map(Number);
+    expect(blue - red).toBeGreaterThan(50);
+    expect(await link.evaluate((node) => node.tagName.toLowerCase())).toBe('sp-action-button');
+    const versionShown = await version.boundingBox();
+    const linkBox = await link.boundingBox();
+    // The same line, link after the version.
+    expect(Math.abs((versionShown?.y ?? 0) - (linkBox?.y ?? 1000))).toBeLessThan(
+      versionShown?.height ?? 0,
+    );
+    expect(linkBox?.x ?? 0).toBeGreaterThan((versionShown?.x ?? 0) + (versionShown?.width ?? 0));
+
+    // Pressing it starts the update (a confirmation), not a trip to Settings.
+    await link.click();
+    await expect(page.locator('.surface-status-banner[open]')).toBeVisible();
+    await expect(page.locator(byTestId('settings-panel'))).toBeHidden();
+    await sendViaComposer(page, '!!update off');
+    await expect(link).toBeHidden();
+    const versionAfter = await version.boundingBox();
+    expect(Math.abs((versionAfter?.x ?? 0) - (versionBefore?.x ?? 1000))).toBeLessThan(2);
+    expect(Math.abs((versionAfter?.y ?? 0) - (versionBefore?.y ?? 1000))).toBeLessThan(2);
   } finally {
     await app.close();
   }

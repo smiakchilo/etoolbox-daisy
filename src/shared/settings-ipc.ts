@@ -13,6 +13,7 @@ import { projectIdSchema, proxyIdSchema, serverIdSchema } from './contracts';
 import { agentIdSchema } from './contracts';
 import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
+import { updateUrlSchema } from './contracts';
 import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
 import {
   environmentRootTextSchema,
@@ -672,3 +673,32 @@ export const updateMemoSettingsRequestSchema = z
   .strict();
 
 export type UpdateMemoSettingsRequest = Readonly<z.infer<typeof updateMemoSettingsRequestSchema>>;
+
+// ---------------------------------------------------------------------------
+// Update settings (the Updates tab)
+// ---------------------------------------------------------------------------
+
+/**
+ * `settings:update-update-settings`. A partial patch: `url` is the custom
+ * update folder (`null` clears it), `checkOnStartup` the silent startup check.
+ */
+export const updateUpdateSettingsRequestSchema = z
+  .object({
+    changes: z
+      .object({
+        url: updateUrlSchema.nullable().optional(),
+        checkOnStartup: z.boolean().optional(),
+      })
+      .strict()
+      .refine((changes) => Object.keys(changes).length > 0, {
+        message: 'at least one setting must be supplied',
+      }),
+  })
+  .strict();
+
+export type UpdateUpdateSettingsRequest = Readonly<
+  z.infer<typeof updateUpdateSettingsRequestSchema>
+>;
+
+export const updateUpdateSettingsResultSchema = settingsIpcVoidResultSchema;
+export type UpdateUpdateSettingsResult = SettingsIpcVoidResult;

@@ -419,6 +419,25 @@ describe('createChatPane status push', () => {
     pane.dispose();
   });
 
+  it('raises an update notice whose Details action opens Settings on the Updates tab', async () => {
+    const onOpenSettings = vi.fn();
+    const pane = createChatPane({ onOpenSettings });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    pane.noticeUpdateAvailable('2.0.0');
+
+    const banner = agentBanner(pane);
+    expect(banner?.hasAttribute('open')).toBe(true);
+    banner
+      ?.querySelector<HTMLElement>(byTestId('banner-update-details'))
+      ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    expect(onOpenSettings).toHaveBeenCalledWith('updates');
+
+    pane.dispose();
+  });
+
   it("a new prompt discards the previous turn's error banner", async () => {
     const pane = createChatPane({ onOpenSettings: vi.fn() });
     pane.setAgents({ copilot: { active: true, hasToken: true } });

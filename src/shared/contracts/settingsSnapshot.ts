@@ -4,6 +4,7 @@ import {
   memoSettingsSchema,
   modelIdSchema,
   reasoningEffortSchema,
+  updateSettingsSchema,
   type AgentSettings,
   type AppSettings,
   type ProxyConfig,
@@ -154,6 +155,8 @@ export const appSettingsSnapshotSchema = z
     browser: browserSettingsSchema,
     /** The self-learning flag; defaulted so a snapshot built without it still parses. */
     memos: memoSettingsSchema.default({ enabled: true }),
+    /** The update settings carry no secret, so the persisted shape is reused. */
+    updates: updateSettingsSchema.default({ checkOnStartup: false }),
   })
   .strict();
 
@@ -274,6 +277,7 @@ export function toAppSettingsSnapshot(
     agents,
     browser: settings.browser,
     memos: settings.memos,
+    updates: settings.updates,
   };
 
   return appSettingsSnapshotSchema.parse(document);

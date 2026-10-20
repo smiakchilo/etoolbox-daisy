@@ -69,6 +69,10 @@ beforeEach(() => {
     agent: {
       getAuthStatus: vi.fn(() => Promise.resolve({ apiVersion: 1, isAuthenticated: false })),
     },
+    updates: {
+      getStatus: vi.fn(() => Promise.resolve({ ok: true, status: { kind: 'idle' } })),
+      onStatusChanged: vi.fn(() => () => undefined),
+    },
   });
   Reflect.set(dom.window, 'requestAnimationFrame', () => 1);
   Reflect.set(dom.window, 'cancelAnimationFrame', () => undefined);
@@ -184,6 +188,14 @@ describe('createSettingsPanel dismissal', () => {
       ...settings.element.querySelectorAll<HTMLElement>('.settings-panel__tab-panel'),
     ].map((panel) => panel.getAttribute('value'));
     expect(panelValues).toEqual(values);
+  });
+
+  it('puts the Updates tab last', () => {
+    const { settings } = build();
+    const values = [
+      ...settings.element.querySelectorAll<HTMLElement>('.settings-panel__tabs sp-tab'),
+    ].map((tab) => tab.getAttribute('value'));
+    expect(values.at(-1)).toBe('updates');
   });
 
   it('shares the pane-owned surface-status row and owns no banner of its own', () => {

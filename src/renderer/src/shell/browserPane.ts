@@ -149,6 +149,8 @@ export interface BrowserPaneCallbacks {
    * "History" action invokes it.
    */
   readonly onOpenHistory?: () => void;
+  /** Starts the pending update; the home screen's "Update X available" button invokes it. */
+  readonly onApplyUpdate?: () => void;
 }
 
 export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): BrowserPane {
@@ -219,6 +221,9 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     },
     onOpenSettings(): void {
       callbacks.onOpenSettings?.();
+    },
+    onApplyUpdate(): void {
+      callbacks.onApplyUpdate?.();
     },
     onClose(): void {
       // Dismiss the forced veil: reveal the page it was covering. Not a

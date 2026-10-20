@@ -490,3 +490,26 @@
   flex-direction: column;
   gap: 8px;
 }
+
+/* The Updates tab's first line: Check, Update (hidden unless an update is
+   pending), then the status phrase. The class's `display` would otherwise
+   outrank the UA's `[hidden]`. */
+.updates-section .field-label-row sp-action-button {
+  min-width: 10rem;
+}
+
+.updates-section .field-label-row sp-action-button[hidden] {
+  display: none;
+}
+
+/* The two settings under the 24px `.subsection-gap` boundary keep the plain gap. */
+.updates-section__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.updates-section__status {
+  margin-left: 8px;
+  opacity: 0.8;
+}

@@ -10,6 +10,7 @@ import {
   readLeadingSkillToken,
   renderSkillCatalogue,
   resolveSkillPrompt,
+  UPDATES_STATUS_CHANGED_CHANNEL,
 } from '../shared';
 import { createViewSession } from './webview';
 import { createWebviewBridgeBroker } from './webview/bridgeBroker';
@@ -71,6 +72,7 @@ import { registerRulesIpcHandlers } from './ipc/rules';
 import { registerSkillsIpcHandlers } from './ipc/skills';
 import { registerTableExportIpcHandlers } from './ipc/tableExport';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
+import { registerUpdatesIpcHandlers } from './ipc/updates';
 import { createLogger } from './logger';
 import { loadRuleResources } from './rules/ruleResources';
 import { normalizeProjectLabel } from './rules/ruleFrontMatter';
@@ -85,6 +87,7 @@ import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsSto
 import { createSkillHost } from './skills/skillHost';
 import { createSkillStore } from './skills/skillStore';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
+import { createAppUpdater, UPDATE_SANDBOX_ENV } from './updates/composition';
 import {
   APP_USER_MODEL_ID,
   createMainWindow,
@@ -688,6 +691,32 @@ if (!gotSingleInstanceLock) {
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
     });
+    const updater = createAppUpdater({
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      installedVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      pid: process.pid,
+      executablePath: process.execPath,
+      scratchDirectory: appPaths.tmp,
+      sandbox: process.env[UPDATE_SANDBOX_ENV],
+      readSettings: () => loadSettingsSync(appPaths.settings),
+      secretStore,
+      logger,
+      quit: () => app.quit(),
+      onStatusChanged: (status) => {
+        if (!mainWindow.isDestroyed()) {
+          mainWindow.webContents.send(UPDATES_STATUS_CHANGED_CHANNEL, status);
+        }
+      },
+    });
+    registerUpdatesIpcHandlers({
+      updater,
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
+    });
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
@@ -1054,6 +1083,21 @@ if (!gotSingleInstanceLock) {
     // must not strand the chat surface on "starting" forever. `unref` so the
     // timer never keeps the process alive on its own.
     setTimeout(startAgentRuntimeOnce, 10_000).unref();
+    // The opt-in startup update check, after the shell has painted; a failure
+    // stays silent (the status simply reads "failed").
+    if (loadSettingsSync(appPaths.settings).updates.checkOnStartup) {
+      runAfterFrameLoad(
+        {
+          isLoadingMainFrame: () => mainWindow.webContents.isLoadingMainFrame(),
+          onceLoaded: (run) => {
+            mainWindow.webContents.once('did-finish-load', run);
+          },
+        },
+        () => {
+          void updater.check();
+        },
+      );
+    }
   });
 
   app.on('window-all-closed', () => {

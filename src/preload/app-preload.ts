@@ -58,6 +58,11 @@ import {
   SETTINGS_UPDATE_PROXY_CHANNEL,
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
+  SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
+  UPDATES_APPLY_CHANNEL,
+  UPDATES_CHECK_CHANNEL,
+  UPDATES_GET_STATUS_CHANNEL,
+  UPDATES_STATUS_CHANGED_CHANNEL,
   MEMOS_OPEN_FOLDER_CHANNEL,
   MEMOS_REVEAL_CHANNEL,
   RULES_OPEN_FOLDER_CHANNEL,
@@ -131,10 +136,16 @@ import {
   updateProxyRequestSchema,
   updateServerPresentationRequestSchema,
   updateServerTargetingRequestSchema,
+  updateStatusSchema,
+  updateUpdateSettingsRequestSchema,
+  parseUpdatesIpcResult,
   viewBoundsSchema,
   type MemoFileRequest,
   type MemosIpcResult,
   type UpdateMemoSettingsRequest,
+  type UpdateStatus,
+  type UpdatesIpcResult,
+  type UpdateUpdateSettingsRequest,
   type AddProjectRequest,
   type AddProjectResult,
   type AddProxyRequest,
@@ -378,6 +389,16 @@ const daisyApi: DaisyAppApi = {
       );
       return parseSettingsIpcVoidResult(raw);
     },
+    async updateUpdateSettings(
+      request: UpdateUpdateSettingsRequest,
+    ): Promise<SettingsIpcVoidResult> {
+      const parsedRequest = updateUpdateSettingsRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
+        parsedRequest,
+      );
+      return parseSettingsIpcVoidResult(raw);
+    },
   },
   agentChat: {
     async getStatus(): Promise<AgentChatStatus> {
@@ -506,6 +527,29 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = memoFileRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(MEMOS_REVEAL_CHANNEL, parsedRequest);
       return parseMemosIpcResult(raw);
+    },
+  },
+  updates: {
+    async getStatus(): Promise<UpdatesIpcResult> {
+      const raw: unknown = await ipcRenderer.invoke(UPDATES_GET_STATUS_CHANNEL);
+      return parseUpdatesIpcResult(raw);
+    },
+    async check(): Promise<UpdatesIpcResult> {
+      const raw: unknown = await ipcRenderer.invoke(UPDATES_CHECK_CHANNEL);
+      return parseUpdatesIpcResult(raw);
+    },
+    async apply(): Promise<UpdatesIpcResult> {
+      const raw: unknown = await ipcRenderer.invoke(UPDATES_APPLY_CHANNEL);
+      return parseUpdatesIpcResult(raw);
+    },
+    onStatusChanged(listener: (status: UpdateStatus) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {
+        listener(updateStatusSchema.parse(raw));
+      };
+      ipcRenderer.on(UPDATES_STATUS_CHANGED_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(UPDATES_STATUS_CHANGED_CHANNEL, handler);
+      };
     },
   },
   shortcuts: {

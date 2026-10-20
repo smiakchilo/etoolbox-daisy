@@ -1,6 +1,7 @@
 import type { AgentEvent, ChatId, MessageId, TurnId } from '../../../shared';
 import { ASK_USER_PREVIEW_HELP, ASK_USER_PREVIEW_PREFIX } from './askUserPreview';
 import { OPEN_CHAT_BY_ID_HELP, OPEN_CHAT_BY_ID_PREFIX } from './openChatById';
+import { UPDATE_PREVIEW_HELP, UPDATE_PREVIEW_PREFIX } from './updatePreview';
 
 /**
  * The dev-only `!!` command registry, and the one mechanism that answers a
@@ -29,6 +30,7 @@ export interface DevCommandDefinition {
 export const DEV_COMMANDS: readonly DevCommandDefinition[] = [
   { prefix: ASK_USER_PREVIEW_PREFIX, usage: ASK_USER_PREVIEW_HELP },
   { prefix: OPEN_CHAT_BY_ID_PREFIX, usage: OPEN_CHAT_BY_ID_HELP },
+  { prefix: UPDATE_PREVIEW_PREFIX, usage: UPDATE_PREVIEW_HELP },
 ];
 
 /** The words that, as a lone argument, ask for a command's help. */

@@ -110,10 +110,29 @@
   color: var(--spectrum-heading-color, var(--spectrum-gray-900, #242424));
 }
 
+/* The version and, when an update is pending, the link to it, on one line. */
+.browser-home__meta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* `sp-action-button` and this row set their own `display`, which beats the UA
+   `[hidden]` rule - without these a hidden link would still hold a slot. */
+.browser-home__meta[hidden],
+.browser-home__update[hidden] {
+  display: none;
+}
+
 .browser-home__version {
   margin: 0;
   font-size: var(--spectrum-font-size-100, 14px);
   color: var(--spectrum-gray-600, #6b6b6b);
+}
+
+.browser-home__update {
+  margin: 0;
 }
 
 .browser-home__actions {

@@ -3,6 +3,7 @@ import { resolveShortcut } from '../../../src/main/shortcuts';
 import { createHomeScreen, HOME_SHORTCUTS } from '../../../src/renderer/src/shell/homeScreen';
 import { makeInput } from '../../support/electronInput';
 import { installJsdomGlobals } from '../../support/jsdomGlobals';
+import { byTestId } from '../../support/selectors';
 
 /**
  * The pane's home (welcome) screen: the base layer that keeps the left pane
@@ -26,6 +27,7 @@ function build(): ReturnType<typeof createHomeScreen> {
     onOpenHosts: vi.fn(),
     onOpenHistory: vi.fn(),
     onOpenSettings: vi.fn(),
+    onApplyUpdate: vi.fn(),
     onClose: vi.fn(),
   });
 }
@@ -85,6 +87,7 @@ describe('createHomeScreen', () => {
       onOpenHosts: vi.fn(),
       onOpenHistory,
       onOpenSettings,
+      onApplyUpdate: vi.fn(),
       onClose: vi.fn(),
     });
     const actions = [...home.element.querySelectorAll<HTMLElement>('.browser-home__action')];
@@ -96,12 +99,36 @@ describe('createHomeScreen', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the update button only while an update is pending, and fires onApplyUpdate', () => {
+    const onApplyUpdate = vi.fn();
+    const home = createHomeScreen({
+      onOpenHosts: vi.fn(),
+      onOpenHistory: vi.fn(),
+      onOpenSettings: vi.fn(),
+      onApplyUpdate,
+      onClose: vi.fn(),
+    });
+    const link = home.element.querySelector<HTMLElement>(byTestId('home-update-link'));
+    if (!link) throw new Error('update button not found');
+    expect(link.hidden).toBe(true);
+
+    home.setUpdateAvailable('9.9.9');
+    expect(link.hidden).toBe(false);
+    expect(link.textContent).toContain('9.9.9');
+    link.click();
+    expect(onApplyUpdate).toHaveBeenCalledTimes(1);
+
+    home.setUpdateAvailable(undefined);
+    expect(link.hidden).toBe(true);
+  });
+
   it('offers the close control only while forced over a page, and fires onClose', () => {
     const onClose = vi.fn();
     const home = createHomeScreen({
       onOpenHosts: vi.fn(),
       onOpenHistory: vi.fn(),
       onOpenSettings: vi.fn(),
+      onApplyUpdate: vi.fn(),
       onClose,
     });
     const close = home.element.querySelector<HTMLElement>('.browser-home__close');

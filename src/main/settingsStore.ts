@@ -15,6 +15,8 @@ import {
   defaultAppSettings,
   parseAppSettings,
   projectConfigSchema,
+  updateSettingsSchema,
+  updateUrlSchema,
   type AgentToken,
   type AppSettings,
   type BrowserSettings,
@@ -210,6 +212,7 @@ const SETTINGS_DOCUMENT_KEYS = [
   'agents',
   'browser',
   'memos',
+  'updates',
 ] as const;
 const SERVER_ENTRY_KEYS = [
   'id',
@@ -233,6 +236,7 @@ const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
 const BROWSER_ENTRY_KEYS = ['disableNativeWebAuthn', 'proxy'] as const;
 const MEMO_ENTRY_KEYS = ['enabled'] as const;
+const UPDATE_ENTRY_KEYS = ['url', 'checkOnStartup'] as const;
 
 /** Matches the Settings UI default and a fresh entry's colour. */
 const DEFAULT_SERVER_COLOR: ServerColor = { kind: 'swatch', swatch: 'blue' };
@@ -566,6 +570,19 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
   const memos: Record<string, unknown> = {};
   if (typeof memoSource['enabled'] === 'boolean') memos['enabled'] = memoSource['enabled'];
 
+  // A custom update URL that is not a valid https URL is dropped (built-ins
+  // only) and a non-boolean startup flag is dropped (default off), so a
+  // hand-edit cannot fail the whole load.
+  const updateSource = pickKnownKeys(
+    isPlainObject(document['updates']) ? document['updates'] : {},
+    UPDATE_ENTRY_KEYS,
+  );
+  const updates: Record<string, unknown> = {};
+  if (updateUrlSchema.safeParse(updateSource['url']).success) updates['url'] = updateSource['url'];
+  if (typeof updateSource['checkOnStartup'] === 'boolean') {
+    updates['checkOnStartup'] = updateSource['checkOnStartup'];
+  }
+
   return {
     hosts,
     projects,
@@ -573,6 +590,7 @@ export function normalizeSettingsDocument(raw: unknown): unknown {
     agents,
     browser,
     memos,
+    updates,
   };
 }
 
@@ -707,6 +725,25 @@ export function applyMemoSettingsChange(
 ): AppSettings {
   if (changes.enabled === undefined) return settings;
   return { ...settings, memos: { ...settings.memos, enabled: changes.enabled } };
+}
+
+/**
+ * Applies a `settings:update-update-settings` patch to a document and returns
+ * the updated document. Pure: the caller persists it. An omitted key means
+ * "leave unchanged"; `url: null` clears the custom update folder.
+ */
+export function applyUpdateSettingsChange(
+  settings: AppSettings,
+  changes: {
+    readonly url?: string | null | undefined;
+    readonly checkOnStartup?: boolean | undefined;
+  },
+): AppSettings {
+  const next: Record<string, unknown> = { ...settings.updates };
+  if (changes.checkOnStartup !== undefined) next['checkOnStartup'] = changes.checkOnStartup;
+  if (changes.url === null) delete next['url'];
+  else if (changes.url !== undefined) next['url'] = changes.url;
+  return { ...settings, updates: updateSettingsSchema.parse(next) };
 }
 
 // ---------------------------------------------------------------------------

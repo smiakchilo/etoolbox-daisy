@@ -7,6 +7,13 @@
   "main": "out/main/index.js",
   "author": "EToolbox Daisy",
   "license": "MIT",
+  "updates": {
+    "urls": [
+      "https://github.com/exadel-inc/etoolbox-daisy/tree/master/update",
+      "https://github.com/smiakchilo/etoolbox-daisy/tree/master/update"
+    ],
+    "runtimeGeneration": 1
+  },
   "scripts": {
     "dev": "npm run icons && npm run build:webview-preload && electron-vite dev",
     "build": "npm run icons && electron-vite build && npm run build:webview-preload",
@@ -21,6 +28,7 @@
     "test:live": "playwright test --config playwright.live.config.ts",
     "package:win": "npm run icons && electron-builder --win --x64",
     "package:mac": "npm run icons && electron-builder --mac",
+    "package:update": "npm run build && npm run icons && electron-builder --dir && node scripts/package-update.mjs && node scripts/package-update.mjs --publish",
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {

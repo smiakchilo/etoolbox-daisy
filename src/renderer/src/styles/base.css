@@ -207,6 +207,30 @@ body.daisy-pane-resizing {
 }
 
 /*
+ * A primary (accent-filled) square `sp-action-button`: the shape of the other
+ * action buttons with the fill of a primary action, via Spectrum's documented
+ * `--mod-*` hooks (the same set the composer's enabled Send uses). Used by the
+ * pending-update buttons on the Home screen and in the Settings Updates tab.
+ */
+.action-button--primary {
+  --mod-actionbutton-background-color-default: var(
+    --spectrum-accent-background-color-default,
+    #0265dc
+  );
+  --mod-actionbutton-background-color-hover: var(--spectrum-accent-background-color-hover);
+  --mod-actionbutton-background-color-down: var(--spectrum-accent-background-color-down);
+  --mod-actionbutton-background-color-focus: var(--spectrum-accent-background-color-key-focus);
+  --mod-actionbutton-border-color-default: transparent;
+  --mod-actionbutton-border-color-hover: transparent;
+  --mod-actionbutton-border-color-down: transparent;
+  --mod-actionbutton-border-color-focus: transparent;
+  --mod-actionbutton-content-color-default: var(--spectrum-white, #ffffff);
+  --mod-actionbutton-content-color-hover: var(--spectrum-white, #ffffff);
+  --mod-actionbutton-content-color-down: var(--spectrum-white, #ffffff);
+  --mod-actionbutton-content-color-focus: var(--spectrum-white, #ffffff);
+}
+
+/*
  * The find-in-page bar, shared by both panes (`shell/findBar.ts`). A fixed-height
  * row in the pane's flex column: in the browser pane it sits above the reserved
  * view slot, so its height shrinks the region the native view is positioned
