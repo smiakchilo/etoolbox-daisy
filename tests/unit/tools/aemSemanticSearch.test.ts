@@ -16,7 +16,9 @@ import {
   type ToolError,
   type ToolHost,
   SEARCH_PAGE_SIZE,
+  applyPublicationFilter,
   createToolError,
+  describePublication,
   err,
   ok,
 } from '../../../src/shared';
@@ -287,6 +289,40 @@ describe('aem_semantic_search executor', () => {
     });
   });
 
+  it('filters every page of a search by publication, and echoes the filter', async () => {
+    let queries = 0;
+    const { host, calls } = makeHost((name, args) => {
+      if (name === 'aem_query') {
+        queries += 1;
+        return ok(queryPage(paths(2, (queries - 1) * 2), queries < 2));
+      }
+      return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
+    });
+    const execute = createAemSemanticSearchExecutor(host);
+    const started = payload(
+      await execute({ terms: 'Waldo', context: 'good', publication: 'published' }, callContext),
+    );
+    await execute({ searchId: started['searchId'] as string, matches: [] }, callContext);
+
+    const expected = applyPublicationFilter({ fulltext: 'Waldo' }, 'published');
+    const queried = calls.filter((call) => call.name === 'aem_query');
+    expect(queried).toHaveLength(2);
+    for (const call of queried) {
+      expect({ ok: true, predicates: call.args['predicates'] }).toEqual(expected);
+    }
+    expect(started['publication']).toBe('published');
+  });
+
+  it('searches without a publication condition, and echoes none, when it is omitted', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)));
+    const started = payload(
+      await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'good' }, callContext),
+    );
+
+    expect(calls[0]?.args['predicates']).toEqual({ fulltext: 'Waldo' });
+    expect(started).not.toHaveProperty('publication');
+  });
+
   it('still gives a total line while nothing has matched', async () => {
     const { host, calls } = makeHost((name) =>
       ok(name === 'aem_query' ? queryPage(paths(2), true) : noAnswer),
@@ -534,5 +570,19 @@ describe('aem_semantic_search renderer', () => {
     expect(resumed.summary).not.toBe(start.summary);
     expect(resumed.summary).not.toContain('Waldo');
     expect(resumed.parameters.length).toBeGreaterThan(0);
+  });
+
+  it('adds a publication row only to a filtered search', () => {
+    const plain = renderer.describeCall({ terms: 'Waldo', context: 'good' });
+    const filteredCall = renderer.describeCall({
+      terms: 'Waldo',
+      context: 'good',
+      publication: 'unpublished',
+    });
+
+    expect(filteredCall.parameters).toHaveLength(plain.parameters.length + 1);
+    expect(filteredCall.parameters.map((row) => row.value)).toContain(
+      describePublication('unpublished'),
+    );
   });
 });

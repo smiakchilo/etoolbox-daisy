@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   type ToolExecutor,
   type JsonValue,
+  type Publication,
   type RequestId,
   type Result,
   type ToolDescriptor,
@@ -15,6 +16,7 @@ import {
   MIN_QUERY_LIMIT,
   SEARCH_PAGE_SIZE,
   TURN_COMPLETE_RESULT_KEY,
+  applyPublicationFilter,
   buildQueryUrl,
   classifyAemResponse,
   computeDeadline,
@@ -22,9 +24,11 @@ import {
   describeTotalValues,
   effectiveRoots,
   err,
+  isComponentSearchPredicates,
   jsonValueSchema,
   newRequestId,
   ok,
+  publicationSchema,
   readCountTotal,
   resolveSearchRoots,
   resolveSearchScope,
@@ -118,6 +122,8 @@ export const aemQueryFormatAskArgsSchema = z
       .max(MAX_QUERY_LIMIT)
       .default(SEARCH_PAGE_SIZE)
       .describe('Rows per page. Omit it unless the user asked for a page size.'),
+    /** Keep only published, or only not-published, content; omitted keeps any state. */
+    publication: publicationSchema.optional(),
   })
   .strict()
   .refine((args) => (args.terms === undefined) !== (args.predicates === undefined), {
@@ -139,6 +145,9 @@ export const AEM_QUERY_FORMAT_ASK_TOOL_DESCRIPTOR: ToolDescriptor = {
     'fields, since each one adds a table column. ' +
     'A search that matches a component by `sling:resourceType` shows each hit against its ' +
     'owning page, with the path within the page beside it. ' +
+    '`publication` keeps only published or only not-published results; it applies to a ' +
+    '`terms` search (then pages and assets only), to predicates with type=cq:Page or ' +
+    'type=dam:Asset, and to a component search. ' +
     'When it returns, the table is already on screen and the user has finished loading pages: ' +
     'do not call aem_query, ask_user or this tool again for the same search, and do not repeat ' +
     'the results.',
@@ -172,19 +181,6 @@ function isRecord(value: JsonValue | undefined): value is Readonly<Record<string
 
 /** The separator inside a page path that marks where the page ends and its content begins. */
 const JCR_CONTENT_SEGMENT = '/jcr:content/';
-
-/** A `property` predicate key: `property`, `1_property`, `group.1_property`, ... */
-const PROPERTY_PREDICATE_KEY = /(?:^|[._])property$/;
-
-/**
- * Whether the predicates match on a component's `sling:resourceType` - i.e. the
- * hits are component instances, which the table shows against their owning page.
- */
-function isComponentSearch(predicates: Readonly<Record<string, string>>): boolean {
-  return Object.entries(predicates).some(
-    ([key, value]) => PROPERTY_PREDICATE_KEY.test(key) && value === 'sling:resourceType',
-  );
-}
 
 /** The keys a component hit's page path lives under - the standard identifying keys. */
 const PAGE_PATH_KEYS = ['jcr:path', 'path'] as const;
@@ -250,6 +246,12 @@ function exactTotalLine(value: number): string {
   return `Total: ${String(value)}`;
 }
 
+/** The publication filter as a clause of the model's summary; empty when none applies. */
+function describePublicationFilter(publication: Publication | undefined): string {
+  if (publication === undefined) return '';
+  return publication === 'published' ? ' (published only)' : ' (not published only)';
+}
+
 function unexpected(message: string, requestId: RequestId): Result<JsonValue, ToolError> {
   return err(createToolError('UNEXPECTED_RESPONSE', message, requestId));
 }
@@ -269,13 +271,20 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): ToolExecutor {
       const message = parsed.error.issues[0]?.message ?? 'Invalid aem_query_format_ask arguments';
       return err(createToolError('INVALID_ARGUMENT', message, requestId));
     }
-    const { terms, limit } = parsed.data;
-    const predicates = parsed.data.predicates ?? { fulltext: terms ?? '' };
+    const { terms, limit, publication } = parsed.data;
+    const searchPredicates = parsed.data.predicates ?? { fulltext: terms ?? '' };
+    // The publication filter joins the predicates the page query and the
+    // background count both use; a shape it cannot filter exactly is refused.
+    const filtered = applyPublicationFilter(searchPredicates, publication);
+    if (!filtered.ok) {
+      return err(createToolError('INVALID_ARGUMENT', filtered.message, requestId));
+    }
+    const predicates = filtered.predicates;
     // A search that matches a component by `sling:resourceType` returns the
     // component instances; the table shows each against its owning page. Read
     // from the query - never asked of the model - so the page path cannot go
     // missing when a call forgets a display flag.
-    const componentNodeDisplay = isComponentSearch(predicates)
+    const componentNodeDisplay = isComponentSearchPredicates(searchPredicates)
       ? createComponentNodeDisplay()
       : undefined;
     const scopedByPath = Object.prototype.hasOwnProperty.call(predicates, 'path');
@@ -299,7 +308,8 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): ToolExecutor {
         ? undefined
         : resolveSearchRoots(host.environmentFacts()).slice(0, MAX_SEARCH_ROOTS));
     const scope = roots === undefined ? predicates['path'] : roots.join(', ');
-    const subject = terms === undefined ? describePredicates(predicates) : `"${terms}"`;
+    const subject = terms === undefined ? describePredicates(searchPredicates) : `"${terms}"`;
+    const stateText = describePublicationFilter(publication);
 
     /**
      * Every `format_table` call this executor makes is chained through here, so
@@ -583,7 +593,8 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): ToolExecutor {
     return ok({
       operation: AEM_QUERY_FORMAT_ASK_TOOL_NAME,
       requestId,
-      ...(terms === undefined ? { predicates } : { terms }),
+      ...(terms === undefined ? { predicates: searchPredicates } : { terms }),
+      ...(publication === undefined ? {} : { publication }),
       ...(roots === undefined ? {} : { roots: [...roots] }),
       pageSize: limit,
       pages,
@@ -596,7 +607,7 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): ToolExecutor {
       // "search is finished" completion (see `TURN_COMPLETE_RESULT_KEY`).
       [TURN_COMPLETE_RESULT_KEY]: true,
       textResultForLlm:
-        `Searched for ${subject} in ${scope ?? 'the whole repository'}: ${String(rowCount)} row(s) over ` +
+        `Searched for ${subject}${stateText} in ${scope ?? 'the whole repository'}: ${String(rowCount)} row(s) over ` +
         `${String(pages)} page(s) are on screen in the chat's table (total matches: ` +
         `${totalText}). The search is finished because ${reason}. Do not repeat the results ` +
         'or call the search tools again for this search.',

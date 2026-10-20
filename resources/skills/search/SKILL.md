@@ -42,6 +42,11 @@ and use it as `roots` instead of the family, exactly as the user wrote it:
 `{ "terms": "<search string>", "roots": ["us/en"] }`. The Scope rules in your
 instructions cover the rest.
 
+If the request is about published or not-published content, keep that out of the
+search string too and add `publication` (the Publication state rules in your
+instructions): `{ "terms": "<search string>", "roots": [...], "publication":
+"published" }`. The search then returns pages and assets only.
+
 That one tool does the whole search: it runs `aem_query` (full text, one page at
 a time), shows the page as the chat's table, and while more results may exist
 offers the user a **Load more** button, loading and appending the next page on
@@ -64,7 +69,8 @@ one call with it as `predicates` instead of `terms`:
 `aem_query_format_ask` validates the map exactly as `aem_query` does and runs the
 same table and **Load more** loop, with the same `roots` discipline as above.
 Never pass both `terms` and `predicates`. Leave `properties` out (see "Leave the
-table's columns alone").
+table's columns alone"). `publication` works with hand-built predicates only when
+they set `type` to `cq:Page` or `dam:Asset`.
 
 ## Always scope
 
@@ -100,18 +106,18 @@ Use `path.exact=true` to match one node rather than a subtree, and
 
 ## Common predicates
 
-| Goal | Predicates |
-| --- | --- |
-| Node type | `type` = `cq:Page`, `dam:Asset`, `nt:unstructured`, ... |
-| Property equals | `property` = `jcr:content/cq:template`, `property.value` = `...` |
-| Property exists | `property` = `...`, `property.operation` = `exists` |
-| Property is absent | `property` = `...`, `property.operation` = `not` |
-| Any of several values | `property.1_value`, `property.2_value`, ... |
-| Full text | `fulltext` = `search terms`, `fulltext.relPath` = `jcr:content` |
-| Node name | `nodename` = `*-draft` |
-| Date range | `daterange.property` = `jcr:content/cq:lastModified`, `daterange.lowerBound` = `2024-01-01T00:00:00.000+00:00` |
-| Numeric range | `rangeproperty.property` = `...`, `rangeproperty.lowerBound` = `10` |
-| Ordering | `orderby` = `@jcr:content/cq:lastModified`, `orderby.sort` = `desc` |
+| Goal                  | Predicates                                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Node type             | `type` = `cq:Page`, `dam:Asset`, `nt:unstructured`, ...                                                        |
+| Property equals       | `property` = `jcr:content/cq:template`, `property.value` = `...`                                               |
+| Property exists       | `property` = `...`, `property.operation` = `exists`                                                            |
+| Property is absent    | `property` = `...`, `property.operation` = `not`                                                               |
+| Any of several values | `property.1_value`, `property.2_value`, ...                                                                    |
+| Full text             | `fulltext` = `search terms`, `fulltext.relPath` = `jcr:content`                                                |
+| Node name             | `nodename` = `*-draft`                                                                                         |
+| Date range            | `daterange.property` = `jcr:content/cq:lastModified`, `daterange.lowerBound` = `2024-01-01T00:00:00.000+00:00` |
+| Numeric range         | `rangeproperty.property` = `...`, `rangeproperty.lowerBound` = `10`                                            |
+| Ordering              | `orderby` = `@jcr:content/cq:lastModified`, `orderby.sort` = `desc`                                            |
 
 Property paths are relative to the matched node, so page properties usually
 live under `jcr:content/`.

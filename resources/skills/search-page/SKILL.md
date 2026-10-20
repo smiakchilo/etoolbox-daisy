@@ -116,6 +116,9 @@ Rules for this call:
 - Pass **no** `properties`: the table is the `Path` column of the pages.
 - Keep the property paths exactly as shown: `jcr:content/cq:template` and
   `jcr:content/sling:resourceType`. Do not use `like`, `%` or `nodename`.
+- When the request asks for published or not-published pages, add `publication`
+  beside `predicates` (the Publication state rules in your instructions); never a
+  replication property of your own.
 - On an instance that does not index these properties the search can be slow. Keep
   the scope as narrow as the question allows and do not retry a failed search
   unchanged.

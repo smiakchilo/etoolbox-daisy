@@ -3,6 +3,7 @@ import {
   type ToolExecutor,
   type BrokerOutcome,
   type JsonValue,
+  type Publication,
   type RequestId,
   type Result,
   type ToolDescriptor,
@@ -13,6 +14,7 @@ import {
   MAX_SEARCH_ROOTS,
   MIN_QUERY_LIMIT,
   TURN_COMPLETE_RESULT_KEY,
+  applyPublicationFilter,
   classifyAemResponse,
   computeDeadline,
   createToolError,
@@ -23,6 +25,7 @@ import {
   ok,
   parseJcrPath,
   parseOrigin,
+  publicationSchema,
   resolveSearchPageSize,
   resolveSearchRoots,
   resolveSearchScope,
@@ -109,6 +112,8 @@ export const aemSemanticSearchArgsSchema = z
       .max(MAX_QUERY_LIMIT)
       .describe('Rows per page. Omit it unless the user asked for a page size.')
       .optional(),
+    /** Call A: keep only published, or only not-published, pages and assets. */
+    publication: publicationSchema.optional(),
     /** Call B: the id call A returned. */
     searchId: z.string().trim().min(1).optional(),
     /** Call B: the candidates that match the context (numbers, or `{ candidate, excerpt }`). */
@@ -121,7 +126,8 @@ export const AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR: ToolDescriptor = {
   description:
     'Runs a semantic AEM search as a loop the application drives. Start it with ' +
     '`{ terms, context }`: `terms` is the full-text search string, `context` is what a result ' +
-    'must be about to count. It returns a `searchId` and numbered candidates (every hit of the ' +
+    'must be about to count; optional `publication` keeps only published or only not-published ' +
+    'pages and assets. It returns a `searchId` and numbered candidates (every hit of the ' +
     'page, with excerpts of its content). Judge EVERY candidate against the context, then call ' +
     'this tool again with `{ searchId, matches }` - the numbers of the matching candidates ' +
     '(`[]` if none), optionally `{ candidate, excerpt }` to choose the excerpt cited. ' +
@@ -162,6 +168,9 @@ interface Pagination {
 interface SearchState {
   readonly terms: string;
   readonly context: string;
+  readonly publication: Publication | undefined;
+  /** The query's predicates: the terms, plus the publication filter when one applies. */
+  readonly predicates: Readonly<Record<string, string>>;
   readonly roots: readonly string[];
   readonly limit: number;
   offset: number;
@@ -432,7 +441,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     const query = await host.invokeTool(
       'aem_query',
       {
-        predicates: { fulltext: state.terms },
+        predicates: { ...state.predicates },
         roots: [...state.roots],
         properties: [],
         limit: state.limit,
@@ -499,6 +508,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     requestId,
     terms: state.terms,
     context: state.context,
+    ...(state.publication === undefined ? {} : { publication: state.publication }),
     roots: [...state.roots],
     pageSize: state.limit,
     page: state.pages,
@@ -633,6 +643,10 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     context: ToolExecutionContext,
     requestId: RequestId,
   ): Promise<Result<JsonValue, ToolError>> => {
+    const filtered = applyPublicationFilter({ fulltext: terms }, args.publication);
+    if (!filtered.ok) {
+      return err(createToolError('INVALID_ARGUMENT', filtered.message, requestId));
+    }
     // A fragment (`us/en`) becomes a full path before anything is searched - by
     // configuration, a lookup or a question to the user, never a guess.
     let explicitRoots = args.roots;
@@ -650,6 +664,8 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     const state: SearchState = {
       terms,
       context: semanticContext,
+      publication: args.publication,
+      predicates: filtered.predicates,
       roots: [
         ...(explicitRoots ??
           resolveSearchRoots(host.environmentFacts()).slice(0, MAX_SEARCH_ROOTS)),

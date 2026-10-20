@@ -18,7 +18,11 @@ import {
   CONTENT_ROOT_DEFAULT,
   LOAD_ALL_ROW_LIMIT,
   SEARCH_PAGE_SIZE,
+  ancestorPublicationPredicates,
+  applyPublicationFilter,
+  contentPublicationPredicates,
   createToolError,
+  describePublication,
   err,
   ok,
 } from '../../../src/shared';
@@ -515,6 +519,89 @@ describe('aem_query_format_ask executor', () => {
     expect(tableData['rows']).toEqual([{ 'jcr:path': '/content/site/a/jcr:content/root/text' }]);
   });
 
+  it('filters a plain-term search by publication, and echoes the filter, not the added predicates', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content/site'],
+    );
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { terms: 'waldo', publication: 'published' },
+      callContext,
+    );
+
+    expect({ ok: true, predicates: calls[0]?.args['predicates'] }).toEqual(
+      applyPublicationFilter({ fulltext: 'waldo' }, 'published'),
+    );
+    expect(payload(result)).toMatchObject({ terms: 'waldo', publication: 'published' });
+  });
+
+  it('echoes the original hand-built predicates when a publication filter is added', async () => {
+    const { host, calls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
+      ['/content/site'],
+    );
+    const predicates = { type: 'cq:Page', property: 'jcr:content/cq:template' };
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { predicates, publication: 'unpublished' },
+      callContext,
+    );
+
+    expect(calls[0]?.args['predicates']).toEqual({
+      ...predicates,
+      ...contentPublicationPredicates('unpublished'),
+    });
+    expect(payload(result)['predicates']).toEqual(predicates);
+    expect(payload(result)['publication']).toBe('unpublished');
+  });
+
+  it('still shows a filtered component search against its pages', async () => {
+    const { host, calls } = makeHost(
+      (name) =>
+        name === 'aem_query'
+          ? ok({
+              ok: true,
+              operation: 'aem_query',
+              rows: [{ 'jcr:path': '/content/site/a/jcr:content/root/text' }],
+              pagination: {
+                offset: 0,
+                limit: 50,
+                returned: 1,
+                hasMore: false,
+                total: { accuracy: 'exact', value: 1 },
+              },
+              textResultForLlm: 'rows',
+              resultType: 'success',
+            })
+          : ok(tableOk),
+      ['/content/site'],
+    );
+    const predicates = { type: 'nt:unstructured', property: 'sling:resourceType' };
+    await createAemQueryFormatAskExecutor(host)(
+      { predicates, publication: 'published' },
+      callContext,
+    );
+
+    expect(calls[0]?.args['predicates']).toEqual({
+      ...predicates,
+      ...ancestorPublicationPredicates('published'),
+    });
+    const tableData = calls[1]?.args['data'] as Record<string, JsonValue>;
+    expect(tableData['rows']).toEqual([
+      { 'jcr:path': '/content/site/a', node: 'jcr:content/root/text' },
+    ]);
+  });
+
+  it('refuses a publication filter on a shape it cannot apply, without calling anything', async () => {
+    const { host, calls } = makeHost(() => ok(tableOk), ['/content/site']);
+    const result = await createAemQueryFormatAskExecutor(host)(
+      { predicates: { type: 'nt:unstructured', fulltext: 'waldo' }, publication: 'published' },
+      callContext,
+    );
+
+    expect(!result.ok && result.error.code).toBe('INVALID_ARGUMENT');
+    expect(calls).toEqual([]);
+  });
+
   it('passes no roots when the predicates carry their own path', async () => {
     const { host, calls } = makeHost(
       (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
@@ -866,6 +953,25 @@ describe('aem_query_format_ask "Load all"', () => {
 });
 
 describe('aem_query_format_ask background count', () => {
+  it('counts with the publication filter, so the honest total is the filtered one', async () => {
+    const { host, countUrls } = makeHost(
+      (name) => (name === 'aem_query' ? ok(lowerBoundPage(2, false)) : ok(tableOk)),
+      ['/content/site'],
+      { currentContext: () => COUNT_CONTEXT, count: () => countResponse(7) },
+    );
+    await createAemQueryFormatAskExecutor(host)(
+      { predicates: { type: 'cq:Page' }, publication: 'unpublished' },
+      callContext,
+    );
+    await flush();
+
+    expect(countUrls).toHaveLength(1);
+    const params = new URL(countUrls[0] ?? '').searchParams;
+    for (const [key, value] of Object.entries(contentPublicationPredicates('unpublished'))) {
+      expect(params.get(key)).toBe(value);
+    }
+  });
+
   it('starts no count when page 1 is exact (never even reaches for a context)', async () => {
     const { host, calls, countUrls } = makeHost((name) =>
       name === 'aem_query' ? ok(queryPage(2, false)) : ok(tableOk),
@@ -1077,5 +1183,18 @@ describe('aem_query_format_ask renderer', () => {
     expect(finished.summary).toContain('waldo');
     expect(finished.parameters.length).toBeGreaterThan(byTerms.parameters.length);
     expect(finished.parameters.some((row) => row.value.includes('73'))).toBe(true);
+  });
+
+  it('adds a publication row only when the search is filtered, distinct per state', () => {
+    const plain = renderer.describeCall({ terms: 'waldo' });
+    const published = renderer.describeCall({ terms: 'waldo', publication: 'published' });
+    const unpublished = renderer.describeCall({ terms: 'waldo', publication: 'unpublished' });
+
+    expect(published.parameters).toHaveLength(plain.parameters.length + 1);
+    expect(unpublished.parameters).toHaveLength(plain.parameters.length + 1);
+    const added = (details: typeof published) =>
+      details.parameters.find((row) => !plain.parameters.some((p) => p.label === row.label));
+    expect(added(published)?.value).toBe(describePublication('published'));
+    expect(added(unpublished)?.value).toBe(describePublication('unpublished'));
   });
 });

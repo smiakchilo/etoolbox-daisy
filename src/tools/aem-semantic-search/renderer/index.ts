@@ -6,6 +6,7 @@ import {
   asRecord,
   asStringArray,
   asText,
+  describePublication,
   parameterRows,
 } from '../../../shared';
 import { describeSemanticTotal } from '../aemSemanticSearch';
@@ -19,7 +20,7 @@ import { describeSemanticTotal } from '../aemSemanticSearch';
  *
  *  - a **start** call (`{ terms, context }`) - the collapsed summary is the
  *    terms themselves (with the page once past the first); rows Terms, Context,
- *    Roots, Page size, then Page, Candidates read, Matches shown and AEM hits
+ *    Publication (only when filtered), Roots, Page size, then Page, Candidates read, Matches shown and AEM hits
  *    (AEM's own total, not the relevant count) as the result reports them;
  *  - a **continue** call (`{ searchId, matches }`) - the model reporting its
  *    verdict on the candidates the start call returned. It carries no terms of
@@ -74,6 +75,7 @@ function describeCall(
     parameters: parameterRows([
       ['Terms', terms],
       ['Context', asText(known?.['context']) ?? asText(args['context'])],
+      ['Publication', describePublication(known?.['publication'] ?? args['publication'])],
       ['Roots', roots?.join(', ')],
       ['Page size', asCount(known?.['pageSize']) ?? asCount(args['limit'])],
       ['Page', asCount(known?.['page'])],

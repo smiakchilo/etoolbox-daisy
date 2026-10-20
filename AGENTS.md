@@ -204,7 +204,13 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change **removes the memo billet's hover
+> The most recent shared-surface change **adds the publication filter**
+> (2026-10-20): a new `tools/core/publication.ts` (exported through the tools
+> barrel) builds the QueryBuilder predicates for the search composites' optional
+> `publication` argument. No file under `contracts/` changed. See "Publication
+> state" below and `docs/verification/followons-2026-10.md` "Published-only and
+> not-published search filter (2026-10-20)".
+> Before that, the shared-surface change **removed the memo billet's hover
 > actions** (2026-10-19): `tools/core/toolRenderer.ts` lost `ToolCallAction` /
 > `readActions` (as did the renderer registry), `src/renderer/src/chat/toolCallActions.ts`
 > is deleted, and `memos-ipc.ts` / `ipc-channels.ts` / `DaisyMemosApi` lost
@@ -1241,7 +1247,7 @@ arrived, so the word "rules" is used throughout.)
 
 | File | Holds | Placeholders |
 | --- | --- | --- |
-| `session.md` | The always-on session instructions: current-page context, **Scope**, **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
+| `session.md` | The always-on session instructions: current-page context, **Scope**, **Publication state**, **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
 | `skills.md` | The skill-catalogue preamble, incl. "a skill's input is the whole request" | `{{skillTool}}` (any number), `{{catalogue}}` - exactly once (`renderSkillCatalogue`) |
 | `user-rules.md` | The frame around the user's generic rules, appended to the session instructions | `{{rules}}` - exactly once (`renderGenericRules`) |
 | `project-rules.md` | The frame around a project's rules, sent on the model prompt | `{{project}}` and `{{rules}}` - each exactly once (`renderProjectRules`) |
@@ -1366,6 +1372,26 @@ are asked for, content roots when neither is named - `resources/rules/session.md
 (content then DAM, collapsed) is kept only as a fallback for a call that passes
 no `roots`; the skills are told not to rely on it.
 
+**Publication state is the model's choice of mode; the filter is the
+application's.** `aem_query_format_ask` and `aem_semantic_search` take an
+optional `publication` argument (`"published"` / `"unpublished"`). The model sets
+it from what the request means, in any wording or language
+(`resources/rules/session.md` "Publication state", stated once; each search
+skill adds one procedure line). `applyPublicationFilter`
+(`src/shared/tools/core/publication.ts`) builds the predicates by shape:
+- published means `jcr:content/cq:lastReplicationAction = Activate`, and not
+  published is its `p.not` complement;
+- a component search gets an OR over ancestor depths 1..20, because QueryBuilder
+  has no joins;
+- `type=cq:Page` / `type=dam:Asset` gets its own `jcr:content` condition;
+- a plain full-text search is typed to pages and assets first;
+- any other shape is refused with `INVALID_ARGUMENT`.
+
+The filtered predicates drive the page query and the honest count. The
+component `Path`/`Node` split and the echoed `predicates` keep the model's own.
+Both billets show a `Publication` row. The groups `9001_group` and `9002_group`
+are reserved. See `docs/compatibility.md` §11.7.
+
 ### In-app updates (`src/main/updates/`)
 
 The app swaps only `resources/app.asar` (17 MB; the install is 648 MB), driven
@@ -1453,8 +1479,14 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3960 passed / 1 failed / 13 skipped** (+76
-against the 3884 below - **in-app updates** (2026-10-21): see "In-app updates"
+Current baseline: **`npm run test` → 3983 passed / 1 failed / 13 skipped** (+23
+against the 3960 below - **the publication filter** (2026-10-20): 22 new cases in
+`publication.test.ts`, `aemQueryFormatAsk.test.ts` and
+`aemSemanticSearch.test.ts`. The rest of the gap comes from other working-tree
+changes. The same pre-existing `searchPageSize` failure remains. See
+`docs/verification/followons-2026-10.md` "Published-only and not-published
+search filter (2026-10-20)"). Before that it was **3960 passed / 1 failed / 13
+skipped** (+76 against the 3884 below - **in-app updates** (2026-10-21): see "In-app updates"
 in §5 and `docs/updates.md`. The one failure is pre-existing and not caused by
 it: `tests/unit/tools/searchPageSize.test.ts` "search-page leaves the page size
 to the application", because `resources/skills/search-page/SKILL.md` contains

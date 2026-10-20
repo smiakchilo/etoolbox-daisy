@@ -5,6 +5,7 @@ import {
   asCount,
   asRecord,
   asStringArray,
+  describePublication,
   parameterRows,
 } from '../../../shared';
 import { describePredicates, describeSearchTotal } from '../aemQueryFormatAsk';
@@ -15,7 +16,7 @@ import { describePredicates, describeSearchTotal } from '../aemQueryFormatAsk';
  * which the transcript shows on their own. Composed with the user (AGENTS.md
  * section 5): the collapsed summary is `Search: <terms>` (or the predicates as
  * `key=value; ...` for a hand-built search); the rows are Terms or Predicates,
- * Roots, Page size, then - once the search finished - Pages, Rows and Total.
+ * Publication (only when filtered), Roots, Page size, then - once the search finished - Pages, Rows and Total.
  */
 function describeCall(
   args: Readonly<Record<string, JsonValue>>,
@@ -35,6 +36,7 @@ function describeCall(
     parameters: parameterRows([
       ['Terms', terms],
       ['Predicates', predicates],
+      ['Publication', describePublication(args['publication'])],
       ['Roots', roots?.join(', ')],
       ['Page size', pageSize],
       ['Pages', asCount(finished?.['pages'])],

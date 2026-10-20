@@ -145,6 +145,11 @@ instance). If the request names a scope ("... under us/en"), use it as `roots`
 instead, exactly as the user wrote it: `"roots": ["us/en"]`. The Scope rules in
 your instructions cover the rest.
 
+When the request asks for pages that are published or not published, add
+`publication` beside `predicates` (the Publication state rules in your
+instructions). The application then keeps only the instances whose owning page is
+in that state; never write a replication property into the predicates yourself.
+
 Pass **no** `properties`, and no other output argument. The table is exactly two
 columns - **`Path`** (the owning page) and **`Node`** (the component node's path
 within it) - and a `properties` list merely adds columns (such as an unwanted
