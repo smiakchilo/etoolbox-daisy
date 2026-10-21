@@ -7,6 +7,13 @@ metadata:
 
 # Finding the pages of a template or page type
 
+**Start here - before any tool call.** The input is a template or a page type,
+never search terms: do not pass it as `terms` to `aem_query_format_ask`. Look at
+the input: a template given as a path (it starts with `/`) goes straight to step 3;
+a template **name or title** means your **first** tool call is the step 1 template
+listing; a page resource type is handled by step 2. Call `aem_query_format_ask` only
+once you hold the template path and/or the resource type.
+
 The job: identify the **template path** and/or the **page resource type**, then make
 **one** `aem_query_format_ask` call over `cq:Page`. Inputs, any of which may be
 given (several are combined with AND):

@@ -7,6 +7,13 @@ metadata:
 
 # Finding the pages that use a component
 
+**Start here - before any tool call.** The input is a component, never search
+terms: do not pass it as `terms` to `aem_query_format_ask`, and do not call that
+tool until step 1 has given you a resource type (it contains a `/`). Look at the
+input: a value **with** a `/` is a resource type - go to phase A; a value
+**without** one ("Product Module") is a title - your **first** tool call is the
+phase B `aem_query` on `cq:Component`.
+
 The job is: work out the component's **resource type**, then run **one search**
 that shows the pages using it. There are two inputs, and only the first step
 differs between them:

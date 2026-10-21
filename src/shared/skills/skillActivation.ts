@@ -112,8 +112,9 @@ export function resolveSkillPrompt(
   ];
   if (token.rest !== '') {
     parts.push(
-      "The text below is the user's input for this skill. Act on it directly; do not ask the " +
-        `user to restate it.\n\n${token.rest}`,
+      "The text below is the user's input for this skill. Act on it directly by starting the " +
+        "skill's procedure with it, from its first step; do not ask the user to restate it." +
+        `\n\n${token.rest}`,
     );
   }
   return { modelPrompt: parts.join('\n\n'), activatedSkill: activation.name };
