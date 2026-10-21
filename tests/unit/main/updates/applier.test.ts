@@ -46,10 +46,12 @@ describe('buildMacScript', () => {
     expect(script).toContain('PID=77');
   });
 
-  it('clears quarantine and reopens the bundle', () => {
+  it('clears quarantine, reseals the bundle and reopens it', () => {
     const script = buildMacScript(macPlan);
     expect(script).toContain('xattr -cr "$APP"');
+    expect(script).toContain('codesign --force --deep --sign - "$APP"');
     expect(script).toContain('open "$APP"');
+    expect(script.indexOf('codesign')).toBeLessThan(script.indexOf('open "$APP"'));
   });
 });
 

@@ -1,22 +1,21 @@
-// Publishes the in-app update for the platform this runs on, and merges the
-// per-platform results into the one `update.json` the app reads.
+// Packs the in-app update for the platform this runs on, and merges the
+// per-platform results into the one `update.json` the app reads. Run by the
+// "Publish update" workflow (.github/workflows/publish-update.yml).
 //
 //   node scripts/package-update.mjs                    pack release/update/ for this platform
 //   node scripts/package-update.mjs --merge <dir>      fold <dir>/update.*.json into <dir>/update.json
-//   node scripts/package-update.mjs --publish         merge release/update/ and replace update/ (see `npm run package:update`)
 //
 // `--notes <text>` (or the UPDATE_NOTES environment variable) sets the release notes.
 //
 // Packing expects `electron-builder --dir` to have produced an unpacked app under
-// `release/` (see `npm run package:update`). Only `app.asar` is published: the
-// updater swaps that one file and never touches the rest of the install.
+// `release/`. Only `app.asar` is published: the updater swaps that one file and
+// never touches the rest of the install.
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -98,28 +97,11 @@ function merge(directory) {
   return manifest;
 }
 
-// Replaces the repository's update/ folder with the merged manifest and the
-// archives it names, ready to commit.
-function publish() {
-  const source = path.join(root, 'release', 'update');
-  const manifest = merge(source);
-  const target = path.join(root, 'update');
-  rmSync(target, { recursive: true, force: true });
-  mkdirSync(target, { recursive: true });
-  copyFileSync(path.join(source, 'update.json'), path.join(target, 'update.json'));
-  for (const file of Object.values(manifest.files)) {
-    copyFileSync(path.join(source, file.name), path.join(target, file.name));
-  }
-  console.log(`Updated update/ for ${manifest.version}; review, commit and push it.`);
-}
-
 const args = process.argv.slice(2);
 const notesIndex = args.indexOf('--notes');
 if (notesIndex !== -1) process.env.UPDATE_NOTES = args[notesIndex + 1] ?? '';
 
-if (args[0] === '--publish') {
-  publish();
-} else if (args[0] === '--merge') {
+if (args[0] === '--merge') {
   merge(path.resolve(args[1] ?? path.join(root, 'release', 'update')));
 } else {
   pack(path.join(root, 'release', 'update'));

@@ -22,6 +22,8 @@ afterEach(() => {
   scratch.cleanup();
 });
 
+const WIN = { platform: 'win32', arch: 'x64' } as const;
+
 function writeFakeExe(filePath: string): void {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, 'not a real exe, just a marker file for tests');
@@ -58,13 +60,13 @@ describe('resolveSdkRuntimeExePath', () => {
       'copilot-runtime.exe',
     );
     writeFakeExe(exePath);
-    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir };
+    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir, ...WIN };
     expect(resolveSdkRuntimeExePath(env)).toBe(exePath);
   });
 
   it('throws a descriptive error when the runtime exe is missing', () => {
     const devRootDir = createScratchRoot();
-    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir };
+    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir, ...WIN };
     expect(() => resolveSdkRuntimeExePath(env)).toThrow(/copilot-runtime\.exe/);
   });
 });
@@ -80,14 +82,51 @@ describe('resolveCliExePath', () => {
       'copilot.exe',
     );
     writeFakeExe(exePath);
-    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir };
+    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir, ...WIN };
     expect(resolveCliExePath(env)).toBe(exePath);
   });
 
   it('throws a descriptive error when the CLI exe is missing', () => {
     const devRootDir = createScratchRoot();
-    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir };
+    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir, ...WIN };
     expect(() => resolveCliExePath(env)).toThrow(/copilot\.exe/);
+  });
+});
+
+describe('macOS layouts', () => {
+  it.each(['arm64', 'x64'])('resolves the runtime and CLI without .exe on darwin-%s', (arch) => {
+    const devRootDir = createScratchRoot();
+    const modules = path.join(devRootDir, 'node_modules', '@github');
+    const runtime = path.join(
+      modules,
+      `copilot-sdk-darwin-${arch}`,
+      'prebuilds',
+      `darwin-${arch}`,
+      'copilot-runtime',
+    );
+    const cli = path.join(modules, `copilot-darwin-${arch}`, 'copilot');
+    writeFakeExe(runtime);
+    writeFakeExe(cli);
+    const env: RuntimePathsEnv = {
+      isPackaged: false,
+      resourcesPath: 'unused',
+      devRootDir,
+      platform: 'darwin',
+      arch,
+    };
+    expect(resolveSdkRuntimeExePath(env)).toBe(runtime);
+    expect(resolveCliExePath(env)).toBe(cli);
+  });
+
+  it('refuses a platform the application does not bundle a runtime for', () => {
+    const env: RuntimePathsEnv = {
+      isPackaged: false,
+      resourcesPath: 'unused',
+      devRootDir: 'unused',
+      platform: 'linux',
+      arch: 'x64',
+    };
+    expect(() => resolveSdkRuntimeExePath(env)).toThrow(/linux-x64/);
   });
 });
 

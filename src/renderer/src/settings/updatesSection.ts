@@ -51,7 +51,7 @@ export function describeUpdateStatus(status: UpdateStatus): string {
     case 'available':
       return `Version ${status.version} is available`;
     case 'installerRequired':
-      return `Version ${status.version} needs a new installer`;
+      return `Version ${status.version} needs a fresh installation`;
     case 'applying':
       return 'Updating\u2026';
     case 'failed':

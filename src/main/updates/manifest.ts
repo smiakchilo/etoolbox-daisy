@@ -15,7 +15,7 @@ const updateFileSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
   sha512: z.string().regex(/^[0-9a-fA-F]{128}$/),
   size: z.number().int().positive().max(MAX_UPDATE_ARCHIVE_BYTES),
-  /** The oldest installed runtime generation this archive runs on; newer needs an installer. */
+  /** The oldest installed runtime generation this archive runs on; newer needs a fresh installation. */
   minInstalled: z.number().int().nonnegative().default(0),
 });
 

@@ -85,6 +85,8 @@ export function buildMacScript(plan: ApplyPlan): string {
     'fi',
     'rm -f "$NEW"',
     'xattr -cr "$APP" 2>/dev/null',
+    // The swap leaves the bundle's ad-hoc seal describing the old archive; seal it again.
+    'codesign --force --deep --sign - "$APP" 2>/dev/null',
     'open "$APP"',
     'rm -f "$0"',
     '',

@@ -26,6 +26,12 @@ files:
   - '!node_modules/@github/copilot-win32-x64/ripgrep/**'
   - '!node_modules/@github/copilot-win32-x64/tgrep/**'
   - '!node_modules/@github/copilot-win32-x64/builtin-skills/**'
+  # The macOS equivalents of the same dead weight (darwin packages have no
+  # OneAuth/msal payload). The CLI package's own `runtime.node` is deliberately
+  # kept here: dropping it was only proven for the Windows login flow, and the
+  # macOS login is unverified.
+  - '!node_modules/@github/copilot-sdk-darwin-*/{plugins,ripgrep,tgrep,builtin-skills}/**'
+  - '!node_modules/@github/copilot-darwin-*/{plugins,ripgrep,tgrep,builtin-skills}/**'
   # MSAL / OneAuth are Microsoft identity-broker binaries. This app only ever
   # authenticates a GitHub account via the CLI's OAuth web flow, and the
   # resulting credential is stored through the Windows Credential Manager
@@ -59,6 +65,8 @@ files:
 asarUnpack:
   - node_modules/@github/copilot-sdk-win32-x64/**
   - node_modules/@github/copilot-win32-x64/**
+  - node_modules/@github/copilot-sdk-darwin-*/**
+  - node_modules/@github/copilot-darwin-*/**
 extraResources:
   - from: resources
     to: resources
@@ -70,7 +78,7 @@ win:
   # `build`/`dev`/`package:*`) and are git-ignored.
   icon: resources/icon.ico
   target:
-    - target: nsis
+    - target: zip
       arch:
         - x64
 mac:
@@ -78,17 +86,9 @@ mac:
   # build/icon.icns, finds nothing and ships Electron's default icon.
   # resources/icon.icns is generated from resources/icon.png at build time.
   icon: resources/icon.icns
-nsis:
-  oneClick: false
-  perMachine: false
-  allowToChangeInstallationDirectory: true
-  # User-facing data lives under the user's own etoolbox-daisy home directory
-  # (see requirements-decisions.md section 8) and technical data under
-  # %LOCALAPPDATA%\etoolbox-daisy, not under this installer's per-version
-  # program directory, so upgrades keep the same data paths. Neither is removed
-  # by this flag (it only covers $APPDATA\<app name>); scripts/installer.nsh
-  # removes the technical %LOCALAPPDATA% folder on a real uninstall (never on an
-  # upgrade) and leaves the user-visible home folder alone.
-  deleteAppDataOnUninstall: false
-  include: scripts/installer.nsh
+  target:
+    - target: zip
+      arch:
+        - x64
+        - arm64
 publish: null

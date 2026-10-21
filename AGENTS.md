@@ -41,6 +41,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained. | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox). | Read before changing the updater or cutting a release. |
+| `docs/run-from-source.md` | The build-from-source distribution: `scripts/run-from-source.cmd` (pinned, signature-checked portable Node) + `scripts/run-from-source.mjs`, `npm run start:source`. | Read before changing those scripts; keep the `.cmd` CRLF. |
 
 ---
 
@@ -50,7 +51,7 @@ Target: Windows 10 x64, internal, unsigned build.
 
 - 09 — genuine history, models, origin changes
 - 10 — UX, deletion, failure handling
-- 11 — NSIS installer, mock-AEM acceptance (**Milestone B**)
+- 11 — zip distribution, mock-AEM acceptance (**Milestone B**)
 - 12 — real AEM verification (**Milestone C**, needs an authorized environment)
 
 Step 09's **history surface** now exists — a whole-size History panel listing
@@ -1438,8 +1439,12 @@ Full description and the release procedure: `docs/updates.md`.
   `settings-ipc.ts` follow (`updateUpdateSettings`), `app-api.ts` gained
   `DaisyUpdatesApi`, and `updates-ipc.ts` is new. Existing settings fixtures
   gained `updates: { checkOnStartup: false }`.
-- **Unproven / deferred.** macOS runtime and the never-run CI workflow:
-  `docs/backlog.md` "In-app updates: macOS runtime and unrun CI".
+- **Unproven / deferred.** The macOS runtime paths (`runtimePaths.ts`), the
+  Mac zip targets and `asarUnpack`, the three-platform workflow matrix
+  (`publish-update.yml`) and the Mac swap's ad-hoc `codesign` re-seal exist but
+  have never run on a Mac or in CI: `docs/backlog.md` "In-app updates: macOS
+  runtime and unrun CI". Updates are published only by that workflow; there is
+  no local publish command.
 
 ### `tests/`
 
@@ -1473,7 +1478,7 @@ npm run verify       # typecheck + lint + format:check + vitest   ← the gate
 npm run build        # electron-vite build + the separate webview-preload build
 npm run test         # vitest only
 npm run test:e2e     # Playwright, against the BUILT app — build first
-npm run package:win  # NSIS x64 per-user installer
+npm run package:win  # x64 portable zip (also package:mac: x64 + arm64 zips)
 npm run dev          # electron-vite dev
 npm run test:live    # opt-in: live scenarios against the BUILT app, real profile
 ```

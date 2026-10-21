@@ -4,7 +4,7 @@ import { z } from 'zod';
  * The updater's status, shared by main (which owns it) and the renderer (the
  * Settings "Updates" tab, the chat pane's notice and the home screen's link).
  * `available` carries the version of a pending update; `installerRequired`
- * means a newer version exists but needs a full installer (the Electron or
+ * means a newer version exists but needs a fresh installation (the Electron or
  * runtime generation changed), so it cannot be applied in place.
  */
 export const updateStatusSchema = z.discriminatedUnion('kind', [

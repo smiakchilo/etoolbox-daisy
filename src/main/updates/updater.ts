@@ -19,7 +19,7 @@ const ARCHIVE_TIMEOUT_MS = 5 * 60_000;
 
 export interface UpdaterDependencies {
   readonly installedVersion: string;
-  /** The runtime generation this install ships; a manifest's `minInstalled` above it needs an installer. */
+  /** The runtime generation this install ships; a manifest's `minInstalled` above it needs a fresh installation. */
   readonly runtimeGeneration: number;
   /** `<platform>-<arch>`, the key into a manifest's `files`. */
   readonly platformKey: string;
