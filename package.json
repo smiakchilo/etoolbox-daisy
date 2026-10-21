@@ -26,7 +26,6 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:live": "playwright test --config playwright.live.config.ts",
-    "start:source": "node scripts/run-from-source.mjs",
     "package:win": "npm run icons && electron-builder --win --x64",
     "package:mac": "npm run icons && electron-builder --mac",
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"

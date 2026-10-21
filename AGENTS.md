@@ -41,7 +41,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained. | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox). | Read before changing the updater or cutting a release. |
-| `docs/run-from-source.md` | The build-from-source distribution: `scripts/run-from-source.cmd` (pinned, signature-checked portable Node) + `scripts/run-from-source.mjs`, `npm run start:source`. | Read before changing those scripts; keep the `.cmd` CRLF. |
+| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - pinned, signature-checked portable Node - plus the shared `install/build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable. |
 
 ---
 

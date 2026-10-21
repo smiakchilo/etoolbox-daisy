@@ -208,6 +208,7 @@ export default tseslint.config(
       'electron.vite.webview-preload.config.ts',
       'scripts/**/*.ts',
       'scripts/**/*.mjs',
+      'install/**/*.mjs',
       'vitest.config.ts',
       'playwright.config.ts',
       'playwright.live.config.ts',
