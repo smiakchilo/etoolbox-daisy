@@ -217,6 +217,55 @@ describe('replayJournalIntoTranscript', () => {
     expect(store.toolCallFor('tool-open' as ToolCallId)?.status).toEqual({ kind: 'abandoned' });
   });
 
+  it('settles a call the journal interrupted before it appended the notice', () => {
+    // The reported defect: a turn cancelled by a navigation leaves the running
+    // composite's requested/approved events and then an `interruption` record.
+    // Replaying the notice used to drop the "is anything running?" index, so the
+    // final settle had nothing to settle and the billet span forever - even
+    // after a restart.
+    const store = createTranscriptStore();
+    const requested: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 4,
+      event: agentEventSchema.parse({
+        type: 'tool.call.requested',
+        chatId: CHAT,
+        sequence: 1,
+        toolCallId: 'composite',
+        toolName: 'aem_query_format_ask',
+        arguments: { terms: 'waldo' },
+      }),
+    };
+    const approved: ChatJournalAgentEventRecord = {
+      recordType: 'agent.event',
+      at: 5,
+      event: agentEventSchema.parse({
+        type: 'tool.call.approved',
+        chatId: CHAT,
+        sequence: 2,
+        toolCallId: 'composite',
+      }),
+    };
+    const interruption: ChatJournalInterruptionRecord = {
+      recordType: 'interruption',
+      at: 6,
+      chatId: CHAT,
+      reason: 'navigation',
+    };
+
+    replayJournalIntoTranscript(
+      [userPrompt('turn-1', 'search'), requested, approved, interruption],
+      store,
+    );
+
+    expect(store.toolCallFor('composite' as ToolCallId)?.status).toEqual({ kind: 'abandoned' });
+    expect(store.items().map((item) => item.kind)).toEqual([
+      'userPrompt',
+      'toolCall',
+      'interruption',
+    ]);
+  });
+
   it('settles unfinished calls with no status word when the turn ended waiting on the user', () => {
     // The app closed while a "Load more" question was on screen. Nothing was in
     // flight, so neither the composite that owns the question nor the ask_user

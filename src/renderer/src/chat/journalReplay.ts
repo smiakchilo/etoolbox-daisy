@@ -17,7 +17,8 @@ import type { TranscriptStore } from './transcriptStore';
  *    {@link TranscriptStore.applyEvent} the live stream uses;
  *  - `interruption` - a durable "Session stopped" notice (see `chatJournal.ts`).
  *    It is replayed as a *historical* notice (`resumable: false`), so a resumed
- *    chat shows it without offering the Resume action the live pane does.
+ *    chat shows it without offering the Resume action the live pane does - and
+ *    it settles the calls the turn had in flight, so none is left spinning.
  *
  * Deliberately ignored:
  *  - `header`, `chat.closed` and `turn.summary` - journal bookkeeping /
@@ -70,6 +71,11 @@ export function replayJournalIntoTranscript(
   // A rebuilt transcript has no live turn, so nothing can still be running: a
   // call the journal left without a result renders as an honest non-spinning
   // "Interrupted" billet instead of a spinner that will never stop.
+  //
+  // This sweep is derived from the calls' own statuses, not from the store's
+  // running index: an `interruption` record above has already settled the calls
+  // it cancelled (see `TranscriptStore.addInterruption`), and the sweep must
+  // still cover the ones no record ever settled.
   //
   // The one exception is a turn that ended **waiting on the user**: a still-
   // running call whose tool renders as a conversation (`ask_user`) means a

@@ -53,12 +53,15 @@ export type ToolCallStatus =
   | { readonly kind: 'succeeded'; readonly data: JsonValue }
   | { readonly kind: 'failed'; readonly error: ToolError }
   /*
-   * A call the journal left unresolved: the app closed (or its turn was
-   * stopped) between `tool.call.requested` and any result. Only ever set while
-   * rebuilding a transcript from the journal (`abandonRunningToolCalls`) - a
-   * live call always settles with a result. It is deliberately NOT running:
-   * the executor's state died with the app, so the call can never resume, and
-   * rendering it as a spinner forever would be a lie.
+   * A call with no live turn owning it: the turn was interrupted (a Stop, or the
+   * controller's navigation cancellation), the app closed mid-turn, or the turn
+   * otherwise ended between `tool.call.requested` and any result. The executor's
+   * state died with the turn - a call can never resume - so it is deliberately
+   * NOT running: rendering it as a spinner would be a lie. A real result that
+   * arrives afterwards still overwrites it, so a call that had actually finished
+   * keeps its true outcome. Settled by `addInterruption`, a turn leaving the
+   * in-flight state, and the journal replay's final sweep;
+   * `describeToolCallStatus` labels it "Interrupted".
    */
   | { readonly kind: 'abandoned' }
   /*
@@ -122,13 +125,20 @@ export interface TranscriptStore {
   /** The current view of one tool call, or `undefined` if `toolCallId` has not been observed. */
   toolCallFor(toolCallId: ToolCallId): ToolCallView | undefined;
   /**
-   * Settles every still-running tool call as `abandoned`. Called once a journal
-   * replay finishes (see `journalReplay.ts`): a rebuilt transcript has no live
-   * turn, so a call the journal left without a result - the app closed mid-turn,
-   * or its turn was stopped - is not running any more and can never resume. The
-   * journal's own `tool.call.abandoned` record exists for exactly this
-   * distinction; this is what makes the transcript honour it (and covers a hard
-   * exit that never wrote the record). A no-op when nothing is running.
+   * Settles every call that still looks running (`requested`/`approved`) as
+   * `abandoned`. Called once a journal replay finishes (see `journalReplay.ts`):
+   * a rebuilt transcript has no live turn, so a call the journal left without a
+   * result - the app closed mid-turn, or its turn was stopped - is not running
+   * any more and can never resume. The journal's own `tool.call.abandoned`
+   * record exists for exactly this distinction; this is what makes the
+   * transcript honour it (and covers a hard exit that never wrote the record).
+   * A no-op when nothing is running.
+   *
+   * It reads the stored statuses rather than the store's internal "is anything
+   * running?" index, so it settles the calls even when some earlier step (an
+   * interruption, a turn leaving the in-flight state) already emptied that
+   * index. Every other path that ends a turn without a result applies the same
+   * settle: `addInterruption` and `setTurnInFlight(false)`.
    *
    * `awaitingInput` distinguishes the one case where "abandoned" would be a lie:
    * the turn was blocked on an unanswered `ask_user` when the journal ended, so
@@ -166,6 +176,10 @@ export interface TranscriptStore {
    * drive this from the same state the composer's Stop button uses
    * (`composerViewModel.ts`'s `isTurnInFlight`), so the two can never
    * disagree.
+   *
+   * Leaving the in-flight state also settles every call still marked running as
+   * `abandoned` (see `ToolCallStatus`): a turn can end without a result for its
+   * call, and a billet must never keep a spinner for work no live turn owns.
    */
   setTurnInFlight(inFlight: boolean): void;
   /**
@@ -195,6 +209,13 @@ export interface TranscriptStore {
    * `resumable` is `true` for a notice from the live session (the pane's own
    * call) and `false` for one replayed from the chat journal - a historical
    * notice must never offer its Resume action (see `journalReplay.ts`).
+   *
+   * Recording an interruption *also ends the work the turn had in flight*: every
+   * call still marked running settles as `abandoned`, and a `format_table` still
+   * counting loses its spinner. The interrupted turn cannot deliver those
+   * results, so leaving them running would show progress that no longer exists -
+   * live, and in a resumed transcript, where this record comes after the calls
+   * it cancelled.
    */
   addInterruption(reason: InterruptionReason, resumable?: boolean): void;
   /** Edge-triggered change flag, same contract as `MessageStream.takeDirty`. */
@@ -344,6 +365,58 @@ export function createTranscriptStore(
       ...(stillRunning && existing.progress !== undefined ? { progress: existing.progress } : {}),
     });
     dirty = true;
+  }
+
+  /**
+   * Settles every call whose *view* still says it is running (`requested` or
+   * `approved`) with `status`, dropping its running-only progress.
+   *
+   * Derived from the stored statuses, deliberately not from the
+   * `runningToolCalls` index: that set exists only to answer "is anything
+   * working?" cheaply, and every path that empties it (an interruption, a turn
+   * leaving the in-flight state) must settle the billets themselves. Trusting
+   * the index is what let an interrupted call keep its spinner - an interruption
+   * cleared the set, so the replay's final settle found nothing left to settle.
+   *
+   * Settling is not final: a real `tool.result` that arrives afterwards
+   * overwrites the placeholder through `updateToolCallStatus`, so a call whose
+   * executor had already finished still shows its true outcome.
+   */
+  function settleRunningToolCalls(status: ToolCallStatus): void {
+    let changed = runningToolCalls.size > 0;
+    for (const [toolCallId, view] of toolCalls) {
+      if (view.status.kind !== 'requested' && view.status.kind !== 'approved') continue;
+      // Rebuilt without `progress`: a running-only note is never shown beside a
+      // settled status (under `exactOptionalPropertyTypes` it is omitted).
+      toolCalls.set(toolCallId, {
+        toolCallId,
+        toolName: view.toolName,
+        args: view.args,
+        status,
+      });
+      changed = true;
+    }
+    runningToolCalls.clear();
+    if (changed) dirty = true;
+  }
+
+  /**
+   * Clears the "counting" flag on every `format_table` call, so no total line
+   * keeps a spinner for a count that died with its turn. Returns whether
+   * anything changed (the caller owns the dirty flag).
+   */
+  function settleCountingTotals(): boolean {
+    let changed = false;
+    for (const [toolCallId, view] of toolCalls) {
+      if (view.args['totalPending'] !== true) continue;
+      // A replayed or interrupted `format_table` whose result never arrived is
+      // rewritten as a settled one: the table keeps its last total line and
+      // loses the spinner. The args are the renderer's only source of the flag
+      // (see `format-table/renderer`'s `readTableMessage`).
+      toolCalls.set(toolCallId, { ...view, args: { ...view.args, totalPending: false } });
+      changed = true;
+    }
+    return changed;
   }
 
   /**
@@ -560,10 +633,10 @@ export function createTranscriptStore(
     setTurnInFlight(inFlight) {
       if (turnInFlight === inFlight) return;
       turnInFlight = inFlight;
-      // A turn that is no longer in flight has nothing running: drop any call
-      // an interruption or a lost result abandoned, so it can no longer
-      // suppress the "Thinking" billet or hide itself as "awaiting input".
-      if (!inFlight) runningToolCalls.clear();
+      // A turn that is no longer in flight has nothing running: settle any call
+      // an interruption or a lost result abandoned - a billet must never keep a
+      // spinner for work no live turn owns.
+      if (!inFlight) settleRunningToolCalls({ kind: 'abandoned' });
       dirty = true;
     },
     setAwaitingUserInput(awaiting) {
@@ -573,9 +646,15 @@ export function createTranscriptStore(
     },
     addInterruption(reason, resumable = true) {
       interruptionSequence += 1;
-      // The turn was stopped: whatever a tool call's billet still says, nothing
-      // is running any more, so a stale entry must not keep "Thinking" hidden.
-      runningToolCalls.clear();
+      // The turn was stopped: the calls it had in flight are over, so they are
+      // settled as interrupted rather than left with a spinner. This is also
+      // what makes a journal replay honest - the interruption record comes
+      // *after* the calls it cancelled, so settling here (not only in the
+      // replay's final sweep) is what a resumed transcript shows.
+      settleRunningToolCalls({ kind: 'abandoned' });
+      // A `format_table` still counting has lost its count with the turn: its
+      // total line falls back to the last total it showed, with no spinner.
+      if (settleCountingTotals()) dirty = true;
       order.push({
         kind: 'interruption',
         interruptionId: `interruption-${interruptionSequence}`,
@@ -602,31 +681,14 @@ export function createTranscriptStore(
       return toolCalls.get(toolCallId);
     },
     abandonRunningToolCalls(awaitingInput = false) {
-      if (runningToolCalls.size === 0) return;
-      // `updateToolCallStatus` drops each call's running-only progress and
-      // removes it from `runningToolCalls`; the explicit clear then covers a
-      // running id with no view (which would otherwise linger).
-      const status: ToolCallStatus = awaitingInput
-        ? { kind: 'abandonedAwaitingInput' }
-        : { kind: 'abandoned' };
-      for (const toolCallId of [...runningToolCalls]) {
-        updateToolCallStatus(toolCallId, status);
-      }
-      runningToolCalls.clear();
-      dirty = true;
+      // `awaitingInput` is the one case where "interrupted" would be a lie: the
+      // turn was blocked on an unanswered question, so nothing was in flight.
+      settleRunningToolCalls(
+        awaitingInput ? { kind: 'abandonedAwaitingInput' } : { kind: 'abandoned' },
+      );
     },
     settlePendingTotals() {
-      let changed = false;
-      for (const [toolCallId, view] of toolCalls) {
-        if (view.args['totalPending'] !== true) continue;
-        // A replayed `format_table` whose result never arrived is rewritten as
-        // a settled one: the table keeps its last total line and loses the
-        // spinner. The args are the renderer's only source of the flag (see
-        // `format-table/renderer`'s `readTableMessage`).
-        toolCalls.set(toolCallId, { ...view, args: { ...view.args, totalPending: false } });
-        changed = true;
-      }
-      if (changed) dirty = true;
+      if (settleCountingTotals()) dirty = true;
     },
     thinkingReasoning() {
       return thinkingVisible() ? reasoningText : '';

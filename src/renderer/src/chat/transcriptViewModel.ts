@@ -25,9 +25,10 @@ export function describeToolCallStatus(status: ToolCallStatus): string | undefin
     case 'failed':
       return 'FAILED';
     case 'abandoned':
-      // A replayed call the journal never resolved (the app closed mid-turn).
-      // It is not running and never will be, so the spinner is gone; the word
-      // says why, rather than implying a completion that never happened.
+      // A call its turn left unresolved: the app closed mid-turn, the turn was
+      // interrupted, or it otherwise ended without a result. It is not running
+      // and never will be, so the spinner is gone; the word says why, rather
+      // than implying a completion that never happened.
       return 'Interrupted';
     case 'abandonedAwaitingInput':
       // The turn was paused on the user's answer, not interrupted - nothing was

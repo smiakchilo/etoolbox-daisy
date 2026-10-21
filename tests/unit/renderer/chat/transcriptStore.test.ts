@@ -597,6 +597,40 @@ describe('createTranscriptStore', () => {
       expect(store.takeDirty()).toBe(true);
     });
 
+    it('settles a call the turn left running as interrupted when it leaves the in-flight state', () => {
+      // A turn can end without a result for its running call (an agent error, a
+      // result lost on the way). Nothing is running any more, so the billet must
+      // not keep a spinner that can never stop.
+      const store = createTranscriptStore();
+      store.setTurnInFlight(true);
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      store.applyEvent(toolProgress(2, 'Reading 1 of 2'));
+
+      store.setTurnInFlight(false);
+
+      const view = store.toolCallFor(toolCallId);
+      expect(view?.status).toEqual({ kind: 'abandoned' });
+      expect(view?.progress).toBeUndefined();
+    });
+
+    it('lets a result that arrives after the interruption settle the call truthfully', () => {
+      const store = createTranscriptStore();
+      store.setTurnInFlight(true);
+      store.applyEvent(toolRequested(0));
+      store.addInterruption('stopped');
+
+      // The executor had already finished when the abort landed: the real
+      // outcome wins over the interruption's placeholder, so the billet never
+      // claims a completed call was interrupted.
+      store.applyEvent(toolResultSucceeded(1));
+
+      expect(store.toolCallFor(toolCallId)?.status).toEqual({
+        kind: 'succeeded',
+        data: { status: 200 },
+      });
+    });
+
     it('settlePendingTotals is a no-op when no call is counting', () => {
       const store = createTranscriptStore();
       store.applyEvent(toolRequested(0));
@@ -1004,6 +1038,44 @@ describe('createTranscriptStore', () => {
         'interruption',
         'message',
       ]);
+    });
+
+    it('settles a call that was still running as interrupted, so no spinner outlives its turn', () => {
+      // The defect this guards: the pane's interruption notice used to only drop
+      // the store's "is anything running?" index, leaving the billet itself in a
+      // running state - so an interrupted call kept spinning, and a journal
+      // replay (which replays the interruption record before settling) never
+      // settled it either.
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolApproved(1));
+      store.applyEvent(toolProgress(2, 'Reading 1 of 2'));
+
+      store.addInterruption('navigation');
+
+      const view = store.toolCallFor(toolCallId);
+      expect(view?.status).toEqual({ kind: 'abandoned' });
+      expect(view?.progress).toBeUndefined();
+    });
+
+    it('settles a counting table when the turn is interrupted, so its total stops spinning', () => {
+      const store = createTranscriptStore();
+      store.applyEvent(
+        agentEventSchema.parse({
+          type: 'tool.call.requested',
+          chatId,
+          sequence: 0,
+          toolCallId,
+          toolName: 'format_table',
+          arguments: { data: { rows: [] }, mode: 'new', totalPending: true },
+        }),
+      );
+
+      store.addInterruption('navigation');
+
+      const view = store.toolCallFor(toolCallId);
+      expect(view?.args['totalPending']).toBe(false);
+      expect(view?.status).toEqual({ kind: 'abandoned' });
     });
 
     it('drops notices on clear()', () => {

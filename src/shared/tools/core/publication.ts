@@ -45,9 +45,11 @@ export function describePublication(value: unknown): string | undefined {
 /**
  * How many ancestor levels a component instance's publication filter climbs to
  * find its page's content node. The deepest component observed live sat 13
- * levels below it; 20 leaves headroom while keeping the OR group small.
+ * levels below it, so 15 leaves headroom while keeping the OR group small; an
+ * instance nested deeper than this is not reached by the filter, so it reads as
+ * not published.
  */
-export const PUBLICATION_ANCESTOR_DEPTH = 20;
+export const PUBLICATION_ANCESTOR_DEPTH = 15;
 
 /** The replication property, relative to a page's or asset's content node. */
 const REPLICATION_ACTION_PROPERTY = 'cq:lastReplicationAction';

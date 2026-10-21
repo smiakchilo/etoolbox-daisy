@@ -556,10 +556,17 @@ skips only ordinary billets, so a question
 (`presentation: 'conversation'`) and a `format_table` result (`'message'`) stay
 visible. A running billet's progress line is written in place (the billet is
 rebuilt only when its non-progress content changes), so a spinner never restarts
-on a tick. A transcript rebuilt from the journal settles every still-running call
-(`TranscriptStore.abandonRunningToolCalls`, called by `journalReplay.ts`), so a
-call the journal never resolved — the app closed mid-turn — shows `Interrupted`
-with the static icon, never a spinner that can never stop. The one exception is a
+on a tick. **A billet may only spin while its turn is live.** Recording an
+interruption settles the calls that turn had in flight (and a `format_table`
+still counting), a turn leaving the in-flight state settles anything it left
+running, and a transcript rebuilt from the journal settles every call the journal
+never resolved (`TranscriptStore.abandonRunningToolCalls`, called by
+`journalReplay.ts`) — all three read the calls' own statuses, never only the
+store's `runningToolCalls` index, because that index is what an interruption
+empties. So a call the journal never resolved — the app closed mid-turn, or a
+navigation cancelled it — shows `Interrupted` with the static icon, never a
+spinner that can never stop; a real result arriving afterwards still overwrites
+the placeholder. The one exception is a
 turn that ended **waiting on the user** (an unanswered `ask_user`): nothing was in
 flight, so its calls settle as `abandonedAwaitingInput` and show **no status word
 at all** — just the tool name and the settled icon (`journalReplay.ts` spots the
@@ -1381,7 +1388,7 @@ skill adds one procedure line). `applyPublicationFilter`
 (`src/shared/tools/core/publication.ts`) builds the predicates by shape:
 - published means `jcr:content/cq:lastReplicationAction = Activate`, and not
   published is its `p.not` complement;
-- a component search gets an OR over ancestor depths 1..20, because QueryBuilder
+- a component search gets an OR over ancestor depths 1..15, because QueryBuilder
   has no joins;
 - `type=cq:Page` / `type=dam:Asset` gets its own `jcr:content` condition;
 - a plain full-text search is typed to pages and assets first;
@@ -1479,7 +1486,18 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3991 passed / 1 failed / 13 skipped** (+8
+Current baseline: **`npm run test` → 3996 passed / 1 failed / 13 skipped** (+5
+against the 3991 below - **an interrupted tool call never keeps spinning**
+(2026-10-20): the transcript store's interruption notice, a turn leaving the
+in-flight state, and the journal replay's final sweep all settle the calls' own
+statuses (not just the `runningToolCalls` index an interruption used to empty),
+so an interrupted billet shows the static icon and `Interrupted` live and after a
+restart; an interruption also stops a `format_table`'s pending count. The +5 is 4
+`transcriptStore` and 1 `journalReplay` case; the same pre-existing
+`searchPageSize` failure remains. See
+`docs/verification/followons-2026-10.md` "An interrupted tool call never keeps
+spinning (2026-10-20)"). Before that it was **3991 passed / 1 failed / 13
+skipped** (+8
 against the 3983 below - **the edit-mode toggle's long press** (2026-10-20): the
 control carries Spectrum's `hold-affordance` and its `longpress` navigates the
 open page to the `wcmmode=disabled` web-content view from either state, while a
@@ -1500,7 +1518,9 @@ skipped** (+76 against the 3884 below - **in-app updates** (2026-10-21): see "In
 in §5 and `docs/updates.md`. The one failure is pre-existing and not caused by
 it: `tests/unit/tools/searchPageSize.test.ts` "search-page leaves the page size
 to the application", because `resources/skills/search-page/SKILL.md` contains
-`"limit": 200`. Playwright is **153 tests** (+1, `settings-updates.spec.ts`);
+`"limit": 200`. Playwright is **155 tests** (+1 in this change; the previously
+recorded 153 was one behind, as the tree measured 154 before
+`chat-interrupted-tool-call.spec.ts` was added);
 a full run had only the known environment-bound `network-error` cases and
 load-correlated flakes (`agent-chat.spec.ts:410`, `settings-tabs`), green in
 isolation). Before that it was **3884 passed / 13 skipped** (+3 against the
