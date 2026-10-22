@@ -17,6 +17,7 @@ export * from './core/envelope';
 export * from './core/brokerOutcome';
 export * from './core/resultCommon';
 export * from './core/responseValidation';
+export * from './core/authIncident';
 export * from './core/environment';
 export * from './core/navigation';
 export * from './core/currentPage';

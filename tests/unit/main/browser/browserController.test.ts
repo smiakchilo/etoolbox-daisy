@@ -127,6 +127,7 @@ interface FakeAemViewControls {
   readonly webContents: FakeWebContents;
   readonly loadURL: ReturnType<typeof vi.fn>;
   readonly stop: ReturnType<typeof vi.fn>;
+  readonly reload: ReturnType<typeof vi.fn>;
   readonly setBounds: ReturnType<typeof vi.fn>;
   readonly closePopups: ReturnType<typeof vi.fn>;
   readonly destroy: ReturnType<typeof vi.fn>;
@@ -156,6 +157,7 @@ function makeFakeAemView(): FakeAemViewControls {
     await controls.loadURLImpl(url);
   });
   const stop = vi.fn();
+  const reload = vi.fn(() => Promise.resolve({ ok: true as const }));
   const destroy = vi.fn();
   const closePopups = vi.fn();
   const setBounds = vi.fn();
@@ -174,7 +176,7 @@ function makeFakeAemView(): FakeAemViewControls {
     })),
     goBack: vi.fn(() => Promise.resolve({ ok: true as const })),
     goForward: vi.fn(() => Promise.resolve({ ok: true as const })),
-    reload: vi.fn(() => Promise.resolve({ ok: true as const })),
+    reload,
     stop,
     loadURL,
     destroy,
@@ -184,6 +186,7 @@ function makeFakeAemView(): FakeAemViewControls {
     webContents: webContentsControls,
     loadURL,
     stop,
+    reload,
     setBounds,
     closePopups,
     destroy,
@@ -1468,6 +1471,66 @@ describe('browserController.openForAgent', () => {
 
     expect(result).toEqual({ kind: 'cancelled' });
     expect(changes).toContainEqual({ initiator: 'user' });
+  });
+});
+
+describe('browserController.reloadForAgent', () => {
+  async function onHostPage(url: string) {
+    const server = makeServer();
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(server));
+    await harness.controller.switchServer(server.id);
+    harness.hostViewControls.setNavigationUrl(url);
+    harness.rendererSend.mockClear();
+    return { server, harness };
+  }
+
+  it('reloads the pane, reveals it, and does not cancel the agent as a user navigation would', async () => {
+    const { server, harness } = await onHostPage(
+      'https://author.example/editor.html/content/x.html',
+    );
+    const initiators: string[] = [];
+    harness.controller.navigationEpoch.subscribe((change) => initiators.push(change.initiator));
+
+    const reloaded = await harness.controller.reloadForAgent(server.id);
+
+    expect(reloaded).toBe(true);
+    expect(harness.hostViewControls.reload).toHaveBeenCalledTimes(1);
+    expect(harness.rendererSend).toHaveBeenCalledWith(BROWSER_AGENT_NAVIGATION_CHANNEL);
+    expect(initiators).not.toContain('user');
+  });
+
+  it('leaves a pane that already shows a sign-in page alone', async () => {
+    const { server, harness } = await onHostPage(
+      'https://author.example/libs/granite/core/content/login.html?resource=%2F',
+    );
+
+    expect(await harness.controller.reloadForAgent(server.id)).toBe(false);
+    expect(harness.hostViewControls.reload).not.toHaveBeenCalled();
+  });
+
+  it('leaves a pane that is on another origin alone', async () => {
+    const { server, harness } = await onHostPage('https://idp.example/app/start');
+
+    expect(await harness.controller.reloadForAgent(server.id)).toBe(false);
+    expect(harness.hostViewControls.reload).not.toHaveBeenCalled();
+  });
+
+  it('leaves the pane alone when the incident belongs to a different host', async () => {
+    const { harness } = await onHostPage('https://author.example/content/x.html');
+
+    const reloaded = await harness.controller.reloadForAgent(newServerId(() => 'other-host'));
+
+    expect(reloaded).toBe(false);
+    expect(harness.hostViewControls.reload).not.toHaveBeenCalled();
+  });
+
+  it('does nothing before any host is open', async () => {
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, settingsWithOneServer(makeServer()));
+
+    expect(await harness.controller.reloadForAgent(makeServer().id)).toBe(false);
+    expect(harness.hostViewControls.reload).not.toHaveBeenCalled();
   });
 });
 

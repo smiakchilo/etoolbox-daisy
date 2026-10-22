@@ -84,6 +84,29 @@ export function parseBrowserSwitchState(candidate: unknown): BrowserSwitchState 
 }
 
 /**
+ * Pushed on `browser:auth-incident` when a read through the browser pane's
+ * session shows the host no longer recognises the user (`lost`; `certain`
+ * evidence is a 401, a redirect or a known login page, `suspected` is HTML that
+ * merely looks like a sign-in), and again when a later read succeeds
+ * (`recovered`). The pane raises a notice offering a reload; it never learns
+ * anything about the host beyond its label.
+ */
+export const browserAuthIncidentSchema = z.discriminatedUnion('state', [
+  z.object({
+    state: z.literal('lost'),
+    severity: z.enum(['certain', 'suspected']),
+    hostLabel: z.string(),
+  }),
+  z.object({ state: z.literal('recovered') }),
+]);
+
+export type BrowserAuthIncident = Readonly<z.infer<typeof browserAuthIncidentSchema>>;
+
+export function parseBrowserAuthIncident(candidate: unknown): BrowserAuthIncident {
+  return browserAuthIncidentSchema.parse(candidate);
+}
+
+/**
  * Pushed on `browser:certificate-blocked` whenever the observational
  * certificate-error tap (`src/main/browser/certificatePrompt.ts`) sees a
  * failure with no matching exception. Same shape as a persisted

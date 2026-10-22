@@ -438,6 +438,31 @@ describe('createChatPane status push', () => {
     pane.dispose();
   });
 
+  it('raises a sign-out notice whose Reload action calls back, and retracts it on recovery', async () => {
+    const onReload = vi.fn();
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    for (const severity of ['certain', 'suspected'] as const) {
+      pane.noticeAuthLost('Author', severity, onReload);
+      const banner = agentBanner(pane);
+      expect(banner?.hasAttribute('open')).toBe(true);
+      expect(banner?.textContent).toContain('Author');
+      expect(banner?.textContent?.trimEnd().endsWith('.')).toBe(false);
+      pane.clearAuthNotice();
+    }
+
+    pane.noticeAuthLost('Author', 'certain', onReload);
+    agentBanner(pane)
+      ?.querySelector<HTMLElement>(byTestId('banner-auth-reload'))
+      ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    expect(onReload).toHaveBeenCalledTimes(1);
+
+    pane.dispose();
+  });
+
   it("a new prompt discards the previous turn's error banner", async () => {
     const pane = createChatPane({ onOpenSettings: vi.fn() });
     pane.setAgents({ copilot: { active: true, hasToken: true } });

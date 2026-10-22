@@ -96,7 +96,7 @@ describe('createTurnSignalCollector', () => {
     expect(signal?.length).toBeLessThan(SIGNAL_TEXT_MAX_LENGTH + 50);
   });
 
-  it.each<ToolErrorCode>(['CANCELLED', 'STALE_CONTEXT', 'AUTH_REQUIRED'])(
+  it.each<ToolErrorCode>(['CANCELLED', 'STALE_CONTEXT', 'AUTH_REQUIRED', 'REDIRECT_BLOCKED'])(
     'ignores a %s failure, which says nothing about how the agent worked',
     (code) => {
       const collector = createTurnSignalCollector(turnId);

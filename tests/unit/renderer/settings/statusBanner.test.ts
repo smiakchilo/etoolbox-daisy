@@ -246,6 +246,29 @@ describe('createStatusBanner single slot', () => {
     expect(banner.element.textContent).toBe('Send failed');
   });
 
+  it('clearNotice retracts a showing notice but leaves an error or an empty row alone', () => {
+    vi.useFakeTimers();
+    try {
+      const action: StatusBannerAction = { label: 'Reload', onActivate: () => undefined };
+      const banner = createStatusBanner();
+
+      banner.showNotice('Signed out. {action}', action);
+      banner.clearNotice();
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(false);
+
+      banner.showError('Send failed');
+      banner.clearNotice();
+      vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+      expect(banner.element.hasAttribute('open')).toBe(true);
+      expect(banner.element.textContent).toBe('Send failed');
+
+      expect(() => createStatusBanner().clearNotice()).not.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a prompt is superseded by a newer prompt, and the old action never fires', () => {
     const firstAction = vi.fn();
     const secondAction = vi.fn();

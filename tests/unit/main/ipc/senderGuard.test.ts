@@ -177,6 +177,7 @@ beforeEach(() => {
     goBack: () => Promise.resolve(record('goBack')),
     goForward: () => Promise.resolve(record('goForward')),
     reload: () => Promise.resolve(record('reload')),
+    reloadForAgent: () => Promise.resolve(false),
     stop: () => record('stop'),
     setViewBounds: () => {
       controllerCalls.push('setViewBounds');

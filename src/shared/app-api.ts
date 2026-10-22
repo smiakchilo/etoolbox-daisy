@@ -31,6 +31,7 @@ import type {
 } from './settings-ipc';
 import type {
   ApproveCertificateExceptionRequest,
+  BrowserAuthIncident,
   BrowserIpcVoidResult,
   BrowserNavigationState,
   BrowserSwitchState,
@@ -284,6 +285,12 @@ export interface DaisyBrowserApi {
    * unsubscribe function.
    */
   onAgentNavigation(listener: () => void): () => void;
+  /**
+   * Subscribes to `browser:auth-incident`, pushed when a tool read shows the
+   * host no longer recognises the user, and again when a later read succeeds.
+   * Returns an unsubscribe function.
+   */
+  onAuthIncident(listener: (incident: BrowserAuthIncident) => void): () => void;
   /** Subscribes to `browser:certificate-blocked`; returns an unsubscribe function. */
   onCertificateBlocked(listener: (info: CertificateBlockedInfo) => void): () => void;
   /**

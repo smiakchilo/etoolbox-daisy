@@ -180,6 +180,12 @@ export const BROWSER_STATE_CHANGED_CHANNEL = 'browser:state-changed' as const;
  * application-caused navigation has begun.
  */
 export const BROWSER_AGENT_NAVIGATION_CHANNEL = 'browser:agent-navigation' as const;
+/**
+ * Push channel: main -> renderer, when a tool read shows the host stopped
+ * recognising the user (or a later read shows it recovered). Payload:
+ * `BrowserAuthIncident` (src/shared/browser-ipc.ts).
+ */
+export const BROWSER_AUTH_INCIDENT_CHANNEL = 'browser:auth-incident' as const;
 /** Push channel: main -> renderer, whenever a server switch starts/finishes. */
 export const BROWSER_SWITCH_STATE_CHANGED_CHANNEL = 'browser:switch-state-changed' as const;
 /** Push channel: main -> renderer, whenever a certificate error has no matching exception. */

@@ -213,6 +213,19 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     })
     .catch(() => undefined);
 
+  // ── Lost sign-in ─────────────────────────────────────────────────────────
+  // Main pushes an incident when a tool read shows the host no longer
+  // recognises the user, and a recovery when a later read succeeds. The chat
+  // pane's notice offers the toolbar's own reload, so the page shows whatever
+  // sign-in experience the host has.
+  const unsubscribeAuthIncident = window.daisy.browser.onAuthIncident((incident) => {
+    if (incident.state === 'recovered') {
+      chatPane.clearAuthNotice();
+      return;
+    }
+    chatPane.noticeAuthLost(incident.hostLabel, incident.severity, () => browserPane.refresh());
+  });
+
   // ── Application-wide keyboard shortcuts ──────────────────────────────────
   // The app has no menu bar, so a shortcut is matched in main on the shell's
   // *or* the AEM view's WebContents (`src/main/shortcuts.ts`) and pushed here as
@@ -533,6 +546,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // observer/listener when this (single, app-lifetime) window actually closes.
   window.addEventListener('unload', () => {
     unsubscribeLastPage();
+    unsubscribeAuthIncident();
     unsubscribeShortcuts();
     shellResizeObserver.disconnect();
     splitView.dispose();

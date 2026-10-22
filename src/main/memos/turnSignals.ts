@@ -24,6 +24,7 @@ const UNINSTRUCTIVE_FAILURES: ReadonlySet<ToolErrorCode> = new Set<ToolErrorCode
   'CANCELLED',
   'STALE_CONTEXT',
   'AUTH_REQUIRED',
+  'REDIRECT_BLOCKED',
 ]);
 
 /**

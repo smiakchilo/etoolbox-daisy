@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   type AppSettings,
   type AuthStatus,
+  BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
   readLeadingSkillToken,
   renderSkillCatalogue,
@@ -421,7 +422,11 @@ if (!gotSingleInstanceLock) {
       // Applies any deferred runtime recycle before the next prompt is
       // dispatched, so "a change made mid-turn takes effect on the next turn"
       // is exact rather than best-effort.
-      beforeSendMessage: () => runtimeRecycler.drain(),
+      beforeSendMessage: async () => {
+        // A new prompt is the user's answer to a lost sign-in: read the host again.
+        webviewBridgeBroker.resetAuthIncidents();
+        await runtimeRecycler.drain();
+      },
     });
 
     // Resolved per call: the agent's runtime is started - and on a proxy change,
@@ -593,6 +598,29 @@ if (!gotSingleInstanceLock) {
         () => browserController.activeServer(),
         () => browserController.navigationEpoch.current(),
       ),
+      authWatch: {
+        incident: ({ serverId, severity }) => {
+          const hostLabel =
+            loadSettingsSync(appPaths.settings).hosts.find((host) => host.id === serverId)?.label ??
+            'The host';
+          logger.warn('AUTH_LOST', { ids: { serverId } });
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(BROWSER_AUTH_INCIDENT_CHANNEL, {
+              state: 'lost',
+              severity,
+              hostLabel,
+            });
+          }
+          // Only certain evidence reloads: a reload can discard unsaved edits in
+          // the page, so a merely suspected loss leaves the page alone.
+          if (severity === 'certain') void browserController.reloadForAgent(serverId);
+        },
+        recovered: () => {
+          if (!mainWindow.isDestroyed()) {
+            mainWindow.webContents.send(BROWSER_AUTH_INCIDENT_CHANNEL, { state: 'recovered' });
+          }
+        },
+      },
     });
 
     const lateBoundToolContext = createLateBoundToolContext();
@@ -841,7 +869,14 @@ if (!gotSingleInstanceLock) {
       logger,
     );
 
+    // The user moving the pane (a host switch, a cross-origin sign-in) ends a
+    // lost-sign-in episode, so the next read tries the host again.
+    const unsubscribeAuthReset = browserController.navigationEpoch.subscribe((change) => {
+      if (change.initiator === 'user') webviewBridgeBroker.resetAuthIncidents();
+    });
+
     mainWindow.on('closed', () => {
+      unsubscribeAuthReset();
       unwireNavigationEpochCancellation();
       unregisterAgentChatIpc();
       void agentChatController.dispose();

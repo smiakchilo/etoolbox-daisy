@@ -122,6 +122,15 @@ export interface ChatPane {
    * newly available version.
    */
   noticeUpdateAvailable(version: string): void;
+  /**
+   * Raises the pane's sticky notice that the host stopped recognising the user
+   * mid-run, with a **Reload** action that runs `onReload` (the toolbar's own
+   * reload, so the page shows the host's sign-in screen). `certain` is a proven
+   * sign-out; `suspected` words the same notice as a possibility.
+   */
+  noticeAuthLost(hostLabel: string, severity: 'certain' | 'suspected', onReload: () => void): void;
+  /** Retracts the sign-out notice (a later read succeeded). Leaves any other notice alone. */
+  clearAuthNotice(): void;
   /** Unsubscribes from the agent-chat event stream and stops all polling/repaint timers. */
   dispose(): void;
 }
@@ -1618,6 +1627,24 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         testId: 'banner-update-details',
         onActivate: () => options.onOpenSettings('updates'),
       });
+    },
+    noticeAuthLost(
+      hostLabel: string,
+      severity: 'certain' | 'suspected',
+      onReload: () => void,
+    ): void {
+      const copy =
+        severity === 'certain'
+          ? `${hostLabel} no longer recognises you. Press ${BANNER_ACTION_MARKER} to show its sign-in page`
+          : `${hostLabel} may have signed you out. Press ${BANNER_ACTION_MARKER} to check the page`;
+      statusBanner.showNotice(copy, {
+        label: 'Reload',
+        testId: 'banner-auth-reload',
+        onActivate: onReload,
+      });
+    },
+    clearAuthNotice(): void {
+      statusBanner.clearNotice();
     },
     dispose(): void {
       unsubscribeEvents?.();

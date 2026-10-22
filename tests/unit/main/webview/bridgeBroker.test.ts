@@ -706,3 +706,134 @@ describe('createWebviewBridgeBroker - tool HTTP log', () => {
     expect(() => broker.request(makeEnvelope('req-1'), 'https://aem.example.com/x')).not.toThrow();
   });
 });
+
+describe('createWebviewBridgeBroker - authentication loss', () => {
+  const unauthorizedReply = (requestId: string) => ({
+    kind: 'response',
+    requestId,
+    status: 401,
+    contentType: 'text/plain',
+    bodyText: '',
+  });
+  const loginPageReply = (requestId: string, bodyText: string) => ({
+    kind: 'response',
+    requestId,
+    status: 200,
+    contentType: 'text/html;charset=utf-8',
+    bodyText,
+  });
+  const blockedReply = (requestId: string) => ({
+    kind: 'blocked',
+    requestId,
+    reason: 'redirect_blocked',
+  });
+  const SERVER_ID = makeEnvelope('probe').serverId;
+
+  function createAuthHarness() {
+    const harness = createHarness();
+    const incidents: { serverId: string; severity: string }[] = [];
+    const recoveries: string[] = [];
+    const broker = createWebviewBridgeBroker({
+      ...harness.deps,
+      authWatch: {
+        incident: (event) => incidents.push(event),
+        recovered: (event) => recoveries.push(event.serverId),
+      },
+    });
+    return { harness, broker, incidents, recoveries };
+  }
+
+  async function settleWith(
+    harness: ReturnType<typeof createHarness>,
+    broker: ReturnType<typeof createWebviewBridgeBroker>,
+    requestId: string,
+    reply: (id: string) => unknown,
+  ): Promise<void> {
+    void broker.request(makeEnvelope(requestId), 'https://aem.example.com/x');
+    harness.fireReply(reply(requestId));
+    await flushMicrotasks();
+  }
+
+  it('reports a 401 once, and latches the host so the next read never reaches it', async () => {
+    const { harness, broker, incidents } = createAuthHarness();
+
+    await settleWith(harness, broker, 'req-a', unauthorizedReply);
+    expect(incidents).toEqual([{ serverId: SERVER_ID, severity: 'certain' }]);
+
+    const latched = trackOutcome(
+      broker.request(makeEnvelope('req-b'), 'https://aem.example.com/y'),
+    );
+    await flushMicrotasks();
+
+    expect(latched.value()).toEqual({ kind: 'blocked', reason: 'redirect_blocked' });
+    expect(harness.sendFetchCalls).toEqual(['req-a']);
+    expect(incidents).toHaveLength(1);
+  });
+
+  it('treats a blocked redirect as certain evidence', async () => {
+    const { harness, broker, incidents } = createAuthHarness();
+    await settleWith(harness, broker, 'req-a', blockedReply);
+    expect(incidents).toEqual([{ serverId: SERVER_ID, severity: 'certain' }]);
+  });
+
+  it('reports a weak login hint as suspected without latching, then escalates once on certain evidence', async () => {
+    const { harness, broker, incidents } = createAuthHarness();
+
+    // noinspection HtmlRequiredLangAttribute
+    await settleWith(harness, broker, 'req-a', (id) =>
+      loginPageReply(id, '<html><body>Please sign in</body></html>'),
+    );
+    expect(incidents).toEqual([{ serverId: SERVER_ID, severity: 'suspected' }]);
+
+    // A merely suspected host is still read.
+    // noinspection HtmlRequiredLangAttribute
+    await settleWith(harness, broker, 'req-b', (id) =>
+      loginPageReply(id, '<html><body>Please sign in</body></html>'),
+    );
+    expect(harness.sendFetchCalls).toEqual(['req-a', 'req-b']);
+    expect(incidents).toHaveLength(1);
+
+    await settleWith(harness, broker, 'req-c', unauthorizedReply);
+    expect(incidents.map((incident) => incident.severity)).toEqual(['suspected', 'certain']);
+  });
+
+  it('ends the episode and reports recovery when a read succeeds with JSON', async () => {
+    const { harness, broker, incidents, recoveries } = createAuthHarness();
+
+    // noinspection HtmlRequiredLangAttribute
+    await settleWith(harness, broker, 'req-a', (id) =>
+      loginPageReply(id, '<html><body>Please sign in</body></html>'),
+    );
+    await settleWith(harness, broker, 'req-b', okReply);
+
+    expect(recoveries).toEqual([SERVER_ID]);
+
+    // A fresh failure after recovery is a new episode.
+    await settleWith(harness, broker, 'req-c', unauthorizedReply);
+    expect(incidents).toHaveLength(2);
+  });
+
+  it('does not report recovery for an unrelated success when no episode is open', async () => {
+    const { harness, broker, recoveries } = createAuthHarness();
+    await settleWith(harness, broker, 'req-a', okReply);
+    expect(recoveries).toEqual([]);
+  });
+
+  it('resetAuthIncidents lifts the latch and reports recovery for the host', async () => {
+    const { harness, broker, recoveries } = createAuthHarness();
+    await settleWith(harness, broker, 'req-a', unauthorizedReply);
+
+    broker.resetAuthIncidents();
+    expect(recoveries).toEqual([SERVER_ID]);
+
+    void broker.request(makeEnvelope('req-b'), 'https://aem.example.com/y');
+    expect(harness.sendFetchCalls).toEqual(['req-a', 'req-b']);
+  });
+
+  it('works without an auth watch', async () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+    await settleWith(harness, broker, 'req-a', unauthorizedReply);
+    expect(() => broker.resetAuthIncidents()).not.toThrow();
+  });
+});

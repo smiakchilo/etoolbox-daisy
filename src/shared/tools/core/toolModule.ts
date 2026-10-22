@@ -329,12 +329,18 @@ export function createToolExecutor<
 
 /** How the model reads any tool's failure. Tool-agnostic: it renders the shared error taxonomy. */
 export function renderToolFailureForModel(error: ToolError): string {
-  return (
+  const base =
     `Tool error [${error.code}]: ${error.message} ` +
     `(requestId=${error.requestId}, retryable=${String(error.retryable)}, ` +
-    `requiredAction=${error.requiredAction})`
-  );
+    `requiredAction=${error.requiredAction})`;
+  if (error.requiredAction !== 'sign_in_to_host') return base;
+  return `${base}. ${SIGN_IN_DIRECTIVE}`;
 }
+
+/** Appended to a failure that needs a sign-in: the model must stop probing and tell the user. */
+export const SIGN_IN_DIRECTIVE =
+  'The host no longer recognises the user. Do not retry and do not navigate or call other tools to work around it; ' +
+  'tell the user briefly that they need to sign in to the host again (the browser pane shows its sign-in page), then stop.';
 
 /**
  * Where the enabled tools' paragraphs go inside the session-instructions

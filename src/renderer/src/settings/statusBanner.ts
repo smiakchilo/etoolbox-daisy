@@ -116,6 +116,13 @@ export interface StatusBanner extends StatusBannerSink {
    */
   clearError(): void;
   /**
+   * Drops a showing notice row and falls back to whatever is beneath it. A
+   * no-op when the active presentation is not a notice, so an error or prompt
+   * that took the row meanwhile is left alone - the chat pane uses it to retract
+   * a "signed out" notice once a later read proves the host recognises the user.
+   */
+  clearNotice(): void;
+  /**
    * Sets the banner's persistent, lowest-priority content - the row shown
    * whenever no `showStatus`/`showError`/`showPrompt` presentation is active.
    * `null` clears it. A later presentation takes the single row (the standing
@@ -389,6 +396,10 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
       // being `'error'` already rules out a live prompt, and the standing floor
       // is untouched (dismissSlot falls back to it, respecting `standingDismissed`).
       if (slot !== 'error') return;
+      dismissSlot();
+    },
+    clearNotice(): void {
+      if (slot !== 'notice') return;
       dismissSlot();
     },
     showStatus(message: string): void {

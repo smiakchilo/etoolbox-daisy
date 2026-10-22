@@ -23,7 +23,12 @@ import type {
 } from '../../shared';
 import type { AppSettings } from '../../shared';
 import type { ProxyConfig, ServerId } from '../../shared';
-import { buildNavigationUrl, parseNavigationTarget, validateBrowserPath } from '../../shared';
+import {
+  buildNavigationUrl,
+  looksLikeLoginUrl,
+  parseNavigationTarget,
+  validateBrowserPath,
+} from '../../shared';
 import { applyServerTargetingChange, loadSettings, saveSettings } from '../settingsStore';
 import type { ViewSession } from '../webview';
 import type { ProxyPlainCredentials } from '../webview';
@@ -164,6 +169,15 @@ export interface BrowserController {
   goBack(): Promise<BrowserIpcVoidResult>;
   goForward(): Promise<BrowserIpcVoidResult>;
   reload(): Promise<BrowserIpcVoidResult>;
+  /**
+   * Reloads the open page on the application's own initiative - the answer to a
+   * host that stopped recognising the user, so the pane shows the sign-in
+   * screen. Like `openForAgent` it is agent-initiated: it does not cancel the
+   * running turn. Resolves `false`, doing nothing, when a reload would help
+   * nobody: the pane is not on `serverId`'s host, is mid-switch, or already
+   * shows a sign-in page.
+   */
+  reloadForAgent(serverId: ServerId): Promise<boolean>;
   /** Stops any in-flight load in the browser view (the toolbar's Stop control while a navigation is loading). */
   stop(): BrowserIpcVoidResult;
   setViewBounds(bounds: ViewBounds): void;
@@ -995,6 +1009,30 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     agentNavigation = undefined;
     return settleHistoryCommand(await hostView.reload());
   }
+  async function reloadForAgent(serverId: ServerId): Promise<boolean> {
+    const url = currentDocumentUrl();
+    const active = activeServerState;
+    // A pane already showing a sign-in page, an identity provider, another host
+    // or a navigation in progress has nothing to gain from a reload.
+    if (
+      url === undefined ||
+      active === undefined ||
+      active.serverId !== serverId ||
+      switchController.getState() === 'switching' ||
+      !isSameOriginNavigation(url) ||
+      looksLikeLoginUrl(url)
+    ) {
+      return false;
+    }
+    rendererWebContents.send(BROWSER_AGENT_NAVIGATION_CHANNEL);
+    agentNavigation = { targetOrigin: active.origin };
+    try {
+      await settleHistoryCommand(await hostView.reload());
+      return true;
+    } finally {
+      agentNavigation = undefined;
+    }
+  }
   function stop(): BrowserIpcVoidResult {
     hostView.stop();
     return ok();
@@ -1032,6 +1070,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     goBack,
     goForward,
     reload,
+    reloadForAgent,
     stop,
     setViewBounds(bounds: ViewBounds): void {
       // The renderer reports CSS pixels; the native view is positioned in DIP.

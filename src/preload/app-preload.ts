@@ -22,6 +22,7 @@ import {
   APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
+  BROWSER_AUTH_INCIDENT_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
   BROWSER_FIND_CHANNEL,
   BROWSER_FIND_RESULT_CHANNEL,
@@ -100,6 +101,7 @@ import {
   parseAuthPresence,
   parseAuthStatus,
   parseBrowserIpcVoidResult,
+  parseBrowserAuthIncident,
   parseBrowserNavigationState,
   parseBrowserSwitchState,
   parseCertificateBlockedInfo,
@@ -172,6 +174,7 @@ import {
   type AppShortcutAction,
   type AuthPresence,
   type AuthStatus,
+  type BrowserAuthIncident,
   type BrowserIpcVoidResult,
   type BrowserNavigationState,
   type BrowserSwitchState,
@@ -634,6 +637,15 @@ const daisyApi: DaisyAppApi = {
       ipcRenderer.on(BROWSER_AGENT_NAVIGATION_CHANNEL, handler);
       return () => {
         ipcRenderer.removeListener(BROWSER_AGENT_NAVIGATION_CHANNEL, handler);
+      };
+    },
+    onAuthIncident(listener: (incident: BrowserAuthIncident) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {
+        listener(parseBrowserAuthIncident(raw));
+      };
+      ipcRenderer.on(BROWSER_AUTH_INCIDENT_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(BROWSER_AUTH_INCIDENT_CHANNEL, handler);
       };
     },
     onCertificateBlocked(listener: (info: CertificateBlockedInfo) => void): () => void {

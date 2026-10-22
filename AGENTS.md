@@ -205,7 +205,22 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change **generalizes the publication filter
+> The most recent shared-surface change **detects an authentication loss
+> mid-run** (2026-10-22): a new push channel `browser:auth-incident`
+> (`BROWSER_AUTH_INCIDENT_CHANNEL`), `DaisyBrowserApi.onAuthIncident`,
+> `browserAuthIncidentSchema` in `browser-ipc.ts`, the classifier
+> `tools/core/authIncident.ts` (certain vs suspected; exported through the tools
+> barrel), `SIGN_IN_DIRECTIVE` appended to a `sign_in_to_host` failure's text, and
+> the `AUTH_LOST` log code. The bridge broker's optional `authWatch` raises a
+> per-host incident and latches fast-fail replies (a synthetic
+> `blocked/redirect_blocked`); `browserController.reloadForAgent` reloads the pane
+> without cancelling the turn; the chat pane shows a sticky notice with a Reload
+> action (`noticeAuthLost` / `clearAuthNotice`, `StatusBanner.clearNotice`).
+> `REDIRECT_BLOCKED` no longer triggers memo reflection. No file under
+> `contracts/` changed. See `docs/verification/followons-2026-10.md`
+> "Authentication lost mid-run is detected at once, announced, and the pane
+> reloaded (2026-10-22)".
+> Before that, the shared-surface change **generalized the publication filter
 > into page-property filters** (2026-10-22): `tools/core/publication.ts` became
 > `tools/core/searchFilters.ts` (exported through the tools barrel); both search
 > composites take an optional `filters` array instead of `publication`, and the
@@ -1533,7 +1548,14 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4015 passed / 13 skipped** (+1 against the
+Current baseline: **`npm run test` → 4046 passed / 13 skipped** (+31 against the
+4015 below - **authentication loss mid-run** (2026-10-22): a 401, a redirect or a
+login-looking HTML body is classified at once, raises a sticky Reload notice,
+reloads the pane and fast-fails further reads for that host until the next prompt;
+Playwright is **156 tests** (+1, `auth-loss-banner.spec.ts`) - see
+`docs/verification/followons-2026-10.md` "Authentication lost mid-run is detected
+at once, announced, and the pane reloaded (2026-10-22)"). Before that it was 4015
+passed / 13 skipped (+1 against the
 4014 below - **a failed or rejected tool call is an ordinary billet**
 (2026-10-22): it keeps every other call's borderless surface and
 collapsed-by-default disclosure, differs while collapsed only by a red

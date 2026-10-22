@@ -8,9 +8,17 @@ import {
   WEBVIEW_BRIDGE_REQUEST_HEADERS,
   webviewBridgeReplySchema,
 } from '../../shared/contracts/webviewBridge';
-import type { Clock, CurrentBridgeContext, ToolEnvelopeBase } from '../../shared';
-import { classifyStaleness, isDeadlineExpired } from '../../shared';
-import type { BrokerOutcome } from '../../shared';
+import {
+  type AuthIncidentSeverity,
+  type BrokerOutcome,
+  type Clock,
+  type CurrentBridgeContext,
+  type ServerId,
+  type ToolEnvelopeBase,
+  classifyAuthIncident,
+  classifyStaleness,
+  isDeadlineExpired,
+} from '../../shared';
 import { toLoggableUrl, type LogOutcome, type Logger } from '../logger';
 import type { ToolHttpLogger } from './toolHttpLog';
 
@@ -83,6 +91,18 @@ export interface BrokerDeps {
    * sink exists only because diagnosing a tool call needs the URL and headers.
    */
   readonly toolLogger?: ToolHttpLogger;
+  /**
+   * Optional listener for authentication loss on a host. `incident` fires once
+   * per host per episode, again only if the evidence strengthens from
+   * `suspected` to `certain`; `recovered` fires when a later read succeeds or
+   * {@link WebviewBridgeBroker.resetAuthIncidents} ends the episode.
+   */
+  readonly authWatch?: AuthWatch;
+}
+
+export interface AuthWatch {
+  incident(event: { readonly serverId: ServerId; readonly severity: AuthIncidentSeverity }): void;
+  recovered(event: { readonly serverId: ServerId }): void;
 }
 
 /** Maps a raw broker verdict onto the logger's closed outcome vocabulary. */
@@ -118,6 +138,12 @@ export interface WebviewBridgeBroker {
    * promise the module does not keep.
    */
   cancelAll(): void;
+  /**
+   * Ends every authentication episode and lifts the fast-fail latch. Called when
+   * the user may have signed in again (a user navigation, a new prompt); if the
+   * host is still signed out the next read simply re-latches.
+   */
+  resetAuthIncidents(): void;
   /** Releases the reply listener. */
   dispose(): void;
 }
@@ -172,6 +198,28 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
   // head of the queue, so dispatch stays FIFO.
   const queue: PendingRequest[] = [];
   const inFlight = new Set<PendingRequest>();
+  // Per host, the strongest authentication evidence of the current episode. A
+  // `certain` host is latched: reads fail at once instead of reaching a host
+  // that has already said it does not know the user.
+  const authEpisodes = new Map<ServerId, AuthIncidentSeverity>();
+
+  function noteAuthEvidence(serverId: ServerId, outcome: BrokerOutcome): void {
+    const severity = classifyAuthIncident(outcome);
+    if (severity === undefined) {
+      const succeeded =
+        outcome.kind === 'response' &&
+        outcome.status >= 200 &&
+        outcome.status < 300 &&
+        outcome.contentType !== null &&
+        outcome.contentType.toLowerCase().includes('json');
+      if (succeeded && authEpisodes.delete(serverId)) deps.authWatch?.recovered({ serverId });
+      return;
+    }
+    const known = authEpisodes.get(serverId);
+    if (known === 'certain' || known === severity) return;
+    authEpisodes.set(serverId, severity);
+    deps.authWatch?.incident({ serverId, severity });
+  }
 
   /**
    * The only place a pending request's promise is ever resolved.
@@ -218,6 +266,7 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
       durationMs,
       headers: responseHeaders ?? [],
     });
+    noteAuthEvidence(entry.envelope.serverId, outcome);
     entry.resolve(outcome);
   }
 
@@ -349,6 +398,11 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
 
   return {
     request(envelope, url) {
+      if (authEpisodes.get(envelope.serverId) === 'certain') {
+        // `redirect_blocked` is the outcome a signed-out host produces anyway, so
+        // every tool already maps it to "sign in to the host".
+        return Promise.resolve<BrokerOutcome>({ kind: 'blocked', reason: 'redirect_blocked' });
+      }
       return new Promise<BrokerOutcome>((resolve) => {
         const entry: PendingRequest = {
           envelope,
@@ -364,6 +418,11 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
     },
     cancelAll() {
       cancelPending();
+    },
+    resetAuthIncidents() {
+      const hosts = [...authEpisodes.keys()];
+      authEpisodes.clear();
+      for (const serverId of hosts) deps.authWatch?.recovered({ serverId });
     },
     dispose() {
       unsubscribe();
