@@ -41,7 +41,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`).                                                                                                                                                                                                         | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained.                                                                                                                                     | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox).                                                                                                                             | Read before changing the updater or cutting a release. |
-| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - pinned, signature-checked portable Node - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable. |
+| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
 
 ---
 
@@ -1518,7 +1518,23 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4009 passed / 13 skipped** (+13 against the
+Current baseline: **`npm run test` → 4014 passed / 13 skipped** (+5 against the
+4009 below - **the Windows installer hashes its download without certutil, and
+both installers reuse an installed Node.js** (2026-10-22): `install.cmd` called
+`certutil` by bare name, so on a machine whose PATH lacks System32 the download
+was never hashed and the script reported a false "does not match the pinned
+SHA-256"; the hash now comes from PowerShell's `Get-FileHash` (PowerShell is
+already required) with `certutil` at its absolute path as the fallback, a file
+that cannot be hashed says so, and `PSModulePath` is cleared before any
+PowerShell call (a PowerShell 7 parent hid `Get-FileHash`). Both scripts now
+prefer an already-installed Node.js at 22.12 or newer that carries npm, and only
+download the pinned, signature-checked one when there is none
+(`EDAISY_NODE=pinned` forces the tested download). The +5 is
+`tests/unit/install/installScripts.test.ts` (line endings, one Node pin across
+both scripts, 64-hex hashes, the baseline, absolute Windows tool paths); 5/5
+mutations caught - see `docs/verification/followons-2026-10.md` "The Windows
+installer hashes its download without certutil, and reuses an installed Node.js
+(2026-10-22)". Before that it was **4009 passed / 13 skipped** (+13 against the
 3996 passed / 1 failed below - **page-property filters** (2026-10-22): the
 publication special case became a generic `filters` array on both search
 composites, with operators and date/number ranges, and `search-component` /
