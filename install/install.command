@@ -12,8 +12,7 @@
 #   4. Deletes the temporary work folder and starts the application.
 #
 # Afterwards the app runs on its own; this file is no longer needed. The app is
-# built on this Mac, so it carries no quarantine mark and Gatekeeper has nothing
-# to warn about; it is sealed with an ad-hoc signature, which Apple Silicon needs.
+# built on this Mac; it is sealed with an ad-hoc signature, which Apple Silicon needs.
 # Your settings and chats live elsewhere and are not touched; run this again in
 # the same folder to update the application.
 #
@@ -87,7 +86,7 @@ mkdir "$WORK/unpack"
 curl -fL --retry 3 -o "$WORK/source.zip" "$SOURCE_URL"
 tar -xf "$WORK/source.zip" -C "$WORK/unpack"
 mv "$WORK"/unpack/*/ "$SRC_DIR"
-test -f "$SRC_DIR/install/build.mjs"
+test -f "$SRC_DIR/scripts/app-build.mjs"
 
 # ---- 3. Install, build, write the app next to this file (caches stay in the work folder) ----
 export PATH="$NODE_DIR/bin:$PATH"
@@ -97,7 +96,7 @@ export electron_config_cache="$WORK/electron-cache"
 export ELECTRON_CACHE="$WORK/electron-cache"
 export ELECTRON_BUILDER_CACHE="$WORK/builder-cache"
 cd "$SRC_DIR"
-"$NODE_DIR/bin/node" install/build.mjs --out "$OUT_DIR"
+"$NODE_DIR/bin/node" scripts/app-build.mjs --out "$OUT_DIR"
 
 # ---- 4. Clean up and start ----
 cd "$OUT_DIR"

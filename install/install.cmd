@@ -12,8 +12,7 @@ rem      and its files - straight into the folder this file is in.
 rem   4. Deletes the temporary work folder and starts the application.
 rem
 rem Afterwards "EToolbox Daisy.exe" runs on its own; this file is no longer needed.
-rem The exe is built on this machine, so it carries no download mark and Windows
-rem SmartScreen has nothing to warn about. Your settings and chats live elsewhere
+rem The exe is built on this machine. Your settings and chats live elsewhere
 rem and are not touched; run this again in the same folder to update the application.
 rem
 rem Usage:  install.cmd            build the latest source of the default branch
@@ -68,7 +67,7 @@ mkdir "%WORK%\unpack"
 "%CURL%" -fL --retry 3 -o "%WORK%\source.zip" "%SOURCE_URL%" || goto fail
 "%TAR%" -xf "%WORK%\source.zip" -C "%WORK%\unpack" || goto fail
 for /d %%D in ("%WORK%\unpack\*") do move "%%D" "%SRC_DIR%" >nul
-if not exist "%SRC_DIR%\install\build.mjs" goto fail
+if not exist "%SRC_DIR%\scripts\app-build.mjs" goto fail
 
 rem ---- 3. Install, build, write the app next to this file (caches stay in the work folder) ----
 set "PATH=%NODE_DIR%;%PATH%"
@@ -78,7 +77,7 @@ set "electron_config_cache=%WORK%\electron-cache"
 set "ELECTRON_CACHE=%WORK%\electron-cache"
 set "ELECTRON_BUILDER_CACHE=%WORK%\builder-cache"
 cd /d "%SRC_DIR%"
-"%NODE_DIR%\node.exe" install\build.mjs --out "%OUT_DIR%"
+"%NODE_DIR%\node.exe" scripts\app-build.mjs --out "%OUT_DIR%"
 if errorlevel 1 goto fail
 
 rem ---- 4. Clean up and start ----
