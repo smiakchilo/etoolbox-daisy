@@ -43,9 +43,10 @@ and use it as `roots` instead of the family, exactly as the user wrote it:
 instructions cover the rest.
 
 If the request is about published or not-published content, keep that out of the
-search string too and add `publication` (the Publication state rules in your
-instructions): `{ "terms": "<search string>", "roots": [...], "publication":
-"published" }`. The search then returns pages and assets only.
+search string too and add the filter the Publication state rules in your
+instructions name: `{ "terms": "<search string>", "roots": [...], "filters":
+[{ "property": "cq:lastReplicationAction", "value": "Activate" }] }`. The search
+then returns pages and assets only.
 
 That one tool does the whole search: it runs `aem_query` (full text, one page at
 a time), shows the page as the chat's table, and while more results may exist
@@ -69,8 +70,9 @@ one call with it as `predicates` instead of `terms`:
 `aem_query_format_ask` validates the map exactly as `aem_query` does and runs the
 same table and **Load more** loop, with the same `roots` discipline as above.
 Never pass both `terms` and `predicates`. Leave `properties` out (see "Leave the
-table's columns alone"). `publication` works with hand-built predicates only when
-they set `type` to `cq:Page` or `dam:Asset`.
+table's columns alone"). `filters` work with hand-built predicates only when
+they set `type` to `cq:Page` or `dam:Asset`, or match a component by
+`sling:resourceType`.
 
 ## Always scope
 

@@ -16,9 +16,9 @@ import {
   type ToolError,
   type ToolHost,
   SEARCH_PAGE_SIZE,
-  applyPublicationFilter,
+  applySearchFilters,
   createToolError,
-  describePublication,
+  describeSearchFilters,
   err,
   ok,
 } from '../../../src/shared';
@@ -289,7 +289,7 @@ describe('aem_semantic_search executor', () => {
     });
   });
 
-  it('filters every page of a search by publication, and echoes the filter', async () => {
+  it('filters every page of a search by page property, and echoes the filter', async () => {
     let queries = 0;
     const { host, calls } = makeHost((name, args) => {
       if (name === 'aem_query') {
@@ -299,28 +299,29 @@ describe('aem_semantic_search executor', () => {
       return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
     });
     const execute = createAemSemanticSearchExecutor(host);
+    const filters = [{ property: 'cq:lastReplicationAction', value: 'Activate' }];
     const started = payload(
-      await execute({ terms: 'Waldo', context: 'good', publication: 'published' }, callContext),
+      await execute({ terms: 'Waldo', context: 'good', filters }, callContext),
     );
     await execute({ searchId: started['searchId'] as string, matches: [] }, callContext);
 
-    const expected = applyPublicationFilter({ fulltext: 'Waldo' }, 'published');
+    const expected = applySearchFilters({ fulltext: 'Waldo' }, filters);
     const queried = calls.filter((call) => call.name === 'aem_query');
     expect(queried).toHaveLength(2);
     for (const call of queried) {
       expect({ ok: true, predicates: call.args['predicates'] }).toEqual(expected);
     }
-    expect(started['publication']).toBe('published');
+    expect(started['filters']).toEqual(filters);
   });
 
-  it('searches without a publication condition, and echoes none, when it is omitted', async () => {
+  it('searches without a filter, and echoes none, when it is omitted', async () => {
     const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)));
     const started = payload(
       await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'good' }, callContext),
     );
 
     expect(calls[0]?.args['predicates']).toEqual({ fulltext: 'Waldo' });
-    expect(started).not.toHaveProperty('publication');
+    expect(started).not.toHaveProperty('filters');
   });
 
   it('still gives a total line while nothing has matched', async () => {
@@ -572,17 +573,14 @@ describe('aem_semantic_search renderer', () => {
     expect(resumed.parameters.length).toBeGreaterThan(0);
   });
 
-  it('adds a publication row only to a filtered search', () => {
+  it('adds a Filters row only to a filtered search', () => {
+    const filters = [{ property: 'cq:template', value: '/conf/site/settings/wcm/templates/page' }];
     const plain = renderer.describeCall({ terms: 'Waldo', context: 'good' });
-    const filteredCall = renderer.describeCall({
-      terms: 'Waldo',
-      context: 'good',
-      publication: 'unpublished',
-    });
+    const filteredCall = renderer.describeCall({ terms: 'Waldo', context: 'good', filters });
 
     expect(filteredCall.parameters).toHaveLength(plain.parameters.length + 1);
     expect(filteredCall.parameters.map((row) => row.value)).toContain(
-      describePublication('unpublished'),
+      describeSearchFilters(filters),
     );
   });
 });

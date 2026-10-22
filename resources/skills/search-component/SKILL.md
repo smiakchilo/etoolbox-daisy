@@ -1,6 +1,6 @@
 ---
 name: search-component
-description: Find the pages that use a given AEM component - the component-usage search. Load this instead of the `search` skill whenever a request pairs looking or searching with a component, such as "search pages containing <component>", "which pages use <component>", "find pages with <component>" or "where is <component> used", or any phrase where a component title or name is the thing to find. Load it before acting - its body carries the exact resolution and search procedure (a plain phrase is a title to resolve against the component roots, never a resource type to invent), and the application then shows a two-column table (the owning page and the component's path within it) with no prose of your own. Use whenever the user asks which pages use, contain, or are built with a component, or where a component is used - including when they invoke `/search-component <what>`. Pages of a given template or page type are `search-page`.
+description: Find the pages that use a given AEM component - the component-usage search. Load this instead of the `search` skill whenever a request pairs looking or searching with a component, such as "search pages containing <component>", "which pages use <component>" or "where is <component> used". Load it before acting - its body carries the exact resolution and search procedure (a plain phrase is a title to resolve against the component roots, never a resource type to invent), and the application then shows a two-column table (the owning page and the component's path within it) with no prose of your own. Use it whenever a request asks which pages use, contain, or are built with a component, or where one is used - including `/search-component <what>` and a request that also names the pages' template or another page property, since that filter only narrows the pages that contain the component. A request that only lists pages of a template or page type is `search-page`.
 metadata:
   user-description: Find the pages that use a given component
 ---
@@ -152,10 +152,53 @@ instance). If the request names a scope ("... under us/en"), use it as `roots`
 instead, exactly as the user wrote it: `"roots": ["us/en"]`. The Scope rules in
 your instructions cover the rest.
 
-When the request asks for pages that are published or not published, add
-`publication` beside `predicates` (the Publication state rules in your
-instructions). The application then keeps only the instances whose owning page is
-in that state; never write a replication property into the predicates yourself.
+### Filtering by the page that owns the component
+
+A request can narrow the pages as well as the component - most often by template.
+Add `filters` beside `predicates`; the application applies each filter to the
+**page that owns the component**, never to the component node, so a template or a
+replication state keeps the instances on matching pages:
+
+```json
+{
+  "predicates": {
+    "type": "nt:unstructured",
+    "property": "sling:resourceType",
+    "property.1_value": "myproject/components/content/content-block",
+    "property.2_value": "/apps/myproject/components/content/content-block"
+  },
+  "filters": [
+    { "property": "cq:template", "value": "/conf/myproject/settings/wcm/templates/generic-page" }
+  ],
+  "roots": ["<the host's content roots>"]
+}
+```
+
+The filters this skill offers:
+
+| The request says | Add this filter |
+| --- | --- |
+| "on the <template> template", "on <template> pages" | `{ "property": "cq:template", "value": "<template path>" }` |
+| published / activated / live | `{ "property": "cq:lastReplicationAction", "value": "Activate" }` |
+| not published / unpublished / draft only | the same filter with `"negate": true` |
+| modified after / before a date | `{ "property": "cq:lastModified", "operator": "after", "value": "<ISO date>" }` (or `before`) |
+| another page property | `{ "property": "<content-node property>", "value": "<value>" }` |
+
+- **A template named by title or name is not a path.** Load the `page-template`
+  skill with the `skill` tool and follow it to resolve the phrase; never invent a
+  path and never search for the title as text. A value that starts with `/` is
+  already the path.
+- Several templates are several `cq:template` filters that share a `group` label
+  (the application ORs them).
+- Publication state is defined once in your instructions' Publication state
+  rules; use that filter rather than writing a replication property into
+  `predicates` yourself.
+- A property is named relative to the page's content node (`cq:template`,
+  `cq:lastModified`), never `jcr:content/...`.
+- Use a property only the page's content node carries (a template, a replication
+  action, a modification date). A property a container inside the page also
+  carries would match that container, not the page.
+- A filter the application cannot apply exactly is refused, never dropped.
 
 Pass **no** `properties`, and no other output argument. The table is exactly two
 columns - **`Path`** (the owning page) and **`Node`** (the component node's path

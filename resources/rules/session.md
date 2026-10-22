@@ -23,15 +23,23 @@ Every search or listing has a scope: the JCR path or paths it looks under.
 - A place described in words ("the US site", "the German pages") is not a path. Do not guess one: follow the Ambiguity rule below and ask which path the user means.
 - Do not narrow a scope on a guess. A wrong scope returns a confident, empty answer.
 
-## Publication state
+## Filters
 
-A search can keep only published or only not-published results with its `publication` argument. Decide it from what the request means, in any wording or language:
+A search can keep only the results whose page carries a given property value, through the tool's `filters` argument. Name the property **relative to the page's content node** - `cq:template`, not `jcr:content/cq:template` - and say how to compare it:
 
-- `"published"` - the user wants published content: "published", "activated", "live", "replicated", "on publish", "veröffentlicht", "опубликованные", and the like;
-- `"unpublished"` - the opposite: "not published", "unpublished", "deactivated", "never published", "draft only", and the like;
-- leave it out when the request says nothing about publication.
+```json
+{ "property": "cq:template", "value": "/conf/site/settings/wcm/templates/generic-page" }
+```
 
-The application builds the filter itself; never write a replication property into `predicates` yourself. "Published" means the last replication action was an activation; a deactivated or never-published page or asset is not published.
+- `operator` defaults to `equals`; `like` matches with `%` wildcards; `exists` needs no value.
+- A date compares with `after`, `onOrAfter`, `before` or `onOrBefore`; a number with `above`, `atLeast`, `below` or `atMost`. A range takes one value per filter, so a between is two filters.
+- `negate: true` keeps the results that do **not** satisfy the filter.
+- Filters on different properties are ANDed; filters sharing a `group` label are ORed, for alternatives such as several templates.
+- On a component search the filter applies to the page that owns the component: a template or a replication state keeps the components on matching pages.
+
+Prefer `filters` to a hand-built predicate for a page condition. On a component search the application is the only one that can apply it to the owning page, so never encode it in `predicates` there. A filter the application cannot apply exactly is refused rather than dropped.
+
+**Publication state.** Published content is content whose last replication action was an activation: `{ "property": "cq:lastReplicationAction", "value": "Activate" }`. Add that filter when the request wants published content ("published", "activated", "live", "replicated", "on publish", "veröffentlicht", "опубликованные", and the like), and add `"negate": true` to it for the opposite ("not published", "unpublished", "deactivated", "never published", "draft only", and the like) - a page without the property is not published. Leave it out when the request says nothing about publication.
 
 ## Ambiguity
 

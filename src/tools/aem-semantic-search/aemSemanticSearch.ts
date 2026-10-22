@@ -3,9 +3,9 @@ import {
   type ToolExecutor,
   type BrokerOutcome,
   type JsonValue,
-  type Publication,
   type RequestId,
   type Result,
+  type SearchFilter,
   type ToolDescriptor,
   type ToolError,
   type ToolExecutionContext,
@@ -14,7 +14,7 @@ import {
   MAX_SEARCH_ROOTS,
   MIN_QUERY_LIMIT,
   TURN_COMPLETE_RESULT_KEY,
-  applyPublicationFilter,
+  applySearchFilters,
   classifyAemResponse,
   computeDeadline,
   createToolError,
@@ -25,10 +25,10 @@ import {
   ok,
   parseJcrPath,
   parseOrigin,
-  publicationSchema,
   resolveSearchPageSize,
   resolveSearchRoots,
   resolveSearchScope,
+  searchFiltersSchema,
   searchRootsSchema,
 } from '../../shared';
 
@@ -112,8 +112,11 @@ export const aemSemanticSearchArgsSchema = z
       .max(MAX_QUERY_LIMIT)
       .describe('Rows per page. Omit it unless the user asked for a page size.')
       .optional(),
-    /** Call A: keep only published, or only not-published, pages and assets. */
-    publication: publicationSchema.optional(),
+    /**
+     * Call A: keep only results whose page carries a given property value (a
+     * template, a replication state, a modification date, ...).
+     */
+    filters: searchFiltersSchema.optional(),
     /** Call B: the id call A returned. */
     searchId: z.string().trim().min(1).optional(),
     /** Call B: the candidates that match the context (numbers, or `{ candidate, excerpt }`). */
@@ -126,8 +129,9 @@ export const AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR: ToolDescriptor = {
   description:
     'Runs a semantic AEM search as a loop the application drives. Start it with ' +
     '`{ terms, context }`: `terms` is the full-text search string, `context` is what a result ' +
-    'must be about to count; optional `publication` keeps only published or only not-published ' +
-    'pages and assets. It returns a `searchId` and numbered candidates (every hit of the ' +
+    'must be about to count; optional `filters` keep only results whose page carries a given ' +
+    'property value (a template, a replication state, a modification date), named relative to ' +
+    "the page's content node. It returns a `searchId` and numbered candidates (every hit of the " +
     'page, with excerpts of its content). Judge EVERY candidate against the context, then call ' +
     'this tool again with `{ searchId, matches }` - the numbers of the matching candidates ' +
     '(`[]` if none), optionally `{ candidate, excerpt }` to choose the excerpt cited. ' +
@@ -168,8 +172,8 @@ interface Pagination {
 interface SearchState {
   readonly terms: string;
   readonly context: string;
-  readonly publication: Publication | undefined;
-  /** The query's predicates: the terms, plus the publication filter when one applies. */
+  readonly filters: readonly SearchFilter[] | undefined;
+  /** The query's predicates: the terms, plus the page-property filters when any apply. */
   readonly predicates: Readonly<Record<string, string>>;
   readonly roots: readonly string[];
   readonly limit: number;
@@ -508,7 +512,9 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     requestId,
     terms: state.terms,
     context: state.context,
-    ...(state.publication === undefined ? {} : { publication: state.publication }),
+    // The typed filter objects are plain JSON; the cast only satisfies the
+    // index-signature shape a JsonValue has.
+    ...(state.filters === undefined ? {} : { filters: state.filters as unknown as JsonValue }),
     roots: [...state.roots],
     pageSize: state.limit,
     page: state.pages,
@@ -643,7 +649,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     context: ToolExecutionContext,
     requestId: RequestId,
   ): Promise<Result<JsonValue, ToolError>> => {
-    const filtered = applyPublicationFilter({ fulltext: terms }, args.publication);
+    const filtered = applySearchFilters({ fulltext: terms }, args.filters);
     if (!filtered.ok) {
       return err(createToolError('INVALID_ARGUMENT', filtered.message, requestId));
     }
@@ -664,7 +670,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     const state: SearchState = {
       terms,
       context: semanticContext,
-      publication: args.publication,
+      filters: args.filters,
       predicates: filtered.predicates,
       roots: [
         ...(explicitRoots ??

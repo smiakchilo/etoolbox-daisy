@@ -37,45 +37,11 @@ Never answer with templates or components: the table must list **pages**.
 
 **A value that starts with `/`** is already a template path - go to step 3.
 
-**Anything else is a name or title.** Do not search for it as text and do not
-invent a path. List the templates and pick from the list - one `aem_query` call
-exactly like this, changing nothing:
-
-```json
-{
-  "predicates": { "type": "cq:Template" },
-  "roots": ["/conf", "/apps"],
-  "properties": [
-    "jcr:content/jcr:title",
-    "structure/jcr:content/sling:resourceType",
-    "jcr:content/sling:resourceType"
-  ],
-  "limit": 200
-}
-```
-
-Then read the rows yourself:
-
-- **Ignore** every row whose path contains `/template-types/` - those are not
-  templates.
-- **Keep the project's templates.** A template belongs to the project when its
-  page resource type (`structure/jcr:content/sling:resourceType` for an editable
-  template, `jcr:content/sling:resourceType` for a static one) lies under one of
-  the host's **component roots** (from the current page context block, default
-  `/apps`). A resource type is stored relative (`myproject/components/...`) or
-  absolute (`/apps/myproject/components/...`), so compare both spellings against a
-  root such as `/apps/myproject`. If this leaves nothing, keep every template.
-- **Match the phrase** against each kept template's node name (the last path
-  segment) and its `jcr:title`, ignoring case, spaces, hyphens, underscores and
-  the words "template" and "page". `UC Basic` matches `hpe-uc-basic`.
-
-Then:
-
-- **Exactly one match?** Use its path.
-- **Several?** Do not choose for the user: call `ask_user` with one option per
-  template, labelled `"<jcr:title> - <path>"`, plus an `All of them` option.
-- **None?** Call `ask_user` (free input) for another name or a template path -
-  your own text is hidden. Never search on a guess.
+**Anything else is a name or title.** Load the `page-template` skill with the
+`skill` tool and follow it: it lists the templates under `/conf` and `/apps`,
+keeps the project's, matches the phrase and asks you when the choice is
+ambiguous. Use the path (or paths) it gives you. Never search for the phrase as
+text and never invent a path.
 
 ## Step 2 - page resource type (only when one was given)
 
@@ -95,37 +61,40 @@ removed; otherwise the value, `/apps/<value>` and `/libs/<value>`.
 
 ## Step 3 - search the pages
 
-Make **one** `aem_query_format_ask` call. Include a property group only for an
-input you have. The groups are ANDed; the values inside a group are ORed:
+Make **one** `aem_query_format_ask` call over `cq:Page`, adding one filter for
+each input you have. Filters on different properties are ANDed; filters that
+share a `group` are ORed:
 
 ```json
 {
-  "predicates": {
-    "type": "cq:Page",
-    "1_property": "jcr:content/cq:template",
-    "1_property.1_value": "/conf/myproject/settings/wcm/templates/generic-page",
-    "2_property": "jcr:content/sling:resourceType",
-    "2_property.1_value": "myproject/components/pages/page-generic",
-    "2_property.2_value": "/apps/myproject/components/pages/page-generic"
-  },
+  "predicates": { "type": "cq:Page" },
+  "filters": [
+    { "property": "cq:template", "value": "/conf/myproject/settings/wcm/templates/generic-page" },
+    { "group": "page type", "property": "sling:resourceType", "value": "myproject/components/pages/page-generic" },
+    { "group": "page type", "property": "sling:resourceType", "value": "/apps/myproject/components/pages/page-generic" }
+  ],
   "roots": ["<the host's content roots>"]
 }
 ```
 
-Several templates are further `1_property.N_value` entries. Search the host's
-**content roots**; if the request names a scope ("... under us/en"), use it as
-`roots` exactly as the user wrote it.
+Name a page property **relative to the page's content node**: `cq:template` and
+`sling:resourceType`, never `jcr:content/cq:template`. Both spellings of a
+resource type are two filters in one `group`, because a page stores either one.
+Several templates are several `cq:template` filters sharing their own group
+label.
+
+Search the host's **content roots**; if the request names a scope ("... under
+us/en"), use it as `roots` exactly as the user wrote it.
 
 Rules for this call:
 
 - `type` is always `cq:Page`. **Never** query `nt:unstructured` or `jcr:content`
   nodes - their hits are `.../jcr:content` paths, not pages.
 - Pass **no** `properties`: the table is the `Path` column of the pages.
-- Keep the property paths exactly as shown: `jcr:content/cq:template` and
-  `jcr:content/sling:resourceType`. Do not use `like`, `%` or `nodename`.
-- When the request asks for published or not-published pages, add `publication`
-  beside `predicates` (the Publication state rules in your instructions); never a
-  replication property of your own.
+- Never write these property conditions into `predicates` yourself, and do not use
+  `like`, `%` or `nodename` for a template or a resource type.
+- When the request asks for published or not-published pages, add the filter the
+  Publication state rules in your instructions name.
 - On an instance that does not index these properties the search can be slow. Keep
   the scope as narrow as the question allows and do not retry a failed search
   unchanged.

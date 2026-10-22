@@ -31,17 +31,17 @@ Target: Windows 10 x64, internal, unsigned build.
 
 ## 2. Documents, in the order they matter
 
-| File | What it is | How to treat it |
-| --- | --- | --- |
-| `docs/implementation-plan.md` | The **contract**. 12 numbered steps, each with explicit success criteria. | **Read-only.** Never edit. Never mark several steps done on a general impression. |
-| `docs/requirements-decisions.md` | The reasoning and agreed decisions behind the plan. | Read when a plan bullet seems arbitrary — the justification is here. |
-| `docs/compatibility.md` | Verified-API fact table (**U1–U12**, ~lines 801–810) plus SDK behaviour notes. | **Authoritative.** If it says an API behaves a certain way, that was proven by running it. Don't re-test; don't contradict it from intuition. |
-| `docs/verification.md` | The **evidence log** — an index over per-era section files in `docs/verification/` (one dated section per completed piece of work). | Append a section to the current archive (`docs/verification/followons-2026-10.md`). Record what was *executed*, not what was written. |
-| `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits. | Read before adding, removing or restructuring an agent/SDK. |
-| `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`). | Read before adding or removing a tool. |
-| `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained. | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
-| `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox). | Read before changing the updater or cutting a release. |
-| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - pinned, signature-checked portable Node - plus the shared `install/build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable. |
+| File | What it is                                                                                                                                                                                                                                    | How to treat it |
+| --- |-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| --- |
+| `docs/implementation-plan.md` | The **contract**. 12 numbered steps, each with explicit success criteria.                                                                                                                                                                     | **Read-only.** Never edit. Never mark several steps done on a general impression. |
+| `docs/requirements-decisions.md` | The reasoning and agreed decisions behind the plan.                                                                                                                                                                                           | Read when a plan bullet seems arbitrary — the justification is here. |
+| `docs/compatibility.md` | Verified-API fact table (**U1–U12**, ~lines 801–810) plus SDK behaviour notes.                                                                                                                                                                | **Authoritative.** If it says an API behaves a certain way, that was proven by running it. Don't re-test; don't contradict it from intuition. |
+| `docs/verification.md` | The **evidence log** — an index over per-era section files in `docs/verification/` (one dated section per completed piece of work).                                                                                                           | Append a section to the current archive (`docs/verification/followons-2026-10.md`). Record what was *executed*, not what was written. |
+| `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits.                                                                                                                       | Read before adding, removing or restructuring an agent/SDK. |
+| `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`).                                                                                                                                                                                                         | Read before adding or removing a tool. |
+| `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained.                                                                                                                                     | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
+| `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox).                                                                                                                             | Read before changing the updater or cutting a release. |
+| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - pinned, signature-checked portable Node - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable. |
 
 ---
 
@@ -205,12 +205,20 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change **adds the publication filter**
+> The most recent shared-surface change **generalizes the publication filter
+> into page-property filters** (2026-10-22): `tools/core/publication.ts` became
+> `tools/core/searchFilters.ts` (exported through the tools barrel); both search
+> composites take an optional `filters` array instead of `publication`, and the
+> publication state is now one filter the prose names
+> (`cq:lastReplicationAction`). An operator covers equality, `like`, existence
+> and date/number ranges; filters sharing a `group` are ORed. No file under
+> `contracts/` changed. See "Page-property filters" below and
+> `docs/verification/followons-2026-10.md` "The publication filter becomes
+> page-property filters, and `search-component` filters by template (2026-10-22)".
+> Before that, the shared-surface change **added the publication filter**
 > (2026-10-20): a new `tools/core/publication.ts` (exported through the tools
-> barrel) builds the QueryBuilder predicates for the search composites' optional
-> `publication` argument. No file under `contracts/` changed. See "Publication
-> state" below and `docs/verification/followons-2026-10.md` "Published-only and
-> not-published search filter (2026-10-20)".
+> barrel) built the QueryBuilder predicates for the search composites' optional
+> `publication` argument - the change this one generalizes; the file is gone.
 > Before that, the shared-surface change **removed the memo billet's hover
 > actions** (2026-10-19): `tools/core/toolRenderer.ts` lost `ToolCallAction` /
 > `readActions` (as did the renderer registry), `src/renderer/src/chat/toolCallActions.ts`
@@ -1075,11 +1083,13 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 
 ### `resources/skills/` and the skill subsystem
 
-Eight bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
+Nine bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
 `search-component`, `search-page`, `navigate` and `remember` (all user-invocable — they appear in the
-composer's `/` autocomplete), plus `daisy-conventions` and `query-results`
-(auxiliary — `user-invocable: false`, so the model still gets them in its
-catalogue but the `/` menu does not list them).
+composer's `/` autocomplete), plus `daisy-conventions`, `query-results` and
+`page-template` (auxiliary — `user-invocable: false`, so the model still gets
+them in its catalogue but the `/` menu does not list them). `page-template` holds
+the one template-name-to-path resolution, loaded by `search-page` and
+`search-component` alike; do not copy that procedure into either skill.
 
 **One app-owned mechanism, identical for every agent** (plan:
 `docs/skill-subsystem-plan.md`). No SDK ever sees a skill directory: Copilot's own
@@ -1209,15 +1219,19 @@ and its background honest count proves an exact total (see
 `docs/compatibility.md` §11.3). Its `description` is written to win the
 auto-inference race against `search`: a request that pairs looking/searching with
 a component belongs here, and `search`'s own description now defers such a
-request. `/search-page <template or page type>` finds the pages built on a
+request. A request that also names the pages' template or another page property
+is still `search-component`: it adds a `filters` entry, which the application
+applies to the page that owns the component (see "Page-property filters" above).
+`/search-page <template or page type>` finds the pages built on a
 template (path, name or title; static or editable) and/or a page resource type: it
-resolves a template name against `/conf` and `/apps`, limits the templates to the
-project by keeping those whose own page resource type
+gets the template path from the shared `page-template` skill, which lists
+`cq:Template` under `/conf` and `/apps`, limits the templates to the project by
+keeping those whose own page resource type
 (`structure/jcr:content/sling:resourceType` editable, `jcr:content/sling:resourceType`
-static) falls under the component roots, and makes one `aem_query_format_ask` call on
-`cq:Page` (`jcr:content/cq:template`, `jcr:content/sling:resourceType`); its query
-shapes are documented, not yet verified live (`docs/compatibility.md` §11.6). The
-template-limited `search-component` is deferred (`docs/backlog.md`). The application suppresses the model's own prose for a `/search`,
+static) falls under the component roots, and matches the phrase; the search is one
+`aem_query_format_ask` call on `cq:Page` with `cq:template` and
+`sling:resourceType` filters; its query shapes are documented, not yet verified
+live (`docs/compatibility.md` §11.6). The application suppresses the model's own prose for a `/search`,
 `/semantic-search`, `/search-component` or `/search-page` turn two ways: at send for a turn whose
 prompt invokes one of them (`isDeterministicTablePrompt` in
 `src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model loads
@@ -1255,7 +1269,7 @@ arrived, so the word "rules" is used throughout.)
 
 | File | Holds | Placeholders |
 | --- | --- | --- |
-| `session.md` | The always-on session instructions: current-page context, **Scope**, **Publication state**, **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
+| `session.md` | The always-on session instructions: current-page context, **Scope**, **Filters** (including the publication state), **Ambiguity**, paths, read-only, tools, errors | `{{tools}}` - the enabled tools' paragraphs, exactly once (`composeAssistantInstructions`) |
 | `skills.md` | The skill-catalogue preamble, incl. "a skill's input is the whole request" | `{{skillTool}}` (any number), `{{catalogue}}` - exactly once (`renderSkillCatalogue`) |
 | `user-rules.md` | The frame around the user's generic rules, appended to the session instructions | `{{rules}}` - exactly once (`renderGenericRules`) |
 | `project-rules.md` | The frame around a project's rules, sent on the model prompt | `{{project}}` and `{{rules}}` - each exactly once (`renderProjectRules`) |
@@ -1380,25 +1394,38 @@ are asked for, content roots when neither is named - `resources/rules/session.md
 (content then DAM, collapsed) is kept only as a fallback for a call that passes
 no `roots`; the skills are told not to rely on it.
 
-**Publication state is the model's choice of mode; the filter is the
-application's.** `aem_query_format_ask` and `aem_semantic_search` take an
-optional `publication` argument (`"published"` / `"unpublished"`). The model sets
-it from what the request means, in any wording or language
-(`resources/rules/session.md` "Publication state", stated once; each search
-skill adds one procedure line). `applyPublicationFilter`
-(`src/shared/tools/core/publication.ts`) builds the predicates by shape:
-- published means `jcr:content/cq:lastReplicationAction = Activate`, and not
-  published is its `p.not` complement;
-- a component search gets an OR over ancestor depths 1..15, because QueryBuilder
-  has no joins;
-- `type=cq:Page` / `type=dam:Asset` gets its own `jcr:content` condition;
+**Page-property filters: one generic shape, applied by the search's own shape.**
+`aem_query_format_ask` and `aem_semantic_search` take an optional `filters`
+array. A filter is `{ property, operator?, value?, negate?, group? }`, the
+property named **relative to the item's content node** (`cq:template`, not
+`jcr:content/cq:template`). The operators are `equals` (default), `like`,
+`exists`, the date range `after`/`onOrAfter`/`before`/`onOrBefore`
+(`daterange`) and the numeric range `above`/`atLeast`/`below`/`atMost`
+(`rangeproperty`); one value per filter, so a between is two filters. Filters are
+ANDed; filters sharing a `group` label are ORed. `negate` is the `p.not`
+complement of the whole filter and never combines with `group` (refused).
+`applySearchFilters` (`src/shared/tools/core/searchFilters.ts`) builds the
+predicates by shape:
+- a component search gets an OR over ancestor content nodes (depths 1..15,
+  `FILTER_ANCESTOR_DEPTH`), because QueryBuilder has no joins. The ancestor chain
+  contains exactly one `jcr:content` - the owning page's - so a property only a
+  page content node carries (`cq:template`, `cq:lastReplicationAction`) is exact;
+  a property a container could also carry would match the container;
+- `type=cq:Page` / `type=dam:Asset` gets its own `jcr:content/<property>`;
 - a plain full-text search is typed to pages and assets first;
-- any other shape is refused with `INVALID_ARGUMENT`.
+- any other shape is refused with `INVALID_ARGUMENT`, never filtered silently.
 
-The filtered predicates drive the page query and the honest count. The
-component `Path`/`Node` split and the echoed `predicates` keep the model's own.
-Both billets show a `Publication` row. The groups `9001_group` and `9002_group`
-are reserved. See `docs/compatibility.md` §11.7.
+The model chooses a filter from what the request means; the *particular
+properties* live in the prose, never in the tool: `resources/rules/session.md`
+"Filters" names the publication state (`cq:lastReplicationAction = Activate`,
+negated for not published) and the component skill names `cq:template` (resolved
+through the shared `page-template` auxiliary skill) and `cq:lastModified`. Never
+add a property-specific argument to a tool. The filtered predicates drive the
+page query and the honest count. The component `Path`/`Node` split and the
+echoed `predicates` keep the model's own; both billets show a `Filters` row. The
+groups `9001_group`..`9005_group` (the type group plus up to
+`MAX_SEARCH_FILTERS` = 4 filter groups) are reserved. See
+`docs/compatibility.md` §11.7.
 
 ### In-app updates (`src/main/updates/`)
 
@@ -1491,17 +1518,26 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 3996 passed / 1 failed / 13 skipped** (+5
+Current baseline: **`npm run test` → 4009 passed / 13 skipped** (+13 against the
+3996 passed / 1 failed below - **page-property filters** (2026-10-22): the
+publication special case became a generic `filters` array on both search
+composites, with operators and date/number ranges, and `search-component` /
+`search-page` filter by template through the shared `page-template` skill. The +13
+is the new `searchFilters.test.ts` (20 cases, replacing the 9-case
+`publication.test.ts`), the new bundled `page-template` skill's front-matter case,
+and the fixed pre-existing `searchPageSize` failure - the `search-page` skill's
+`limit: 200` was removed when its template listing moved into `page-template`,
+which carries no page size. See
+`docs/verification/followons-2026-10.md` "The publication filter becomes
+page-property filters, and `search-component` filters by template (2026-10-22)".
+Before that it was **3996 passed / 1 failed / 13 skipped** (+5
 against the 3991 below - **an interrupted tool call never keeps spinning**
 (2026-10-20): the transcript store's interruption notice, a turn leaving the
 in-flight state, and the journal replay's final sweep all settle the calls' own
 statuses (not just the `runningToolCalls` index an interruption used to empty),
 so an interrupted billet shows the static icon and `Interrupted` live and after a
 restart; an interruption also stops a `format_table`'s pending count. The +5 is 4
-`transcriptStore` and 1 `journalReplay` case; the same pre-existing
-`searchPageSize` failure remains. See
-`docs/verification/followons-2026-10.md` "An interrupted tool call never keeps
-spinning (2026-10-20)"). Before that it was **3991 passed / 1 failed / 13
+`transcriptStore` and 1 `journalReplay` case). Before that it was **3991 passed / 1 failed / 13
 skipped** (+8
 against the 3983 below - **the edit-mode toggle's long press** (2026-10-20): the
 control carries Spectrum's `hold-affordance` and its `longpress` navigates the

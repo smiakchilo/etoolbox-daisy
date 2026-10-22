@@ -55,8 +55,9 @@ If the request names a scope ("... under us/en"), it belongs in neither `terms` 
 rest.
 
 Whether the content is published belongs in neither `terms` nor `context` either:
-when the request asks for published or not-published content, add `publication`
-to this first call (the Publication state rules in your instructions). The
+when the request asks for published or not-published content, add the filter the
+Publication state rules in your instructions name to this first call (`"filters":
+[{ "property": "cq:lastReplicationAction", "value": "Activate" }]`). The
 candidates are then pages and assets only.
 
 ## 3. Judge every candidate, and call back

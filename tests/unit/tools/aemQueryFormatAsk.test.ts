@@ -18,11 +18,9 @@ import {
   CONTENT_ROOT_DEFAULT,
   LOAD_ALL_ROW_LIMIT,
   SEARCH_PAGE_SIZE,
-  ancestorPublicationPredicates,
-  applyPublicationFilter,
-  contentPublicationPredicates,
+  applySearchFilters,
   createToolError,
-  describePublication,
+  describeSearchFilters,
   err,
   ok,
 } from '../../../src/shared';
@@ -519,39 +517,40 @@ describe('aem_query_format_ask executor', () => {
     expect(tableData['rows']).toEqual([{ 'jcr:path': '/content/site/a/jcr:content/root/text' }]);
   });
 
-  it('filters a plain-term search by publication, and echoes the filter, not the added predicates', async () => {
+  it('filters a plain-term search by page property, and echoes the filter, not the added predicates', async () => {
     const { host, calls } = makeHost(
       (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
       ['/content/site'],
     );
+    const filters = [{ property: 'cq:lastReplicationAction', value: 'Activate' }];
     const result = await createAemQueryFormatAskExecutor(host)(
-      { terms: 'waldo', publication: 'published' },
+      { terms: 'waldo', filters },
       callContext,
     );
 
     expect({ ok: true, predicates: calls[0]?.args['predicates'] }).toEqual(
-      applyPublicationFilter({ fulltext: 'waldo' }, 'published'),
+      applySearchFilters({ fulltext: 'waldo' }, filters),
     );
-    expect(payload(result)).toMatchObject({ terms: 'waldo', publication: 'published' });
+    expect(payload(result)).toMatchObject({ terms: 'waldo', filters });
   });
 
-  it('echoes the original hand-built predicates when a publication filter is added', async () => {
+  it('echoes the original hand-built predicates when a filter is added', async () => {
     const { host, calls } = makeHost(
       (name) => (name === 'aem_query' ? ok(queryPage(1, false)) : ok(tableOk)),
       ['/content/site'],
     );
     const predicates = { type: 'cq:Page', property: 'jcr:content/cq:template' };
+    const filters = [{ property: 'cq:lastReplicationAction', value: 'Activate', negate: true }];
+    const filtered = applySearchFilters(predicates, filters);
+    if (!filtered.ok) throw new Error(filtered.message);
     const result = await createAemQueryFormatAskExecutor(host)(
-      { predicates, publication: 'unpublished' },
+      { predicates, filters },
       callContext,
     );
 
-    expect(calls[0]?.args['predicates']).toEqual({
-      ...predicates,
-      ...contentPublicationPredicates('unpublished'),
-    });
+    expect(calls[0]?.args['predicates']).toEqual(filtered.predicates);
     expect(payload(result)['predicates']).toEqual(predicates);
-    expect(payload(result)['publication']).toBe('unpublished');
+    expect(payload(result)['filters']).toEqual(filters);
   });
 
   it('still shows a filtered component search against its pages', async () => {
@@ -576,25 +575,25 @@ describe('aem_query_format_ask executor', () => {
       ['/content/site'],
     );
     const predicates = { type: 'nt:unstructured', property: 'sling:resourceType' };
-    await createAemQueryFormatAskExecutor(host)(
-      { predicates, publication: 'published' },
-      callContext,
-    );
+    const filters = [{ property: 'cq:template', value: '/conf/site/settings/wcm/templates/page' }];
+    const filtered = applySearchFilters(predicates, filters);
+    if (!filtered.ok) throw new Error(filtered.message);
+    await createAemQueryFormatAskExecutor(host)({ predicates, filters }, callContext);
 
-    expect(calls[0]?.args['predicates']).toEqual({
-      ...predicates,
-      ...ancestorPublicationPredicates('published'),
-    });
+    expect(calls[0]?.args['predicates']).toEqual(filtered.predicates);
     const tableData = calls[1]?.args['data'] as Record<string, JsonValue>;
     expect(tableData['rows']).toEqual([
       { 'jcr:path': '/content/site/a', node: 'jcr:content/root/text' },
     ]);
   });
 
-  it('refuses a publication filter on a shape it cannot apply, without calling anything', async () => {
+  it('refuses a filter on a shape it cannot apply, without calling anything', async () => {
     const { host, calls } = makeHost(() => ok(tableOk), ['/content/site']);
     const result = await createAemQueryFormatAskExecutor(host)(
-      { predicates: { type: 'nt:unstructured', fulltext: 'waldo' }, publication: 'published' },
+      {
+        predicates: { type: 'nt:unstructured', fulltext: 'waldo' },
+        filters: [{ property: 'cq:template', value: '/conf/x' }],
+      },
       callContext,
     );
 
@@ -953,21 +952,22 @@ describe('aem_query_format_ask "Load all"', () => {
 });
 
 describe('aem_query_format_ask background count', () => {
-  it('counts with the publication filter, so the honest total is the filtered one', async () => {
+  it('counts with the filters, so the honest total is the filtered one', async () => {
     const { host, countUrls } = makeHost(
       (name) => (name === 'aem_query' ? ok(lowerBoundPage(2, false)) : ok(tableOk)),
       ['/content/site'],
       { currentContext: () => COUNT_CONTEXT, count: () => countResponse(7) },
     );
-    await createAemQueryFormatAskExecutor(host)(
-      { predicates: { type: 'cq:Page' }, publication: 'unpublished' },
-      callContext,
-    );
+    const predicates = { type: 'cq:Page' };
+    const filters = [{ property: 'cq:lastReplicationAction', value: 'Activate', negate: true }];
+    const filtered = applySearchFilters(predicates, filters);
+    if (!filtered.ok) throw new Error(filtered.message);
+    await createAemQueryFormatAskExecutor(host)({ predicates, filters }, callContext);
     await flush();
 
     expect(countUrls).toHaveLength(1);
     const params = new URL(countUrls[0] ?? '').searchParams;
-    for (const [key, value] of Object.entries(contentPublicationPredicates('unpublished'))) {
+    for (const [key, value] of Object.entries(filtered.predicates)) {
       expect(params.get(key)).toBe(value);
     }
   });
@@ -1185,16 +1185,15 @@ describe('aem_query_format_ask renderer', () => {
     expect(finished.parameters.some((row) => row.value.includes('73'))).toBe(true);
   });
 
-  it('adds a publication row only when the search is filtered, distinct per state', () => {
+  it('adds a Filters row only when the search is filtered', () => {
+    const filters = [{ property: 'cq:template', value: '/conf/site/settings/wcm/templates/page' }];
     const plain = renderer.describeCall({ terms: 'waldo' });
-    const published = renderer.describeCall({ terms: 'waldo', publication: 'published' });
-    const unpublished = renderer.describeCall({ terms: 'waldo', publication: 'unpublished' });
+    const filtered = renderer.describeCall({ terms: 'waldo', filters });
 
-    expect(published.parameters).toHaveLength(plain.parameters.length + 1);
-    expect(unpublished.parameters).toHaveLength(plain.parameters.length + 1);
-    const added = (details: typeof published) =>
-      details.parameters.find((row) => !plain.parameters.some((p) => p.label === row.label));
-    expect(added(published)?.value).toBe(describePublication('published'));
-    expect(added(unpublished)?.value).toBe(describePublication('unpublished'));
+    expect(filtered.parameters).toHaveLength(plain.parameters.length + 1);
+    const added = filtered.parameters.find(
+      (row) => !plain.parameters.some((other) => other.label === row.label),
+    );
+    expect(added?.value).toBe(describeSearchFilters(filters));
   });
 });
