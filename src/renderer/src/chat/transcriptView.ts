@@ -29,7 +29,7 @@ import {
   latestReasoningLine,
   splitLeadingSkill,
 } from './transcriptViewModel';
-import { describeToolCall } from './toolCallDetails';
+import { describeToolCall, type ToolCallParameter } from './toolCallDetails';
 import { toolRendererRegistry } from './toolRegistry';
 import type {
   ToolCallStatus,
@@ -143,7 +143,7 @@ function keyFor(item: TranscriptItem): string {
  * The succeeded call's payload, handed to `describeCall` so a tool whose detail
  * lives in its result (rather than its arguments) can compose the collapsed
  * summary and the expansion rows. `undefined` while pending, and on failure -
- * a failure's message/action are rendered outside the disclosure regardless.
+ * a failure's message/action become the expansion's last row instead.
  */
 function succeededData(view: ToolCallView): JsonValue | undefined {
   return view.status.kind === 'succeeded' ? view.status.data : undefined;
@@ -304,6 +304,11 @@ function renderToolCallToggle(
   // semantic search reading every hit's content) is visibly working rather than
   // apparently stalled.
   const running = view.status.kind === 'requested' || view.status.kind === 'approved';
+  // A settled call that did not succeed wears the red cross instead of the
+  // tool icon: that icon, the status word and (once expanded) the last details
+  // row are the whole failure signal - the billet itself stays an ordinary
+  // borderless tool call, with no tinted surface of its own.
+  const negative = view.status.kind === 'failed' || view.status.kind === 'rejected';
   // A status may deliberately carry no word (a replayed call the turn was
   // waiting on the user for - see `describeToolCallStatus`): then the header is
   // the tool name alone, with no ` - status` suffix.
@@ -313,7 +318,14 @@ function renderToolCallToggle(
       ? el('sp-progress-circle', {
           attrs: { class: 'chat-tool-call__icon', size: 's', indeterminate: '', label: 'Working' },
         })
-      : el('sp-icon-actions', { attrs: { class: 'chat-tool-call__icon', size: 's' } }),
+      : negative
+        ? el('sp-icon-cross600', {
+            attrs: {
+              class: 'chat-tool-call__icon chat-tool-call__icon--negative',
+              size: 's',
+            },
+          })
+        : el('sp-icon-actions', { attrs: { class: 'chat-tool-call__icon', size: 's' } }),
     el('span', {
       attrs: { class: 'chat-tool-call__header' },
       text: statusLabel === undefined ? view.toolName : `${view.toolName} \u2014 ${statusLabel}`,
@@ -404,15 +416,43 @@ function applyToolCallProgress(shell: HTMLElement, view: ToolCallView): void {
 }
 
 /**
+ * The last label/value row a failed or rejected call adds to its detail table:
+ * the error's own message plus, when the error names one, the action that
+ * addresses it (a failed call's reason is an error message; a rejected call's
+ * is the policy's).
+ *
+ * It is a details row rather than a paragraph under the billet so the billet
+ * stays an ordinary collapsed tool call in every state - the red icon and the
+ * status word carry the failure at a glance, and expanding reveals why. Returns
+ * `undefined` for every other status.
+ */
+function toolCallProblemRow(view: ToolCallView): ToolCallParameter | undefined {
+  if (view.status.kind === 'failed') {
+    const action = describeRequiredAction(view.status.error.requiredAction);
+    return {
+      label: 'Error',
+      value:
+        action === undefined ? view.status.error.message : `${view.status.error.message} ${action}`,
+    };
+  }
+  if (view.status.kind === 'rejected') {
+    return { label: 'Reason', value: view.status.reason };
+  }
+  return undefined;
+}
+
+/**
  * The label/value rows revealed when a billet is expanded. Every value is set
  * through `textContent`: these are model-authored strings, so this is a
  * hard text boundary and must never be parsed as markup.
  */
 function renderToolCallParameters(view: ToolCallView, expanded: boolean): HTMLElement {
   const { parameters } = describeToolCall(view.toolName, view.args, succeededData(view));
+  const problem = toolCallProblemRow(view);
+  const rows = problem === undefined ? parameters : [...parameters, problem];
   const container = el('div', {
     attrs: { class: 'chat-tool-call__params' },
-    children: parameters.map((parameter) =>
+    children: rows.map((parameter) =>
       el('div', {
         attrs: { class: 'chat-tool-call__param' },
         children: [
@@ -451,33 +491,16 @@ function renderToolCallBody(
     return [el('p', { attrs: { class: 'chat-tool-call__header' }, text: 'Unknown tool call' })];
   }
 
-  const nodes: HTMLElement[] = [
+  // A failed or rejected call's message and suggested action live in the last
+  // details row (see `toolCallProblemRow`), so nothing else is appended here:
+  // the billet keeps one shape in every status and the reader expands to read
+  // the reason. The `chat-tool-call--failed` / `--rejected` class still marks
+  // the card structurally (implementation-plan.md step 07) and the toggle's
+  // red cross carries the signal while collapsed.
+  return [
     renderToolCallToggle(view, toolCallId, expanded),
     renderToolCallParameters(view, expanded),
   ];
-
-  if (view.status.kind === 'rejected') {
-    nodes.push(el('p', { attrs: { class: 'chat-tool-call__detail' }, text: view.status.reason }));
-  }
-
-  if (view.status.kind === 'failed') {
-    // The explicit, mandatory case (implementation-plan.md step 07): a
-    // failed tool call must show the error message and the suggested
-    // action, and must be structurally distinguishable from a completed
-    // one - see this function's caller, which puts a
-    // `chat-tool-call--failed` class on the whole card, not just this text.
-    // The error text stays outside the disclosure so a failure is never
-    // hidden behind a collapsed billet.
-    nodes.push(
-      el('p', { attrs: { class: 'chat-tool-call__detail' }, text: view.status.error.message }),
-    );
-    const action = describeRequiredAction(view.status.error.requiredAction);
-    if (action !== undefined) {
-      nodes.push(el('p', { attrs: { class: 'chat-tool-call__action' }, text: action }));
-    }
-  }
-
-  return nodes;
 }
 
 /**

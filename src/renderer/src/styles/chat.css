@@ -282,10 +282,11 @@
 }
 
 /* A tool call is a borderless "billet" - a disclosure row, not a card. It has
-   no surface of its own (no border, no background) so it reads as transcript
-   metadata rather than a message bubble, matching how other harnesses show a
-   compact line that opens to reveal the request. Only the failure/rejection
-   tints below add a surface, and only to carry the step-07 status signal. */
+   no surface of its own (no border, no background) in every status, so it reads
+   as transcript metadata rather than a message bubble, matching how other
+   harnesses show a compact line that opens to reveal the request. A failure is
+   not a different card either: its red cross and status word carry the signal,
+   and the reason is the last row of the details it opens to. */
 .chat-tool-call {
   padding: 0 4px;
   border-radius: 4px;
@@ -319,6 +320,19 @@
 .chat-tool-call__chevron {
   flex: 0 0 auto;
   color: var(--spectrum-gray-600, #6e6e6e);
+}
+
+/* A failed or rejected call's cross: the one difference from an ordinary
+   settled billet, alongside the status word. Spectrum's own semantic negative
+   icon colour (Global red-600) rather than a bespoke red. The glyph is drawn
+   edge to edge, so it reads heavier than the tool icon at the same size: it is
+   drawn at 12px instead of the 16px `size="s"` box, with 2px side margins so
+   the billet's text stays aligned with every other status. */
+.chat-tool-call__icon--negative {
+  --mod-icon-size: 12px;
+
+  margin-inline: 2px;
+  color: var(--spectrum-semantic-negative-icon-color, #b40000);
 }
 
 .chat-tool-call__header {
@@ -397,8 +411,10 @@
   color: var(--spectrum-gray-800, #333);
 }
 
-.chat-tool-call__detail,
-.chat-tool-call__action {
+/* A failed or rejected `ask_user` call's reason, under the question it could not
+   answer. An ordinary billet no longer uses this: its reason is the last
+   details row (`toolCallProblemRow` in `transcriptView.ts`). */
+.chat-tool-call__detail {
   margin: 4px 0 0;
   padding-left: 28px;
 }
@@ -512,20 +528,12 @@
   overflow-wrap: anywhere;
 }
 
-/* Must be visually distinguishable from every other tool-call status
-   (implementation-plan.md step 07), especially --succeeded. Borderless now, so
-   the tint alone carries the signal; the `FAILED` label remains the textual
-   one. The tint is inset by padding on the root so the toggle's own hover
-   surface does not sit flush against the row edge. */
-.chat-tool-call--failed {
-  background: var(--spectrum-red-100, #ffebe7);
-  padding-bottom: 10px;
-  padding-top: 8px;
-}
-
-.chat-tool-call--rejected {
-  background: var(--spectrum-orange-100, #ffeccc);
-}
+/* The `chat-tool-call--failed` / `--rejected` classes remain on the card (the
+   status modifier every settled call carries, and the structural distinction
+   step 07 requires), but deliberately paint nothing: these statuses keep the
+   same borderless surface as every other billet. The red cross
+   (`.chat-tool-call__icon--negative`) and the status word are the visible
+   signal, and the reason is the last row of the expanded details. */
 
 .chat-composer {
   flex: 0 0 auto;

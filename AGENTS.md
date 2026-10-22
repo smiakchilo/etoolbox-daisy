@@ -1081,6 +1081,21 @@ the arguments or the succeeded result — a zero-argument tool reads `data`.
 - Cover it: `tests/unit/renderer/chat/toolCallDetails.test.ts`, plus an E2E
   when the composition hinges on a custom element (see §9).
 
+**A failed or rejected call is the same billet, not a different card.** It keeps
+the borderless surface and collapsed-by-default disclosure every other call has;
+the only visible difference while collapsed is the toggle's icon - a red
+`sp-icon-cross600` (`.chat-tool-call__icon--negative`, Spectrum's semantic
+negative icon colour, drawn at 12px because the edge-to-edge glyph otherwise
+reads heavier than the tool icon in the same 16px box) instead of
+`sp-icon-actions` - beside the status word. The
+reason is the **last row of the same details table**, appended by
+`transcriptView.ts`'s `toolCallProblemRow`: a failed call's `Error` row holds the
+error message with the suggested action appended to it, a rejected call's
+`Reason` row holds the policy's reason. Nothing is shown outside the disclosure.
+Do not reintroduce a tinted surface or an always-visible reason paragraph;
+`chat-tool-call__detail` is now only the reason under a failed/rejected
+`ask_user` question.
+
 ### `resources/skills/` and the skill subsystem
 
 Nine bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
@@ -1518,7 +1533,18 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4014 passed / 13 skipped** (+5 against the
+Current baseline: **`npm run test` → 4015 passed / 13 skipped** (+1 against the
+4014 below - **a failed or rejected tool call is an ordinary billet**
+(2026-10-22): it keeps every other call's borderless surface and
+collapsed-by-default disclosure, differs while collapsed only by a red
+`sp-icon-cross600` and its status word, and moves its reason out of an
+always-visible paragraph and into the **last row of its details table** - the
+error message with the suggested action appended (`Error`), or the policy's
+reason (`Reason`). The +1 is the rejected case in `transcriptView.test.ts`; the
+built-app `agent-chat` cases now expand the billet and assert the icon's
+computed colour - see `docs/verification/followons-2026-10.md` "A failed or
+rejected tool call is an ordinary billet (2026-10-22)"). Before that it was
+4014 passed / 13 skipped (+5 against the
 4009 below - **the Windows installer hashes its download without certutil, and
 both installers reuse an installed Node.js** (2026-10-22): `install.cmd` called
 `certutil` by bare name, so on a machine whose PATH lacks System32 the download

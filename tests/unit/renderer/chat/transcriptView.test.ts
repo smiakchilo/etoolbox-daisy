@@ -119,6 +119,16 @@ function toolApproved(sequence: number): AgentEvent {
   });
 }
 
+function toolRejected(sequence: number, reason: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.rejected',
+    chatId,
+    sequence,
+    toolCallId,
+    reason,
+  });
+}
+
 function toolRequestedWithArgs(
   sequence: number,
   toolName: string,
@@ -302,9 +312,12 @@ describe('createTranscriptView', () => {
       expect(toolNode?.textContent).toContain('aem_get_json');
     });
 
-    it('renders a failed tool call as structurally distinct from a succeeded one, showing the error and suggested action', () => {
+    it('renders a failed tool call as an ordinary billet whose reason is its last details row', () => {
       // The mandatory anti-regression case (implementation-plan.md step 07):
-      // a failed tool call must never render as a completed one.
+      // a failed tool call must never render as a completed one. It differs by
+      // its icon and status word alone - the card keeps the same borderless
+      // surface as every other billet - and its reason (message plus the
+      // suggested action) is the last row of the details it expands to.
       const succeededView = createTranscriptView(markdownRenderer);
       const succeededStore = createTranscriptStore();
       succeededStore.applyEvent(toolRequested(0));
@@ -321,11 +334,39 @@ describe('createTranscriptView', () => {
       const toolNode = view.element.querySelector('.chat-tool-call');
       const succeededNode = succeededView.element.querySelector('.chat-tool-call');
       expect(toolNode?.className).not.toBe(succeededNode?.className);
-      expect(toolNode?.textContent).not.toBe(succeededNode?.textContent);
-      expect(toolNode?.textContent).toContain('The requested page does not exist.');
-      expect(toolNode?.textContent).toContain(
-        'Sign in to the site in the browser pane, then try again',
-      );
+
+      // The reason lives in the details, which stay collapsed by default.
+      const params = toolNode?.querySelector<HTMLElement>('.chat-tool-call__params');
+      expect(params?.hidden).toBe(true);
+      const reasonRow = params?.querySelector('.chat-tool-call__param:last-child');
+      const reason = 'The requested page does not exist.';
+      expect(reasonRow?.textContent).toContain(reason);
+      // The suggested action is appended to the same row, not a separate one.
+      expect(reasonRow?.textContent?.trim().length).toBeGreaterThan(reason.length);
+
+      // The one visible difference while collapsed: the negative icon.
+      const icon = toolNode?.querySelector('.chat-tool-call__icon');
+      expect(icon?.classList.contains('chat-tool-call__icon--negative')).toBe(true);
+      const succeededIcon = succeededNode?.querySelector('.chat-tool-call__icon');
+      expect(succeededIcon?.classList.contains('chat-tool-call__icon--negative')).toBe(false);
+    });
+
+    it('renders a rejected tool call the same way, with the policy reason as its last row', () => {
+      const view = createTranscriptView(markdownRenderer);
+      const store = createTranscriptStore();
+      store.applyEvent(toolRequested(0));
+      store.applyEvent(toolRejected(1, 'This path is outside the allowed AEM server.'));
+
+      view.repaint(store);
+
+      const toolNode = view.element.querySelector('.chat-tool-call');
+      expect(toolNode?.className).toMatch(/chat-tool-call--rejected/);
+      const params = toolNode?.querySelector<HTMLElement>('.chat-tool-call__params');
+      expect(params?.hidden).toBe(true);
+      const reasonRow = params?.querySelector('.chat-tool-call__param:last-child');
+      expect(reasonRow?.textContent).toContain('This path is outside the allowed AEM server.');
+      const icon = toolNode?.querySelector('.chat-tool-call__icon');
+      expect(icon?.classList.contains('chat-tool-call__icon--negative')).toBe(true);
     });
 
     it('shows a spinner on a running call and a different, static icon once it settles', () => {

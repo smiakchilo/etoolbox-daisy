@@ -41,8 +41,9 @@ import { byTestId } from '../support/selectors';
  *
  * #4 (tool lifecycle visibility) - four scripted turns cover every shape the
  * fake can produce: approved+success, approved+failure (must render as a
- * distinct FAILED card with the error message and the suggested action),
- * policy-rejected (must render as Rejected, and must never produce a
+ * distinct FAILED billet whose red cross carries the status and whose last
+ * details row is the error message with the suggested action), policy-rejected
+ * (must render as Rejected the same way, and must never produce a
  * `tool.result` event at all - checked via a raw capture of the
  * `agent-chat:event` push channel, not merely "the DOM never shows a
  * result"), and a tool call with zero delta/text steps (the tool card must
@@ -451,7 +452,7 @@ test.describe('Milestone A #4: tool lifecycle visibility', () => {
     await expect(params).toContainText('.0.json');
   });
 
-  test('an approved but failed tool call renders as FAILED with the error message and the suggested action', async () => {
+  test('an approved but failed tool call renders as a red-cross billet whose last row is the error and suggested action', async () => {
     const beforeCount = (await getCapturedEvents(shell)).length;
 
     await scriptTurn(app, {
@@ -483,10 +484,33 @@ test.describe('Milestone A #4: tool lifecycle visibility', () => {
     const toolCall = shell.locator(TOOL_CALL).last();
     await expect(toolCall).toHaveClass(TOOL_STATUS_CLASS);
     await expect(toolCall.locator('.chat-tool-call__header')).toContainText(AEM_GET_JSON_TOOL_NAME);
-    await expect(toolCall.locator('.chat-tool-call__detail')).toHaveText(
-      'AEM returned 401 Unauthorized.',
+
+    // An ordinary billet: nothing about the failure shows while collapsed except
+    // the red cross icon, and the details stay closed.
+    const params = toolCall.locator('.chat-tool-call__params');
+    await expect(params).toBeHidden();
+    const icon = toolCall.locator('.chat-tool-call__icon');
+    await expect(icon).toHaveClass(/chat-tool-call__icon--negative/);
+    const iconUpgraded = await shell.evaluate(
+      () => customElements.get('sp-icon-cross600') !== undefined,
     );
-    await expect(toolCall.locator('.chat-tool-call__action')).toHaveText(/\S/);
+    expect(iconUpgraded).toBe(true);
+    // The one requested visual difference, proven against the shipped theme
+    // rather than only a jsdom element: Spectrum's semantic negative icon
+    // colour (Global red-600).
+    expect(await icon.evaluate((node) => getComputedStyle(node).color)).toBe('rgb(180, 0, 0)');
+
+    // Expanding reveals the error as the last details row, with the suggested
+    // action appended to that same row rather than shown as its own paragraph.
+    await toolCall.locator('.chat-tool-call__toggle').click();
+    await expect(params).toBeVisible();
+    const value = params
+      .locator('.chat-tool-call__param')
+      .last()
+      .locator('.chat-tool-call__param-value');
+    const message = 'AEM returned 401 Unauthorized.';
+    await expect(value).toContainText(message);
+    expect(((await value.textContent()) ?? '').trim().length).toBeGreaterThan(message.length);
 
     // A failed tool call still produces a `tool.result` event (`ok: false`)
     // - only a policy REJECTION produces none at all (see the next test).
@@ -518,7 +542,17 @@ test.describe('Milestone A #4: tool lifecycle visibility', () => {
     const toolCall = shell.locator(TOOL_CALL).last();
     await expect(toolCall).toHaveClass(TOOL_STATUS_CLASS);
     await expect(toolCall.locator('.chat-tool-call__header')).toContainText(AEM_GET_JSON_TOOL_NAME);
-    await expect(toolCall.locator('.chat-tool-call__detail')).toHaveText(
+
+    // Same treatment as a failure: an ordinary collapsed billet with the red
+    // cross, the policy's reason as the last details row once expanded.
+    const params = toolCall.locator('.chat-tool-call__params');
+    await expect(params).toBeHidden();
+    await expect(toolCall.locator('.chat-tool-call__icon')).toHaveClass(
+      /chat-tool-call__icon--negative/,
+    );
+    await toolCall.locator('.chat-tool-call__toggle').click();
+    await expect(params).toBeVisible();
+    await expect(params.locator('.chat-tool-call__param').last()).toContainText(
       'This path is outside the allowed AEM server.',
     );
 
