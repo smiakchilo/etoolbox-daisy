@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import { CREDENTIALS_CAPTURED_CHANNEL } from '../shared';
 import {
   WEBVIEW_BRIDGE_CANCEL_CHANNEL,
   WEBVIEW_BRIDGE_FETCH_CHANNEL,
@@ -8,6 +9,7 @@ import {
   webviewBridgeFetchCommandSchema,
 } from '../shared/contracts/webviewBridge';
 import { performBridgeFetch } from './bridgeFetch';
+import { installCredentialCapture } from './credentialCapture';
 
 /**
  * Preload for the browser view - the private bridge of implementation-plan.md
@@ -25,6 +27,13 @@ import { performBridgeFetch } from './bridgeFetch';
  * Only the two commands below are accepted, both validated before use. There
  * is no generic "run this" entry point, and no way for a command to name a
  * function, a module, or anything other than a URL to fetch.
+ *
+ * It sends one message of its own, and starts nothing: a submitted sign-in form
+ * (`credentialCapture.ts`) is reported to main so the pane can prefill it next
+ * time. Main derives the origin from the sending frame, so the payload carries
+ * no URL and no origin, and nothing ever comes back through that channel - the
+ * page cannot ask for a credential, and no credential is ever exposed to it
+ * beyond the values main writes into its own form fields.
  */
 
 /** Abort handles for in-flight fetches, keyed by the request id main assigned. */
@@ -86,3 +95,9 @@ ipcRenderer.on(WEBVIEW_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {
 // letting it look like a request timeout. Sent once per document; a navigation
 // re-runs this file, which re-registers and re-announces.
 ipcRenderer.send(WEBVIEW_BRIDGE_READY_CHANNEL, {});
+
+// Saved sign-ins: report a submitted sign-in form to main. The page's own
+// submission is never delayed or cancelled - this only observes it.
+installCredentialCapture(window.document, (capture) => {
+  ipcRenderer.send(CREDENTIALS_CAPTURED_CHANNEL, capture);
+});

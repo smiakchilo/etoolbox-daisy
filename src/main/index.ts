@@ -62,11 +62,16 @@ import {
   type ChatJournalReadFailureReason,
 } from './chatJournalReader';
 import { installContentSecurityPolicy } from './csp';
+import { attachCredentialAutofill } from './credentials/autofill';
+import { registerCredentialCaptureIpc } from './credentials/capture';
+import { createCredentialVault } from './credentials/credentialVault';
+import { createHostLoginListener } from './credentials/hostAuth';
 import { mergeDisabledFeatures } from './disabledFeatures';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
+import { registerCredentialsIpcHandlers } from './ipc/credentials';
 import { registerSettingsIpcHandlers } from './ipc/settings';
 import { registerMemosIpcHandlers } from './ipc/memos';
 import { registerRulesIpcHandlers } from './ipc/rules';
@@ -323,6 +328,27 @@ if (!gotSingleInstanceLock) {
     });
     const secretStore = createSecretStore(appPaths.secrets, safeStorage);
 
+    // Saved sign-ins (the pane's own credential vault): a DPAPI secret per
+    // `(origin, username)` plus a plaintext index naming both. Created before
+    // the browser view exists, because the prefill hooks and the capture
+    // listener both close over it.
+    const credentialVault = createCredentialVault({
+      directory: appPaths.credentials,
+      secrets: secretStore,
+      logger,
+    });
+    registerCredentialCaptureIpc({ vault: credentialVault, logger });
+    // An origin's own HTTP authentication (`isProxy: false`) is answered from the
+    // same vault. `createViewSession` wires the proxy listener; each declines the
+    // other's challenges, and neither touches the one-time callback unless it
+    // supplies (see `credentials/hostAuth.ts`).
+    app.on(
+      'login',
+      createHostLoginListener({
+        lookup: (origin) => credentialVault.listForOrigin(origin)[0],
+      }),
+    );
+
     // Explicit, observable failure path - never a silent plaintext
     // fallback. `secretStore` itself already throws instead of falling
     // back to plaintext on every `set`/`get`; this just makes an
@@ -356,6 +382,21 @@ if (!gotSingleInstanceLock) {
     // controller below. Certificate-error/login policy is wired inside
     // `createViewSession` itself; nothing here duplicates it.
     const viewSession = createViewSession({ logger });
+
+    // Prefill a saved sign-in on every document in the pane's session - the
+    // pane itself and every popup an SSO flow opens (`window.open` windows get a
+    // real BrowserWindow, so they are separate `WebContents`). The listener is
+    // registered before the view exists; a `WebContents` from any other session
+    // (the shell's own renderer) is ignored. `attachCredentialAutofill` checks
+    // the document's own origin before injecting anything, so a page the vault
+    // does not know is never touched.
+    app.on('web-contents-created', (_event, contents) => {
+      if (contents.session !== viewSession.session) return;
+      attachCredentialAutofill(contents, {
+        listForOrigin: (origin) => credentialVault.listForOrigin(origin),
+        logger,
+      });
+    });
 
     const browserController = createBrowserController({
       settingsDir: appPaths.settings,
@@ -552,6 +593,13 @@ if (!gotSingleInstanceLock) {
 
     registerTableExportIpcHandlers({
       parentWindow: mainWindow,
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
+    });
+
+    registerCredentialsIpcHandlers({
+      vault: credentialVault,
       logger,
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,

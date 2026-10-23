@@ -11,6 +11,7 @@ export * from './table-export-ipc';
 export * from './skills-ipc';
 export * from './rules-ipc';
 export * from './memos-ipc';
+export * from './credentials-ipc';
 export * from './updates-ipc';
 export * from './agent-chat-ipc';
 export * from './skillInvocation';

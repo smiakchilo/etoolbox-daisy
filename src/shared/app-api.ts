@@ -42,6 +42,7 @@ import type {
   StopFindRequest,
   ViewBounds,
 } from './browser-ipc';
+import type { CredentialsIpcResult } from './credentials-ipc';
 import type { MemoFileRequest, MemosIpcResult } from './memos-ipc';
 import type { RulesOpenFolderResult } from './rules-ipc';
 import type { UpdateStatus, UpdatesIpcResult } from './updates-ipc';
@@ -126,6 +127,12 @@ export interface DaisyAppApi {
   readonly rules: DaisyRulesApi;
   /** The self-learning memos surface: the Settings folder link and the notice's reveal. */
   readonly memos: DaisyMemosApi;
+  /**
+   * The saved sign-ins surface: the Settings "Browser" tab's erase action. The
+   * renderer never sees a credential - the pane's own preload writes and
+   * consumes them (see `src/shared/credentials-ipc.ts`).
+   */
+  readonly credentials: DaisyCredentialsApi;
   /** The updater surface: check, apply and a status push (Settings "Updates", notice, home link). */
   readonly updates: DaisyUpdatesApi;
   /**
@@ -171,6 +178,14 @@ export interface DaisyMemosApi {
   openFolder(): Promise<MemosIpcResult>;
   /** Reveals one memo file (named by its store-relative id) in the file manager. */
   reveal(request: MemoFileRequest): Promise<MemosIpcResult>;
+}
+
+export interface DaisyCredentialsApi {
+  /**
+   * Forgets every saved sign-in, all or nothing. No payload, so the renderer
+   * cannot name - and therefore cannot reveal - a single one.
+   */
+  erase(): Promise<CredentialsIpcResult>;
 }
 
 export interface DaisySkillsApi {

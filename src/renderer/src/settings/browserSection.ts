@@ -2,13 +2,13 @@ import { el } from '../lib/dom';
 import type { AppSettingsSnapshot, ProxyId, ProxySnapshot } from '../../../shared';
 import { createContextualHelp, helpAccessibleName, labelledField } from './fieldHelp';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
-import type { SaveOutcome, StatusBannerSink } from './statusBanner';
+import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } from './statusBanner';
 
 /**
  * The Settings panel's Browser tab: browser-pane behaviour that is not about a
  * host, a proxy entry, or the agent.
  *
- * Two controls:
+ * Three controls:
  *
  *  - **Default proxy** (first) - the entry of the "Proxies" library the AEM
  *    pane uses for any origin that is not one of the configured hosts (for
@@ -24,10 +24,17 @@ import type { SaveOutcome, StatusBannerSink } from './statusBanner';
  *    app is ready, so this value is consumed at the next launch - the field's
  *    contextual help says so, and the checkbox deliberately reports the *stored*
  *    value, not a live effect.
+ *  - **Erase saved sign-ins** - the only management the saved-sign-in vault has
+ *    (there is deliberately no list: the pane prefills an origin's most
+ *    recently used credential and the user switches accounts by typing another
+ *    saved username, and no count either - a number beside the button had no
+ *    action attached to it). The erase is all-or-nothing and confirms through
+ *    the shared destructive prompt, exactly like removing a host or a proxy.
  *
- * Both save immediately on change (there is nothing to debounce and no
+ * The first two save immediately on change (there is nothing to debounce and no
  * dependent fields), through the panel's one save reporter, exactly like the
- * other sections' immediate mutations.
+ * other sections' immediate mutations. The erase is not a save: it reports to
+ * the same status banner directly.
  */
 export interface BrowserSectionOptions {
   /** The panel's single status slot. */
@@ -102,17 +109,62 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     children: [proxyField, checkboxRow],
   });
 
+  const eraseButton = el('sp-action-button', {
+    attrs: { 'data-testid': 'erase-saved-credentials' },
+    text: 'Erase saved sign-ins',
+  }) as HTMLElement & { disabled: boolean };
+  // A button is not a field: it carries no contextual-help badge (the same rule
+  // the Updates tab's Check/Update buttons follow), and it stands on its own
+  // line with nothing beside it.
+  const credentialsRow = el('div', {
+    attrs: { class: 'field-label-row' },
+    children: [eraseButton],
+  });
+
   const section = el('div', {
     attrs: {
-      class: 'settings-section browser-section',
+      class: 'settings-section browser-section subsection-gap',
       'aria-label': 'Browser',
     },
-    children: [fields],
+    children: [fields, credentialsRow],
   });
 
   // Guards `update` against the `change` event assigning `.checked` can emit
   // in some environments (the same guard the Agents section uses).
   let rendering = false;
+  let disposed = false;
+  let erasing = false;
+
+  async function eraseSavedSignIns(): Promise<void> {
+    if (erasing) return;
+    erasing = true;
+    eraseButton.disabled = true;
+    try {
+      const result = await window.daisy.credentials.erase();
+      if (disposed) return;
+      if (!result.ok) {
+        options.status.showError(result.error.message);
+        return;
+      }
+      options.status.showStatus('Sign-ins erased');
+    } catch (error) {
+      if (!disposed) {
+        options.status.showError(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      erasing = false;
+      if (!disposed) eraseButton.disabled = false;
+    }
+  }
+
+  const onEraseClick = (): void => {
+    // The prompt dismisses itself when its button is pressed (see
+    // `showPrompt`), so the erase's outcome takes the row.
+    confirmDestructiveAction(options.status, 'erase every saved sign-in', () => {
+      void eraseSavedSignIns();
+    });
+  };
+  eraseButton.addEventListener('click', onEraseClick);
 
   async function save(changes: {
     disableNativeWebAuthn?: boolean;
@@ -158,7 +210,9 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
       rendering = false;
     },
     dispose(): void {
+      disposed = true;
       checkbox.removeEventListener('change', onWebAuthnChange);
+      eraseButton.removeEventListener('click', onEraseClick);
     },
   };
 }

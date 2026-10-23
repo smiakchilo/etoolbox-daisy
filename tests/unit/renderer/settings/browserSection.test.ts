@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createBrowserSection } from '../../../../src/renderer/src/settings/browserSection';
 import type {
   SaveOutcome,
+  StatusBannerAction,
   StatusBannerSink,
 } from '../../../../src/renderer/src/settings/statusBanner';
 import {
@@ -10,27 +11,33 @@ import {
   parseAppSettingsSnapshot,
   proxySnapshotSchema,
   type AppSettingsSnapshot,
+  type CredentialsIpcResult,
   type ProxySnapshot,
 } from '../../../../src/shared';
 import { PROXY_NONE_VALUE } from '../../../../src/renderer/src/settings/proxyPicker';
 import { flushMicrotasks } from '../../../support/asyncWaits';
 import { installJsdomGlobals } from '../../../support/jsdomGlobals';
-import { byField } from '../../../support/selectors';
+import { byField, byTestId } from '../../../support/selectors';
 
 /**
  * The Browser section's DOM, in jsdom. The real custom-element upgrade is
  * asserted in `tests/e2e/settings-tabs.spec.ts`; this proves the wiring: the
  * checkbox reflects the stored value, a toggle persists exactly the flag it
- * changed, a failed save leaves the panel snapshot untouched, and `dispose`
- * unhooks the listener.
+ * changed, a failed save leaves the panel snapshot untouched, `dispose`
+ * unhooks the listener, and the erase button confirms and reports through the
+ * shared prompt.
  */
 
 let dom: JSDOM;
 let restoreGlobals: () => void;
 
 const updateBrowserSettings = vi.fn();
+const erase = vi.fn<() => Promise<CredentialsIpcResult>>();
 
 let status: StatusBannerSink;
+let showStatus: ReturnType<typeof vi.fn<(message: string) => void>>;
+let showError: ReturnType<typeof vi.fn<(message: string) => void>>;
+let showPrompt: ReturnType<typeof vi.fn<(copy: string, action: StatusBannerAction) => void>>;
 let reportSave: (outcome: Promise<SaveOutcome>) => void;
 let onSettingsChanged: () => void;
 
@@ -88,11 +95,16 @@ function toggle(checkbox: HTMLElement & { checked: boolean }, checked: boolean):
 beforeEach(() => {
   updateBrowserSettings.mockReset();
   updateBrowserSettings.mockResolvedValue({ ok: true });
+  erase.mockReset();
+  erase.mockResolvedValue({ ok: true });
 
+  showStatus = vi.fn();
+  showError = vi.fn();
+  showPrompt = vi.fn();
   status = {
-    showStatus: vi.fn(),
-    showError: vi.fn(),
-    showPrompt: vi.fn(),
+    showStatus,
+    showError,
+    showPrompt,
     showNotice: vi.fn(),
     clear: vi.fn(),
   };
@@ -100,7 +112,10 @@ beforeEach(() => {
   onSettingsChanged = vi.fn<() => void>();
 
   ({ dom, restore: restoreGlobals } = installJsdomGlobals());
-  Reflect.set(dom.window, 'daisy', { settings: { updateBrowserSettings } });
+  Reflect.set(dom.window, 'daisy', {
+    settings: { updateBrowserSettings },
+    credentials: { erase },
+  });
 });
 
 afterEach(() => {
@@ -195,6 +210,70 @@ describe('createBrowserSection', () => {
 
       chooseProxy(proxyPickerOf(section), PROXY_NONE_VALUE);
       expect(updateBrowserSettings).toHaveBeenLastCalledWith({ changes: { proxy: null } });
+    });
+  });
+
+  describe('Saved sign-ins', () => {
+    function eraseButtonOf(section: ReturnType<typeof createBrowserSection>): HTMLElement {
+      const button = section.element.querySelector(byTestId('erase-saved-credentials'));
+      if (button === null) throw new Error('erase button not found');
+      return button as HTMLElement;
+    }
+
+    function lastPrompt(): StatusBannerAction {
+      const action = showPrompt.mock.calls.at(-1)?.[1];
+      if (action === undefined) throw new Error('no confirmation was raised');
+      return action;
+    }
+
+    it('has no count line beside the button', () => {
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      expect(section.element.querySelector(byTestId('saved-sign-ins-status'))).toBeNull();
+    });
+
+    it('confirms before erasing, and does nothing until the prompt is accepted', () => {
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      eraseButtonOf(section).click();
+
+      expect(showPrompt).toHaveBeenCalledTimes(1);
+      expect(erase).not.toHaveBeenCalled();
+      expect(lastPrompt().testId).toBe('banner-confirm');
+
+      lastPrompt().onActivate();
+
+      expect(erase).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a successful erase as a status line', async () => {
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      eraseButtonOf(section).click();
+      lastPrompt().onActivate();
+      await flush();
+
+      expect(showStatus).toHaveBeenCalled();
+      expect(showError).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a failed erase as an error', async () => {
+      erase.mockResolvedValue({
+        ok: false,
+        error: { code: 'storage_error', message: 'could not forget' },
+      });
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      eraseButtonOf(section).click();
+      lastPrompt().onActivate();
+      await flush();
+
+      expect(showError).toHaveBeenCalledWith('could not forget');
+      expect(showStatus).not.toHaveBeenCalled();
     });
   });
 });

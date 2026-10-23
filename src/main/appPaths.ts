@@ -43,6 +43,12 @@ export interface AppPaths {
   /** DPAPI-encrypted secrets - owned by `secretStore`. */
   readonly secrets: string;
   /**
+   * Saved sign-ins: the plaintext `sign-ins.json` index plus nothing else
+   * (each password lives in `secrets`). Technical, so it sits under the data
+   * root the user never needs to open.
+   */
+  readonly credentials: string;
+  /**
    * The main window's persisted geometry file. A file, not a directory:
    * unlike the storage roots it is written directly by `windowState.ts` (see
    * that module for why it is not part of the settings document).
@@ -157,6 +163,7 @@ export function resolveAppPaths(homeDir: string, localDataDir: string): AppPaths
     logs: path.join(root, 'logs'),
     dataRoot,
     secrets: path.join(dataRoot, 'secrets'),
+    credentials: path.join(dataRoot, 'credentials'),
     windowState: path.join(dataRoot, 'window-state.json'),
     browser: path.join(dataRoot, 'browser'),
     agents: path.join(dataRoot, 'agents'),
@@ -179,6 +186,7 @@ export function ensureAppDirectories(paths: AppPaths): void {
     paths.logs,
     paths.dataRoot,
     paths.secrets,
+    paths.credentials,
     paths.browser,
     paths.agents,
     paths.tmp,

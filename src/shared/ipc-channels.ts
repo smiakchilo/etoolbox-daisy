@@ -141,6 +141,16 @@ export const MEMOS_OPEN_FOLDER_CHANNEL = 'memos:open-folder' as const;
 export const MEMOS_REVEAL_CHANNEL = 'memos:reveal' as const;
 
 /**
+ * Saved sign-ins. `credentials:captured` is the one message the browser pane's
+ * preload sends to main (a submitted sign-in form); main decides the origin
+ * from the sending frame, never from the payload. `credentials:erase` backs the
+ * Settings "Browser" tab's one management action. See
+ * src/shared/credentials-ipc.ts.
+ */
+export const CREDENTIALS_CAPTURED_CHANNEL = 'credentials:captured' as const;
+export const CREDENTIALS_ERASE_CHANNEL = 'credentials:erase' as const;
+
+/**
  * Persists the Updates tab's custom update URL and startup-check flag. A
  * partial patch, like {@link SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL}.
  */

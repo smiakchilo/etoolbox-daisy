@@ -26,7 +26,10 @@
  *   which is how the chat pane discards an error the user has moved on from -
  *   a new prompt, a new session, or a different conversation - without
  *   touching a prompt or the floor.
- * - `showPrompt` is sticky, dismissible, and replaces anything.
+ * - `showPrompt` is sticky, dismissible, and replaces anything. Activating its
+ *   one action dismisses it before the action runs, so whatever the confirmed
+ *   work reports next (a status, an error, a reload) is visible rather than
+ *   hidden behind a prompt that has already been answered.
  * - `setStanding` is the persistent floor: shown only while no `show*`
  *   presentation is active, and restored when one clears. The chat pane
  *   expresses its standing conditions this way rather than as a second
@@ -82,7 +85,12 @@ export interface StatusBannerSink {
   showStatus(message: string): void;
   /** Sticky, dismissible error row. Does not displace a prompt. */
   showError(message: string): void;
-  /** Sticky, dismissible confirm prompt with one action; highest priority. */
+  /**
+   * Sticky, dismissible confirm prompt with one action; highest priority.
+   * Activating the action dismisses the prompt first (like a notice), so the
+   * outcome the confirmation starts - a status, an error, a reload - can take
+   * the row; a prompt left up would outrank and mask it.
+   */
   showPrompt(copy: string, action: StatusBannerAction): void;
   /**
    * Sticky, dismissible notice with one inline action - the chat pane's
@@ -157,11 +165,12 @@ export interface StatusBanner extends StatusBannerSink {
  * method, so the framing, the "OK" label and the one-button rule are identical
  * everywhere and no second confirmation UI exists to drift from them.
  *
- * `onConfirm` runs on the button press. A caller that must refuse a stale press
- * - the Settings sections disarm a pending removal when their row is edited -
- * guards inside its own callback; this method only raises the prompt. A caller
- * whose confirmed work reports through the banner must drop this prompt first
- * (a prompt outranks the status/error it would otherwise mask).
+ * `onConfirm` runs on the button press, after the prompt has dismissed itself
+ * (a caller's follow-up status or error therefore takes the row immediately;
+ * calling `clear()` first, as the Settings sections and History do, is now
+ * redundant but harmless). A caller that must refuse a stale press - the
+ * Settings sections disarm a pending removal when their row is edited - guards
+ * inside its own callback; this method only raises the prompt.
  */
 export function confirmDestructiveAction(
   status: StatusBannerSink,
@@ -430,7 +439,21 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
       );
     },
     showPrompt(copy: string, action: StatusBannerAction): void {
-      present('prompt', inlineActionContent(copy, action), `prompt:${copy}:${action.label}`);
+      // Activating the prompt's action is the answer to it, so it dismisses
+      // itself first - otherwise the prompt stays up (it outranks every other
+      // presentation) and the outcome the action starts is never seen.
+      present(
+        'prompt',
+        inlineActionContent(copy, {
+          label: action.label,
+          ...(action.testId === undefined ? {} : { testId: action.testId }),
+          onActivate: () => {
+            if (slot === 'prompt') dismissSlot();
+            action.onActivate();
+          },
+        }),
+        `prompt:${copy}:${action.label}`,
+      );
     },
     setStanding(
       content: readonly Node[] | null,

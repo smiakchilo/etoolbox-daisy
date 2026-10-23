@@ -96,6 +96,7 @@ commit unless the user asks.**
 │  app-preload ........ chat + settings bridge                        │
 │  webview-preload .... runs INSIDE the remote page; the private fetch│
 │  bridgeFetch ........ the actual authenticated read                 │
+│  credentialCapture .. reports a submitted sign-in form (outbound)   │
 └──────────┬───────────┘            └────────────────────────────────┘
            │
 ┌──────────┴──────────────────────────────────────────────────────────┐
@@ -469,6 +470,28 @@ central to correctness), `serverSwitch.ts`, `certificatePrompt.ts`,
 policy; new-window requests classified as popups - `window.open` with window
 features, left as real windows for SSO - vs tabs, loaded in the same view),
 `viewBounds.ts`.
+
+`main/credentials/` remembers the sign-ins the pane has seen submitted and puts
+them back: `credentialVault.ts` (the store - `(origin, username)` keyed, the
+password in `secretStore`/DPAPI, a plaintext `sign-ins.json` index holding no
+password, everything loaded into memory once at startup so the fill and
+`login`-event paths are synchronous), `capture.ts` (the `credentials:captured`
+listener; **the origin comes from `event.senderFrame.url`, never from the
+payload**, top frame and http(s) only), `autofill.ts` (attaches to every
+`WebContents` in the pane's session via `app.on('web-contents-created')` - so
+`window.open` SSO windows are covered - and injects on `dom-ready` /
+`did-navigate-in-page`), `fillScript.ts` (the injected script: empty fields
+only, one password field only, no `new-password`, no submit, bounded
+`MutationObserver`, and a typed different saved username swaps the password),
+and `hostAuth.ts` (an `isProxy: false` `app.on('login')` challenge is answered
+from the same vault - the sibling of `webview/proxyAuth.ts`, with the same
+one-time-callback discipline). The Settings "Browser" tab's only management is
+**Erase saved sign-ins** (`credentials:erase`, all-or-nothing, through the
+shared destructive-confirm prompt), a button that stands alone: there is
+deliberately no list, no picker (see `docs/backlog.md` "Saved sign-ins: a
+per-origin picker") and no stored count - a number beside the button had no
+action attached to it. `appPaths.credentials` is technical, under
+`%LOCALAPPDATA%\etoolbox-daisy`.
 
 **Names describe what a thing is: `AEM` only for AEM-specific behaviour.**
 The browser pane, its preload (`webview-preload`), its persistent session
@@ -1587,7 +1610,33 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4090 passed / 13 skipped** (+30 against the
+Current baseline: **`npm run test` → 4182 passed / 13 skipped** (+92 against the
+4090 below - **saved sign-ins** (2026-10-24): the pane remembers a sign-in form
+it saw submitted and prefills it on the next visit. A new
+`src/main/credentials/` (`credentialVault.ts` - `(origin, username)` keyed, the
+password in `secretStore`, a plaintext index with no password, loaded into
+memory once at startup; `capture.ts` - the origin always from
+`event.senderFrame.url`, top frame and http(s) only; `autofill.ts` +
+`fillScript.ts` - attach to every `WebContents` in the pane's session via
+`app.on('web-contents-created')`, inject on `dom-ready` /
+`did-navigate-in-page`, fill empty fields only, never submit, and swap the
+password when a different saved username is typed; `hostAuth.ts` - an
+`isProxy: false` `app.on('login')` challenge answered from the same vault), the
+preload's one outbound `credentials:captured` message, the Settings "Browser"
+tab's **Erase saved sign-ins** (a lone button, all-or-nothing, through the
+shared destructive confirm), `appPaths.credentials`, and **no `contracts/`
+schema change** (the vault is not part of `appSettings`).
+`statusBanner.showPrompt` now dismisses itself when its action is pressed, so
+the outcome it starts takes the row (previously every caller had to `clear()`
+first, and this section did not). New `tests/e2e/saved-sign-ins.spec.ts`
+(capture → restart → prefill → erase → restart), Playwright **158 tests**; a
+full run was 153 passed / 5 failed (the four environment-bound `network-error`
+cases + the documented `chat-transcript-scroll` flake), and three mutations
+(prefill disabled, capture disabled, prompt self-dismissal disabled) were each
+caught in the built app - see
+`docs/verification/followons-2026-10.md` "Saved sign-ins: automatic capture,
+per-origin prefill, and one erase action (2026-10-24)". Before that it was
+**`npm run test` → 4090 passed / 13 skipped** (+30 against the
 4060 below - **transcript: the ongoing billet is lowest and one billet expands
 at a time** (2026-10-23): `transcriptView.ts` moves running tool-call billets
 (and Thinking) after every settled entry, so the spinner is never stranded at

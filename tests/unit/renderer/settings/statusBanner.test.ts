@@ -386,6 +386,22 @@ describe('createStatusBanner single slot', () => {
     expect(banner.element.querySelector('sp-action-button')).toBe(button);
   });
 
+  it('a prompt dismisses itself when its action is pressed, so the outcome can take the row', () => {
+    const banner = createStatusBanner();
+    const onActivate = vi.fn(() => banner.showStatus('Saved'));
+    banner.showPrompt('Confirm?', { label: 'OK', onActivate });
+
+    const button = banner.element.querySelector('sp-action-button');
+    (button as HTMLElement).click();
+
+    // The prompt is no longer the active presentation: the action's own status
+    // is allowed through instead of being outranked by a prompt already
+    // answered.
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(banner.isPromptShowing()).toBe(false);
+    expect(banner.element.textContent).toBe('Saved');
+  });
+
   it('dispose removes the banner element from the DOM', () => {
     const banner = createStatusBanner();
     document.body.append(banner.element);

@@ -38,6 +38,7 @@ import {
   BROWSER_STOP_FIND_CHANNEL,
   BROWSER_SWITCH_SERVER_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
+  CREDENTIALS_ERASE_CHANNEL,
   SETTINGS_ADD_PROJECT_CHANNEL,
   SETTINGS_ADD_PROXY_CHANNEL,
   SETTINGS_ADD_SERVER_CHANNEL,
@@ -105,6 +106,7 @@ import {
   parseBrowserNavigationState,
   parseBrowserSwitchState,
   parseCertificateBlockedInfo,
+  parseCredentialsIpcResult,
   parseFindResult,
   parseGetModelSelectionResult,
   parseGetSettingsSnapshotResult,
@@ -179,6 +181,7 @@ import {
   type BrowserNavigationState,
   type BrowserSwitchState,
   type CertificateBlockedInfo,
+  type CredentialsIpcResult,
   type DaisyAppApi,
   type FindRequest,
   type FindResult,
@@ -530,6 +533,12 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = memoFileRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(MEMOS_REVEAL_CHANNEL, parsedRequest);
       return parseMemosIpcResult(raw);
+    },
+  },
+  credentials: {
+    async erase(): Promise<CredentialsIpcResult> {
+      const raw: unknown = await ipcRenderer.invoke(CREDENTIALS_ERASE_CHANNEL);
+      return parseCredentialsIpcResult(raw);
     },
   },
   updates: {

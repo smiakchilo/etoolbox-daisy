@@ -82,6 +82,7 @@ describe('resolveAppPaths', () => {
     expect(path.dirname(paths.dataRoot)).toBe(local);
     for (const technical of [
       paths.secrets,
+      paths.credentials,
       paths.windowState,
       paths.browser,
       paths.agents,
@@ -134,6 +135,7 @@ describe('ensureAppDirectories', () => {
       paths.logs,
       paths.dataRoot,
       paths.secrets,
+      paths.credentials,
       paths.browser,
       paths.agents,
       paths.tmp,
