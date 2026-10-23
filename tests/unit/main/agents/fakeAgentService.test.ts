@@ -750,3 +750,44 @@ describe('scripted input requests', () => {
     expect(result.ok).toBe(false);
   });
 });
+
+describe('fake answer', () => {
+  it('answers "no match" when nothing is scripted', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    const result = await service.answer({
+      instruction: 'x',
+      items: [
+        { id: '1', text: 'a' },
+        { id: '2', text: 'b' },
+      ],
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { id: '1', match: false },
+        { id: '2', match: false },
+      ],
+    });
+  });
+
+  it('consumes queued verdicts in order', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    service.queueAnswer({
+      ok: true,
+      value: [{ id: '1', match: true }],
+    });
+
+    const first = await service.answer({
+      instruction: 'x',
+      items: [{ id: '1', text: 'a' }],
+    });
+    const second = await service.answer({
+      instruction: 'x',
+      items: [{ id: '1', text: 'a' }],
+    });
+
+    expect(first).toEqual({ ok: true, value: [{ id: '1', match: true }] });
+    expect(second).toEqual({ ok: true, value: [{ id: '1', match: false }] });
+  });
+});

@@ -1,14 +1,20 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  AgentHost,
-  AgentRuntime,
-  AppSettings,
-  AuthPresence,
-  AuthStatus,
-  ModelCatalogResult,
+import {
+  type AgentHost,
+  type AgentRuntime,
+  type AppSettings,
+  type AuthPresence,
+  type AuthStatus,
+  type AnswerRequest,
+  type AnswerResult,
+  type ModelCatalogResult,
+  ANSWER_SESSION_INSTRUCTIONS,
+  err,
+  parseAnswer,
+  renderAnswerPrompt,
 } from '../../shared';
-import { createOpenRouterAgentService } from './agentService';
+import { AUTO_MODEL, createOpenRouterAgentService } from './agentService';
 import { authPresenceFromToken, authStatusFromToken } from './auth';
 import { createOpenRouterClient } from './client';
 import { meta } from './meta';
@@ -96,6 +102,54 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
     return run;
   }
 
+  const answer = async (
+    request: AnswerRequest,
+    signal: AbortSignal | undefined,
+  ): Promise<AnswerResult> => {
+    const aborted = (): boolean => signal?.aborted === true;
+    if (aborted()) {
+      return err({ message: 'The answer call was cancelled', cancelled: true });
+    }
+    await inFlight;
+    if (client === undefined || !client.hasApiKey) {
+      return err({ message: 'OpenRouter is not available' });
+    }
+    const preference = host.modelPreferences();
+    // A one-shot call: a fresh state, no tools, and a final answer allowed (the
+    // text is the verdict, unlike the chat's 'turn-complete' stop).
+    const controller = new AbortController();
+    const abort = (): void => controller.abort();
+    if (aborted()) controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    try {
+      const call = client.callModel({
+        model: preference.model ?? AUTO_MODEL,
+        reasoningEffort: preference.reasoningEffort,
+        instructions: ANSWER_SESSION_INSTRUCTIONS,
+        input: renderAnswerPrompt(request),
+        tools: [],
+        state: client.createConversationState(),
+        signal: controller.signal,
+        allowFinalResponse: true,
+      });
+      let text = '';
+      const collected = (async () => {
+        for await (const delta of call.getTextStream()) text += delta;
+      })();
+      await Promise.all([Promise.resolve().then(() => call.getResponse()), collected]);
+      if (controller.signal.aborted) {
+        return err({ message: 'The answer call was cancelled', cancelled: true });
+      }
+      return parseAnswer(text, request.items);
+    } catch {
+      return controller.signal.aborted
+        ? err({ message: 'The answer call was cancelled', cancelled: true })
+        : err({ message: 'The agent could not answer the search candidates' });
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
+  };
+
   return {
     start: (settings) => install(settings),
 
@@ -135,6 +189,8 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
       await inFlight;
       return authPresenceFromToken(token);
     },
+
+    answer,
 
     loadModelCatalog: async (): Promise<ModelCatalogResult> => {
       await inFlight;

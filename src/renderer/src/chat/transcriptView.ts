@@ -44,12 +44,16 @@ export interface TranscriptView {
    * Repaints the transcript from `store`'s current items and text. Call when
    * `store.takeDirty()` is true.
    *
-   * Returns the elements of any **message the application just updated in
-   * place** - an already-rendered `presentation: 'message'` run whose
-   * accumulated content changed (a search table gaining a `Load more` page).
-   * The pane reveals the last of these, so an update stays visible even for a
-   * reader who scrolled up to read history. It is empty when nothing was
-   * updated, in which case the ordinary stick-to-bottom rule applies. Streaming
+   * Returns the elements the pane should reveal. That is any **message the
+   * application just updated in place** - an already-rendered
+   * `presentation: 'message'` run whose accumulated content changed (a search
+   * table gaining a `Load more` page) - and the **ongoing billet** (the running
+   * tool call or Thinking row) when it is new, has just been moved to the
+   * bottom, or a table above it changed in place (the ongoing billet is lower,
+   * so revealing it keeps the whole bottom visible). The pane reveals the last
+   * of these, so an update stays visible even
+   * for a reader who scrolled up to read history. It is empty when nothing
+   * changed, in which case the ordinary stick-to-bottom rule applies. Streaming
    * assistant text is deliberately excluded: that is new content being written,
    * not a settled message changed under the reader.
    */
@@ -611,6 +615,11 @@ export function createTranscriptView(
   // read as the same run changing rather than a new one appearing.
   let renderedRunSignatures = new Map<string, string>();
 
+  // The rendered order as of the previous repaint, so a repaint can tell
+  // whether the ongoing billet is new or has just moved to the bottom (see the
+  // reorder below). Element identity, not keys: the same cached shell is reused.
+  let lastRenderedNodes: readonly HTMLElement[] = [];
+
   // The one travelling hover popover for transcript affordances that offer icon
   // actions: a pane link (Edit/CRX) or a `format_table` run's gutter
   // (Copy/Export). It is undefined in a jsdom unit test (the Spectrum overlay is
@@ -719,13 +728,41 @@ export function createTranscriptView(
     if (params !== null) params.hidden = !expanded;
   }
 
+  /**
+   * Collapses every expanded tool-call billet except `except`, and makes the
+   * expansion set agree. Used by both directions of the accordion: opening a
+   * billet closes the others, whether the newly opened one is a tool call or
+   * the Thinking billet.
+   */
+  function collapseToolCallsExcept(except: string | undefined): void {
+    for (const other of element.querySelectorAll<HTMLElement>('[data-tool-call-toggle]')) {
+      const id = other.getAttribute('data-tool-call-toggle');
+      if (id === except) continue;
+      if (other.getAttribute('aria-expanded') !== 'true') continue;
+      const shell = other.closest<HTMLElement>('.chat-tool-call');
+      if (shell !== null) applyToolCallExpansion(shell, false);
+    }
+    expandedToolCalls.clear();
+    if (except !== undefined) expandedToolCalls.add(except);
+  }
+
+  /** Collapses the Thinking billet if it is open, for the same accordion rule. */
+  function collapseThinkingExpansion(): void {
+    if (!expandedThinking) return;
+    expandedThinking = false;
+    const shell = element.querySelector<HTMLElement>('.chat-message--thinking');
+    if (shell !== null) applyThinkingExpansion(shell, false);
+  }
+
   function toggleToolCallExpansion(toggle: Element): void {
     const toolCallId = toggle.getAttribute('data-tool-call-toggle');
     const shell = toggle.closest<HTMLElement>('.chat-tool-call');
     if (toolCallId === null || shell === null) return;
     const expanded = toggle.getAttribute('aria-expanded') !== 'true';
     if (expanded) {
-      expandedToolCalls.add(toolCallId);
+      // One expanded billet at a time: the transcript is an accordion.
+      collapseThinkingExpansion();
+      collapseToolCallsExcept(toolCallId);
     } else {
       expandedToolCalls.delete(toolCallId);
     }
@@ -754,6 +791,10 @@ export function createTranscriptView(
     const shell = toggle.closest<HTMLElement>('.chat-message--thinking');
     if (shell === null) return;
     const expanded = toggle.getAttribute('aria-expanded') !== 'true';
+    if (expanded) {
+      // The accordion has room for exactly one open billet.
+      collapseToolCallsExcept(undefined);
+    }
     expandedThinking = expanded;
     applyThinkingExpansion(shell, expanded);
   }
@@ -1382,6 +1423,27 @@ export function createTranscriptView(
     }
   }
 
+  /**
+   * Whether this item is the transcript's one "still working" billet - the
+   * running tool call (or the transient Thinking billet) that wears the spinner.
+   * A `presentation: 'conversation'` call (a pending `ask_user` question) is an
+   * interactive surface, not a spinner, and a `format_table` run is content;
+   * neither is moved.
+   */
+  function isOngoing(
+    store: TranscriptStore,
+    item: TranscriptItem,
+    tableMessage: ToolTableMessage | undefined,
+  ): boolean {
+    if (tableMessage !== undefined) return false;
+    if (item.kind === 'thinking') return true;
+    if (item.kind !== 'toolCall') return false;
+    const view = store.toolCallFor(item.toolCallId);
+    if (view === undefined) return false;
+    if (view.status.kind !== 'requested' && view.status.kind !== 'approved') return false;
+    return toolRendererRegistry.presentationOf(view.toolName) !== 'conversation';
+  }
+
   return {
     element,
     repaint(store) {
@@ -1393,7 +1455,10 @@ export function createTranscriptView(
       const { skip, messages, runIds } = planTableRuns(store, items);
       const lastItem = items[items.length - 1];
       const seenKeys = new Set<string>();
-      const nodes: HTMLElement[] = [];
+      // The running billet is moved after every settled entry (see below), so
+      // it is always the lowest entry on screen - whatever its journal order.
+      const settledNodes: HTMLElement[] = [];
+      const ongoingNodes: HTMLElement[] = [];
       // Messages the application updated in place this repaint - see the
       // `repaint` doc on `TranscriptView` and `renderedRunSignatures`.
       const updatedMessages: HTMLElement[] = [];
@@ -1440,9 +1505,29 @@ export function createTranscriptView(
             nextRunSignatures.set(runId, signature);
           }
         }
-        nodes.push(shell);
+        (isOngoing(store, item, tableMessage) ? ongoingNodes : settledNodes).push(shell);
       }
       renderedRunSignatures = nextRunSignatures;
+      const nodes = [...settledNodes, ...ongoingNodes];
+      const ongoingElement = ongoingNodes[ongoingNodes.length - 1];
+      const orderChanged =
+        nodes.length !== lastRenderedNodes.length ||
+        nodes.some((node, index) => node !== lastRenderedNodes[index]);
+      lastRenderedNodes = nodes;
+      // A new or just-moved ongoing billet is revealed even for a reader who
+      // scrolled up: the spinner is the app's own "this is still working"
+      // signal, and it must be on screen. The same holds when a table above it
+      // was updated in place - the ongoing billet is the lowest entry, so it is
+      // the target that keeps the whole bottom (updated table included) visible.
+      // A progress tick that leaves the rendered order unchanged does not
+      // qualify, so reading history is not interrupted on every tick.
+      if (
+        ongoingElement !== undefined &&
+        (orderChanged || updatedMessages.length > 0) &&
+        !updatedMessages.includes(ongoingElement)
+      ) {
+        updatedMessages.push(ongoingElement);
+      }
 
       // The billet is gone entirely (its turn ended): drop any expansion so
       // the next block starts collapsed. `updateShell` handles the case where

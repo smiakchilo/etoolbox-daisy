@@ -1,4 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  OpenRouterCall,
+  OpenRouterCallRequest,
+  OpenRouterClient,
+} from '../../../../src/agents/openrouter/types';
+import { AUTO_MODEL } from '../../../../src/agents/openrouter/agentService';
 import { createOpenRouterRuntime } from '../../../../src/agents/openrouter/runtime';
 import {
   defaultAppSettings,
@@ -6,6 +12,42 @@ import {
   type AgentHost,
   type AgentService,
 } from '../../../../src/shared';
+
+const clients = vi.hoisted(() => ({ current: undefined as OpenRouterClient | undefined }));
+
+vi.mock('../../../../src/agents/openrouter/client', () => ({
+  createOpenRouterClient: () => clients.current,
+}));
+
+function fakeClient(
+  text: string,
+  calls: OpenRouterCallRequest[],
+  hasApiKey = true,
+): OpenRouterClient {
+  return {
+    hasApiKey,
+    createConversationState: () => ({}),
+    callModel: (request) => {
+      calls.push(request);
+      const call: OpenRouterCall = {
+        getTextStream: async function* () {
+          await Promise.resolve();
+          yield text;
+        },
+        getReasoningStream: async function* () {
+          // no reasoning in the answer test
+        },
+        getResponse: () => Promise.resolve({}),
+      };
+      return call;
+    },
+    listModels: () => Promise.resolve([]),
+  };
+}
+
+beforeEach(() => {
+  clients.current = fakeClient('{"matches":[]}', []);
+});
 
 /**
  * Runtime wiring for the OpenRouter agent, against a fake host: start installs
@@ -136,5 +178,70 @@ describe('createOpenRouterRuntime', () => {
     await runtime.refresh(settings);
 
     expect(installed).toHaveLength(2);
+  });
+
+  it('answers with one fresh, tools-disabled call and returns a verdict per item', async () => {
+    const calls: OpenRouterCallRequest[] = [];
+    clients.current = fakeClient('{"matches":[2]}', calls);
+    const { host } = buildHost({ accessToken: 'k' });
+    const runtime = createOpenRouterRuntime(host);
+    await runtime.start(settings);
+
+    const result = await runtime.answer?.(
+      {
+        instruction: 'Waldo is good',
+        items: [
+          { id: '1', text: 'a bad Waldo' },
+          { id: '2', text: 'a good Waldo' },
+        ],
+      },
+      undefined,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { id: '1', match: false },
+        { id: '2', match: true },
+      ],
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      model: AUTO_MODEL,
+      tools: [],
+      allowFinalResponse: true,
+      reasoningEffort: null,
+    });
+    expect(calls[0]?.input).toContain('Waldo is good');
+    expect(calls[0]?.input).toContain('[2] a good Waldo');
+  });
+
+  it('refuses to answer without a stored API key', async () => {
+    clients.current = fakeClient('{"matches":[]}', [], false);
+    const { host } = buildHost({});
+    const runtime = createOpenRouterRuntime(host);
+    await runtime.start(settings);
+
+    const result = await runtime.answer?.({ instruction: 'x', items: [] }, undefined);
+
+    expect(result?.ok).toBe(false);
+  });
+
+  it('does not answer once the turn is aborted', async () => {
+    const calls: OpenRouterCallRequest[] = [];
+    clients.current = fakeClient('{"matches":[]}', calls);
+    const { host } = buildHost({ accessToken: 'k' });
+    const runtime = createOpenRouterRuntime(host);
+    await runtime.start(settings);
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runtime.answer?.({ instruction: 'x', items: [] }, controller.signal);
+
+    expect(result).toEqual({
+      ok: false,
+      error: { message: 'The answer call was cancelled', cancelled: true },
+    });
+    expect(calls).toEqual([]);
   });
 });

@@ -32,7 +32,7 @@ function actionsOf(element: Element | null | undefined): { id: string; href: str
 // helper. `createMarkdownRenderer`, by contrast, takes its `Window`
 // explicitly (see that module's own test), so it is constructed directly
 // from `dom.window` rather than relying on the global installed here.
-const dom = new JSDOM();
+const dom = new JSDOM('', { url: 'http://localhost' });
 globalThis.document = dom.window.document;
 const markdownRenderer = createMarkdownRenderer(
   dom.window as unknown as Window & typeof globalThis,
@@ -173,6 +173,33 @@ function toolResult(sequence: number, ok: boolean): AgentEvent {
           },
         },
   });
+}
+
+/** A tool call with its own id, for scenarios with more than one billet. */
+function toolRequestedAs(sequence: number, id: string, toolName = 'aem_get_json'): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.call.requested',
+    chatId,
+    sequence,
+    toolCallId: toolCallIdSchema.parse(id),
+    toolName,
+    arguments: {},
+  });
+}
+
+/** A successful result for a call created by {@link toolRequestedAs}. */
+function toolResultAs(sequence: number, id: string): AgentEvent {
+  return agentEventSchema.parse({
+    type: 'tool.result',
+    chatId,
+    sequence,
+    toolCallId: toolCallIdSchema.parse(id),
+    outcome: { ok: true, data: null },
+  });
+}
+
+function clickElement(target: Element): void {
+  target.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
 describe('createTranscriptView', () => {
@@ -754,7 +781,7 @@ describe('createTranscriptView', () => {
   });
 
   describe('ordering and cache reuse across repaints', () => {
-    it('keeps items in first-seen order across repeated repaints', () => {
+    it('keeps settled items in first-seen order and moves the running billet last', () => {
       const view = createTranscriptView(markdownRenderer);
       const store = createTranscriptStore();
       store.applyUserPrompt(turnId, 'hi');
@@ -767,8 +794,10 @@ describe('createTranscriptView', () => {
       const children = Array.from(view.element.children);
       expect(children).toHaveLength(3);
       expect(children[0]?.matches('.chat-message--user')).toBe(true);
-      expect(children[1]?.matches('.chat-tool-call')).toBe(true);
-      expect(children[2]?.matches('.chat-message--assistant')).toBe(true);
+      // The tool call is still running, so it is the transcript's lowest entry;
+      // the assistant message that arrived after it is settled and stays above.
+      expect(children[1]?.matches('.chat-message--assistant')).toBe(true);
+      expect(children[2]?.matches('.chat-tool-call')).toBe(true);
     });
 
     it('reuses the same DOM node identity for an item across repaints instead of rebuilding it', () => {
@@ -1180,9 +1209,14 @@ describe('createTranscriptView - format_table message table', () => {
     expect(view.element.querySelector('sp-table')).toBe(table);
     expect(view.element.querySelector('sp-table-body sp-table-row')).toBe(firstRow);
     expect(view.element.querySelectorAll('sp-table-body sp-table-row')).toHaveLength(3);
-    // The table moved to the run's end, past the sibling billet, without being
-    // rebuilt.
-    expect(view.element.lastElementChild).toBe(table?.closest('.chat-table-message'));
+    // The table moved to the run's end, past the settled content, without being
+    // rebuilt. The running sibling is the transcript's lowest entry by design
+    // (see the ongoing-billet rule), so the table sits immediately above it.
+    const tableMessage = table?.closest('.chat-table-message');
+    expect(tableMessage).not.toBeNull();
+    const running = view.element.querySelector('.chat-tool-call');
+    expect(view.element.lastElementChild).toBe(running);
+    expect(tableMessage?.nextElementSibling).toBe(running);
   });
 
   it('rebuilds the table when the link context changes', () => {
@@ -1269,6 +1303,30 @@ describe('createTranscriptView - format_table message table', () => {
 
     // Detected once only: the next repaint has no change to report.
     expect(view.repaint(store)).toEqual([]);
+  });
+
+  it('reveals the ongoing billet, not the table, when a table grows above it', () => {
+    const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+    const store = createTranscriptStore();
+    store.applyEvent(requested(0, 1, { data: page }));
+    store.applyEvent(result(1, 1, 2, 'new'));
+    store.applyEvent(toolRequestedAs(2, 'call-ongoing', 'aem_query'));
+    view.repaint(store);
+    const ongoing = view.element
+      .querySelector('[data-tool-call-toggle="call-ongoing"]')
+      ?.closest<HTMLElement>('.chat-tool-call');
+    expect(ongoing).not.toBeNull();
+
+    store.applyEvent(
+      requested(3, 2, { data: { rows: [{ 'jcr:path': '/content/site/c' }] }, mode: 'append' }),
+    );
+    store.applyEvent(result(4, 2, 1, 'append'));
+    const targets = view.repaint(store);
+
+    // The table is reported as updated, but the ongoing billet is the lower
+    // entry: it is the last target, so the pane reveals the whole bottom.
+    expect(targets).toContain(ongoing);
+    expect(targets.at(-1)).toBe(ongoing);
   });
 
   it('does not report a table update when only the link context changed', () => {
@@ -1800,5 +1858,86 @@ describe('ask_user conversation presentation', () => {
     expect(view.element.querySelector('.chat-ask-user .chat-tool-call__detail')?.textContent).toBe(
       'The question was cancelled',
     );
+  });
+});
+
+describe('ongoing billet placement and the expansion accordion', () => {
+  function idOf(node: Element): string | null | undefined {
+    return node.querySelector('[data-tool-call-toggle]')?.getAttribute('data-tool-call-toggle');
+  }
+
+  it('keeps the running billet as the lowest entry and reveals it when it moves', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedAs(0, 'call-1'));
+    store.applyEvent(toolResultAs(1, 'call-1'));
+    store.applyEvent(toolRequestedAs(2, 'call-2'));
+
+    const firstReveal = view.repaint(store);
+    const first = [...view.element.children] as HTMLElement[];
+    expect(first.map(idOf)).toEqual(['call-1', 'call-2']);
+    // The running billet is new, so it is the reveal target even though the
+    // store's item order put it after the settled one already.
+    expect(firstReveal.at(-1)).toBe(first[1]);
+
+    // A no-change repaint (a progress tick with the same rendered order) does
+    // not yank the viewport.
+    expect(view.repaint(store)).toEqual([]);
+
+    // New settled content is placed above the running billet.
+    store.applyEvent(toolRequestedAs(4, 'call-3'));
+    store.applyEvent(toolResultAs(5, 'call-3'));
+    const movedReveal = view.repaint(store);
+    const after = [...view.element.children] as HTMLElement[];
+    expect(after.map(idOf)).toEqual(['call-1', 'call-3', 'call-2']);
+    expect(movedReveal.at(-1)).toBe(after[2]);
+  });
+
+  it('expands only one tool-call billet at a time', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    for (const [index, id] of ['call-1', 'call-2'].entries()) {
+      store.applyEvent(toolRequestedAs(index * 2, id));
+      store.applyEvent(toolResultAs(index * 2 + 1, id));
+    }
+    view.repaint(store);
+    const toggles = [...view.element.querySelectorAll<HTMLElement>('[data-tool-call-toggle]')];
+    expect(toggles).toHaveLength(2);
+
+    clickElement(toggles[0] as HTMLElement);
+    expect(toggles[0]?.getAttribute('aria-expanded')).toBe('true');
+    clickElement(toggles[1] as HTMLElement);
+    expect(toggles[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(toggles[1]?.getAttribute('aria-expanded')).toBe('true');
+
+    // The state survives a repaint, still with one open billet.
+    view.repaint(store);
+    const after = [...view.element.querySelectorAll<HTMLElement>('[data-tool-call-toggle]')];
+    expect(after[0]?.getAttribute('aria-expanded')).toBe('false');
+    expect(after[1]?.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('closes an expanded tool call when the Thinking billet is expanded', () => {
+    const view = createTranscriptView(markdownRenderer);
+    const store = createTranscriptStore();
+    store.applyUserPrompt(turnId, 'hi');
+    store.setTurnInFlight(true);
+    store.applyEvent(toolRequestedAs(0, 'call-1'));
+    store.applyEvent(toolResultAs(1, 'call-1'));
+    store.applyEvent(reasoningDelta(2, 'pondering the AEM path'));
+    view.repaint(store);
+
+    const toolToggle = view.element.querySelector<HTMLElement>('[data-tool-call-toggle]');
+    expect(toolToggle).not.toBeNull();
+    clickElement(toolToggle as HTMLElement);
+    expect(toolToggle?.getAttribute('aria-expanded')).toBe('true');
+
+    const thinkingToggle = view.element.querySelector<HTMLElement>(
+      '.chat-message__thinking-toggle',
+    );
+    expect(thinkingToggle).not.toBeNull();
+    clickElement(thinkingToggle as HTMLElement);
+    expect(toolToggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(thinkingToggle?.getAttribute('aria-expanded')).toBe('true');
   });
 });

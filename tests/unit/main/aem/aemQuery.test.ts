@@ -236,7 +236,7 @@ describe('executeAemQuery - pagination is reported honestly', () => {
     expect(pagination.hasMore).toBe(true);
   });
 
-  it('accounts for the offset when judging whether a further page exists', async () => {
+  it('accounts for the offset when checking whether a further page exists', async () => {
     const result = await run(
       jsonResponse(queryBody([{ 'jcr:path': '/c' }], { more: false, total: 3 })),
       { offset: 2 },

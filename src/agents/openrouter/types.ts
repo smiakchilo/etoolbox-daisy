@@ -55,6 +55,13 @@ export interface OpenRouterCallRequest {
   readonly state: unknown;
   readonly signal: AbortSignal;
   /**
+   * Whether the run may end with an assistant text response. The chat sets this
+   * to `false` when a tool result already ended the turn (`TURN_COMPLETE_RESULT_KEY`),
+   * so the SDK does not spend one more model call; a one-shot answer call leaves
+   * it `true` because the text *is* its answer.
+   */
+  readonly allowFinalResponse?: boolean;
+  /**
    * Whether the run should stop after the step it is on, read by the client's
    * stop condition. The service sets it when a tool result carries the
    * turn-complete marker (`TURN_COMPLETE_RESULT_KEY`), so the SDK ends the run

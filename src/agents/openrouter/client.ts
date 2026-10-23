@@ -111,7 +111,7 @@ export function createOpenRouterClient(options: OpenRouterClientOptions): OpenRo
         state: request.state as StateAccessor,
         signal: request.signal,
         stopWhen,
-        allowFinalResponse: false,
+        allowFinalResponse: request.allowFinalResponse ?? false,
         ...(request.reasoningEffort !== null
           ? {
               reasoning: { effort: request.reasoningEffort as ReasoningEffort },

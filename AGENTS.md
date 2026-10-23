@@ -376,7 +376,10 @@ src/agents/<name>/
    `loadModelCatalog`; `login`/`cancelLogin`/`logout` only if the SDK signs in
    interactively; optional `getAuthPresence` to report a cheap, **non-starting**
    sign-in presence so the Settings "Set active" control can be honest without
-   starting an inactive provider's runtime). Get proxy/token from
+   starting an inactive provider's runtime; optional `answer` for the stateless,
+   tools-disabled model verdict a tool asks for through `ToolHost.answer` - see
+   `src/shared/tools/core/answer.ts`; a fresh request, not a chat turn, no
+   events, same model/provider/proxy and the turn's abort signal). Get proxy/token from
    `host.resolveConnection(meta.id, settings)` — an agent never touches the
    secret store or settings store. An **in-process** agent applies its proxy by
    wrapping the resolved connection with `host.createProxyFetch(connection)`
@@ -596,6 +599,26 @@ flight, so its calls settle as `abandonedAwaitingInput` and show **no status wor
 at all** — just the tool name and the settled icon (`journalReplay.ts` spots the
 still-running conversation call and passes `awaitingInput`; a call the app died
 under while it was *working* still reads `Interrupted`).
+
+**The ongoing billet is the transcript's lowest entry.** `transcriptView.ts`
+renders settled entries in journal order, then moves every ongoing entry — the
+running tool-call billets and the Thinking row, but not a `format_table` message
+or a pending `ask_user` conversation — after them (relative order preserved).
+The move is presentation only: the store, the journal and a restored transcript
+keep journal order, so a future restore may show the old entry where it was
+recorded. A repaint whose rendered order changed reports the bottom-most
+ongoing billet as a reveal target (`TranscriptView.repaint`), and `chatPane.ts`
+reveals it: a spinner that appears, or is moved to the bottom by a nested call
+settling above it, is brought on screen even for a reader who scrolled up. A
+progress tick that leaves the rendered order unchanged does not move the
+viewport. This is what stops the outer `aem_semantic_search` billet from being
+stranded at the top while its nested `Load more` work happens below it.
+
+**Only one billet is expanded at a time (accordion).** Expanding a tool-call
+billet collapses every other tool-call billet and the Thinking billet; expanding
+Thinking collapses every tool-call billet. `expandedToolCalls` therefore holds at
+most one id and `expandedThinking` is mutually exclusive with it; a repaint
+re-applies that one open state. Clicking an open billet still collapses it.
 
 **An assistant message with no text paints nothing.** A tool-only turn (the
 model ends it with `assistant.message.completed`, `content: ""`) still has a
@@ -911,7 +934,9 @@ src/tools/<name>/
 - **The search page size is one constant**: `SEARCH_PAGE_SIZE` (20) in
   `src/shared/tools/core/search.ts` is the default `limit` of `aem_query` and
   of both search composites; change it there. `resolveSearchPageSize` is the
-  one fallback for an optional parsed argument. The skills carry no page-size
+  one fallback for an optional parsed argument. For `aem_semantic_search` the
+  same `limit` is also the **display** page size: it queries as many hit pages
+  as it takes to answer that many matches. The skills carry no page-size
   number - `navigate` and `search-component` omit `limit`, and
   `resources/rules/session.md` tells the model not to choose one; an explicit
   `limit` remains a permitted override. So are the other search limits -
@@ -924,8 +949,8 @@ src/tools/<name>/
   model's turn at that result instead of resuming it. The two search composites
   set it when a search is finished - the table is the whole answer, so the
   model's follow-up ("search is finished") would only cost a round trip - and
-  `aem_semantic_search` sets it *only* on its terminal call, never on a
-  candidates result the model must judge. Copilot ends the turn with a quiet
+  `aem_semantic_search` sets it on its single final result (it has no
+  candidate-result phase). Copilot ends the turn with a quiet
   `session.abort()` + `idle` (never `cancelling`, which the pane paints as an
   interruption); OpenRouter stops the run through its stop condition with
   `allowFinalResponse: false`; the fake ends the scripted turn. See
@@ -986,41 +1011,54 @@ src/tools/<name>/
   `nestedAemQueryArgsSchema` (cap 2000) instead of the model's (cap 200).
   `p.limit=-1` stays inexpressible and the descriptor still advertises 200.
   One request must fit the 90 s per-request deadline.
-- `aem_semantic_search` is the second composite, and the first **stateful**
-  one: the model must judge, so the tool runs in two kinds of call keyed by a
-  `searchId` (state held in the executor's closure, at most 8 searches).
-  Call A `{ terms, context, roots?, limit? }` runs `aem_query` (via `invokeTool`)
-  for one page (default `SEARCH_PAGE_SIZE`; `roots` defaults to the host's
-  content roots then its DAM roots, `resolveSearchRoots`), reads **every** hit in code (QueryBuilder
-  `path.self` + `fulltext` + `p.hits=full` through `host.bridge`, a pool of 4,
-  falling back to the hit itself), and returns a numbered candidate list in
-  `textResultForLlm`. Reading every hit is the slow part and has no transcript
-  entry of its own, so while it reads the executor reports a `Reading n of m`
-  note through `ToolHost.reportToolProgress` (keyed to its own
-  `context.toolCallId`); the running billet shows it beside a spinner, written
-  in place (the billet is rebuilt only when its non-progress content changes, so
-  the spinner's animation never restarts on a tick). Call B
-  `{ searchId, matches }` shows the judged matches
-  with `format_table` (`new`, then `append`), always passing a `totalLine`
-  that counts the **relevant** matches (`describeRelevantTotal`: "Total: N so
-  far", or "Did not find any relevant results so far"; no
-  "so far" once AEM is exhausted), so an empty run still shows a message, then, unless `hasMore === false`, offers
-  `ask_user` `["Load more"]`: a click returns the next page's candidates, a
-  cancel ends the search. The model never decides how many hits to read or when
-  to stop. Each matched row's `Path` is the **concrete node** the excerpt's
-  property lives on (`jcr:path` = the excerpt's `nodePath`), and `Property` is
-  that property's own bare name — not the page the query matched, and not a
-  relative label (the model-facing candidate list still shows the hit-relative
-  label, e.g. `jcr:content/text/text`). Billet: a **start** call
-  (`{ terms, context }`) is summarised by its terms alone, and its `AEM hits` row
-  is the raw query total; a **continue** call (`{ searchId, matches }`) carries no
-  terms of its own and, while it runs (which includes the read after Load more) or
-  if it was abandoned, none to borrow from its result either - so it reads
-  `judging N match(es)` with Search ID/Matched rows. Neither summary repeats the
-  tool's own name: the header already reads `aem_semantic_search`, so a
-  `Semantic search:` prefix printed the words twice on one line (as `aem_query`
-  shows `fulltext=...`, never "Query: ..."). `describeCall` keys on the call's own
-  `terms`, never its result's (a continue call's result echoes them).
+- `aem_semantic_search` **owns the whole search in one call**. It is not
+  stateful and has no callback protocol: `{ terms, context, roots?, limit?, filters? }`
+  starts it, and the same call runs query -> read -> answer -> paint/ask until the
+  search is exhausted or the user declines. The model never sees candidates and
+  never decides which match; it supplies only the terms and the meaning
+  (`context`), so a model that stops writing cannot strand the search. (The old
+  two-call `searchId`/`matches` protocol is gone.)
+  Per hit page it runs `aem_query` (via `invokeTool`; default
+  `SEARCH_PAGE_SIZE`; roots default to the host's content roots then its DAM
+  roots, `resolveSearchRoots`, and a fragment is resolved by
+  `resolveSearchScope`), reads **every** hit in parallel (QueryBuilder
+  `path.self` + `fulltext` + `p.hits=full` through `host.bridge`, pooled at the
+  one application-wide `DEFAULT_REQUEST_CONCURRENCY` (4, the same constant that
+  sets the bridge's request slots),
+  falling back to the hit itself), and asks the active model about the page with
+  **one** call through `ToolHost.answer` - a stateless, tools-disabled model
+  call on the active agent (`AgentRuntime.answer`, implemented by Copilot,
+  OpenRouter and the fake). The answer returns one true/false per item; the
+  shared prompt/parser live in `src/shared/tools/core/answer.ts`, so every agent
+  asks the same question. An unusable answer is retried (`ANSWER_MAX_ATTEMPTS`,
+  3 attempts in total: one call plus two retries) and
+  then fails the search with `UNEXPECTED_RESPONSE` - never a silent "no match".
+  Accepted rows go into `PageFillQueue` through the reusable `runPageFill`
+  (`src/shared/tools/core/pageFill.ts`): query/process until `limit` matches are
+  buffered or AEM is exhausted, then paint with `format_table` (`new`, then
+  `append`). A display page is never painted for a page whose hits mostly failed
+  to match, so the old "Did not find any relevant results so far" with a "Load
+  more" under it cannot happen. While anything remains, `ask_user`
+  `["Load more"]`; a click shows buffered surplus first and probes further pages
+  only while the buffer is short, so a surplus answered match is never re-queried
+  or re-answered. An empty source page stops probing rather than querying
+  unattended. The total line counts the **relevant** matches
+  (`describeRelevantTotal`: "Total: N so far", or "Did not find any relevant
+  results"; no "so far" once nothing remains). Each matched row's `Path` is the
+  **concrete node** the first excerpt's property lives on (`jcr:path` = the
+  excerpt's `nodePath`), `Property` its bare name, `Citation` its text (the
+  answer no longer picks an excerpt). Progress is
+  `Reading i/n · Page n · m/limit collected` while reading,
+  `Testing n candidate(s) · Page n · m/limit collected` while the answer runs,
+  and `Showing n · Page n · m/limit collected` once a page is taken (the count
+  is then the true remainder for the next page; `selectionLabel` clamps it to
+  `limit`, so a 23-match overflow after a 20-row page can never read `23/20`),
+  through
+  `ToolHost.reportToolProgress` (written in place). The billet is summarised by
+  the terms alone (plus the page once past the first); it never repeats the
+  tool's own name, because the header already reads `aem_semantic_search` (the
+  same reason `aem_query` shows `fulltext=...`, never "Query: ..."). The single
+  final result carries `ended` and `TURN_COMPLETE_RESULT_KEY`.
 
 #### Recipe: add a new tool
 
@@ -1230,10 +1268,11 @@ All three search skills answer with **exactly one application-rendered table**:
 `/search` makes a single `aem_query_format_ask` call (`{ "terms": ... }`), which
 runs `aem_query`, `format_table` and the `ask_user` `["Load more"]` loop itself
 through the tool-to-tool bridge (a hand-built predicate query is the same single
-call with `predicates` instead of `terms`); `/semantic-search` calls
-`aem_semantic_search` `{ terms, context }`, judges every candidate it returns by
-meaning, and calls it back `{ searchId, matches }`, which tables the passing
-`{ jcr:path, property, citation }` rows and runs the Load-more loop; and
+call with `predicates` instead of `terms`); `/semantic-search` makes one
+`aem_semantic_search` call (`{ terms, context }`), inside which the application
+reads and answers each hit page, tables the passing `{ jcr:path, property,
+citation }` rows and runs the Load-more loop itself - the model never returns
+candidates or verdicts; and
 `/search-component <component>` resolves a title or name to a resource type from
 `cq:Component` nodes under the component roots (`aem_query`), then makes one
 `aem_query_format_ask` call over the component **instances**
@@ -1548,8 +1587,36 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4046 passed / 13 skipped** (+31 against the
-4015 below - **authentication loss mid-run** (2026-10-22): a 401, a redirect or a
+Current baseline: **`npm run test` → 4090 passed / 13 skipped** (+30 against the
+4060 below - **transcript: the ongoing billet is lowest and one billet expands
+at a time** (2026-10-23): `transcriptView.ts` moves running tool-call billets
+(and Thinking) after every settled entry, so the spinner is never stranded at
+the top; a repaint that changes that order (or updates a table above it) reveals
+the ongoing billet, and only one billet - tool call or Thinking - can stay
+expanded. The +4 is the new transcript cases, and the +1 is the semantic
+progress-overflow case (`23/20` can never be shown). Before that it was 4089
+passed / 13 skipped (+29 against the 4060 below - the same work before the
+overflow guard). Before that it was 4085 passed /
+13 skipped (+25 against the 4060 below - **semantic search: the tool owns the
+loop, the model only answers** (2026-10-23): one `aem_semantic_search` call
+queries, reads every hit in parallel, asks the active model about each hit page
+through the new stateless `ToolHost.answer` / `AgentRuntime.answer`, fills a
+display page with `runPageFill`, and paints the table and asks "Load more"
+itself. No candidates reach the model; the answer call is retried
+(`ANSWER_MAX_ATTEMPTS`, 3 attempts in total). Playwright is **157 tests**, and a
+full run was 151 passed / 6 failed - the four environment-bound `network-error`
+cases plus `address-deep-link` / `address-hosts-picker`, both green 3/3 in
+isolation - see `docs/verification/followons-2026-10.md` "Semantic search: the
+tool owns the loop and the model only answers (2026-10-23)"). Before that it was
+4060 passed / 13 skipped (+14 against the 4046 below - **semantic search fills a
+page before it paints anything** (2026-10-23): accepted matches go into the
+reusable `PageFillQueue`; the tool only shows a table once it holds `limit`
+matches or AEM is exhausted; a surplus stays buffered for the next click (no
+re-query, no re-answering), an empty source page stops probing, and the progress
+line reads `Page n · m/limit selected · reading i/n`; the +14 was 8
+`pageFill.test.ts` cases and 6 net new `aemSemanticSearch.test.ts` cases). Before
+that it was 4046 passed / 13 skipped (+31
+against the 4015 below - **authentication loss mid-run** (2026-10-22): a 401, a redirect or a
 login-looking HTML body is classified at once, raises a sticky Reload notice,
 reloads the pane and fast-fails further reads for that host until the next prompt;
 Playwright is **156 tests** (+1, `auth-loss-banner.spec.ts`) - see

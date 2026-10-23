@@ -14,10 +14,9 @@ import type { JsonValue } from '../../contracts';
  * instead of resuming the model.
  *
  * Deliberately a marker on the *result*, not a `turnEnds` flag on the tool
- * manifest: `aem_semantic_search` starts by returning candidates the model
- * must judge (the turn continues), and only its final call - the one that
- * renders the table and finishes the search - ends the turn. A per-tool flag
- * could not tell those two calls apart.
+ * manifest: `aem_semantic_search` runs one long call and paints its table
+ * before it returns, so only its final result carries the marker. A per-tool
+ * flag would end the turn at the first result regardless.
  *
  * The key is part of the tool-result convention, so it lives in `src/shared`
  * where each tool folder and every agent adapter can agree on it without

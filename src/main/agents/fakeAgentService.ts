@@ -7,6 +7,8 @@ import {
   type ChatId,
   type IdGenerator,
   type JsonValue,
+  type AnswerRequest,
+  type AnswerResult,
   type MessageId,
   type OpenConversationRequest,
   type ReasoningId,
@@ -225,6 +227,16 @@ export interface FakeAgentService extends AgentService {
    * removing anything - enough for a test to assert which session was named.
    */
   deletedSessionIds(): readonly SessionId[];
+
+  /**
+   * Queues the answer to the next `answer` call (a stateless model verdict the
+   * semantic search asks for inside its tool call). Nothing queued answers
+   * "no candidate matches", which keeps an unscripted test deterministic.
+   */
+  queueAnswer(answer: AnswerResult): void;
+
+  /** One stateless answer call; consumes the next queued answer. */
+  answer(request: AnswerRequest): Promise<AnswerResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,8 +305,8 @@ function defaultIdGenerator(): IdGenerator {
  * `session_error` and `turn_in_progress` both reuse `ACCESS_DENIED` - "The
  * application's own policy refused the request before it was sent" - because
  * in both cases nothing was ever sent anywhere; this service's own state
- * machine refused to forward the prompt at all. This mapping is a judgement
- * call: none of `ToolErrorCode`'s members were written with this boundary in
+ * machine refused to forward the prompt at all. This mapping is a design
+ * choice: none of `ToolErrorCode`'s members were written with this boundary in
  * mind, and a reviewer may prefer different picks - see the session report.
  */
 function blockReasonToError(reason: CanSendBlockReason): AgentServiceError {
@@ -347,6 +359,8 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   const eventListeners = new Set<(event: AgentEvent) => void>();
   const authListeners = new Set<(state: AgentAuthState) => void>();
   const scriptedTurns: ScriptedTurn[] = [];
+  /** Answers for the next `answer` calls (FIFO); an empty queue means "no match". */
+  const answers: AnswerResult[] = [];
   /** Sequence counters persist across close/reopen of the same `chatId` - see agentEvents.ts's module doc: sequence is a per-chat lifetime counter, not reset by this fake's own bookkeeping. */
   const sequenceByChatId = new Map<ChatId, number>();
 
@@ -1027,6 +1041,20 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
 
     deletedSessionIds(): readonly SessionId[] {
       return [...deletedSessions];
+    },
+
+    queueAnswer(answer: AnswerResult): void {
+      answers.push(answer);
+    },
+
+    answer(request: AnswerRequest): Promise<AnswerResult> {
+      const answer = answers.shift();
+      if (answer !== undefined) return Promise.resolve(answer);
+      // Nothing scripted: every candidate is a non-match. Deterministic and
+      // empty, which is what a test that does not care about answering expects.
+      return Promise.resolve(
+        ok(request.items.map((item) => ({ id: item.id, match: false as const }))),
+      );
     },
   };
 }

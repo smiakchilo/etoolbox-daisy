@@ -15,6 +15,7 @@ import {
   type CurrentBridgeContext,
   type ServerId,
   type ToolEnvelopeBase,
+  DEFAULT_REQUEST_CONCURRENCY,
   classifyAuthIncident,
   classifyStaleness,
   isDeadlineExpired,
@@ -68,10 +69,10 @@ export interface BrokerDeps {
   /** The live serverRevision + navigationEpoch, read fresh at every decision point. */
   readonly currentContext: () => CurrentBridgeContext;
   /**
-   * How many requests may be in flight at once. Defaults to
-   * {@link DEFAULT_MAX_CONCURRENT_WEBVIEW_REQUESTS}. Requests beyond the limit wait
-   * in FIFO order. Exposed so a test can pin a single slot and exercise the
-   * per-slot rules deterministically.
+   * How many requests may be in flight at once. Defaults to the
+   * application-wide {@link DEFAULT_REQUEST_CONCURRENCY}. Requests beyond the
+   * limit wait in FIFO order. Exposed so a test can pin a single slot and
+   * exercise the per-slot rules deterministically.
    */
   readonly maxConcurrentRequests?: number;
   /**
@@ -182,17 +183,12 @@ function replyToOutcome(reply: WebviewBridgeReply): BrokerOutcome {
  * This **supersedes** requirements-decisions.md section 6's "allow one
  * application bridge request at a time", by owner decision (see
  * docs/accurate-search-total.md and docs/verification.md): a search's background
- * honest count must run without blocking the "Load more" page it races. A
- * small bound - not unbounded concurrency - keeps author load predictable;
- * requests beyond it still wait in FIFO order.
+ * honest count must run without blocking the "Load more" page it races. The
+ * bound itself is the application-wide `DEFAULT_REQUEST_CONCURRENCY`; requests
+ * beyond it wait in FIFO order.
  */
-export const DEFAULT_MAX_CONCURRENT_WEBVIEW_REQUESTS = 4;
-
 export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker {
-  const maxConcurrent = Math.max(
-    1,
-    deps.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_WEBVIEW_REQUESTS,
-  );
+  const maxConcurrent = Math.max(1, deps.maxConcurrentRequests ?? DEFAULT_REQUEST_CONCURRENCY);
   // Up to `maxConcurrent` requests are sent to the view at once; everything
   // else waits here in arrival order, and a slot freeing always dispatches the
   // head of the queue, so dispatch stays FIFO.

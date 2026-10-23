@@ -1528,12 +1528,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   });
 
   function repaintTranscript(): void {
-    let updated: readonly HTMLElement[] = [];
+    let revealTargets: readonly HTMLElement[] = [];
     transcriptFollower.repaint(() => {
-      updated = transcriptView.repaint(transcriptStore);
+      revealTargets = transcriptView.repaint(transcriptStore);
     });
-    const updatedMessage = updated[updated.length - 1];
-    if (updatedMessage !== undefined) transcriptFollower.reveal(updatedMessage);
+    const revealTarget = revealTargets[revealTargets.length - 1];
+    if (revealTarget !== undefined) transcriptFollower.reveal(revealTarget);
     // A repaint rebuilds the transcript's DOM, so a live find's highlight ranges
     // (which point into the old nodes) must be recomputed.
     findBar.refresh();

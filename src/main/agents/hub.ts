@@ -10,6 +10,8 @@ import {
   type AppSettings,
   type AuthPresence,
   type AuthStatus,
+  type AnswerRequest,
+  type AnswerResult,
   type LoginOutcome,
   type LogoutResult,
   type ModelCatalogResult,
@@ -49,6 +51,11 @@ export interface AgentHub {
   login(agentId: AgentId, settings: AppSettings | undefined): Promise<LoginOutcome>;
   cancelLogin(agentId: AgentId): void;
   logout(agentId: AgentId): Promise<LogoutResult>;
+  /**
+   * One stateless answer call on the active agent's provider. An agent with no
+   * `answer` (or no active runtime) answers with a failure, never a throw.
+   */
+  answer(request: AnswerRequest, signal: AbortSignal | undefined): Promise<AnswerResult>;
 }
 
 export interface AgentHubDeps {
@@ -242,6 +249,19 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
       } catch (error) {
         report(agentId, error);
         return { apiVersion: 1, warning: 'Sign-out could not be completed' };
+      }
+    },
+
+    async answer(request, signal) {
+      const runtime = active();
+      if (runtime?.answer === undefined) {
+        return err({ message: 'The active agent cannot answer search candidates' });
+      }
+      try {
+        return await runtime.answer(request, signal);
+      } catch (error) {
+        if (activeId !== undefined) report(activeId, error);
+        return err({ message: 'The agent could not answer the search candidates' });
       }
     },
   };

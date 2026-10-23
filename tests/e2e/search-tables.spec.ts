@@ -24,8 +24,8 @@ import { createScratchDirs } from '../support/e2e/profile';
  * driven by `aem_query_format_ask` (its nested `format_table` call) and continued
  * with a one-click "Load more";
  * `/semantic-search` a `# | Path | Property | Citation` table with the same
- * total slot, driven by `aem_semantic_search`, counting the relevant matches (or
- * saying none were found so far).
+ * total slot, driven by one `aem_semantic_search` call: the tool runs the whole
+ * search (query, read, answer) itself, so the model never answers candidates.
  * The application suppresses the model's own prose for these turns.
  *
  * The deterministic fake scripts the tool calls and the `ask_user` action, so
@@ -166,11 +166,12 @@ function finalSearchStep(): ScriptedStep {
   };
 }
 
-const NO_MATCHES = 'Did not find any relevant results so far';
+const NO_MATCHES = 'Did not find any relevant results';
 const ONE_MATCH = 'Total: 1';
+const TWO_MATCHES = 'Total: 2';
 const SEMANTIC_EMPTY = {
   rows: [],
-  pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 60 } },
+  pagination: { hasMore: false, total: { accuracy: 'exact', value: 0 } },
 };
 const SEMANTIC = {
   rows: [
@@ -182,7 +183,17 @@ const SEMANTIC = {
       citation: 'Waldo is a good guy and a generous donor.',
     },
   ],
-  pagination: { hasMore: false, total: { accuracy: 'exact', value: 4 } },
+  pagination: { hasMore: true, total: { accuracy: 'atLeast', value: 60 } },
+};
+const SEMANTIC_MORE = {
+  rows: [
+    {
+      'jcr:path': '/content/wknd/us/en/news/waldo-charity/jcr:content',
+      property: 'jcr:description',
+      citation: 'Waldo invests into charity.',
+    },
+  ],
+  pagination: { hasMore: false, total: { accuracy: 'exact', value: 2 } },
 };
 
 test.describe('deterministic search tables', () => {
@@ -249,71 +260,83 @@ test.describe('deterministic search tables', () => {
     await expect(shell.locator('.chat-table-message__total').last()).toContainText('3');
   });
 
-  test('a /semantic-search run says no matches so far in the total slot, then appends matches and counts them', async () => {
+  test('a /semantic-search run is one call: the table arrives with its matches and Load more appends', async () => {
     const tablesBefore = await shell.locator('.chat-table-message').count();
+    const semanticBillets = shell
+      .locator('.chat-tool-call')
+      .filter({ hasText: 'aem_semantic_search' });
+    const billetsBefore = await semanticBillets.count();
     await scriptTurn(app, {
       steps: [
+        // One model-facing call runs the whole search; the table and the
+        // question are its nested calls, journaled flat as the fake scripts them.
         semanticStep({ terms: 'waldo', context: 'Waldo is good' }),
-        formatTableStep(SEMANTIC_EMPTY, 'new', NO_MATCHES),
+        formatTableStep(SEMANTIC, 'new', ONE_MATCH),
         { kind: 'inputRequest', actions: ['Load more'] },
-        semanticStep({ searchId: 'sem-1', matches: [] }),
-        formatTableStep(SEMANTIC, 'append', ONE_MATCH),
+        formatTableStep(SEMANTIC_MORE, 'append', TWO_MATCHES),
       ],
     });
     await sendViaComposer(shell, '/semantic-search good waldo');
     await flushFake(app);
 
-    // The tool call itself is a billet; the run's table message starts empty,
-    // with "no relevant results so far" in the total slot instead of a table.
-    const semanticStartBillet = shell
-      .locator('.chat-tool-call')
-      .filter({ hasText: 'aem_semantic_search' })
-      .first();
-    await expect(semanticStartBillet).toBeVisible({ timeout: 30_000 });
-    // The summary is the terms alone - the header already names the tool, so the
-    // billet must not print "semantic search" twice.
-    await expect(semanticStartBillet.locator('.chat-tool-call__summary')).toHaveText('waldo');
+    // Exactly one billet: the whole search is one tool call.
+    await expect(semanticBillets).toHaveCount(billetsBefore + 1);
+    await expect(semanticBillets.nth(billetsBefore).locator('.chat-tool-call__summary')).toHaveText(
+      'waldo',
+    );
     await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
     const message = shell.locator('.chat-table-message').last();
-    await expect(message.locator('.chat-table-message__total')).toHaveText(NO_MATCHES);
-    await expect(message.locator('sp-table')).toHaveCount(0);
-
-    await expect(shell.locator('.chat-ask__action')).toHaveText(/\S/);
-    await shell.locator('.chat-ask__action').click();
-    await flushFake(app);
-
-    // The next page's match is appended to the SAME message; the total slot now
-    // counts the relevant matches and still reads beneath the table.
-    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
-    await expect(message.locator('sp-table-head-cell')).toHaveCount(4);
-    await expect(message.locator('sp-table-body sp-table-row')).toHaveCount(1);
+    await expect(message.locator('.chat-table-message__total')).toHaveText(ONE_MATCH);
     // The new column semantics: Path is the concrete node the property lives
     // on, Property the bare name, and the Property cell the wrap-at-any-
     // character class the Path link also gets.
+    await expect(message.locator('sp-table-head-cell')).toHaveCount(4);
     await expect(message.locator('sp-table-body sp-table-cell').nth(1)).toContainText(
       '/content/wknd/us/en/about/waldo/jcr:content',
     );
     await expect(message.locator('sp-table-body .chat-table-message__wrap')).toHaveText(
       'jcr:description',
     );
-    await expect(message.locator('.chat-table-message__total')).toHaveText(ONE_MATCH);
-    const totalBelowTable = await message.evaluate((element) => {
+    // The total line reads beneath the table.
+    const totalAwaitingClick = await message.evaluate((element) => {
       const total = element.querySelector('.chat-table-message__total');
       const table = element.querySelector('sp-table');
       if (total === null || table === null) return false;
       // 4 = Node.DOCUMENT_POSITION_FOLLOWING.
       return (table.compareDocumentPosition(total) & 4) !== 0;
     });
-    expect(totalBelowTable).toBe(true);
+    expect(totalAwaitingClick).toBe(true);
+
+    await expect(shell.locator('.chat-ask__action')).toHaveText(/\S/);
+    await shell.locator('.chat-ask__action').click();
+    await flushFake(app);
+
+    // The next match is appended to the SAME message; the total counts both.
+    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
+    await expect(message.locator('sp-table-body sp-table-row')).toHaveCount(2);
+    await expect(message.locator('.chat-table-message__total')).toHaveText(TWO_MATCHES);
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
-    // The continue call (`{ searchId, matches }`) carries no terms: it is
-    // summarised by its matches, never as a blank label - even though its result
-    // echoes the terms.
-    const semanticBillets = shell
-      .locator('.chat-tool-call')
-      .filter({ hasText: 'aem_semantic_search' });
-    await expect(semanticBillets).toHaveCount(2);
-    await expect(semanticBillets.nth(1).locator('.chat-tool-call__summary')).toHaveText(/\S/);
+  });
+
+  test('a /semantic-search run exhausted with no matches paints no table and no Load more', async () => {
+    const tablesBefore = await shell.locator('.chat-table-message').count();
+    await scriptTurn(app, {
+      steps: [
+        semanticStep({ terms: 'waldo', context: 'Waldo is good' }),
+        formatTableStep(SEMANTIC_EMPTY, 'new', NO_MATCHES),
+      ],
+    });
+    await sendViaComposer(shell, '/semantic-search no such thing anywhere');
+    await flushFake(app);
+
+    // Only now - the whole search exhausted - does the empty total line show,
+    // and there is nothing to "Load more".
+    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore + 1);
+    const message = shell.locator('.chat-table-message').last();
+    await expect(message.locator('.chat-table-message__total')).toHaveText(NO_MATCHES);
+    await expect(message.locator('sp-table')).toHaveCount(0);
+    await expect(shell.locator('.chat-ask__action')).toHaveCount(0);
+    await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
   });
   test('a skill the model chose on its own (no /name) hides its prose, keeps the table and shows the load', async () => {
     // A natural-language prompt: `isDeterministicTablePrompt` is false at send,

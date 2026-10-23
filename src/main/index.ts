@@ -759,6 +759,16 @@ if (!gotSingleInstanceLock) {
         configuredHosts,
         openPage: (target) => browserController.openForAgent(target),
         requestUserInput: lateBoundUserInput.requestUserInput,
+        // One stateless answer call on the active agent's provider. `agentHub` is
+        // assigned after the registry is built (the agent starts after the shell
+        // paints), so the closure reads it at call time - a tool call can only
+        // happen after a chat turn, which needs the hub.
+        answer: (request, signal) => {
+          const hub = agentHub;
+          return hub === undefined
+            ? Promise.resolve(err({ message: 'The agent is still starting' }))
+            : hub.answer(request, signal);
+        },
         clock: Date.now,
         idGenerator: randomUUID,
         // Diagnostics only: a tool reports how it classified the response body

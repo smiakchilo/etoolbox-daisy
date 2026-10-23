@@ -158,7 +158,14 @@
 }
 
 .chat-message__interruption-icon {
+  /* The cross glyph is drawn edge to edge, so it reads heavier than a normal
+     16px icon at the same size. Mirror the failed tool-call cross: draw it at
+     12px with 2px side margins, which keeps the label aligned with every other
+     status row. */
+  --mod-icon-size: 12px;
+
   flex: 0 0 auto;
+  margin-inline: 2px;
   color: var(--spectrum-gray-600, #6e6e6e);
 }
 

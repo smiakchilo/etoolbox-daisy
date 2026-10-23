@@ -1,8 +1,8 @@
 import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from '../agent-auth';
 import type { AgentDefinition, AgentId, AppSettings, ModelCatalogEntry } from '../contracts';
 import type { Result } from '../result';
-import type { ToolExecutor, ToolDescriptor } from '../tools';
 import type { AgentService } from './agentService';
+import type { AnswerRequest, AnswerResult, ToolExecutor, ToolDescriptor } from '../tools';
 
 /**
  * The agent plugin contract. An agent is one folder, `src/agents/<name>/`,
@@ -142,6 +142,21 @@ export interface AgentRuntime {
    * Must never start the runtime and never reject.
    */
   readonly getAuthPresence?: () => Promise<AuthPresence>;
+  /**
+   * One stateless classification call on this agent's provider: answer whether
+   * each item matches `instruction`, returning one true/false per item. It is
+   * not a chat turn: no conversation history, no tools, no skills, no AgentEvents, and it
+   * must never touch the installed `AgentService`'s session. Implemented with a
+   * fresh, tools-disabled session (Copilot) or a fresh conversation state
+   * (OpenRouter), with the active model preference and the turn's abort signal.
+   *
+   * Optional: an agent that cannot make such a call leaves it absent; a tool
+   * that needs it reports the capability as unavailable.
+   */
+  readonly answer?: (
+    request: AnswerRequest,
+    signal: AbortSignal | undefined,
+  ) => Promise<AnswerResult>;
   /** Absent for an agent that needs no sign-in (`requiresAuth: false`). */
   readonly login?: (settings: AppSettings | undefined) => Promise<LoginOutcome>;
   readonly cancelLogin?: () => void;

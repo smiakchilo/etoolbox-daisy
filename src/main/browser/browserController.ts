@@ -936,7 +936,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       return;
     }
     // Read after the settings I/O, not before: overlapping refreshes (a commit
-    // event racing a switch's own settle) must all judge the page the view is
+    // event racing a switch's own settle) must all evaluate the page the view is
     // on *now*, so whichever finishes last cannot write an older answer.
     const url = currentDocumentUrl();
     const target = url === undefined ? undefined : parseNavigationTarget(url);

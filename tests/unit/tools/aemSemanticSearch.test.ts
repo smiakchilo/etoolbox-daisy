@@ -12,10 +12,11 @@ import { tool } from '../../../src/tools/aem-semantic-search/tool';
 import {
   type BrokerOutcome,
   type JsonValue,
+  type AnswerRequest,
+  type AnswerResult,
   type Result,
   type ToolError,
   type ToolHost,
-  SEARCH_PAGE_SIZE,
   applySearchFilters,
   createToolError,
   describeSearchFilters,
@@ -33,6 +34,13 @@ type Responder = (
   name: string,
   args: Readonly<Record<string, JsonValue>>,
 ) => Result<JsonValue, ToolError>;
+
+type ReadResult = BrokerOutcome | Promise<BrokerOutcome>;
+
+type AnswerResponder = (
+  request: AnswerRequest,
+  attempt: number,
+) => AnswerResult | Promise<AnswerResult>;
 
 const ORIGIN = 'https://aem.example';
 
@@ -70,19 +78,38 @@ function contentFor(url: string): BrokerOutcome {
   };
 }
 
-function makeHost(
-  responder: Responder,
-  read: (url: string) => BrokerOutcome = contentFor,
-  contentRoots: readonly string[] = ['/content/site'],
-  damRoots: readonly string[] = [],
-) {
+/** An answer response that marks exactly `matches` (1-based) as true. */
+const matching =
+  (...matches: number[]): AnswerResponder =>
+  (request) =>
+    ok(
+      request.items.map((item) => ({
+        id: item.id,
+        match: matches.includes(Number(item.id)),
+      })),
+    );
+
+const allMatch = (request: AnswerRequest): AnswerResult =>
+  ok(request.items.map((item) => ({ id: item.id, match: true })));
+
+interface HostOptions {
+  readonly read?: (url: string) => ReadResult;
+  /** Omitted entirely means the host has no answer capability. */
+  readonly answer?: AnswerResponder;
+  readonly contentRoots?: readonly string[];
+  readonly damRoots?: readonly string[];
+}
+
+function makeHost(responder: Responder, options: HostOptions = {}) {
   const calls: Invocation[] = [];
   const reads: string[] = [];
+  const answers: AnswerRequest[] = [];
+  let answerAttempts = 0;
   const host: ToolHost = {
     bridge: {
-      request: (_envelope, url) => {
+      request: async (_envelope, url) => {
         reads.push(url);
-        return Promise.resolve(read(url));
+        return options.read === undefined ? contentFor(url) : await options.read(url);
       },
     },
     currentContext: () => ({
@@ -95,15 +122,24 @@ function makeHost(
     }),
     environmentFacts: () => ({
       origin: ORIGIN,
-      contentRoots,
+      contentRoots: options.contentRoots ?? ['/content/site'],
       componentRoots: ['/apps'],
-      damRoots,
+      damRoots: options.damRoots ?? [],
       contentPriorityPaths: [],
     }),
     configuredHosts: () => [],
     skills: NO_SKILLS,
     openPage: () => Promise.resolve({ kind: 'no_view' }),
     requestUserInput: () => Promise.reject(new Error('asks only through ask_user')),
+    ...(options.answer === undefined
+      ? {}
+      : {
+          answer: (request: AnswerRequest) => {
+            answers.push(request);
+            answerAttempts += 1;
+            return Promise.resolve(options.answer!(request, answerAttempts));
+          },
+        }),
     clock: () => 1,
     idGenerator: createCountingIdGenerator('sem'),
     invokeTool: (name, args) => {
@@ -111,7 +147,7 @@ function makeHost(
       return Promise.resolve(responder(name, args));
     },
   };
-  return { host, calls, reads };
+  return { host, calls, reads, answers };
 }
 
 const callContext = { toolCallId: 'call-1' as never, signal: undefined };
@@ -128,6 +164,8 @@ function tableData(call: Invocation | undefined): Record<string, JsonValue> {
 const paths = (count: number, from = 0): string[] =>
   Array.from({ length: count }, (_, index) => `/content/site/p${String(from + index)}`);
 
+const callNames = (calls: readonly Invocation[]): string[] => calls.map((call) => call.name);
+
 describe('aem_semantic_search manifest', () => {
   it('declares its parts and its name', () => {
     expect(tool.name).toBe(AEM_SEMANTIC_SEARCH_TOOL_NAME);
@@ -135,92 +173,345 @@ describe('aem_semantic_search manifest', () => {
     expect(tool.allowlistEntry).toBe('custom:aem_semantic_search');
     expect(tool.uses).toEqual(['aem_query', 'format_table', 'ask_user']);
   });
+
+  it('takes only the search arguments, never a search id or verdicts', () => {
+    const properties = AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR.parameters as {
+      readonly properties?: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(properties.properties ?? {})).toEqual([
+      'terms',
+      'context',
+      'roots',
+      'limit',
+      'filters',
+    ]);
+  });
 });
 
 describe('aem_semantic_search executor', () => {
-  it('queries one page, reads EVERY hit and returns them all as candidates', async () => {
-    const { host, calls, reads } = makeHost(() => ok(queryPage(paths(6), true)));
+  it('runs the whole search in one call: query, read every hit, answer, show, finish', async () => {
+    const { host, calls, reads, answers } = makeHost(() => ok(queryPage(paths(6), false)), {
+      answer: allMatch,
+    });
     const result = await createAemSemanticSearchExecutor(host)(
       { terms: 'Waldo', context: 'Waldo is good' },
       callContext,
     );
 
-    expect(calls.map((call) => call.name)).toEqual(['aem_query']);
-    expect(calls[0]?.args).toEqual({
+    expect(callNames(calls)).toEqual(['aem_query', 'format_table']);
+    expect(calls[0]?.args).toMatchObject({
       predicates: { fulltext: 'Waldo' },
       roots: ['/content/site'],
       properties: [],
-      limit: SEARCH_PAGE_SIZE,
       offset: 0,
     });
     expect(reads).toHaveLength(6);
+    // One model call answers the whole page, with the context as the instruction.
+    expect(answers).toHaveLength(1);
+    expect(answers[0]?.instruction).toBe('Waldo is good');
+    expect(answers[0]?.items.map((item) => item.id)).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(answers[0]?.items[0]?.text).toContain('/content/site/p0');
+    expect(answers[0]?.items[0]?.text).toContain('Waldo at /content/site/p0');
     const value = payload(result);
     expect(value).toMatchObject({
       operation: 'aem_semantic_search',
-      searchId: expect.any(String) as unknown,
-      candidates: 6,
-      candidatesRead: 6,
+      terms: 'Waldo',
       page: 1,
+      candidatesRead: 6,
+      matchesShown: 6,
+      ended: 'exhausted',
+      turnComplete: true,
     });
-    // Call A returns candidates to judge: it must never end the turn.
-    expect(value['turnComplete']).toBeUndefined();
-    const text = value['textResultForLlm'] as string;
-    for (const path of paths(6)) {
-      expect(text).toContain(path);
-    }
-    expect(text).toContain('Waldo at /content/site/p0');
+    // The model never receives candidates or a search id any more.
+    expect(value['candidates']).toBeUndefined();
+    expect(value['searchId']).toBeUndefined();
+    expect(tableData(calls[1])['rows']).toHaveLength(6);
+    expect(calls[1]?.args['mode']).toBe('new');
   });
 
-  it('defaults to the content roots followed by the DAM roots', async () => {
-    const { host, calls } = makeHost(
-      () => ok(queryPage(paths(2), false)),
-      contentFor,
-      ['/content/site'],
-      ['/content/dam/site'],
+  it('probes further pages, with no table until a page of matches is answered', async () => {
+    let queries = 0;
+    const { host, calls, answers } = makeHost(
+      (name) => {
+        if (name === 'aem_query') {
+          queries += 1;
+          // Page 2 is AEM's last.
+          return ok(queryPage(paths(2, (queries - 1) * 2), queries < 2));
+        }
+        return ok(name === 'ask_user' ? noAnswer : tableOk);
+      },
+      {
+        // Page 1 yields one match; page 2's first candidate yields the second.
+        answer: (request) =>
+          Number(request.items[0]?.text.includes('/p2')) === 1
+            ? matching(1)(request, 1)
+            : matching(2)(request, 1),
+      },
     );
-    const result = await createAemSemanticSearchExecutor(host)(
-      { terms: 'Waldo', context: 'Waldo is good' },
-      callContext,
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'good', limit: 2 },
+        callContext,
+      ),
     );
 
-    expect(calls[0]?.args['roots']).toEqual(['/content/site', '/content/dam/site']);
-    expect(payload(result)['roots']).toEqual(['/content/site', '/content/dam/site']);
-  });
-
-  it('resolves a path fragment in roots before the query, here from a content root', async () => {
-    const { host, calls } = makeHost(() => ok(queryPage(paths(2), false)), contentFor, [
-      '/content/site/us/en',
-      '/content/site/de',
+    // Two queries, two answer calls, and only then one table. Page 2 is AEM's
+    // last, so the filled page needs no "Load more".
+    expect(callNames(calls)).toEqual(['aem_query', 'aem_query', 'format_table']);
+    expect(answers).toHaveLength(2);
+    expect(value).toMatchObject({ ended: 'exhausted', matchesShown: 2, candidatesRead: 4 });
+    expect(tableData(calls[2])['rows']).toEqual([
+      { 'jcr:path': '/content/site/p1', property: 'text', citation: 'Waldo at /content/site/p1' },
+      { 'jcr:path': '/content/site/p2', property: 'text', citation: 'Waldo at /content/site/p2' },
     ]);
+    expect(calls[2]?.args['totalLine']).toBe('Total: 2');
+  });
+
+  it('keeps probing when a page matches nothing instead of painting an empty table', async () => {
+    let queries = 0;
+    const { host, calls, answers } = makeHost(
+      (name) => {
+        if (name === 'aem_query') {
+          queries += 1;
+          return ok(queryPage(paths(2, (queries - 1) * 2), queries < 2));
+        }
+        return ok(name === 'ask_user' ? noAnswer : tableOk);
+      },
+      {
+        // Page 1 matches nothing; page 2's candidates both match.
+        answer: (request) =>
+          request.items[0]?.text.includes('/p2') === true
+            ? matching(1, 2)(request, 1)
+            : matching()(request, 1),
+      },
+    );
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'good', limit: 2 },
+        callContext,
+      ),
+    );
+
+    expect(callNames(calls)).toEqual(['aem_query', 'aem_query', 'format_table']);
+    expect(answers).toHaveLength(2);
+    expect(value).toMatchObject({ ended: 'exhausted', matchesShown: 2 });
+    // No table was painted for the zero-match first page.
+    expect(calls.filter((call) => call.name === 'format_table')).toHaveLength(1);
+  });
+
+  it('shows a short final page when AEM is exhausted below the page size, and never asks', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(2), false)), { answer: allMatch });
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'good', limit: 5 },
+        callContext,
+      ),
+    );
+
+    expect(callNames(calls)).toEqual(['aem_query', 'format_table']);
+    expect(tableData(calls[1])['rows']).toHaveLength(2);
+    expect(calls[1]?.args['totalLine']).toBe('Total: 2');
+    expect(value).toMatchObject({ ended: 'exhausted', matchesShown: 2, turnComplete: true });
+  });
+
+  it('paints the empty total line only when the whole search is exhausted', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(2), false)), {
+      answer: matching(),
+    });
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'good' }, callContext),
+    );
+
+    expect(callNames(calls)).toEqual(['aem_query', 'format_table']);
+    expect(tableData(calls[1])['rows']).toEqual([]);
+    expect(calls[1]?.args['totalLine']).toBe('Did not find any relevant results');
+    expect(value).toMatchObject({ ended: 'exhausted', matchesShown: 0, turnComplete: true });
+  });
+
+  it('keeps a surplus of answered matches for the next click, without re-querying or re-answering', async () => {
+    let queries = 0;
+    const { host, calls, answers } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          queries += 1;
+          return ok(queryPage(paths(2, (queries - 1) * 2), queries < 2));
+        }
+        return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
+      },
+      {
+        answer: (request) =>
+          request.items[0]?.text.includes('/p2') === true
+            ? matching(1, 2)(request, 1)
+            : matching(1)(request, 1),
+      },
+    );
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'good', limit: 2 },
+        callContext,
+      ),
+    );
+
+    // Page 1 gives one match, page 2 gives two: 3 answered, a page of 2 shown, the
+    // surplus shown on the answered click - with no further query or judgment.
+    expect(queries).toBe(2);
+    expect(answers).toHaveLength(2);
+    const tables = calls.filter((call) => call.name === 'format_table');
+    expect(tables).toHaveLength(2);
+    expect(tableData(tables[0])['rows']).toHaveLength(2);
+    expect(tables[0]?.args['totalLine']).toBe('Total: 2 so far');
+    expect(tables[1]?.args['mode']).toBe('append');
+    expect(tableData(tables[1])['rows']).toHaveLength(1);
+    expect(tables[1]?.args['totalLine']).toBe('Total: 3');
+    expect(value).toMatchObject({ ended: 'exhausted', matchesShown: 3, turnComplete: true });
+  });
+
+  it('stops when the Load more question is cancelled', async () => {
+    const { host } = makeHost(
+      (name) => {
+        if (name === 'aem_query') return ok(queryPage(paths(1), 'unknown'));
+        if (name === 'ask_user') return err(createToolError('CANCELLED', 'no', 'r' as never));
+        return ok(tableOk);
+      },
+      { answer: allMatch },
+    );
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'x', context: 'y', limit: 1 },
+        callContext,
+      ),
+    );
+    expect(value).toMatchObject({ ended: 'stopped', matchesShown: 1 });
+  });
+
+  it('retries a failed answer call, then succeeds', async () => {
+    let attempts = 0;
+    const { host, calls, answers } = makeHost(() => ok(queryPage(paths(1), false)), {
+      answer: allMatch,
+    });
+    const failingHost: ToolHost = {
+      ...host,
+      answer: (request) => {
+        attempts += 1;
+        answers.push(request);
+        return attempts < 3
+          ? Promise.resolve(err({ message: 'unusable answer' }))
+          : Promise.resolve(allMatch(request));
+      },
+    };
+    const value = payload(
+      await createAemSemanticSearchExecutor(failingHost)({ terms: 'x', context: 'y' }, callContext),
+    );
+
+    expect(attempts).toBe(3);
+    expect(value).toMatchObject({ matchesShown: 1, ended: 'exhausted' });
+    expect(callNames(calls)).toEqual(['aem_query', 'format_table']);
+  });
+
+  it('fails the search after three unusable answers', async () => {
+    let attempts = 0;
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)), {
+      answer: () => {
+        attempts += 1;
+        return err({ message: 'unusable answer' });
+      },
+    });
     const result = await createAemSemanticSearchExecutor(host)(
-      { terms: 'Waldo', context: 'Waldo is good', roots: ['us/en'] },
+      { terms: 'x', context: 'y' },
       callContext,
     );
 
-    expect(calls.map((call) => call.name)).toEqual(['aem_query']);
-    expect(calls[0]?.args['roots']).toEqual(['/content/site/us/en']);
-    expect(payload(result)['roots']).toEqual(['/content/site/us/en']);
+    expect(!result.ok && result.error.code).toBe('UNEXPECTED_RESPONSE');
+    // One call plus two retries.
+    expect(attempts).toBe(3);
+    expect(callNames(calls)).toEqual(['aem_query']);
   });
 
-  it('asks the user, before the search, when a fragment resolves to nothing, and ends if dismissed', async () => {
-    const { host, calls } = makeHost((name, args) =>
-      name === 'ask_user'
-        ? err(createToolError('CANCELLED', 'dismissed', 'r' as never))
-        : ok(queryPage(args['limit'] === 200 ? [] : paths(2), false)),
-    );
+  it('does not retry a cancelled answer call', async () => {
+    let attempts = 0;
+    const { host } = makeHost(() => ok(queryPage(paths(1), false)), {
+      answer: () => {
+        attempts += 1;
+        return err({ message: 'cancelled', cancelled: true });
+      },
+    });
     const result = await createAemSemanticSearchExecutor(host)(
-      { terms: 'Waldo', context: 'Waldo is good', roots: ['us/en'] },
+      { terms: 'x', context: 'y' },
       callContext,
     );
 
     expect(!result.ok && result.error.code).toBe('CANCELLED');
-    expect(calls.map((call) => call.name)).toEqual(['aem_query', 'ask_user']);
+    expect(attempts).toBe(1);
+  });
+
+  it('reports a host with no answer capability, without painting anything', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)));
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'x', context: 'y' },
+      callContext,
+    );
+
+    expect(!result.ok && result.error.code).toBe('AGENT_UNAVAILABLE');
+    expect(callNames(calls)).toEqual(['aem_query']);
+  });
+
+  it('does not query past a source page with no hits even when AEM claims more', async () => {
+    let queries = 0;
+    const { host, calls } = makeHost(
+      (name) => {
+        if (name !== 'aem_query') return ok(tableOk);
+        queries += 1;
+        // Page 1 has no hits but claims more; a second page would have one.
+        return ok(queries === 1 ? queryPage([], true) : queryPage(paths(1), false));
+      },
+      { answer: allMatch },
+    );
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)({ terms: 'x', context: 'y' }, callContext),
+    );
+
+    expect(callNames(calls)).toEqual(['aem_query', 'format_table']);
+    expect(value).toMatchObject({ ended: 'exhausted', matchesShown: 0, turnComplete: true });
+    expect(value['textResultForLlm'] as string).toContain('returned no hits');
+  });
+
+  it('defaults to the content roots followed by the DAM roots', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(2), false)), {
+      answer: allMatch,
+      contentRoots: ['/content/site'],
+      damRoots: ['/content/dam/site'],
+    });
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'good' }, callContext),
+    );
+
+    expect(calls[0]?.args['roots']).toEqual(['/content/site', '/content/dam/site']);
+    expect(value['roots']).toEqual(['/content/site', '/content/dam/site']);
+  });
+
+  it('resolves a path fragment in roots before the query, here from a content root', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)), {
+      answer: allMatch,
+      contentRoots: ['/content/site/us/en', '/content/site/de'],
+    });
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'good', roots: ['us/en'] },
+        callContext,
+      ),
+    );
+
+    expect(calls.map((call) => call.name)).toContain('aem_query');
+    expect(calls.find((call) => call.name === 'aem_query')?.args['roots']).toEqual([
+      '/content/site/us/en',
+    ]);
+    expect(value['roots']).toEqual(['/content/site/us/en']);
   });
 
   it('refuses a description in words as a root, without calling anything', async () => {
-    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)));
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)), { answer: allMatch });
     const result = await createAemSemanticSearchExecutor(host)(
-      { terms: 'Waldo', context: 'Waldo is good', roots: ['the US site'] },
+      { terms: 'Waldo', context: 'good', roots: ['the US site'] },
       callContext,
     );
 
@@ -228,150 +519,177 @@ describe('aem_semantic_search executor', () => {
     expect(calls).toEqual([]);
   });
 
-  it('shows the judged matches, offers a click-through, and returns the next page to judge', async () => {
-    let queries = 0;
-    const { host, calls } = makeHost((name, args) => {
-      if (name === 'aem_query') {
-        queries += 1;
-        return ok(queryPage(paths(3, (queries - 1) * 3), queries < 2));
-      }
-      return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
-    });
-    const execute = createAemSemanticSearchExecutor(host);
-    const started = payload(
-      await execute({ terms: 'Waldo', context: 'good', limit: 3 }, callContext),
-    );
-    const searchId = started['searchId'] as string;
-
-    const second = payload(
-      await execute({ searchId, matches: [3, { candidate: 1, excerpt: 1 }] }, callContext),
-    );
-    expect(calls.map((call) => call.name)).toEqual([
-      'aem_query',
-      'format_table',
-      'ask_user',
-      'aem_query',
-    ]);
-    const firstTable = calls[1];
-    expect(firstTable?.args['mode']).toBe('new');
-    expect(firstTable?.args['totalLine']).toContain('2');
-    expect(tableData(firstTable)['rows']).toEqual([
-      {
-        'jcr:path': '/content/site/p2',
-        property: 'text',
-        citation: 'Waldo at /content/site/p2',
-      },
-      {
-        'jcr:path': '/content/site/p0',
-        property: 'text',
-        citation: 'Waldo at /content/site/p0',
-      },
-    ]);
-    expect(tableData(firstTable)['pagination']).toMatchObject({ hasMore: true });
-    expect(calls[2]?.args).toEqual({ actions: [expect.any(String) as unknown] });
-    expect(calls[3]?.args['offset']).toBe(3);
-    expect(second).toMatchObject({ searchId, candidates: 3, page: 2, matchesShown: 2 });
-    // A page of candidates still has to be judged, so the turn continues.
-    expect(second['turnComplete']).toBeUndefined();
-
-    const finished = payload(await execute({ searchId, matches: [] }, callContext));
-    expect(calls[4]?.name).toBe('format_table');
-    expect(calls[4]?.args['mode']).toBe('append');
-    expect(tableData(calls[4])['rows']).toEqual([]);
-    expect(calls[4]?.args['totalLine']).toContain('2');
-    expect(calls).toHaveLength(5);
-    expect(finished).toMatchObject({
-      ended: 'exhausted',
-      matchesShown: 2,
-      candidatesRead: 6,
-      // The search is over, so this call ends the turn (TURN_COMPLETE_RESULT_KEY).
-      turnComplete: true,
-    });
-  });
-
   it('filters every page of a search by page property, and echoes the filter', async () => {
-    let queries = 0;
-    const { host, calls } = makeHost((name, args) => {
-      if (name === 'aem_query') {
-        queries += 1;
-        return ok(queryPage(paths(2, (queries - 1) * 2), queries < 2));
-      }
-      return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
-    });
-    const execute = createAemSemanticSearchExecutor(host);
+    const { host, calls } = makeHost(() => ok(queryPage(paths(2), false)), { answer: allMatch });
     const filters = [{ property: 'cq:lastReplicationAction', value: 'Activate' }];
-    const started = payload(
-      await execute({ terms: 'Waldo', context: 'good', filters }, callContext),
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'good', filters },
+        callContext,
+      ),
     );
-    await execute({ searchId: started['searchId'] as string, matches: [] }, callContext);
 
     const expected = applySearchFilters({ fulltext: 'Waldo' }, filters);
     const queried = calls.filter((call) => call.name === 'aem_query');
-    expect(queried).toHaveLength(2);
-    for (const call of queried) {
-      expect({ ok: true, predicates: call.args['predicates'] }).toEqual(expected);
-    }
-    expect(started['filters']).toEqual(filters);
+    expect(queried).toHaveLength(1);
+    expect({ ok: true, predicates: queried[0]?.args['predicates'] }).toEqual(expected);
+    expect(value['filters']).toEqual(filters);
   });
 
   it('searches without a filter, and echoes none, when it is omitted', async () => {
-    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)));
-    const started = payload(
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)), { answer: allMatch });
+    const value = payload(
       await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'good' }, callContext),
     );
 
     expect(calls[0]?.args['predicates']).toEqual({ fulltext: 'Waldo' });
-    expect(started).not.toHaveProperty('filters');
+    expect(value).not.toHaveProperty('filters');
   });
 
-  it('still gives a total line while nothing has matched', async () => {
-    const { host, calls } = makeHost((name) =>
-      ok(name === 'aem_query' ? queryPage(paths(2), true) : noAnswer),
-    );
+  it('rejects the old two-phase arguments and incomplete ones', async () => {
+    const { host, calls } = makeHost(() => ok(queryPage(paths(1), false)), { answer: allMatch });
     const execute = createAemSemanticSearchExecutor(host);
-    const searchId = payload(await execute({ terms: 'x', context: 'y' }, callContext))[
-      'searchId'
-    ] as string;
-    const result = payload(await execute({ searchId, matches: [] }, callContext));
 
-    expect(typeof calls[1]?.args['totalLine']).toBe('string');
-    expect(calls[1]?.args['totalLine']).not.toBe('');
-    expect(result).toMatchObject({ ended: 'stopped', matchesShown: 0 });
+    for (const args of [
+      {},
+      { terms: 'x' },
+      { context: 'y' },
+      { terms: 'x', context: 'y', searchId: 's', matches: [1] },
+      { terms: 'x', context: 'y', extra: 1 },
+    ]) {
+      const result = await execute(args, callContext);
+      expect(!result.ok && result.error.code).toBe('INVALID_ARGUMENT');
+    }
+    expect(calls).toEqual([]);
   });
 
-  it('ends as stopped when the Load more question is cancelled', async () => {
-    const { host } = makeHost((name) => {
-      if (name === 'aem_query') return ok(queryPage(paths(1), 'unknown'));
-      if (name === 'ask_user') return err(createToolError('CANCELLED', 'no', 'r' as never));
-      return ok(tableOk);
+  it('honours an already-aborted signal', async () => {
+    const { host, calls, answers } = makeHost(() => ok(queryPage(paths(1), false)), {
+      answer: allMatch,
     });
-    const execute = createAemSemanticSearchExecutor(host);
-    const searchId = payload(await execute({ terms: 'x', context: 'y' }, callContext))[
-      'searchId'
-    ] as string;
-    expect(payload(await execute({ searchId, matches: [1] }, callContext))).toMatchObject({
-      ended: 'stopped',
-      matchesShown: 1,
+    const controller = new AbortController();
+    controller.abort();
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'x', context: 'y' },
+      { toolCallId: 'call-1' as never, signal: controller.signal },
+    );
+
+    expect(!result.ok && result.error.code).toBe('CANCELLED');
+    expect(calls).toEqual([]);
+    expect(answers).toEqual([]);
+  });
+
+  it('cancels the whole call when a read is cancelled', async () => {
+    const { host } = makeHost(() => ok(queryPage(paths(3), true)), {
+      read: () => ({ kind: 'cancelled' }),
+      answer: allMatch,
     });
-    const again = await execute({ searchId, matches: [] }, callContext);
-    expect(!again.ok && again.error.code).toBe('INVALID_ARGUMENT');
+    const result = await createAemSemanticSearchExecutor(host)(
+      { terms: 'x', context: 'y' },
+      callContext,
+    );
+    expect(!result.ok && result.error.code).toBe('CANCELLED');
   });
 
-  it('skips straight past pages with no hits and still reports a total', async () => {
-    const { host, calls, reads } = makeHost((name) =>
-      ok(name === 'aem_query' ? queryPage([], false) : tableOk),
+  it('reports reading and testing progress with the page fill count', async () => {
+    const progress: string[] = [];
+    const { host } = makeHost(() => ok(queryPage(paths(3), false)), { answer: allMatch });
+    const withProgress: ToolHost = {
+      ...host,
+      reportToolProgress: (_toolCallId, text) => {
+        progress.push(text);
+      },
+    };
+    await createAemSemanticSearchExecutor(withProgress)(
+      { terms: 'Waldo', context: 'y', limit: 3 },
+      callContext,
     );
-    const result = payload(
-      await createAemSemanticSearchExecutor(host)({ terms: 'x', context: 'y' }, callContext),
-    );
-    expect(reads).toEqual([]);
-    expect(calls.map((call) => call.name)).toEqual(['aem_query', 'format_table']);
-    expect(typeof calls[1]?.args['totalLine']).toBe('string');
-    expect(calls[1]?.args['totalLine']).not.toBe('');
-    expect(result).toMatchObject({ ended: 'exhausted' });
+
+    expect(progress[0]).toContain('Page 1');
+    expect(progress[0]).toContain('0/3 collected');
+    expect(progress[0]).toContain('Reading 0/3');
+    expect(progress.some((line) => line.includes('Reading 3/3'))).toBe(true);
+    const testing = progress.find((line) => line.startsWith('Testing 3 candidate(s)'));
+    expect(testing).toContain('Page 1');
+    expect(testing).toContain('0/3 collected');
+    // What happens next keeps the same shape, and after the page is taken the
+    // count is the true remainder (0 here), not the 3 that were just shown.
+    const showing = progress.find((line) => line.startsWith('Showing 3'));
+    expect(showing).toContain('Page 1');
+    expect(showing).toContain('0/3 collected');
   });
 
-  it('falls back to the hit itself when no node contains the terms, and marks unreadable hits', async () => {
+  it('never shows more collected than the page holds when a page overflows', async () => {
+    let queries = 0;
+    const progress: string[] = [];
+    const { host } = makeHost(
+      (name, args) => {
+        if (name === 'aem_query') {
+          queries += 1;
+          return ok(queryPage(paths(2, (queries - 1) * 2), queries < 2));
+        }
+        return ok(name === 'ask_user' ? clickFirstAction(args) : tableOk);
+      },
+      {
+        answer: (request) =>
+          request.items[0]?.text.includes('/p2') === true
+            ? matching(1, 2)(request, 1)
+            : matching(1)(request, 1),
+      },
+    );
+    const withProgress: ToolHost = {
+      ...host,
+      reportToolProgress: (_toolCallId, text) => {
+        progress.push(text);
+      },
+    };
+    await createAemSemanticSearchExecutor(withProgress)(
+      { terms: 'x', context: 'y', limit: 2 },
+      callContext,
+    );
+
+    // Page 1 gives one match, page 2 gives two: three collected, two shown, one
+    // remains. The line after the page is taken reports the remainder (1/2),
+    // never the impossible 3/2.
+    const showing = progress.find((line) => line.startsWith('Showing 2'));
+    expect(showing).toContain('Page 2');
+    expect(showing).toContain('1/2 collected');
+    expect(progress.some((line) => line.includes('3/2'))).toBe(false);
+    for (const line of progress) {
+      const counted = /(\d+)\/(\d+) collected/.exec(line);
+      if (counted === null) continue;
+      expect(Number(counted[1])).toBeLessThanOrEqual(Number(counted[2]));
+    }
+  });
+
+  it('reads a page of hits in parallel', async () => {
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { host } = makeHost(() => ok(queryPage(paths(3), false)), {
+      answer: allMatch,
+      read: async (url) => {
+        started += 1;
+        // Only when all three reads are in flight can any of them finish.
+        if (started === 3) release();
+        await gate;
+        return contentFor(url);
+      },
+    });
+    const value = payload(
+      await createAemSemanticSearchExecutor(host)(
+        { terms: 'Waldo', context: 'y', limit: 3 },
+        callContext,
+      ),
+    );
+
+    expect(started).toBe(3);
+    expect(value['matchesShown']).toBe(3);
+  });
+
+  it('falls back to the hit itself when no node contains the terms, and says so to the answer', async () => {
     const read = (url: string): BrokerOutcome => {
       const params = new URL(url).searchParams;
       if (params.get('path') === '/content/site/p1') return { kind: 'network_error', message: 'x' };
@@ -385,82 +703,19 @@ describe('aem_semantic_search executor', () => {
       }
       return contentFor(url);
     };
-    const { host, reads } = makeHost(() => ok(queryPage(paths(2), false)), read);
-    const value = payload(
-      await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'y' }, callContext),
-    );
+    const { host, reads, answers } = makeHost(() => ok(queryPage(paths(2), false)), {
+      read,
+      answer: allMatch,
+    });
+    await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'y' }, callContext);
     expect(reads).toHaveLength(4);
-    const text = value['textResultForLlm'] as string;
-    expect(text).toContain('Waldo at /content/site/p0');
-    expect(text).toContain('/content/site/p1');
-  });
-
-  it('cancels the whole call when a read is cancelled', async () => {
-    const { host } = makeHost(
-      () => ok(queryPage(paths(3), true)),
-      () => ({ kind: 'cancelled' }),
-    );
-    const result = await createAemSemanticSearchExecutor(host)(
-      { terms: 'x', context: 'y' },
-      callContext,
-    );
-    expect(!result.ok && result.error.code).toBe('CANCELLED');
-  });
-
-  it('rejects an unknown searchId, an out-of-range candidate and incomplete arguments', async () => {
-    const { host, calls } = makeHost(() => ok(queryPage(paths(2), true)));
-    const execute = createAemSemanticSearchExecutor(host);
-    const unknown = await execute({ searchId: 'nope', matches: [] }, callContext);
-    expect(!unknown.ok && unknown.error.code).toBe('INVALID_ARGUMENT');
-
-    const searchId = payload(await execute({ terms: 'x', context: 'y' }, callContext))[
-      'searchId'
-    ] as string;
-    const outOfRange = await execute({ searchId, matches: [3] }, callContext);
-    expect(!outOfRange.ok && outOfRange.error.code).toBe('INVALID_ARGUMENT');
-    expect(calls.map((call) => call.name)).toEqual(['aem_query']);
-
-    for (const args of [{}, { terms: 'x' }, { searchId }, { terms: 'x', context: 'y', extra: 1 }]) {
-      const result = await execute(args, callContext);
-      expect(!result.ok && result.error.code).toBe('INVALID_ARGUMENT');
-    }
-  });
-
-  it('honours an already-aborted signal', async () => {
-    const { host, calls } = makeHost(() => ok(tableOk));
-    const controller = new AbortController();
-    controller.abort();
-    const result = await createAemSemanticSearchExecutor(host)(
-      { terms: 'x', context: 'y' },
-      { toolCallId: 'call-1' as never, signal: controller.signal },
-    );
-    expect(!result.ok && result.error.code).toBe('CANCELLED');
-    expect(calls).toEqual([]);
-  });
-
-  it('reports reading progress while it reads the page', async () => {
-    const progress: string[] = [];
-    const { host } = makeHost(() => ok(queryPage(paths(3), true)));
-    const withProgress: ToolHost = {
-      ...host,
-      reportToolProgress: (_toolCallId, text) => {
-        progress.push(text);
-      },
-    };
-    await createAemSemanticSearchExecutor(withProgress)(
-      { terms: 'Waldo', context: 'y', limit: 3 },
-      callContext,
-    );
-    // One "0 of n" before the reads start, then one per completed read.
-    expect(progress[0]).toMatch(/0\D+3/);
-    expect(progress).toHaveLength(4);
-    expect(progress.at(-1)).toMatch(/3\D+3/);
+    expect(answers[0]?.items[0]?.text).toContain('Waldo at /content/site/p0');
+    expect(answers[0]?.items[1]?.text).toContain('content could not be read');
   });
 
   it('puts the concrete node path and the property name in the table, not the hit', async () => {
     // A text property that lives on a descendant of the hit: the table's Path
-    // must be that node, and Property its own name - not the page the query
-    // matched, and not a relative label.
+    // must be that node, and Property its own name.
     const descendantContent = (url: string): BrokerOutcome => {
       const path = new URL(url).searchParams.get('path') ?? '';
       return {
@@ -469,26 +724,16 @@ describe('aem_semantic_search executor', () => {
         contentType: 'application/json',
         bodyText: JSON.stringify({
           success: true,
-          hits: [
-            {
-              'jcr:path': `${path}/jcr:content/text`,
-              text: '<p>Waldo lives here</p>',
-            },
-          ],
+          hits: [{ 'jcr:path': `${path}/jcr:content/text`, text: '<p>Waldo lives here</p>' }],
         }),
       };
     };
     const { host, calls } = makeHost(
       (name) => ok(name === 'aem_query' ? queryPage(['/content/site/p'], false) : tableOk),
-      descendantContent,
+      { read: descendantContent, answer: allMatch },
     );
-    const execute = createAemSemanticSearchExecutor(host);
-    const started = payload(await execute({ terms: 'Waldo', context: 'y' }, callContext));
-    // The model still reads the excerpt by its hit-relative label...
-    expect(started['textResultForLlm'] as string).toContain('Waldo lives here');
-    await execute({ searchId: started['searchId'] as string, matches: [1] }, callContext);
+    await createAemSemanticSearchExecutor(host)({ terms: 'Waldo', context: 'y' }, callContext);
     const table = calls.find((call) => call.name === 'format_table');
-    // ...while the table shows the concrete node and the bare property name.
     expect(tableData(table)['rows']).toEqual([
       {
         'jcr:path': '/content/site/p/jcr:content/text',
@@ -559,18 +804,17 @@ describe('extractExcerpts', () => {
 });
 
 describe('aem_semantic_search renderer', () => {
-  it("keys a call's summary on its own arguments, not on the result it echoes", () => {
+  it('summarises a search by its terms, and adds the page once past the first', () => {
     const start = renderer.describeCall({ terms: 'Waldo', context: 'Waldo is good' });
-    const resumed = renderer.describeCall(
-      { searchId: 's-1', matches: [1] },
-      { operation: 'aem_semantic_search', terms: 'Waldo', page: 2, matchesShown: 1 },
+    const later = renderer.describeCall(
+      { terms: 'Waldo', context: 'Waldo is good' },
+      { operation: 'aem_semantic_search', page: 2, matchesShown: 20 },
     );
 
-    expect(start.summary).toContain('Waldo');
-    expect(resumed.summary?.trim().length).toBeGreaterThan(0);
-    expect(resumed.summary).not.toBe(start.summary);
-    expect(resumed.summary).not.toContain('Waldo');
-    expect(resumed.parameters.length).toBeGreaterThan(0);
+    expect(start.summary).toBe('Waldo');
+    expect(later.summary).toContain('Waldo');
+    expect(later.summary).toContain('2');
+    expect(start.parameters.length).toBeGreaterThan(0);
   });
 
   it('adds a Filters row only to a filtered search', () => {

@@ -1,4 +1,5 @@
 export * from './result';
+export * from './network';
 export * from './app-info';
 export * from './ipc-channels';
 export * from './app-api';

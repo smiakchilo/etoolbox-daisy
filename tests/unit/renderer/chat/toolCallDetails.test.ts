@@ -337,7 +337,7 @@ describe('describeToolCall - aem_semantic_search', () => {
         terms: 'waldo',
         context: 'Waldo is good',
         roots: ['/content/a'],
-        pageSize: 50,
+        pageSize: 20,
         page: 2,
         candidatesRead: 100,
         matchesShown: 3,
@@ -351,18 +351,6 @@ describe('describeToolCall - aem_semantic_search', () => {
     // Terms, context, roots, page size, page, candidates read, matches shown, AEM hits.
     expect(details.parameters).toHaveLength(8);
     expect(valuesOf(details)).toContain('Waldo is good');
-  });
-
-  it('summarises a continue call by its matches, with Search ID and Matched rows', () => {
-    // A continue call (`{ searchId, matches }`) has no terms of its own; it must
-    // never render as a blank summary with a dead chevron.
-    const details = describeToolCall('aem_semantic_search', {
-      searchId: 's-1',
-      matches: [3, { candidate: 7 }],
-    });
-    expect(details.summary?.length).toBeGreaterThan(0);
-    expect(details.summary).toContain('2');
-    expect(valuesOf(details)).toEqual(['s-1', '3, 7']);
   });
 });
 

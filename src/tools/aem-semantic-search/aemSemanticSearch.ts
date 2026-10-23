@@ -1,15 +1,21 @@
 import { z } from 'zod';
 import {
-  type ToolExecutor,
   type BrokerOutcome,
   type JsonValue,
+  type AnswerItem,
+  type AnswerResult,
+  type PageFillPage,
+  type PageFillQueue,
   type RequestId,
   type Result,
   type SearchFilter,
   type ToolDescriptor,
   type ToolError,
   type ToolExecutionContext,
+  type ToolExecutor,
   type ToolHost,
+  ANSWER_MAX_ATTEMPTS,
+  DEFAULT_REQUEST_CONCURRENCY,
   MAX_QUERY_LIMIT,
   MAX_SEARCH_ROOTS,
   MIN_QUERY_LIMIT,
@@ -17,6 +23,7 @@ import {
   applySearchFilters,
   classifyAemResponse,
   computeDeadline,
+  createPageFillQueue,
   createToolError,
   describeTotalValues,
   err,
@@ -28,31 +35,35 @@ import {
   resolveSearchPageSize,
   resolveSearchRoots,
   resolveSearchScope,
+  runPageFill,
   searchFiltersSchema,
   searchRootsSchema,
 } from '../../shared';
 
 /**
- * The `aem_semantic_search` tool, self-contained: a **stateful composite**.
+ * The `aem_semantic_search` tool, self-contained. The **tool owns the whole
+ * search**; the model is involved only for what only a model can do - answering
+ * whether a candidate's text carries the requested meaning.
  *
- * It is the `/semantic-search` loop made deterministic, except for the one step
- * only the model can do - judging meaning. The application runs everything
- * else, in code, so a weak model cannot skip a hit, forget the table, or stop
- * before the user does:
+ * One call runs the complete loop:
  *
- * 1. **Call A** `{ terms, context }` queries one page (`aem_query`, `limit` hits
- *    at the current offset), reads the content of **every** hit (a small pool
- *    of direct QueryBuilder reads through the AEM pane) and returns the
- *    numbered candidates with excerpts, plus a `searchId`.
- * 2. **Call B** `{ searchId, matches }` takes the model's verdict on every
- *    candidate, appends the matches to the chat's table (`format_table`, whose
- *    total line counts the relevant matches - see {@link describeRelevantTotal}),
- *    and - unless AEM reported the results exhausted - offers "Load more"
- *    (`ask_user`). A click queries and reads the next page and returns its
- *    candidates, so the model judges again and calls back again; a cancel or
- *    exhaustion ends the search.
+ * 1. **Query** one page of hits (`aem_query`, `limit` hits at the current
+ *    offset). Pure code, no model.
+ * 2. **Read** every hit's content in parallel (a small pool of direct
+ *    QueryBuilder reads through the AEM pane). Pure code, no model.
+ * 3. **Answer** that page with **one** model call through `ToolHost.answer` - a
+ *    stateless, tools-disabled call on the active agent - and turn the verdicts
+ *    into table rows. The only non-deterministic step.
+ * 4. **Fill** the reusable {@link PageFillQueue}: while it holds fewer than
+ *    `limit` answered matches and AEM may have more, query/read/answer another page.
+ *    Once it holds a page (or AEM is exhausted), paint it with `format_table`
+ *    and, while anything remains, ask "Load more" (`ask_user`). A surplus stays
+ *    buffered for the next click; nothing is re-queried or re-answered.
  *
- * The search state lives in this executor's closure, keyed by `searchId`.
+ * The model never receives candidate lists, never calls back with verdicts and
+ * therefore cannot stop the search halfway: a tool call cannot end until the
+ * search is exhausted, the user declines, or an answer/read fails. A failed
+ * answer call is retried ({@link ANSWER_MAX_ATTEMPTS} attempts in total).
  */
 
 export const AEM_SEMANTIC_SEARCH_TOOL_NAME = 'aem_semantic_search';
@@ -63,32 +74,21 @@ export const AEM_SEMANTIC_SEARCH_USES = ['aem_query', 'format_table', 'ask_user'
 
 const LOAD_MORE = 'Load more';
 
-/** Concurrent content reads per page; the broker serialises them, this keeps its queue fed. */
-const READ_CONCURRENCY = 4;
 /** Nodes a single hit's content read returns. */
 const READ_NODE_LIMIT = 10;
 const MAX_EXCERPTS = 3;
 const EXCERPT_LENGTH = 200;
-/** Searches remembered at once; the oldest is forgotten first. */
-const MAX_LIVE_SEARCHES = 8;
 
 const QUERYBUILDER_ENDPOINT_PATH = '/bin/querybuilder.json';
 
-const matchSchema = z.union([
-  z.number().int().min(1),
-  z
-    .object({ candidate: z.number().int().min(1), excerpt: z.number().int().min(1).optional() })
-    .strict(),
-]);
-
 export const aemSemanticSearchArgsSchema = z
   .object({
-    /** Call A: the full-text search string sent to AEM. */
-    terms: z.string().trim().min(1).optional(),
-    /** Call A: what a result must be about to count as relevant. */
-    context: z.string().trim().min(1).optional(),
+    /** The full-text search string sent to AEM. */
+    terms: z.string().trim().min(1),
+    /** What a result must be about to count as relevant. */
+    context: z.string().trim().min(1),
     /**
-     * Call A: where to search - full paths as the user wrote them, or path fragments
+     * Where to search - full paths as the user wrote them, or path fragments
      * the application resolves (`resolveSearchScope`). Omitted falls back to the
      * host's content roots followed by its DAM roots; the Scope rules tell the
      * model to pass the family the subject needs instead.
@@ -104,7 +104,7 @@ export const aemSemanticSearchArgsSchema = z
           'current-page context block. See Scope in your instructions.',
       )
       .optional(),
-    /** Call A: hits per page. */
+    /** Hits per page. */
     limit: z
       .number()
       .int()
@@ -113,31 +113,25 @@ export const aemSemanticSearchArgsSchema = z
       .describe('Rows per page. Omit it unless the user asked for a page size.')
       .optional(),
     /**
-     * Call A: keep only results whose page carries a given property value (a
-     * template, a replication state, a modification date, ...).
+     * Keep only results whose page carries a given property value (a template,
+     * a replication state, a modification date, ...).
      */
     filters: searchFiltersSchema.optional(),
-    /** Call B: the id call A returned. */
-    searchId: z.string().trim().min(1).optional(),
-    /** Call B: the candidates that match the context (numbers, or `{ candidate, excerpt }`). */
-    matches: z.array(matchSchema).optional(),
   })
   .strict();
 
 export const AEM_SEMANTIC_SEARCH_TOOL_DESCRIPTOR: ToolDescriptor = {
   name: AEM_SEMANTIC_SEARCH_TOOL_NAME,
   description:
-    'Runs a semantic AEM search as a loop the application drives. Start it with ' +
-    '`{ terms, context }`: `terms` is the full-text search string, `context` is what a result ' +
-    'must be about to count; optional `filters` keep only results whose page carries a given ' +
-    'property value (a template, a replication state, a modification date), named relative to ' +
-    "the page's content node. It returns a `searchId` and numbered candidates (every hit of the " +
-    'page, with excerpts of its content). Judge EVERY candidate against the context, then call ' +
-    'this tool again with `{ searchId, matches }` - the numbers of the matching candidates ' +
-    '(`[]` if none), optionally `{ candidate, excerpt }` to choose the excerpt cited. ' +
-    'The application shows the table and the "Load more" button itself; when the user loads more you ' +
-    'receive the next candidates and judge again. Stop only when the result says the search is ' +
-    'finished; never write the results yourself.',
+    'Runs a complete semantic AEM search in one call. `terms` is the full-text search string and ' +
+    '`context` is what a result must be about to count; optional `filters` keep only results ' +
+    'whose page carries a given property value (a template, a replication state, a modification ' +
+    "date), named relative to the page's content node. The application queries the hits, reads " +
+    'every hit, and asks the active model whether each hit matches the meaning - you never see ' +
+    "the candidates or decide which match. It shows the relevant matches as the chat's table " +
+    "itself and offers the user 'Load more' while results remain, loading further pages on a " +
+    'click. When it returns, the search is finished: do not call it again, do not call aem_query ' +
+    'or ask_user for the same search, and do not write out the results.',
   parameters: z.toJSONSchema(aemSemanticSearchArgsSchema, { io: 'input' }),
 };
 
@@ -148,8 +142,7 @@ export type SemanticSearchEnd = 'exhausted' | 'stopped';
  * the property lives on, the property's own name, and its text. Kept as the
  * three facts rather than a single pre-joined label, because the chat's table
  * shows the node path (Path) and the property name (Property) as separate
- * columns, while the model's candidate list shows them joined relative to the
- * hit.
+ * columns.
  */
 export interface Excerpt {
   readonly nodePath: string;
@@ -177,17 +170,18 @@ interface SearchState {
   readonly predicates: Readonly<Record<string, string>>;
   readonly roots: readonly string[];
   readonly limit: number;
+  /** The offset of the next query page. */
   offset: number;
   pages: number;
   candidatesRead: number;
   matchesShown: number;
   tableShown: boolean;
-  candidates: readonly Candidate[];
+  /** Matches the model answered, waiting for a display page (the reusable fill routine). */
+  readonly fill: PageFillQueue<JsonValue>;
   pagination: Pagination;
+  /** Why probing stopped when it was not simply "AEM had no more". */
+  endReason?: string;
 }
-
-type SemanticSearchArgs = z.infer<typeof aemSemanticSearchArgsSchema>;
-type Match = z.infer<typeof matchSchema>;
 
 const queryPageSchema = z.looseObject({
   rows: z.array(jsonValueSchema),
@@ -213,7 +207,7 @@ export function describeSemanticTotal(
 
 /**
  * The table's total line: it counts the **relevant** matches shown, not AEM's
- * hits. "so far" stays while further pages may exist.
+ * hits. "so far" stays while anything may still be shown.
  */
 export function describeRelevantTotal(matches: number, exhausted: boolean): string {
   const soFar = exhausted ? '' : ' so far';
@@ -353,29 +347,33 @@ async function mapPooled<T, R>(
 
 class SearchCancelled extends Error {}
 
-/** Read through a call so a second check after an wait is not narrowed away. */
+/** Read through a call so a second check after an await is not narrowed away. */
 function isAborted(context: ToolExecutionContext): boolean {
   return context.signal?.aborted === true;
+}
+
+/** The text the model sees for one candidate: its path and every excerpt. */
+function describeCandidateForAnswer(candidate: Candidate): string {
+  if (candidate.excerpts.length === 0) {
+    const why = candidate.unreadable ? 'content could not be read' : 'no readable text';
+    return `${candidate.path}\n    (${why})`;
+  }
+  const excerpts = candidate.excerpts.map(
+    (excerpt, index) =>
+      `    (${String(index + 1)}) ` +
+      `${relativeLabel(candidate.path, excerpt.nodePath, excerpt.name)}: ` +
+      `${JSON.stringify(excerpt.text)}`,
+  );
+  return [candidate.path, ...excerpts].join('\n');
 }
 
 // ---------------------------------------------------------------------------
 // Executor
 // ---------------------------------------------------------------------------
 
-/** Builds the executor; the search state lives in its closure. */
+/** Builds the executor. No state survives the call: the whole search runs inside it. */
 export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
-  const searches = new Map<string, SearchState>();
-
-  const remember = (searchId: string, state: SearchState): void => {
-    searches.set(searchId, state);
-    while (searches.size > MAX_LIVE_SEARCHES) {
-      const oldest = searches.keys().next().value;
-      if (oldest === undefined) break;
-      searches.delete(oldest);
-    }
-  };
-
-  const cancelled = (requestId: RequestId): Result<JsonValue, ToolError> =>
+  const cancelled = <T>(requestId: RequestId): Result<T, ToolError> =>
     err(createToolError('CANCELLED', 'The search was cancelled', requestId));
 
   /** One content read; `undefined` when it could not be read (a cancel throws). */
@@ -436,12 +434,12 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     return { path: hitPath, excerpts, unreadable: nodes === undefined };
   };
 
-  /** Queries the page at `state.offset` and reads every hit; updates the state. */
-  const loadPage = async (
+  /** Queries the next page and returns its hit paths; updates the counters + pagination. */
+  const queryPage = async (
     state: SearchState,
     context: ToolExecutionContext,
     requestId: RequestId,
-  ): Promise<Result<JsonValue, ToolError> | undefined> => {
+  ): Promise<Result<readonly string[], ToolError>> => {
     const query = await host.invokeTool(
       'aem_query',
       {
@@ -467,21 +465,48 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     const paths = page.data.rows
       .map((row) => (isRecord(row) ? row['jcr:path'] : undefined))
       .filter((path): path is string => typeof path === 'string');
-    // Reading every hit's content is the slow part of a semantic search and
-    // the part with no transcript entry of its own, so report it: the running
-    // billet shows "Reading n of m" while the reads proceed. A count, not a
-    // percentage - the reads finish out of order, and this is the honest
-    // progress ("n reads done").
+    state.pages += 1;
+    state.offset += state.limit;
+    state.pagination = {
+      hasMore: page.data.pagination.hasMore,
+      total: page.data.pagination.total,
+      raw: page.data.pagination as JsonValue,
+    };
+    if (state.pagination.hasMore === false) state.fill.exhaust();
+    return ok(paths);
+  };
+
+  /** One uniform progress fragment: `n/limit collected`, never n > limit. */
+  const selectionLabel = (state: SearchState, count: number): string => {
+    const collected = Math.min(Math.max(count, 0), state.limit);
+    return `${String(collected)}/${String(state.limit)} collected`;
+  };
+
+  /** Reads every hit in parallel and answers them with one model call per page. */
+  const processPage = async (
+    paths: readonly string[],
+    state: SearchState,
+    context: ToolExecutionContext,
+    requestId: RequestId,
+  ): Promise<Result<readonly JsonValue[], ToolError>> => {
+    // Reading every hit's content is the slow part with no transcript entry of
+    // its own, so report it: which source page is being probed and how far the
+    // next display page already is.
     const reportProgress = (read: number): void => {
+      const activity =
+        paths.length === 0
+          ? 'No hits on this page'
+          : `Reading ${String(read)}/${String(paths.length)}`;
       host.reportToolProgress?.(
         context.toolCallId,
-        `Reading ${String(read)} of ${String(paths.length)}`,
+        `${activity} · Page ${String(state.pages)} · ${selectionLabel(state, state.fill.buffered.length)}`,
       );
     };
     reportProgress(0);
     let readsDone = 0;
+    let candidates: Candidate[];
     try {
-      state.candidates = await mapPooled(paths, READ_CONCURRENCY, async (path) => {
+      candidates = await mapPooled(paths, DEFAULT_REQUEST_CONCURRENCY, async (path) => {
         const candidate = await readCandidate(path, state.terms, context);
         readsDone += 1;
         reportProgress(readsDone);
@@ -491,22 +516,75 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
       if (error instanceof SearchCancelled) return cancelled(requestId);
       throw error;
     }
-    state.pages += 1;
-    state.candidatesRead += state.candidates.length;
-    state.pagination = {
-      hasMore: page.data.pagination.hasMore,
-      total: page.data.pagination.total,
-      raw: page.data.pagination as JsonValue,
-    };
-    return undefined;
+    state.candidatesRead += candidates.length;
+
+    const items: AnswerItem[] = candidates.map((candidate, index) => ({
+      id: String(index + 1),
+      text: describeCandidateForAnswer(candidate),
+    }));
+    const answer = host.answer;
+    if (answer === undefined) {
+      return err(
+        createToolError(
+          'AGENT_UNAVAILABLE',
+          'The active agent cannot answer search candidates',
+          requestId,
+        ),
+      );
+    }
+    // One model call answers the whole page. A failure or an unusable answer is
+    // retried; it never silently becomes "nothing matched".
+    for (let attempt = 1; attempt <= ANSWER_MAX_ATTEMPTS; attempt += 1) {
+      if (isAborted(context)) return cancelled(requestId);
+      host.reportToolProgress?.(
+        context.toolCallId,
+        `Testing ${String(items.length)} candidate(s) · Page ${String(state.pages)} · ` +
+          selectionLabel(state, state.fill.buffered.length),
+      );
+      let answered: AnswerResult;
+      try {
+        answered = await answer({ instruction: state.context, items }, context.signal);
+      } catch {
+        answered = err({ message: 'The agent could not answer the candidates' });
+      }
+      if (answered.ok) return ok(toRows(candidates, answered.value));
+      if (answered.error.cancelled === true) return cancelled(requestId);
+    }
+    return err(
+      createToolError(
+        'UNEXPECTED_RESPONSE',
+        `The agent could not answer the candidates after ${String(ANSWER_MAX_ATTEMPTS)} attempts`,
+        requestId,
+      ),
+    );
   };
 
+  /** Turns verdicts into table rows: the first excerpt supplies Path/Property/Citation. */
+  function toRows(
+    candidates: readonly Candidate[],
+    verdicts: readonly { readonly id: string; readonly match: boolean }[],
+  ): readonly JsonValue[] {
+    const matched = new Set(
+      verdicts.filter((verdict) => verdict.match).map((verdict) => verdict.id),
+    );
+    const rows: JsonValue[] = [];
+    candidates.forEach((candidate, index) => {
+      if (!matched.has(String(index + 1))) return;
+      const excerpt = candidate.excerpts[0];
+      rows.push({
+        'jcr:path': excerpt?.nodePath ?? candidate.path,
+        property: excerpt?.name ?? '',
+        citation: excerpt?.text ?? '',
+      });
+    });
+    return rows;
+  }
+
   const summary = (
-    searchId: string,
     state: SearchState,
     requestId: RequestId,
-    textResultForLlm: string,
-    ended?: SemanticSearchEnd,
+    ended: SemanticSearchEnd,
+    reason: string,
   ): JsonValue => ({
     operation: AEM_SEMANTIC_SEARCH_TOOL_NAME,
     requestId,
@@ -522,134 +600,24 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
     matchesShown: state.matchesShown,
     total: state.pagination.total,
     hasMore: state.pagination.hasMore,
-    ...(ended === undefined
-      ? { searchId, candidates: state.candidates.length }
-      : {
-          ended,
-          // This call finished the search - the table is on screen and no
-          // further candidates are waiting to be judged - so the model's turn
-          // ends here. A start or a "load more" result returns candidates the
-          // model must judge and deliberately carries no marker.
-          [TURN_COMPLETE_RESULT_KEY]: true,
-        }),
-    textResultForLlm,
+    ended,
+    // This call is the whole search: the table is on screen and the run is
+    // over, so the model's turn ends here rather than being resumed for a
+    // "search is finished" completion (see `TURN_COMPLETE_RESULT_KEY`).
+    [TURN_COMPLETE_RESULT_KEY]: true,
+    textResultForLlm:
+      `The semantic search for "${state.terms}" is finished because ${reason}: ` +
+      `${String(state.matchesShown)} relevant result(s) of ${String(state.candidatesRead)} ` +
+      "read are on screen in the chat's table. End your turn now without writing any text.",
     resultType: 'success',
   });
 
-  const candidatesResult = (
-    searchId: string,
-    state: SearchState,
-    requestId: RequestId,
-  ): JsonValue => {
-    const lines = state.candidates.map((candidate, index) => {
-      const head = `[${String(index + 1)}] ${candidate.path}`;
-      if (candidate.excerpts.length === 0) {
-        const why = candidate.unreadable ? 'content could not be read' : 'no readable text';
-        return `${head}\n    (${why})`;
-      }
-      const excerpts = candidate.excerpts.map(
-        (excerpt, excerptIndex) =>
-          `    (${String(excerptIndex + 1)}) ` +
-          `${relativeLabel(candidate.path, excerpt.nodePath, excerpt.name)}: ` +
-          `${JSON.stringify(excerpt.text)}`,
-      );
-      return [head, ...excerpts].join('\n');
-    });
-    const text =
-      `Semantic search for "${state.terms}", page ${String(state.pages)}: ` +
-      `${String(state.candidates.length)} candidate(s) to judge.\n` +
-      `Context: ${JSON.stringify(state.context)}\n\n` +
-      `${lines.join('\n')}\n\n` +
-      'Judge EVERY candidate above against the context. Then call aem_semantic_search with ' +
-      `{"searchId":${JSON.stringify(searchId)},"matches":[...]} listing the numbers of ALL ` +
-      'matching candidates (use {"candidate":n,"excerpt":m} to choose the excerpt cited; pass [] ' +
-      'if none match). Do not write any text and do not call any other tool before that call.';
-    return summary(searchId, state, requestId, text);
-  };
-
-  /**
-   * Shows the judged rows, then loops: "Load more" -> next page. Returns the
-   * next candidates to judge, or the finished result.
-   */
-  const presentAndContinue = async (
-    searchId: string,
-    state: SearchState,
-    rows: readonly JsonValue[],
-    context: ToolExecutionContext,
-    requestId: RequestId,
-  ): Promise<Result<JsonValue, ToolError>> => {
-    let pending = rows;
-    let ended: SemanticSearchEnd;
-    for (;;) {
-      if (context.signal?.aborted === true) {
-        searches.delete(searchId);
-        return cancelled(requestId);
-      }
-      state.matchesShown += pending.length;
-      const shown = await host.invokeTool(
-        'format_table',
-        {
-          data: { rows: [...pending], pagination: state.pagination.raw },
-          mode: state.tableShown ? 'append' : 'new',
-          totalLine: describeRelevantTotal(state.matchesShown, state.pagination.hasMore === false),
-        },
-        context,
-      );
-      if (!shown.ok) {
-        searches.delete(searchId);
-        return shown;
-      }
-      state.tableShown = true;
-      state.candidates = [];
-      if (state.pagination.hasMore === false) {
-        ended = 'exhausted';
-        break;
-      }
-      const asked = await host.invokeTool('ask_user', { actions: [LOAD_MORE] }, context);
-      if (!asked.ok && asked.error.code !== 'CANCELLED') {
-        searches.delete(searchId);
-        return asked;
-      }
-      const answer = asked.ok ? askAnswerSchema.safeParse(asked.value) : undefined;
-      if (answer?.success !== true || !answer.data.selections.includes(LOAD_MORE)) {
-        ended = 'stopped';
-        break;
-      }
-      state.offset += state.limit;
-      const failed = await loadPage(state, context, requestId);
-      if (failed !== undefined) {
-        searches.delete(searchId);
-        return failed;
-      }
-      if (state.candidates.length > 0) return ok(candidatesResult(searchId, state, requestId));
-      pending = [];
-    }
-    searches.delete(searchId);
-    const reason =
-      ended === 'exhausted'
-        ? 'no further results exist'
-        : 'the user did not load more (further results may exist)';
-    return ok(
-      summary(
-        searchId,
-        state,
-        requestId,
-        `The semantic search for "${state.terms}" is finished because ${reason}: ` +
-          `${String(state.matchesShown)} relevant result(s) of ${String(state.candidatesRead)} ` +
-          "read are on screen in the chat's table. End your turn now without writing any text.",
-        ended,
-      ),
-    );
-  };
-
   const start = async (
-    args: SemanticSearchArgs,
-    terms: string,
-    semanticContext: string,
+    args: z.infer<typeof aemSemanticSearchArgsSchema>,
     context: ToolExecutionContext,
     requestId: RequestId,
   ): Promise<Result<JsonValue, ToolError>> => {
-    const filtered = applySearchFilters({ fulltext: terms }, args.filters);
+    const filtered = applySearchFilters({ fulltext: args.terms }, args.filters);
     if (!filtered.ok) {
       return err(createToolError('INVALID_ARGUMENT', filtered.message, requestId));
     }
@@ -666,89 +634,89 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
       if (!resolvedScope.ok) return resolvedScope;
       explicitRoots = resolvedScope.value;
     }
-    const searchId = host.idGenerator();
+    const limit = resolveSearchPageSize(args.limit);
     const state: SearchState = {
-      terms,
-      context: semanticContext,
+      terms: args.terms,
+      context: args.context,
       filters: args.filters,
       predicates: filtered.predicates,
       roots: [
         ...(explicitRoots ??
           resolveSearchRoots(host.environmentFacts()).slice(0, MAX_SEARCH_ROOTS)),
       ],
-      limit: resolveSearchPageSize(args.limit),
+      limit,
       offset: 0,
       pages: 0,
       candidatesRead: 0,
       matchesShown: 0,
       tableShown: false,
-      candidates: [],
+      fill: createPageFillQueue<JsonValue>(limit),
       pagination: { hasMore: 'unknown', total: null, raw: null },
     };
-    const failed = await loadPage(state, context, requestId);
-    if (failed !== undefined) return failed;
-    remember(searchId, state);
-    if (state.candidates.length === 0) {
-      return presentAndContinue(searchId, state, [], context, requestId);
-    }
-    return ok(candidatesResult(searchId, state, requestId));
-  };
 
-  const judge = async (
-    searchId: string,
-    matches: readonly Match[],
-    context: ToolExecutionContext,
-    requestId: RequestId,
-  ): Promise<Result<JsonValue, ToolError>> => {
-    const state = searches.get(searchId);
-    if (state === undefined) {
-      return err(
-        createToolError(
-          'INVALID_ARGUMENT',
-          `Unknown searchId "${searchId}": that search is finished or was never started`,
-          requestId,
-        ),
-      );
-    }
-    if (state.candidates.length === 0) {
-      return err(
-        createToolError(
-          'INVALID_ARGUMENT',
-          'There are no candidates waiting to be judged for this search',
-          requestId,
-        ),
-      );
-    }
-    const rows: JsonValue[] = [];
-    const picked = new Set<number>();
-    for (const match of matches) {
-      const number = typeof match === 'number' ? match : match.candidate;
-      const candidate = state.candidates[number - 1];
-      if (candidate === undefined) {
-        const count = String(state.candidates.length);
-        return err(
-          createToolError(
-            'INVALID_ARGUMENT',
-            `Candidate ${String(number)} does not exist; this page has ${count} candidate(s)`,
-            requestId,
-          ),
-        );
+    const fetchPage = async (): Promise<Result<PageFillPage<string>, ToolError>> => {
+      const paths = await queryPage(state, context, requestId);
+      if (!paths.ok) return paths;
+      return ok({ items: paths.value, hasMore: state.pagination.hasMore });
+    };
+    const onEmptyPage = (page: PageFillPage<string>): void => {
+      if (page.hasMore !== false) {
+        state.endReason =
+          'a page returned no hits while AEM reported more, so the search cannot continue';
       }
-      if (picked.has(number)) continue;
-      picked.add(number);
-      const excerptNumber = typeof match === 'number' ? 1 : (match.excerpt ?? 1);
-      const excerpt = candidate.excerpts[excerptNumber - 1] ?? candidate.excerpts[0];
-      // The Path column is the concrete node the property lives on, not the
-      // hit that was queried; Property is that property's own name. A candidate
-      // whose content could not be read falls back to the hit path and no
-      // property.
-      rows.push({
-        'jcr:path': excerpt?.nodePath ?? candidate.path,
-        property: excerpt?.name ?? '',
-        citation: excerpt?.text ?? '',
+    };
+
+    let ended: SemanticSearchEnd;
+    for (;;) {
+      if (isAborted(context)) return cancelled(requestId);
+      const filled = await runPageFill({
+        queue: state.fill,
+        fetchPage,
+        processPage: (paths) => processPage(paths, state, context, requestId),
+        isCancelled: () => isAborted(context),
+        onEmptyPage,
       });
+      if (!filled.ok) return filled;
+      if (filled.value === 'cancelled') return cancelled(requestId);
+
+      const page = state.fill.takePage();
+      state.matchesShown += page.length;
+      // What is happening now, then the page, then the next page's collection -
+      // one shape for every progress line. After the page is taken, the count is
+      // the true remainder, so it can never read "23/20".
+      host.reportToolProgress?.(
+        context.toolCallId,
+        `Showing ${String(page.length)} · Page ${String(state.pages)} · ` +
+          selectionLabel(state, state.fill.buffered.length),
+      );
+      const shown = await host.invokeTool(
+        'format_table',
+        {
+          data: { rows: [...page], pagination: state.pagination.raw },
+          mode: state.tableShown ? 'append' : 'new',
+          totalLine: describeRelevantTotal(state.matchesShown, !state.fill.hasMore),
+        },
+        context,
+      );
+      if (!shown.ok) return shown;
+      state.tableShown = true;
+      if (!state.fill.hasMore) {
+        ended = 'exhausted';
+        break;
+      }
+      const asked = await host.invokeTool('ask_user', { actions: [LOAD_MORE] }, context);
+      if (!asked.ok && asked.error.code !== 'CANCELLED') return asked;
+      const selection = asked.ok ? askAnswerSchema.safeParse(asked.value) : undefined;
+      if (selection?.success !== true || !selection.data.selections.includes(LOAD_MORE)) {
+        ended = 'stopped';
+        break;
+      }
     }
-    return presentAndContinue(searchId, state, rows, context, requestId);
+    const reason =
+      ended === 'exhausted'
+        ? (state.endReason ?? 'no further results exist')
+        : 'the user did not load more (further results may exist)';
+    return ok(summary(state, requestId, ended, reason));
   };
 
   return async (rawArgs, context) => {
@@ -758,25 +726,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
       const message = parsed.error.issues[0]?.message ?? 'Invalid aem_semantic_search arguments';
       return err(createToolError('INVALID_ARGUMENT', message, requestId));
     }
-    const args = parsed.data;
-    if (context.signal?.aborted === true) return cancelled(requestId);
-    if (args.searchId !== undefined) {
-      if (args.matches === undefined) {
-        return err(
-          createToolError('INVALID_ARGUMENT', 'Pass `matches` together with `searchId`', requestId),
-        );
-      }
-      return judge(args.searchId, args.matches, context, requestId);
-    }
-    if (args.terms === undefined || args.context === undefined) {
-      return err(
-        createToolError(
-          'INVALID_ARGUMENT',
-          'Pass `terms` and `context` to start a search, or `searchId` and `matches` to continue one',
-          requestId,
-        ),
-      );
-    }
-    return start(args, args.terms, args.context, context, requestId);
+    if (isAborted(context)) return cancelled(requestId);
+    return start(parsed.data, context, requestId);
   };
 }

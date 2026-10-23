@@ -35,7 +35,7 @@ function isHtmlMediaType(contentType: string | null): boolean {
 }
 
 /**
- * Judges one bridge outcome for an authentication loss. Pure and total: any
+ * Classifies one bridge outcome for an authentication loss. Pure and total: any
  * outcome that is not evidence of one - including an empty HTML body, which is
  * the signature of an aborted server-side read, not of a sign-in gate - is
  * `undefined`.
@@ -69,7 +69,7 @@ const LOGIN_URL_WORDS =
 const LOGIN_URL_PARAMETERS = ['resource', 'redirect', 'redirect_uri', 'relaystate', 'samlrequest'];
 
 /**
- * Whether a page URL looks like a sign-in or identity-provider page, judged by
+ * Whether a page URL looks like a sign-in or identity-provider page, classified by
  * its path and query alone. Used to avoid reloading a pane that is already
  * showing a login screen.
  */

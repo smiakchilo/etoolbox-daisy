@@ -317,3 +317,42 @@ describe('createAgentHub', () => {
     await expect(hub.getAuthStatus(BETA)).resolves.toMatchObject({ isAuthenticated: true });
   });
 });
+
+describe('answer routing', () => {
+  it("routes a answer call to the active agent's runtime", async () => {
+    const answer = vi.fn(() => Promise.resolve(ok([{ id: '1', match: true }])));
+    const b = build({ overrides: { alpha: { answer } } });
+    await b.hub.start(settingsWithActive(ALPHA));
+
+    const result = await b.hub.answer(
+      { instruction: 'good', items: [{ id: '1', text: 'a' }] },
+      undefined,
+    );
+
+    expect(result).toEqual(ok([{ id: '1', match: true }]));
+    expect(answer).toHaveBeenCalledWith(
+      { instruction: 'good', items: [{ id: '1', text: 'a' }] },
+      undefined,
+    );
+  });
+
+  it('answers unavailable when the active agent has no answer capability', async () => {
+    const b = build();
+    await b.hub.start(settingsWithActive(ALPHA));
+
+    const result = await b.hub.answer({ instruction: 'good', items: [] }, undefined);
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('answers unavailable, not a throw, when the answering runtime throws', async () => {
+    const answer = vi.fn(() => Promise.reject(new Error('boom')));
+    const b = build({ overrides: { alpha: { answer } } });
+    await b.hub.start(settingsWithActive(ALPHA));
+
+    const result = await b.hub.answer({ instruction: 'good', items: [] }, undefined);
+
+    expect(result.ok).toBe(false);
+    expect(b.onRuntimeFailure).toHaveBeenCalled();
+  });
+});

@@ -427,7 +427,10 @@ test.describe('Milestone A #4: tool lifecycle visibility', () => {
     });
     await flushFakeAtOnce(app);
 
-    const toolCall = shell.locator(TOOL_CALL).last();
+    const toolCall = shell
+      .locator(TOOL_CALL)
+      .filter({ hasText: '/content/we-retail/us/en/home' })
+      .last();
     const toggle = toolCall.locator('.chat-tool-call__toggle');
     await expect(toggle).toBeVisible();
 

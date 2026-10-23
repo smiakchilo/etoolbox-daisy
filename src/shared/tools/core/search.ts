@@ -1,7 +1,12 @@
 /**
  * The page size of every search - how many AEM hits a plain `aem_query` returns,
- * and how many rows a search composite (`aem_query_format_ask`,
- * `aem_semantic_search`) queries per page, and so per "Load more" click.
+ * and how many a search composite (`aem_query_format_ask`,
+ * `aem_semantic_search`) queries per page.
+ *
+ * For `aem_semantic_search` the same value is also the **display** page size:
+ * it keeps querying and reading hit pages until that many matches have been
+ * answered (or AEM is exhausted), so one "Load more" click may show buffered
+ * matches without a query, or probe several hit pages before it can show any.
  *
  * This is the **only** page-size definition in the application. Every tool's
  * default, descriptor and instruction is built from it, and a bundled skill

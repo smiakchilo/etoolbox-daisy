@@ -122,7 +122,7 @@ function looksLikeLoginPage(bodyText: string): boolean {
 }
 
 /**
- * Judges a 200 response body: the one status where the payload might actually
+ * Classifies a 200 response body: the one status where the payload might actually
  * be the requested resource. Every other status is classified by status code
  * alone and never reaches here.
  */
@@ -183,7 +183,7 @@ function isJsonObjectShape(value: JsonValue): value is JsonObject {
 }
 
 /**
- * Classifies a raw AEM HTTP response. Status is judged first and exhaustively:
+ * Classifies a raw AEM HTTP response. Status is classified first and exhaustively:
  * every non-200 status is resolved to an outcome without ever looking at the
  * body, because an error page's `Content-Type` and body text describe the
  * error, not a resource, no matter what they claim.

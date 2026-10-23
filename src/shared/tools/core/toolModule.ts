@@ -14,6 +14,7 @@ import type { MemoHost } from '../../memos';
 import type { SkillHost } from '../../skills';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
+import type { AnswerRequest, AnswerResult } from './answer';
 import type { ConfiguredHostInfo, OpenPageOutcome, OpenPageTarget } from './navigation';
 import type { AemResponseOutcome } from './responseValidation';
 import type { ToolExecutor, BrokerOutcome, CurrentToolContext, ToolDescriptor } from './types';
@@ -86,6 +87,21 @@ export interface ToolHost {
    * the turn is aborted or torn down before the user answers.
    */
   readonly requestUserInput: (request: UserInputRequest) => Promise<UserInputAnswer>;
+  /**
+   * Optional: one **stateless model call** on the active agent, for a tool that
+   * must ask the model for a verdict it cannot compute itself (the semantic
+   * search asks the active agent about each hit page this way). It runs outside the chat session -
+   * no conversation history, no tools, no skills, no transcript events - with
+   * the active provider/model/proxy, and returns one true/false per item.
+   *
+   * The capability is optional only so an agent that cannot make such a call
+   * can exist; the app wires it for Copilot, OpenRouter and the fake. A tool
+   * that needs it reports `AGENT_UNAVAILABLE` when it is absent.
+   */
+  readonly answer?: (
+    request: AnswerRequest,
+    signal: AbortSignal | undefined,
+  ) => Promise<AnswerResult>;
   /**
    * The skills the application loaded (bundled and the user's): the one way a
    * skill tool reaches a skill's body, its files or its scripts. The model
