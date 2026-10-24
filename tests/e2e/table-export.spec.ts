@@ -191,7 +191,7 @@ test.describe('format_table gutter: copy and export', () => {
       for (const item of items) {
         if (item.types.includes('text/html')) {
           const payload = await item.getType('text/html');
-          return await (payload as Blob).text();
+          return await payload.text();
         }
       }
       return '';

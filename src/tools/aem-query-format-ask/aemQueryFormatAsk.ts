@@ -390,6 +390,9 @@ export function createAemQueryFormatAskExecutor(host: ToolHost): ToolExecutor {
             args: { predicates: scoped },
           },
           built.value.url,
+          // The application's own count of an AEM query result: its outcome is
+          // evidence about the sign-in state.
+          { authEvidence: true },
         );
         if (countAbort.signal.aborted) return undefined;
         if (outcome.kind !== 'response') return undefined;

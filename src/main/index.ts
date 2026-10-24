@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   type AppSettings,
   type AuthStatus,
+  type SkillSummary,
   answerWith,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
@@ -99,7 +100,7 @@ import { createSkillHost } from './skills/skillHost';
 import { createSkillStore } from './skills/skillStore';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import { createAppUpdater, UPDATE_SANDBOX_ENV } from './updates/composition';
-import { createUpdateFetch } from './updates/proxy';
+import { createUpdateFetch, isUpdateProxyConfigured } from './updates/proxy';
 import {
   APP_USER_MODEL_ID,
   createMainWindow,
@@ -268,6 +269,9 @@ if (!gotSingleInstanceLock) {
     // `agent:get-auth-status` before then; those calls must answer "still
     // starting" rather than hit an unregistered channel or throw.
     let agentHub: AgentHub | undefined = undefined;
+    // A skills reload that happened before the hub existed: consumed once the
+    // hub has started, so a reload during the first seconds is not lost.
+    let pendingSkillRefresh = false;
     const STARTING: AuthStatus = {
       apiVersion: 1,
       isAuthenticated: false,
@@ -617,15 +621,32 @@ if (!gotSingleInstanceLock) {
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
       reload: async () => {
-        const skills = await skillStore.reload();
+        let skills: readonly SkillSummary[];
+        try {
+          skills = await skillStore.reload();
+        } catch {
+          // The store kept what it had; the reader is told, and the runtime is
+          // left alone because its catalogue did not change.
+          logger.error('SKILLS_RELOAD_FAILED', { outcome: 'failure' });
+          return {
+            ok: false,
+            message: 'The skills could not be reloaded, so the previous list is still in use',
+          };
+        }
         // The model's catalogue is composed when the runtime installs its service, so the
         // refresh waits for the turn in flight. The fake agent keeps its scripted state.
         if (!useFakeAgentService) {
+          if (agentHub === undefined) {
+            // The hub is built after the shell paints; refresh as soon as it
+            // has started rather than losing this reload's catalogue.
+            pendingSkillRefresh = true;
+            return { ok: true, count: skills.length };
+          }
           await runtimeRecycler.request(async () => {
             await agentHub?.refresh();
           });
         }
-        return skills.length;
+        return { ok: true, count: skills.length };
       },
     });
 
@@ -853,10 +874,18 @@ if (!gotSingleInstanceLock) {
         // line here and touches no agent.
         answer: (request, signal) =>
           answerWith((oneShot) => secondaryTurns.complete(oneShot, signal), request),
-        // Anonymous requests to hosts the pane is not on (`http_fetch`); the
-        // proxy is read per request so a settings change applies at once.
+        // Anonymous requests to hosts the pane is not on (`http_fetch`). The
+        // proxy is read per request so a settings change applies at once; when a
+        // proxy is configured it resolves the address, so the fetch's own local
+        // policy cannot pin it (the proxy's policy decides).
         externalFetch: createExternalFetch({
-          getFetch: () => createUpdateFetch(loadSettingsSync(appPaths.settings), secretStore),
+          getTransport: async () => {
+            const settings = loadSettingsSync(appPaths.settings);
+            return {
+              fetch: await createUpdateFetch(settings, secretStore),
+              proxied: isUpdateProxyConfigured(settings),
+            };
+          },
         }),
         // Lighthouse in a hidden window: a configured host's page loads with the
         // pane's session, any other page with an empty in-memory one.
@@ -1189,6 +1218,12 @@ if (!gotSingleInstanceLock) {
           // rejects, so this can never block the agent from starting.
           await Promise.all([skillStore.load(), ruleStore.load()]);
           await hub.start(storedSettings);
+          // A reload that arrived before the hub existed (see the skills IPC
+          // handler) is applied now, when the catalogue can reach a runtime.
+          if (pendingSkillRefresh) {
+            pendingSkillRefresh = false;
+            await runtimeRecycler.request(() => hub.refresh());
+          }
         },
         // No free-text field exists on `Logger` by design (see its own module
         // doc comment): `AGENT_UNAVAILABLE` is already the closed-vocabulary

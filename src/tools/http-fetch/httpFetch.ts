@@ -227,9 +227,16 @@ export interface HttpFetchDeps {
         url: string,
         options: BridgeRequestOptions,
         signal: AbortSignal | undefined,
+        maxBytes: number,
       ) => Promise<BrokerOutcome>)
     | undefined;
   readonly isConfiguredOrigin: (origin: string) => boolean;
+  /**
+   * True when this call is the application's own nested read (a composite such
+   * as `aem_get_json`) rather than a model's direct fetch: only then is the
+   * outcome evidence about the host's sign-in state.
+   */
+  readonly authEvidence?: boolean;
   readonly bodyLimit: number;
   readonly signal: AbortSignal | undefined;
 }
@@ -269,6 +276,7 @@ export async function executeHttpFetch(
   const options: BridgeRequestOptions = {
     method,
     ...(args.accept !== undefined ? { accept: args.accept } : {}),
+    ...(deps.authEvidence === true ? { authEvidence: true } : {}),
   };
 
   let via: 'bridge' | 'external';
@@ -282,11 +290,13 @@ export async function executeHttpFetch(
   } else {
     if (deps.external === undefined) return toolError('external_unavailable', requestId);
     via = 'external';
-    outcome = await deps.external(url.href, options, deps.signal);
+    outcome = await deps.external(url.href, options, deps.signal, deps.bodyLimit);
     if (outcome.kind !== 'response') return toolError(externalFailureKey(outcome), requestId);
   }
 
-  const truncated = outcome.bodyText.length > deps.bodyLimit;
+  // The outside fetch is told the limit, so a body it had to cut never reaches
+  // this point longer than that; either way the caller is told it was cut.
+  const truncated = outcome.truncated === true || outcome.bodyText.length > deps.bodyLimit;
   return {
     ok: true,
     operation: 'http_fetch',
@@ -349,6 +359,9 @@ export function createHttpFetchExecutor(config: HttpFetchExecutorConfig): ToolEx
           viaBridge: (url, options) => config.request(envelope, url, options),
           external: config.external,
           isConfiguredOrigin: config.isConfiguredOrigin,
+          // A nested call is the application's own read (`aem_get_json`); a
+          // direct `http_fetch` is the model's and is never auth evidence.
+          authEvidence: nested,
           bodyLimit: nested ? HTTP_FETCH_NESTED_BODY_LIMIT : HTTP_FETCH_MODEL_BODY_LIMIT,
           signal: context.signal,
         }),

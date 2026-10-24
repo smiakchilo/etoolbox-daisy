@@ -74,7 +74,14 @@ export class DebuggerTransport implements ConnectionTransport {
 
   send(raw: string): void {
     if (this.closed) return;
-    const message = JSON.parse(raw) as ProtocolMessage;
+    let message: ProtocolMessage;
+    try {
+      message = JSON.parse(raw) as ProtocolMessage;
+    } catch {
+      // Puppeteer never sends malformed JSON; a broken frame is dropped rather
+      // than thrown into Electron's debugger event handler.
+      return;
+    }
     const { id, method, params, sessionId } = message;
     if (id === undefined || method === undefined) return;
     if (sessionId === undefined) {

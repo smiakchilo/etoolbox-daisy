@@ -410,6 +410,9 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
         args: { path: hitPath },
       },
       url,
+      // The application's own read of a hit's JSON: its outcome is evidence
+      // about the sign-in state.
+      { authEvidence: true },
     );
     if (outcome.kind === 'cancelled') throw new SearchCancelled();
     if (outcome.kind !== 'response') return undefined;

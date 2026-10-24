@@ -131,19 +131,31 @@ export interface ToolHost {
    * One request to a host the browser pane is not on, made by the application
    * itself with **no cookies and no session**. The application, not the tool,
    * enforces the limits (http/https only, redirect and size caps, no private or
-   * loopback addresses), and reports a refusal as a `blocked` outcome. Absent in
-   * a host that offers no outside access.
+   * loopback addresses), and reports a refusal as a `blocked` outcome. The
+   * caller's `maxBytes` is the body ceiling it will use, so no larger body is
+   * read or sent; a response the transport cut says so with `truncated`.
+   *
+   * Address policy has one documented limit: when the application reaches the
+   * network through the user's configured proxy, the proxy resolves the name and
+   * opens the connection, so only literal addresses and internal-looking names
+   * can be checked here and address policy is delegated to the proxy. Direct
+   * connections are pinned to the addresses that were validated.
+   *
+   * Absent in a host that offers no outside access.
    */
   readonly externalFetch?: (
     url: string,
     options: BridgeRequestOptions,
     signal: AbortSignal | undefined,
+    maxBytes?: number,
   ) => Promise<BrokerOutcome>;
   /**
    * Audits one page with Lighthouse and returns its scores and failing audits.
    * The application runs it in a hidden browser window it owns: a configured
-   * host's page loads with the pane's session, any other page without cookies
-   * and only if it passes the same address policy as `externalFetch`. Absent
+   * host's page loads with the pane's session, any other page without cookies.
+   * Every request such a page makes is held to the same address policy as
+   * `externalFetch`, but Chromium resolves the name itself, so that check is
+   * best effort rather than pinned (see `docs/compatibility.md` §11.8). Absent
    * in a host that cannot audit pages.
    */
   readonly pageAudit?: PageAuditRunner;

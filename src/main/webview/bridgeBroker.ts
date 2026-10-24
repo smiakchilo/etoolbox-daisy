@@ -169,6 +169,8 @@ interface PendingRequest {
   readonly url: string;
   readonly method: 'GET' | 'HEAD';
   readonly accept: string | undefined;
+  /** The application's own JSON data read: its outcome may be auth evidence. */
+  readonly authEvidence: boolean;
   /** Set for a DOM read; such a request has no URL and is no evidence about the session. */
   readonly read: DomReadSpec | undefined;
   readonly resolve: (outcome: BrokerOutcome) => void;
@@ -176,6 +178,20 @@ interface PendingRequest {
   readonly queuedAt: number;
   settled: boolean;
   cancelTimer: (() => void) | undefined;
+}
+
+/**
+ * An `Accept` value safe to put on a request: printable ASCII only, at most 200
+ * characters. The value can come from a model argument (`http_fetch`), so a
+ * control character could otherwise be smuggled into a header.
+ */
+const ACCEPT_PATTERN = /^[\x20-\x7e]{1,200}$/;
+
+/** The usable `Accept` header for a request, or `undefined` for the default. */
+export function validatedAccept(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  return ACCEPT_PATTERN.test(trimmed) ? trimmed : undefined;
 }
 
 function replyToOutcome(reply: WebviewBridgeReply): BrokerOutcome {
@@ -290,14 +306,12 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
       durationMs,
       headers: responseHeaders ?? [],
     });
-    // Only a JSON data read is evidence about the session. A HEAD probe or an
-    // HTML page read legitimately meets redirects and login-looking markup
-    // (a link checker visiting a vanity URL) and must not latch a false loss.
-    if (
-      entry.read === undefined &&
-      entry.method === 'GET' &&
-      (entry.accept ?? 'json').toLowerCase().includes('json')
-    ) {
+    // Only a request the application itself made as a JSON data read is
+    // evidence about the session. A HEAD probe or an HTML page read legitimately
+    // meets redirects and login-looking markup (a link checker visiting a vanity
+    // URL) and must not latch a false loss; and a model-chosen `Accept` must not
+    // be able to decide this either way.
+    if (entry.read === undefined && entry.authEvidence) {
       noteAuthEvidence(entry.envelope.serverId, outcome);
     }
     entry.resolve(outcome);
@@ -449,6 +463,7 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
           url: `dom-read:${spec.selector}`,
           method: 'GET',
           accept: undefined,
+          authEvidence: false,
           read: spec,
           resolve,
           queuedAt: deps.clock(),
@@ -469,7 +484,8 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
           envelope,
           url,
           method: options?.method ?? 'GET',
-          accept: options?.accept,
+          accept: validatedAccept(options?.accept),
+          authEvidence: options?.authEvidence === true,
           read: undefined,
           resolve,
           queuedAt: deps.clock(),

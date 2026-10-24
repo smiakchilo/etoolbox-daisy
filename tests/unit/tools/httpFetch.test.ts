@@ -15,6 +15,7 @@ import {
   httpFetchArgsSchema,
   resolveFetchUrl,
   type HttpFetchDeps,
+  type HttpFetchExecutorConfig,
   type HttpFetchRequest,
 } from '../../../src/tools/http-fetch/httpFetch';
 import { createCountingIdGenerator } from '../../support/testIds';
@@ -158,6 +159,14 @@ describe('executeHttpFetch - routing', () => {
     expect(options).toEqual<BridgeRequestOptions>({ method: 'HEAD', accept: 'text/html' });
     expect(signal).toBe(controller.signal);
   });
+
+  it('tells the anonymous fetch the body limit this call accepts', async () => {
+    const { deps, external } = makeDeps({ bodyLimit: 1234 });
+
+    await executeHttpFetch(envelope({ url: 'https://example.com/' }), deps);
+
+    expect(external.mock.calls[0]?.[3]).toBe(1234);
+  });
 });
 
 describe('executeHttpFetch - results', () => {
@@ -186,6 +195,21 @@ describe('executeHttpFetch - results', () => {
     const result = await executeHttpFetch(envelope({ url: '/a' }), deps);
 
     expect(result).toMatchObject({ ok: true, truncated: false });
+  });
+
+  it('reports a body the anonymous fetch cut at its own limit', async () => {
+    const cut: BrokerOutcome = {
+      kind: 'response',
+      status: 200,
+      contentType: 'text/plain',
+      bodyText: 'short',
+      truncated: true,
+    };
+    const { deps } = makeDeps({}, response(), cut);
+
+    const result = await executeHttpFetch(envelope({ url: 'https://example.com/' }), deps);
+
+    expect(result).toMatchObject({ ok: true, bodyText: 'short', truncated: true });
   });
 });
 
@@ -255,7 +279,9 @@ describe('createHttpFetchExecutor', () => {
   const ids = createCountingIdGenerator('id');
 
   function makeExecutor(bodyText: string) {
-    const request = vi.fn(() => Promise.resolve(response(200, bodyText, 'text/html')));
+    const request = vi.fn<HttpFetchExecutorConfig['request']>(() =>
+      Promise.resolve(response(200, bodyText, 'text/html')),
+    );
     const executor = createHttpFetchExecutor({
       request,
       external: undefined,
@@ -277,7 +303,7 @@ describe('createHttpFetchExecutor', () => {
   const callId = 'call-1' as never;
 
   it('gives the model the body and a nested caller only the status line', async () => {
-    const { executor } = makeExecutor('BODY-TEXT');
+    const { executor, request } = makeExecutor('BODY-TEXT');
 
     const forModel = await executor({ url: '/a' }, { toolCallId: callId, signal: undefined });
     const nested = await executor(
@@ -292,6 +318,9 @@ describe('createHttpFetchExecutor', () => {
       ok: true,
       value: { textResultForLlm: expect.not.stringContaining('BODY') as unknown },
     });
+    // Only the application's own nested read may be evidence about the session.
+    expect(request.mock.calls[0]?.[2]).not.toMatchObject({ authEvidence: true });
+    expect(request.mock.calls[1]?.[2]).toMatchObject({ authEvidence: true });
   });
 
   it('gives a nested caller a larger body than the model', async () => {

@@ -980,12 +980,39 @@ src/tools/<name>/
   `ToolHost.externalFetch` (`src/main/externalFetch.ts`: cookie-less, public hosts only -
   link-local, metadata, loopback and private addresses are refused). `aem_get_json` is a
   composite on it (`uses: ['http_fetch']`; its nested billet is `transparent`).
+  **That anonymous fetch pins the address it validated**: a name is resolved once per
+  hop, every answer checked, and the connection goes through an undici `Agent` whose
+  `connect.lookup` returns only those addresses (a resolution failure or an empty answer
+  is a refusal, never "let the request decide"); the address table covers the full
+  non-public IPv4 and IPv6 sets, including mapped/NAT64/6to4/Teredo forms; bodies are cut
+  in **bytes of the decoded stream**, at the caller's own limit (the tool passes its
+  model or nested limit down) and a cut response says `truncated`. **With a proxy
+  configured the proxy resolves the name**, so only literal addresses and
+  internal-looking names are checked and address policy is the proxy's
+  (`docs/compatibility.md` §11.8). Only an **application** read may be authentication
+  evidence: `BridgeRequestOptions.authEvidence` is set by `aem_query`, both composites
+  and a nested `http_fetch`, never from a model argument, so a model-chosen `accept`
+  cannot latch (or hide) a lost session. `accept` must be 1-200 printable ASCII
+  characters.
   `page_read` `{ selector, include?, attributes?, limit?, frame? }` reads the open page's
   DOM through the broker's read channel (`webview-bridge:read`, `ToolHost.bridge.readDom`).
+  **Credential-looking values are withheld** (`token|csrf|secret|password|auth|nonce`
+  attributes, a hidden or password input's `value`, inline `script`/`style` in `html`)
+  behind `[withheld]`, and the result carries `redacted: true`; the walk stops at `limit`
+  and at a wall-clock budget without materialising the match list.
   `page_audit` `{ url?, categories?, formFactor? }` runs Lighthouse in a hidden offscreen
   `WebContents` over an in-process CDP transport (`src/main/pageAudit.ts`,
-  `pageAuditTransport.ts`; `ToolHost.pageAudit`), serialized, 120 s deadline; a
-  non-configured origin uses a cookie-less `audit-anonymous` session. The runner takes an
+  `pageAuditTransport.ts`; `ToolHost.pageAudit`), serialized with at most two waiting (a
+  third is refused as retryable), 120 s deadline; a
+  non-configured origin uses a cookie-less `audit-anonymous` session. **Every** audit's
+  requests - a configured host's included - are held to `inspectAuditRequest` (its own
+  configured origins trusted, `data:`/`blob:`/`about:` local, the rest through the shared
+  address policy) and again to `will-navigate`/`will-redirect`; a configured host's audit
+  shares the pane session and filters only its own window, so the user's browsing is
+  untouched; the window denies new windows, permissions (scoped to itself) and
+  non-proxied WebRTC UDP, and a refused request is reported by URL. That filter is
+  **best effort against DNS rebinding** - Chromium resolves the name itself
+  (`docs/compatibility.md` §11.8, `docs/backlog.md`). The runner takes an
   optional third `progress` callback (`PageAuditRunner`, `src/shared/tools/core`, not a
   `contracts/` change) that the tool forwards to `reportToolProgress`: the billet reads
   "Loading tools" while the lazy imports run (the slow first audit), then "Auditing the
@@ -998,11 +1025,12 @@ src/tools/<name>/
   second browser. Dropping Puppeteer would mean writing a Lighthouse driver. Cost:
   ~130 MB of `node_modules` across ~100 packages (largest: `lighthouse`, `@sentry/*`,
   `@paulirish/trace_engine`, `@opentelemetry/semantic-conventions`, `chromium-bidi`; disk
-  only, nothing at startup), `npm audit` advisories not yet addressed
-  (`docs/verification/followons-2026-10.md`). Keep both pinned and imported only from
+  only, nothing at startup). `npm audit` is clean as of 2026-10-25; the packaged build
+  carries both packages (1571 entries inside `app.asar`, deep config import included) but
+  a packaged audit has still not run. Keep both pinned and imported only from
   `pageAudit.ts` / `pageAuditTransport.ts`.
-  Known open: external-HTTPS audits are flaky in the offscreen window and the packaged
-  build is unverified (`docs/backlog.md`).
+  Known open: external-HTTPS audits are flaky in the offscreen window, the audit's
+  rebinding window, and the packaged build is unverified (`docs/backlog.md`).
 - A skill's front matter may carry `table-only: true`: the transcript suppresses the
   model's prose for that skill's turn, as it does for the search skills (the
   hard-coded `DETERMINISTIC_TABLE_SKILLS` list is gone; a bundled fallback remains).
@@ -1321,6 +1349,12 @@ dot-entries and symlinks are not indexed, a skill folder or `SKILL.md` that is a
 link/junction is rejected (`Links are not followed.`), and paths are real-path
 contained.
 Rejections log `SKILL_REJECTED`; a failed script logs `SKILL_SCRIPT_FAILED`.
+**A failed reload keeps what was already loaded**: `skillStore.reload()` (and
+`ruleStore.reload()`) rejects instead of committing an empty or partial catalogue, the
+IPC reports `ok: false` with an application-authored corrective message (never a path),
+and `load()` is left able to read again; rapid reloads share one in-flight read. A
+reload that arrives before the agent hub exists (the first seconds after launch) queues
+one refresh that the hub applies once it has started.
 
 **Settings "Skills" tab** (after Agents) holds the **Custom skills
 folder** link (`skills:open-folder`, no payload: main creates the folder and opens it in
@@ -1727,7 +1761,20 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4523 passed / 13 skipped** (+234 against the
+Current baseline: **`npm run test` → 4590 passed / 13 skipped** (+57 against the
+4533 below - **the security review follow-on** (2026-10-25): outside fetches pin the
+validated address and fail closed on a resolution error, the address table covers the
+full non-public IPv4/IPv6 sets, bodies are capped in bytes with the caller's own limit,
+`page_audit` filters a configured host's requests too (nav guards, scoped permissions,
+WebRTC off, prompt teardown, a capped queue), `page_read` withholds credential-looking
+values behind a `redacted` flag and stops at `limit`/a wall clock, a failed skills or
+rules reload keeps the previous catalogues, and a model-chosen `Accept` no longer
+decides authentication evidence. Contract changes reported in that section:
+`webviewBridgeDomResultSchema` gained `redacted`; `BrokerOutcome` gained `truncated`;
+`BridgeRequestOptions` gained `authEvidence`; `ToolHost.externalFetch` gained `maxBytes`.
+See §5's `http_fetch`/`page_read`/`page_audit` bullets and
+`docs/verification/followons-2026-10.md` "Security review follow-on ... (2026-10-25)".
+Before that it was **`npm run test` → 4523 passed / 13 skipped** (+234 against the
 4289 below - **custom skills for validator-style audits** (2026-10-25): the new
 `http_fetch`, `page_read` and `page_audit` tools, a model-callable `format_table`
 with typed columns, the `table-only` skill flag, and **Reload skills**; see the
@@ -3095,6 +3142,17 @@ is how E2E drives the fake transport.
 
 **`messageStream`** marks dirty only when the rendered text actually changes.
 
+**A dispatcher's `connect.lookup` is what pins an address (by type and unit test 2026-10-25).**
+`undici`'s `Agent({ connect: { lookup } })` passes `lookup` through to `net`/`tls`
+`connect` (`BuildOptions` extends `TcpNetConnectOpts`), so the only DNS answer the socket
+can see is the one that function returns; the URL's host still supplies the Host header
+and TLS servername. `Node`'s global `fetch` accepts the dispatcher as an (undocumented in
+DOM types) `RequestInit.dispatcher`. A proxy dispatcher, by contrast, resolves the name
+itself - which is why the app's own address check cannot pin a proxied request. The
+pinning is proved by unit test (`createPinnedLookup`'s answers, and the dispatcher
+receiving the validated list); no socket was opened to measure the connect address end to
+end.
+
 ### The one contract change since Step 03
 
 `paginationMetadataSchema` in `toolResult.ts` (now `src/tools/aem-query/aemQuery.ts`) had no total
@@ -3306,8 +3364,10 @@ what would have been missed without it.
   ordinary Node.
 - Windows paths, backslashes.
 
-Toolchain: Electron 44.3.0, TypeScript 6.0.3, vitest 5.0.0, Playwright 1.63.0,
-zod 4.6.4, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83.
+Toolchain: Electron 44.9.3, TypeScript 6.0.3, vitest 5.0.5, Playwright 1.63.0,
+zod 4.6.7, `@github/copilot-sdk` 1.0.13, `@github/copilot` 1.0.83. (Read from
+`package.json`; the review of commit `3bd1ad8` noted the mixed dependency bump that
+moved these.)
 
 ---
 

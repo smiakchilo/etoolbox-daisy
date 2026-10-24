@@ -113,6 +113,49 @@ describe('createSkillStore', () => {
     expect(store.list().map((skill) => skill.name)).toEqual(['late', 'only']);
   });
 
+  it('keeps the skills it had when a reload read fails, and still loads later', async () => {
+    const bundled = makeRoot({ only: {} });
+    let failing = false;
+    const store = createSkillStore({
+      bundledDirectory: bundled,
+      onRejected: () => {
+        if (failing) throw new Error('the disk went away');
+      },
+    });
+    await store.load();
+    // A folder that is rejected makes the read report through `onRejected`,
+    // which is where this read is made to fail.
+    mkdirSync(path.join(bundled, 'Bad'));
+    writeFileSync(path.join(bundled, 'Bad', 'SKILL.md'), skillMd('Bad'));
+
+    failing = true;
+    await expect(store.reload()).rejects.toThrow('the disk went away');
+
+    expect(store.list().map((skill) => skill.name)).toEqual(['only']);
+    expect(store.get('only')?.summary.name).toBe('only');
+    // A failed reload must not poison the shared read.
+    failing = false;
+    expect((await store.load()).map((skill) => skill.name)).toEqual(['only']);
+  });
+
+  it('shares one read between rapid reloads', async () => {
+    const bundled = makeRoot({ Bad: {} });
+    const rejected: string[] = [];
+    const store = createSkillStore({
+      bundledDirectory: bundled,
+      onRejected: (rejection) => rejected.push(rejection.folder),
+    });
+    await store.load();
+    expect(rejected).toHaveLength(1);
+
+    const first = store.reload();
+    const second = store.reload();
+
+    expect(second).toBe(first);
+    await first;
+    expect(rejected).toHaveLength(2);
+  });
+
   it('reads the body without its front matter and indexes the other files', async () => {
     const script = 'export default () => 1;';
     const { store } = await loadStore({

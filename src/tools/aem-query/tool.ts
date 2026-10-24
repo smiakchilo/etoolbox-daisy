@@ -33,7 +33,10 @@ export const tool: ModelToolModule = {
         executeAemQuery(envelope, {
           origin: deps.origin,
           now: deps.now,
-          fetchThroughBridge: (url) => host.bridge.request(envelope, url),
+          fetchThroughBridge: (url) =>
+            // The application's own AEM JSON read, so its outcome is evidence
+            // about the sign-in state (never a model-chosen `Accept`).
+            host.bridge.request(envelope, url, { authEvidence: true }),
           onClassified: (requestId, kind) => host.recordResponseClassification?.(requestId, kind),
           priorityPaths: host.environmentFacts()?.contentPriorityPaths,
         }),

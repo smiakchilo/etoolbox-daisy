@@ -48,6 +48,10 @@ export const DOM_READ_HTML_LIMIT = 20000;
 export const DOM_READ_TOTAL_LIMIT = 100000;
 export const DOM_READ_MAX_ITEMS = 200;
 export const DOM_READ_MAX_ATTRIBUTES = 10;
+/** How long the preload may spend collecting one read before it reports a truncation. */
+export const DOM_READ_TIME_BUDGET_MS = 1000;
+/** What a withheld attribute value reads as, so a reader knows something was there. */
+export const DOM_READ_REDACTED_VALUE = '[withheld]';
 
 const attributeNameSchema = z.string().regex(/^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/);
 
@@ -89,6 +93,12 @@ export const webviewBridgeDomResultSchema = z.discriminatedUnion('status', [
     items: z.array(webviewBridgeDomItemSchema),
     /** True when `limit`, a per-item cap or the total budget cut something off. */
     truncated: z.boolean(),
+    /**
+     * True when at least one value was withheld because it looked like a
+     * credential (a token/CSRF/password/auth/nonce attribute, a hidden or
+     * password input's `value`, or inline script/style markup).
+     */
+    redacted: z.boolean().optional(),
   }),
   z.object({ status: z.literal('invalid_selector') }),
   z.object({ status: z.literal('frame_unavailable') }),

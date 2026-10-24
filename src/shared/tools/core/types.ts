@@ -61,6 +61,12 @@ export type BrokerOutcome =
       readonly status: number;
       readonly contentType: string | null;
       readonly bodyText: string;
+      /**
+       * Present only when the body was cut at the transport's own byte limit
+       * (the anonymous outside fetch does this, so a client that asked for a
+       * smaller body is told the truth instead of inferring it from length).
+       */
+      readonly truncated?: boolean;
     }
   | { readonly kind: 'blocked'; readonly reason: WebviewBridgeBlockReason }
   | { readonly kind: 'network_error'; readonly message: string }
@@ -86,6 +92,13 @@ export interface BridgeRequestOptions {
   readonly method?: 'GET' | 'HEAD';
   /** Replaces the default JSON `Accept`, e.g. for an HTML page. */
   readonly accept?: string;
+  /**
+   * Set by the application when this request is one of its own JSON data reads
+   * (an AEM tool), so its outcome may be evidence about the sign-in state.
+   * Never derived from a model argument: `http_fetch`'s `accept` is the model's
+   * and says nothing about what the application needs to know.
+   */
+  readonly authEvidence?: boolean;
 }
 
 /**

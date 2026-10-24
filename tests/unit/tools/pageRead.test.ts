@@ -157,6 +157,20 @@ describe('executePageRead', () => {
 
     expect(result).toMatchObject({ ok: false, error: { code: 'ACCESS_DENIED' } });
   });
+
+  it('carries a redacted read through, and only then', async () => {
+    const redacted = await executePageRead(envelope({ selector: 'a' }), {
+      now: () => 0,
+      read: readReturning(domResponse({ ...OK_RESULT, redacted: true })),
+    });
+    const clean = await executePageRead(envelope({ selector: 'a' }), {
+      now: () => 0,
+      read: readReturning(domResponse(OK_RESULT)),
+    });
+
+    expect(redacted).toMatchObject({ ok: true, redacted: true });
+    expect(clean).toMatchObject({ ok: true, redacted: false });
+  });
 });
 
 describe('createPageReadExecutor', () => {

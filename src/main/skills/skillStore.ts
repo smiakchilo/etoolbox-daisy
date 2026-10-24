@@ -59,7 +59,11 @@ export interface SkillStoreOptions {
 export interface SkillStore {
   /** Reads both sources once; later calls share that read. */
   load(): Promise<readonly SkillSummary[]>;
-  /** Reads both sources again, replacing the snapshot (a skill added or edited on disk). */
+  /**
+   * Reads both sources again, replacing the snapshot (a skill added or edited on
+   * disk). Rejects when the read itself fails, and then keeps the snapshot it
+   * had: a failed reload must never wipe the skills the user already has.
+   */
   reload(): Promise<readonly SkillSummary[]>;
   /** Every loaded skill, sorted by name; `[]` until `load()` resolves. */
   list(): readonly SkillSummary[];
@@ -223,9 +227,14 @@ interface StoreSnapshot {
 
 const EMPTY_SNAPSHOT: StoreSnapshot = { skills: new Map(), sorted: [], rejections: [] };
 
+function summarize(snapshot: StoreSnapshot): readonly SkillSummary[] {
+  return snapshot.sorted.map((skill) => skill.summary);
+}
+
 export function createSkillStore(options: SkillStoreOptions): SkillStore {
   let snapshot = EMPTY_SNAPSHOT;
   let inFlight: Promise<readonly SkillSummary[]> | undefined;
+  let reloading: Promise<readonly SkillSummary[]> | undefined;
 
   async function read(): Promise<StoreSnapshot> {
     const rejections: SkillRejection[] = [];
@@ -250,13 +259,28 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
     return read().then(
       (loaded) => {
         snapshot = loaded;
-        return loaded.sorted.map((skill) => skill.summary);
+        return summarize(loaded);
       },
       () => {
+        // The initial read may fall back to nothing: there is no earlier
+        // snapshot to keep, and the app must still start.
         snapshot = EMPTY_SNAPSHOT;
         return [];
       },
     );
+  }
+
+  /**
+   * A reload never replaces what is loaded with nothing: a failed read keeps the
+   * previous snapshot (only `SKILL_REJECTED`-style per-folder problems ever get
+   * that far - this is the whole-source read failing) and rejects so the
+   * Settings button can say so.
+   */
+  function reloadOnce(): Promise<readonly SkillSummary[]> {
+    return read().then((loaded) => {
+      snapshot = loaded;
+      return summarize(loaded);
+    });
   }
 
   return {
@@ -265,10 +289,22 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
       return inFlight;
     },
     reload() {
-      // Chained behind a read already running so two snapshots never race each other.
-      const chained = inFlight === undefined ? start() : inFlight.then(() => start());
-      inFlight = chained;
-      return chained;
+      // Rapid clicks share one read instead of queueing a scan each.
+      if (reloading !== undefined) return reloading;
+      const run = (inFlight ?? Promise.resolve<readonly SkillSummary[]>([]))
+        .catch(() => [])
+        .then(reloadOnce);
+      reloading = run;
+      const settle = (): void => {
+        if (reloading === run) reloading = undefined;
+      };
+      run.then(() => {
+        // `load()` answers with the latest successful read; a failed reload
+        // leaves the previous one in place.
+        inFlight = run;
+        settle();
+      }, settle);
+      return run;
     },
     list: () => snapshot.sorted.map((skill) => skill.summary),
     get: (name) => snapshot.skills.get(name),

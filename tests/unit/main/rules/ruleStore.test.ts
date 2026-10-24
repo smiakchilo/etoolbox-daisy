@@ -156,6 +156,26 @@ describe('createRuleStore', () => {
     expect(store.rejections()).toEqual([]);
   });
 
+  it('a failed reload() leaves load() able to read again', async () => {
+    const root = makeRoot({ 'big.md': 'x'.repeat(RULE_FILE_MAX_BYTES + 1), 'a.md': 'A' });
+    let failing = false;
+    const store = createRuleStore({
+      directory: root,
+      onRejected: () => {
+        if (failing) throw new Error('the disk went away');
+      },
+    });
+    await store.load();
+
+    failing = true;
+    await expect(store.reload()).rejects.toThrow('the disk went away');
+
+    failing = false;
+    await store.load();
+    expect(store.count()).toBe(1);
+    expect(store.rejections()).toHaveLength(1);
+  });
+
   it('does not follow a link to a file outside the folder', async () => {
     const outside = makeRoot({ 'evil.md': 'Evil' });
     const root = makeRoot({ 'good.md': 'Good' });

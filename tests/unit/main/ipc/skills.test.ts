@@ -86,8 +86,25 @@ describe('isTrustedSkillsIpcSender', () => {
 describe('reloadSkills', () => {
   it('reports how many skills the store now holds', async () => {
     const logger = makeRecordingLogger();
-    expect(await reloadSkills(() => Promise.resolve(3), logger)).toEqual({ ok: true, count: 3 });
+    expect(await reloadSkills(() => Promise.resolve({ ok: true, count: 3 }), logger)).toEqual({
+      ok: true,
+      count: 3,
+    });
     expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("passes on the store's own corrective message", async () => {
+    const logger = makeRecordingLogger();
+    const result = await reloadSkills(
+      () => Promise.resolve({ ok: false, message: 'The previous list is still in use' }),
+      logger,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'reload_failed', message: 'The previous list is still in use' },
+    });
+    expect(logger.error).toHaveBeenCalledWith('SKILLS_RELOAD_FAILED', { outcome: 'failure' });
   });
 
   it('reports reload_failed without leaking the cause, and logs it', async () => {
@@ -103,11 +120,12 @@ describe('reloadSkills', () => {
 });
 
 describe('registerSkillsIpcHandlers', () => {
-  const reload = vi.fn<() => Promise<number>>();
+  const reload =
+    vi.fn<() => Promise<{ ok: true; count: number } | { ok: false; message: string }>>();
 
   beforeEach(() => {
     reload.mockReset();
-    reload.mockResolvedValue(2);
+    reload.mockResolvedValue({ ok: true, count: 2 });
   });
 
   function register(

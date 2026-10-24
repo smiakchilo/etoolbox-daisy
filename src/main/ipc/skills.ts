@@ -42,27 +42,40 @@ export async function openSkillsFolder(
   return { ok: true };
 }
 
+/**
+ * What a reload attempt reports back to the IPC layer: the count on success, or
+ * a message that is safe to show (application-authored, never a path).
+ */
+export type SkillsReloadOutcome =
+  { readonly ok: true; readonly count: number } | { readonly ok: false; readonly message: string };
+
 export interface SkillsIpcDependencies {
   readonly directory: string;
   readonly logger: Logger;
   readonly rendererDistDir: string;
   readonly mainWebContentsId: number;
-  /** Re-reads the skill sources and resolves to the number of skills now loaded. */
-  readonly reload: () => Promise<number>;
+  /** Re-reads the skill sources and reports how many skills are now loaded. */
+  readonly reload: () => Promise<SkillsReloadOutcome>;
 }
 
 /** Runs the reload; a failure is reported, never thrown into the renderer. */
 export async function reloadSkills(
-  reload: () => Promise<number>,
+  reload: () => Promise<SkillsReloadOutcome>,
   logger: Logger,
 ): Promise<SkillsReloadResult> {
   try {
-    return { ok: true, count: await reload() };
+    const outcome = await reload();
+    if (outcome.ok) return { ok: true, count: outcome.count };
+    logger.error('SKILLS_RELOAD_FAILED', { outcome: 'failure' });
+    return { ok: false, error: { code: 'reload_failed', message: outcome.message } };
   } catch {
     logger.error('SKILLS_RELOAD_FAILED', { outcome: 'failure' });
     return {
       ok: false,
-      error: { code: 'reload_failed', message: 'The skills could not be reloaded' },
+      error: {
+        code: 'reload_failed',
+        message: 'The skills could not be reloaded, so the previous list is still in use',
+      },
     };
   }
 }

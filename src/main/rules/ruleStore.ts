@@ -150,8 +150,14 @@ export function createRuleStore(options: RuleStoreOptions): RuleStore {
       return loaded;
     },
     reload() {
-      loaded = read();
-      return loaded;
+      // A failed read keeps the rules already loaded (the rejection is reported
+      // to the Settings button), and leaves `load()` able to retry later.
+      const run = (loaded ?? Promise.resolve()).catch(() => undefined).then(read);
+      loaded = run;
+      return run.catch((error: unknown) => {
+        if (loaded === run) loaded = undefined;
+        throw error;
+      });
     },
     generic: () => rules.filter((rule) => rule.projects.length === 0),
     forProject(label) {

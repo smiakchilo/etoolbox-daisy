@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Dispatcher } from 'undici';
 import type { AgentFetch } from '../../../src/shared';
-import { createExternalFetch, isRefusedAddress } from '../../../src/main/externalFetch';
+import {
+  EXTERNAL_FETCH_USER_AGENT,
+  createExternalFetch,
+  createPinnedLookup,
+  isRefusedAddress,
+} from '../../../src/main/externalFetch';
 
 const PUBLIC = ['93.184.216.34'];
 
@@ -17,6 +23,11 @@ function requestUrl(input: Parameters<AgentFetch>[0]): string {
   return input instanceof URL ? input.href : input.url;
 }
 
+interface FakeDispatcher {
+  readonly addresses: readonly string[];
+  readonly destroy: ReturnType<typeof vi.fn>;
+}
+
 function setup(
   handler: (url: string, init: RequestInit | undefined) => Promise<Response> | Response,
   options: Partial<Parameters<typeof createExternalFetch>[0]> = {},
@@ -25,12 +36,22 @@ function setup(
     Promise.resolve(handler(requestUrl(input), init)),
   );
   const resolveAddresses = vi.fn(() => Promise.resolve(PUBLIC));
+  const dispatchers: FakeDispatcher[] = [];
   const external = createExternalFetch({
-    getFetch: () => Promise.resolve(fetchImpl),
+    getTransport: () => Promise.resolve({ fetch: fetchImpl, proxied: false }),
     resolveAddresses,
+    createDispatcher: (addresses) => {
+      const dispatcher: FakeDispatcher = { addresses, destroy: vi.fn() };
+      dispatchers.push(dispatcher);
+      return dispatcher as unknown as Dispatcher;
+    },
     ...options,
   });
-  return { external, fetchImpl, resolveAddresses };
+  return { external, fetchImpl, resolveAddresses, dispatchers };
+}
+
+function dispatcherOf(init: RequestInit | undefined): FakeDispatcher | undefined {
+  return (init as (RequestInit & { dispatcher?: FakeDispatcher }) | undefined)?.dispatcher;
 }
 
 describe('isRefusedAddress', () => {
@@ -43,29 +64,77 @@ describe('isRefusedAddress', () => {
     '172.16.0.1',
     '172.31.255.255',
     '192.168.1.1',
+    '192.0.0.8',
+    '192.0.2.10',
+    '192.88.99.1',
     '198.18.0.1',
+    '198.51.100.7',
+    '203.0.113.9',
     '224.0.0.1',
+    '255.255.255.255',
     '::',
     '::1',
     'fc00::1',
     'fd12:3456::1',
     'fe80::1',
+    'fec0::1',
     'ff02::1',
+    '2001:db8::1',
+    '2001:0:1::1',
     '::ffff:10.0.0.1',
     '::ffff:169.254.169.254',
+    '::ffff:7f00:1',
+    '::127.0.0.1',
+    '2002:7f00:0001::1',
+    '64:ff9b::7f00:1',
   ])('refuses %s', (address) => {
     expect(isRefusedAddress(address)).toBe(true);
   });
 
-  it.each(['93.184.216.34', '8.8.8.8', '172.15.0.1', '172.32.0.1', '2606:4700::1111'])(
-    'allows the public address %s',
-    (address) => {
-      expect(isRefusedAddress(address)).toBe(false);
-    },
-  );
+  it.each([
+    '93.184.216.34',
+    '8.8.8.8',
+    '172.15.0.1',
+    '172.32.0.1',
+    '2606:4700::1111',
+    '::ffff:8.8.8.8',
+    '2002:0808:0808::1',
+    '64:ff9b::8.8.8.8',
+  ])('allows the public address %s', (address) => {
+    expect(isRefusedAddress(address)).toBe(false);
+  });
 
   it('refuses anything that is not an address', () => {
     expect(isRefusedAddress('example.com')).toBe(true);
+  });
+});
+
+describe('createPinnedLookup', () => {
+  it('answers with the validated addresses and never resolves again', async () => {
+    const lookup = createPinnedLookup(['93.184.216.34', '2606:4700::1111']);
+
+    const addresses = await new Promise<unknown>((resolve, reject) => {
+      lookup('rebind.example', { all: true }, (error, value) =>
+        error === null ? resolve(value) : reject(error),
+      );
+    });
+
+    expect(addresses).toEqual([
+      { address: '93.184.216.34', family: 4 },
+      { address: '2606:4700::1111', family: 6 },
+    ]);
+  });
+
+  it('answers a single-address lookup with the first validated address', async () => {
+    const lookup = createPinnedLookup(['93.184.216.34']);
+
+    const answer = await new Promise<unknown>((resolve, reject) => {
+      lookup('rebind.example', {}, (error, address, family) =>
+        error === null ? resolve({ address, family }) : reject(error),
+      );
+    });
+
+    expect(answer).toEqual({ address: '93.184.216.34', family: 4 });
   });
 });
 
@@ -97,13 +166,55 @@ describe('createExternalFetch - what may be requested', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('lets the request decide when a name cannot be resolved', async () => {
+  it('refuses a name that cannot be resolved, rather than leaving it to the request', async () => {
     const { external, fetchImpl, resolveAddresses } = setup(() => reply('x'));
     resolveAddresses.mockRejectedValue(new Error('ENOTFOUND'));
 
-    const outcome = await external('https://example.com/', {}, undefined);
+    expect(await external('https://example.com/', {}, undefined)).toEqual({
+      kind: 'blocked',
+      reason: 'cross_origin',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
 
-    expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+  it('refuses a name that resolves to no address at all', async () => {
+    const { external, fetchImpl, resolveAddresses } = setup(() => reply('x'));
+    resolveAddresses.mockResolvedValue([]);
+
+    expect(await external('https://example.com/', {}, undefined)).toEqual({
+      kind: 'blocked',
+      reason: 'cross_origin',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('connects through a dispatcher pinned to the addresses it validated', async () => {
+    const { external, fetchImpl, dispatchers } = setup(() => reply('x'));
+
+    await external('https://example.com/', {}, undefined);
+
+    expect(dispatchers.map((dispatcher) => dispatcher.addresses)).toEqual([PUBLIC]);
+    expect(dispatcherOf(fetchImpl.mock.calls[0]?.[1])).toBe(dispatchers[0]);
+  });
+
+  it('examines only literals and internal names when a proxy resolves the address', async () => {
+    const fetchImpl = vi.fn<AgentFetch>(() => Promise.resolve(reply('x')));
+    const resolveAddresses = vi.fn(() => Promise.resolve(['10.0.0.5']));
+    const createDispatcher = vi.fn();
+    const external = createExternalFetch({
+      getTransport: () => Promise.resolve({ fetch: fetchImpl, proxied: true }),
+      resolveAddresses,
+      createDispatcher,
+    });
+
+    await expect(external('https://example.com/', {}, undefined)).resolves.toMatchObject({
+      kind: 'response',
+    });
+    await expect(external('http://127.0.0.1/', {}, undefined)).resolves.toMatchObject({
+      kind: 'blocked',
+    });
+    expect(resolveAddresses).not.toHaveBeenCalled();
+    expect(createDispatcher).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
@@ -133,6 +244,7 @@ describe('createExternalFetch - the request', () => {
       credentials: 'omit',
       cache: 'no-store',
     });
+    expect(dispatcherOf(fetchImpl.mock.calls[0]?.[1])?.destroy).toHaveBeenCalled();
   });
 
   it("sends the caller's method and accept header", async () => {
@@ -142,7 +254,10 @@ describe('createExternalFetch - the request', () => {
 
     const init = fetchImpl.mock.calls[0]?.[1];
     expect(init?.method).toBe('HEAD');
-    expect(init?.headers).toEqual({ Accept: 'text/html' });
+    expect(init?.headers).toEqual({
+      Accept: 'text/html',
+      'User-Agent': EXTERNAL_FETCH_USER_AGENT,
+    });
   });
 
   it('returns status, content type and body', async () => {
@@ -164,13 +279,74 @@ describe('createExternalFetch - the request', () => {
     expect(outcome).toMatchObject({ kind: 'response', bodyText: '' });
   });
 
-  it('cuts a body at the character cap', async () => {
-    const { external } = setup(() => reply('x'.repeat(500)), { maxChars: 100 });
+  it('cuts a body at the byte cap and says so', async () => {
+    const { external } = setup(() => reply('x'.repeat(500)), { maxBytes: 100 });
 
     const outcome = await external('https://example.com/', {}, undefined);
 
-    expect(outcome).toMatchObject({ kind: 'response' });
+    expect(outcome).toMatchObject({ kind: 'response', truncated: true });
     if (outcome.kind === 'response') expect(outcome.bodyText).toHaveLength(100);
+  });
+
+  it('never offers more than the caller asked for', async () => {
+    const { external } = setup(() => reply('x'.repeat(500)));
+
+    const outcome = await external('https://example.com/', {}, undefined, 10);
+
+    expect(outcome).toMatchObject({ kind: 'response', truncated: true });
+    if (outcome.kind === 'response') expect(outcome.bodyText).toHaveLength(10);
+  });
+
+  it('refuses a declared body larger than the limit without reading it', async () => {
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulled += 1;
+          controller.enqueue(new TextEncoder().encode('x'.repeat(10)));
+        },
+      },
+      // Pull only when someone reads, so the count measures reads and not the
+      // stream's own eager fill.
+      { highWaterMark: 0 },
+    );
+    const { external } = setup(
+      () => new Response(body, { headers: { 'content-length': '5000' } }),
+      { maxBytes: 100 },
+    );
+
+    const outcome = await external('https://example.com/', {}, undefined);
+
+    expect(outcome).toMatchObject({ kind: 'response', bodyText: '', truncated: true });
+    expect(pulled).toBe(0);
+  });
+
+  it('stops reading a stream at the limit instead of draining it', async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new TextEncoder().encode('x'.repeat(10)));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const { external } = setup(() => new Response(body), { maxBytes: 25 });
+
+    const outcome = await external('https://example.com/', {}, undefined);
+
+    expect(outcome).toMatchObject({ kind: 'response', truncated: true });
+    if (outcome.kind === 'response') expect(outcome.bodyText).toHaveLength(25);
+    expect(cancelled).toBe(true);
+  });
+
+  it('does not call a body exactly at the limit truncated', async () => {
+    const { external } = setup(() => reply('x'.repeat(10)), { maxBytes: 10 });
+
+    const outcome = await external('https://example.com/', {}, undefined);
+
+    expect(outcome).toMatchObject({ kind: 'response', bodyText: 'x'.repeat(10) });
+    if (outcome.kind === 'response') expect(outcome.truncated).toBeUndefined();
   });
 });
 
@@ -187,6 +363,23 @@ describe('createExternalFetch - redirects', () => {
       'https://example.com/a',
       'https://example.com/b',
     ]);
+  });
+
+  it('resolves and pins every hop separately', async () => {
+    const { external, fetchImpl, resolveAddresses, dispatchers } = setup((url) =>
+      url.endsWith('/a') ? redirect('/b') : reply('final'),
+    );
+    resolveAddresses.mockResolvedValueOnce(['93.184.216.34']);
+    resolveAddresses.mockResolvedValueOnce(['1.1.1.1']);
+
+    await external('https://example.com/a', {}, undefined);
+
+    expect(resolveAddresses).toHaveBeenCalledTimes(2);
+    expect(dispatchers.map((dispatcher) => dispatcher.addresses)).toEqual([
+      ['93.184.216.34'],
+      ['1.1.1.1'],
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
   it('refuses a redirect to a private address', async () => {
@@ -278,5 +471,27 @@ describe('createExternalFetch - concurrency', () => {
     );
 
     expect(peak).toBe(2);
+  });
+
+  it('drops a queued request whose caller aborts instead of running it later', async () => {
+    let release: (() => void) | undefined;
+    const { external, fetchImpl } = setup(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = () => resolve(reply('x'));
+        }),
+      { concurrency: 1 },
+    );
+
+    const first = external('https://example.com/1', {}, undefined);
+    const controller = new AbortController();
+    const queued = external('https://example.com/2', {}, controller.signal);
+    controller.abort();
+
+    expect(await queued).toEqual({ kind: 'cancelled' });
+    release?.();
+    await first;
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 });

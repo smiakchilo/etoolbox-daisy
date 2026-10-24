@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createWebviewBridgeBroker,
+  validatedAccept,
   type BridgeReplyOrigin,
   type BridgeTransport,
   type BrokerDeps,
@@ -762,7 +763,10 @@ describe('createWebviewBridgeBroker - authentication loss', () => {
     requestId: string,
     reply: (id: string) => unknown,
   ): Promise<void> {
-    void broker.request(makeEnvelope(requestId), 'https://aem.example.com/x');
+    // The application's own JSON data read, which is what may be auth evidence.
+    void broker.request(makeEnvelope(requestId), 'https://aem.example.com/x', {
+      authEvidence: true,
+    });
     harness.fireReply(reply(requestId));
     await flushMicrotasks();
   }
@@ -917,7 +921,7 @@ describe('createWebviewBridgeBroker - request method and accept', () => {
     expect(incidents).toEqual([]);
   });
 
-  it('still takes a redirect met by a JSON read for a lost session', async () => {
+  it('does not let a model-chosen Accept decide the evidence', async () => {
     const { harness, broker, incidents } = createWatchedHarness();
 
     void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
@@ -926,7 +930,40 @@ describe('createWebviewBridgeBroker - request method and accept', () => {
     harness.fireReply(redirectReply('req-a'));
     await flushMicrotasks();
 
+    expect(incidents).toEqual([]);
+  });
+
+  it('takes a redirect met by an application JSON read for a lost session', async () => {
+    const { harness, broker, incidents } = createWatchedHarness();
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
+      authEvidence: true,
+    });
+    harness.fireReply(redirectReply('req-a'));
+    await flushMicrotasks();
+
     expect(incidents).toEqual(['certain']);
+  });
+
+  it('drops an Accept header that carries control characters', () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
+      accept: 'text/html\r\nX-Injected: 1',
+    });
+
+    expect(harness.sendFetchCommands[0]).toEqual({
+      requestId: 'req-a',
+      url: 'https://aem.example.com/x',
+    });
+  });
+
+  it('keeps a printable Accept header', () => {
+    expect(validatedAccept(' application/json, text/plain ')).toBe('application/json, text/plain');
+    expect(validatedAccept(undefined)).toBeUndefined();
+    expect(validatedAccept('')).toBeUndefined();
+    expect(validatedAccept('x'.repeat(201))).toBeUndefined();
   });
 });
 
@@ -1006,7 +1043,9 @@ describe('createWebviewBridgeBroker - DOM reads', () => {
         recovered: () => undefined,
       },
     });
-    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x');
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
+      authEvidence: true,
+    });
     harness.fireReply({ kind: 'blocked', requestId: 'req-a', reason: 'redirect_blocked' });
     await flushMicrotasks();
     expect(incidents).toEqual(['certain']);

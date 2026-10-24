@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { performBridgeRead } from '../../../src/preload/bridgeRead';
 import {
   DOM_READ_HTML_LIMIT,
+  DOM_READ_REDACTED_VALUE,
   DOM_READ_TEXT_LIMIT,
   DOM_READ_TOTAL_LIMIT,
   type WebviewBridgeReadCommand,
@@ -130,6 +131,104 @@ describe('performBridgeRead - refusals', () => {
     expect(performBridgeRead(command({ frame: 'a[' }), pageWith('<a>x</a>'))).toEqual({
       status: 'frame_unavailable',
     });
+  });
+});
+
+describe('performBridgeRead - redaction', () => {
+  it('withholds a password field value and a CSRF hidden field value', () => {
+    const doc = pageWith(
+      '<input type="password" name="j_password" value="hunter2">' +
+        '<input type="hidden" name="csrf" value="abc123">',
+    );
+
+    const result = performBridgeRead(command({ selector: 'input', attributes: ['value'] }), doc);
+
+    expect(result).toMatchObject({
+      redacted: true,
+      items: [
+        { attributes: { value: DOM_READ_REDACTED_VALUE } },
+        { attributes: { value: DOM_READ_REDACTED_VALUE } },
+      ],
+    });
+  });
+
+  it('masks an attribute whose name looks like a credential', () => {
+    const doc = pageWith('<a href="/a" data-auth-token="abc">link</a>');
+
+    const result = performBridgeRead(command({ attributes: ['href', 'data-auth-token'] }), doc);
+
+    expect(result).toMatchObject({
+      redacted: true,
+      items: [{ attributes: { href: '/a', 'data-auth-token': DOM_READ_REDACTED_VALUE } }],
+    });
+  });
+
+  it('still returns an ordinary form field value', () => {
+    const doc = pageWith('<input type="text" name="q" value="daisy">');
+
+    const result = performBridgeRead(command({ selector: 'input', attributes: ['value'] }), doc);
+
+    expect(result).toMatchObject({ items: [{ attributes: { value: 'daisy' } }] });
+    expect(result).not.toHaveProperty('redacted');
+  });
+
+  it('strips inline script/style and masks credentials in markup', () => {
+    const doc = pageWith(
+      '<div id="x"><script>var t = "plainsecret"</script><style>.a{}</style>' +
+        '<input type="hidden" name="token" value="abc"><p data-token="t">hi</p></div>',
+    );
+
+    const result = performBridgeRead(command({ selector: '#x', include: 'html' }), doc);
+
+    const html = (result as { items: { html: string }[] }).items[0]?.html ?? '';
+    expect(html).not.toContain('script');
+    expect(html).not.toContain('style');
+    expect(html).not.toContain('plainsecret');
+    expect(html).not.toContain('abc');
+    expect(html).toContain(DOM_READ_REDACTED_VALUE);
+    expect(result).toMatchObject({ redacted: true });
+  });
+});
+
+describe('performBridgeRead - pre-cap allocation', () => {
+  function textElement(): Element {
+    return {
+      tagName: 'A',
+      textContent: 'x',
+      getAttribute: () => null,
+      attributes: [],
+      cloneNode: () => textElement(),
+      querySelectorAll: () => [],
+    } as unknown as Element;
+  }
+
+  it('walks the match list only as far as it needs', () => {
+    const read: number[] = [];
+    const total = 100_000;
+    const list = new Proxy<Record<string, unknown>>(
+      {},
+      {
+        get(target, property) {
+          if (property === 'length') return total;
+          if (typeof property === 'string' && /^\d+$/.test(property)) {
+            read.push(Number(property));
+            return textElement();
+          }
+          return Reflect.get(target, property) as unknown;
+        },
+      },
+    );
+    const doc = {
+      querySelectorAll: () => list,
+      location: { href: '' },
+      title: '',
+    } as unknown as Document;
+
+    const result = performBridgeRead(command({ limit: 3 }), doc);
+
+    expect(read).toEqual([0, 1, 2]);
+    expect(result).toMatchObject({ status: 'ok', matched: total, truncated: true });
+    expect((result as { items: unknown[] }).items).toHaveLength(3);
   });
 });
 
