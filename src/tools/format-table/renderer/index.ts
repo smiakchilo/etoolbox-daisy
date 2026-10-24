@@ -6,7 +6,7 @@ import {
   describeGenericArgs,
   parameterRows,
 } from '../../../shared';
-import { normalizeFormatTable, type FormatTableMode } from '../formatTable';
+import { type FormatTableMode, normalizeFormatTable, readTableOptions } from '../formatTable';
 
 /**
  * `format_table` does not render as a billet: its call paints an assistant
@@ -28,10 +28,18 @@ function readTableMessage(args: Readonly<Record<string, JsonValue>>): ToolTableM
   if (data === undefined) return undefined;
   const totalLine = typeof args['totalLine'] === 'string' ? args['totalLine'] : undefined;
   const totalPending = args['totalPending'] === true;
-  const normalized = normalizeFormatTable(data, modeFromArgs(args), totalLine, totalPending);
+  const normalized = normalizeFormatTable(
+    data,
+    modeFromArgs(args),
+    totalLine,
+    totalPending,
+    readTableOptions(args),
+  );
   if (normalized === undefined) return undefined;
   return {
     mode: normalized.mode,
+    ...(normalized.title !== undefined ? { title: normalized.title } : {}),
+    columnKinds: normalized.columnKinds,
     total: normalized.total,
     totalPending: normalized.totalPending,
     // The status line is not used for a message table - the total line replaces

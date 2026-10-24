@@ -42,6 +42,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained.                                                                                                                                     | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox).                                                                                                                             | Read before changing the updater or cutting a release. |
 | `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
+| `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the two example skills in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the examples are guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
 
 ---
 
@@ -904,13 +905,12 @@ src/tools/<name>/
   the segments, so **Load more** shows no seam; an unprovable segment end
   degrades to `hasMore: 'unknown'`. See `docs/compatibility.md` §11.4 and
   `docs/backlog.md` "Priority search paths".
-- `format_table` is the **only** table renderer, and it is **internal**
-  (`InternalToolModule`: `internal: true`, no descriptor/allowlist/instructions):
-  the registry keeps it out of the
-  model's handlers, descriptors, allowlist and instructions (it is listed in
-  `ToolRegistry.internalNames`), but the composites still reach it through
-  `invokeTool`. It takes `data` (an array of rows, or an object with a `rows`
-  array - typically the whole `aem_query` result), `mode: 'new' | 'append'`, an
+- `format_table` is the **only** table renderer. It was internal; it is now
+  **model-callable** too (descriptor, `custom:format_table` allowlist entry and
+  instructions), so a custom skill can show its own table. The composites still reach
+  it through `invokeTool`; `ToolRegistry.internalNames` is now only `memo_reflection`.
+  It also takes optional typed `columns` (`{ key, label?, type?: 'text' | 'status' }`)
+  and a `title`; `data` is an array of row objects. It also takes `mode: 'new' | 'append'`, an
   optional `totalLine` that replaces the derived total text, and an optional
   `totalPending: boolean` that draws a small spinner before the total while an
   exact count is still being fetched (the run's **last** call decides it, exactly
@@ -974,6 +974,38 @@ src/tools/<name>/
   one exception that adds DAM roots — content then DAM, collapsed — and only the
   two search composites use it, so a plain `aem_query` never traverses DAM by
   default.
+- **`http_fetch`, `page_read`, `page_audit`** (2026-10-25, for custom skills; see
+  `docs/custom-skills.md`). `http_fetch` `{ url, method?: GET|HEAD, accept? }` fetches
+  through the pane's authenticated session for a configured host, else through
+  `ToolHost.externalFetch` (`src/main/externalFetch.ts`: cookie-less, public hosts only -
+  link-local, metadata, loopback and private addresses are refused). `aem_get_json` is a
+  composite on it (`uses: ['http_fetch']`; its nested billet is `transparent`).
+  `page_read` `{ selector, include?, attributes?, limit?, frame? }` reads the open page's
+  DOM through the broker's read channel (`webview-bridge:read`, `ToolHost.bridge.readDom`).
+  `page_audit` `{ url?, categories?, formFactor? }` runs Lighthouse in a hidden offscreen
+  `WebContents` over an in-process CDP transport (`src/main/pageAudit.ts`,
+  `pageAuditTransport.ts`; `ToolHost.pageAudit`), serialized, 120 s deadline; a
+  non-configured origin uses a cookie-less `audit-anonymous` session. The runner takes an
+  optional third `progress` callback (`PageAuditRunner`, `src/shared/tools/core`, not a
+  `contracts/` change) that the tool forwards to `reportToolProgress`: the billet reads
+  "Loading tools" while the lazy imports run (the slow first audit), then "Auditing the
+  page". Their results are
+  untrusted page data (`session.md`). Rule 7.4 is unchanged: `method` stays GET/HEAD.
+  **Why two runtime dependencies** (`lighthouse` 13.5.0, `puppeteer-core` 25.16.0, main
+  process only, both imported lazily): Lighthouse 12+ has no Chrome driver of its own and
+  takes a Puppeteer `Page`; `puppeteer-core` (no Chromium download) supplies it through
+  our `DebuggerTransport`, so the audit drives the hidden `WebContents` instead of a
+  second browser. Dropping Puppeteer would mean writing a Lighthouse driver. Cost:
+  ~130 MB of `node_modules` across ~100 packages (largest: `lighthouse`, `@sentry/*`,
+  `@paulirish/trace_engine`, `@opentelemetry/semantic-conventions`, `chromium-bidi`; disk
+  only, nothing at startup), `npm audit` advisories not yet addressed
+  (`docs/verification/followons-2026-10.md`). Keep both pinned and imported only from
+  `pageAudit.ts` / `pageAuditTransport.ts`.
+  Known open: external-HTTPS audits are flaky in the offscreen window and the packaged
+  build is unverified (`docs/backlog.md`).
+- A skill's front matter may carry `table-only: true`: the transcript suppresses the
+  model's prose for that skill's turn, as it does for the search skills (the
+  hard-coded `DETERMINISTIC_TABLE_SKILLS` list is gone; a bundled fallback remains).
 - `browser_navigate` opens a page in the browser pane. It also takes an optional `mode` (`view`/`edit`/`sites`/`assets`/`crxde`/`asset_details`/`properties`): with a mode `path` is a raw repository path and the application builds the URL (`shapeModeBrowserPath`; consoles carry no `.html`); without one a verbatim path is completed only by `completeBrowserPath` (extensionless `/content` page gets `.html`). Also a `place` (standard AEM places, application-owned paths), the `admin` mode alias, a repository-root check on modes, and a tolerant `host` (label, origin, host:port). Billet rows: URL / Mode / Place / Result. It takes a host **label**
   (or none, for the pane's current host) and a **verbatim browser path**
   (`/content/site/page.html`, `/editor.html/content/site/page.html`, `/crx/de`);
@@ -1279,8 +1311,9 @@ Scripts are ES modules that `export default` a function of the input; relative
 imports work; **JS only** (a `.py` file is readable, not runnable).
 
 **Two sources, user wins.** Bundled skills come from `resources/skills/`; user
-skills from exactly `~\etoolbox-daisy\skills` (`appPaths.skills`), read **at
-startup only** (restart to apply). A user skill with a bundled skill's name
+skills from exactly `~\etoolbox-daisy\skills` (`appPaths.skills`), read at startup
+and again on the Skills tab's icon-only reload button (`skills:reload`; no restart
+needed - rules have the same, `rules:reload`). A user skill with a bundled skill's name
 **replaces** it (owner decision; plan D3 said the opposite), but a *rejected* user
 skill never displaces a bundled one. A skill needs a valid lowercase name and a
 non-empty `description`; limits: `SKILL.md` 64 KB, 200 files, 5 MB total, depth 4;
@@ -1289,21 +1322,27 @@ link/junction is rejected (`Links are not followed.`), and paths are real-path
 contained.
 Rejections log `SKILL_REJECTED`; a failed script logs `SKILL_SCRIPT_FAILED`.
 
-**Settings "Skills" tab** (after Agents) holds two action links, **Custom skills
-folder** (`skills:open-folder`, no payload: main creates the folder and opens it in
-the OS file manager) and **Custom rules folder** (`rules:open-folder`, same
-shape - see "User rules" below), each with contextual help, then the
+**Settings "Skills" tab** (after Agents) holds the **Custom skills
+folder** link (`skills:open-folder`, no payload: main creates the folder and opens it in
+the OS file manager), an icon-only **Reload skills** button (`skills:reload`, test id `skills-reload`;
+the browser toolbar's refresh icon with a native `title` tooltip; re-indexes both
+sources and refreshes the composer's `/` list and the agent runtime) and the
+**Custom rules folder** link (`rules:open-folder`, same
+shape - see "User rules" below) with its own icon-only **Reload rules** button
+(`rules:reload`, test id `rules-reload`), each with contextual help, then the
 **Self-learning** checkbox (`memos.enabled`) and the **Memos folder** link
 (`memos:open-folder`) - see "Memos" below. The three folder buttons share one
 width so they line up as a column, and every help badge on the tab ends with the
-same ". Changes apply ..." formula (after restarting the app for skills and
-rules, on the next prompt for memos and the checkbox). The tab reads as three
+same ". Changes apply ..." formula (after reloading for skills, on the next
+prompt for rules, memos and the checkbox). The tab reads as three
 subsections (skills, rules, the memos pair), separated by the **one
 `.subsection-gap` utility** (24px, in `settings.css`, also on the
 Hosts/Projects/Proxies multifield list and the Agents provider cards) rather than
-a bespoke rule per tab. There is no reload button
-and no per-skill list. Test ids:
-`settings-tab-skills`, `skills-open-folder`, `rules-open-folder`,
+a bespoke rule per tab. There is no per-skill list. Writing and installing a
+custom skill (front matter, `table-only`, the example skills `lighthouse-check` and
+`links-check`) is documented in `docs/custom-skills.md` and
+`docs/examples/skills/`. Test ids:
+`settings-tab-skills`, `skills-open-folder`, `skills-reload`, `rules-open-folder`,
 `memos-open-folder`, `data-field="memos-enabled"`.
 
 Every **new** bundled skill must carry a user-facing summary in its front
@@ -1454,7 +1493,12 @@ files (`tests/support/ruleResources.ts`).
 
 The user's own standing instructions, as `*.md` files, merged with the bundled
 ones. Named **rules** (the Open Agent term), not "instructions". Mirrors the skill
-subsystem: read **at startup only** (restart to apply) by `src/main/rules/`
+subsystem: read at startup and again on the Skills tab's **Reload rules** button
+(`rules:reload` - `ruleStore.reload()`, then a deferred runtime recycle so generic
+rules reach the session instructions; project rules are read per prompt and need
+only the store refresh. A shared-surface addition: `RULES_RELOAD_CHANNEL`,
+`DaisyRulesApi.reload`, `rulesReloadResultSchema`, log code `RULES_RELOAD_FAILED`;
+no `contracts/` file changed) by `src/main/rules/`
 (`ruleStore.ts`, `ruleFrontMatter.ts`, `ruleRendering.ts`), the folder is
 `appPaths.rules`, and the Settings **Skills** tab carries a second action link,
 **Custom rules folder** (`rules:open-folder`, test id `rules-open-folder`).
@@ -1683,7 +1727,15 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4289 passed / 13 skipped** (+106 against the
+Current baseline: **`npm run test` → 4523 passed / 13 skipped** (+234 against the
+4289 below - **custom skills for validator-style audits** (2026-10-25): the new
+`http_fetch`, `page_read` and `page_audit` tools, a model-callable `format_table`
+with typed columns, the `table-only` skill flag, and **Reload skills**; see the
+Skills tab and the `http_fetch` bullet in §5, and `docs/verification/followons-2026-10.md` "Custom skills for
+validator-style audits ... (2026-10-25)". Playwright is 161 tests; a full run was 155
+passed / 6 failed - the four environment-bound `network-error` cases plus the
+load-correlated `host-proxy-selection` and `settings-hosts` flakes, both green on
+repeat). Before that it was **`npm run test` → 4289 passed / 13 skipped** (+106 against the
 4183 below - **the chat footer's token gauge and the Usage panel** (2026-10-24):
 a gauge (gross input/output, hidden while no call has reported either) before the
 reveal-log control opens a whole-size Usage panel (model, context, input uncached

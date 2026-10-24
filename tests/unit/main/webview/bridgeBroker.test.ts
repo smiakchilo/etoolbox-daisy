@@ -7,6 +7,10 @@ import {
   type BrokerOutcome,
 } from '../../../../src/main/webview/bridgeBroker';
 import { type CurrentBridgeContext } from '../../../../src/shared';
+import type {
+  WebviewBridgeFetchCommand,
+  WebviewBridgeReadCommand,
+} from '../../../../src/shared/contracts/webviewBridge';
 import { toolRequestEnvelopeSchema, type ToolRequestEnvelope } from '../../../support/toolUnions';
 import type { Logger } from '../../../../src/main/logger';
 import type {
@@ -77,6 +81,8 @@ interface FakeTimer {
  */
 function createHarness(options: { readonly maxConcurrentRequests?: number } = {}) {
   const sendFetchCalls: string[] = [];
+  const sendFetchCommands: WebviewBridgeFetchCommand[] = [];
+  const sendReadCommands: WebviewBridgeReadCommand[] = [];
   const sendCancelCalls: string[] = [];
   const timers: FakeTimer[] = [];
   let replyListener: ((rawReply: unknown, origin: BridgeReplyOrigin) => void) | undefined;
@@ -88,6 +94,11 @@ function createHarness(options: { readonly maxConcurrentRequests?: number } = {}
   const transport: BridgeTransport = {
     sendFetch(command) {
       sendFetchCalls.push(command.requestId);
+      sendFetchCommands.push(command);
+      return !blockedRequestIds.has(command.requestId);
+    },
+    sendRead(command) {
+      sendReadCommands.push(command);
       return !blockedRequestIds.has(command.requestId);
     },
     sendCancel(command) {
@@ -122,6 +133,8 @@ function createHarness(options: { readonly maxConcurrentRequests?: number } = {}
   return {
     deps,
     sendFetchCalls,
+    sendFetchCommands,
+    sendReadCommands,
     sendCancelCalls,
     timers,
     setNow: (value: number) => {
@@ -835,5 +848,186 @@ describe('createWebviewBridgeBroker - authentication loss', () => {
     const broker = createWebviewBridgeBroker(harness.deps);
     await settleWith(harness, broker, 'req-a', unauthorizedReply);
     expect(() => broker.resetAuthIncidents()).not.toThrow();
+  });
+});
+
+describe('createWebviewBridgeBroker - request method and accept', () => {
+  const redirectReply = (requestId: string) => ({
+    kind: 'blocked',
+    requestId,
+    reason: 'redirect_blocked',
+  });
+
+  function createWatchedHarness() {
+    const harness = createHarness();
+    const incidents: string[] = [];
+    const broker = createWebviewBridgeBroker({
+      ...harness.deps,
+      authWatch: {
+        incident: (event) => incidents.push(event.severity),
+        recovered: () => undefined,
+      },
+    });
+    return { harness, broker, incidents };
+  }
+
+  it('sends a plain GET with no method or accept on the wire', () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x');
+
+    expect(harness.sendFetchCommands[0]).toEqual({
+      requestId: 'req-a',
+      url: 'https://aem.example.com/x',
+    });
+  });
+
+  it('hands a HEAD method and an accept header on to the transport', () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
+      method: 'HEAD',
+      accept: 'text/html',
+    });
+
+    expect(harness.sendFetchCommands[0]).toMatchObject({ method: 'HEAD', accept: 'text/html' });
+  });
+
+  it('does not take a redirect met by a HEAD probe for a lost session', async () => {
+    const { harness, broker, incidents } = createWatchedHarness();
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', { method: 'HEAD' });
+    harness.fireReply(redirectReply('req-a'));
+    await flushMicrotasks();
+
+    expect(incidents).toEqual([]);
+  });
+
+  it('does not take a redirect met by an HTML read for a lost session', async () => {
+    const { harness, broker, incidents } = createWatchedHarness();
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
+      accept: 'text/html',
+    });
+    harness.fireReply(redirectReply('req-a'));
+    await flushMicrotasks();
+
+    expect(incidents).toEqual([]);
+  });
+
+  it('still takes a redirect met by a JSON read for a lost session', async () => {
+    const { harness, broker, incidents } = createWatchedHarness();
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x', {
+      accept: 'application/json',
+    });
+    harness.fireReply(redirectReply('req-a'));
+    await flushMicrotasks();
+
+    expect(incidents).toEqual(['certain']);
+  });
+});
+
+describe('createWebviewBridgeBroker - DOM reads', () => {
+  const SPEC = { selector: 'a', limit: 20 } as const;
+  const domResult = {
+    status: 'ok',
+    url: 'https://x.example/',
+    title: 'T',
+    matched: 0,
+    items: [],
+    truncated: false,
+  };
+
+  function domReply(requestId: string, result: unknown = domResult) {
+    return { kind: 'dom', requestId, result };
+  }
+
+  it('hands the read to the transport as a read command, not a fetch', () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    void broker.readDom(makeEnvelope('req-a'), SPEC);
+
+    expect(harness.sendReadCommands).toEqual([{ requestId: 'req-a', ...SPEC }]);
+    expect(harness.sendFetchCalls).toEqual([]);
+  });
+
+  it('settles a dom reply as a JSON response carrying the result', async () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    const outcome = trackOutcome(broker.readDom(makeEnvelope('req-a'), SPEC));
+    harness.fireReply(domReply('req-a'));
+    await flushMicrotasks();
+
+    expect(outcome.value()).toEqual({
+      kind: 'response',
+      status: 200,
+      contentType: 'application/json',
+      bodyText: JSON.stringify(domResult),
+    });
+  });
+
+  it('settles no_view when the transport cannot deliver the read', async () => {
+    const harness = createHarness();
+    harness.blockRequestId('req-a');
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    const outcome = trackOutcome(broker.readDom(makeEnvelope('req-a'), SPEC));
+    await flushMicrotasks();
+
+    expect(outcome.value()).toEqual({ kind: 'no_view' });
+  });
+
+  it('shares the request queue with fetches, in order', async () => {
+    const harness = createHarness();
+    const broker = createWebviewBridgeBroker(harness.deps);
+
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x');
+    void broker.readDom(makeEnvelope('req-b'), SPEC);
+    expect(harness.sendReadCommands).toEqual([]);
+
+    harness.fireReply(okReply('req-a'));
+    await flushMicrotasks();
+
+    expect(harness.sendReadCommands.map((command) => command.requestId)).toEqual(['req-b']);
+  });
+
+  it('is not refused by a lost-session latch, and does not feed it', async () => {
+    const harness = createHarness();
+    const incidents: string[] = [];
+    const broker = createWebviewBridgeBroker({
+      ...harness.deps,
+      authWatch: {
+        incident: (event) => incidents.push(event.severity),
+        recovered: () => undefined,
+      },
+    });
+    void broker.request(makeEnvelope('req-a'), 'https://aem.example.com/x');
+    harness.fireReply({ kind: 'blocked', requestId: 'req-a', reason: 'redirect_blocked' });
+    await flushMicrotasks();
+    expect(incidents).toEqual(['certain']);
+
+    void broker.readDom(makeEnvelope('req-b'), SPEC);
+    expect(harness.sendReadCommands.map((command) => command.requestId)).toEqual(['req-b']);
+
+    harness.fireReply({ kind: 'blocked', requestId: 'req-b', reason: 'redirect_blocked' });
+    await flushMicrotasks();
+    expect(incidents).toEqual(['certain']);
+  });
+
+  it('logs the read with the READ method and its selector', () => {
+    const harness = createHarness();
+    const { toolLogger, requests } = recordingToolLogger();
+    const broker = createWebviewBridgeBroker({ ...harness.deps, toolLogger });
+
+    void broker.readDom(makeEnvelope('req-a'), SPEC);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ requestId: 'req-a', method: 'READ' });
+    expect(requests[0]?.url).toContain(SPEC.selector);
   });
 });

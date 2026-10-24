@@ -112,6 +112,10 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     onDismiss() {
       browserPane.panelHost.close();
     },
+    // The chat pane is created after the panel; the callback runs on a click only.
+    onSkillsReloaded() {
+      void chatPane.reloadSkills();
+    },
   });
   browserPane.appendPanel(settingsPanel);
 

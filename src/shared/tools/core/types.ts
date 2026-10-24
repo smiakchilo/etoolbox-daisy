@@ -78,6 +78,17 @@ export type BrokerOutcome =
   | { readonly kind: 'bridge_unavailable' };
 
 /**
+ * What a tool may vary about one bridge fetch. Everything else (credentials,
+ * redirect handling, caching) is fixed by the preload. Only the two
+ * non-mutating methods exist; the bridge has no write path.
+ */
+export interface BridgeRequestOptions {
+  readonly method?: 'GET' | 'HEAD';
+  /** Replaces the default JSON `Accept`, e.g. for an HTML page. */
+  readonly accept?: string;
+}
+
+/**
  * A tool's model-facing registration data. `parameters` is derived from the
  * same schema that validates the call (`z.toJSONSchema`), so the two cannot
  * drift the way a hand-written JSON Schema copy eventually would.

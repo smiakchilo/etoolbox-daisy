@@ -1055,6 +1055,30 @@ describe('createChatPane skill catalogue', () => {
 
     pane.dispose();
   });
+
+  it('reads the catalogue again when the skills were reloaded', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    expect(listSkills).toHaveBeenCalledTimes(1);
+
+    await pane.reloadSkills();
+
+    expect(listSkills).toHaveBeenCalledTimes(2);
+
+    pane.dispose();
+  });
+
+  it('does not read the catalogue on a reload before the first read happened', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+
+    await pane.reloadSkills();
+
+    expect(listSkills).not.toHaveBeenCalled();
+
+    pane.dispose();
+  });
 });
 
 describe('createChatPane interruptions and session id', () => {

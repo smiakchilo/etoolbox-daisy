@@ -1,7 +1,9 @@
 import type {
+  DomReadSpec,
   WebviewBridgeCancelCommand,
   WebviewBridgeFetchCommand,
   WebviewBridgeHeader,
+  WebviewBridgeReadCommand,
   WebviewBridgeReply,
 } from '../../shared/contracts/webviewBridge';
 import {
@@ -10,6 +12,7 @@ import {
 } from '../../shared/contracts/webviewBridge';
 import {
   type AuthIncidentSeverity,
+  type BridgeRequestOptions,
   type BrokerOutcome,
   type Clock,
   type CurrentBridgeContext,
@@ -47,6 +50,8 @@ export interface BridgeReplyOrigin {
 export interface BridgeTransport {
   /** Delivers a fetch command to the browser view. Returns false when there is no live view to send to. */
   sendFetch(command: WebviewBridgeFetchCommand): boolean;
+  /** Delivers a DOM read command to the browser view. Optional like `isReady`; absent means reads are unsupported. */
+  sendRead?(command: WebviewBridgeReadCommand): boolean;
   sendCancel(command: WebviewBridgeCancelCommand): void;
   /**
    * Whether the live browser view's preload has announced it can answer fetches
@@ -130,8 +135,18 @@ function toLogOutcome(outcome: BrokerOutcome): LogOutcome {
  * so the broker's own consumers keep a single import site.
  */
 export interface WebviewBridgeBroker {
-  /** Issues one fetch. Resolves exactly once. */
-  request(envelope: ToolEnvelopeBase, url: string): Promise<BrokerOutcome>;
+  /**
+   * Reads elements from the document the pane is showing, with the same
+   * deadline, staleness, concurrency and cancel rules as a fetch. The reply is
+   * a JSON `response` outcome carrying a `WebviewBridgeDomResult`.
+   */
+  readDom(envelope: ToolEnvelopeBase, spec: DomReadSpec): Promise<BrokerOutcome>;
+  /** Issues one fetch (`GET` unless `options.method` says otherwise). Resolves exactly once. */
+  request(
+    envelope: ToolEnvelopeBase,
+    url: string,
+    options?: BridgeRequestOptions,
+  ): Promise<BrokerOutcome>;
   /**
    * Cancels the in-flight request and every queued one. Used on stop, chat
    * switch, and server switch. Takes no reason argument on purpose: nothing
@@ -152,6 +167,10 @@ export interface WebviewBridgeBroker {
 interface PendingRequest {
   readonly envelope: ToolEnvelopeBase;
   readonly url: string;
+  readonly method: 'GET' | 'HEAD';
+  readonly accept: string | undefined;
+  /** Set for a DOM read; such a request has no URL and is no evidence about the session. */
+  readonly read: DomReadSpec | undefined;
   readonly resolve: (outcome: BrokerOutcome) => void;
   /** When the request was enqueued, so `WEBVIEW_REQUEST_COMPLETED` can report total wait. */
   readonly queuedAt: number;
@@ -174,6 +193,15 @@ function replyToOutcome(reply: WebviewBridgeReply): BrokerOutcome {
       return { kind: 'network_error', message: reply.message };
     case 'cancelled':
       return { kind: 'cancelled' };
+    case 'dom':
+      // Carried as a JSON response so no consumer of `BrokerOutcome` needs a new
+      // case; `page_read` parses it back with the same schema.
+      return {
+        kind: 'response',
+        status: 200,
+        contentType: 'application/json',
+        bodyText: JSON.stringify(reply.result),
+      };
   }
 }
 
@@ -262,7 +290,16 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
       durationMs,
       headers: responseHeaders ?? [],
     });
-    noteAuthEvidence(entry.envelope.serverId, outcome);
+    // Only a JSON data read is evidence about the session. A HEAD probe or an
+    // HTML page read legitimately meets redirects and login-looking markup
+    // (a link checker visiting a vanity URL) and must not latch a false loss.
+    if (
+      entry.read === undefined &&
+      entry.method === 'GET' &&
+      (entry.accept ?? 'json').toLowerCase().includes('json')
+    ) {
+      noteAuthEvidence(entry.envelope.serverId, outcome);
+    }
     entry.resolve(outcome);
   }
 
@@ -317,10 +354,18 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
         pump();
       }, remainingMs);
 
-      const sent = deps.transport.sendFetch({
-        requestId: entry.envelope.requestId,
-        url: entry.url,
-      });
+      const sent =
+        entry.read === undefined
+          ? deps.transport.sendFetch({
+              requestId: entry.envelope.requestId,
+              url: entry.url,
+              ...(entry.method === 'GET' ? {} : { method: entry.method }),
+              ...(entry.accept === undefined ? {} : { accept: entry.accept }),
+            })
+          : (deps.transport.sendRead?.({
+              requestId: entry.envelope.requestId,
+              ...entry.read,
+            }) ?? false);
       if (!sent) {
         settle(entry, { kind: 'no_view' });
         continue;
@@ -331,12 +376,15 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
       });
       deps.toolLogger?.request({
         requestId: entry.envelope.requestId,
-        method: 'GET',
+        method: entry.read === undefined ? entry.method : 'READ',
         url: entry.url,
-        headers: Object.entries(WEBVIEW_BRIDGE_REQUEST_HEADERS).map(([name, value]) => ({
-          name,
-          value,
-        })),
+        headers:
+          entry.read === undefined
+            ? Object.entries({
+                ...WEBVIEW_BRIDGE_REQUEST_HEADERS,
+                ...(entry.accept === undefined ? {} : { Accept: entry.accept }),
+              }).map(([name, value]) => ({ name, value }))
+            : [],
       });
     }
   }
@@ -393,7 +441,24 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
   });
 
   return {
-    request(envelope, url) {
+    readDom(envelope, spec) {
+      return new Promise<BrokerOutcome>((resolve) => {
+        queue.push({
+          envelope,
+          // Not a request URL: the logs record what was read, by selector.
+          url: `dom-read:${spec.selector}`,
+          method: 'GET',
+          accept: undefined,
+          read: spec,
+          resolve,
+          queuedAt: deps.clock(),
+          settled: false,
+          cancelTimer: undefined,
+        });
+        pump();
+      });
+    },
+    request(envelope, url, options) {
       if (authEpisodes.get(envelope.serverId) === 'certain') {
         // `redirect_blocked` is the outcome a signed-out host produces anyway, so
         // every tool already maps it to "sign in to the host".
@@ -403,6 +468,9 @@ export function createWebviewBridgeBroker(deps: BrokerDeps): WebviewBridgeBroker
         const entry: PendingRequest = {
           envelope,
           url,
+          method: options?.method ?? 'GET',
+          accept: options?.accept,
+          read: undefined,
           resolve,
           queuedAt: deps.clock(),
           settled: false,

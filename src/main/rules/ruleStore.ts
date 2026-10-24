@@ -6,7 +6,8 @@ import { normalizeProjectLabel, parseRuleMarkdown } from './ruleFrontMatter';
 /**
  * The reader of the user's own rules: `*.md` files, top level only, in the
  * application-fixed `<home>/etoolbox-daisy/rules` folder. Like skills, they are
- * read once, at startup (`load()`); a change on disk applies after a restart.
+ * read at startup (`load()`) and again on request (`reload()`, the Settings
+ * reload button); without that, a change on disk applies after a restart.
  *
  * A rule with no `project` front matter is generic and joins the session
  * instructions; a rule naming projects is handed to the model by the chat
@@ -41,11 +42,15 @@ export interface RuleStoreOptions {
 export interface RuleStore {
   /** Reads the folder once; later calls share that read. */
   load(): Promise<void>;
+  /** Reads the folder again, replacing what was loaded and the rejections. */
+  reload(): Promise<void>;
   /** The generic rules, sorted by name; `[]` until `load()` resolves. */
   generic(): readonly LoadedRule[];
   /** The rules naming `label` (trimmed, case-insensitive), sorted by name. */
   forProject(label: string): readonly LoadedRule[];
   rejections(): readonly RuleRejection[];
+  /** The number of rules loaded, generic and project alike. */
+  count(): number;
 }
 
 const RULE_EXTENSION = '.md';
@@ -132,6 +137,7 @@ export function createRuleStore(options: RuleStoreOptions): RuleStore {
     const rejections: RuleRejection[] = [];
     const files = await readRuleFiles(options.directory, rejections);
     rules = applyBudgets(files, rejections);
+    rejected.length = 0;
     for (const rejection of rejections) {
       rejected.push(rejection);
       options.onRejected?.(rejection);
@@ -143,6 +149,10 @@ export function createRuleStore(options: RuleStoreOptions): RuleStore {
       loaded ??= read();
       return loaded;
     },
+    reload() {
+      loaded = read();
+      return loaded;
+    },
     generic: () => rules.filter((rule) => rule.projects.length === 0),
     forProject(label) {
       const key = normalizeProjectLabel(label);
@@ -150,5 +160,6 @@ export function createRuleStore(options: RuleStoreOptions): RuleStore {
       return rules.filter((rule) => rule.projects.includes(key));
     },
     rejections: () => rejected,
+    count: () => rules.length,
   };
 }

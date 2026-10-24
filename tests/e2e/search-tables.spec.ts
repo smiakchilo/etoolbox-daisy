@@ -339,7 +339,7 @@ test.describe('deterministic search tables', () => {
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
   });
   test('a skill the model chose on its own (no /name) hides its prose, keeps the table and shows the load', async () => {
-    // A natural-language prompt: `isDeterministicTablePrompt` is false at send,
+    // A natural-language prompt: `isDeterministicTablePrompt` (driven by the skills' `table-only` flag) is false at send,
     // so the prose can only be suppressed retroactively, by the turn's own
     // `skill` call. The leading delta proves the message item is removed even
     // though it was created before the skill was loaded. The load itself is a

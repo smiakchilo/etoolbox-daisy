@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../../../src/main/logger';
-import { RULES_OPEN_FOLDER_CHANNEL } from '../../../../src/shared';
+import { RULES_OPEN_FOLDER_CHANNEL, RULES_RELOAD_CHANNEL } from '../../../../src/shared';
 import { ipcEventFrom, makeRecordingLogger } from '../../../support/ipcHandlerHarness';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
   session: {},
 }));
 
-const { openRulesFolder, registerRulesIpcHandlers } =
+const { openRulesFolder, registerRulesIpcHandlers, reloadRules } =
   await import('../../../../src/main/ipc/rules');
 
 const scratch = createScratchDirs('rules-ipc', 'rules-ipc-');
@@ -68,18 +68,60 @@ describe('openRulesFolder', () => {
   });
 });
 
+describe('reloadRules', () => {
+  it('reports the count the reload resolved to', async () => {
+    const logger = makeRecordingLogger();
+    expect(await reloadRules(() => Promise.resolve(3), logger)).toEqual({ ok: true, count: 3 });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('reports reload_failed and logs no free text when the reload throws', async () => {
+    const logger = makeRecordingLogger();
+    const result = await reloadRules(() => Promise.reject(new Error('C:\\secret')), logger);
+    expect(result).toMatchObject({ ok: false, error: { code: 'reload_failed' } });
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(logger.error).toHaveBeenCalledWith('RULES_RELOAD_FAILED', { outcome: 'failure' });
+  });
+});
+
 describe('registerRulesIpcHandlers', () => {
-  function register(logger: Logger): (event: unknown) => Promise<unknown> {
+  const reload = vi.fn<() => Promise<number>>();
+
+  function register(
+    logger: Logger,
+    channel:
+      typeof RULES_OPEN_FOLDER_CHANNEL | typeof RULES_RELOAD_CHANNEL = RULES_OPEN_FOLDER_CHANNEL,
+  ) {
     registerRulesIpcHandlers({
       directory: path.join(scratch.create(), 'rules'),
       logger,
       rendererDistDir: RENDERER_DIST,
       mainWebContentsId: MAIN_WEB_CONTENTS_ID,
+      reload,
     });
-    const handler = invokeHandlers.get(RULES_OPEN_FOLDER_CHANNEL);
+    const handler = invokeHandlers.get(channel);
     if (handler === undefined) throw new Error('handler not registered');
-    return (event) => Promise.resolve(handler(event));
+    return (event: unknown) => Promise.resolve(handler(event));
   }
+
+  it('reloads the rules for a trusted sender', async () => {
+    reload.mockReset();
+    reload.mockResolvedValue(2);
+    const handler = register(makeRecordingLogger(), RULES_RELOAD_CHANNEL);
+    expect(await handler(ipcEventFrom(TRUSTED_URL, MAIN_WEB_CONTENTS_ID))).toEqual({
+      ok: true,
+      count: 2,
+    });
+  });
+
+  it('refuses a reload from a remote frame without reloading', async () => {
+    reload.mockReset();
+    const logger = makeRecordingLogger();
+    const handler = register(logger, RULES_RELOAD_CHANNEL);
+    const result = await handler(ipcEventFrom('https://aem.example/', MAIN_WEB_CONTENTS_ID));
+    expect(result).toMatchObject({ ok: false, error: { code: 'untrusted_sender' } });
+    expect(reload).not.toHaveBeenCalled();
+  });
 
   it('opens the folder for a trusted sender', async () => {
     const handler = register(makeRecordingLogger());

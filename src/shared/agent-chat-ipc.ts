@@ -360,11 +360,14 @@ export function parseAgentChatHistoryListResult(candidate: unknown): AgentChatHi
  * from the application's own `resources/skills/<name>/SKILL.md` front matter and
  * never sends a skill's body - the renderer only ever re-emits the name in a
  * prompt, and the model loads the body through the runtime's `skill` tool.
+ * `tableOnly` (present only when true) tells the transcript that the skill's
+ * answer is one application-rendered table, so the model's prose is suppressed.
  */
 export const agentChatSkillSchema = z
   .object({
     name: z.string().min(1).max(200),
     description: z.string().max(4000),
+    tableOnly: z.boolean().optional(),
   })
   .strict();
 

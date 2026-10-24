@@ -272,6 +272,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
     readonly callees?: Readonly<Record<string, ToolExecutor>>;
     readonly disabled?: readonly string[];
     readonly nestedCalls?: NestedToolCallObserver;
+    readonly transparent?: boolean;
   }): Promise<ToolHost> {
     let captured: ToolHost | undefined;
     const entries: Record<string, () => Promise<unknown>> = {
@@ -280,6 +281,7 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
         Promise.resolve({
           tool: fakeTool('caller', {
             uses: params.uses,
+            ...(params.transparent === true ? { transparent: true } : {}),
             createExecutor: (toolHost) => {
               captured = toolHost;
               return () => Promise.resolve({ ok: true, value: {} });
@@ -457,10 +459,30 @@ describe('ToolHost.invokeTool (the tool-to-tool bridge)', () => {
       { phase: 'settled', toolName: 'callee', outcome: { n: 2 } },
     ]);
   });
+
+  it('keeps the nested calls of a transparent tool from the observer, yet still runs them', async () => {
+    const seen: string[] = [];
+    const callee = vi.fn<ToolExecutor>(() => Promise.resolve({ ok: true, value: { n: 3 } }));
+    const toolHost = await setUp({
+      uses: ['callee'],
+      callees: { callee },
+      transparent: true,
+      nestedCalls: {
+        onCallStarted: (call) => seen.push(call.toolName),
+        onCallSettled: (call) => seen.push(call.toolName),
+      },
+    });
+
+    const result = await toolHost.invokeTool('callee', {}, parent());
+
+    expect(result).toEqual({ ok: true, value: { n: 3 } });
+    expect(callee).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([]);
+  });
 });
 
 describe('discovered tools (the real src/tools folders)', () => {
-  it('enables exactly the shipped tools, keeps format_table and memo_reflection internal and aem_create_page disabled', async () => {
+  it('enables exactly the shipped tools, keeps memo_reflection internal and aem_create_page disabled', async () => {
     const registry = await buildToolRegistry({
       instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
       host,
@@ -476,12 +498,16 @@ describe('discovered tools (the real src/tools folders)', () => {
       'ask_user',
       'browser_navigate',
       'environment_facts',
+      'format_table',
+      'http_fetch',
       'memo',
+      'page_audit',
+      'page_read',
       'skill',
       'skill_resource',
       'skill_script',
     ]);
-    expect([...registry.internalNames].sort()).toEqual(['format_table', 'memo_reflection']);
+    expect([...registry.internalNames]).toEqual(['memo_reflection']);
     expect(registry.disabledNames).toEqual(['aem_create_page']);
     expect([...registry.allowlistEntries].sort()).toEqual([
       'custom:aem_get_json',
@@ -491,7 +517,11 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:ask_user',
       'custom:browser_navigate',
       'custom:environment_facts',
+      'custom:format_table',
+      'custom:http_fetch',
       'custom:memo',
+      'custom:page_audit',
+      'custom:page_read',
       'custom:skill',
       'custom:skill_resource',
       'custom:skill_script',

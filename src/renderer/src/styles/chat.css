@@ -486,6 +486,15 @@
   flex: 0 0 auto;
 }
 
+.chat-table-message__title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+
+.chat-table-message__status {
+  white-space: nowrap;
+}
+
 /* The table spans the message and grows with its content. Its cells are set to
    the assistant message's own text size: `size: "s"` had rendered them at
    Spectrum's small size, visibly smaller than the surrounding prose. */

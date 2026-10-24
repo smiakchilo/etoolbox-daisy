@@ -3,6 +3,7 @@ name: search-page
 description: Find the pages built on a given page template or page component - the page-type search. Load this instead of the `search` skill whenever the thing the pages share is a template or a page resource type, such as "pages on the <name> template", "show me pages on <template title>", "which pages use template <path>", "pages created from <template>", "find pages of type <page component>" or "pages with sling:resourceType <x>". Both static and editable templates are supported, and a template may be given by path, name or title. Load it before acting - its body carries the exact procedure (a template name is looked up in the template list, never guessed or searched as free text), and the application then shows the table of pages with no prose of your own. Use it whenever the user asks which pages use or are based on a template or a page component, including when they invoke `/search-page <what>`. A request for pages that contain a component is `search-component`, not this skill.
 metadata:
   user-description: Find the pages built on a given template or page type
+table-only: true
 ---
 
 # Finding the pages of a template or page type

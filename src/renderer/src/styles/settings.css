@@ -477,7 +477,7 @@
    `.agent-item__button`). `min-width`, not `width`: a larger text size must
    still fit the longest label - "Custom skills folder" - and the value clears
    it with room to spare, so all three stay equal in practice. */
-.skills-section .field-label-row sp-action-button {
+.skills-section .field-label-row sp-action-button:not(.skills-section__reload) {
   min-width: 12rem;
 }
 

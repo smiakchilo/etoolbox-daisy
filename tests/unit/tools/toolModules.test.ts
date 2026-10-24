@@ -66,6 +66,7 @@ describe('tool manifests', () => {
     ['aem_create_page', createPageTool],
     ['browser_navigate', browserNavigateTool],
     ['ask_user', askUserTool],
+    ['format_table', formatTableTool],
   ])('%s is internally consistent', (name, tool: ModelToolModule) => {
     expect(tool.name).toBe(name);
     expect(tool.descriptor.name).toBe(name);
@@ -73,13 +74,11 @@ describe('tool manifests', () => {
     expect(tool.instructions.length).toBeGreaterThan(0);
   });
 
-  it('exposes format_table as an internal tool with no model-facing surface', () => {
-    expect(formatTableTool.name).toBe('format_table');
-    expect(formatTableTool.internal).toBe(true);
-    // The model never sees it, so the contract lets it omit these entirely.
-    expect('descriptor' in formatTableTool).toBe(false);
-    expect('allowlistEntry' in formatTableTool).toBe(false);
-    expect('instructions' in formatTableTool).toBe(false);
+  it('offers format_table to the model with a schema that has no recursive definitions', () => {
+    const schema = formatTableTool.descriptor.parameters;
+    expect(schema).not.toHaveProperty('$defs');
+    expect(JSON.stringify(schema)).not.toContain('$ref');
+    expect(schema).toMatchObject({ required: ['data'] });
   });
 
   it('keeps aem_create_page disabled while the bridge has no write transport', () => {
@@ -92,19 +91,30 @@ describe('tool manifests', () => {
 });
 
 describe('aem_get_json module', () => {
-  it("routes the fetch through the host bridge with the URL built for the call's own args", async () => {
-    const { host, calls } = makeHost({
-      kind: 'response',
-      status: 200,
-      contentType: 'application/json',
-      bodyText: '{"jcr:primaryType":"nt:unstructured"}',
-    });
-    const result = await getJsonTool.createExecutor(host)({ path: '/content/foo' }, callContext);
+  it("reads through http_fetch with the URL built for the call's own args", async () => {
+    const { host } = makeHost({ kind: 'cancelled' });
+    const invoked: Array<{ name: string; args: unknown }> = [];
+    const result = await getJsonTool.createExecutor({
+      ...host,
+      invokeTool: (name, args) => {
+        invoked.push({ name, args });
+        return Promise.resolve({
+          ok: true,
+          value: {
+            status: 200,
+            contentType: 'application/json',
+            bodyText: '{"jcr:primaryType":"nt:unstructured"}',
+          },
+        });
+      },
+    })({ path: '/content/foo' }, callContext);
 
     expect(result.ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe('https://aem.example.com/content/foo.0.json');
-    expect(calls[0]?.envelope.requestId).toBeDefined();
+    expect(invoked).toHaveLength(1);
+    expect(invoked[0]?.name).toBe('http_fetch');
+    expect(invoked[0]?.args).toMatchObject({
+      url: 'https://aem.example.com/content/foo.0.json',
+    });
   });
 
   it('never reaches the bridge for invalid arguments', async () => {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, Menu, safeStorage, session as electronSession, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -70,6 +70,8 @@ import { registerCredentialCaptureIpc } from './credentials/capture';
 import { createCredentialVault } from './credentials/credentialVault';
 import { createHostLoginListener } from './credentials/hostAuth';
 import { mergeDisabledFeatures } from './disabledFeatures';
+import { createExternalFetch } from './externalFetch';
+import { createPageAudit } from './pageAudit';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
@@ -97,6 +99,7 @@ import { createSkillHost } from './skills/skillHost';
 import { createSkillStore } from './skills/skillStore';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import { createAppUpdater, UPDATE_SANDBOX_ENV } from './updates/composition';
+import { createUpdateFetch } from './updates/proxy';
 import {
   APP_USER_MODEL_ID,
   createMainWindow,
@@ -613,6 +616,17 @@ if (!gotSingleInstanceLock) {
       logger,
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
+      reload: async () => {
+        const skills = await skillStore.reload();
+        // The model's catalogue is composed when the runtime installs its service, so the
+        // refresh waits for the turn in flight. The fake agent keeps its scripted state.
+        if (!useFakeAgentService) {
+          await runtimeRecycler.request(async () => {
+            await agentHub?.refresh();
+          });
+        }
+        return skills.length;
+      },
     });
 
     registerRulesIpcHandlers({
@@ -620,6 +634,18 @@ if (!gotSingleInstanceLock) {
       logger,
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
+      reload: async () => {
+        await ruleStore.reload();
+        // Generic rules are composed onto the session instructions when the
+        // runtime installs its service, so the refresh waits for the turn in
+        // flight; project rules are read per prompt and need nothing more.
+        if (!useFakeAgentService) {
+          await runtimeRecycler.request(async () => {
+            await agentHub?.refresh();
+          });
+        }
+        return ruleStore.count();
+      },
     });
 
     // --- bridge tool / agent chat wiring (implementation-plan.md step 07) ---
@@ -827,6 +853,20 @@ if (!gotSingleInstanceLock) {
         // line here and touches no agent.
         answer: (request, signal) =>
           answerWith((oneShot) => secondaryTurns.complete(oneShot, signal), request),
+        // Anonymous requests to hosts the pane is not on (`http_fetch`); the
+        // proxy is read per request so a settings change applies at once.
+        externalFetch: createExternalFetch({
+          getFetch: () => createUpdateFetch(loadSettingsSync(appPaths.settings), secretStore),
+        }),
+        // Lighthouse in a hidden window: a configured host's page loads with the
+        // pane's session, any other page with an empty in-memory one.
+        pageAudit: createPageAudit({
+          paneSession: viewSession.session,
+          anonymousSession: () => electronSession.fromPartition('audit-anonymous'),
+          currentUrl: () => browserController.currentDocumentUrl(),
+          isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
+          logger,
+        }),
         clock: Date.now,
         idGenerator: randomUUID,
         // Diagnostics only: a tool reports how it classified the response body

@@ -1,6 +1,11 @@
 import { ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdir } from 'node:fs/promises';
-import { SKILLS_OPEN_FOLDER_CHANNEL, type SkillsOpenFolderResult } from '../../shared';
+import {
+  SKILLS_OPEN_FOLDER_CHANNEL,
+  SKILLS_RELOAD_CHANNEL,
+  type SkillsOpenFolderResult,
+  type SkillsReloadResult,
+} from '../../shared';
 import type { Logger } from '../logger';
 import { isAllowedAppNavigation } from '../security';
 
@@ -42,6 +47,24 @@ export interface SkillsIpcDependencies {
   readonly logger: Logger;
   readonly rendererDistDir: string;
   readonly mainWebContentsId: number;
+  /** Re-reads the skill sources and resolves to the number of skills now loaded. */
+  readonly reload: () => Promise<number>;
+}
+
+/** Runs the reload; a failure is reported, never thrown into the renderer. */
+export async function reloadSkills(
+  reload: () => Promise<number>,
+  logger: Logger,
+): Promise<SkillsReloadResult> {
+  try {
+    return { ok: true, count: await reload() };
+  } catch {
+    logger.error('SKILLS_RELOAD_FAILED', { outcome: 'failure' });
+    return {
+      ok: false,
+      error: { code: 'reload_failed', message: 'The skills could not be reloaded' },
+    };
+  }
 }
 
 export interface SkillsIpcSenderInfo {
@@ -86,5 +109,19 @@ export function registerSkillsIpcHandlers(deps: SkillsIpcDependencies): void {
       logger: deps.logger,
       openPath: (path) => shell.openPath(path),
     });
+  });
+
+  ipcMain.handle(SKILLS_RELOAD_CHANNEL, (event): Promise<SkillsReloadResult> => {
+    if (!isTrustedSkillsIpcSender(senderInfoFrom(event), deps)) {
+      deps.logger.warn('SKILLS_IPC_SENDER_REJECTED');
+      return Promise.resolve({
+        ok: false,
+        error: {
+          code: 'untrusted_sender',
+          message: 'This request must come from the local app window',
+        },
+      });
+    }
+    return reloadSkills(deps.reload, deps.logger);
   });
 }

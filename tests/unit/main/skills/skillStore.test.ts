@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -74,6 +74,45 @@ describe('createSkillStore', () => {
     expect(await store.load()).toBe(first);
   });
 
+  it('reload picks up a skill added and a description changed since the first load', async () => {
+    const bundled = makeRoot({ only: {} });
+    const store = createSkillStore({ bundledDirectory: bundled });
+    await store.load();
+    mkdirSync(path.join(bundled, 'added'));
+    writeFileSync(path.join(bundled, 'added', 'SKILL.md'), skillMd('added'));
+    writeFileSync(path.join(bundled, 'only', 'SKILL.md'), skillMd('only', 'Changed.'));
+
+    const reloaded = await store.reload();
+
+    expect(reloaded.map((skill) => skill.name)).toEqual(['added', 'only']);
+    expect(store.list().find((skill) => skill.name === 'only')?.description).toBe('Changed.');
+    expect(await store.load()).toBe(reloaded);
+  });
+
+  it('reload drops a skill whose folder was removed', async () => {
+    const bundled = makeRoot({ keep: {}, gone: {} });
+    const store = createSkillStore({ bundledDirectory: bundled });
+    await store.load();
+    rmSync(path.join(bundled, 'gone'), { recursive: true });
+
+    await store.reload();
+
+    expect(store.list().map((skill) => skill.name)).toEqual(['keep']);
+    expect(store.get('gone')).toBeUndefined();
+  });
+
+  it('reload queued behind a read in flight ends with the newest disk state', async () => {
+    const bundled = makeRoot({ only: {} });
+    const store = createSkillStore({ bundledDirectory: bundled });
+    const first = store.load();
+    mkdirSync(path.join(bundled, 'late'));
+    writeFileSync(path.join(bundled, 'late', 'SKILL.md'), skillMd('late'));
+    const second = store.reload();
+    await first;
+    await second;
+    expect(store.list().map((skill) => skill.name)).toEqual(['late', 'only']);
+  });
+
   it('reads the body without its front matter and indexes the other files', async () => {
     const script = 'export default () => 1;';
     const { store } = await loadStore({
@@ -144,6 +183,19 @@ describe('createSkillStore', () => {
     expect(store.modelCatalogue()).toEqual([
       { name: 'aux', description: 'Auxiliary.' },
       { name: 'search', description: 'Technical.' },
+    ]);
+  });
+
+  it('reports table-only in the summary and in the composer list, only when set', async () => {
+    const { store } = await loadStore({
+      tabled: { front: skillMd('tabled', 'Table.', '\ntable-only: true') },
+      plain: { front: skillMd('plain', 'Plain.') },
+    });
+    expect(store.get('tabled')?.summary.tableOnly).toBe(true);
+    expect(store.get('plain')?.summary.tableOnly).toBe(false);
+    expect(store.invocable()).toEqual([
+      { name: 'plain', description: 'Plain.' },
+      { name: 'tabled', description: 'Table.', tableOnly: true },
     ]);
   });
 

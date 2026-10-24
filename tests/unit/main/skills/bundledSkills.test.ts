@@ -54,4 +54,18 @@ describe('bundled skills', () => {
       expect(shown).not.toMatch(/[.!?]$/);
     },
   );
+
+  it('flags exactly the search skills as table-only, so their prose is suppressed', () => {
+    const tableOnly = skills.filter(
+      (name) =>
+        parseSkillFrontMatter(readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8'))
+          ?.tableOnly === true,
+    );
+    expect(tableOnly.sort()).toEqual([
+      'search',
+      'search-component',
+      'search-page',
+      'semantic-search',
+    ]);
+  });
 });

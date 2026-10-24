@@ -34,6 +34,7 @@ function summary(overrides: Partial<SkillSummary> = {}): SkillSummary {
     source: 'user',
     userInvocable: true,
     disableModelInvocation: false,
+    tableOnly: false,
     hasScripts: true,
     ...overrides,
   };

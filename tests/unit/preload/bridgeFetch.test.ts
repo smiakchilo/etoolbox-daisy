@@ -110,6 +110,43 @@ describe('performBridgeFetch - how it issues the request', () => {
     expect(headerNames).not.toContain('cookie');
     expect(headers['Accept']).toBe('application/json');
   });
+
+  it('issues a GET by default', async () => {
+    const fetchSpy = vi.fn<BridgeFetchDeps['fetch']>(() => Promise.resolve(responseStub({})));
+    await performBridgeFetch(COMMAND, deps(fetchSpy), new AbortController().signal);
+
+    expect(fetchSpy.mock.calls[0]?.[1]?.method).toBe('GET');
+  });
+
+  it('issues a HEAD when asked, still same-origin only', async () => {
+    const fetchSpy = vi.fn<BridgeFetchDeps['fetch']>(() => Promise.resolve(responseStub({})));
+    await performBridgeFetch(
+      { ...COMMAND, method: 'HEAD' },
+      deps(fetchSpy),
+      new AbortController().signal,
+    );
+    expect(fetchSpy.mock.calls[0]?.[1]?.method).toBe('HEAD');
+
+    const crossOrigin = await performBridgeFetch(
+      { requestId: 'req-2', url: 'https://evil.example/x', method: 'HEAD' },
+      deps(vi.fn(neverCalled)),
+      new AbortController().signal,
+    );
+    expect(crossOrigin).toEqual({ kind: 'blocked', requestId: 'req-2', reason: 'cross_origin' });
+  });
+
+  it('replaces the Accept header only when the command carries one', async () => {
+    const fetchSpy = vi.fn<BridgeFetchDeps['fetch']>(() => Promise.resolve(responseStub({})));
+    await performBridgeFetch(
+      { ...COMMAND, accept: 'text/html' },
+      deps(fetchSpy),
+      new AbortController().signal,
+    );
+
+    const headers = fetchSpy.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers['Accept']).toBe('text/html');
+    expect(Object.keys(headers).map((name) => name.toLowerCase())).not.toContain('cookie');
+  });
 });
 
 describe('performBridgeFetch - how it reports each outcome', () => {

@@ -15,6 +15,10 @@ import {
   type TurnId,
 } from '../../../../src/shared';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
+import {
+  resetTableOnlySkills,
+  setTableOnlySkills,
+} from '../../../../src/renderer/src/chat/transcriptViewModel';
 
 const chatId = chatIdSchema.parse('chat-1');
 const turnId: TurnId = turnIdSchema.parse('turn-1');
@@ -355,6 +359,21 @@ describe('createTranscriptStore', () => {
           { kind: 'userPrompt', turnId },
           { kind: 'toolCall', toolCallId: skillToolCallId },
         ]);
+      }
+    });
+
+    it('suppresses the prose of a custom skill the skill list flags as table-only', () => {
+      setTableOnlySkills([{ name: 'lighthouse-check', tableOnly: true }]);
+      try {
+        const store = createTranscriptStore();
+        store.applyUserPrompt(turnId, 'audit this page');
+        store.applyEvent(skillRequested(0, 'lighthouse-check'));
+        store.applyEvent(modelSkillResult(1, 'lighthouse-check'));
+        store.applyEvent(messageStarted(2));
+        store.applyEvent(delta(3, 'Running the audit.'));
+        expect(store.items().some((item) => item.kind === 'message')).toBe(false);
+      } finally {
+        resetTableOnlySkills();
       }
     });
 

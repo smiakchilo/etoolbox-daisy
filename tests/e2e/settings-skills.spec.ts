@@ -1,6 +1,7 @@
 import { _electron as electron, expect, test } from '@playwright/test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { DaisyAppApi } from '../../src/shared';
 import { mainEntry } from '../support/e2e/app';
 import { verticalGap } from '../support/e2e/layout';
 import { createScratchDirs, scratchEnv } from '../support/e2e/profile';
@@ -14,6 +15,11 @@ import { byField, byTestId } from '../support/selectors';
  */
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'settings-skills-scratch');
+
+interface TestWindow {
+  daisy: DaisyAppApi;
+}
+declare const window: TestWindow;
 
 test('the Skills tab opens the custom skills folder through main', async () => {
   test.setTimeout(120_000);
@@ -115,6 +121,24 @@ test('the Skills tab opens the custom skills folder through main', async () => {
     );
     expect(path.basename(withMemos[2] ?? '')).toBe('memos');
     expect(existsSync(withMemos[2] ?? '')).toBe(true);
+
+    const skillsFolder = path.join(home, 'etoolbox-daisy', 'skills', 'dropped-in');
+    mkdirSync(skillsFolder, { recursive: true });
+    writeFileSync(
+      path.join(skillsFolder, 'SKILL.md'),
+      '---\nname: dropped-in\ndescription: A skill dropped in after startup\n---\nBody\n',
+    );
+    const catalogue = (): Promise<string[]> =>
+      shell.evaluate(async () => {
+        const result = await window.daisy.agentChat.listSkills();
+        return result.ok ? result.skills.map((skill) => skill.name) : [];
+      });
+    expect(await catalogue()).not.toContain('dropped-in');
+    await panel.locator(byTestId('skills-reload')).click();
+    await expect.poll(catalogue).toContain('dropped-in');
+
+    await panel.locator(byTestId('rules-reload')).click();
+    await expect(shell.locator('.surface-status-banner[open]')).toBeVisible();
 
     const selfLearning = panel.locator(byField('memos-enabled'));
     await expect(selfLearning).toHaveJSProperty('checked', true);

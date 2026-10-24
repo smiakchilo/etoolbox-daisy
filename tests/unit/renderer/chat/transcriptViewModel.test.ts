@@ -1,10 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   describeInterruption,
   describeRequiredAction,
   describeToolCallStatus,
   isDeterministicTablePrompt,
+  isTableOnlySkill,
   latestReasoningLine,
+  resetTableOnlySkills,
+  setTableOnlySkills,
   splitLeadingSkill,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
 import type { ToolCallStatus } from '../../../../src/renderer/src/chat/transcriptStore';
@@ -146,6 +149,10 @@ describe('splitLeadingSkill', () => {
 });
 
 describe('isDeterministicTablePrompt', () => {
+  afterEach(() => {
+    resetTableOnlySkills();
+  });
+
   it('recognises the search skills, with or without trailing text', () => {
     expect(isDeterministicTablePrompt('/search waldo')).toBe(true);
     expect(isDeterministicTablePrompt('/search')).toBe(true);
@@ -158,5 +165,24 @@ describe('isDeterministicTablePrompt', () => {
     expect(isDeterministicTablePrompt('search for waldo')).toBe(false);
     expect(isDeterministicTablePrompt('/other-skill x')).toBe(false);
     expect(isDeterministicTablePrompt('plain question')).toBe(false);
+  });
+
+  it('follows the skill list: a custom table-only skill counts, a skill that lost its flag does not', () => {
+    setTableOnlySkills([
+      { name: 'lighthouse-check', tableOnly: true },
+      { name: 'search' },
+      { name: 'other', tableOnly: false },
+    ]);
+    expect(isDeterministicTablePrompt('/lighthouse-check https://example.com')).toBe(true);
+    expect(isTableOnlySkill('lighthouse-check')).toBe(true);
+    expect(isDeterministicTablePrompt('/search waldo')).toBe(false);
+    expect(isDeterministicTablePrompt('/other x')).toBe(false);
+  });
+
+  it('restores the bundled fallback on reset', () => {
+    setTableOnlySkills([]);
+    expect(isDeterministicTablePrompt('/search waldo')).toBe(false);
+    resetTableOnlySkills();
+    expect(isDeterministicTablePrompt('/search waldo')).toBe(true);
   });
 });

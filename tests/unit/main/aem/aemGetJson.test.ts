@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   executeAemGetJson,
+  readHttpFetchOutcome,
   type AemGetJsonRequest,
 } from '../../../../src/tools/aem-get-json/aemGetJson';
-import type { BrokerOutcome } from '../../../../src/shared';
-import type { ProjectedResourceData } from '../../../../src/tools/aem-get-json/aemGetJson';
+import type {
+  GetJsonFetchOutcome,
+  ProjectedResourceData,
+} from '../../../../src/tools/aem-get-json/aemGetJson';
 import {
   aemGetJsonArgsSchema,
   type AemGetJsonArgs,
@@ -14,6 +17,7 @@ import {
   requestIdSchema,
   serverIdSchema,
   turnIdSchema,
+  type ToolError,
 } from '../../../../src/shared';
 import { toolResultSchema, type ToolResult } from '../../../support/toolUnions';
 import { TOOL_ERROR_CODES } from '../../../../src/shared';
@@ -37,19 +41,19 @@ function envelope(argsOverrides: Partial<AemGetJsonArgs> = {}): AemGetJsonReques
 }
 
 function run(
-  outcome: BrokerOutcome,
+  outcome: GetJsonFetchOutcome,
   argsOverrides: Partial<AemGetJsonArgs> = {},
   origin = ORIGIN,
 ): Promise<ToolResult> {
   return executeAemGetJson(envelope(argsOverrides), {
     origin,
-    fetchThroughBridge: () => Promise.resolve(outcome),
+    fetchJson: () => Promise.resolve(outcome),
     now: () => 1_700_000_000_000,
   });
 }
 
-function jsonResponse(body: string, status = 200): BrokerOutcome {
-  return { kind: 'response', status, contentType: 'application/json', bodyText: body };
+function jsonResponse(body: string, status = 200): GetJsonFetchOutcome {
+  return { ok: true, status, contentType: 'application/json', bodyText: body };
 }
 
 function expectError(result: ToolResult): ToolResult & { ok: false } {
@@ -108,7 +112,7 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
     // as though it were the resource.
     const error = expectError(
       await run({
-        kind: 'response',
+        ok: true,
         status: 200,
         contentType: 'text/html; charset=utf-8',
         bodyText:
@@ -126,7 +130,7 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
     // evidence that the session ended.
     const error = expectError(
       await run({
-        kind: 'response',
+        ok: true,
         status: 200,
         contentType: 'text/html; charset=utf-8',
         bodyText: '<html lang="en"><body><h1>Error</h1></body></html>',
@@ -140,7 +144,7 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
   it('reports an empty 200 body as an unexpected response, never as a sign-in', async () => {
     const error = expectError(
       await run({
-        kind: 'response',
+        ok: true,
         status: 200,
         contentType: 'text/html;charset=utf-8',
         bodyText: '\n',
@@ -192,83 +196,49 @@ describe('executeAemGetJson - what each AEM status means to the agent', () => {
 
   it('rejects a non-JSON content type even when the body would have parsed', async () => {
     const error = expectError(
-      await run({ kind: 'response', status: 200, contentType: 'text/plain', bodyText: '{"a":1}' }),
+      await run({ ok: true, status: 200, contentType: 'text/plain', bodyText: '{"a":1}' }),
     ).error;
 
     expect(error.code).toBe('UNEXPECTED_RESPONSE');
   });
 });
 
-describe('executeAemGetJson - what each transport verdict means to the agent', () => {
-  it('reports a blocked redirect as a session problem the user must resolve', async () => {
-    const error = expectError(await run({ kind: 'blocked', reason: 'redirect_blocked' })).error;
+describe('executeAemGetJson - the nested read', () => {
+  // The transport verdicts (redirect, timeout, stale, cancelled, ...) are the
+  // `http_fetch` tool's; its own suite certifies them.
+  it("hands the nested read's error back unchanged", async () => {
+    const nested: ToolError = {
+      code: 'TIMEOUT',
+      message: 'The request timed out',
+      requestId: requestIdSchema.parse('req-1'),
+      retryable: true,
+      requiredAction: 'none',
+    };
 
-    expect(error.code).toBe('REDIRECT_BLOCKED');
-    expect(error.requiredAction).toBe('sign_in_to_host');
-    expect(error.retryable).toBe(false);
+    const result = expectError(await run({ ok: false, error: nested }));
+
+    expect(result.error).toEqual(nested);
   });
 
-  it("reports a cross-origin refusal as this application's own policy, not an AEM failure", async () => {
-    const error = expectError(await run({ kind: 'blocked', reason: 'cross_origin' })).error;
+  it('reads an http_fetch payload into the shape it classifies', () => {
+    const id = requestIdSchema.parse('req-1');
 
-    expect(error.code).toBe('ACCESS_DENIED');
-    expect(error.retryable).toBe(false);
+    expect(
+      readHttpFetchOutcome(
+        { ok: true, value: { status: 200, contentType: 'application/json', bodyText: '{}' } },
+        id,
+      ),
+    ).toEqual({ ok: true, status: 200, contentType: 'application/json', bodyText: '{}' });
   });
 
-  it('reports a timeout as retryable, because the identical request may still succeed', async () => {
-    const error = expectError(await run({ kind: 'timeout' })).error;
+  it('reports a malformed http_fetch payload as an unexpected response', () => {
+    const outcome = readHttpFetchOutcome(
+      { ok: true, value: { status: 'x' } },
+      requestIdSchema.parse('req-1'),
+    );
 
-    expect(error.code).toBe('TIMEOUT');
-    expect(error.retryable).toBe(true);
-  });
-
-  it('reports staleness as retryable and names which kind of staleness it was', async () => {
-    const navigation = expectError(
-      await run({ kind: 'stale', status: 'stale_navigation_epoch' }),
-    ).error;
-    const revision = expectError(
-      await run({ kind: 'stale', status: 'stale_server_revision' }),
-    ).error;
-
-    expect(navigation.code).toBe('STALE_CONTEXT');
-    expect(navigation.retryable).toBe(true);
-    // Distinct messages: "the browser left the page" and "the server config
-    // changed" are different facts, and a shared message would hide which.
-    expect(navigation.message).not.toBe(revision.message);
-  });
-
-  it('reports a cancellation as cancelled rather than as a failure', async () => {
-    const error = expectError(await run({ kind: 'cancelled' })).error;
-
-    expect(error.code).toBe('CANCELLED');
-  });
-
-  it('reports a missing browser pane as something the user must address', async () => {
-    const error = expectError(await run({ kind: 'no_view' })).error;
-
-    expect(error.code).toBe('ACCESS_DENIED');
-    expect(error.requiredAction).toBe('select_server');
-  });
-
-  it('reports an unavailable bridge as a non-retryable application problem, distinct from no_view', async () => {
-    const bridge = expectError(await run({ kind: 'bridge_unavailable' })).error;
-    const noView = expectError(await run({ kind: 'no_view' })).error;
-
-    expect(bridge.code).toBe('ACCESS_DENIED');
-    expect(bridge.retryable).toBe(false);
-    // The pane is present, so this is not "pick a server" - and the two facts
-    // must not share a message, or the log could not tell them apart.
-    expect(bridge.requiredAction).toBe('none');
-    expect(bridge.message).not.toBe(noView.message);
-  });
-
-  it('reports a transport failure as retryable', async () => {
-    const error = expectError(
-      await run({ kind: 'network_error', message: 'ERR_CONNECTION_REFUSED' }),
-    ).error;
-
-    expect(error.code).toBe('NETWORK_ERROR');
-    expect(error.retryable).toBe(true);
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error.code).toBe('UNEXPECTED_RESPONSE');
   });
 });
 
@@ -285,7 +255,7 @@ describe('executeAemGetJson - refusing before anything is sent', () => {
       { ...base, args: { ...base.args, path: '/content/../etc' } },
       {
         origin: ORIGIN,
-        fetchThroughBridge: () => {
+        fetchJson: () => {
           sent += 1;
           return Promise.resolve(jsonResponse('{}'));
         },
@@ -301,7 +271,7 @@ describe('executeAemGetJson - refusing before anything is sent', () => {
     let sent = 0;
     const result = await executeAemGetJson(envelope(), {
       origin: 'not-an-origin',
-      fetchThroughBridge: () => {
+      fetchJson: () => {
         sent += 1;
         return Promise.resolve(jsonResponse('{}'));
       },
@@ -334,7 +304,7 @@ describe('executeAemGetJson - errors never carry remote content', () => {
   it('does not echo an HTML error page in the error', async () => {
     const error = expectError(
       await run({
-        kind: 'response',
+        ok: true,
         status: 500,
         contentType: 'text/html',
         bodyText: `<html lang='en'>${secret}</html>`,
@@ -344,26 +314,8 @@ describe('executeAemGetJson - errors never carry remote content', () => {
     expect(JSON.stringify(error)).not.toContain(secret);
   });
 
-  it("does not echo a transport failure's own message, which can name internal hosts", async () => {
-    const error = expectError(
-      await run({ kind: 'network_error', message: `connect failed to ${secret}` }),
-    ).error;
-
-    expect(JSON.stringify(error)).not.toContain(secret);
-  });
-
   it("produces a message within the contract's length limit for every failure it can report", async () => {
-    const outcomes: BrokerOutcome[] = [
-      { kind: 'blocked', reason: 'redirect_blocked' },
-      { kind: 'blocked', reason: 'cross_origin' },
-      { kind: 'blocked', reason: 'invalid_url' },
-      { kind: 'network_error', message: 'x' },
-      { kind: 'cancelled' },
-      { kind: 'timeout' },
-      { kind: 'stale', status: 'stale_server_revision' },
-      { kind: 'stale', status: 'stale_navigation_epoch' },
-      { kind: 'no_view' },
-      { kind: 'bridge_unavailable' },
+    const outcomes: GetJsonFetchOutcome[] = [
       jsonResponse('x', 401),
       jsonResponse('x', 403),
       jsonResponse('x', 404),

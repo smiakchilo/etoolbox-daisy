@@ -27,7 +27,7 @@ import {
 } from '../chat/composerViewModel';
 import { createTranscriptStore, type TranscriptStore } from '../chat/transcriptStore';
 import { createTranscriptView, type TranscriptView } from '../chat/transcriptView';
-import { isDeterministicTablePrompt } from '../chat/transcriptViewModel';
+import { isDeterministicTablePrompt, setTableOnlySkills } from '../chat/transcriptViewModel';
 import { EMPTY_LINK_CONTEXT, type LinkContext } from '../chat/linkTargets';
 import { createTranscriptFollower } from '../chat/transcriptFollower';
 import {
@@ -110,6 +110,11 @@ export interface ChatPane {
    * re-open a chat whose storage is gone.
    */
   handleConversationDeleted(chatId: ChatId): void;
+  /**
+   * Re-reads the skill catalogue after main reloaded its sources, so the `/`
+   * autocomplete and the table-only registry see added or removed skills.
+   */
+  reloadSkills(): Promise<void>;
   /**
    * Starts a brand-new conversation - the chat toolbar's "New session" action,
    * and the Ctrl+N shortcut's target. Runs the same body a click does, so its
@@ -569,6 +574,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     skillsState = 'loaded';
     if (result.ok) {
       skills = result.skills;
+      setTableOnlySkills(skills);
       composer.setSkills(skills);
     }
     refreshSessionPresentation();
@@ -1670,6 +1676,13 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     },
     openConversationFromHistory,
     handleConversationDeleted,
+    async reloadSkills(): Promise<void> {
+      // Before the first load the catalogue is read fresh anyway, and a read
+      // already in flight started after main finished reloading.
+      if (skillsState !== 'loaded') return;
+      skillsState = 'idle';
+      await loadSkills();
+    },
     startNewSession,
     openFind(): void {
       findBar.open();

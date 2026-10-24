@@ -2,6 +2,7 @@ import { ipcMain, type IpcMainEvent, type WebContents } from 'electron';
 import {
   WEBVIEW_BRIDGE_CANCEL_CHANNEL,
   WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_READ_CHANNEL,
   WEBVIEW_BRIDGE_READY_CHANNEL,
   WEBVIEW_BRIDGE_REPLY_CHANNEL,
 } from '../../shared/contracts/webviewBridge';
@@ -98,6 +99,9 @@ export function createWebviewBridgeTransport(
   return {
     sendFetch(command) {
       return send(WEBVIEW_BRIDGE_FETCH_CHANNEL, command);
+    },
+    sendRead(command) {
+      return send(WEBVIEW_BRIDGE_READ_CHANNEL, command);
     },
     sendCancel(command) {
       // Nothing to report when the view is already gone: a view that no longer

@@ -1,5 +1,5 @@
 import { createMessageStream, type MessageStream } from './messageStream';
-import { DETERMINISTIC_TABLE_SKILLS } from './transcriptViewModel';
+import { isTableOnlySkill } from './transcriptViewModel';
 import {
   type AgentEvent,
   type InterruptionReason,
@@ -534,7 +534,7 @@ export function createTranscriptStore(
             const skillName = event.arguments['name'];
             if (
               typeof skillName === 'string' &&
-              DETERMINISTIC_TABLE_SKILLS.includes(skillName) &&
+              isTableOnlySkill(skillName) &&
               currentTurnId !== undefined
             ) {
               suppressTurn(currentTurnId);

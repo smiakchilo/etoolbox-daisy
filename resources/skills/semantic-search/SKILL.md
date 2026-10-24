@@ -3,6 +3,7 @@ name: semantic-search
 description: How to run a semantic search against a conventional AEM Author instance - recall everything the full-text index can find for a subject, ask the active model whether each candidate carries the requested meaning, and show the passing matches as a path-to-citation table, using the aem_semantic_search tool. Use whenever the user asks for content by meaning, quality, topic, or description rather than by an exact word, a path, a property value, or a structured predicate - including when they invoke `/semantic-search <text>`.
 metadata:
   user-description: Find content by meaning, not just matching words
+table-only: true
 ---
 
 # Semantic search

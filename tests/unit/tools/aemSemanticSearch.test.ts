@@ -9,6 +9,7 @@ import {
 } from '../../../src/tools/aem-semantic-search/aemSemanticSearch';
 import { renderer } from '../../../src/tools/aem-semantic-search/renderer';
 import { tool } from '../../../src/tools/aem-semantic-search/tool';
+import { formatTableColumnsSchema } from '../../../src/tools/format-table/formatTable';
 import {
   type BrokerOutcome,
   type JsonValue,
@@ -741,6 +742,9 @@ describe('aem_semantic_search executor', () => {
         citation: 'Waldo lives here',
       },
     ]);
+    const columns = formatTableColumnsSchema.parse(table?.args['columns']);
+    const rows = tableData(table)['rows'] as readonly Record<string, unknown>[];
+    expect(columns.map((column) => column.key).sort()).toEqual(Object.keys(rows[0] ?? {}).sort());
   });
 });
 

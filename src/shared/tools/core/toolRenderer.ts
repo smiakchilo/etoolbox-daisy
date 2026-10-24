@@ -47,6 +47,13 @@ export interface ToolResultTable {
 }
 
 /**
+ * How a table column's cells are drawn. `'text'` is the default (and still
+ * linkifies a path or URL it finds); `'status'` draws the cell as a coloured
+ * status light - a verdict such as `pass`, `warn` or `fail`.
+ */
+export type TableCellKind = 'text' | 'status';
+
+/**
  * A whole table the transcript paints as an assistant **message** (in place of
  * a billet), optionally over a one-line total. This is what a
  * `presentation: 'message'` tool returns: `format_table` accumulates its rows
@@ -55,6 +62,14 @@ export interface ToolResultTable {
 export interface ToolTableMessage {
   /** Whether this call starts a new run or appends to the current one. */
   readonly mode: 'new' | 'append';
+  /** A caption painted above the table, when the call named one. */
+  readonly title?: string;
+  /**
+   * How each column's cells are drawn, aligned to `table.columns`. Absent (or
+   * a missing entry) means plain text - which is also what every message from
+   * before typed columns existed reads as.
+   */
+  readonly columnKinds?: readonly TableCellKind[];
   /** The total line shown beneath the table, or `undefined` for no total. */
   readonly total: string | undefined;
   /**

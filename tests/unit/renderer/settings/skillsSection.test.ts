@@ -1,5 +1,5 @@
 import type { JSDOM } from 'jsdom';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSkillsSection } from '../../../../src/renderer/src/settings/skillsSection';
 import { parseAppSettingsSnapshot, type AppSettingsSnapshot } from '../../../../src/shared';
 import type { StatusBannerSink } from '../../../../src/renderer/src/settings/statusBanner';
@@ -17,9 +17,13 @@ import { byField, byTestId } from '../../../support/selectors';
 let dom: JSDOM;
 let restoreGlobals: () => void;
 let status: StatusBannerSink;
+let showStatus: Mock<(message: string) => void>;
 
 const openFolder = vi.fn();
+const reload = vi.fn();
+const onSkillsReloaded = vi.fn();
 const openRulesFolder = vi.fn();
+const rulesReload = vi.fn();
 const openMemosFolder = vi.fn();
 const updateMemoSettings = vi.fn();
 const reportSave = vi.fn();
@@ -27,7 +31,7 @@ const onSettingsChanged = vi.fn();
 const showError = vi.fn();
 
 function makeSection(): ReturnType<typeof createSkillsSection> {
-  return createSkillsSection({ status, reportSave, onSettingsChanged });
+  return createSkillsSection({ status, reportSave, onSettingsChanged, onSkillsReloaded });
 }
 
 function snapshotWith(enabled: boolean): AppSettingsSnapshot {
@@ -52,6 +56,18 @@ function openButton(element: HTMLElement): HTMLElement {
   return button;
 }
 
+function reloadButton(element: HTMLElement): HTMLElement {
+  const button = element.querySelector<HTMLElement>(byTestId('skills-reload'));
+  if (button === null) throw new Error('reload control not found');
+  return button;
+}
+
+function rulesReloadButton(element: HTMLElement): HTMLElement {
+  const button = element.querySelector<HTMLElement>(byTestId('rules-reload'));
+  if (button === null) throw new Error('rules reload control not found');
+  return button;
+}
+
 function rulesButton(element: HTMLElement): HTMLElement {
   const button = element.querySelector<HTMLElement>(byTestId('rules-open-folder'));
   if (button === null) throw new Error('rules open-folder control not found');
@@ -60,8 +76,12 @@ function rulesButton(element: HTMLElement): HTMLElement {
 
 beforeEach(() => {
   openFolder.mockReset();
+  reload.mockReset();
+  onSkillsReloaded.mockReset();
+  reload.mockResolvedValue({ ok: true, count: 2 });
   openRulesFolder.mockReset();
-  openMemosFolder.mockReset();
+  rulesReload.mockReset();
+  rulesReload.mockResolvedValue({ ok: true, count: 1 });
   updateMemoSettings.mockReset();
   reportSave.mockReset();
   onSettingsChanged.mockReset();
@@ -70,8 +90,9 @@ beforeEach(() => {
   updateMemoSettings.mockResolvedValue({ ok: true });
   openFolder.mockResolvedValue({ ok: true });
   openRulesFolder.mockResolvedValue({ ok: true });
+  showStatus = vi.fn();
   status = {
-    showStatus: vi.fn(),
+    showStatus,
     showError,
     showPrompt: vi.fn(),
     showNotice: vi.fn(),
@@ -79,8 +100,8 @@ beforeEach(() => {
   };
   ({ dom, restore: restoreGlobals } = installJsdomGlobals());
   Reflect.set(dom.window, 'daisy', {
-    skills: { openFolder },
-    rules: { openFolder: openRulesFolder },
+    skills: { openFolder, reload },
+    rules: { openFolder: openRulesFolder, reload: rulesReload },
     memos: { openFolder: openMemosFolder },
     settings: { updateMemoSettings },
   });
@@ -156,14 +177,92 @@ describe('createSkillsSection', () => {
     expect(showError).toHaveBeenCalledWith('ipc gone');
   });
 
+  it('reloads skills, confirms, and tells the shell so the chat re-reads its list', async () => {
+    const section = makeSection();
+    reloadButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(showStatus).toHaveBeenCalledTimes(1);
+    expect(onSkillsReloaded).toHaveBeenCalledTimes(1);
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('shows the failure and does not notify the shell when the reload fails', async () => {
+    reload.mockResolvedValue({
+      ok: false,
+      error: { code: 'reload_failed', message: 'could not read' },
+    });
+    const section = makeSection();
+    reloadButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(showError).toHaveBeenCalledWith('could not read');
+    expect(onSkillsReloaded).not.toHaveBeenCalled();
+  });
+
+  it('shows a rejected reload as an error', async () => {
+    reload.mockRejectedValue(new Error('ipc gone'));
+    const section = makeSection();
+    reloadButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(showError).toHaveBeenCalledWith('ipc gone');
+    expect(onSkillsReloaded).not.toHaveBeenCalled();
+  });
+
+  it('reloads rules through the rules call only, and confirms', async () => {
+    const section = makeSection();
+    rulesReloadButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(rulesReload).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(onSkillsReloaded).not.toHaveBeenCalled();
+    expect(showStatus).toHaveBeenCalledTimes(1);
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it('shows a failed rules reload as an error', async () => {
+    rulesReload.mockResolvedValue({
+      ok: false,
+      error: { code: 'reload_failed', message: 'could not read rules' },
+    });
+    const section = makeSection();
+    rulesReloadButton(section.element).click();
+    await flushMicrotasks(4);
+    expect(showError).toHaveBeenCalledWith('could not read rules');
+  });
+
+  it('wears icon-only reload buttons that carry their name as a title', () => {
+    const section = makeSection();
+    for (const button of [reloadButton(section.element), rulesReloadButton(section.element)]) {
+      expect(button.textContent?.trim()).toBe('');
+      expect(button.querySelector('[slot="icon"]')).not.toBeNull();
+      expect(button.getAttribute('title')).toBeTruthy();
+      expect(button.getAttribute('aria-label')).toBe(button.getAttribute('title'));
+    }
+  });
+
+  it('ignores a second click while a reload is running', async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    reload.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const section = makeSection();
+    reloadButton(section.element).click();
+    reloadButton(section.element).click();
+    expect(reload).toHaveBeenCalledTimes(1);
+    finish({ ok: true, count: 1 });
+    await flushMicrotasks(4);
+    reloadButton(section.element).click();
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
   it('unhooks the click listeners on dispose', async () => {
     const section = makeSection();
     section.dispose();
     openButton(section.element).click();
     rulesButton(section.element).click();
+    reloadButton(section.element).click();
     await flushMicrotasks(4);
     expect(openFolder).not.toHaveBeenCalled();
     expect(openRulesFolder).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('asks main to open the memos folder, and only that one', async () => {

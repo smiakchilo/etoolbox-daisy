@@ -16,7 +16,7 @@ import { z } from 'zod';
  * that stays true if some future change makes it reachable.
  */
 
-/** main -> preload: perform exactly one same-origin JSON fetch. */
+/** main -> preload: perform exactly one same-origin fetch (GET or HEAD). */
 export const WEBVIEW_BRIDGE_FETCH_CHANNEL = 'webview-bridge:fetch' as const;
 /** main -> preload: abandon an in-flight fetch. */
 export const WEBVIEW_BRIDGE_CANCEL_CHANNEL = 'webview-bridge:cancel' as const;
@@ -39,6 +39,61 @@ export const WEBVIEW_BRIDGE_REPLY_CHANNEL = 'webview-bridge:reply' as const;
  * the preload context that registered the listeners.
  */
 export const WEBVIEW_BRIDGE_READY_CHANNEL = 'webview-bridge:ready' as const;
+/** main -> preload: read matching elements from the document the pane is showing. */
+export const WEBVIEW_BRIDGE_READ_CHANNEL = 'webview-bridge:read' as const;
+
+/** Per-item and total character budgets the preload applies to a DOM read. */
+export const DOM_READ_TEXT_LIMIT = 2000;
+export const DOM_READ_HTML_LIMIT = 20000;
+export const DOM_READ_TOTAL_LIMIT = 100000;
+export const DOM_READ_MAX_ITEMS = 200;
+export const DOM_READ_MAX_ATTRIBUTES = 10;
+
+const attributeNameSchema = z.string().regex(/^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/);
+
+/**
+ * main -> preload: read the elements a CSS selector matches. Read only: the
+ * preload uses `textContent`, `outerHTML` and `getAttribute`, never evaluates
+ * anything from the page, and never reaches outside the shown document (an
+ * optional same-origin iframe is the only other document it will enter).
+ */
+export const webviewBridgeReadCommandSchema = z.object({
+  requestId: z.string().min(1),
+  selector: z.string().min(1).max(500),
+  /** What each item carries besides its tag and attributes. Absent means `text`. */
+  include: z.enum(['text', 'html']).optional(),
+  attributes: z.array(attributeNameSchema).max(DOM_READ_MAX_ATTRIBUTES).optional(),
+  limit: z.number().int().min(1).max(DOM_READ_MAX_ITEMS),
+  /** A selector of a same-origin `iframe` in the document whose own document is read instead. */
+  frame: z.string().min(1).max(500).optional(),
+});
+export type WebviewBridgeReadCommand = z.infer<typeof webviewBridgeReadCommandSchema>;
+/** What a tool asks the broker to read; the broker adds the request id. */
+export type DomReadSpec = Omit<WebviewBridgeReadCommand, 'requestId'>;
+
+export const webviewBridgeDomItemSchema = z.object({
+  tag: z.string(),
+  text: z.string().optional(),
+  html: z.string().optional(),
+  attributes: z.record(z.string(), z.string()).optional(),
+});
+export type WebviewBridgeDomItem = z.infer<typeof webviewBridgeDomItemSchema>;
+
+export const webviewBridgeDomResultSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ok'),
+    url: z.string(),
+    title: z.string(),
+    /** How many elements the selector matched in total. */
+    matched: z.number().int().min(0),
+    items: z.array(webviewBridgeDomItemSchema),
+    /** True when `limit`, a per-item cap or the total budget cut something off. */
+    truncated: z.boolean(),
+  }),
+  z.object({ status: z.literal('invalid_selector') }),
+  z.object({ status: z.literal('frame_unavailable') }),
+]);
+export type WebviewBridgeDomResult = z.infer<typeof webviewBridgeDomResultSchema>;
 
 export const webviewBridgeFetchCommandSchema = z.object({
   /**
@@ -55,6 +110,10 @@ export const webviewBridgeFetchCommandSchema = z.object({
    * cookies.
    */
   url: z.string().min(1),
+  /** Absent means `GET`. Only the two non-mutating methods exist; see `http_fetch`. */
+  method: z.enum(['GET', 'HEAD']).optional(),
+  /** Absent means {@link WEBVIEW_BRIDGE_REQUEST_HEADERS}'s JSON `Accept`. */
+  accept: z.string().min(1).max(200).optional(),
 });
 export type WebviewBridgeFetchCommand = z.infer<typeof webviewBridgeFetchCommandSchema>;
 
@@ -146,6 +205,11 @@ export const webviewBridgeReplySchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('cancelled'),
     requestId: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('dom'),
+    requestId: z.string().min(1),
+    result: webviewBridgeDomResultSchema,
   }),
 ]);
 export type WebviewBridgeReply = z.infer<typeof webviewBridgeReplySchema>;

@@ -88,6 +88,7 @@ function isToolModule(value: unknown): value is ToolModule {
   if (typeof v['createExecutor'] !== 'function') return false;
   if (v['disabled'] !== undefined && typeof v['disabled'] !== 'boolean') return false;
   if (v['internal'] !== undefined && typeof v['internal'] !== 'boolean') return false;
+  if (v['transparent'] !== undefined && typeof v['transparent'] !== 'boolean') return false;
   const uses = v['uses'];
   if (
     uses !== undefined &&
@@ -257,7 +258,7 @@ export async function buildToolRegistry(params: {
           handlers,
           depths,
           host: params.host,
-          observer: params.nestedCalls,
+          observer: tool.transparent === true ? undefined : params.nestedCalls,
         }),
       };
       executor = tool.createExecutor(host);

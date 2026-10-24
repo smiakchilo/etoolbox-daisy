@@ -1,14 +1,18 @@
 import { ipcRenderer } from 'electron';
 import { CREDENTIALS_CAPTURED_CHANNEL } from '../shared';
 import {
+  type WebviewBridgeDomResult,
   WEBVIEW_BRIDGE_CANCEL_CHANNEL,
   WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_READ_CHANNEL,
   WEBVIEW_BRIDGE_READY_CHANNEL,
   WEBVIEW_BRIDGE_REPLY_CHANNEL,
   webviewBridgeCancelCommandSchema,
   webviewBridgeFetchCommandSchema,
+  webviewBridgeReadCommandSchema,
 } from '../shared/contracts/webviewBridge';
 import { performBridgeFetch } from './bridgeFetch';
+import { performBridgeRead } from './bridgeRead';
 import { installCredentialCapture } from './credentialCapture';
 
 /**
@@ -24,9 +28,10 @@ import { installCredentialCapture } from './credentialCapture';
  * removed rather than grown, because "expose nothing to the page's main
  * world" is a property worth being able to state without exceptions.
  *
- * Only the two commands below are accepted, both validated before use. There
+ * Only the commands below are accepted, both validated before use. There
  * is no generic "run this" entry point, and no way for a command to name a
- * function, a module, or anything other than a URL to fetch.
+ * function, a module, or anything other than a URL to fetch or a selector to
+ * read.
  *
  * It sends one message of its own, and starts nothing: a submitted sign-in form
  * (`credentialCapture.ts`) is reported to main so the pane can prefill it next
@@ -75,6 +80,31 @@ ipcRenderer.on(WEBVIEW_BRIDGE_FETCH_CHANNEL, (_event, rawCommand: unknown) => {
         message: error instanceof Error ? error.message : String(error),
       });
     });
+});
+
+// A DOM read is synchronous, so it needs no abort handle: the reply is sent in
+// the same turn the command arrives. Main's own deadline and staleness checks
+// still decide whether anyone is waiting for it.
+ipcRenderer.on(WEBVIEW_BRIDGE_READ_CHANNEL, (_event, rawCommand: unknown) => {
+  const parsed = webviewBridgeReadCommandSchema.safeParse(rawCommand);
+  if (!parsed.success) return;
+  const command = parsed.data;
+  let result: WebviewBridgeDomResult;
+  try {
+    result = performBridgeRead(command, window.document);
+  } catch (error) {
+    ipcRenderer.send(WEBVIEW_BRIDGE_REPLY_CHANNEL, {
+      kind: 'network_error',
+      requestId: command.requestId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  ipcRenderer.send(WEBVIEW_BRIDGE_REPLY_CHANNEL, {
+    kind: 'dom',
+    requestId: command.requestId,
+    result,
+  });
 });
 
 ipcRenderer.on(WEBVIEW_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {

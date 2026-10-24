@@ -116,11 +116,24 @@ export const TABLE_EXPORT_REVEAL_LAST_CHANNEL = 'table-export:reveal-last' as co
 export const SKILLS_OPEN_FOLDER_CHANNEL = 'skills:open-folder' as const;
 
 /**
+ * Reads the bundled and the user's skills again, so a skill dropped into the
+ * folder is available without restarting the app. No request payload (see
+ * `src/shared/skills-ipc.ts`).
+ */
+export const SKILLS_RELOAD_CHANNEL = 'skills:reload' as const;
+
+/**
  * Opens the user's rules folder (`appPaths.rules`) in the OS file manager,
  * creating it when missing. No request payload: main owns the path (see
  * `src/shared/rules-ipc.ts`).
  */
 export const RULES_OPEN_FOLDER_CHANNEL = 'rules:open-folder' as const;
+
+/**
+ * Reads the user's rules again, so a rule added or edited in the folder applies
+ * without restarting the app. No request payload (see `src/shared/rules-ipc.ts`).
+ */
+export const RULES_RELOAD_CHANNEL = 'rules:reload' as const;
 
 /**
  * Persists the self-learning flag (the Settings "Skills" tab's checkbox). A

@@ -48,6 +48,80 @@ describe('describeToolCall - aem_get_json', () => {
   });
 });
 
+describe('describeToolCall - http_fetch', () => {
+  it('summarises the URL and lists the request options only when given', () => {
+    const plain = describeToolCall('http_fetch', { url: 'https://example.com/a' });
+    const probe = describeToolCall('http_fetch', {
+      url: 'https://example.com/a',
+      method: 'HEAD',
+      accept: 'text/html',
+    });
+
+    expect(plain.summary).toBe('https://example.com/a');
+    expect(valuesOf(plain)).toContain('https://example.com/a');
+    expect(valuesOf(probe)).toEqual(expect.arrayContaining(['HEAD', 'text/html']));
+    expect(probe.parameters.length).toBeGreaterThan(plain.parameters.length);
+  });
+
+  it('degrades honestly when the URL is missing', () => {
+    const details = describeToolCall('http_fetch', {});
+
+    expect(details.summary).toBeUndefined();
+    expect(details.parameters.length).toBeGreaterThan(0);
+  });
+});
+
+describe('describeToolCall - page_read', () => {
+  it('summarises the selector and reads the counts from the finished result', () => {
+    const pending = describeToolCall('page_read', { selector: 'a.cta', attributes: ['href'] });
+    const done = describeToolCall(
+      'page_read',
+      { selector: 'a.cta', limit: 5 },
+      { matched: 12, items: [{ tag: 'a' }, { tag: 'a' }] },
+    );
+
+    expect(pending.summary).toBe('a.cta');
+    expect(valuesOf(pending)).toContain('href');
+    expect(valuesOf(done)).toEqual(expect.arrayContaining(['12', '2']));
+  });
+
+  it('degrades honestly when the selector is missing', () => {
+    const details = describeToolCall('page_read', {});
+
+    expect(details.parameters.length).toBeGreaterThan(0);
+  });
+});
+
+describe('describeToolCall - page_audit', () => {
+  it('summarises the URL and reads the scores from the finished result', () => {
+    const pending = describeToolCall('page_audit', {
+      url: 'https://example.com/a',
+      categories: ['seo', 'performance'],
+    });
+    const done = describeToolCall(
+      'page_audit',
+      {},
+      {
+        url: 'https://example.com/b',
+        formFactor: 'mobile',
+        scores: [{ category: 'seo', score: 80 }],
+        failureCount: 7,
+      },
+    );
+
+    expect(pending.summary).toBe('https://example.com/a');
+    expect(valuesOf(pending)).toContain('seo, performance');
+    expect(done.summary).toBe('https://example.com/b');
+    expect(valuesOf(done)).toEqual(expect.arrayContaining(['seo 80', '7']));
+  });
+
+  it('still describes a call that names nothing', () => {
+    const details = describeToolCall('page_audit', {});
+
+    expect(details.parameters.length).toBeGreaterThan(0);
+  });
+});
+
 describe('describeToolCall - aem_query', () => {
   it('summarises the exact query and repeats it as a labelled parameter', () => {
     const details = describeToolCall('aem_query', {

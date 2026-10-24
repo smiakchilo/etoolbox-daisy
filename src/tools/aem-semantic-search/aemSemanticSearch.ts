@@ -74,6 +74,13 @@ export const AEM_SEMANTIC_SEARCH_USES = ['aem_query', 'format_table', 'ask_user'
 
 const LOAD_MORE = 'Load more';
 
+/** The semantic table's columns, pinned so they never depend on key inference. */
+const SEMANTIC_TABLE_COLUMNS: JsonValue = [
+  { key: 'jcr:path', label: 'Path' },
+  { key: 'property', label: 'Property' },
+  { key: 'citation', label: 'Citation' },
+];
+
 /** Nodes a single hit's content read returns. */
 const READ_NODE_LIMIT = 10;
 const MAX_EXCERPTS = 3;
@@ -693,6 +700,7 @@ export function createAemSemanticSearchExecutor(host: ToolHost): ToolExecutor {
         'format_table',
         {
           data: { rows: [...page], pagination: state.pagination.raw },
+          columns: SEMANTIC_TABLE_COLUMNS,
           mode: state.tableShown ? 'append' : 'new',
           totalLine: describeRelevantTotal(state.matchesShown, !state.fill.hasMore),
         },

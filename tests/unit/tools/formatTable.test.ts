@@ -178,6 +178,86 @@ describe('normalizeFormatTable', () => {
   });
 });
 
+describe('normalizeFormatTable with explicit columns', () => {
+  const rows = [
+    { name: 'Performance', score: 91, verdict: 'pass', extra: 'ignored' },
+    { name: 'SEO', score: 60, verdict: 'fail' },
+  ];
+
+  it('shows only the chosen keys, in order, with labels and cell types', () => {
+    const normalized = normalizeFormatTable(rows, 'new', undefined, false, {
+      columns: [
+        { key: 'verdict', label: 'Result', type: 'status' },
+        { key: 'name' },
+        { key: 'score', label: 'Score' },
+      ],
+      title: ' Scorecard ',
+    });
+    expect(normalized?.columns).toEqual(['Result', 'Name', 'Score']);
+    expect(normalized?.columnKinds).toEqual(['status', 'text', 'text']);
+    expect(normalized?.rows).toEqual([
+      ['pass', 'Performance', '91'],
+      ['fail', 'SEO', '60'],
+    ]);
+    expect(normalized?.title).toBe('Scorecard');
+  });
+
+  it('keeps a key no row carries as a blank column', () => {
+    const normalized = normalizeFormatTable(rows, 'new', undefined, false, {
+      columns: [{ key: 'name' }, { key: 'missing' }],
+    });
+    expect(normalized?.rows[0]).toEqual(['Performance', '']);
+  });
+
+  it('infers the columns, all plain text, when none are given', () => {
+    const normalized = normalizeFormatTable(rows, 'new');
+    expect(normalized?.columns).toEqual(['Name', 'Score', 'Verdict', 'Extra']);
+    expect(normalized?.columnKinds).toEqual(['text', 'text', 'text', 'text']);
+    expect(normalized?.title).toBeUndefined();
+  });
+
+  it('takes the columns and the title from the call arguments', () => {
+    const message = renderer.readTableMessage?.({
+      data: rows,
+      columns: [{ key: 'verdict', type: 'status' }],
+      title: 'Verdicts',
+    });
+    expect(message?.table.columns).toEqual(['Verdict']);
+    expect(message?.columnKinds).toEqual(['status']);
+    expect(message?.title).toBe('Verdicts');
+  });
+
+  it('falls back to inferred columns when the columns argument is unusable', () => {
+    const message = renderer.readTableMessage?.({
+      data: rows,
+      columns: [{ key: 'name' }, { key: 'name' }],
+    });
+    expect(message?.table.columns).toEqual(['Name', 'Score', 'Verdict', 'Extra']);
+    expect(message?.title).toBeUndefined();
+  });
+});
+
+describe('formatTableArgsSchema columns', () => {
+  it('accepts a column list and a title', () => {
+    const parsed = formatTableArgsSchema.parse({
+      data: [],
+      columns: [{ key: 'a', label: ' A ', type: 'status' }],
+      title: 'T',
+    });
+    expect(parsed.columns?.[0]?.label).toBe('A');
+  });
+
+  it.each([
+    ['a repeated key', [{ key: 'a' }, { key: 'a' }]],
+    ['an empty list', []],
+    ['an unknown cell type', [{ key: 'a', type: 'link' }]],
+    ['an unknown member', [{ key: 'a', width: 3 }]],
+    ['too many columns', Array.from({ length: 21 }, (_, i) => ({ key: `k${String(i)}` }))],
+  ])('rejects %s', (_name, columns) => {
+    expect(formatTableArgsSchema.safeParse({ data: [], columns }).success).toBe(false);
+  });
+});
+
 describe('formatTableArgsSchema', () => {
   it('defaults mode to new', () => {
     expect(formatTableArgsSchema.parse({ data: [] }).mode).toBe('new');

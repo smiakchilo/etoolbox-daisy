@@ -71,7 +71,11 @@ export async function performBridgeFetch(
       // Asking for JSON explicitly gives a well-behaved SSO gateway the chance
       // to answer 401 instead of an HTML login page - a far more actionable
       // result. Safe to send on a same-origin request: it triggers no preflight.
-      headers: { ...WEBVIEW_BRIDGE_REQUEST_HEADERS },
+      headers:
+        command.accept === undefined
+          ? { ...WEBVIEW_BRIDGE_REQUEST_HEADERS }
+          : { ...WEBVIEW_BRIDGE_REQUEST_HEADERS, Accept: command.accept },
+      method: command.method ?? 'GET',
       signal,
     });
   } catch (error) {

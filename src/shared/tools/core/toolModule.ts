@@ -10,14 +10,22 @@ import type {
   UserInputRequest,
 } from '../../contracts';
 import { type Result, err, ok } from '../../result';
+import type { DomReadSpec } from '../../contracts/webviewBridge';
 import type { MemoHost } from '../../memos';
 import type { SkillHost } from '../../skills';
 import { computeDeadline, type ToolEnvelopeBase } from './envelope';
 import type { EnvironmentFacts } from './environment';
 import type { AnswerRequest, AnswerResult } from './answer';
+import type { PageAuditRunner } from './pageAudit';
 import type { ConfiguredHostInfo, OpenPageOutcome, OpenPageTarget } from './navigation';
 import type { AemResponseOutcome } from './responseValidation';
-import type { ToolExecutor, BrokerOutcome, CurrentToolContext, ToolDescriptor } from './types';
+import type {
+  BridgeRequestOptions,
+  BrokerOutcome,
+  CurrentToolContext,
+  ToolDescriptor,
+  ToolExecutor,
+} from './types';
 import { firstIssueMessage } from './validationIssue';
 
 /**
@@ -51,7 +59,18 @@ export interface ToolHost {
      * the broker guards (deadline, server revision, navigation epoch); `url`
      * is the same-origin path the tool built.
      */
-    request(envelope: ToolEnvelopeBase, url: string): Promise<BrokerOutcome>;
+    request(
+      envelope: ToolEnvelopeBase,
+      url: string,
+      options?: BridgeRequestOptions,
+    ): Promise<BrokerOutcome>;
+    /**
+     * Reads elements from the document the pane is showing (selector in, text
+     * or markup out). Optional so a test fake need not model it; the live
+     * broker always supplies it. Resolves a JSON `response` outcome carrying a
+     * `WebviewBridgeDomResult`.
+     */
+    readDom?(envelope: ToolEnvelopeBase, spec: DomReadSpec): Promise<BrokerOutcome>;
   };
   /** Read fresh on every call; the model can never influence it. */
   readonly currentContext: () => CurrentToolContext;
@@ -108,6 +127,26 @@ export interface ToolHost {
     request: AnswerRequest,
     signal: AbortSignal | undefined,
   ) => Promise<AnswerResult>;
+  /**
+   * One request to a host the browser pane is not on, made by the application
+   * itself with **no cookies and no session**. The application, not the tool,
+   * enforces the limits (http/https only, redirect and size caps, no private or
+   * loopback addresses), and reports a refusal as a `blocked` outcome. Absent in
+   * a host that offers no outside access.
+   */
+  readonly externalFetch?: (
+    url: string,
+    options: BridgeRequestOptions,
+    signal: AbortSignal | undefined,
+  ) => Promise<BrokerOutcome>;
+  /**
+   * Audits one page with Lighthouse and returns its scores and failing audits.
+   * The application runs it in a hidden browser window it owns: a configured
+   * host's page loads with the pane's session, any other page without cookies
+   * and only if it passes the same address policy as `externalFetch`. Absent
+   * in a host that cannot audit pages.
+   */
+  readonly pageAudit?: PageAuditRunner;
   /**
    * The skills the application loaded (bundled and the user's): the one way a
    * skill tool reaches a skill's body, its files or its scripts. The model
@@ -200,6 +239,12 @@ interface ToolModuleBase {
    * not listed is refused.
    */
   readonly uses?: readonly string[];
+  /**
+   * A composite whose parts are an implementation detail: the calls it makes
+   * through {@link ToolHost.invokeTool} are not reported to the chat, so no
+   * nested billet appears (`aem_get_json` over `http_fetch`).
+   */
+  readonly transparent?: boolean;
   readonly createExecutor: (host: ToolHost) => ToolExecutor;
 }
 

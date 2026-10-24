@@ -24,6 +24,8 @@ export interface ParsedSkillFrontMatter {
   readonly userInvocable: boolean;
   /** `disable-model-invocation: true` leaves the skill out of the model's catalogue. Defaults to `false`. */
   readonly disableModelInvocation: boolean;
+  /** `table-only: true` marks a skill whose answer is one application-rendered table, so the model's own prose is suppressed. Defaults to `false`. */
+  readonly tableOnly: boolean;
 }
 
 export interface SplitSkillMarkdown {
@@ -120,5 +122,6 @@ export function parseSkillFrontMatter(markdown: string): ParsedSkillFrontMatter 
     userDescription: nested !== '' ? nested : readText(fields['user-description']),
     userInvocable: readBoolean(fields['user-invocable'], true),
     disableModelInvocation: readBoolean(fields['disable-model-invocation'], false),
+    tableOnly: readBoolean(fields['table-only'], false),
   };
 }

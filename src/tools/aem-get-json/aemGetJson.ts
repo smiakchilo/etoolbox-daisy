@@ -2,7 +2,6 @@ import { z } from 'zod';
 import {
   type AemResponseOutcome,
   type ToolExecutor,
-  type BrokerOutcome,
   type CurrentToolContext,
   type IdGenerator,
   type JcrPathRejectionReason,
@@ -13,9 +12,10 @@ import {
   type RequiredAction,
   type Result,
   type ToolDescriptor,
+  type ToolError,
   type ToolErrorCode,
+  type ToolExecutionContext,
   type ToolOutcome,
-  brokerErrorKey,
   classifyAemResponse,
   createToolExecutor,
   envelopeCommonShape,
@@ -431,11 +431,52 @@ function toolError(key: ErrorMessageKey, requestId: RequestId): AemGetJsonResult
   };
 }
 
+/** What the HTTP step hands back: the response to classify, or the step's own error. */
+export type GetJsonFetchOutcome =
+  | {
+      readonly ok: true;
+      readonly status: number;
+      readonly contentType: string | null;
+      readonly bodyText: string;
+    }
+  | { readonly ok: false; readonly error: ToolError };
+
+/**
+ * Reads what a nested `http_fetch` call resolved into the shape this tool
+ * classifies. The nested call's own errors pass through unchanged.
+ */
+export function readHttpFetchOutcome(
+  result: Result<JsonValue, ToolError>,
+  requestId: RequestId,
+): GetJsonFetchOutcome {
+  if (!result.ok) return result;
+  const parsed = httpResponseViewSchema.safeParse(result.value);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: {
+        code: 'UNEXPECTED_RESPONSE',
+        message: 'The HTTP read returned an unexpected result',
+        requestId,
+        retryable: false,
+        requiredAction: 'none',
+      },
+    };
+  }
+  return { ok: true, ...parsed.data };
+}
+
+const httpResponseViewSchema = z.object({
+  status: z.number().int(),
+  contentType: z.string().nullable(),
+  bodyText: z.string(),
+});
+
 export interface AemGetJsonDeps {
   /** The origin of the server the request is addressed to. */
   readonly origin: string;
-  /** Performs the bridge round trip. Injected so this composition is testable without Electron. */
-  readonly fetchThroughBridge: (url: string) => Promise<BrokerOutcome>;
+  /** Performs the HTTP read (the `http_fetch` tool). Injected so this composition is testable without Electron. */
+  readonly fetchJson: (url: string) => Promise<GetJsonFetchOutcome>;
   /** Wall-clock time stamped onto a successful result. */
   readonly now: () => number;
   /**
@@ -460,15 +501,13 @@ export async function executeAemGetJson(
     return toolError(built.error.kind, envelope.requestId);
   }
 
-  const brokerOutcome = await deps.fetchThroughBridge(built.value);
-  if (brokerOutcome.kind !== 'response') {
-    return toolError(brokerErrorKey(brokerOutcome), envelope.requestId);
-  }
+  const fetched = await deps.fetchJson(built.value);
+  if (!fetched.ok) return fetched;
 
   const classified = classifyAemResponse({
-    status: brokerOutcome.status,
-    contentType: brokerOutcome.contentType,
-    bodyText: brokerOutcome.bodyText,
+    status: fetched.status,
+    contentType: fetched.contentType,
+    bodyText: fetched.bodyText,
   });
   deps.onClassified?.(envelope.requestId, classified.kind);
   if (classified.kind !== 'ok') {
@@ -495,6 +534,7 @@ export interface AemGetJsonExecutorConfig<TRuntimeDeps extends Record<string, un
   readonly execute: (
     envelope: AemGetJsonRequest,
     deps: { readonly origin: string } & TRuntimeDeps,
+    context: ToolExecutionContext,
   ) => Promise<AemGetJsonResult>;
   readonly runtimeDeps: TRuntimeDeps;
   readonly currentContext: () => CurrentToolContext;
@@ -505,17 +545,21 @@ export interface AemGetJsonExecutorConfig<TRuntimeDeps extends Record<string, un
 /**
  * Builds the `ToolExecutor` the SDK adapter registers for `aem_get_json`.
  * The shared order of operations (abort, validate args, bind context, re-validate
- * the envelope, execute, render) lives in `createToolExecutor`.
+ * the envelope, execute, render) lives in `createToolExecutor`; it is assembled
+ * per call because the nested `http_fetch` call needs the call's own context.
  */
 export function createAemGetJsonExecutor<TRuntimeDeps extends Record<string, unknown>>(
   config: AemGetJsonExecutorConfig<TRuntimeDeps>,
 ): ToolExecutor {
-  return createToolExecutor({
-    operation: 'aem_get_json',
-    argsSchema: aemGetJsonArgsSchema,
-    requestSchema: aemGetJsonRequestSchema,
-    render: renderGetJsonSuccess,
-    failureFallbackMessage: 'AEM request failed',
-    ...config,
-  });
+  const { execute, ...rest } = config;
+  return (args, context) =>
+    createToolExecutor({
+      operation: 'aem_get_json',
+      argsSchema: aemGetJsonArgsSchema,
+      requestSchema: aemGetJsonRequestSchema,
+      render: renderGetJsonSuccess,
+      failureFallbackMessage: 'AEM request failed',
+      execute: (envelope, deps) => execute(envelope, deps, context),
+      ...rest,
+    })(args, context);
 }

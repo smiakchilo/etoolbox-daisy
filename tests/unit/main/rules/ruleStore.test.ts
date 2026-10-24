@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -128,6 +128,32 @@ describe('createRuleStore', () => {
     writeFileSync(path.join(root, 'b.md'), 'B', 'utf8');
     await store.load();
     expect(names(store.generic())).toEqual(['a']);
+  });
+
+  it('reload() picks up added and removed files and reports the count', async () => {
+    const root = makeRoot({ 'a.md': 'A' });
+    const store = createRuleStore({ directory: root });
+    await store.load();
+    expect(store.count()).toBe(1);
+    writeFileSync(path.join(root, 'b.md'), 'B', 'utf8');
+    await store.reload();
+    expect(names(store.generic())).toEqual(['a', 'b']);
+    expect(store.count()).toBe(2);
+    rmSync(path.join(root, 'a.md'));
+    await store.reload();
+    expect(names(store.generic())).toEqual(['b']);
+  });
+
+  it('reload() replaces earlier rejections instead of accumulating them', async () => {
+    const root = makeRoot({ 'big.md': 'x'.repeat(RULE_FILE_MAX_BYTES + 1) });
+    const store = createRuleStore({ directory: root });
+    await store.load();
+    expect(store.rejections()).toHaveLength(1);
+    await store.reload();
+    expect(store.rejections()).toHaveLength(1);
+    rmSync(path.join(root, 'big.md'));
+    await store.reload();
+    expect(store.rejections()).toEqual([]);
   });
 
   it('does not follow a link to a file outside the folder', async () => {

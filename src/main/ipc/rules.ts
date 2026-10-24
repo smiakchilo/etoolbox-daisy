@@ -1,6 +1,11 @@
 import { ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdir } from 'node:fs/promises';
-import { RULES_OPEN_FOLDER_CHANNEL, type RulesOpenFolderResult } from '../../shared';
+import {
+  RULES_OPEN_FOLDER_CHANNEL,
+  RULES_RELOAD_CHANNEL,
+  type RulesOpenFolderResult,
+  type RulesReloadResult,
+} from '../../shared';
 import type { Logger } from '../logger';
 import { isTrustedSkillsIpcSender, type SkillsIpcSenderInfo } from './skills';
 
@@ -41,6 +46,24 @@ export interface RulesIpcDependencies {
   readonly logger: Logger;
   readonly rendererDistDir: string;
   readonly mainWebContentsId: number;
+  /** Re-reads the rules and resolves to the number of rules now loaded. */
+  readonly reload: () => Promise<number>;
+}
+
+/** Runs the reload; a failure is reported, never thrown into the renderer. */
+export async function reloadRules(
+  reload: () => Promise<number>,
+  logger: Logger,
+): Promise<RulesReloadResult> {
+  try {
+    return { ok: true, count: await reload() };
+  } catch {
+    logger.error('RULES_RELOAD_FAILED', { outcome: 'failure' });
+    return {
+      ok: false,
+      error: { code: 'reload_failed', message: 'The rules could not be reloaded' },
+    };
+  }
 }
 
 function senderInfoFrom(event: IpcMainInvokeEvent): SkillsIpcSenderInfo | undefined {
@@ -66,5 +89,19 @@ export function registerRulesIpcHandlers(deps: RulesIpcDependencies): void {
       logger: deps.logger,
       openPath: (path) => shell.openPath(path),
     });
+  });
+
+  ipcMain.handle(RULES_RELOAD_CHANNEL, (event): Promise<RulesReloadResult> => {
+    if (!isTrustedSkillsIpcSender(senderInfoFrom(event), deps)) {
+      deps.logger.warn('RULES_IPC_SENDER_REJECTED');
+      return Promise.resolve({
+        ok: false,
+        error: {
+          code: 'untrusted_sender',
+          message: 'This request must come from the local app window',
+        },
+      });
+    }
+    return reloadRules(deps.reload, deps.logger);
   });
 }

@@ -44,9 +44,9 @@ import type {
 } from './browser-ipc';
 import type { CredentialsIpcResult } from './credentials-ipc';
 import type { MemoFileRequest, MemosIpcResult } from './memos-ipc';
-import type { RulesOpenFolderResult } from './rules-ipc';
+import type { RulesOpenFolderResult, RulesReloadResult } from './rules-ipc';
 import type { UpdateStatus, UpdatesIpcResult } from './updates-ipc';
-import type { SkillsOpenFolderResult } from './skills-ipc';
+import type { SkillsOpenFolderResult, SkillsReloadResult } from './skills-ipc';
 import type {
   TableExportRevealResult,
   TableExportSaveCsvRequest,
@@ -157,6 +157,11 @@ export interface DaisyRulesApi {
    * when missing. Takes no argument - main owns the path.
    */
   openFolder(): Promise<RulesOpenFolderResult>;
+  /**
+   * Re-reads the user's rules. Takes no argument. The model sees them from its
+   * next turn on.
+   */
+  reload(): Promise<RulesReloadResult>;
 }
 
 export interface DaisyUpdatesApi {
@@ -194,6 +199,11 @@ export interface DaisySkillsApi {
    * when missing. Takes no argument - main owns the path.
    */
   openFolder(): Promise<SkillsOpenFolderResult>;
+  /**
+   * Re-reads the bundled and the user's skills. Takes no argument. The model
+   * sees the new catalogue from its next turn on.
+   */
+  reload(): Promise<SkillsReloadResult>;
 }
 
 export interface DaisyTableExportApi {

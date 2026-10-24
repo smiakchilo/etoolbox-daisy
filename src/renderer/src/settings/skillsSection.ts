@@ -7,9 +7,9 @@ import type { SaveOutcome, StatusBannerSink } from './statusBanner';
  * The Settings panel's Skills tab. It holds three folder actions - **Custom
  * skills folder**, **Custom rules folder** and **Memos folder** - each opening
  * the user's folder in the OS file manager (main creates it when missing), and
- * the **Self-learning** checkbox (`memos.enabled`). Skills and rules are read at
- * startup only, so their help badges say to restart after adding one; memos and
- * the checkbox are read fresh on every prompt, so they apply to the next one.
+ * the **Self-learning** checkbox (`memos.enabled`), plus icon-only reload
+ * buttons for skills and rules, which re-read those sources without a restart.
+ * Memos and the checkbox are read fresh on every prompt.
  * The checkbox saves immediately, like the Browser tab's.
  */
 export interface SkillsSectionOptions {
@@ -19,6 +19,8 @@ export interface SkillsSectionOptions {
   reportSave(outcome: Promise<SaveOutcome>): void;
   /** Fired after a successful save, so the panel re-reads the snapshot. */
   onSettingsChanged(): void;
+  /** Fired after skills were re-read, so the chat refreshes its skill list. */
+  onSkillsReloaded?(): void;
 }
 
 export interface SkillsSection {
@@ -29,6 +31,25 @@ export interface SkillsSection {
 }
 
 const OPEN_FOLDER_LABEL = 'Custom skills folder';
+const RELOAD_SKILLS_LABEL = 'Reload skills';
+const RELOAD_RULES_LABEL = 'Reload rules';
+
+/** An icon-only quiet button wearing the browser toolbar's refresh glyph. */
+function createReloadButton(testId: string, label: string): HTMLElement {
+  const button = el('sp-action-button', {
+    attrs: {
+      quiet: '',
+      title: label,
+      'aria-label': label,
+      'data-testid': testId,
+      class: 'skills-section__reload',
+    },
+  });
+  const icon = document.createElement('sp-icon-refresh');
+  icon.setAttribute('slot', 'icon');
+  button.append(icon);
+  return button;
+}
 const OPEN_RULES_FOLDER_LABEL = 'Custom rules folder';
 const OPEN_MEMOS_FOLDER_LABEL = 'Memos folder';
 const SELF_LEARNING_LABEL = 'Self-learning';
@@ -38,6 +59,8 @@ export function createSkillsSection(options: SkillsSectionOptions): SkillsSectio
     attrs: { 'data-testid': 'skills-open-folder' },
     text: OPEN_FOLDER_LABEL,
   });
+  const reloadButton = createReloadButton('skills-reload', RELOAD_SKILLS_LABEL);
+  const reloadRulesButton = createReloadButton('rules-reload', RELOAD_RULES_LABEL);
   const openRulesButton = el('sp-action-button', {
     attrs: { 'data-testid': 'rules-open-folder' },
     text: OPEN_RULES_FOLDER_LABEL,
@@ -63,6 +86,39 @@ export function createSkillsSection(options: SkillsSectionOptions): SkillsSectio
   }
 
   const onClick = (): void => void openFolder(() => window.daisy.skills.openFolder());
+
+  let reloading = false;
+  async function reload(
+    run: () => Promise<{ ok: true } | { ok: false; error: { message: string } }>,
+    doneMessage: string,
+    onDone?: () => void,
+  ): Promise<void> {
+    if (reloading) return;
+    reloading = true;
+    try {
+      const result = await run();
+      if (result.ok) {
+        options.status.showStatus(doneMessage);
+        onDone?.();
+      } else {
+        options.status.showError(result.error.message);
+      }
+    } catch (error) {
+      options.status.showError(error instanceof Error ? error.message : String(error));
+    } finally {
+      reloading = false;
+    }
+  }
+  const onReloadClick = (): void =>
+    void reload(
+      () => window.daisy.skills.reload(),
+      'Skills reloaded',
+      () => options.onSkillsReloaded?.(),
+    );
+  const onReloadRulesClick = (): void =>
+    void reload(() => window.daisy.rules.reload(), 'Rules reloaded');
+  reloadButton.addEventListener('click', onReloadClick);
+  reloadRulesButton.addEventListener('click', onReloadRulesClick);
   const onRulesClick = (): void => void openFolder(() => window.daisy.rules.openFolder());
   openButton.addEventListener('click', onClick);
   openRulesButton.addEventListener('click', onRulesClick);
@@ -96,8 +152,9 @@ export function createSkillsSection(options: SkillsSectionOptions): SkillsSectio
     attrs: { class: 'field-label-row' },
     children: [
       openButton,
+      reloadButton,
       createContextualHelp(
-        'Place your skills in the folder. Changes apply after restarting the app',
+        'Place your skills in the folder, then press Reload skills. Rules and memos are separate. Changes apply to the next prompt',
         helpAccessibleName(OPEN_FOLDER_LABEL),
       ),
     ],
@@ -107,8 +164,9 @@ export function createSkillsSection(options: SkillsSectionOptions): SkillsSectio
     attrs: { class: 'field-label-row' },
     children: [
       openRulesButton,
+      reloadRulesButton,
       createContextualHelp(
-        'Place your rules as markdown files in the folder. A rule applies to every project, or only to the projects named in its project front matter. Changes apply after restarting the app',
+        'Place your rules as markdown files in the folder, then press Reload rules. A rule applies to every project, or only to the projects named in its project front matter. Changes apply to the next prompt',
         helpAccessibleName(OPEN_RULES_FOLDER_LABEL),
       ),
     ],
@@ -160,6 +218,8 @@ export function createSkillsSection(options: SkillsSectionOptions): SkillsSectio
     },
     dispose(): void {
       openButton.removeEventListener('click', onClick);
+      reloadButton.removeEventListener('click', onReloadClick);
+      reloadRulesButton.removeEventListener('click', onReloadRulesClick);
       openRulesButton.removeEventListener('click', onRulesClick);
       openMemosButton.removeEventListener('click', onMemosClick);
       selfLearning.removeEventListener('change', onSelfLearningChange);

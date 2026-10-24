@@ -140,26 +140,49 @@ export function splitLeadingSkill(
 
 /**
  * The bundled skills whose answer is a deterministic, application-rendered
- * table rather than the model's own prose. A turn that invokes one of these
- * (`/search`, `/semantic-search`, `/search-component`, `/search-page`) has its assistant text
- * suppressed from the transcript: the `format_table` message is the whole
- * answer, so the model's surrounding prose ("here are the results...", an
- * explanation of the component, ad-hoc Markdown tables) would only duplicate or
- * contradict it.
- *
- * Deliberately a constant, not the live skill catalogue: suppression is decided
- * on send, before the catalogue may have loaded, and must not change with it.
+ * table. They are the fallback of the table-only registry below, so a startup
+ * replay that runs before the skill list has loaded still suppresses their prose.
  */
-export const DETERMINISTIC_TABLE_SKILLS: readonly string[] = [
+const BUNDLED_TABLE_ONLY_SKILLS: readonly string[] = [
   'search',
   'semantic-search',
   'search-page',
   'search-component',
-  'search-page',
 ];
 
-/** Whether `prompt` invokes one of {@link DETERMINISTIC_TABLE_SKILLS}. */
+/** The skill list entry the registry reads; a structural subset of `AgentChatSkill`. */
+interface TableOnlySkillEntry {
+  readonly name: string;
+  readonly tableOnly?: boolean | undefined;
+}
+
+let tableOnlySkills: ReadonlySet<string> = new Set(BUNDLED_TABLE_ONLY_SKILLS);
+
+/**
+ * Replaces the registry with the skills the application reports as table-only
+ * (`table-only: true` in a skill's front matter, bundled or the user's own).
+ * Such a skill's answer is a `format_table` message, so a turn that invokes it
+ * has its assistant text suppressed from the transcript: the model's
+ * surrounding prose ("here are the results...", ad-hoc Markdown tables) would
+ * only duplicate or contradict the table. The list is authoritative: a user
+ * skill that replaces a bundled one also replaces its flag.
+ */
+export function setTableOnlySkills(skills: readonly TableOnlySkillEntry[]): void {
+  tableOnlySkills = new Set(skills.filter((skill) => skill.tableOnly === true).map((s) => s.name));
+}
+
+/** Restores the bundled fallback, before any skill list has loaded. */
+export function resetTableOnlySkills(): void {
+  tableOnlySkills = new Set(BUNDLED_TABLE_ONLY_SKILLS);
+}
+
+/** Whether the skill named `name` answers with one application-rendered table. */
+export function isTableOnlySkill(name: string): boolean {
+  return tableOnlySkills.has(name);
+}
+
+/** Whether `prompt` invokes a table-only skill (`/search`, `/lighthouse-check`, ...). */
 export function isDeterministicTablePrompt(prompt: string): boolean {
   const token = readLeadingSkillToken(prompt);
-  return token !== undefined && DETERMINISTIC_TABLE_SKILLS.includes(token.name);
+  return token !== undefined && isTableOnlySkill(token.name);
 }

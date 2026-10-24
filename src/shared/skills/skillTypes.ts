@@ -30,6 +30,8 @@ export interface SkillSummary {
   readonly userInvocable: boolean;
   /** Left out of the model's catalogue; still loadable by `/name`. */
   readonly disableModelInvocation: boolean;
+  /** The skill's answer is one application-rendered table; the model's prose is suppressed. */
+  readonly tableOnly: boolean;
   /** Whether the skill has at least one script `skill_script` can run. */
   readonly hasScripts: boolean;
 }

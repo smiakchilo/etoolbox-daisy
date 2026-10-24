@@ -3,6 +3,7 @@ import type { IpcMainEvent, WebContents } from 'electron';
 import {
   WEBVIEW_BRIDGE_CANCEL_CHANNEL,
   WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_READ_CHANNEL,
   WEBVIEW_BRIDGE_READY_CHANNEL,
   WEBVIEW_BRIDGE_REPLY_CHANNEL,
 } from '../../../../src/shared/contracts/webviewBridge';
@@ -97,6 +98,18 @@ describe('createWebviewBridgeTransport - delivering commands', () => {
         payload: { requestId: 'req-a', url: 'https://author.example/x.0.json' },
       },
     ]);
+  });
+
+  it('sends a read command on its own channel and reports whether it went out', () => {
+    const view = makeFakeView(7);
+    const transport = createWebviewBridgeTransport({ viewWebContents: () => view.webContents });
+    const command = { requestId: 'req-a', selector: 'a', limit: 5 };
+
+    expect(transport.sendRead?.(command)).toBe(true);
+    expect(view.sent).toEqual([{ channel: WEBVIEW_BRIDGE_READ_CHANNEL, payload: command }]);
+
+    const absent = createWebviewBridgeTransport({ viewWebContents: () => undefined });
+    expect(absent.sendRead?.(command)).toBe(false);
   });
 
   it('reports that a fetch did not go out when there is no view, rather than pretending it did', () => {

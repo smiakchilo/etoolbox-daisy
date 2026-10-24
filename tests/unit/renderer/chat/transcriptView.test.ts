@@ -1253,6 +1253,83 @@ describe('createTranscriptView - format_table message table', () => {
     expect(element.querySelector('img')).toBeNull();
   });
 
+  describe('typed columns and a title', () => {
+    const scorecard = {
+      rows: [
+        { name: 'Performance', verdict: 'pass' },
+        { name: 'SEO', verdict: 'fail' },
+      ],
+    };
+    const columns = [{ key: 'name' }, { key: 'verdict', type: 'status' }];
+
+    it('draws a status cell as a status light that keeps its text, and a text cell plain', () => {
+      const element = renderTable([
+        requested(0, 1, { data: scorecard, columns, title: 'Scorecard' }),
+        result(1, 1, 2, 'new'),
+      ]);
+      const cells = [...element.querySelectorAll('sp-table-body sp-table-row')[0]!.children];
+      expect(cells.map((c) => c.textContent)).toEqual(['1', 'Performance', 'pass']);
+      expect(cells[1]?.querySelector('sp-status-light')).toBeNull();
+      const light = cells[2]?.querySelector('sp-status-light');
+      expect(light?.getAttribute('variant')).toBe('positive');
+      const failing = element.querySelectorAll('sp-table-body sp-table-row')[1]!;
+      expect(failing.querySelector('sp-status-light')?.getAttribute('variant')).toBe('negative');
+      expect(element.querySelector('.chat-table-message__title')?.textContent).toBe('Scorecard');
+    });
+
+    it('never parses a status value as markup', () => {
+      // noinspection HtmlUnknownTarget,HtmlDeprecatedAttribute,HtmlRequiredAltAttribute,JSUnresolvedFunction
+      const hostile = '<img src=x onerror=alert(1) alt="Image">';
+      const element = renderTable([
+        requested(0, 1, { data: { rows: [{ verdict: hostile }] }, columns }),
+        result(1, 1, 1, 'new'),
+      ]);
+      expect(element.querySelector('sp-status-light')?.textContent).toBe(hostile);
+      expect(element.querySelector('img')).toBeNull();
+    });
+
+    it('leaves an empty status cell empty', () => {
+      const element = renderTable([
+        requested(0, 1, { data: { rows: [{ name: 'A' }] }, columns }),
+        result(1, 1, 1, 'new'),
+      ]);
+      expect(element.querySelector('sp-status-light')).toBeNull();
+    });
+
+    it('keeps the kinds across an appended page', () => {
+      const element = renderTable([
+        requested(0, 1, { data: scorecard, columns }),
+        result(1, 1, 2, 'new'),
+        requested(2, 2, {
+          data: { rows: [{ name: 'A11y', verdict: 'warn' }] },
+          columns,
+          mode: 'append',
+        }),
+        result(3, 2, 1, 'append'),
+      ]);
+      const lights = element.querySelectorAll('sp-table-body sp-status-light');
+      expect(lights).toHaveLength(3);
+      expect(lights[2]?.getAttribute('variant')).toBe('notice');
+    });
+
+    it('re-renders when only the cell kind changes', () => {
+      const view = createTranscriptView(markdownRenderer, { getLinkContext: () => activeContext });
+      const plain = createTranscriptStore();
+      plain.applyEvent(
+        requested(0, 1, { data: scorecard, columns: [{ key: 'name' }, { key: 'verdict' }] }),
+      );
+      plain.applyEvent(result(1, 1, 2, 'new'));
+      view.repaint(plain);
+      expect(view.element.querySelector('sp-status-light')).toBeNull();
+
+      const typed = createTranscriptStore();
+      typed.applyEvent(requested(0, 1, { data: scorecard, columns }));
+      typed.applyEvent(result(1, 1, 2, 'new'));
+      view.repaint(typed);
+      expect(view.element.querySelectorAll('sp-status-light')).toHaveLength(2);
+    });
+  });
+
   it('groups an append call into one table that stays at the run end', () => {
     const element = renderTable([
       requested(0, 1, { data: page }),

@@ -36,12 +36,14 @@
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
     "@openrouter/agent": "0.11.0",
     "@openrouter/sdk": "0.13.67",
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
+    "lighthouse": "13.5.0",
     "marked": "18.0.13",
+    "puppeteer-core": "25.16.0",
     "quickjs-emscripten-core": "0.32.0",
-    "undici": "7.29.1",
+    "undici": "7.30.1",
     "yaml": "2.9.1",
-    "zod": "4.6.4"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -70,7 +72,7 @@
     "@spectrum-web-components/theme": "1.12.2",
     "@types/jsdom": "30.0.0",
     "@types/node": "24.13.4",
-    "electron": "44.3.0",
+    "electron": "44.9.3",
     "electron-builder": "26.15.3",
     "electron-vite": "5.0.0",
     "eslint": "10.10.0",
@@ -80,6 +82,6 @@
     "selfsigned": "5.5.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.0",
-    "vitest": "5.0.0"
+    "vitest": "5.0.5"
   }
 }

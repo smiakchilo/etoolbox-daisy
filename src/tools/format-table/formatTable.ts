@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import {
-  type ToolExecutor,
   type JsonValue,
   type RequestId,
   type Result,
+  type TableCellKind,
+  type ToolDescriptor,
   type ToolError,
+  type ToolExecutor,
   type ToolHost,
   createToolError,
   err,
@@ -16,8 +18,8 @@ import {
 /**
  * The `format_table` tool, self-contained.
  *
- * The one place the chat renders a table. It is **internal**: the model never
- * sees it; the search composites (`aem_query_format_ask`, `aem_semantic_search`)
+ * The one place the chat renders a table. The model may call it with rows of its
+ * own, and the search composites (`aem_query_format_ask`, `aem_semantic_search`)
  * call it through the tool-to-tool bridge with the JSON they hold - an array of
  * rows, or an object with a `rows` array (the `aem_query` result) - and the
  * application paints it as an **assistant message**: a Spectrum table over an
@@ -45,6 +47,24 @@ export const FORMAT_TABLE_TOOL_NAME = 'format_table';
  */
 export const formatTableModeSchema = z.enum(['new', 'append']);
 
+const MAX_TABLE_COLUMNS = 20;
+
+export const formatTableColumnsSchema = z
+  .array(
+    z
+      .object({
+        key: z.string().min(1).max(200),
+        label: z.string().trim().min(1).max(60).optional(),
+        type: z.enum(['text', 'status']).optional(),
+      })
+      .strict(),
+  )
+  .min(1)
+  .max(MAX_TABLE_COLUMNS)
+  .refine((columns) => new Set(columns.map((column) => column.key)).size === columns.length, {
+    message: 'format_table `columns` must not repeat a key',
+  });
+
 export type FormatTableMode = z.infer<typeof formatTableModeSchema>;
 
 export const formatTableArgsSchema = z
@@ -70,10 +90,46 @@ export const formatTableArgsSchema = z
      * `false` on the settle call.
      */
     totalPending: z.boolean().optional(),
+    /**
+     * Which row keys to show, in order, with an optional header and a cell type.
+     * Without it the columns are inferred from the rows' keys. A `status` cell
+     * is drawn as a coloured status light.
+     */
+    columns: formatTableColumnsSchema.optional(),
+    /** A caption shown above the table. */
+    title: z.string().trim().min(1).max(200).optional(),
   })
   .strict();
 
 export type FormatTableArgs = z.infer<typeof formatTableArgsSchema>;
+
+const FORMAT_TABLE_INPUT_SCHEMA: Record<string, unknown> & { properties?: unknown } = {
+  ...z.toJSONSchema(formatTableArgsSchema, { io: 'input' }),
+};
+// The model-facing schema is self-contained, so the generator's definitions table is dropped.
+delete FORMAT_TABLE_INPUT_SCHEMA['$defs'];
+
+export const FORMAT_TABLE_TOOL_DESCRIPTOR: ToolDescriptor = {
+  name: FORMAT_TABLE_TOOL_NAME,
+  description:
+    'Shows rows to the user as a table in the chat. `data` is an array of row objects. ' +
+    '`columns` picks which keys to show, in order, with an optional `label` (the header) and ' +
+    'a cell `type`: "text" (default) or "status", which draws a coloured status light for ' +
+    'values such as pass / warn / fail. Without `columns` every key is shown. `title` is a ' +
+    'caption above the table and `totalLine` replaces the line under it. ' +
+    '`mode: "append"` adds rows to the table the previous call started. ' +
+    'Cell values are shown as text, never as markup. Give the user the table instead of ' +
+    'repeating its rows in your reply.',
+  parameters: {
+    ...FORMAT_TABLE_INPUT_SCHEMA,
+    properties: {
+      ...(FORMAT_TABLE_INPUT_SCHEMA.properties as Record<string, unknown>),
+      data: { type: 'array', items: { type: 'object' } },
+    },
+  },
+};
+
+export const FORMAT_TABLE_ALLOWLIST_ENTRY = `custom:${FORMAT_TABLE_TOOL_NAME}`;
 
 /** One value rendered as a table cell. Objects/arrays are JSON-stringified rather than dropped. */
 function renderCell(value: JsonValue | undefined): string {
@@ -254,10 +310,23 @@ function totalLine(data: JsonValue): string | undefined {
 /** The normalised table: headers, string cells aligned to them, and an optional total line. */
 export interface NormalizedTable {
   readonly columns: readonly string[];
+  /** The cell type of each column, aligned to `columns`. */
+  readonly columnKinds: readonly TableCellKind[];
+  readonly title: string | undefined;
   readonly rows: readonly (readonly string[])[];
   readonly total: string | undefined;
   readonly totalPending: boolean;
   readonly mode: FormatTableMode;
+}
+
+/** The caller-chosen presentation of a table: its columns (keys, headers, cell types) and caption. */
+export interface NormalizeFormatTableOptions {
+  readonly columns?: readonly {
+    readonly key: string;
+    readonly label?: string | undefined;
+    readonly type?: TableCellKind | undefined;
+  }[];
+  readonly title?: string | undefined;
 }
 
 /**
@@ -268,16 +337,39 @@ export interface NormalizedTable {
  * identifying path hoisted first; a key whose header would collide with an
  * earlier one is dropped so a node carrying both `jcr:path` and `path` still
  * yields one Path column.
+ *
+ * With `options.columns` the caller picks the keys, headers and cell types
+ * instead; a key no row carries is still a (blank) column, so the shape is
+ * what the caller asked for.
  */
 export function normalizeFormatTable(
   data: JsonValue,
   mode: FormatTableMode,
   totalOverride?: string,
   totalPending = false,
+  options: NormalizeFormatTableOptions = {},
 ): NormalizedTable | undefined {
   const resolved = resolveTable(data);
   if (resolved === undefined) return undefined;
   const { rows, container } = resolved;
+  const total =
+    totalOverride !== undefined && totalOverride.trim().length > 0
+      ? totalOverride.trim()
+      : totalLine(container);
+  const title = options.title?.trim() ? options.title.trim() : undefined;
+
+  if (options.columns !== undefined && options.columns.length > 0) {
+    const chosen = options.columns;
+    return {
+      columns: chosen.map((column) => column.label ?? headerFor(column.key)),
+      columnKinds: chosen.map((column) => column.type ?? 'text'),
+      title,
+      rows: rows.map((row) => chosen.map((column) => renderCell(row[column.key]))),
+      total,
+      totalPending,
+      mode,
+    };
+  }
 
   const seen = new Set<string>();
   const keys: string[] = [];
@@ -308,11 +400,10 @@ export function normalizeFormatTable(
 
   return {
     columns,
+    columnKinds: columns.map(() => 'text' as const),
+    title,
     rows: rows.map((row) => columnKeys.map((key) => renderCell(row[key]))),
-    total:
-      totalOverride !== undefined && totalOverride.trim().length > 0
-        ? totalOverride.trim()
-        : totalLine(container),
+    total,
     totalPending,
     mode,
   };
@@ -328,6 +419,23 @@ export const formatTableSuccessSchema = z
     resultType: z.literal('success'),
   })
   .strict();
+
+/**
+ * The presentation options of a call's arguments, with an absent member omitted
+ * (not `undefined`). From the renderer, which holds raw arguments, an unusable
+ * `columns` falls back to inferred columns rather than hiding the table.
+ */
+export function readTableOptions(source: {
+  readonly columns?: unknown;
+  readonly title?: unknown;
+}): NormalizeFormatTableOptions {
+  const columns = formatTableColumnsSchema.safeParse(source.columns);
+  const title = typeof source.title === 'string' ? source.title : undefined;
+  return {
+    ...(columns.success ? { columns: columns.data } : {}),
+    ...(title !== undefined ? { title } : {}),
+  };
+}
 
 function invalidArgument(message: string, requestId: RequestId): Result<JsonValue, ToolError> {
   return err(createToolError('INVALID_ARGUMENT', message, requestId));
@@ -353,6 +461,8 @@ export function createFormatTableExecutor(host: ToolHost): ToolExecutor {
       parsed.data.data,
       parsed.data.mode,
       parsed.data.totalLine,
+      false,
+      readTableOptions(parsed.data),
     );
     if (normalized === undefined) {
       return Promise.resolve(

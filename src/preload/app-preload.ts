@@ -68,7 +68,9 @@ import {
   MEMOS_OPEN_FOLDER_CHANNEL,
   MEMOS_REVEAL_CHANNEL,
   RULES_OPEN_FOLDER_CHANNEL,
+  RULES_RELOAD_CHANNEL,
   SKILLS_OPEN_FOLDER_CHANNEL,
+  SKILLS_RELOAD_CHANNEL,
   TABLE_EXPORT_REVEAL_LAST_CHANNEL,
   TABLE_EXPORT_SAVE_CSV_CHANNEL,
   addProjectRequestSchema,
@@ -114,8 +116,10 @@ import {
   parseLogoutResult,
   parseReorderServersResult,
   parseRulesOpenFolderResult,
+  parseRulesReloadResult,
   parseSettingsIpcVoidResult,
   parseSkillsOpenFolderResult,
+  parseSkillsReloadResult,
   parseTableExportRevealResult,
   parseTableExportSaveCsvResult,
   parseUpdateServerPresentationResult,
@@ -201,7 +205,9 @@ import {
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
   type RulesOpenFolderResult,
+  type RulesReloadResult,
   type SkillsOpenFolderResult,
+  type SkillsReloadResult,
   type StopFindRequest,
   type TableExportRevealResult,
   type TableExportSaveCsvRequest,
@@ -517,11 +523,19 @@ const daisyApi: DaisyAppApi = {
       const raw: unknown = await ipcRenderer.invoke(SKILLS_OPEN_FOLDER_CHANNEL);
       return parseSkillsOpenFolderResult(raw);
     },
+    async reload(): Promise<SkillsReloadResult> {
+      const raw: unknown = await ipcRenderer.invoke(SKILLS_RELOAD_CHANNEL);
+      return parseSkillsReloadResult(raw);
+    },
   },
   rules: {
     async openFolder(): Promise<RulesOpenFolderResult> {
       const raw: unknown = await ipcRenderer.invoke(RULES_OPEN_FOLDER_CHANNEL);
       return parseRulesOpenFolderResult(raw);
+    },
+    async reload(): Promise<RulesReloadResult> {
+      const raw: unknown = await ipcRenderer.invoke(RULES_RELOAD_CHANNEL);
+      return parseRulesReloadResult(raw);
     },
   },
   memos: {

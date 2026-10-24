@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Logger } from '../../../../src/main/logger';
-import { SKILLS_OPEN_FOLDER_CHANNEL } from '../../../../src/shared';
+import { SKILLS_OPEN_FOLDER_CHANNEL, SKILLS_RELOAD_CHANNEL } from '../../../../src/shared';
 import { ipcEventFrom, makeRecordingLogger } from '../../../support/ipcHandlerHarness';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
@@ -21,7 +21,7 @@ vi.mock('electron', () => ({
   session: {},
 }));
 
-const { isTrustedSkillsIpcSender, openSkillsFolder, registerSkillsIpcHandlers } =
+const { isTrustedSkillsIpcSender, openSkillsFolder, registerSkillsIpcHandlers, reloadSkills } =
   await import('../../../../src/main/ipc/skills');
 
 const scratch = createScratchDirs('skills-ipc', 'skills-ipc-');
@@ -83,18 +83,68 @@ describe('isTrustedSkillsIpcSender', () => {
   });
 });
 
+describe('reloadSkills', () => {
+  it('reports how many skills the store now holds', async () => {
+    const logger = makeRecordingLogger();
+    expect(await reloadSkills(() => Promise.resolve(3), logger)).toEqual({ ok: true, count: 3 });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('reports reload_failed without leaking the cause, and logs it', async () => {
+    const logger = makeRecordingLogger();
+    const result = await reloadSkills(
+      () => Promise.reject(new Error('C:\\secret\\path exploded')),
+      logger,
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: 'reload_failed' } });
+    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(logger.error).toHaveBeenCalledWith('SKILLS_RELOAD_FAILED', { outcome: 'failure' });
+  });
+});
+
 describe('registerSkillsIpcHandlers', () => {
-  function register(logger: Logger): (event: unknown) => Promise<unknown> {
+  const reload = vi.fn<() => Promise<number>>();
+
+  beforeEach(() => {
+    reload.mockReset();
+    reload.mockResolvedValue(2);
+  });
+
+  function register(
+    logger: Logger,
+    channel: string = SKILLS_OPEN_FOLDER_CHANNEL,
+  ): (event: unknown) => Promise<unknown> {
     registerSkillsIpcHandlers({
       directory: path.join(scratch.create(), 'skills'),
       logger,
       rendererDistDir: RENDERER_DIST,
       mainWebContentsId: MAIN_WEB_CONTENTS_ID,
+      reload,
     });
-    const handler = invokeHandlers.get(SKILLS_OPEN_FOLDER_CHANNEL);
+    const handler = invokeHandlers.get(channel);
     if (handler === undefined) throw new Error('handler not registered');
     return (event) => Promise.resolve(handler(event));
   }
+
+  it('reloads for a trusted sender', async () => {
+    const handler = register(makeRecordingLogger(), SKILLS_RELOAD_CHANNEL);
+    expect(await handler(ipcEventFrom(TRUSTED_URL, MAIN_WEB_CONTENTS_ID))).toEqual({
+      ok: true,
+      count: 2,
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a reload from a remote frame', async () => {
+    const logger = makeRecordingLogger();
+    const handler = register(logger, SKILLS_RELOAD_CHANNEL);
+
+    const result = await handler(ipcEventFrom('https://aem.example/', MAIN_WEB_CONTENTS_ID));
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'untrusted_sender' } });
+    expect(reload).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith('SKILLS_IPC_SENDER_REJECTED');
+  });
 
   it('opens the folder for a trusted sender', async () => {
     const handler = register(makeRecordingLogger());

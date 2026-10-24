@@ -1,5 +1,6 @@
-import type { JsonValue, ToolTableMessage } from '../../../shared';
+import type { JsonValue, TableCellKind, ToolTableMessage } from '../../../shared';
 import { el } from '../lib/dom';
+import { statusLightVariant } from './tableCells';
 import {
   EMPTY_AEM_LINKIFY_STATE,
   EMPTY_LINK_CONTEXT,
@@ -168,6 +169,9 @@ function succeededData(view: ToolCallView): JsonValue | undefined {
  */
 interface RenderedTable {
   readonly columns: readonly string[];
+  /** `columnKinds` joined into one comparable string. */
+  readonly kinds: string;
+  readonly title: string | undefined;
   readonly rows: readonly (readonly string[])[];
   readonly total: string | undefined;
   /** Whether the total line currently wears its "counting" spinner. */
@@ -207,6 +211,11 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return true;
 }
 
+/** A message's column kinds as one comparable string (a missing kind is text). */
+function columnKindsSignature(message: ToolTableMessage): string {
+  return message.table.columns.map((_, index) => message.columnKinds?.[index] ?? 'text').join(',');
+}
+
 /**
  * The *rows* of a rendered run - its columns and rows, with neither the total
  * line nor the spinner. This is the signature `repaint` compares to decide a
@@ -218,6 +227,7 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
 function tableRunRowsSignature(message: ToolTableMessage): string {
   return [
     message.table.columns.join('\u0001'),
+    columnKindsSignature(message),
     message.table.rows.map((row) => row.join('\u0001')).join('\u0002'),
   ].join('\u0000');
 }
@@ -899,7 +909,21 @@ export function createTranscriptView(
     value: string,
     header: string,
     segments: readonly MessageSegment[],
+    kind: TableCellKind = 'text',
   ): void {
+    if (kind === 'status' && value.trim().length > 0) {
+      cell.append(
+        el('sp-status-light', {
+          attrs: {
+            class: 'chat-table-message__status',
+            size: 's',
+            variant: statusLightVariant(value),
+          },
+          text: value,
+        }),
+      );
+      return;
+    }
     if (!segments.some((segment) => segment.kind === 'link')) {
       const span = el('span', { text: value });
       if (header === 'Value' || header === 'Citation') {
@@ -929,6 +953,7 @@ export function createTranscriptView(
   function renderTableRow(
     row: readonly string[],
     columns: readonly string[],
+    kinds: readonly TableCellKind[],
     rowIndex: number,
     state: AemLinkifyState,
     context: LinkContext,
@@ -944,9 +969,14 @@ export function createTranscriptView(
     columns.forEach((column, columnIndex) => {
       const value = row[columnIndex] ?? '';
       const cell = el('sp-table-cell', {});
-      const linked = splitAemPathLinks(value, context, currentState);
-      currentState = linked.state;
-      appendCellContent(cell, value, column, linked.segments);
+      const kind = kinds[columnIndex] ?? 'text';
+      if (kind === 'status') {
+        appendCellContent(cell, value, column, [], kind);
+      } else {
+        const linked = splitAemPathLinks(value, context, currentState);
+        currentState = linked.state;
+        appendCellContent(cell, value, column, linked.segments, kind);
+      }
       rowEl.append(cell);
     });
     return { element: rowEl, linkState: currentState };
@@ -992,7 +1022,11 @@ export function createTranscriptView(
   ): { readonly nodes: readonly HTMLElement[]; readonly linkState: AemLinkifyState } {
     const nodes: HTMLElement[] = [];
     const { columns, rows } = message.table;
+    const kinds = columns.map((_, index) => message.columnKinds?.[index] ?? 'text');
     let linkState = EMPTY_AEM_LINKIFY_STATE;
+    if (message.title !== undefined && rows.length > 0) {
+      nodes.push(el('p', { attrs: { class: 'chat-table-message__title' }, text: message.title }));
+    }
     if (rows.length > 0) {
       const head = el('sp-table-head', {});
       head.append(el('sp-table-head-cell', { attrs: {}, text: '#' }));
@@ -1002,7 +1036,14 @@ export function createTranscriptView(
 
       const body = el('sp-table-body', {});
       for (let index = 0; index < rows.length; index += 1) {
-        const rendered = renderTableRow(rows[index] ?? [], columns, index, linkState, context);
+        const rendered = renderTableRow(
+          rows[index] ?? [],
+          columns,
+          kinds,
+          index,
+          linkState,
+          context,
+        );
         body.append(rendered.element);
         linkState = rendered.linkState;
       }
@@ -1074,12 +1115,16 @@ export function createTranscriptView(
     const linkContext = getLinkContext();
     const context = linkContextSignature(linkContext);
     const { columns, rows } = message.table;
+    const kinds = columnKindsSignature(message);
+    const kindList = columns.map((_, index) => message.columnKinds?.[index] ?? 'text');
     const previous = renderedTables.get(shell);
     if (
       previous !== undefined &&
       previous.context === context &&
       previous.total === message.total &&
       previous.totalPending === message.totalPending &&
+      previous.kinds === kinds &&
+      previous.title === message.title &&
       sameStrings(previous.columns, columns) &&
       previous.rows.length === rows.length &&
       previous.rows.every((row, index) => sameStrings(row, rows[index] ?? []))
@@ -1091,6 +1136,8 @@ export function createTranscriptView(
       previous.context === context &&
       previous.table !== undefined &&
       previous.body !== undefined &&
+      previous.kinds === kinds &&
+      previous.title === message.title &&
       sameStrings(previous.columns, columns) &&
       rows.length >= previous.rows.length &&
       previous.rows.every((row, index) => sameStrings(row, rows[index] ?? []))
@@ -1100,7 +1147,14 @@ export function createTranscriptView(
       // the page above it.
       let linkState = previous.linkState;
       for (let index = previous.rows.length; index < rows.length; index += 1) {
-        const rendered = renderTableRow(rows[index] ?? [], columns, index, linkState, linkContext);
+        const rendered = renderTableRow(
+          rows[index] ?? [],
+          columns,
+          kindList,
+          index,
+          linkState,
+          linkContext,
+        );
         previous.body.append(rendered.element);
         linkState = rendered.linkState;
       }
@@ -1119,6 +1173,8 @@ export function createTranscriptView(
     shell.replaceChildren(...rendered.nodes);
     renderedTables.set(shell, {
       columns,
+      kinds,
+      title: message.title,
       rows,
       linkState: rendered.linkState,
       total: message.total,
@@ -1158,6 +1214,9 @@ export function createTranscriptView(
     interface Run {
       readonly keys: string[];
       readonly columns: string[];
+      /** The kind each header was last declared with, across the run's pages. */
+      readonly kinds: Map<string, TableCellKind>;
+      title: string | undefined;
       readonly pages: {
         readonly columns: readonly string[];
         readonly rows: readonly (readonly string[])[];
@@ -1184,6 +1243,8 @@ export function createTranscriptView(
         );
         messages.set(lastKey, {
           mode: 'new',
+          ...(run.title !== undefined ? { title: run.title } : {}),
+          columnKinds: run.columns.map((column) => run.kinds.get(column) ?? 'text'),
           total: run.total,
           totalPending: run.totalPending,
           table: { columns: run.columns, rows, status: '', mayHaveMore: false },
@@ -1213,13 +1274,24 @@ export function createTranscriptView(
       }
       if (message.mode === 'new' || current === undefined) {
         flush();
-        current = { keys: [key], columns: [], pages: [], total: undefined, totalPending: false };
+        current = {
+          keys: [key],
+          columns: [],
+          kinds: new Map(),
+          title: undefined,
+          pages: [],
+          total: undefined,
+          totalPending: false,
+        };
       } else {
         current.keys.push(key);
       }
-      for (const column of message.table.columns) {
+      for (const [index, column] of message.table.columns.entries()) {
         if (!current.columns.includes(column)) current.columns.push(column);
+        const kind = message.columnKinds?.[index];
+        if (kind !== undefined && kind !== 'text') current.kinds.set(column, kind);
       }
+      current.title ??= message.title;
       current.pages.push({ columns: message.table.columns, rows: message.table.rows });
       current.total = message.total ?? current.total;
       // The run's **last** call decides the flag, exactly as it decides the

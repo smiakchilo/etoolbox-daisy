@@ -77,6 +77,8 @@ export interface CreateSettingsPanelOptions {
    * native view stays collapsed and re-opening the panel short-circuits.
    */
   onDismiss(): void;
+  /** Fired after Reload skills succeeded, so the chat re-reads its skill list. */
+  onSkillsReloaded?(): void;
 }
 
 export function createSettingsPanel(options: CreateSettingsPanelOptions): SettingsPanel {
@@ -133,6 +135,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     status,
     reportSave: reportWith,
     onSettingsChanged: () => void reload(),
+    onSkillsReloaded: () => options.onSkillsReloaded?.(),
   });
 
   const updatesSection = createUpdatesSection({

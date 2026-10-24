@@ -59,6 +59,8 @@ export interface SkillStoreOptions {
 export interface SkillStore {
   /** Reads both sources once; later calls share that read. */
   load(): Promise<readonly SkillSummary[]>;
+  /** Reads both sources again, replacing the snapshot (a skill added or edited on disk). */
+  reload(): Promise<readonly SkillSummary[]>;
   /** Every loaded skill, sorted by name; `[]` until `load()` resolves. */
   list(): readonly SkillSummary[];
   get(name: string): LoadedSkill | undefined;
@@ -159,6 +161,7 @@ async function readSkillFolder(
       source,
       userInvocable: parsed.userInvocable,
       disableModelInvocation: parsed.disableModelInvocation,
+      tableOnly: parsed.tableOnly,
       hasScripts: files.some((file) => isRunnableScriptPath(file.path)),
     },
     directory,
@@ -243,19 +246,29 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
     return { skills: merged, sorted, rejections };
   }
 
+  function start(): Promise<readonly SkillSummary[]> {
+    return read().then(
+      (loaded) => {
+        snapshot = loaded;
+        return loaded.sorted.map((skill) => skill.summary);
+      },
+      () => {
+        snapshot = EMPTY_SNAPSHOT;
+        return [];
+      },
+    );
+  }
+
   return {
     load() {
-      inFlight ??= read().then(
-        (loaded) => {
-          snapshot = loaded;
-          return loaded.sorted.map((skill) => skill.summary);
-        },
-        () => {
-          snapshot = EMPTY_SNAPSHOT;
-          return [];
-        },
-      );
+      inFlight ??= start();
       return inFlight;
+    },
+    reload() {
+      // Chained behind a read already running so two snapshots never race each other.
+      const chained = inFlight === undefined ? start() : inFlight.then(() => start());
+      inFlight = chained;
+      return chained;
     },
     list: () => snapshot.sorted.map((skill) => skill.summary),
     get: (name) => snapshot.skills.get(name),
@@ -269,6 +282,7 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
             ? summary.description
             : summary.userDescription
           ).slice(0, COMPOSER_DESCRIPTION_MAX_LENGTH),
+          ...(summary.tableOnly ? { tableOnly: true } : {}),
         })),
     modelCatalogue: () =>
       snapshot.sorted

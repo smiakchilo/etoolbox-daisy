@@ -17,7 +17,14 @@ describe('parseSkillFrontMatter', () => {
       userDescription: '',
       userInvocable: true,
       disableModelInvocation: false,
+      tableOnly: false,
     });
+  });
+
+  it('reads table-only and defaults it to false', () => {
+    expect(parseSkillFrontMatter('---\nname: s\ntable-only: true\n---\n')?.tableOnly).toBe(true);
+    expect(parseSkillFrontMatter('---\nname: s\ntable-only: no\n---\n')?.tableOnly).toBe(false);
+    expect(parseSkillFrontMatter('---\nname: s\n---\n')?.tableOnly).toBe(false);
   });
 
   it('reads user-invocable: false', () => {
@@ -109,6 +116,7 @@ describe('parseSkillFrontMatter', () => {
       userDescription: '',
       userInvocable: true,
       disableModelInvocation: false,
+      tableOnly: false,
     });
   });
 });
