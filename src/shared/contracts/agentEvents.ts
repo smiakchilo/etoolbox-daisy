@@ -29,7 +29,7 @@ import {
  * requirements-decisions.md section 2 forbids for anything beyond content
  * the user already has access to, and (b) couple every consumer to an SDK
  * version instead of to this module. So every event below is a deliberately
- * narrow, hand-picked projection: seventeen variants, each a `.strict()` object of
+ * narrow, hand-picked projection: eighteen variants, each a `.strict()` object of
  * named fields, with no `unknown`/`Record<string, unknown>` escape hatch
  * anywhere in the tree. If a caller wants something this module does not
  * expose, that is a decision to revisit here, not a reason to reach past it.
@@ -377,7 +377,8 @@ const diagnosticTextSchema = z.string().min(1).max(100);
 /**
  * The model/reasoning effort the agent is *observed* to run on, emitted when it
  * is first known for an open chat and whenever it changes afterwards. A
- * diagnostics signal: no consumer derives state from it. `cause` says where the
+ * diagnostics signal: it moves no turn state (the usage panel only shows the
+ * latest value). `cause` says where the
  * value came from - the conversation was opened/resumed (`session-open`), the
  * adapter applied a Settings change at the start of a turn
  * (`preference-change`), or the agent runtime itself switched (`runtime-reported`,
@@ -403,14 +404,37 @@ const modelChangedEventSchema = z
   .strict();
 
 /**
+ * What `model.usage.cost` is measured in. `usd` is money; `billing-multiplier`
+ * is a provider's per-request weighting (Copilot's premium-request multiplier),
+ * which is not money and must never be added to dollars. A `cost` that names no
+ * unit is shown nowhere: the reader cannot tell what it measures.
+ */
+export const COST_UNITS = ['usd', 'billing-multiplier'] as const;
+export type CostUnit = (typeof COST_UNITS)[number];
+export const costUnitSchema = z.enum(COST_UNITS);
+
+/**
  * One finished model call of a turn: how long it took, when the first token
  * arrived, how many tokens it used. A turn with tool calls makes several. Every
- * metric is optional because neither agent reports all of them; absent means
+ * metric is optional because no agent reports all of them; absent means
  * "not reported", never zero.
  *
  * Contract for every agent: report per model call where the SDK exposes calls;
  * an SDK that only gives per-turn totals reports one aggregate event for the
- * turn (the journal sums events into the turn summary either way).
+ * turn (the journal sums events into the turn summary either way). The totals
+ * must be **cumulative over every model call the turn made** - the last round
+ * of a tool loop alone understates the spend - and a call that completed
+ * before the turn failed is still reported. Calls made on the chat's behalf
+ * outside the conversation (a tool's stateless one-shot question to the model)
+ * are reported through the usage sink `AgentRuntime.complete` receives, not
+ * silently dropped.
+ *
+ * The user sees these totals (the footer gauge and the usage panel), so build
+ * the event with `buildModelUsage` (`src/shared/agents/usageReport.ts`): it
+ * keeps `cost` and `costUnit` together and rejects unusable numbers.
+ * `inputTokens` is gross (cached reads included); `cacheReadTokens` is the part
+ * of it served from the provider's cache. `aiCredits` is GitHub Copilot's own
+ * usage metric.
  */
 const modelUsageEventSchema = z
   .object({
@@ -425,9 +449,31 @@ const modelUsageEventSchema = z
     cacheWriteTokens: metricSchema.optional(),
     reasoningTokens: metricSchema.optional(),
     cost: metricSchema.optional(),
+    costUnit: costUnitSchema.optional(),
+    aiCredits: metricSchema.optional(),
     durationMs: metricSchema.optional(),
     timeToFirstTokenMs: metricSchema.optional(),
     finishReason: diagnosticTextSchema.optional(),
+  })
+  .strict();
+
+/**
+ * A snapshot of how full the model's context window is right now. Optional per
+ * agent: an SDK that reports it (Copilot's `session.usage_info`) emits it, one
+ * that cannot simply stays silent and the usage panel says "Not reported" -
+ * never a guess. When emitted, `currentTokens` is what the conversation holds
+ * and `tokenLimit` the window it must fit; `currentTokens <= tokenLimit` is not
+ * enforced here because a runtime may report a transient overshoot before it
+ * compacts. A diagnostics signal like `model.usage`: it moves no turn state and
+ * does not count as the turn's first activity.
+ */
+const contextUsageEventSchema = z
+  .object({
+    type: z.literal('context.usage'),
+    ...baseEventFields,
+    turnId: turnIdSchema.optional(),
+    currentTokens: metricSchema,
+    tokenLimit: metricSchema,
   })
   .strict();
 
@@ -458,6 +504,7 @@ const modelCallFailedEventSchema = z
 export const agentEventSchema = z.discriminatedUnion('type', [
   modelChangedEventSchema,
   modelUsageEventSchema,
+  contextUsageEventSchema,
   modelCallFailedEventSchema,
   assistantMessageStartedEventSchema,
   assistantTextDeltaEventSchema,
@@ -494,6 +541,7 @@ export type UserInputRequestedEvent = z.infer<typeof userInputRequestedEventSche
 export type UserInputActionsAddedEvent = z.infer<typeof userInputActionsAddedEventSchema>;
 export type ModelChangedEvent = z.infer<typeof modelChangedEventSchema>;
 export type ModelUsageEvent = z.infer<typeof modelUsageEventSchema>;
+export type ContextUsageEvent = z.infer<typeof contextUsageEventSchema>;
 export type ModelCallFailedEvent = z.infer<typeof modelCallFailedEventSchema>;
 
 /** Re-exported so a caller building a failure event does not need a second import. */

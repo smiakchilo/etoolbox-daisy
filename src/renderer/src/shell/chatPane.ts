@@ -11,6 +11,13 @@ import { createTranscriptFindController } from '../chat/transcriptFind';
 import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
 import { replayJournalIntoTranscript } from '../chat/journalReplay';
+import {
+  type UsageRow,
+  createSessionUsage,
+  describeGauge,
+  describeUsagePanel,
+  replayJournalIntoUsage,
+} from '../chat/sessionUsage';
 import { createStatusBanner, type StatusBanner } from '../settings/statusBanner';
 import {
   buildNoAnswer,
@@ -232,6 +239,18 @@ export interface ChatPaneOptions {
    */
   readonly onOpenHistory?: () => void;
   /**
+   * Opens the in-shell usage panel (the footer gauge's click). The shell owns
+   * the panel, like History, so the pane only reports the click. Optional so a
+   * unit test need not wire a panel.
+   */
+  readonly onOpenUsage?: () => void;
+  /**
+   * Receives the usage panel's rows whenever they may have changed (a call's
+   * usage arrived, a conversation was opened or reset, the selected model
+   * changed). The panel dedupes, so this may fire freely.
+   */
+  readonly onUsageChanged?: (rows: readonly UsageRow[]) => void;
+  /**
    * Opens an AEM-pane message link. The shell routes this to the browser pane
    * so that pane owns the navigation *and its failure* - a failed link load
    * must show the browser pane's error row (with Reload) and recover the page
@@ -270,6 +289,10 @@ function linkContextsEqual(left: LinkContext, right: LinkContext): boolean {
 
 export function createChatPane(options: ChatPaneOptions): ChatPane {
   const transcriptStore: TranscriptStore = createTranscriptStore();
+  // What the open conversation has cost: folded from the same live events and
+  // journal replays the transcript is, and shown in the footer's gauge and the
+  // shell's usage panel.
+  const sessionUsage = createSessionUsage();
   // The live link context, replaced by `setLinkContext`. A fresh pane starts
   // with nothing openable, which is also correct before the settings snapshot
   // and the browser pane's first navigation state arrive.
@@ -613,6 +636,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (chatId !== undefined && event.chatId !== chatId) return;
 
       transcriptStore.applyEvent(event);
+      sessionUsage.apply(event);
       noticeStoredMemo(event);
       // An interactive question swaps the composer into its selection UI; the
       // matching answer is delivered by `onAnswer`. Any terminal turn state
@@ -785,6 +809,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (chatId !== undefined && chatId !== startup.chatId) return;
     if (chatId === undefined) pendingStartup = startup;
     replayJournalIntoTranscript(startup.records, transcriptStore, isDeterministicTablePrompt);
+    replayJournalIntoUsage(startup.records, sessionUsage);
     conversationHasMessage = true;
     refreshEmptyState();
     repaintTranscript();
@@ -813,6 +838,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     reflecting = false;
     resetInputMode();
     transcriptStore.clear();
+    sessionUsage.clear();
     refreshEmptyState();
     const result = await openConversation(id);
     if (result.outcome === 'failed') statusBanner.showError(result.error.message);
@@ -863,6 +889,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           // The preload painted a *different* conversation's journal - drop it,
           // so its history is not shown under the adopted conversation's id.
           transcriptStore.clear();
+          sessionUsage.clear();
           conversationHasMessage = false;
           refreshEmptyState();
           repaintTranscript();
@@ -1052,7 +1079,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     const header = records.find((record) => record.recordType === 'header');
     adoptChatId(id);
     transcriptStore.clear();
+    sessionUsage.clear();
     replayJournalIntoTranscript(records, transcriptStore, isDeterministicTablePrompt);
+    replayJournalIntoUsage(records, sessionUsage);
     conversationHasMessage = records.some(
       (record) => record.recordType === 'user.prompt' || record.recordType === 'agent.event',
     );
@@ -1400,6 +1429,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     reflecting = false;
     resetInputMode();
     transcriptStore.clear();
+    sessionUsage.clear();
     sessionStatus = { ...sessionStatus, state: 'idle' };
     refreshEmptyState();
     // A fresh conversation starts at the bottom, following by default, even if
@@ -1471,7 +1501,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       'data-testid': 'chat-reveal-log',
     },
   });
-  sessionIdAnchor.append(el('sp-icon-file-txt', { attrs: { size: 's' } }));
+  sessionIdAnchor.append(el('sp-icon-text-align-justify', { attrs: { size: 's' } }));
   sessionIdAnchor.addEventListener('click', (event) => {
     event.preventDefault();
     if (chatId === undefined) return;
@@ -1479,9 +1509,22 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       if (!result.ok) statusBanner.showError(result.error.message);
     });
   });
+  // The token gauge, just before the reveal-log control: gross input then
+  // output for the whole conversation. A click opens the usage panel.
+  const usageGaugeAnchor = el('a', {
+    attrs: {
+      class: 'chat-usage-gauge',
+      href: '#',
+      'data-testid': 'chat-usage-gauge',
+    },
+  });
+  usageGaugeAnchor.addEventListener('click', (event) => {
+    event.preventDefault();
+    options.onOpenUsage?.();
+  });
   const transcriptFooter = el('div', {
     attrs: { class: 'chat-pane__footer' },
-    children: [agentSummaryAnchor, sessionIdAnchor],
+    children: [agentSummaryAnchor, usageGaugeAnchor, sessionIdAnchor],
   });
 
   /**
@@ -1501,6 +1544,19 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     agentSummaryAnchor.hidden = summary === undefined;
     agentSummaryAnchor.textContent = summary ?? '';
     sessionIdAnchor.hidden = conversationEmpty;
+    const gauge = describeGauge(sessionUsage.snapshot());
+    // Nothing reported means nothing to show: hidden, not zeros or dashes.
+    usageGaugeAnchor.hidden = gauge === undefined;
+    usageGaugeAnchor.textContent = gauge?.text ?? '';
+    usageGaugeAnchor.title = gauge?.title ?? '';
+    if (gauge === undefined) usageGaugeAnchor.removeAttribute('aria-label');
+    else usageGaugeAnchor.setAttribute('aria-label', `${gauge.title}. Open usage details`);
+    options.onUsageChanged?.(
+      describeUsagePanel(
+        sessionUsage.snapshot(),
+        activeAgentId === undefined ? undefined : describeModel(agents[activeAgentId]?.model),
+      ),
+    );
     transcriptFooter.hidden = chatId === undefined || (summary === undefined && conversationEmpty);
   }
 

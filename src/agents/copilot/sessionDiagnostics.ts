@@ -9,7 +9,14 @@
  * Every string is bounded here, so an oversized value is dropped rather than
  * failing the contract's validation and losing the whole event.
  */
-import type { ModelCallFailedEvent, ModelChangedEvent, ModelUsageEvent } from '../../shared';
+import {
+  type ContextUsageBody,
+  type ModelCallFailedEvent,
+  type ModelChangedEvent,
+  type ModelUsageBody,
+  buildContextUsage,
+  buildModelUsage,
+} from '../../shared';
 
 type EventBody<T extends { chatId: unknown; sequence: unknown }> = Omit<T, 'chatId' | 'sequence'>;
 
@@ -21,10 +28,19 @@ export interface SdkUsageData {
   readonly cacheReadTokens?: number;
   readonly cacheWriteTokens?: number;
   readonly reasoningTokens?: number;
+  /** The model's billing multiplier for the call (not money, and not AI credits). */
   readonly cost?: number;
+  /** The call's real spend, in nano-AI units (1e9 per AI credit). */
+  readonly copilotUsage?: { readonly totalNanoAiu?: number };
   readonly duration?: number;
   readonly timeToFirstTokenMs?: number;
   readonly finishReason?: string;
+}
+
+/** The SDK's `session.usage_info` payload: how full the context window is. */
+export interface SdkUsageInfoData {
+  readonly currentTokens?: number;
+  readonly tokenLimit?: number;
 }
 
 export interface SdkModelCallFailureData {
@@ -67,23 +83,35 @@ function defined<T extends Record<string, unknown>>(entries: T): Partial<T> {
   return out as Partial<T>;
 }
 
-export function mapModelUsage(data: SdkUsageData): EventBody<ModelUsageEvent> {
-  return {
-    type: 'model.usage',
-    ...defined({
-      model: text(data.model, MODEL_MAX),
-      reasoningEffort: text(data.reasoningEffort, EFFORT_MAX),
-      inputTokens: metric(data.inputTokens),
-      outputTokens: metric(data.outputTokens),
-      cacheReadTokens: metric(data.cacheReadTokens),
-      cacheWriteTokens: metric(data.cacheWriteTokens),
-      reasoningTokens: metric(data.reasoningTokens),
-      cost: metric(data.cost),
-      durationMs: metric(data.duration),
-      timeToFirstTokenMs: metric(data.timeToFirstTokenMs),
-      finishReason: text(data.finishReason, TEXT_MAX),
-    }),
-  };
+/** Nano-AI units per AI credit, the SDK's own conversion (`NANO_AIU_PER_AIU`). */
+const NANO_AIU_PER_AI_CREDIT = 1e9;
+
+export function mapModelUsage(data: SdkUsageData): ModelUsageBody {
+  const nanoAiu = data.copilotUsage?.totalNanoAiu;
+  // The runtime itself reads an absent cache count as zero when the call
+  // reports its input (its own uncached figure is `input - cacheRead -
+  // cacheWrite`), so a call with input but no cache fields means "no cache used"
+  // rather than "not reported".
+  const hasInput = metric(data.inputTokens) !== undefined;
+  return buildModelUsage({
+    model: data.model,
+    reasoningEffort: data.reasoningEffort,
+    inputTokens: data.inputTokens,
+    outputTokens: data.outputTokens,
+    cacheReadTokens: data.cacheReadTokens ?? (hasInput ? 0 : undefined),
+    cacheWriteTokens: data.cacheWriteTokens ?? (hasInput ? 0 : undefined),
+    reasoningTokens: data.reasoningTokens,
+    cost: { value: data.cost, unit: 'billing-multiplier' },
+    aiCredits: typeof nanoAiu === 'number' ? nanoAiu / NANO_AIU_PER_AI_CREDIT : undefined,
+    durationMs: data.duration,
+    timeToFirstTokenMs: data.timeToFirstTokenMs,
+    finishReason: data.finishReason,
+  });
+}
+
+/** Returns `undefined` when the runtime reported no usable window size. */
+export function mapContextUsage(data: SdkUsageInfoData): ContextUsageBody | undefined {
+  return buildContextUsage(data);
 }
 
 /** Returns `undefined` for a failure that is not the user's own model call (sub-agent, MCP sampling). */

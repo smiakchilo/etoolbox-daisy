@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  mapContextUsage,
   mapModelCallFailure,
   mapModelChange,
   mapModelUsage,
@@ -31,10 +32,32 @@ describe('mapModelUsage', () => {
       cacheWriteTokens: 3,
       reasoningTokens: 2,
       cost: 1,
+      costUnit: 'billing-multiplier',
       durationMs: 1200,
       timeToFirstTokenMs: 300,
       finishReason: 'stop',
     });
+  });
+
+  it('reports AI credits from the runtime nano-AI units, apart from the billing multiplier', () => {
+    const mapped = mapModelUsage({
+      inputTokens: 10,
+      cost: 2,
+      copilotUsage: { totalNanoAiu: 2_500_000_000 },
+    });
+
+    expect(mapped).toMatchObject({ aiCredits: 2.5, cost: 2, costUnit: 'billing-multiplier' });
+  });
+
+  it('reads an absent cache count as zero once the call reports its input, as the runtime does', () => {
+    expect(mapModelUsage({ inputTokens: 10 })).toMatchObject({
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
+    // Without an input figure nothing says the cache was unused.
+    const noInput = mapModelUsage({ outputTokens: 3 });
+    expect(noInput).not.toHaveProperty('cacheReadTokens');
+    expect(noInput).not.toHaveProperty('cacheWriteTokens');
   });
 
   it('omits absent, null, negative, non-finite and oversized values', () => {
@@ -48,6 +71,22 @@ describe('mapModelUsage', () => {
       duration: 0,
     });
     expect(mapped).toEqual({ type: 'model.usage', durationMs: 0 });
+  });
+});
+
+describe('mapContextUsage', () => {
+  it('maps the window snapshot', () => {
+    expect(mapContextUsage({ currentTokens: 1200, tokenLimit: 128_000 })).toEqual({
+      type: 'context.usage',
+      currentTokens: 1200,
+      tokenLimit: 128_000,
+    });
+  });
+
+  it('reports nothing for a snapshot that cannot describe a window', () => {
+    expect(mapContextUsage({ currentTokens: 5 })).toBeUndefined();
+    expect(mapContextUsage({ currentTokens: 5, tokenLimit: 0 })).toBeUndefined();
+    expect(mapContextUsage({ currentTokens: -1, tokenLimit: 100 })).toBeUndefined();
   });
 });
 

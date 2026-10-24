@@ -20,6 +20,7 @@ import {
   type IdGenerator,
   type JsonValue,
   type MessageId,
+  type ModelUsageBody,
   type RequiredAction,
   type Result,
   type SessionId,
@@ -39,6 +40,7 @@ import {
   applyAgentEvent,
   canSendMessage,
   err,
+  hasUsage,
   newToolCallId,
   newTurnId,
   ok,
@@ -264,6 +266,13 @@ export interface AgentChatController {
    * Ignored with no pending question, and for one the user has already answered.
    */
   recordUserInputActionsAdded(actions: readonly string[]): void;
+  /**
+   * Counts the usage of a model call made on the open chat's behalf outside the
+   * conversation (the stateless one-shot question a tool asks the model): it is
+   * journaled and forwarded exactly like the conversation's own `model.usage`,
+   * so the gross totals include it. Ignored with no chat open.
+   */
+  recordAuxiliaryUsage(usage: ModelUsageBody): void;
   /** Notifies `listener` of every `AgentEvent` that survives the ownership guard, in order. */
   onEvent(listener: (event: AgentEvent) => void): () => void;
   /**
@@ -500,9 +509,16 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
         );
       case 'model.changed':
       case 'model.usage':
+      case 'context.usage':
+        // What the model cost and how full its window is: chat-scoped facts the
+        // footer gauge and the usage panel total. Forwarded for any turn of the
+        // open chat - a late report from a stopped turn is still real spend - and
+        // recorded in the journal before this guard runs, so a restored chat
+        // shows the same totals.
+        return true;
       case 'model.call.failed':
         // Diagnostics for the journal only (recorded before this guard runs);
-        // nothing in the renderer consumes them, so they are never forwarded.
+        // nothing in the renderer consumes it, so it is never forwarded.
         return false;
       default: {
         return event;
@@ -756,6 +772,29 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
       logger.error('AGENT_CHAT_INPUT_ACTIONS_INVALID', { ids: { chatId: activeChatId } });
       return;
     }
+    ingestOwnedEvent(parsed.data, true);
+  }
+
+  /**
+   * Counts the usage of a model call made on the open chat's behalf outside the
+   * conversation (a tool's stateless one-shot question): journaled and forwarded
+   * like the conversation's own `model.usage`, stamped with the turn that asked.
+   * Called through the secondary-turn usage sink (`createSecondaryTurns`), not over IPC. Dropped when no
+   * chat is open; a report with nothing in it is not an event.
+   */
+  function recordAuxiliaryUsage(usage: ModelUsageBody): void {
+    if (activeChatId === undefined || !hasUsage(usage)) return;
+    const parsed = agentEventSchema.safeParse({
+      ...usage,
+      chatId: activeChatId,
+      sequence: 0,
+      ...(activeTurn !== undefined ? { turnId: activeTurn.turnId } : {}),
+    });
+    if (!parsed.success) {
+      logger.error('AGENT_CHAT_AUXILIARY_USAGE_INVALID', { ids: { chatId: activeChatId } });
+      return;
+    }
+    chatJournal?.recordEvent(parsed.data);
     ingestOwnedEvent(parsed.data, true);
   }
 
@@ -1174,6 +1213,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     recordNestedToolCall,
     recordToolProgress,
     recordUserInputActionsAdded,
+    recordAuxiliaryUsage,
     onEvent,
     onStatusChanged,
     currentToolContext,
@@ -1383,6 +1423,10 @@ export function createStartupGatedAgentChatController(
     real?.recordUserInputActionsAdded(actions);
   }
 
+  function recordAuxiliaryUsage(usage: ModelUsageBody): void {
+    real?.recordAuxiliaryUsage(usage);
+  }
+
   function onEvent(listener: (event: AgentEvent) => void): () => void {
     forwardListeners.add(listener);
     return () => {
@@ -1465,6 +1509,7 @@ export function createStartupGatedAgentChatController(
     recordNestedToolCall,
     recordToolProgress,
     recordUserInputActionsAdded,
+    recordAuxiliaryUsage,
     onEvent,
     onStatusChanged,
     currentToolContext,

@@ -125,7 +125,7 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     // Right: the reveal icon (no literal session id anymore).
     const anchor = shell.locator(SESSION_ID);
     await expect(anchor).toBeVisible();
-    await expect(anchor.locator('sp-icon-file-txt')).toHaveCount(1);
+    await expect(anchor.locator('sp-icon-text-align-justify')).toHaveCount(1);
 
     await stubShowItemInFolder(app);
     await anchor.click();

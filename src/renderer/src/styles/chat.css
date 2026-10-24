@@ -121,6 +121,22 @@
   color: var(--spectrum-accent-background-color-default, #0265dc);
 }
 
+/* The token gauge, just before the reveal-log icon: muted like the summary,
+   never shrinking or wrapping (the summary beside it is what ellipsises). */
+.chat-usage-gauge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--spectrum-gray-600, #6e6e6e);
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-usage-gauge:hover,
+.chat-usage-gauge:focus-visible {
+  color: var(--spectrum-accent-background-color-default, #0265dc);
+}
+
 .chat-message {
   padding: 8px 10px;
   border-radius: 4px;

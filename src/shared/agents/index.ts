@@ -9,3 +9,5 @@ export * from './agentService';
 export * from './agentModule';
 export * from './agentCatalog';
 export * from './modelObserver';
+export * from './usageReport';
+export * from './oneShot';

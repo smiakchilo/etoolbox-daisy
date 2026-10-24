@@ -1039,7 +1039,7 @@ describe('agentChatController chat journal', () => {
     });
   });
 
-  it('journals the model diagnostics events of the live turn but never forwards them to the renderer', async () => {
+  it('journals every model diagnostics event of the live turn, and forwards usage and model facts but not call failures', async () => {
     const leaky = createLeakyAgentService();
     const { journal, calls } = createRecordingJournal();
     const { controller } = buildController(leaky, { chatJournal: journal });
@@ -1055,6 +1055,7 @@ describe('agentChatController chat journal', () => {
     const diagnostics = [
       { type: 'model.changed', model: 'gpt-x', cause: 'session-open' },
       { type: 'model.usage', inputTokens: 5 },
+      { type: 'context.usage', currentTokens: 100, tokenLimit: 1000 },
       { type: 'model.call.failed', statusCode: 503 },
     ];
     diagnostics.forEach((diagnostic, index) => {
@@ -1066,11 +1067,74 @@ describe('agentChatController chat journal', () => {
       } as AgentEvent);
     });
 
-    expect(received).toEqual([]);
+    // The footer gauge and the usage panel total these; a failed call is a
+    // journal-only diagnostic nobody renders.
+    expect(received.map((event) => event.type)).toEqual([
+      'model.changed',
+      'model.usage',
+      'context.usage',
+    ]);
     const journaled = calls
       .filter((call) => call.method === 'recordEvent')
       .map((call) => (call.args as AgentEvent).type);
     expect(journaled).toEqual(expect.arrayContaining(diagnostics.map((d) => d.type)));
+  });
+
+  it('forwards a late usage report of a stopped turn of the open chat, which is still real spend', async () => {
+    const leaky = createLeakyAgentService();
+    const { controller } = buildController(leaky);
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    received.length = 0;
+
+    leaky.emit({
+      type: 'model.usage',
+      chatId,
+      sequence: 20,
+      turnId: 'turn-that-is-over',
+      inputTokens: 9,
+    } as AgentEvent);
+
+    expect(received.map((event) => event.type)).toEqual(['model.usage']);
+  });
+
+  it('counts the usage of a one-shot model call on the open chat: journaled, forwarded, stamped with the live turn', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { journal, calls } = createRecordingJournal();
+    const { controller } = buildController(agentService, { chatJournal: journal });
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+    const chatId = newChatId('chat-1');
+    await controller.openConversation({ chatId });
+    const sent = await controller.sendMessage({ chatId, prompt: 'hi' });
+    if (!sent.ok) throw new Error('unreachable');
+    received.length = 0;
+
+    controller.recordAuxiliaryUsage({ type: 'model.usage', inputTokens: 40, outputTokens: 6 });
+
+    expect(received).toMatchObject([
+      { type: 'model.usage', chatId, turnId: sent.turnId, inputTokens: 40, outputTokens: 6 },
+    ]);
+    expect(
+      calls.some(
+        (call) => call.method === 'recordEvent' && (call.args as AgentEvent).type === 'model.usage',
+      ),
+    ).toBe(true);
+  });
+
+  it('ignores a one-shot usage report when no chat is open, or when it carries nothing', async () => {
+    const agentService = createFakeAgentService({ idGenerator: counterIdGenerator('fake') });
+    const { controller } = buildController(agentService);
+    const received: AgentEvent[] = [];
+    controller.onEvent((event) => received.push(event));
+
+    controller.recordAuxiliaryUsage({ type: 'model.usage', inputTokens: 1 });
+    await controller.openConversation({ chatId: newChatId('chat-1') });
+    controller.recordAuxiliaryUsage({ type: 'model.usage' });
+
+    expect(received).toEqual([]);
   });
 });
 

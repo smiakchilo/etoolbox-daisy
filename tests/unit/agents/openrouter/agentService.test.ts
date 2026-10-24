@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   AUTO_MODEL,
   createOpenRouterAgentService,
@@ -21,7 +21,12 @@ import {
   type AuthStatus,
   type ModelPreference,
 } from '../../../../src/shared';
-import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
+import {
+  type ConformanceUsage,
+  conformanceCalls,
+  describeAgentDiagnosticsConformance,
+} from '../../../support/agentDiagnosticsConformance';
+import { USAGE_READ_TIMEOUT_MS } from '../../../../src/agents/openrouter/usageDiagnostics';
 import { flushMicrotasks } from '../../../support/asyncWaits';
 
 /**
@@ -52,6 +57,10 @@ interface FakeScript {
   readonly hangUntilAbort?: boolean;
   /** The resolved `getResponse` value; defaults to an empty response. */
   readonly response?: unknown;
+  /** The resolved `getUsage` value (the run's aggregate); absent means the SDK reports none. */
+  readonly usage?: unknown;
+  /** `getUsage` never settles - an aborted run whose accounting does not arrive. */
+  readonly usageNever?: boolean;
 }
 
 function createFakeClient(script: FakeScript, hasApiKey = true): OpenRouterClient {
@@ -82,6 +91,8 @@ function createFakeClient(script: FakeScript, hasApiKey = true): OpenRouterClien
               reject,
             );
           }),
+        getUsage: () =>
+          script.usageNever === true ? new Promise(() => undefined) : Promise.resolve(script.usage),
       };
     },
     listModels: () => Promise.resolve([]),
@@ -178,8 +189,8 @@ describe('createOpenRouterAgentService', () => {
       'assistant.message.started',
       'assistant.text.delta',
       'assistant.text.delta',
-      'assistant.message.completed',
       'model.usage',
+      'assistant.message.completed',
       'session.state.changed',
     ]);
     const completed = events.find((e) => e.type === 'assistant.message.completed');
@@ -249,6 +260,7 @@ describe('createOpenRouterAgentService', () => {
           stops.push(request.shouldStopTurn?.());
           return {};
         },
+        getUsage: () => Promise.resolve(undefined),
       }),
       listModels: () => Promise.resolve([]),
     };
@@ -520,13 +532,99 @@ describe('createOpenRouterAgentService', () => {
   });
 });
 
+describe("createOpenRouterAgentService - a stopped turn's usage", () => {
+  const TOTALS = {
+    inputTokens: 30,
+    outputTokens: 4,
+    totalTokens: 34,
+    cachedTokens: 0,
+    reasoningTokens: 0,
+    modelCalls: 2,
+  };
+
+  async function stoppedTurn(
+    script: FakeScript,
+    afterStop: (service: ReturnType<typeof build>) => Promise<void>,
+  ) {
+    const service = build({
+      client: createFakeClient({ hangUntilAbort: true, ...script }),
+      buildTools: () => [],
+    });
+    const events = collect(service);
+    await service.initialize();
+    await service.openConversation({ chatId: CHAT });
+    await service.sendPrompt({ chatId: CHAT, turnId: TURN, prompt: 'hi' });
+    await flush();
+    await afterStop(service);
+    for (let i = 0; i < 64; i += 1) await flush();
+    return events;
+  }
+
+  it('reports the rounds a Stop interrupted, once, on the turn that made them', async () => {
+    const events = await stoppedTurn({ usage: TOTALS }, async (service) => {
+      await service.abort(CHAT);
+    });
+
+    const usage = events.filter((event) => event.type === 'model.usage');
+    expect(usage).toMatchObject([{ turnId: TURN, inputTokens: 30, outputTokens: 4 }]);
+    // The Stop's own terminal states are unchanged: no second idle from the stale run.
+    expect(
+      events.filter((event) => event.type === 'session.state.changed').map((e) => e.state),
+    ).toEqual(['sending', 'cancelling', 'idle']);
+  });
+
+  it('reports nothing for a chat that was closed under the turn - its journal is gone', async () => {
+    const events = await stoppedTurn({ usage: TOTALS }, async (service) => {
+      await service.closeConversation(CHAT);
+    });
+
+    expect(events.some((event) => event.type === 'model.usage')).toBe(false);
+  });
+
+  it('is not held open by an aborted run whose accounting never arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      const service = build({
+        client: createFakeClient({ hangUntilAbort: true, usageNever: true }),
+        buildTools: () => [],
+      });
+      const events = collect(service);
+      await service.initialize();
+      await service.openConversation({ chatId: CHAT });
+      await service.sendPrompt({ chatId: CHAT, turnId: TURN, prompt: 'hi' });
+      await flush();
+
+      await service.abort(CHAT);
+      await vi.advanceTimersByTimeAsync(USAGE_READ_TIMEOUT_MS + 1);
+
+      // The Stop completed at once; the late read gave up without inventing usage.
+      expect(finalState(events)).toBe('idle');
+      expect(events.some((event) => event.type === 'model.usage')).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 describeAgentDiagnosticsConformance('openrouter', async (initial) => {
   let preference: ModelPreference = initial;
   let response: unknown = {};
+  let totals: unknown;
+  let failNext = false;
+  let hangNext = false;
   const service = build({
     client: createFakeClient({
       get response() {
         return response;
+      },
+      get usage() {
+        return totals;
+      },
+      get fail() {
+        return failNext;
+      },
+      get hangUntilAbort() {
+        return hangNext;
       },
     }),
     buildTools: () => [],
@@ -541,15 +639,45 @@ describeAgentDiagnosticsConformance('openrouter', async (initial) => {
     setPreference: (next) => {
       preference = next;
     },
-    runTurn: async (turnId, usage) => {
+    runTurn: async (turnId, usage, options) => {
+      // The SDK's `getResponse` is only the last round of a tool loop; the whole
+      // run's spend is what `getUsage` aggregates, which the adapter must report.
+      const calls = conformanceCalls(usage);
+      const last = calls.at(-1);
+      const sum = (pick: (call: ConformanceUsage) => number): number =>
+        calls.reduce((total, call) => total + pick(call), 0);
+      const costs = calls.filter((call) => call.cost !== undefined);
       response =
-        usage === undefined
+        last === undefined
           ? {}
           : {
-              model: usage.model,
-              usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
+              model: last.model,
+              usage: { inputTokens: last.inputTokens, outputTokens: last.outputTokens },
             };
+      totals =
+        calls.length === 0
+          ? undefined
+          : {
+              inputTokens: sum((call) => call.inputTokens),
+              outputTokens: sum((call) => call.outputTokens),
+              totalTokens: sum((call) => call.inputTokens + call.outputTokens),
+              cachedTokens: 0,
+              reasoningTokens: 0,
+              modelCalls: calls.length,
+              ...(costs.length > 0 ? { cost: sum((call) => call.cost ?? 0) } : {}),
+            };
+      failNext = options?.failAfterUsage === true;
+      hangNext = options?.stopAfterUsage === true;
       await service.sendPrompt({ chatId: CHAT, turnId, prompt: 'hi' });
+      if (options?.stopAfterUsage === true) {
+        // The run is mid-loop when the user stops it; its accounting arrives after.
+        await flush();
+        await service.abort(CHAT);
+        for (let i = 0; i < 64 && !events.some((e) => e.type === 'model.usage'); i += 1) {
+          await flush();
+        }
+        return;
+      }
       await awaitTurnEnd(events);
     },
   };

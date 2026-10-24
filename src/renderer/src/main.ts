@@ -39,6 +39,7 @@ import '@spectrum-web-components/icons-workflow/icons/sp-icon-send.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-actions.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-open-in-light.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-file-txt.js';
+import '@spectrum-web-components/icons-workflow/icons/sp-icon-text-align-justify.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-copy.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-export.js';
 import '@spectrum-web-components/icons-workflow/icons/sp-icon-undo.js';
@@ -60,6 +61,7 @@ import './styles/home.css';
 import './styles/chat.css';
 import './styles/settings.css';
 import './styles/history.css';
+import './styles/usage.css';
 import { installTextfieldPlaceholderColor } from './lib/textfieldPlaceholder';
 import { mountMainShell } from './shell/mainShell';
 

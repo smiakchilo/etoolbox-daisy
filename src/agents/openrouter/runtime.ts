@@ -6,13 +6,10 @@ import {
   type AppSettings,
   type AuthPresence,
   type AuthStatus,
-  type AnswerRequest,
-  type AnswerResult,
   type ModelCatalogResult,
-  ANSWER_SESSION_INSTRUCTIONS,
+  type OneShotCall,
   err,
-  parseAnswer,
-  renderAnswerPrompt,
+  ok,
 } from '../../shared';
 import { AUTO_MODEL, createOpenRouterAgentService } from './agentService';
 import { authPresenceFromToken, authStatusFromToken } from './auth';
@@ -20,7 +17,8 @@ import { createOpenRouterClient } from './client';
 import { meta } from './meta';
 import { loadOpenRouterModelCatalog } from './modelCatalog';
 import { buildOpenRouterTools } from './toolMapping';
-import type { OpenRouterClient, ToolSpec } from './types';
+import type { OpenRouterCall, OpenRouterClient, ToolSpec } from './types';
+import { mapOpenRouterUsage, readUsageTotals } from './usageDiagnostics';
 
 /**
  * OpenRouter's {@link AgentRuntime}: turns the host's neutral services
@@ -102,31 +100,36 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
     return run;
   }
 
-  const answer = async (
-    request: AnswerRequest,
-    signal: AbortSignal | undefined,
-  ): Promise<AnswerResult> => {
+  /**
+   * The secondary-turn routine (`AgentRuntime.complete`, see
+   * `src/shared/agents/oneShot.ts`): one prompt on a fresh conversation state.
+   * It knows nothing of the tool asking - the prompt and the reply's meaning are
+   * the caller's - only how to run the call and to report its usage.
+   */
+  const complete: OneShotCall = async (request, signal, reportUsage) => {
     const aborted = (): boolean => signal?.aborted === true;
     if (aborted()) {
-      return err({ message: 'The answer call was cancelled', cancelled: true });
+      return err({ message: 'The call was cancelled', cancelled: true });
     }
     await inFlight;
     if (client === undefined || !client.hasApiKey) {
       return err({ message: 'OpenRouter is not available' });
     }
     const preference = host.modelPreferences();
-    // A one-shot call: a fresh state, no tools, and a final answer allowed (the
-    // text is the verdict, unlike the chat's 'turn-complete' stop).
+    // A fresh state, no tools, and a final answer allowed (the text is the
+    // reply, unlike the chat's 'turn-complete' stop).
     const controller = new AbortController();
     const abort = (): void => controller.abort();
     if (aborted()) controller.abort();
     signal?.addEventListener('abort', abort, { once: true });
+    const startedAt = Date.now();
+    let call: OpenRouterCall | undefined;
     try {
-      const call = client.callModel({
+      call = client.callModel({
         model: preference.model ?? AUTO_MODEL,
         reasoningEffort: preference.reasoningEffort,
-        instructions: ANSWER_SESSION_INSTRUCTIONS,
-        input: renderAnswerPrompt(request),
+        instructions: request.instructions,
+        input: request.prompt,
         tools: [],
         state: client.createConversationState(),
         signal: controller.signal,
@@ -136,20 +139,29 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
       const collected = (async () => {
         for await (const delta of call.getTextStream()) text += delta;
       })();
-      await Promise.all([Promise.resolve().then(() => call.getResponse()), collected]);
+      await Promise.all([Promise.resolve().then(() => call?.getResponse()), collected]);
       if (controller.signal.aborted) {
-        return err({ message: 'The answer call was cancelled', cancelled: true });
+        return err({ message: 'The call was cancelled', cancelled: true });
       }
-      return parseAnswer(text, request.items);
+      return ok(text);
     } catch {
       return controller.signal.aborted
-        ? err({ message: 'The answer call was cancelled', cancelled: true })
-        : err({ message: 'The agent could not answer the search candidates' });
+        ? err({ message: 'The call was cancelled', cancelled: true })
+        : err({ message: 'The agent could not complete the request' });
     } finally {
       signal?.removeEventListener('abort', abort);
+      // The call is no chat turn, but it spends the chat's tokens: whatever it
+      // used - failed or cancelled included - is reported.
+      if (call !== undefined) {
+        const totals = await readUsageTotals(call);
+        const usage = mapOpenRouterUsage(undefined, totals, {
+          durationMs: Date.now() - startedAt,
+          reasoningEffort: preference.reasoningEffort,
+        });
+        if (usage !== undefined) reportUsage(usage);
+      }
     }
   };
-
   return {
     start: (settings) => install(settings),
 
@@ -190,7 +202,7 @@ export function createOpenRouterRuntime(host: AgentHost): AgentRuntime {
       return authPresenceFromToken(token);
     },
 
-    answer,
+    complete,
 
     loadModelCatalog: async (): Promise<ModelCatalogResult> => {
       await inFlight;

@@ -598,6 +598,7 @@ export function createTranscriptStore(
         case 'user.input.actions.added':
         case 'model.changed':
         case 'model.usage':
+        case 'context.usage':
         case 'model.call.failed':
           // Signals with no transcript item of their own:
           // `error` surfaces via the composer's disabled-reason notice

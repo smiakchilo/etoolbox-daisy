@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   type AppSettings,
   type AuthStatus,
+  answerWith,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
   readLeadingSkillToken,
@@ -29,6 +30,8 @@ import {
   createLateBoundToolContext,
   createLateBoundToolProgress,
   createLateBoundUserInput,
+  createLateBoundAuxiliaryUsage,
+  createSecondaryTurns,
   createLateBoundUserInputActions,
   createModelPreferenceCache,
   installAgentService,
@@ -680,6 +683,17 @@ if (!gotSingleInstanceLock) {
     const lateBoundToolProgress = createLateBoundToolProgress();
     // Extra one-click actions on a pending question, late-bound likewise.
     const lateBoundUserInputActions = createLateBoundUserInputActions();
+    // Usage of the model calls a tool makes outside the conversation (the
+    // semantic search's stateless verdicts), late-bound likewise.
+    const lateBoundAuxiliaryUsage = createLateBoundAuxiliaryUsage();
+    // Every tool-triggered secondary model call goes through this one binder, so its
+    // usage always reaches the chat's totals. `agentHub` is assigned after the
+    // registry is built (the agent starts after the shell paints), so it is read at
+    // call time - a tool call can only happen after a chat turn, which needs the hub.
+    const secondaryTurns = createSecondaryTurns({
+      hub: () => agentHub,
+      reportUsage: lateBoundAuxiliaryUsage.report,
+    });
     // The host's content/component roots, resolved from the live pane URL, the
     // current settings document and the host's selected project. Read fresh so
     // a roots/project edit in Settings is visible immediately;
@@ -807,16 +821,12 @@ if (!gotSingleInstanceLock) {
         configuredHosts,
         openPage: (target) => browserController.openForAgent(target),
         requestUserInput: lateBoundUserInput.requestUserInput,
-        // One stateless answer call on the active agent's provider. `agentHub` is
-        // assigned after the registry is built (the agent starts after the shell
-        // paints), so the closure reads it at call time - a tool call can only
-        // happen after a chat turn, which needs the hub.
-        answer: (request, signal) => {
-          const hub = agentHub;
-          return hub === undefined
-            ? Promise.resolve(err({ message: 'The agent is still starting' }))
-            : hub.answer(request, signal);
-        },
+        // A tool's secondary agentic turns all go through `secondaryTurns`, which
+        // carries the usage sink; a capability is a prompt, `complete` and a
+        // parser (`answerWith` is the semantic search's). A new such tool adds a
+        // line here and touches no agent.
+        answer: (request, signal) =>
+          answerWith((oneShot) => secondaryTurns.complete(oneShot, signal), request),
         clock: Date.now,
         idGenerator: randomUUID,
         // Diagnostics only: a tool reports how it classified the response body
@@ -859,6 +869,7 @@ if (!gotSingleInstanceLock) {
     lateBoundUserInput.bind(agentChatController);
     lateBoundToolProgress.bind(agentChatController);
     lateBoundUserInputActions.bind(agentChatController);
+    lateBoundAuxiliaryUsage.bind(agentChatController);
 
     const unregisterAgentChatIpc = registerAgentChatIpcHandlers({
       controller: agentChatController,

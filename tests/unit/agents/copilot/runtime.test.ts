@@ -1,16 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentHost } from '../../../../src/shared';
+import type { AgentHost, ModelUsageBody } from '../../../../src/shared';
+import {
+  describeAgentOneShotConformance,
+  ONE_SHOT_REQUEST,
+} from '../../../support/agentOneShotConformance';
 
 /**
- * The Copilot answer call: a fresh, tools-disabled session on the shared client,
- * one `sendAndWait`, and the shared prompt/parser. The session is a double, so
- * this proves the wiring, not the SDK (a live run proves the concurrency).
+ * The Copilot secondary-turn call (`complete`): a fresh, tools-disabled session on
+ * the shared client and one `sendAndWait`. The session is a double, so this proves
+ * the wiring, not the SDK (a live run proves the concurrency).
  */
 
 interface SessionDouble {
   sendAndWait: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
   rpc: { options: { update: ReturnType<typeof vi.fn> } };
 }
 
@@ -37,11 +42,25 @@ vi.mock('../../../../src/agents/copilot/runtimeManager', () => ({
 
 import { createCopilotRuntime } from '../../../../src/agents/copilot/runtime';
 
-function makeSession(answer: string | undefined): SessionDouble {
+function makeSession(
+  reply: string | undefined,
+  usage: readonly Record<string, unknown>[] = [],
+  fails = false,
+): SessionDouble {
+  const listeners = new Set<(event: unknown) => void>();
   return {
-    sendAndWait: vi.fn(() =>
-      Promise.resolve(answer === undefined ? undefined : { data: { content: answer } }),
-    ),
+    // The model calls the session reports while it answers.
+    sendAndWait: vi.fn(() => {
+      for (const data of usage) {
+        for (const listener of listeners) listener({ type: 'assistant.usage', data });
+      }
+      if (fails) return Promise.reject(new Error('provider error'));
+      return Promise.resolve(reply === undefined ? undefined : { data: { content: reply } });
+    }),
+    on: vi.fn((listener: (event: unknown) => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }),
     abort: vi.fn(() => Promise.resolve()),
     disconnect: vi.fn(() => Promise.resolve()),
     rpc: { options: { update: vi.fn(() => Promise.resolve({ success: true })) } },
@@ -74,69 +93,97 @@ function makeHost(): AgentHost {
   };
 }
 
-describe('createCopilotRuntime answer', () => {
-  it('creates a fresh, tool-less session and parses its verdicts', async () => {
-    const session = makeSession('{"matches":[2]}');
+describe('createCopilotRuntime complete', () => {
+  it("runs the caller's prompt and instructions on a fresh, tool-less session, with the chat's model", async () => {
+    const session = makeSession('the reply');
     const client = makeClient(session);
     state.client = client;
     const runtime = createCopilotRuntime(makeHost());
 
-    const result = await runtime.answer?.(
-      {
-        instruction: 'Waldo is good',
-        items: [
-          { id: '1', text: 'bad Waldo' },
-          { id: '2', text: 'good Waldo' },
-        ],
-      },
-      undefined,
-    );
+    const result = await runtime.complete?.(ONE_SHOT_REQUEST, undefined, () => undefined);
 
-    expect(result).toEqual({
-      ok: true,
-      value: [
-        { id: '1', match: false },
-        { id: '2', match: true },
-      ],
-    });
+    expect(result).toEqual({ ok: true, value: 'the reply' });
     const config = client.createSession.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(config['availableTools']).toEqual([]);
     expect(config['model']).toBe('mai-code-1.1-flash');
     expect(config['reasoningEffort']).toBe('low');
-    const prompt = (session.sendAndWait.mock.calls[0]?.[0] as { prompt: string }).prompt;
-    expect(prompt).toContain('Waldo is good');
-    expect(prompt).toContain('[2] good Waldo');
+    expect(JSON.stringify(config['systemMessage'])).toContain(ONE_SHOT_REQUEST.instructions);
+    expect((session.sendAndWait.mock.calls[0]?.[0] as { prompt: string }).prompt).toBe(
+      ONE_SHOT_REQUEST.prompt,
+    );
     expect(session.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('returns a failure for an unusable answer, and still closes the session', async () => {
-    const session = makeSession('{"matches":[9]}');
+  it('fails when the model gives no reply, and still closes the session', async () => {
+    const session = makeSession(undefined);
     state.client = makeClient(session);
     const runtime = createCopilotRuntime(makeHost());
 
-    const result = await runtime.answer?.(
-      { instruction: 'x', items: [{ id: '1', text: 'a' }] },
-      undefined,
-    );
+    const result = await runtime.complete?.(ONE_SHOT_REQUEST, undefined, () => undefined);
 
     expect(result?.ok).toBe(false);
     expect(session.disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('creates no session once the turn is aborted', async () => {
-    const session = makeSession('{"matches":[]}');
+    const session = makeSession('x');
     const client = makeClient(session);
     state.client = client;
     const runtime = createCopilotRuntime(makeHost());
     const controller = new AbortController();
     controller.abort();
 
-    const result = await runtime.answer?.({ instruction: 'x', items: [] }, controller.signal);
+    const result = await runtime.complete?.(ONE_SHOT_REQUEST, controller.signal, () => undefined);
 
     expect(result).toEqual({
       ok: false,
-      error: { message: 'The answer call was cancelled', cancelled: true },
+      error: { message: 'The call was cancelled', cancelled: true },
     });
     expect(client.createSession).not.toHaveBeenCalled();
   });
+
+  it('stops listening to the throwaway session once the call is over', async () => {
+    const session = makeSession('x', [{ inputTokens: 1, outputTokens: 1 }]);
+    state.client = makeClient(session);
+    const runtime = createCopilotRuntime(makeHost());
+
+    await runtime.complete?.(ONE_SHOT_REQUEST, undefined, () => undefined);
+
+    const unsubscribe = session.on.mock.results[0]?.value as () => boolean;
+    expect(unsubscribe()).toBe(false);
+  });
+});
+
+describeAgentOneShotConformance('copilot', async (scenario) => {
+  const session = makeSession(
+    scenario.reply,
+    [
+      {
+        model: 'mai-code-1.1-flash',
+        inputTokens: scenario.inputTokens,
+        outputTokens: scenario.outputTokens,
+      },
+    ],
+    scenario.fails === true,
+  );
+  const client = makeClient(session);
+  state.client = client;
+  const runtime = createCopilotRuntime(makeHost());
+  const reports: ModelUsageBody[] = [];
+
+  const result = await runtime.complete?.(ONE_SHOT_REQUEST, undefined, (usage) =>
+    reports.push(usage),
+  );
+
+  const config = client.createSession.mock.calls[0]?.[0] as
+    { systemMessage?: { content?: string } } | undefined;
+  const sentPrompt = session.sendAndWait.mock.calls[0]?.[0] as { prompt: string } | undefined;
+  return {
+    result: result ?? { ok: false, error: { message: 'no complete' } },
+    reports,
+    sent: {
+      instructions: config?.systemMessage?.content ?? '',
+      prompt: sentPrompt?.prompt ?? '',
+    },
+  };
 });

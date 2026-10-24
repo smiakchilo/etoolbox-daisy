@@ -37,10 +37,10 @@ export function createFakeRuntime(host: AgentHost): AgentRuntime {
       Promise.resolve({ status: 'failed', message: 'Sign-in is unavailable with the fake agent' }),
     logout: () =>
       Promise.resolve({ apiVersion: 1, warning: 'Sign-out is unavailable with the fake agent' }),
-    answer: (request) =>
+    complete: (request, _signal, reportUsage) =>
       fake === undefined
         ? Promise.resolve(err({ message: 'The fake agent is not started' }))
-        : fake.answer(request),
+        : fake.complete(request, reportUsage),
     loadModelCatalog: () => Promise.resolve(ok(fakeModelCatalog())),
   };
 }

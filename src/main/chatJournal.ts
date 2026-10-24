@@ -365,7 +365,11 @@ export function createChatJournal(chatsDir: string, options: ChatJournalOptions 
     // A state change or a model switch is bookkeeping, not a sign the agent is
     // working on the turn; counting `sending` would make the first-activity
     // time always zero.
-    if (event.type !== 'session.state.changed' && event.type !== 'model.changed') {
+    if (
+      event.type !== 'session.state.changed' &&
+      event.type !== 'model.changed' &&
+      event.type !== 'context.usage'
+    ) {
       turn.firstActivityAt ??= at;
     }
     switch (event.type) {

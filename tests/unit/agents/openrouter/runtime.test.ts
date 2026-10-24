@@ -11,7 +11,13 @@ import {
   type AgentConnection,
   type AgentHost,
   type AgentService,
+  type ModelUsageBody,
 } from '../../../../src/shared';
+import {
+  describeAgentOneShotConformance,
+  ONE_SHOT_REQUEST,
+} from '../../../support/agentOneShotConformance';
+import { USAGE_READ_TIMEOUT_MS } from '../../../../src/agents/openrouter/usageDiagnostics';
 
 const clients = vi.hoisted(() => ({ current: undefined as OpenRouterClient | undefined }));
 
@@ -23,6 +29,8 @@ function fakeClient(
   text: string,
   calls: OpenRouterCallRequest[],
   hasApiKey = true,
+  usage?: unknown,
+  fails = false,
 ): OpenRouterClient {
   return {
     hasApiKey,
@@ -37,7 +45,10 @@ function fakeClient(
         getReasoningStream: async function* () {
           // no reasoning in the answer test
         },
-        getResponse: () => Promise.resolve({}),
+        getResponse: () =>
+          fails ? Promise.reject(new Error('provider error')) : Promise.resolve({}),
+        // 'never' models an SDK whose accounting does not arrive (an aborted run).
+        getUsage: () => (usage === 'never' ? new Promise(() => undefined) : Promise.resolve(usage)),
       };
       return call;
     },
@@ -180,68 +191,108 @@ describe('createOpenRouterRuntime', () => {
     expect(installed).toHaveLength(2);
   });
 
-  it('answers with one fresh, tools-disabled call and returns a verdict per item', async () => {
+  it("runs the caller's prompt and instructions as one fresh, tools-disabled call and returns the reply", async () => {
     const calls: OpenRouterCallRequest[] = [];
-    clients.current = fakeClient('{"matches":[2]}', calls);
+    clients.current = fakeClient('the reply', calls);
     const { host } = buildHost({ accessToken: 'k' });
     const runtime = createOpenRouterRuntime(host);
     await runtime.start(settings);
 
-    const result = await runtime.answer?.(
-      {
-        instruction: 'Waldo is good',
-        items: [
-          { id: '1', text: 'a bad Waldo' },
-          { id: '2', text: 'a good Waldo' },
-        ],
-      },
-      undefined,
-    );
+    const result = await runtime.complete?.(ONE_SHOT_REQUEST, undefined, () => undefined);
 
-    expect(result).toEqual({
-      ok: true,
-      value: [
-        { id: '1', match: false },
-        { id: '2', match: true },
-      ],
-    });
+    expect(result).toEqual({ ok: true, value: 'the reply' });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       model: AUTO_MODEL,
       tools: [],
       allowFinalResponse: true,
       reasoningEffort: null,
+      instructions: ONE_SHOT_REQUEST.instructions,
+      input: ONE_SHOT_REQUEST.prompt,
     });
-    expect(calls[0]?.input).toContain('Waldo is good');
-    expect(calls[0]?.input).toContain('[2] a good Waldo');
   });
 
-  it('refuses to answer without a stored API key', async () => {
-    clients.current = fakeClient('{"matches":[]}', [], false);
+  it('refuses to complete without a stored API key', async () => {
+    clients.current = fakeClient('x', [], false);
     const { host } = buildHost({});
     const runtime = createOpenRouterRuntime(host);
     await runtime.start(settings);
 
-    const result = await runtime.answer?.({ instruction: 'x', items: [] }, undefined);
+    const result = await runtime.complete?.(ONE_SHOT_REQUEST, undefined, () => undefined);
 
     expect(result?.ok).toBe(false);
   });
 
-  it('does not answer once the turn is aborted', async () => {
+  it('does not call the model once the turn is aborted', async () => {
     const calls: OpenRouterCallRequest[] = [];
-    clients.current = fakeClient('{"matches":[]}', calls);
+    clients.current = fakeClient('x', calls);
     const { host } = buildHost({ accessToken: 'k' });
     const runtime = createOpenRouterRuntime(host);
     await runtime.start(settings);
     const controller = new AbortController();
     controller.abort();
 
-    const result = await runtime.answer?.({ instruction: 'x', items: [] }, controller.signal);
+    const result = await runtime.complete?.(ONE_SHOT_REQUEST, controller.signal, () => undefined);
 
     expect(result).toEqual({
       ok: false,
-      error: { message: 'The answer call was cancelled', cancelled: true },
+      error: { message: 'The call was cancelled', cancelled: true },
     });
     expect(calls).toEqual([]);
   });
+
+  it('reports the usage of a call whose accounting never arrives as nothing, without hanging', async () => {
+    clients.current = fakeClient('x', [], true, 'never');
+    const { host } = buildHost({ accessToken: 'k' });
+    const runtime = createOpenRouterRuntime(host);
+    await runtime.start(settings);
+    const reports: ModelUsageBody[] = [];
+
+    vi.useFakeTimers();
+    try {
+      const pending = runtime.complete?.(ONE_SHOT_REQUEST, undefined, (usage) =>
+        reports.push(usage),
+      );
+      await vi.advanceTimersByTimeAsync(USAGE_READ_TIMEOUT_MS + 1);
+      const result = await pending;
+
+      expect(result).toEqual({ ok: true, value: 'x' });
+      // Only the wall-clock duration is known; no tokens are invented.
+      expect(reports.every((body) => body.inputTokens === undefined)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describeAgentOneShotConformance('openrouter', async (scenario) => {
+  const calls: OpenRouterCallRequest[] = [];
+  clients.current = fakeClient(
+    scenario.reply ?? '',
+    calls,
+    true,
+    {
+      inputTokens: scenario.inputTokens,
+      outputTokens: scenario.outputTokens,
+      totalTokens: scenario.inputTokens + scenario.outputTokens,
+      cachedTokens: 0,
+      reasoningTokens: 0,
+      modelCalls: 1,
+    },
+    scenario.fails === true,
+  );
+  const { host } = buildHost({ accessToken: 'k' });
+  const runtime = createOpenRouterRuntime(host);
+  await runtime.start(settings);
+  const reports: ModelUsageBody[] = [];
+
+  const result = await runtime.complete?.(ONE_SHOT_REQUEST, undefined, (usage) =>
+    reports.push(usage),
+  );
+
+  return {
+    result: result ?? { ok: false, error: { message: 'no complete' } },
+    reports,
+    sent: { instructions: calls[0]?.instructions ?? '', prompt: calls[0]?.input ?? '' },
+  };
 });

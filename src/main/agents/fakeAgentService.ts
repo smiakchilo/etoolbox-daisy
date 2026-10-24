@@ -7,9 +7,11 @@ import {
   type ChatId,
   type IdGenerator,
   type JsonValue,
-  type AnswerRequest,
   type AnswerResult,
   type MessageId,
+  type ModelUsageBody,
+  type OneShotRequest,
+  type OneShotResult,
   type OpenConversationRequest,
   type ReasoningId,
   type RequiredAction,
@@ -23,6 +25,7 @@ import {
   type ToolResultEvent,
   type TurnId,
   type Unsubscribe,
+  type UsageSink,
   type UserInputAnswer,
   type UserInputRequestId,
   applyAgentEvent,
@@ -154,11 +157,30 @@ export interface ScriptedInputRequestStep {
   readonly freeInput?: boolean;
 }
 
+/**
+ * One model call's usage, delivered as a `model.usage` event at this point of
+ * the turn. Diagnostics, like the real adapters': it ends no reasoning block and
+ * moves no state.
+ */
+export interface ScriptedUsageStep {
+  readonly kind: 'usage';
+  readonly usage: Omit<ModelUsageBody, 'type'>;
+}
+
+/** A context-window snapshot, delivered as a `context.usage` event. */
+export interface ScriptedContextStep {
+  readonly kind: 'context';
+  readonly currentTokens: number;
+  readonly tokenLimit: number;
+}
+
 /** One step of a scripted turn, emitted in the order the script lists them. */
 export type ScriptedStep =
   | ScriptedDeltaStep
   | ScriptedReasoningStep
   | ScriptedInputRequestStep
+  | ScriptedUsageStep
+  | ScriptedContextStep
   | { readonly kind: 'toolCall'; readonly call: ScriptedToolCall };
 
 /**
@@ -230,13 +252,17 @@ export interface FakeAgentService extends AgentService {
 
   /**
    * Queues the answer to the next `answer` call (a stateless model verdict the
-   * semantic search asks for inside its tool call). Nothing queued answers
-   * "no candidate matches", which keeps an unscripted test deterministic.
+   * semantic search asks for inside its tool call), optionally with the usage
+   * that call reports. Nothing queued answers "no candidate matches", which
+   * keeps an unscripted test deterministic.
    */
-  queueAnswer(answer: AnswerResult): void;
+  queueAnswer(answer: AnswerResult, usage?: ModelUsageBody): void;
 
-  /** One stateless answer call; consumes the next queued answer. */
-  answer(request: AnswerRequest): Promise<AnswerResult>;
+  /**
+   * One stateless secondary call (`AgentRuntime.complete`); consumes the next
+   * queued answer and returns it as the reply text a tool's parser reads.
+   */
+  complete(request: OneShotRequest, reportUsage?: UsageSink): Promise<OneShotResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -360,7 +386,7 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
   const authListeners = new Set<(state: AgentAuthState) => void>();
   const scriptedTurns: ScriptedTurn[] = [];
   /** Answers for the next `answer` calls (FIFO); an empty queue means "no match". */
-  const answers: AnswerResult[] = [];
+  const answers: { readonly answer: AnswerResult; readonly usage?: ModelUsageBody }[] = [];
   /** Sequence counters persist across close/reopen of the same `chatId` - see agentEvents.ts's module doc: sequence is a per-chat lifetime counter, not reset by this fake's own bookkeeping. */
   const sequenceByChatId = new Map<ChatId, number>();
 
@@ -637,6 +663,27 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     }
 
     for (const step of steps) {
+      if (step.kind === 'usage') {
+        queue.push({
+          ...step.usage,
+          type: 'model.usage',
+          chatId,
+          sequence: nextSequence(chatId),
+          turnId,
+        });
+        continue;
+      }
+      if (step.kind === 'context') {
+        queue.push({
+          type: 'context.usage',
+          chatId,
+          sequence: nextSequence(chatId),
+          turnId,
+          currentTokens: step.currentTokens,
+          tokenLimit: step.tokenLimit,
+        });
+        continue;
+      }
       if (step.kind === 'reasoning') {
         if (step.text.length === 0) {
           throw new Error(
@@ -1043,18 +1090,20 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
       return [...deletedSessions];
     },
 
-    queueAnswer(answer: AnswerResult): void {
-      answers.push(answer);
+    queueAnswer(answer: AnswerResult, usage?: ModelUsageBody): void {
+      answers.push(usage === undefined ? { answer } : { answer, usage });
     },
 
-    answer(request: AnswerRequest): Promise<AnswerResult> {
-      const answer = answers.shift();
-      if (answer !== undefined) return Promise.resolve(answer);
-      // Nothing scripted: every candidate is a non-match. Deterministic and
-      // empty, which is what a test that does not care about answering expects.
-      return Promise.resolve(
-        ok(request.items.map((item) => ({ id: item.id, match: false as const }))),
-      );
+    complete(_request: OneShotRequest, reportUsage?: UsageSink): Promise<OneShotResult> {
+      const queued = answers.shift();
+      if (queued?.usage !== undefined) reportUsage?.(queued.usage);
+      // Nothing scripted: no candidate matches. Deterministic and empty, which is
+      // what a test that does not care about answering expects.
+      if (queued === undefined) return Promise.resolve(ok('{"matches":[]}'));
+      if (!queued.answer.ok) return Promise.resolve(err(queued.answer.error));
+      // A scripted verdict list, as the reply text the shared parser reads back.
+      const matches = queued.answer.value.filter((verdict) => verdict.match).map((v) => v.id);
+      return Promise.resolve(ok(JSON.stringify({ matches })));
     },
   };
 }

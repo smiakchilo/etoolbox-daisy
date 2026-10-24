@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   type AgentEvent,
   type IdGenerator,
+  type ModelUsageBody,
   type SessionId,
   type SessionStatus,
+  answerWith,
   applyAgentEvent,
   createAgentServiceError,
   newChatId,
@@ -751,16 +753,23 @@ describe('scripted input requests', () => {
   });
 });
 
-describe('fake answer', () => {
-  it('answers "no match" when nothing is scripted', async () => {
+describe('fake complete', () => {
+  const ONE_SHOT = { instructions: 'i', prompt: 'p' };
+  const ask = (items: readonly { id: string; text: string }[]) => ({ instruction: 'x', items });
+  /** Runs the shared answer capability over the fake's `complete`, end to end. */
+  const answer = (
+    service: ReturnType<typeof createFakeAgentService>,
+    items: readonly { id: string; text: string }[],
+    reportUsage?: (usage: ModelUsageBody) => void,
+  ) => answerWith((request) => service.complete(request, reportUsage), ask(items));
+
+  it('replies "no match" when nothing is scripted', async () => {
     const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
-    const result = await service.answer({
-      instruction: 'x',
-      items: [
-        { id: '1', text: 'a' },
-        { id: '2', text: 'b' },
-      ],
-    });
+
+    const result = await answer(service, [
+      { id: '1', text: 'a' },
+      { id: '2', text: 'b' },
+    ]);
 
     expect(result).toEqual({
       ok: true,
@@ -771,23 +780,73 @@ describe('fake answer', () => {
     });
   });
 
-  it('consumes queued verdicts in order', async () => {
+  it('consumes queued verdicts in order, as reply text the shared parser reads back', async () => {
     const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
-    service.queueAnswer({
-      ok: true,
-      value: [{ id: '1', match: true }],
-    });
+    service.queueAnswer({ ok: true, value: [{ id: '1', match: true }] });
 
-    const first = await service.answer({
-      instruction: 'x',
-      items: [{ id: '1', text: 'a' }],
-    });
-    const second = await service.answer({
-      instruction: 'x',
-      items: [{ id: '1', text: 'a' }],
-    });
+    const first = await answer(service, [{ id: '1', text: 'a' }]);
+    const second = await answer(service, [{ id: '1', text: 'a' }]);
 
     expect(first).toEqual({ ok: true, value: [{ id: '1', match: true }] });
     expect(second).toEqual({ ok: true, value: [{ id: '1', match: false }] });
+  });
+
+  it('fails the call with a queued failure', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    service.queueAnswer({ ok: false, error: { message: 'scripted failure' } });
+
+    const result = await service.complete(ONE_SHOT);
+
+    expect(result).toEqual({ ok: false, error: { message: 'scripted failure' } });
+  });
+
+  it('reports the usage queued with a verdict to the sink, once', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    service.queueAnswer(
+      { ok: true, value: [{ id: '1', match: true }] },
+      { type: 'model.usage', inputTokens: 40, outputTokens: 6 },
+    );
+    const reports: unknown[] = [];
+
+    await service.complete(ONE_SHOT, (usage) => reports.push(usage));
+    await service.complete(ONE_SHOT, (usage) => reports.push(usage));
+
+    expect(reports).toEqual([{ type: 'model.usage', inputTokens: 40, outputTokens: 6 }]);
+  });
+});
+describe('scripted usage steps', () => {
+  it('deliver model.usage and context.usage in order, on the turn, without moving its state', async () => {
+    const service = createFakeAgentService({ idGenerator: counterIdGenerator() });
+    const events: AgentEvent[] = [];
+    service.onEvent((event) => events.push(event));
+    const chatId = newChatId(() => 'chat-1');
+    const turnId = newTurnId(() => 'turn-1');
+    await service.initialize();
+    await service.openConversation({ chatId });
+    service.scriptNextResponse({
+      steps: [
+        { kind: 'delta', text: 'hi' },
+        { kind: 'usage', usage: { inputTokens: 10, outputTokens: 2, cost: 0.5, costUnit: 'usd' } },
+        { kind: 'context', currentTokens: 100, tokenLimit: 1000 },
+      ],
+    });
+
+    await service.sendPrompt({ chatId, turnId, prompt: 'x' });
+    service.flush();
+
+    const types = events.map((event) => event.type);
+    expect(types).toContain('model.usage');
+    expect(types.indexOf('model.usage')).toBeLessThan(types.indexOf('context.usage'));
+    expect(events.find((event) => event.type === 'model.usage')).toMatchObject({
+      turnId,
+      inputTokens: 10,
+      costUnit: 'usd',
+    });
+    expect(events.find((event) => event.type === 'context.usage')).toMatchObject({
+      turnId,
+      currentTokens: 100,
+      tokenLimit: 1000,
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'session.state.changed', state: 'idle' });
   });
 });

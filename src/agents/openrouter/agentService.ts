@@ -46,7 +46,7 @@ import {
   toolCallIdSchema,
 } from '../../shared';
 import type { OpenRouterCall, OpenRouterClient, RunTool, ToolCallContext, ToolSpec } from './types';
-import { mapOpenRouterUsage } from './usageDiagnostics';
+import { mapOpenRouterUsage, readUsageTotals } from './usageDiagnostics';
 
 /**
  * The OpenRouter-backed `AgentService`.
@@ -486,8 +486,9 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
    * reasoning and emitting the terminal state. Detached from `sendPrompt` (see
    * its call site) so the turn does not block the IPC reply, exactly like the
    * Copilot adapter's `session.send`. A run superseded by abort/teardown/open
-   * of another chat emits nothing: that path has already emitted the terminal
-   * state, and `generation` is bumped there.
+   * of another chat emits no state change: that path has already emitted the
+   * terminal state, and `generation` is bumped there. It still reports the usage
+   * of the rounds it completed, while its chat is open.
    */
   async function runTurn(
     chatId: ChatId,
@@ -505,10 +506,31 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
       consumeReasoning(call, chatId, turnId),
     ]);
 
+    const response = settled[0]?.status === 'fulfilled' ? settled[0].value : undefined;
+    /** Reports what the run spent, as one `model.usage` event of this turn. */
+    const reportRunUsage = (totals: unknown): void => {
+      const usage = mapOpenRouterUsage(response, totals, {
+        durationMs: Date.now() - startedAt,
+        reasoningEffort,
+      });
+      if (usage === undefined) return;
+      try {
+        applyAndEmit({ ...usage, chatId, sequence: nextSequence(chatId), turnId });
+      } catch (error) {
+        console.error('openrouter: could not report model usage', error);
+      }
+    };
+
     // Superseded by abort/teardown/open of another chat: that path already
-    // emitted the terminal state, so emit nothing here.
+    // emitted the terminal state, so no state change is emitted here. The rounds
+    // the run completed were still billed, though, so its usage is reported -
+    // while the chat is still the open one (a closed chat's journal is gone, and
+    // an event for it has nowhere to go). The read is bounded: an aborted run's
+    // accounting is not promised to arrive.
     if (myGeneration !== generation) {
       rejectPendingUserInputs();
+      const stoppedTotals = await readUsageTotals(call);
+      if (openChatId === chatId) reportRunUsage(stoppedTotals);
       return;
     }
 
@@ -516,6 +538,17 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
     currentAbort = undefined;
     rejectPendingUserInputs();
 
+    // The run's own accounting, read whether it succeeded or not: a turn that
+    // failed after some rounds still spent those tokens, and the final round
+    // alone (`getResponse`) would understate a turn that called tools.
+    const totals = await readUsageTotals(call);
+    // Reading it can take a moment; a Stop or a newer open may have superseded
+    // this run meanwhile, and then it emits no state change - only its usage.
+    if (myGeneration !== generation) {
+      if (openChatId === chatId) reportRunUsage(totals);
+      return;
+    }
+    reportRunUsage(totals);
     if (settled[0]?.status === 'rejected') {
       // The raw rejection is the only place the real cause is visible; the
       // user-facing line stays application-authored (see
@@ -559,20 +592,6 @@ export function createOpenRouterAgentService(options: OpenRouterAgentServiceOpti
         reasoningId: reasoningIdSchema.parse(reasoning.reasoningId),
         content: reasoning.content,
       });
-    }
-    const usage = mapOpenRouterUsage(
-      settled[0]?.status === 'fulfilled' ? settled[0].value : undefined,
-      {
-        durationMs: Date.now() - startedAt,
-        reasoningEffort,
-      },
-    );
-    if (usage !== undefined) {
-      try {
-        applyAndEmit({ ...usage, chatId, sequence: nextSequence(chatId), turnId });
-      } catch (error) {
-        console.error('openrouter: could not report model usage', error);
-      }
     }
     applyAndEmit(makeSessionStateEvent(chatId, 'idle', turnId));
   }

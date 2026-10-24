@@ -18,6 +18,7 @@ import { confirmDestructiveAction } from '../settings/statusBanner';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
+import { createUsagePanel, type UsagePanel } from './usagePanel';
 import { buildHostOptions, computeAddressBarValue } from './viewModel';
 
 /**
@@ -136,6 +137,16 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   });
   browserPane.appendPanel(historyPanel);
 
+  // Usage: the open conversation's token and cost details, opened by the chat
+  // footer's gauge. Created before the chat pane so its rows can be fed from the
+  // pane's first footer refresh.
+  const usagePanel: UsagePanel = createUsagePanel({
+    onDismiss(): void {
+      browserPane.panelHost.close();
+    },
+  });
+  browserPane.appendPanel(usagePanel);
+
   // Fill the home screen's slower data off the first-paint path: the pane
   // builds the screen synchronously with a static name and a "Loading skills…"
   // row, and these populate it a beat later. Both are best-effort - a failure
@@ -167,6 +178,12 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     },
     onOpenHistory() {
       browserPane.panelHost.open(historyPanel);
+    },
+    onOpenUsage() {
+      browserPane.panelHost.open(usagePanel);
+    },
+    onUsageChanged(rows) {
+      usagePanel.setRows(rows);
     },
     // A chat link is a browser navigation: route it through the browser pane
     // so that pane owns the load and, on failure, its error row (with Reload)
@@ -553,6 +570,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     browserPane.dispose();
     settingsPanel.dispose();
     historyPanel.dispose();
+    usagePanel.dispose();
     chatPane.dispose();
   });
 }

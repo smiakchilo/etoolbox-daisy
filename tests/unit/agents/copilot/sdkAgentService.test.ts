@@ -22,7 +22,10 @@ import {
 import { applyAgentEvent, type SessionStatus } from '../../../../src/shared';
 import { err, ok } from '../../../../src/shared';
 import type { AuthStatus, SessionId } from '../../../../src/shared';
-import { describeAgentDiagnosticsConformance } from '../../../support/agentDiagnosticsConformance';
+import {
+  conformanceCalls,
+  describeAgentDiagnosticsConformance,
+} from '../../../support/agentDiagnosticsConformance';
 
 /** Mints reproducible `ChatId`/`TurnId` values - never SDK-facing ids, which the adapter adopts instead. */
 function counterIdGenerator(): IdGenerator {
@@ -1540,6 +1543,42 @@ describe('sdkAgentService - model diagnostics events', () => {
     expect(events.some((event) => event.type === 'model.changed')).toBe(false);
   });
 
+  it("reports a call's AI credits and window snapshot as the runtime states them", async () => {
+    const { service, sessionHandle, events, chatId, ids } = await setUp(() => ({
+      model: null,
+      reasoningEffort: null,
+    }));
+    const turnId = newTurnId(ids);
+    await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
+
+    sessionHandle.emit({
+      type: 'assistant.usage',
+      data: {
+        model: 'gpt-x',
+        inputTokens: 1000,
+        outputTokens: 20,
+        cost: 1,
+        copilotUsage: { totalNanoAiu: 1_500_000_000 },
+      },
+    });
+    sessionHandle.emit({
+      type: 'session.usage_info',
+      data: { currentTokens: 1200, tokenLimit: 128_000, messagesLength: 4 },
+    });
+    // A snapshot with no usable window is dropped, not reported as a guess.
+    sessionHandle.emit({
+      type: 'session.usage_info',
+      data: { currentTokens: 5, messagesLength: 1 },
+    });
+
+    expect(events.filter((event) => event.type === 'model.usage')).toMatchObject([
+      { turnId, aiCredits: 1.5, cost: 1, costUnit: 'billing-multiplier', inputTokens: 1000 },
+    ]);
+    expect(events.filter((event) => event.type === 'context.usage')).toMatchObject([
+      { turnId, currentTokens: 1200, tokenLimit: 128_000 },
+    ]);
+  });
+
   it('maps a top-level model.call_failure and ignores a sub-agent one', async () => {
     const { service, sessionHandle, events, chatId, ids } = await setUp(() => ({
       model: null,
@@ -1602,17 +1641,26 @@ describeAgentDiagnosticsConformance('copilot', async (initial) => {
     setPreference: (next) => {
       preference = next;
     },
-    runTurn: async (turnId, usage) => {
+    runTurn: async (turnId, usage, options) => {
       await service.sendPrompt({ chatId, turnId, prompt: 'hi' });
-      if (usage !== undefined) {
+      for (const call of conformanceCalls(usage)) {
         sessionHandle.emit({
           type: 'assistant.usage',
           data: {
-            model: usage.model,
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
+            model: call.model,
+            inputTokens: call.inputTokens,
+            outputTokens: call.outputTokens,
+            ...(call.cost !== undefined ? { cost: call.cost } : {}),
           },
         });
+      }
+      if (options?.failAfterUsage === true) {
+        sessionHandle.emit({ type: 'session.error', data: {} });
+        return;
+      }
+      if (options?.stopAfterUsage === true) {
+        await service.abort(chatId);
+        return;
       }
       sessionHandle.emit({ type: 'assistant.message_start', data: { messageId: `m-${turnId}` } });
       sessionHandle.emit({

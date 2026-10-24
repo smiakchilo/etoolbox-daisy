@@ -62,7 +62,12 @@ import {
   type SendPromptRequest,
   type Unsubscribe,
 } from '../../shared';
-import { mapModelCallFailure, mapModelChange, mapModelUsage } from './sessionDiagnostics';
+import {
+  mapContextUsage,
+  mapModelCallFailure,
+  mapModelChange,
+  mapModelUsage,
+} from './sessionDiagnostics';
 import {
   createHardenedSession,
   type HardenedSessionClient,
@@ -1196,6 +1201,17 @@ export function createSdkAgentService(options: SdkAgentServiceOptions): AgentSer
         case 'assistant.usage': {
           applyAndEmit({
             ...mapModelUsage(event.data),
+            chatId,
+            sequence: nextSequence(chatId),
+            ...(currentTurn !== undefined ? { turnId: currentTurn.turnId } : {}),
+          });
+          return;
+        }
+        case 'session.usage_info': {
+          const body = mapContextUsage(event.data);
+          if (body === undefined) return;
+          applyAndEmit({
+            ...body,
             chatId,
             sequence: nextSequence(chatId),
             ...(currentTurn !== undefined ? { turnId: currentTurn.turnId } : {}),

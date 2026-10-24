@@ -2,7 +2,8 @@ import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from '../ag
 import type { AgentDefinition, AgentId, AppSettings, ModelCatalogEntry } from '../contracts';
 import type { Result } from '../result';
 import type { AgentService } from './agentService';
-import type { AnswerRequest, AnswerResult, ToolExecutor, ToolDescriptor } from '../tools';
+import type { OneShotCall } from './oneShot';
+import type { ToolExecutor, ToolDescriptor } from '../tools';
 
 /**
  * The agent plugin contract. An agent is one folder, `src/agents/<name>/`,
@@ -143,21 +144,28 @@ export interface AgentRuntime {
    */
   readonly getAuthPresence?: () => Promise<AuthPresence>;
   /**
-   * One stateless classification call on this agent's provider: answer whether
-   * each item matches `instruction`, returning one true/false per item. It is
-   * not a chat turn: no conversation history, no tools, no skills, no AgentEvents, and it
-   * must never touch the installed `AgentService`'s session. Implemented with a
-   * fresh, tools-disabled session (Copilot) or a fresh conversation state
-   * (OpenRouter), with the active model preference and the turn's abort signal.
+   * The one routine behind every secondary agentic turn (see `oneShot.ts`): a
+   * stateless model call a tool makes on the chat's behalf - the semantic
+   * search's verdicts today, other tools' later. It is not a chat turn: no
+   * conversation history, no tools, no skills, no AgentEvents, and it must never
+   * touch the installed `AgentService`'s session. Implemented on a fresh,
+   * tools-disabled session (Copilot) or a fresh conversation state (OpenRouter),
+   * with the active model preference, proxy and the caller's abort signal. It
+   * returns the reply text; what a tool asks and how it parses the reply is the
+   * tool's business, in `src/shared/tools/core/`.
    *
    * Optional: an agent that cannot make such a call leaves it absent; a tool
    * that needs it reports the capability as unavailable.
+   *
+   * **Every model call it makes must be reported to `reportUsage`** (a failed,
+   * cancelled or retried attempt included, since it spent tokens too): these
+   * calls are part of the chat's gross usage, which the footer gauge and the
+   * usage panel show, but - being no chat turn - they emit no AgentEvents of
+   * their own. Build each body with `buildModelUsage`.
+   * `tests/support/agentOneShotConformance.ts` holds an agent that defines
+   * `complete` to this.
    */
-  readonly answer?: (
-    request: AnswerRequest,
-    signal: AbortSignal | undefined,
-  ) => Promise<AnswerResult>;
-  /** Absent for an agent that needs no sign-in (`requiresAuth: false`). */
+  readonly complete?: OneShotCall; /** Absent for an agent that needs no sign-in (`requiresAuth: false`). */
   readonly login?: (settings: AppSettings | undefined) => Promise<LoginOutcome>;
   readonly cancelLogin?: () => void;
   readonly logout?: () => Promise<LogoutResult>;

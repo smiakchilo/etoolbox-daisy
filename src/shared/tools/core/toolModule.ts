@@ -97,6 +97,12 @@ export interface ToolHost {
    * The capability is optional only so an agent that cannot make such a call
    * can exist; the app wires it for Copilot, OpenRouter and the fake. A tool
    * that needs it reports `AGENT_UNAVAILABLE` when it is absent.
+   *
+   * It is one *capability* over the reusable secondary-turn routine
+   * (`AgentRuntime.complete`, `src/shared/agents/oneShot.ts`): the tokens it
+   * spends are counted in the chat's totals by construction. A tool that asks the
+   * model something else adds its own capability beside this one, not a new
+   * agent method.
    */
   readonly answer?: (
     request: AnswerRequest,

@@ -339,13 +339,38 @@ src/agents/<name>/
   `agentSettingsSchema` (`active`, `proxy`, `model`, `reasoningEffort`,
   `token`); an agent that needs other settings would have to extend that shared
   contract - **say so and ask**.
-- **Diagnostics contract (every agent, incl. a future Claude).** Journal-only
-  `model.changed` / `model.usage` / `model.call.failed` events. An adapter
-  reports its model through `createModelObserver`
-  (`src/shared/agents/modelObserver.ts`) in `sendPrompt` and must pass
-  `describeAgentDiagnosticsConformance`
-  (`tests/support/agentDiagnosticsConformance.ts`) via its own harness. Semantics
-  are documented in `src/shared/contracts/agentEvents.ts`.
+- **Diagnostics and usage contract (every agent, incl. a future Claude).**
+  `model.changed` / `model.usage` / `context.usage` / `model.call.failed`
+  events. The first three are journaled **and forwarded** to the renderer: the
+  chat footer's token gauge and the Usage panel total them (`chat/sessionUsage.ts`
+  projects them, live and from a resumed chat's journal), so a wrong or
+  unit-less number is visible to the user. `model.call.failed` stays
+  journal-only. An adapter:
+  - reports its model through `createModelObserver`
+    (`src/shared/agents/modelObserver.ts`) in `sendPrompt`;
+  - builds every `model.usage` body with `buildModelUsage`
+    (`src/shared/agents/usageReport.ts`), which keeps a `cost` inseparable from
+    its `costUnit` (`usd` or `billing-multiplier`; Copilot's real spend is
+    `aiCredits`, `totalNanoAiu / 1e9`) and drops unusable numbers;
+  - reports usage **cumulative over every model call of a turn** (the last round
+    of a tool loop alone understates it) and still reports the calls a turn
+    completed before it failed;
+  - optionally emits `context.usage` (`buildContextUsage`) when its SDK exposes
+    the window - otherwise stays silent and the panel says "Not reported";
+  - implements `AgentRuntime.complete` (optional) - **the one routine behind
+    every tool-triggered secondary agentic turn** (see "Secondary agentic turns"
+    under Tools). It runs the caller's `{ instructions, prompt }` on a fresh
+    session and returns the reply text; it knows nothing of any tool. It reports
+    **each model call it makes** (retries, failures and cancellations included)
+    to the `UsageSink` it is handed - it emits no events of its own;
+  - passes `describeAgentDiagnosticsConformance`
+    (`tests/support/agentDiagnosticsConformance.ts`; it also pins that a turn the
+    user stopped still reports the calls it had completed) and, with a
+    `complete`, `describeAgentOneShotConformance`
+    (`tests/support/agentOneShotConformance.ts`) via its own harness.
+  `tests/unit/agents/agentConformance.test.ts` **fails the build** for an enabled
+  agent folder whose tests do not run them. Semantics are documented in
+  `src/shared/contracts/agentEvents.ts`.
 - Copilot's files: `copilotClient.ts` (`createHardenedCopilotClient`),
   `runtimePaths.ts` (+ `findProjectRoot`), `toolPolicy.ts`
   (**the hardening core**), `toolAllowlistPolicy.ts`, `sdkAgentService.ts`, `auth.ts`,
@@ -377,10 +402,12 @@ src/agents/<name>/
    `loadModelCatalog`; `login`/`cancelLogin`/`logout` only if the SDK signs in
    interactively; optional `getAuthPresence` to report a cheap, **non-starting**
    sign-in presence so the Settings "Set active" control can be honest without
-   starting an inactive provider's runtime; optional `answer` for the stateless,
-   tools-disabled model verdict a tool asks for through `ToolHost.answer` - see
-   `src/shared/tools/core/answer.ts`; a fresh request, not a chat turn, no
-   events, same model/provider/proxy and the turn's abort signal). Get proxy/token from
+   starting an inactive provider's runtime; optional `complete` - the generic stateless one-shot call behind every
+   tool-triggered secondary agentic turn (`src/shared/agents/oneShot.ts`): run the
+   caller's `{ instructions, prompt }` on a fresh, tools-disabled session with the
+   same model/provider/proxy and the caller's abort signal, return the reply text,
+   and **report every model call it makes to its third argument, the usage sink**).
+   Get proxy/token from
    `host.resolveConnection(meta.id, settings)` — an agent never touches the
    secret store or settings store. An **in-process** agent applies its proxy by
    wrapping the resolved connection with `host.createProxyFetch(connection)`
@@ -394,6 +421,8 @@ src/agents/<name>/
    `instructions`) onto the SDK. `allowlistEntries`
    are in Copilot's `custom:<name>` form; translate if the SDK differs. **Do not
    import `src/tools` or `src/main`** — everything arrives through the host.
+    Report the model and the usage per the "Diagnostics and usage contract"
+    above (`createModelObserver`, `buildModelUsage`): the user reads those totals.
 6. **Hardening is per-agent.** Copilot's `toolPolicy.ts` denies every built-in
    tool except the AEM tools and `skill`; a new SDK must get an equivalent
    deny-by-default policy (and equivalent verification, cf. AGENTS.md §8 skill
@@ -404,7 +433,10 @@ src/agents/<name>/
    copy, don't import).
 8. Dependencies: add the SDK to `package.json`; if it ships a native runtime, add
    its `electron-builder.yml` filters/`asarUnpack` (see Copilot's).
-9. Tests in `tests/unit/agents/<name>/`. The fake E2E path needs **nothing**: with
+9. Tests in `tests/unit/agents/<name>/`, **including the shared conformance
+   suites** (`describeAgentDiagnosticsConformance`, and
+   `describeAgentOneShotConformance` if the runtime defines `complete`) -
+   `tests/unit/agents/agentConformance.test.ts` fails without them. The fake E2E path needs **nothing**: with
    the fake enabled the hub gives *every* discovered definition a fake runtime.
    Do check that `tests/unit/main/agents/registry.test.ts` / `hub.test.ts` still
    pass, run `npm run typecheck`, `npm run build`, launch the built app, and run
@@ -680,6 +712,19 @@ not on a configured host, and never while the Home veil, an error row or no
 document is up; re-picking the open host loads its root. `navigateTo(origin)` and a
 typed address are unchanged and are the escape hatch. Widening the allowlist is the
 one constant; the origin always comes from the picked host.
+
+**The chat footer carries a token gauge and opens a Usage panel.** The gauge sits
+right before the reveal-log control and reads gross input then output for the
+whole conversation (`↑ 12.3k ↓ 1.8k`, exact figures in its tooltip). It is
+**hidden whenever nothing was reported** - a new chat, a restored one whose
+journal has no usage, an agent that reports durations only - never zeros or
+dashes. A total some call did not report is a lower bound (`≥`). A click opens
+`shell/usagePanel.ts` through the same `panelHost` as Settings/History; the pane
+projects the rows (`chat/sessionUsage.ts`'s `describeUsagePanel`) and the panel
+only draws them. The projection is agent-neutral (it reads only the normalized
+events, live and replayed from the journal), keeps costs of different units apart
+and never derives a figure it cannot prove (uncached input needs input and cache
+reads from every call). New session and a History resume rebuild it.
 
 **An application-caused navigation reveals the page over any panel.**
 `browserPane.ts` dismisses its active panel (and clears the Home veil) when a
@@ -1051,7 +1096,7 @@ src/tools/<name>/
   sets the bridge's request slots),
   falling back to the hit itself), and asks the active model about the page with
   **one** call through `ToolHost.answer` - a stateless, tools-disabled model
-  call on the active agent (`AgentRuntime.answer`, implemented by Copilot,
+  call on the active agent (`AgentRuntime.complete` through `answerWith`, implemented by Copilot,
   OpenRouter and the fake). The answer returns one true/false per item; the
   shared prompt/parser live in `src/shared/tools/core/answer.ts`, so every agent
   asks the same question. An unusable answer is retried (`ANSWER_MAX_ATTEMPTS`,
@@ -1083,6 +1128,33 @@ src/tools/<name>/
   tool's own name, because the header already reads `aem_semantic_search` (the
   same reason `aem_query` shows `fulltext=...`, never "Query: ..."). The single
   final result carries `ended` and `TURN_COMPLETE_RESULT_KEY`.
+
+#### Secondary agentic turns (a tool that asks the model something)
+
+Some tools make a **secondary agentic turn**: a stateless model call on the chat's
+behalf, outside the conversation - the semantic search asking which extracts match
+is the first. There is **one reusable routine**, not a per-tool patch
+(`src/shared/agents/oneShot.ts`):
+
+- **Agent side - written once per SDK:** `AgentRuntime.complete` runs
+  `{ instructions, prompt }` and returns the reply text, reporting every model
+  call it makes to the usage sink. It knows nothing of any tool.
+- **Application side - bound once:** `createSecondaryTurns`
+  (`src/main/agentComposition.ts`, wired in `index.ts`) is the only path to
+  `complete`, and it carries the usage sink, so a tool cannot reach the model
+  without its tokens landing in the chat's gross totals (journaled, forwarded,
+  shown in the gauge and the Usage panel).
+- **Tool side - a thin function:** build a prompt, call the bound `complete`,
+  parse the reply. `answerWith` is the first (`ToolHost.answer`, prompt and parser
+  in `src/shared/tools/core/answer.ts`).
+
+**To add another such tool: write its prompt and parser in
+`src/shared/tools/core/` as a `xxxWith(complete, request)` beside `answerWith`,
+add a `ToolHost` capability for it built on `secondaryTurns.complete` in
+`index.ts` (copy the `answer` line), and touch no agent.** The fake agent already
+serves `complete` (`queueAnswer` scripts the reply). A secondary turn that needs
+tools, history or events is not this routine - ask first. Retries are the tool's
+(`ANSWER_MAX_ATTEMPTS`); each attempt is counted.
 
 #### Recipe: add a new tool
 
@@ -1611,7 +1683,28 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4183 passed / 13 skipped** (+1 against the
+Current baseline: **`npm run test` → 4289 passed / 13 skipped** (+106 against the
+4183 below - **the chat footer's token gauge and the Usage panel** (2026-10-24):
+a gauge (gross input/output, hidden while no call has reported either) before the
+reveal-log control opens a whole-size Usage panel (model, context, input uncached
+and cached, output, cost); the reveal-log icon became
+`sp-icon-text-align-justify`. The totals are projected in the renderer
+(`chat/sessionUsage.ts`) from `model.usage` / `model.changed` / `context.usage`,
+now **forwarded** by the controller (they were journal-only); contract changes in
+`contracts/agentEvents.ts` (`costUnit`, `aiCredits`, the new `context.usage`),
+`sessionState.ts`, and the agent kit (`shared/agents/usageReport.ts`,
+`AgentRuntime.complete`'s usage sink). Both adapters now report **cumulative**
+usage (OpenRouter via `getUsage()`), Copilot reports AI credits and the window,
+and a runtime's secondary-turn calls (`AgentRuntime.complete`, one reusable routine)
+are counted. A new
+`tests/unit/agents/agentConformance.test.ts` fails the build for an agent that
+does not run the shared usage-contract suites. Playwright is **161 tests** (+3,
+`usage-gauge.spec.ts`); the latest full run was 156 passed / 5 failed: the four
+environment-bound `network-error` cases plus one load-correlated flake in an
+unrelated spec (`ask-user.spec.ts` 43 of 44 on repeat; an earlier run's
+`history.spec.ts` "host never answers" flake also fails on a clean HEAD) - see `docs/verification/followons-2026-10.md` "Chat footer:
+a token gauge and a Usage panel (2026-10-24)". Before that it was
+**`npm run test` → 4183 passed / 13 skipped** (+1 against the
 4182 below - **saved sign-ins on AEM's real Granite login form** (2026-10-24):
 the form carries hidden `new_password` and `confirm_password` inputs beside
 `j_password`. Capture and prefill now ignore hidden password candidates, while
@@ -1662,7 +1755,7 @@ overflow guard). Before that it was 4085 passed /
 13 skipped (+25 against the 4060 below - **semantic search: the tool owns the
 loop, the model only answers** (2026-10-23): one `aem_semantic_search` call
 queries, reads every hit in parallel, asks the active model about each hit page
-through the new stateless `ToolHost.answer` / `AgentRuntime.answer`, fills a
+through the new stateless `ToolHost.answer` / `AgentRuntime.complete`, fills a
 display page with `runPageFill`, and paints the table and asks "Load more"
 itself. No candidates reach the model; the answer call is retried
 (`ANSWER_MAX_ATTEMPTS`, 3 attempts in total). Playwright is **157 tests**, and a

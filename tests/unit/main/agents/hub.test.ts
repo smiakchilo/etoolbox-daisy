@@ -318,41 +318,61 @@ describe('createAgentHub', () => {
   });
 });
 
-describe('answer routing', () => {
-  it("routes a answer call to the active agent's runtime", async () => {
-    const answer = vi.fn(() => Promise.resolve(ok([{ id: '1', match: true }])));
-    const b = build({ overrides: { alpha: { answer } } });
+describe('secondary-turn (complete) routing', () => {
+  const REQUEST = { instructions: 'i', prompt: 'p' };
+
+  it("routes a call to the active agent's runtime", async () => {
+    const complete = vi.fn(() => Promise.resolve(ok('the reply')));
+    const b = build({ overrides: { alpha: { complete } } });
     await b.hub.start(settingsWithActive(ALPHA));
 
-    const result = await b.hub.answer(
-      { instruction: 'good', items: [{ id: '1', text: 'a' }] },
-      undefined,
-    );
+    const result = await b.hub.complete(REQUEST, undefined, vi.fn());
 
-    expect(result).toEqual(ok([{ id: '1', match: true }]));
-    expect(answer).toHaveBeenCalledWith(
-      { instruction: 'good', items: [{ id: '1', text: 'a' }] },
-      undefined,
-    );
+    expect(result).toEqual(ok('the reply'));
+    expect(complete).toHaveBeenCalledWith(REQUEST, undefined, expect.any(Function));
   });
 
-  it('answers unavailable when the active agent has no answer capability', async () => {
+  it('fails cleanly when the active agent cannot make such a call', async () => {
     const b = build();
     await b.hub.start(settingsWithActive(ALPHA));
 
-    const result = await b.hub.answer({ instruction: 'good', items: [] }, undefined);
+    const result = await b.hub.complete(REQUEST, undefined, vi.fn());
 
     expect(result.ok).toBe(false);
   });
 
-  it('answers unavailable, not a throw, when the answering runtime throws', async () => {
-    const answer = vi.fn(() => Promise.reject(new Error('boom')));
-    const b = build({ overrides: { alpha: { answer } } });
+  it('fails cleanly, not with a throw, when the runtime throws', async () => {
+    const complete = vi.fn(() => Promise.reject(new Error('boom')));
+    const b = build({ overrides: { alpha: { complete } } });
     await b.hub.start(settingsWithActive(ALPHA));
 
-    const result = await b.hub.answer({ instruction: 'good', items: [] }, undefined);
+    const result = await b.hub.complete(REQUEST, undefined, vi.fn());
 
     expect(result.ok).toBe(false);
+    expect(b.onRuntimeFailure).toHaveBeenCalled();
+  });
+
+  it("hands the runtime a sink that reaches the caller's, and a throwing sink never fails the call", async () => {
+    const complete = vi.fn(
+      (
+        _request: unknown,
+        _signal: unknown,
+        report: (usage: { type: 'model.usage'; inputTokens: number }) => void,
+      ) => {
+        report({ type: 'model.usage', inputTokens: 5 });
+        return Promise.resolve(ok('the reply'));
+      },
+    );
+    const b = build({ overrides: { alpha: { complete } } });
+    await b.hub.start(settingsWithActive(ALPHA));
+    const sink = vi.fn(() => {
+      throw new Error('sink broke');
+    });
+
+    const result = await b.hub.complete(REQUEST, undefined, sink);
+
+    expect(sink).toHaveBeenCalledWith({ type: 'model.usage', inputTokens: 5 });
+    expect(result).toEqual(ok('the reply'));
     expect(b.onRuntimeFailure).toHaveBeenCalled();
   });
 });

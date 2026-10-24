@@ -7,6 +7,7 @@ import {
   type StartupGatedAgentChatController,
 } from './agentChatController';
 import type { FakeAgentService } from './agents/fakeAgentService';
+import type { AgentHub } from './agents/hub';
 import { type ActiveHost } from './browser/browserController';
 import { type NavigationEpochTracker } from './browser/navigationEpoch';
 import type { ChatJournal } from './chatJournal';
@@ -21,14 +22,18 @@ import {
   type IdGenerator,
   type ModelCatalogEntry,
   type ModelPreference,
+  type OneShotRequest,
+  type OneShotResult,
   type ProjectConfig,
   type SessionId,
   type ServerConfig,
   type SessionStreamState,
   type ToolCallId,
+  type UsageSink,
   type UserInputAnswer,
   type UserInputRequest,
   deriveCurrentPageContext,
+  err,
   originsMatch,
   parseNavigationTarget,
   renderCurrentPageContextForModel,
@@ -365,6 +370,64 @@ export function createLateBoundUserInputActions(): LateBoundUserInputActions {
   };
 }
 
+/**
+ * The usage sink for model calls a tool makes on the chat's behalf outside the
+ * conversation, late-bound and silently lossy like {@link LateBoundToolProgress}
+ * (the registry is built before the chat controller): a report that races
+ * startup simply is not counted.
+ */
+export interface LateBoundAuxiliaryUsage {
+  readonly report: UsageSink;
+  readonly bind: (controller: Pick<AgentChatController, 'recordAuxiliaryUsage'>) => void;
+}
+
+export function createLateBoundAuxiliaryUsage(): LateBoundAuxiliaryUsage {
+  let bound: Pick<AgentChatController, 'recordAuxiliaryUsage'> | undefined;
+  return {
+    report: (usage) => {
+      bound?.recordAuxiliaryUsage(usage);
+    },
+    bind: (controller) => {
+      bound = controller;
+    },
+  };
+}
+
+/**
+ * The one path every tool-triggered **secondary agentic turn** takes to the
+ * model (see `src/shared/agents/oneShot.ts`): the semantic search's verdicts
+ * today, any tool's later. It binds, in exactly one place, what such a call must
+ * always carry - the usage sink that lands its tokens in the chat's gross totals
+ * - so a tool's capability is `build a prompt -> complete -> parse` and cannot
+ * reach the model without being counted.
+ *
+ * Adding a tool that asks the model something: write its prompt and parser in
+ * `src/shared/tools/core/`, expose a `ToolHost` capability built on this
+ * `complete` (as `answerWith` is, in `index.ts`), and touch no agent.
+ *
+ * `hub` is read per call because the agent starts after the shell paints; a call
+ * before that fails cleanly instead of throwing.
+ */
+export interface SecondaryTurns {
+  readonly complete: (
+    request: OneShotRequest,
+    signal: AbortSignal | undefined,
+  ) => Promise<OneShotResult>;
+}
+
+export function createSecondaryTurns(options: {
+  readonly hub: () => Pick<AgentHub, 'complete'> | undefined;
+  readonly reportUsage: UsageSink;
+}): SecondaryTurns {
+  return {
+    complete: (request, signal) => {
+      const hub = options.hub();
+      return hub === undefined
+        ? Promise.resolve(err({ message: 'The agent is still starting' }))
+        : hub.complete(request, signal, options.reportUsage);
+    },
+  };
+}
 // ---------------------------------------------------------------------------
 // Server-switch cancellation (Milestone A criterion 6)
 // ---------------------------------------------------------------------------

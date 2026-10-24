@@ -43,6 +43,12 @@ export interface OpenRouterCall {
   getReasoningStream(): AsyncIterableIterator<string>;
   /** Drives the run to completion; rejects on failure or abort. */
   getResponse(): Promise<unknown>;
+  /**
+   * Aggregate token/cost usage across **every** model call the run made (the
+   * SDK's `SessionUsageTotals`), unlike `getResponse()`, which is only the last
+   * round. Never rejects - a failed run still reports what it spent.
+   */
+  getUsage(): Promise<unknown>;
 }
 
 /** Everything the service needs to start one model run. `tools`/`state` are opaque. */

@@ -553,6 +553,33 @@ describe('model diagnostics events', () => {
     expect(agentEventSchema.safeParse({ ...usage, finishReason: '' }).success).toBe(false);
   });
 
+  it('accepts a model.usage cost unit and AI credits, and rejects an unknown unit', () => {
+    const usage = { type: 'model.usage', chatId: 'chat-1', sequence: 0, cost: 1 };
+    expect(agentEventSchema.safeParse({ ...usage, costUnit: 'usd', aiCredits: 2.5 }).success).toBe(
+      true,
+    );
+    expect(agentEventSchema.safeParse({ ...usage, costUnit: 'billing-multiplier' }).success).toBe(
+      true,
+    );
+    expect(agentEventSchema.safeParse({ ...usage, costUnit: 'euro' }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...usage, aiCredits: -1 }).success).toBe(false);
+  });
+
+  it('accepts a context.usage snapshot and rejects a missing, negative or extra field', () => {
+    const snapshot = {
+      type: 'context.usage',
+      chatId: 'chat-1',
+      sequence: 0,
+      currentTokens: 1200,
+      tokenLimit: 128000,
+    };
+    expect(agentEventSchema.safeParse(snapshot).success).toBe(true);
+    expect(agentEventSchema.safeParse({ ...snapshot, turnId: 'turn-1' }).success).toBe(true);
+    expect(agentEventSchema.safeParse({ ...snapshot, tokenLimit: undefined }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...snapshot, currentTokens: -1 }).success).toBe(false);
+    expect(agentEventSchema.safeParse({ ...snapshot, extra: 1 }).success).toBe(false);
+  });
+
   it('accepts model.call.failed diagnostics only, and rejects a raw error message', () => {
     const failed = {
       type: 'model.call.failed',

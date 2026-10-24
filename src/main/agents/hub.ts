@@ -10,11 +10,12 @@ import {
   type AppSettings,
   type AuthPresence,
   type AuthStatus,
-  type AnswerRequest,
-  type AnswerResult,
   type LoginOutcome,
   type LogoutResult,
   type ModelCatalogResult,
+  type OneShotRequest,
+  type OneShotResult,
+  type UsageSink,
   err,
   resolveConfiguredAgentId,
 } from '../../shared';
@@ -52,10 +53,17 @@ export interface AgentHub {
   cancelLogin(agentId: AgentId): void;
   logout(agentId: AgentId): Promise<LogoutResult>;
   /**
-   * One stateless answer call on the active agent's provider. An agent with no
-   * `answer` (or no active runtime) answers with a failure, never a throw.
+   * One stateless secondary model call on the active agent's provider - the
+   * routine behind every tool-triggered secondary turn (`shared/agents/oneShot.ts`).
+   * An agent with no `complete` (or no active runtime) answers with a failure,
+   * never a throw. The model calls it makes are reported to `reportUsage`; the
+   * application binds that sink once (`createSecondaryTurns`), not each tool.
    */
-  answer(request: AnswerRequest, signal: AbortSignal | undefined): Promise<AnswerResult>;
+  complete(
+    request: OneShotRequest,
+    signal: AbortSignal | undefined,
+    reportUsage: UsageSink,
+  ): Promise<OneShotResult>;
 }
 
 export interface AgentHubDeps {
@@ -252,16 +260,26 @@ export function createAgentHub(deps: AgentHubDeps): AgentHub {
       }
     },
 
-    async answer(request, signal) {
+    async complete(request, signal, reportUsage) {
       const runtime = active();
-      if (runtime?.answer === undefined) {
-        return err({ message: 'The active agent cannot answer search candidates' });
+      if (runtime?.complete === undefined) {
+        return err({ message: 'The active agent cannot make this kind of call' });
       }
+      // A usage report is bookkeeping: whatever the sink does must never fail
+      // the call that made it.
+      const agentId = activeId;
+      const sink: UsageSink = (usage) => {
+        try {
+          reportUsage(usage);
+        } catch (error) {
+          if (agentId !== undefined) report(agentId, error);
+        }
+      };
       try {
-        return await runtime.answer(request, signal);
+        return await runtime.complete(request, signal, sink);
       } catch (error) {
         if (activeId !== undefined) report(activeId, error);
-        return err({ message: 'The agent could not answer the search candidates' });
+        return err({ message: 'The agent could not complete the request' });
       }
     },
   };

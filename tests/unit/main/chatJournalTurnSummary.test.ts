@@ -195,6 +195,23 @@ describe('createChatJournal - turn.summary', () => {
     expect(summaries(dir)[0]).not.toHaveProperty('firstActivityMs');
   });
 
+  it('does not count a context-window snapshot as first activity either', () => {
+    const { dir, journal, advance, prompt } = setUp();
+    prompt();
+    journal.recordEvent(state('sending'));
+    journal.recordEvent({
+      type: 'context.usage',
+      chatId: CHAT,
+      sequence: 3,
+      turnId: TURN,
+      currentTokens: 10,
+      tokenLimit: 100,
+    });
+    advance(40);
+    journal.recordEvent(state('error'));
+    expect(summaries(dir)[0]).not.toHaveProperty('firstActivityMs');
+  });
+
   it('records an error turn once, with no second summary for the recovery idle', () => {
     const { dir, journal, advance, prompt } = setUp();
     prompt();

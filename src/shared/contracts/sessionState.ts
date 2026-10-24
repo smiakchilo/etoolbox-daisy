@@ -270,6 +270,7 @@ function nextStreamStateForEvent(
     case 'user.input.actions.added':
     case 'model.changed':
     case 'model.usage':
+    case 'context.usage':
     case 'model.call.failed':
       return current;
     default: {
