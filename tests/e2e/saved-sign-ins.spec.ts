@@ -19,8 +19,8 @@ import { byTestId } from '../support/selectors';
  *
  * 1. signing in on the fixture's Granite form is remembered automatically -
  *    the plaintext index names the origin and username and never the password;
- * 2. after a restart (with the session cookies cleared, so the host really
- *    asks again) the same form is **prefilled on load**, with nothing typed;
+ * 2. signing out immediately shows a prefilled form, and so does a restart
+ *    (with the session cookies cleared, so the host really asks again);
  * 3. the Settings "Browser" tab's one action erases them, through the shared
  *    destructive-confirm prompt, and a further restart proves the form is empty.
  *
@@ -42,7 +42,8 @@ async function paneEvaluate<T>(app: ElectronApp, viewId: number, code: string): 
     async ({ webContents }, args: PaneEvalArgs) => {
       const contents = webContents.fromId(args.id);
       if (contents === undefined) throw new Error('the pane webContents is gone');
-      return contents.executeJavaScript(args.code) as Promise<unknown>;
+      const result: unknown = await contents.executeJavaScript(args.code);
+      return result;
     },
     { id: viewId, code },
   )) as T;
@@ -50,6 +51,32 @@ async function paneEvaluate<T>(app: ElectronApp, viewId: number, code: string): 
 
 async function paneText(app: ElectronApp, viewId: number): Promise<string> {
   return paneEvaluate<string>(app, viewId, 'document.body ? document.body.textContent : ""');
+}
+
+async function paneLoad(app: ElectronApp, viewId: number, url: string): Promise<void> {
+  await app.evaluate(
+    async ({ webContents }, args: { id: number; url: string }) => {
+      const contents = webContents.fromId(args.id);
+      if (contents === undefined) throw new Error('the pane webContents is gone');
+      await contents.loadURL(args.url);
+    },
+    { id: viewId, url },
+  );
+}
+
+async function loginFieldValues(
+  app: ElectronApp,
+  viewId: number,
+): Promise<{ username: string; password: string }> {
+  return paneEvaluate<{ username: string; password: string }>(
+    app,
+    viewId,
+    `(() => {
+      const username = document.querySelector('#username');
+      const password = document.querySelector('#password');
+      return { username: username ? username.value : '', password: password ? password.value : '' };
+    })()`,
+  );
 }
 
 /** True while the fixture's sign-in form is the document on screen. */
@@ -78,7 +105,7 @@ function readIndex(localAppData: string): { entries?: unknown[] } | undefined {
   return JSON.parse(readFileSync(file, 'utf8')) as { entries?: unknown[] };
 }
 
-test('a sign-in is remembered, prefilled after a restart, and erased from Settings', async () => {
+test('a sign-in is remembered, prefilled after sign-out and restart, and erased from Settings', async () => {
   test.setTimeout(240_000);
 
   const aem: AemOrigin = await startAemOrigin();
@@ -156,6 +183,14 @@ test('a sign-in is remembered, prefilled after a restart, and erased from Settin
       expect(indexText).toContain(aem.origin);
       expect(indexText).toContain(FIXTURE_USERNAME);
       expect(indexText).not.toContain(FIXTURE_PASSWORD);
+
+      // The owner's round trip needs no restart: sign out, and the login page
+      // that comes back is already prefilled from the submission just captured.
+      await paneLoad(first.app, first.viewId, aem.url('/logout'));
+      await waitForLoginForm(first.app, first.viewId);
+      await expect
+        .poll(() => loginFieldValues(first.app, first.viewId), { timeout: 30_000 })
+        .toEqual({ username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD });
     } finally {
       await first.app.close();
     }
@@ -165,19 +200,7 @@ test('a sign-in is remembered, prefilled after a restart, and erased from Settin
     try {
       // Nothing is typed: the values are the ones main wrote on `dom-ready`.
       await expect
-        .poll(
-          () =>
-            paneEvaluate<{ username: string; password: string }>(
-              second.app,
-              second.viewId,
-              `(() => {
-                const username = document.querySelector('#username');
-                const password = document.querySelector('#password');
-                return { username: username ? username.value : '', password: password ? password.value : '' };
-              })()`,
-            ),
-          { timeout: 30_000 },
-        )
+        .poll(() => loginFieldValues(second.app, second.viewId), { timeout: 30_000 })
         .toEqual({ username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD });
 
       // The Settings line is the one erase action, and pressing it only raises

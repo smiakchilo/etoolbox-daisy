@@ -69,6 +69,23 @@ describe('buildCredentialFillScript', () => {
     expect(valueOf(target, 'input[name="j_password"]')).toBe('secret');
   });
 
+  it('ignores the hidden change-password fields on AEM’s sign-in form', () => {
+    const target = page(`
+      <form method="post" action="/j_security_check">
+        <input type="text" name="j_username">
+        <input type="password" name="j_password">
+        <input type="password" id="new_password" hidden>
+        <input type="password" id="confirm_password" hidden>
+        <button type="submit">Sign in</button>
+      </form>`);
+
+    expect(evalFill(target, [primary])).toBe(true);
+    expect(valueOf(target, 'input[name="j_username"]')).toBe('admin');
+    expect(valueOf(target, 'input[name="j_password"]')).toBe('secret');
+    expect(valueOf(target, '#new_password')).toBe('');
+    expect(valueOf(target, '#confirm_password')).toBe('');
+  });
+
   it('does not overwrite a field the page (or the user) already filled', () => {
     const target = page(`
       <form>

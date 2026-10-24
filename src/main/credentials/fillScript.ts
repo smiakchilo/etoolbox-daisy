@@ -17,8 +17,9 @@
  *
  * - it fills only **empty** fields, so a value the user (or the page) already
  *   put there wins;
- * - it refuses a page with more than one password field, or a `new-password`
- *   one: that is a change-password form, and filling it would be wrong;
+ * - it refuses a page with more than one non-hidden password field, or a
+ *   `new-password` one: that is a change-password form, and filling it would be
+ *   wrong (AEM's hidden new/confirm-password inputs do not count);
  * - it fills the **first** credential (the origin's most recently used one),
  *   then watches the username field: typing a different saved username swaps
  *   the password to that entry - which is how a second account on the same
@@ -63,7 +64,8 @@ export function buildCredentialFillScript(credentials: readonly FillCredential[]
   const typeOf = (el) => ((el.getAttribute('type') || 'text') + '').toLowerCase();
   const passwordFields = () =>
     Array.from(document.querySelectorAll('input')).filter(
-      (el) => isField(el) && typeOf(el) === 'password' && !el.disabled,
+      (el) =>
+        isField(el) && typeOf(el) === 'password' && !el.disabled && !el.hasAttribute('hidden'),
     );
 
   function setValue(el, value) {

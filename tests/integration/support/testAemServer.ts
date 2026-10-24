@@ -170,7 +170,7 @@ function escapeHtml(value: string): string {
 
 function loginFormHtml(actionPath: string, next: string, message: string): string {
   return `<!doctype html>
-<html><head><meta charset="utf-8"><title>Sign in</title></head>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head>
 <body>
 <h1 id="login-heading">Sign in</h1>
 <p id="login-message">${escapeHtml(message)}</p>
@@ -178,6 +178,8 @@ function loginFormHtml(actionPath: string, next: string, message: string): strin
 <input type="hidden" name="next" value="${escapeHtml(next)}">
 <label>User <input id="username" name="username" type="text" autocomplete="username"></label>
 <label>Password <input id="password" name="password" type="password" autocomplete="current-password"></label>
+<input id="new_password" type="password" autocomplete="off" hidden>
+<input id="confirm_password" type="password" autocomplete="off" hidden>
 <button id="submit" type="submit">Sign in</button>
 </form>
 </body></html>`;
@@ -443,7 +445,7 @@ export async function startAemOrigin(options: AemOriginOptions = {}): Promise<Ae
               'Content-Type': 'text/html; charset=utf-8',
               'Set-Cookie': sessionCookie(POPUP_COOKIE, '1', secure),
             },
-            `<!doctype html><html><head><meta charset="utf-8"><title>Popup</title></head>
+            `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Popup</title></head>
 <body><p id="popup-status">popup-loaded</p>
 <button id="close-popup" onclick="window.close()">Close</button></body></html>`,
           );
@@ -458,7 +460,7 @@ export async function startAemOrigin(options: AemOriginOptions = {}): Promise<Ae
             response,
             200,
             { 'Content-Type': 'text/html; charset=utf-8' },
-            `<!doctype html><html><head><meta charset="utf-8"><title>Launcher</title></head>
+            `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Launcher</title></head>
 <body><p id="launcher-status">launcher-loaded</p>
 <button id="open-popup" onclick="window.open('/popup', 'daisy-popup', 'width=420,height=520')">Open popup</button>
 </body></html>`,
@@ -611,7 +613,7 @@ export async function startAemOrigin(options: AemOriginOptions = {}): Promise<Ae
                 response,
                 200,
                 { 'Content-Type': 'text/html; charset=utf-8' },
-                '<!doctype html><html><body>not json</body></html>',
+                '<!doctype html><html lang="en"><body>not json</body></html>',
               );
               return;
             }
@@ -671,13 +673,14 @@ export async function startAemOrigin(options: AemOriginOptions = {}): Promise<Ae
             response,
             200,
             { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
-            `<!doctype html><html><head><meta charset="utf-8"><title>AEM</title></head>
+            `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>AEM</title></head>
 <body><h1 id="aem-heading">AEM content</h1>
 <p id="aem-path">${escapeHtml(requestUrl.pathname)}</p>
 <p id="aem-user">${FIXTURE_USERNAME}</p>
 <p id="cookie-visible-to-script">${escapeHtml('')}</p>
 <script>
   // Proves the session cookie is HttpOnly: if it were not, this would print it.
+  // noinspection JSUnresolvedFunction,JSUnresolvedVariable
   document.getElementById("cookie-visible-to-script").textContent =
     document.cookie.includes("${AEM_SESSION_COOKIE}") ? "LEAKED" : "hidden";
 </script>

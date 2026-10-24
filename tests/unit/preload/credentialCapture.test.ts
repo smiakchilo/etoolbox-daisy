@@ -43,6 +43,8 @@ const GRANITE_FORM = `
   <form method="post" action="/j_security_check">
     <input type="text" name="j_username" value="">
     <input type="password" name="j_password" value="">
+    <input type="password" id="new_password" hidden>
+    <input type="password" id="confirm_password" hidden>
     <button type="submit">Sign in</button>
   </form>`;
 

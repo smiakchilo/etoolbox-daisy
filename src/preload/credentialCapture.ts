@@ -13,9 +13,12 @@
  * The rules that keep a capture honest - each has a case in
  * `tests/unit/preload/credentialCapture.test.ts`:
  *
- * - **Exactly one password field** in the form. An account page's
+ * - **Exactly one non-hidden password field** in the form. An account page's
  *   change-password form has two or three, and remembering one of them would
  *   overwrite the working credential with a new one that is not the login's.
+ *   AEM's ordinary sign-in form also carries its new/confirm-password inputs,
+ *   but hidden; those do not count until the page shows them for a password
+ *   change, at which point this guard refuses the form again.
  * - **Never a `new-password` field** (`autocomplete="new-password"` on the
  *   field or the form) - the same form, by another signal.
  * - **Never an empty password**, and never a password field with no username
@@ -65,6 +68,11 @@ function isDisabled(input: Element): boolean {
   return input.hasAttribute('disabled');
 }
 
+/** Hidden change-password inputs share AEM's ordinary sign-in form; they are not candidates. */
+function isPasswordCandidate(input: Element): boolean {
+  return inputType(input) === 'password' && !isDisabled(input) && !input.hasAttribute('hidden');
+}
+
 /**
  * The element's live `value`, without trusting its type: `Reflect.get` is
  * `any`-typed, and only an input-shaped element is ever passed here.
@@ -90,9 +98,7 @@ export function readCredentialFrom(
     return undefined;
   }
 
-  const passwordInputs = Array.from(scope.querySelectorAll('input')).filter(
-    (input) => inputType(input) === 'password' && !isDisabled(input),
-  );
+  const passwordInputs = Array.from(scope.querySelectorAll('input')).filter(isPasswordCandidate);
   if (passwordInputs.length !== 1) return undefined;
 
   const inputs = Array.from(scope.querySelectorAll<Element>('input'));
@@ -119,9 +125,7 @@ export function readCredentialFrom(
 export function findSignInForm(doc: Document, target: Element | null): Element | undefined {
   const form = target?.closest('form') ?? null;
   const scope: ParentNode = form ?? doc;
-  const passwords = Array.from(scope.querySelectorAll('input')).filter(
-    (input) => inputType(input) === 'password' && !isDisabled(input),
-  );
+  const passwords = Array.from(scope.querySelectorAll('input')).filter(isPasswordCandidate);
   if (passwords.length !== 1) return undefined;
   if (form !== null && (form.getAttribute('autocomplete') ?? '').toLowerCase() === 'new-password') {
     return undefined;

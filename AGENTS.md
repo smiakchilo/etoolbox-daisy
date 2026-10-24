@@ -481,7 +481,8 @@ payload**, top frame and http(s) only), `autofill.ts` (attaches to every
 `WebContents` in the pane's session via `app.on('web-contents-created')` - so
 `window.open` SSO windows are covered - and injects on `dom-ready` /
 `did-navigate-in-page`), `fillScript.ts` (the injected script: empty fields
-only, one password field only, no `new-password`, no submit, bounded
+only, one non-hidden password field only (AEM's sign-in form also carries hidden
+new/confirm-password fields), no `new-password`, no submit, bounded
 `MutationObserver`, and a typed different saved username swaps the password),
 and `hostAuth.ts` (an `isProxy: false` `app.on('login')` challenge is answered
 from the same vault - the sibling of `webview/proxyAuth.ts`, with the same
@@ -1610,7 +1611,19 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4182 passed / 13 skipped** (+92 against the
+Current baseline: **`npm run test` → 4183 passed / 13 skipped** (+1 against the
+4182 below - **saved sign-ins on AEM's real Granite login form** (2026-10-24):
+the form carries hidden `new_password` and `confirm_password` inputs beside
+`j_password`. Capture and prefill now ignore hidden password candidates, while
+a form that shows them for a password change is still refused. The AEM fixture
+mirrors that shape, and `saved-sign-ins.spec.ts` now covers sign-in → sign-out →
+prefill in the same launch as well as prefill after a restart; Playwright stays
+**158 tests**. The original shape failed six focused unit cases before the fix,
+and a built-app prefill mutation failed the same sign-out assertion with both
+fields empty - see `docs/verification/followons-2026-10.md` "Saved sign-ins:
+automatic capture, per-origin prefill, and one erase action (2026-10-24)",
+second addendum. Before that it was
+**`npm run test` → 4182 passed / 13 skipped** (+92 against the
 4090 below - **saved sign-ins** (2026-10-24): the pane remembers a sign-in form
 it saw submitted and prefills it on the next visit. A new
 `src/main/credentials/` (`credentialVault.ts` - `(origin, username)` keyed, the
