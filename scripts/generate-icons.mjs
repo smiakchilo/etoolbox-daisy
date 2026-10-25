@@ -5,7 +5,8 @@
  * `resources/icon.ico` (Windows: window/taskbar icon, and electron-builder's
  * `win.icon`) and `resources/icon.icns` (macOS: electron-builder's `mac.icon`)
  * from it, so both are recreated on every build and can never drift from the
- * PNG. Run by `npm run icons`, which `build`/`dev`/`package:*` invoke first.
+ * PNG. Run by `npm run icons`, which `build`/`dev` invoke first (`package:*`
+ * runs `build`).
  *
  * Both outputs are git-ignored. `png2icons` is a dependency-free, pure-JS
  * converter (no native binaries).

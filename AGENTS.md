@@ -1875,17 +1875,57 @@ are reserved by the plan; nothing lives there yet.
 
 ## 6. Commands
 
+The scripts, and what each is for. `package.json` is strict JSON and cannot
+carry comments, so the explanation lives here, one line above each script:
+
 ```bash
-npm run verify       # typecheck + lint + format:check + vitest   ← the gate
-npm run build        # addons:build + electron-vite build + the separate webview-preload build
-npm run addons:install  # each add-on's own npm ci (run by postinstall too)
-npm run addons:build    # out/addons/<id>/ + src/main/addons/pins.json
-npm run addons:zip      # the published archives + dist-addons/addons.json
-npm run test         # vitest only
-npm run test:e2e     # Playwright, against the BUILT app — build first
-npm run package:win  # x64 portable zip (also package:mac: x64 + arm64 zips)
-npm run dev          # electron-vite dev
-npm run test:live    # opt-in: live scenarios against the BUILT app, real profile
+# the gate: typecheck + lint + format:check + vitest
+npm run verify
+
+# build everything: icons, add-ons, electron-vite, then the webview preload
+npm run build
+
+# electron-vite dev, with icons, add-ons and the webview preload built first
+npm run dev
+
+# publish the add-on archives + dist-addons/addons.json; reuses what `build` just made
+npm run addons:zip
+
+# rebuild out/addons/<id>/ and src/main/addons/pins.json only
+npm run addons:build
+
+# install each add-on's own dependencies; `npm install` / `npm ci` do this via postinstall
+npm run addons:install
+
+# regenerate the git-ignored resources/icon.ico and icon.icns from resources/icon.png
+npm run icons
+
+# the second, sandbox-safe preload pass (run by `build` and `dev`)
+npm run build:webview-preload
+
+# unit + integration tests only (vitest)
+npm run test
+
+# Playwright against the BUILT app - run `npm run build` first
+npm run test:e2e
+
+# opt-in: live scenarios against the BUILT app, real profile, real hosts, real model calls
+npm run test:live
+
+# Windows x64 portable zip: builds the app first, then packages
+npm run package:win
+
+# macOS zips (x64 + arm64 per electron-builder.yml): builds the app first, then packages
+npm run package:mac
+
+# tsc --build over every project reference
+npm run typecheck
+
+# eslint over the whole repository
+npm run lint
+
+# prettier --check over the whole repository
+npm run format:check
 ```
 
 **Live tests (opt-in, never in `verify`).** `npm run test:live` runs

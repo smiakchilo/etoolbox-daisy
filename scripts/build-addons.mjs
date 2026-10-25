@@ -11,6 +11,9 @@
  * `npm run build` and `npm run dev` run this without `--zip`: a build from this
  * repository carries its add-ons (`out/addons`) and never downloads one. Only
  * `npm run addons:zip` (used by the publish workflow) writes `dist-addons/`.
+ * A `--zip` run reuses an add-on `out/addons` already holds when that is at
+ * least as new as the add-on's sources, so a release does not build (and, for
+ * `copilot-cli`, copy) every add-on twice.
  *
  * Usage: node scripts/build-addons.mjs [--zip]
  */
@@ -22,6 +25,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -64,6 +68,69 @@ function addonFolders() {
 /** The expected package name of a platform-specific Copilot payload. */
 function copilotCliPackage(platform, arch) {
   return `@github/copilot-${platform}-${arch}`;
+}
+
+/** A binary add-on's file list for this platform (`copilot.exe` is `copilot` elsewhere). */
+function platformFiles(descriptor) {
+  return Object.fromEntries(
+    Object.entries(descriptor.files ?? {}).map(([name, relativePath]) => [
+      name,
+      process.platform === 'win32'
+        ? String(relativePath)
+        : String(relativePath).replace(/\.exe$/, ''),
+    ]),
+  );
+}
+
+/** The newest modification time of an add-on's own sources (its install is not a source). */
+function newestSourceMtime(directory) {
+  let newest = 0;
+  const visit = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) {
+        visit(full);
+      } else if (entry.isFile()) {
+        newest = Math.max(newest, statSync(full).mtimeMs);
+      }
+    }
+  };
+  visit(directory);
+  return newest;
+}
+
+/**
+ * Whether `--zip` can reuse what `out/addons/<id>` already holds instead of
+ * building the add-on a second time.
+ *
+ * The release workflow zips straight after `npm run build`, so those artifacts
+ * are exactly what a rebuild would produce - and rebuilding `copilot-cli` copies
+ * its ~138 MB payload again. An edited add-on, or a bumped `@github/copilot`,
+ * still rebuilds.
+ */
+function isBuildFresh(directory, descriptor) {
+  const target = join(outDir, descriptor.id);
+
+  if (descriptor.kind === 'binary') {
+    // A copied file keeps the payload's timestamps on Windows, so mtime cannot
+    // tell whether the executable beside it is still the pinned one. The
+    // descriptor written at build time records the version (and file list) it
+    // was copied from, so that is compared instead.
+    const descriptorFile = join(target, 'addon.json');
+    const built = readJson(descriptorFile);
+    const files = platformFiles(descriptor);
+    if (Object.keys(files).length === 0) return false;
+    if (built?.version !== copilotVersion()) return false;
+    if (JSON.stringify(built.files) !== JSON.stringify(files)) return false;
+    if (statSync(descriptorFile).mtimeMs < newestSourceMtime(directory)) return false;
+    return Object.values(files).every((relativePath) =>
+      existsSync(join(target, ...String(relativePath).split('/'))),
+    );
+  }
+
+  const entry = join(target, 'index.js');
+  return existsSync(entry) && statSync(entry).mtimeMs >= newestSourceMtime(directory);
 }
 
 function copilotVersion() {
@@ -112,21 +179,14 @@ async function buildJsAddon(directory, descriptor, pkg) {
 /** Copies, into `target`, the files a binary add-on consists of. */
 function buildBinaryAddon(directory, descriptor, version, target) {
   const pkg = readJson(join(directory, 'package.json'));
-  const platform = process.platform;
-  const arch = process.arch;
-  const payloadPackage = copilotCliPackage(platform, arch);
+  const payloadPackage = copilotCliPackage(process.platform, process.arch);
   const payloadDirectory = join(root, 'node_modules', ...payloadPackage.split('/'));
   if (!existsSync(payloadDirectory)) {
     fail(`The binary add-on "${descriptor.id}" needs ${payloadPackage}, which is not installed.`);
   }
   // The payload executable has no `.exe` outside Windows; the descriptor in the
   // source tree is written for Windows.
-  const files = Object.fromEntries(
-    Object.entries(descriptor.files ?? {}).map(([name, relativePath]) => [
-      name,
-      platform === 'win32' ? String(relativePath) : String(relativePath).replace(/\.exe$/, ''),
-    ]),
-  );
+  const files = platformFiles(descriptor);
   for (const [name, relativePath] of Object.entries(files)) {
     const source = join(payloadDirectory, ...String(relativePath).split('/'));
     if (!existsSync(source)) {
@@ -247,6 +307,10 @@ async function main() {
     const descriptor = readJson(join(directory, 'addon.json'));
     const pkg = readJson(join(directory, 'package.json'));
     const target = join(outDir, descriptor.id);
+    if (withZip && isBuildFresh(directory, descriptor)) {
+      console.log(`Reusing ${relative(root, target)}`);
+      continue;
+    }
     if (descriptor.kind === 'js') {
       if (pkg === undefined) fail(`src/addons/${descriptor.id}/package.json is missing.`);
       await buildJsAddon(directory, descriptor, pkg);

@@ -26,12 +26,11 @@
     "typecheck": "tsc --build --force",
     "lint": "eslint .",
     "format:check": "prettier --check .",
-    "format:fix": "prettier --write .",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:live": "playwright test --config playwright.live.config.ts",
-    "package:win": "npm run icons && electron-builder --win --x64",
-    "package:mac": "npm run icons && electron-builder --mac",
+    "package:win": "npm run build && electron-builder --win --x64",
+    "package:mac": "npm run build && electron-builder --mac",
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {

@@ -42,8 +42,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Zips the add-ons from the artifacts `npm run build` just wrote (it does
+      # not build them again), and the app build already generated the icons,
+      # so electron-builder needs no separate `npm run icons` here.
       - run: npm run addons:zip
-      - run: npm run icons
       - run: npx electron-builder --dir ${{ matrix.target }}
       - run: node scripts/package-update.mjs
       - name: Collect this platform's add-on catalogue
