@@ -90,8 +90,39 @@ function makeHost(): AgentHost {
       bundledSkillDirectories: [],
     }),
     modelPreferences: () => ({ model: 'mai-code-1.1-flash', reasoningEffort: 'low' }),
+    resolveAddonFile: () => Promise.resolve({ ok: false, error: { message: 'not installed' } }),
   };
 }
+
+describe('createCopilotRuntime login', () => {
+  it('reports the CLI add-on download as sign-in progress', async () => {
+    const reportAuthProgress = vi.fn();
+    const host: AgentHost = {
+      ...makeHost(),
+      reportAuthProgress,
+      resolveAddonFile: (_id, _file, options) => {
+        options?.onProgress?.(0.4);
+        return Promise.resolve({ ok: false, error: { message: 'the download failed' } });
+      },
+    };
+    const runtime = createCopilotRuntime(host);
+
+    await expect(runtime.login?.(undefined)).resolves.toEqual({
+      status: 'failed',
+      message: 'the download failed',
+    });
+    expect(reportAuthProgress).toHaveBeenCalledWith('copilot', 'Downloading sign-in component 40%');
+  });
+
+  it('reports a failed sign-in, never throwing, when the add-on is unavailable', async () => {
+    const runtime = createCopilotRuntime(makeHost());
+
+    await expect(runtime.login?.(undefined)).resolves.toEqual({
+      status: 'failed',
+      message: 'not installed',
+    });
+  });
+});
 
 describe('createCopilotRuntime complete', () => {
   it("runs the caller's prompt and instructions on a fresh, tool-less session, with the chat's model", async () => {

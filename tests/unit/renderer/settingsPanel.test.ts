@@ -68,6 +68,7 @@ beforeEach(() => {
     },
     agent: {
       getAuthStatus: vi.fn(() => Promise.resolve({ apiVersion: 1, isAuthenticated: false })),
+      onAuthProgress: vi.fn(() => () => undefined),
     },
     updates: {
       getStatus: vi.fn(() => Promise.resolve({ ok: true, status: { kind: 'idle' } })),

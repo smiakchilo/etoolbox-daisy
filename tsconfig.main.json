@@ -5,6 +5,6 @@
     "outDir": ".tsc-out/main",
     "types": ["node"]
   },
-  "include": ["src/main/**/*.ts"],
+  "include": ["src/main/**/*.ts", "src/main/**/*.json"],
   "references": [{ "path": "./tsconfig.shared.json" }, { "path": "./tsconfig.agent.json" }]
 }

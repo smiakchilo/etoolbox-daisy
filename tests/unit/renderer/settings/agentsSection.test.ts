@@ -38,6 +38,7 @@ let restoreGlobals: () => void;
 
 const getAuthStatus = vi.fn();
 const getAuthPresence = vi.fn();
+const onAuthProgress = vi.fn(() => () => undefined);
 const getModelSelection = vi.fn();
 const setAgentSettings = vi.fn();
 const setModelPreferences = vi.fn();
@@ -154,7 +155,7 @@ beforeEach(() => {
 
   ({ dom, restore: restoreGlobals } = installJsdomGlobals({ url: 'https://daisy.test/' }));
   Reflect.set(dom.window, 'daisy', {
-    agent: { getAuthStatus, getAuthPresence },
+    agent: { getAuthStatus, getAuthPresence, onAuthProgress },
     settings: {
       getModelSelection,
       setModelPreferences,

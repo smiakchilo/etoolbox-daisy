@@ -3,7 +3,6 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   findProjectRoot,
-  resolveCliExePath,
   resolvePlatformPackageDir,
   resolveSdkRuntimeExePath,
   type RuntimePathsEnv,
@@ -71,30 +70,8 @@ describe('resolveSdkRuntimeExePath', () => {
   });
 });
 
-describe('resolveCliExePath', () => {
-  it('returns the absolute path when the CLI exe exists on disk', () => {
-    const devRootDir = createScratchRoot();
-    const exePath = path.join(
-      devRootDir,
-      'node_modules',
-      '@github',
-      'copilot-win32-x64',
-      'copilot.exe',
-    );
-    writeFakeExe(exePath);
-    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir, ...WIN };
-    expect(resolveCliExePath(env)).toBe(exePath);
-  });
-
-  it('throws a descriptive error when the CLI exe is missing', () => {
-    const devRootDir = createScratchRoot();
-    const env: RuntimePathsEnv = { isPackaged: false, resourcesPath: 'unused', devRootDir, ...WIN };
-    expect(() => resolveCliExePath(env)).toThrow(/copilot\.exe/);
-  });
-});
-
 describe('macOS layouts', () => {
-  it.each(['arm64', 'x64'])('resolves the runtime and CLI without .exe on darwin-%s', (arch) => {
+  it.each(['arm64', 'x64'])('resolves the runtime without .exe on darwin-%s', (arch) => {
     const devRootDir = createScratchRoot();
     const modules = path.join(devRootDir, 'node_modules', '@github');
     const runtime = path.join(
@@ -104,9 +81,7 @@ describe('macOS layouts', () => {
       `darwin-${arch}`,
       'copilot-runtime',
     );
-    const cli = path.join(modules, `copilot-darwin-${arch}`, 'copilot');
     writeFakeExe(runtime);
-    writeFakeExe(cli);
     const env: RuntimePathsEnv = {
       isPackaged: false,
       resourcesPath: 'unused',
@@ -115,7 +90,6 @@ describe('macOS layouts', () => {
       arch,
     };
     expect(resolveSdkRuntimeExePath(env)).toBe(runtime);
-    expect(resolveCliExePath(env)).toBe(cli);
   });
 
   it('refuses a platform the application does not bundle a runtime for', () => {

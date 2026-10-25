@@ -1,10 +1,13 @@
 name: Publish update
 
 # Builds app.asar on each OS/arch (Windows x64, macOS arm64 and Intel) and commits the merged update.json plus the archives
-# to update/ on the default branch, where installed apps read them. Run it by
-# hand after bumping `version` in package.json. If a release changes native
-# dependencies or the Electron version, bump `updates.runtimeGeneration` too, so
-# older installs are told to reinstall instead of loading an incompatible asar.
+# to update/ on the default branch, where installed apps read them. The same run
+# builds and publishes the add-on archives (`docs/addon-architecture.md`).
+# Run it by hand after bumping `version` in package.json. If a release changes
+# native dependencies or the Electron version, bump `updates.runtimeGeneration`
+# too, so older installs are told to reinstall instead of loading an incompatible
+# asar. A release that changes an add-on's version needs nothing extra: the pins
+# travel inside the new asar, and this run publishes the zips it names.
 on:
   workflow_dispatch:
     inputs:
@@ -39,9 +42,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run addons:zip
       - run: npm run icons
       - run: npx electron-builder --dir ${{ matrix.target }}
       - run: node scripts/package-update.mjs
+      - name: Collect this platform's add-on catalogue
+        shell: bash
+        run: cp dist-addons/addons.json release/update/addons.${{ matrix.name }}.json
       - uses: actions/upload-artifact@v4
         with:
           name: update-${{ matrix.name }}
@@ -60,10 +67,25 @@ jobs:
         env:
           UPDATE_NOTES: ${{ inputs.notes }}
         run: node scripts/package-update.mjs --merge incoming
+      - name: Merge add-on catalogues
+        run: node scripts/merge-addons.mjs incoming
+      # The add-ons are published first, `update.json` last: an install that sees
+      # the new manifest pins the add-on versions that build needs, so those zips
+      # must already be in the folder. Older add-on zips stay (older installs
+      # still pin them, and `addons.json` names every version).
+      - name: Publish the add-ons
+        run: |
+          mkdir -p update
+          cp incoming/*.zip update/
+          cp incoming/addons.json update/addons.json
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add update
+          git commit -m "Publish add-ons" || echo "No add-ons to publish"
+          git push
       - name: Commit update/
         run: |
-          rm -rf update
-          mkdir update
+          rm -f update/app-*.asar
           cp incoming/app-*.asar incoming/update.json update/
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"

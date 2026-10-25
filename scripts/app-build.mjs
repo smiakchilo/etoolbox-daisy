@@ -73,6 +73,25 @@ function run(label, command, args) {
 
 const node = (label, args) => run(label, process.execPath, args);
 
+/**
+ * Copies the add-ons built from this repository beside the packaged
+ * application (`<out>/resources/addons`), where `src/main/addons/devSource.ts`
+ * finds them. The packaged asar deliberately carries none: a release downloads
+ * the add-on it pins, while a build-from-source installation uses the copies
+ * made here and never downloads one.
+ *
+ * The built JS add-on's `node_modules` is a junction into `src/addons/<id>/`, so
+ * the copy must dereference it - the source tree is deleted with the temporary
+ * work folder, and a junction pointing into it would dangle.
+ */
+function copyAddons(target) {
+  const built = join(root, 'out', 'addons');
+  if (!existsSync(built)) {
+    fail(`No add-ons were built: ${built} does not exist.`);
+  }
+  cpSync(built, target, { recursive: true, force: true, dereference: true });
+}
+
 node('Installing dependencies (install scripts disabled)', [
   npmCli,
   'ci',
@@ -80,6 +99,10 @@ node('Installing dependencies (install scripts disabled)', [
   '--no-audit',
   '--no-fund',
 ]);
+// `--ignore-scripts` skipped the root `postinstall`, so the add-ons' own
+// dependencies are installed explicitly. They are separate npm packages
+// (src/addons/<id>/), and the build below needs them.
+node('Installing add-on dependencies', [npmCli, 'run', 'addons:install']);
 node('Building', [npmCli, 'run', 'build']);
 
 const platformFlags = isWindows
@@ -107,6 +130,7 @@ if (isWindows) {
       `Could not write to ${outDir}: ${error.message}\nIs EToolbox Daisy running from there? Close it and try again.`,
     );
   }
+  copyAddons(join(outDir, 'resources', 'addons'));
 } else {
   const bundleName = 'EToolbox Daisy.app';
   const built = readdirSync(packageDir)
@@ -121,11 +145,21 @@ if (isWindows) {
   const steps = [
     ['rm', ['-rf', target]],
     ['ditto', [built, target]],
+  ];
+  const addonsInBundle = () => copyAddons(join(target, 'Contents', 'Resources', 'addons'));
+  steps.push(
     // Apple Silicon refuses unsigned code: seal the bundle with an ad-hoc signature (no identity).
     ['codesign', ['--force', '--deep', '--sign', '-', target]],
     ['xattr', ['-cr', target]],
-  ];
+  );
+  let copied = false;
   for (const [command, args] of steps) {
+    // The add-ons go in after the copy and before the signature, so the seal
+    // covers them.
+    if (command === 'codesign' && !copied) {
+      addonsInBundle();
+      copied = true;
+    }
     const result = spawnSync(command, args, { stdio: 'inherit' });
     if (result.status !== 0) {
       fail(`Step failed: ${command} ${args.join(' ')}`);

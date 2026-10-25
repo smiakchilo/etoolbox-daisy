@@ -710,11 +710,27 @@ export function createAgentsSection(options: AgentsSectionOptions): AgentsSectio
     children: [group],
   });
 
+  // A sign-in that has to prepare something (the Copilot CLI add-on download)
+  // says so in the provider's own status line while it happens.
+  const unsubscribeAuthProgress = window.daisy.agent.onAuthProgress((progress) => {
+    if (snapshot === undefined) return;
+    const configured = resolveConfiguredAgentId(snapshot.agents, definitions);
+    if (configured !== undefined && progress.agentId !== configured) return;
+    auth = {
+      ...(auth ?? { apiVersion: 1, isAuthenticated: false }),
+      statusMessage: progress.text,
+    };
+    render();
+  });
+
   return {
     element,
     refresh: (next) => refresh(next),
     flushNow: () => commitSaver.flushNow(),
     hasPendingEdits: () => commitSaver.hasPending() || hasUnsavedSelection(),
-    dispose: () => commitSaver.dispose(),
+    dispose: () => {
+      unsubscribeAuthProgress();
+      commitSaver.dispose();
+    },
   };
 }

@@ -1,5 +1,11 @@
 import type { AppInfo } from './app-info';
-import type { AuthPresence, AuthStatus, LoginOutcome, LogoutResult } from './agent-auth';
+import type {
+  AgentAuthProgress,
+  AuthPresence,
+  AuthStatus,
+  LoginOutcome,
+  LogoutResult,
+} from './agent-auth';
 import type {
   AddProjectRequest,
   AddProjectResult,
@@ -404,6 +410,11 @@ export interface DaisyAgentAuthApi {
   login(agentId: AgentId): Promise<LoginOutcome>;
   cancelLogin(agentId: AgentId): Promise<void>;
   logout(agentId: AgentId): Promise<LogoutResult>;
+  /**
+   * Progress pushed while a sign-in is prepared (the Copilot CLI add-on
+   * downloading on first use). Returns an unsubscribe function.
+   */
+  onAuthProgress(listener: (progress: AgentAuthProgress) => void): () => void;
 }
 
 /**

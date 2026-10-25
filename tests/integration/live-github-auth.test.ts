@@ -13,7 +13,8 @@ import {
   type ProxyEnvOverrides,
 } from '../../src/agents/copilot/copilotClient';
 import { createHardenedSession, resumeHardenedSession } from '../../src/agents/copilot/toolPolicy';
-import { resolveCliExePath, resolveSdkRuntimeExePath } from '../../src/agents/copilot/runtimePaths';
+import { resolveSdkRuntimeExePath } from '../../src/agents/copilot/runtimePaths';
+import { resolveCopilotCliExe } from '../support/copilotCliPath';
 import type { RuntimePathsEnv } from '../../src/agents/copilot/runtimePaths';
 import { realGithubLoginApproved, realLoginSuite } from './support/liveAuthPolicy';
 import { runSyntheticWebFlowLogin } from './support/syntheticLogin';
@@ -124,7 +125,7 @@ describe.skipIf(!LIVE)(realLoginSuite('live authenticated agent verification'), 
   });
 
   it('signs in via the real web flow and stores no plaintext credential', async () => {
-    const outcome = await startWebFlowLogin(resolveCliExePath(pathsEnv), {
+    const outcome = await startWebFlowLogin(resolveCopilotCliExe(), {
       copilotHomeDir: scratchHome,
     }).outcome;
 
@@ -225,7 +226,7 @@ describe.skipIf(!LIVE)(realLoginSuite('live authenticated agent verification'), 
     // Cancellation is a mandatory step 02 scenario. This spawns the real CLI
     // and terminates it the way the UI's Cancel button does, so it proves the
     // outcome mapping rather than mocking it. It briefly opens a browser tab.
-    const handle = startWebFlowLogin(resolveCliExePath(pathsEnv), {
+    const handle = startWebFlowLogin(resolveCopilotCliExe(), {
       copilotHomeDir: scratchHome,
     });
     // Give the child a moment to actually start before signalling cancel.
@@ -263,14 +264,10 @@ describe.skipIf(process.env['DAISY_LIVE_DENY'] !== '1' || !APPROVED)(
         ">>> Your browser will then show '127.0.0.1 refused to connect' - expected. <<<\n",
       );
 
-      const outcome = await startWebFlowLogin(
-        resolveCliExePath({
-          isPackaged: false,
-          resourcesPath: 'unused-in-dev',
-          devRootDir: process.cwd(),
-        }),
-        { copilotHomeDir: scratchHome, timeoutMs: 30_000 },
-      ).outcome;
+      const outcome = await startWebFlowLogin(resolveCopilotCliExe(), {
+        copilotHomeDir: scratchHome,
+        timeoutMs: 30_000,
+      }).outcome;
 
       // GitHub redirects a denial to the OAuth app's registered callback
       // (`http://127.0.0.1/callback`, no port) rather than the CLI's random
@@ -411,7 +408,7 @@ describe.skipIf(process.env['DAISY_LIVE_NOSUB'] !== '1' || !APPROVED)(
         '\n>>> ACTION REQUIRED: sign in as the account WITHOUT a Copilot subscription. <<<\n',
       );
 
-      const login = await startWebFlowLogin(resolveCliExePath(pathsEnvFor()), {
+      const login = await startWebFlowLogin(resolveCopilotCliExe(), {
         copilotHomeDir: scratchHome,
         timeoutMs: 180_000,
       }).outcome;
@@ -478,7 +475,7 @@ const PATHS_ENV: RuntimePathsEnv = {
 };
 const RUNTIME_EXE = resolveSdkRuntimeExePath(PATHS_ENV);
 /** The CLI (`copilot.exe`), used only for `login` - distinct from `RUNTIME_EXE`. */
-const CLI_EXE = resolveCliExePath(PATHS_ENV);
+const CLI_EXE = resolveCopilotCliExe();
 
 const SCRATCH_ROOT = path.join(process.cwd(), 'test-results', 'live-github-auth');
 mkdirSync(SCRATCH_ROOT, { recursive: true });

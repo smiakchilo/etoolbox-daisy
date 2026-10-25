@@ -2,7 +2,7 @@
   "name": "etoolbox-daisy",
   "productName": "EToolbox Daisy",
   "version": "0.1.0",
-  "description": "Windows desktop application pairing a private AEM browser with GitHub Copilot.",
+  "description": "Desktop application pairing a private AEM browser with agentic frameworks.",
   "private": true,
   "main": "out/main/index.js",
   "author": "EToolbox Daisy",
@@ -15,8 +15,12 @@
     "runtimeGeneration": 1
   },
   "scripts": {
-    "dev": "npm run icons && npm run build:webview-preload && electron-vite dev",
-    "build": "npm run icons && electron-vite build && npm run build:webview-preload",
+    "postinstall": "npm run addons:install",
+    "addons:install": "node scripts/addons-install.mjs",
+    "addons:build": "node scripts/build-addons.mjs",
+    "addons:zip": "node scripts/build-addons.mjs --zip",
+    "dev": "npm run icons && npm run addons:build && npm run build:webview-preload && electron-vite dev",
+    "build": "npm run icons && npm run addons:build && electron-vite build && npm run build:webview-preload",
     "build:webview-preload": "electron-vite build --config electron.vite.webview-preload.config.ts",
     "icons": "node scripts/generate-icons.mjs",
     "typecheck": "tsc --build --force",
@@ -31,15 +35,13 @@
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {
-    "@github/copilot": "1.0.83",
     "@github/copilot-sdk": "1.0.13",
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
     "@openrouter/agent": "0.11.0",
     "@openrouter/sdk": "0.13.67",
     "dompurify": "3.4.17",
-    "lighthouse": "13.5.0",
+    "fflate": "0.8.3",
     "marked": "18.0.13",
-    "puppeteer-core": "25.16.0",
     "quickjs-emscripten-core": "0.32.0",
     "undici": "7.30.1",
     "yaml": "2.9.1",
@@ -47,6 +49,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@github/copilot": "1.0.83",
     "@playwright/test": "1.63.0",
     "@spectrum-web-components/action-button": "1.12.2",
     "@spectrum-web-components/action-menu": "1.12.2",

@@ -17,6 +17,8 @@ export interface ScratchDirs extends ScratchHome {
 export interface ScratchEnvOptions {
   /** Selects the deterministic fake agent service instead of the real SDK adapter. */
   readonly fakeAgent?: boolean;
+  /** Extra environment for this launch (a QA switch the spec needs). */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** Creates `<scratchBase>/<prefix>XXXXXX/home` with its `AppData` folders. */
@@ -46,6 +48,7 @@ export function scratchEnv(
     APPDATA: profile.appData,
     LOCALAPPDATA: profile.localAppData,
     ...(options.fakeAgent === true ? { [FAKE_AGENT_SERVICE_ENV_VAR]: '1' } : {}),
+    ...options.env,
   };
 }
 

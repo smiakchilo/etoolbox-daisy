@@ -7,9 +7,11 @@ import {
   type AppSettings,
   type AuthStatus,
   type SkillSummary,
+  AGENT_AUTH_PROGRESS_CHANNEL,
   answerWith,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
+  ok,
   readLeadingSkillToken,
   renderSkillCatalogue,
   resolveSkillPrompt,
@@ -71,8 +73,13 @@ import { registerCredentialCaptureIpc } from './credentials/capture';
 import { createCredentialVault } from './credentials/credentialVault';
 import { createHostLoginListener } from './credentials/hostAuth';
 import { mergeDisabledFeatures } from './disabledFeatures';
-import { createExternalFetch } from './externalFetch';
-import { createPageAudit } from './pageAudit';
+import { createExternalFetch, defaultResolve, inspectTarget } from './externalFetch';
+import {
+  createAppAddons,
+  createAddonTestProbe,
+  createPageAuditCapability,
+  TEST_ADDONS_GLOBAL_KEY,
+} from './addons';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
@@ -765,6 +772,41 @@ if (!gotSingleInstanceLock) {
       () => loadSettingsSync(appPaths.settings).hosts,
       () => loadSettingsSync(appPaths.settings).projects,
     );
+    // Add-ons this build pins (`src/main/addons/pins.json`): downloaded on first
+    // use from the same folders `update.json` lives in, through the same proxy.
+    // A build from this repository carries its own (`out/addons`), so `npm run
+    // dev`, the E2E runs and a run-from-source installation never download one.
+    const addons = createAppAddons({
+      addonsRoot: appPaths.addons,
+      mainDirectory: currentDir,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      platformKey: `${process.platform}-${process.arch}`,
+      readSettings: () => loadSettingsSync(appPaths.settings),
+      secretStore,
+      logger,
+    });
+    if (!app.isPackaged) {
+      // Same-process test probe: the E2E suite installs an add-on from a local
+      // folder and reads where it landed. Never exposed in a packaged build.
+      (globalThis as Record<string, unknown>)[TEST_ADDONS_GLOBAL_KEY] =
+        createAddonTestProbe(addons);
+    }
+    // Lighthouse lives in the page-audit add-on; the tool's capability loads it
+    // on the first audit, so nothing Lighthouse-related is imported at startup.
+    const pageAuditCapability = createPageAuditCapability({
+      manager: addons,
+      createDeps: () => ({
+        paneSession: viewSession.session,
+        anonymousSession: () => electronSession.fromPartition('audit-anonymous'),
+        createWindow: (options) => new BrowserWindow(options),
+        currentUrl: () => browserController.currentDocumentUrl(),
+        isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
+        inspectTarget: (url) => inspectTarget(url, defaultResolve),
+        logger,
+      }),
+    });
     // The application's own markdown resources: the model-facing instructions
     // and the bundled skills. Resolved from the install location only. The
     // instruction templates carry the read-only policy, so a missing file
@@ -888,14 +930,9 @@ if (!gotSingleInstanceLock) {
           },
         }),
         // Lighthouse in a hidden window: a configured host's page loads with the
-        // pane's session, any other page with an empty in-memory one.
-        pageAudit: createPageAudit({
-          paneSession: viewSession.session,
-          anonymousSession: () => electronSession.fromPartition('audit-anonymous'),
-          currentUrl: () => browserController.currentDocumentUrl(),
-          isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
-          logger,
-        }),
+        // pane's session, any other page with an empty in-memory one. The runner
+        // is lazy - the add-on is ensured on the first audit.
+        pageAudit: pageAuditCapability,
         clock: Date.now,
         idGenerator: randomUUID,
         // Diagnostics only: a tool reports how it classified the response body
@@ -1113,6 +1150,24 @@ if (!gotSingleInstanceLock) {
           // Settings reaches the next prompt without a restart. Deliberately
           // synchronous - `sendPrompt` must not wait on a disk read.
           modelPreferences: () => modelPreferenceCache.current(),
+          // A binary add-on's file (Copilot's `copilot.exe`, used only for the
+          // interactive sign-in). The pinned add-on is downloaded on first use;
+          // the agent names an id and a file, never a path.
+          resolveAddonFile: async (id, file, addonOptions) => {
+            const resolved = await addons.resolveFile(id, file, {
+              ...(addonOptions?.onProgress === undefined
+                ? {}
+                : { onProgress: addonOptions.onProgress }),
+              ...(addonOptions?.signal === undefined ? {} : { signal: addonOptions.signal }),
+            });
+            return resolved.ok ? ok(resolved.value) : err({ message: resolved.error.message });
+          },
+          // Shown in the Agents tab's sign-in status while the download runs.
+          reportAuthProgress: (agentId, text) => {
+            if (!mainWindow.isDestroyed()) {
+              mainWindow.webContents.send(AGENT_AUTH_PROGRESS_CHANNEL, { agentId, text });
+            }
+          },
         },
         installService: (service) =>
           installAgentService(

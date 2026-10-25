@@ -67,6 +67,24 @@ export function parseLoginOutcome(candidate: unknown): LoginOutcome {
 }
 
 /**
+ * A progress note pushed while a sign-in is being prepared - today, while the
+ * Copilot CLI add-on downloads on first use. `text` is a short human-readable
+ * phrase the Agents tab shows in place of the provider's sign-in status.
+ */
+export const agentAuthProgressSchema = z
+  .object({
+    agentId: agentIdSchema,
+    text: z.string().min(1).max(200),
+  })
+  .strict();
+
+export type AgentAuthProgress = z.infer<typeof agentAuthProgressSchema>;
+
+export function parseAgentAuthProgress(candidate: unknown): AgentAuthProgress {
+  return agentAuthProgressSchema.parse(candidate);
+}
+
+/**
  * Result of the app's local sign-out (see `src/agent/auth.ts` for why this is
  * not a full vault-credential logout). `warning` is always populated so the
  * UI can surface the blast-radius caveat verbatim instead of re-deriving it.

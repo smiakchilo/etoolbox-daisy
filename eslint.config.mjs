@@ -4,6 +4,7 @@ import tseslint from 'typescript-eslint';
 const tsconfigRootDir = import.meta.dirname;
 
 const appTsconfigs = [
+  './tsconfig.addons.json',
   './tsconfig.agent.json',
   './tsconfig.main.json',
   './tsconfig.preload.json',
@@ -15,6 +16,8 @@ const appTsconfigs = [
 // Rule 1 (all app code except agent folders, `src/agents/<name>/`): the
 // provider SDKs may only be imported from an agent folder, per
 // docs/implementation-plan.md ("Import the SDK only through the agent adapter").
+// Lighthouse and Puppeteer belong to the page-audit add-on for the same reason:
+// they are downloaded on first use, not part of the application.
 const sdkOutsideAgentRestriction = [
   'error',
   {
@@ -35,6 +38,61 @@ const sdkOutsideAgentRestriction = [
       {
         name: '@openrouter/sdk',
         message: 'Import the OpenRouter SDK only inside an agent folder (src/agents/<name>/).',
+      },
+      {
+        name: 'lighthouse',
+        message:
+          'lighthouse belongs to the page-audit add-on (src/addons/page-audit); the app loads it from there.',
+      },
+      {
+        name: 'puppeteer-core',
+        message:
+          'puppeteer-core belongs to the page-audit add-on (src/addons/page-audit); the app loads it from there.',
+      },
+    ],
+  },
+];
+
+// Rule 1b (`src/**` except add-on folders): nothing in the application may
+// import an add-on. An add-on is a downloaded plugin, discovered only through
+// its `addon.json`, and the TypeScript project references enforce the same
+// boundary - the main/renderer/preload programs do not reference
+// `tsconfig.addons.json`.
+const appAddonImportRestriction = [
+  'error',
+  {
+    paths: sdkOutsideAgentRestriction[1].paths,
+    patterns: [
+      {
+        regex: '^(\\.\\./)+addons/',
+        message:
+          'An add-on is a downloaded plugin: only its own folder may import it (use the add-on manager).',
+      },
+    ],
+  },
+];
+
+// Rule 6 (`src/addons/<name>/`): an add-on has no application source beside it
+// when it runs - it is downloaded to %LOCALAPPDATA% - so it may import only its
+// own files and src/shared, and it may import Electron *types* only (the
+// application supplies the live objects). Its own runtime dependencies
+// (lighthouse, puppeteer-core) are allowed.
+const addonRestriction = [
+  'error',
+  {
+    paths: [
+      {
+        name: 'electron',
+        allowTypeImports: true,
+        message:
+          'An add-on may import Electron types only; the application supplies the live objects.',
+      },
+    ],
+    patterns: [
+      {
+        regex: '^\\.\\./(?!\\.\\./shared(/|$))',
+        message:
+          'An add-on may import only its own files and src/shared - not the application or a sibling add-on.',
       },
     ],
   },
@@ -229,13 +287,28 @@ export default tseslint.config(
     },
   },
   {
-    // A tool's non-renderer code runs in main and is shared with the renderer
-    // and tests: same purity as src/shared, plus the plugin boundary.
+    // An add-on's non-renderer code runs in main and is shared with the
+    // renderer and tests: same purity as src/shared, plus the plugin boundary.
     files: ['src/tools/**/*.ts'],
     ignores: ['src/tools/*/renderer/**'],
     rules: {
       'no-restricted-imports': toolTopLevelRestriction,
       'no-restricted-globals': sharedGlobalsRestriction,
+    },
+  },
+  {
+    // Nothing in the application may import a downloaded add-on.
+    files: ['src/**/*.ts'],
+    ignores: ['src/addons/**'],
+    rules: {
+      'no-restricted-imports': appAddonImportRestriction,
+    },
+  },
+  {
+    // An add-on folder is a plugin with no application source beside it.
+    files: ['src/addons/**/*.ts'],
+    rules: {
+      'no-restricted-imports': addonRestriction,
     },
   },
   {
@@ -302,6 +375,13 @@ export default tseslint.config(
     files: ['tests/fixtures/eslint-violations/agent-boundary-violation.ts'],
     rules: {
       'no-restricted-imports': agentRestriction,
+    },
+  },
+  {
+    // Proves the add-on boundary rules fire (run directly with --no-ignore).
+    files: ['tests/fixtures/eslint-violations/addon-boundary-violation.ts'],
+    rules: {
+      'no-restricted-imports': addonRestriction,
     },
   },
 );

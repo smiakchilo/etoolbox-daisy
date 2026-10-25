@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
+  AGENT_AUTH_PROGRESS_CHANNEL,
   AGENT_CANCEL_LOGIN_CHANNEL,
   AGENT_GET_AUTH_PRESENCE_CHANNEL,
   AGENT_GET_AUTH_STATUS_CHANNEL,
@@ -101,6 +102,7 @@ import {
   parseAppInfo,
   parseAppShortcutAction,
   agentAuthRequestSchema,
+  parseAgentAuthProgress,
   parseAuthPresence,
   parseAuthStatus,
   parseBrowserIpcVoidResult,
@@ -171,6 +173,7 @@ import {
   type AgentChatSendMessageRequest,
   type AgentChatSendResult,
   type AgentChatSkillsResult,
+  type AgentAuthProgress,
   type AgentChatStatus,
   type AgentChatVoidResult,
   type AgentEvent,
@@ -262,6 +265,15 @@ const daisyApi: DaisyAppApi = {
       const request = agentAuthRequestSchema.parse({ agentId });
       const raw: unknown = await ipcRenderer.invoke(AGENT_LOGOUT_CHANNEL, request);
       return parseLogoutResult(raw);
+    },
+    onAuthProgress(listener: (progress: AgentAuthProgress) => void): () => void {
+      const handler = (_event: Electron.IpcRendererEvent, raw: unknown): void => {
+        listener(parseAgentAuthProgress(raw));
+      };
+      ipcRenderer.on(AGENT_AUTH_PROGRESS_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(AGENT_AUTH_PROGRESS_CHANNEL, handler);
+      };
     },
   },
   settings: {

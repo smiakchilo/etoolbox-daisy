@@ -109,10 +109,36 @@ export interface AgentHost {
    * the live chat surface, replacing (and disposing) the previous one.
    */
   readonly installService: (service: AgentService) => Promise<void>;
-  /** Read at service-build time, after the tool registry exists. */
+  /**
+   * Read at service-build time, after the tool registry exists.
+   */
   readonly toolkit: () => AgentToolkit;
   /** Read fresh on every use, so a Settings change reaches an open conversation. */
   readonly modelPreferences: () => ModelPreference;
+  /**
+   * Resolves a file a **binary add-on** provides, for an agent that needs an
+   * external executable (Copilot's `copilot.exe` for `login --web-flow`). The
+   * application downloads the pinned add-on on first use - `onProgress` is told
+   * 0..1 as it arrives - and answers the file's absolute path. A failure is a
+   * typed `err` and never a throw: the agent reports it as a failed sign-in.
+   *
+   * The agent never names a folder, only an add-on id and a file name, so no
+   * path from an agent can leave the application's add-on store.
+   */
+  readonly resolveAddonFile: (
+    id: string,
+    file: string,
+    options?: {
+      readonly onProgress?: (fraction: number) => void;
+      readonly signal?: AbortSignal | undefined;
+    },
+  ) => Promise<Result<string, { readonly message: string }>>;
+  /**
+   * Optional: a short progress note for the sign-in surface while it is
+   * preparing something (today, downloading the CLI add-on). The application
+   * pushes it to the Settings Agents tab; it is never journaled.
+   */
+  readonly reportAuthProgress?: (agentId: AgentId, text: string) => void;
 }
 
 export type ModelCatalogResult = Result<readonly ModelCatalogEntry[], { readonly message: string }>;

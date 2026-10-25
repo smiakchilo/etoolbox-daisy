@@ -21,6 +21,7 @@ function host(installService: (service: AgentService) => Promise<void>): AgentHo
       throw new Error('not used');
     },
     modelPreferences: () => ({ model: null, reasoningEffort: null }),
+    resolveAddonFile: () => Promise.resolve({ ok: false, error: { message: 'not installed' } }),
   };
 }
 

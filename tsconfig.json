@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./tsconfig.shared.json" },
+    { "path": "./tsconfig.addons.json" },
     { "path": "./tsconfig.agent.json" },
     { "path": "./tsconfig.main.json" },
     { "path": "./tsconfig.preload.json" },

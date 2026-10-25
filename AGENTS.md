@@ -43,6 +43,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox).                                                                                                                             | Read before changing the updater or cutting a release. |
 | `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
 | `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the two example skills in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the examples are guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
+| `docs/addon-architecture.md` | The add-on model: pinned versions in `src/main/addons/pins.json`, the `addons.json` catalogue, the install store, `out/addons` in development, the recipe for adding one. | Read before touching `src/main/addons/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
 
 ---
 
@@ -85,11 +86,16 @@ commit unless the user asks.**
 │    settingsStore / secretStore / logger / appPaths                   │
 │    (appPaths: visible ~\etoolbox-daisy = settings, chats, logs;      │
 │     technical %LOCALAPPDATA%\etoolbox-daisy = browser, agents,       │
-│     secrets, window-state, tmp)                                      │
+│     addons, secrets, window-state, tmp)                              │
 │                                                                      │
 │  src/agents/<name>/  ← agent plugins; the ONLY place an SDK is imported│
 │    copilot/: meta · agent · runtime · sdkAgentService · toolPolicy … │
 │  (discovered by src/main/agents/registry.ts, run by agents/hub.ts)   │
+│                                                                      │
+│  src/addons/<id>/  ← downloaded add-ons, loaded at run time with a    │
+│    page-audit/ (Lighthouse) · copilot-cli/ (copilot.exe for sign-in) │
+│   real import(); pinned by src/main/addons/pins.json, installed by    │
+│   src/main/addons/, never in the asar (docs/addon-architecture.md)    │
 └──────────┬───────────────────────────────────┬───────────────────────┘
            │ typed IPC                         │ stdio
 ┌──────────┴───────────┐            ┌──────────┴─────────────────────┐
@@ -340,6 +346,15 @@ src/agents/<name>/
   `agentSettingsSchema` (`active`, `proxy`, `model`, `reasoningEffort`,
   `token`); an agent that needs other settings would have to extend that shared
   contract - **say so and ask**.
+- **An agent that needs an external executable asks the host for it.** Copilot's
+  interactive sign-in spawns `copilot.exe`, which is the `copilot-cli` **binary
+  add-on**, not part of the install: the agent calls
+  `AgentHost.resolveAddonFile(id, file, { onProgress })` and gets an absolute
+  path (or a typed `err`, which it reports as a failed sign-in - never a throw).
+  The download's progress goes to `AgentHost.reportAuthProgress`, which main
+  pushes as `agent:auth-progress` and the Settings Agents tab shows in the
+  provider's sign-in status. An agent never names a folder, only an id and a
+  file, so no path from an agent can leave the add-on store.
 - **Diagnostics and usage contract (every agent, incl. a future Claude).**
   `model.changed` / `model.usage` / `context.usage` / `model.call.failed`
   events. The first three are journaled **and forwarded** to the renderer: the
@@ -474,6 +489,15 @@ orchestrates it: close the chat if open, delete every SDK session the journal
 recorded (best-effort per session), remove the journal. A runtime recycle
 re-opens the same chat under a new SDK session, so the journal records each one
 (a `session.opened` record after the header) and deletion removes them all.
+
+`src/main/addons/` is the add-on machinery: `manager.ts` (`ensure` /
+`resolveFile`, single-flight, typed failures), `store.ts` (the atomic install
+under `<dataRoot>/addons/<id>/<version>`), `manifest.ts` (the `addons.json` and
+`addon.json` schemas), `pins.ts` (the generated `pins.json`), `downloader.ts`
+(the catalogue and one archive), `devSource.ts` (`out/addons` for a build from
+this repository), `pageAudit.ts` (the lazy `ToolHost.pageAudit` runner) and
+`testProbe.ts` (an unpackaged-build-only probe for the E2E). `updates/download.ts`
+is the one verified archive download, shared with the updater.
 
 `main/webview/` is the browser pane's runtime: `session.ts` owns the single
 persistent Electron session (proxy, TLS exceptions, cookie persistence),
@@ -1033,8 +1057,10 @@ src/tools/<name>/
   behind `[withheld]`, and the result carries `redacted: true`; the walk stops at `limit`
   and at a wall-clock budget without materialising the match list.
   `page_audit` `{ url?, categories?, formFactor? }` runs Lighthouse in a hidden offscreen
-  `WebContents` over an in-process CDP transport (`src/main/pageAudit.ts`,
-  `pageAuditTransport.ts`; `ToolHost.pageAudit`), serialized with at most two waiting (a
+  `WebContents` over an in-process CDP transport — **inside the `page-audit` add-on**
+  (`src/addons/page-audit/pageAudit.ts`, `pageAuditTransport.ts`; the application's
+  `src/main/addons/pageAudit.ts` loads it on the first audit). `ToolHost.pageAudit`
+  is the add-on's `PageAuditRunner`, serialized with at most two waiting (a
   third is refused as retryable), 120 s deadline; a
   non-configured origin uses a cookie-less `audit-anonymous` session. **Every** audit's
   requests - a configured host's included - are held to `inspectAuditRequest` (its own
@@ -1044,25 +1070,30 @@ src/tools/<name>/
   untouched; the window denies new windows, permissions (scoped to itself) and
   non-proxied WebRTC UDP, and a refused request is reported by URL. That filter is
   **best effort against DNS rebinding** - Chromium resolves the name itself
-  (`docs/compatibility.md` §11.8, `docs/backlog.md`). The runner takes an
+  (`docs/compatibility.md` §11.8, `docs/backlog.md`). The add-on creates no window and
+  resolves no name of its own: `createPageAuditRunner(deps)` receives the window
+  factory, the pane sessions and the application's `inspectTarget`, so the audit's
+  window and its network position stay the application's decisions. The runner takes an
   optional third `progress` callback (`PageAuditRunner`, `src/shared/tools/core`, not a
   `contracts/` change) that the tool forwards to `reportToolProgress`: the billet reads
-  "Loading tools" while the lazy imports run (the slow first audit), then "Auditing the
-  page". Their results are
-  untrusted page data (`session.md`). Rule 7.4 is unchanged: `method` stays GET/HEAD.
-  **Why two runtime dependencies** (`lighthouse` 13.5.0, `puppeteer-core` 25.16.0, main
-  process only, both imported lazily): Lighthouse 12+ has no Chrome driver of its own and
-  takes a Puppeteer `Page`; `puppeteer-core` (no Chromium download) supplies it through
-  our `DebuggerTransport`, so the audit drives the hidden `WebContents` instead of a
-  second browser. Dropping Puppeteer would mean writing a Lighthouse driver. Cost:
-  ~130 MB of `node_modules` across ~100 packages (largest: `lighthouse`, `@sentry/*`,
-  `@paulirish/trace_engine`, `@opentelemetry/semantic-conventions`, `chromium-bidi`; disk
-  only, nothing at startup). `npm audit` is clean as of 2026-10-25; the packaged build
-  carries both packages (1571 entries inside `app.asar`, deep config import included) but
-  a packaged audit has still not run. Keep both pinned and imported only from
-  `pageAudit.ts` / `pageAuditTransport.ts`.
+  "Downloading page audit add-on 34%" while the add-on installs, then "Loading tools"
+  while the lazy imports run (the slow first audit), then "Auditing the page". Their
+  results are untrusted page data (`session.md`). Rule 7.4 is unchanged: `method` stays
+  GET/HEAD.
+  **Why Lighthouse and Puppeteer are one add-on** (`lighthouse` 13.5.0,
+  `puppeteer-core` 25.16.0, in `src/addons/page-audit/package.json` only): Lighthouse 12+
+  has no Chrome driver of its own and takes a Puppeteer `Page`; `puppeteer-core` (no
+  Chromium download) supplies it through our `DebuggerTransport`, so the audit drives
+  the hidden `WebContents` instead of a second browser. Dropping Puppeteer would mean
+  writing a Lighthouse driver. Cost: ~137 MB of `node_modules` across ~114 packages
+  (largest: `lighthouse`, `@sentry/*`, `@paulirish/trace_engine`,
+  `@opentelemetry/semantic-conventions`, `chromium-bidi`), downloaded on the first audit
+  and kept under `%LOCALAPPDATA%\etoolbox-daisy\addons`; no `.node` files, so nothing to
+  rebuild. Keep both pinned in the add-on's own lockfile (never the root
+  `package.json` — electron-builder would package them again) and imported only from
+  that add-on.
   Known open: external-HTTPS audits are flaky in the offscreen window, the audit's
-  rebinding window, and the packaged build is unverified (`docs/backlog.md`).
+  rebinding window, and the packaged `page_audit` has still not run (`docs/backlog.md`).
 - A skill's front matter may carry `table-only: true`: the transcript suppresses the
   model's prose for that skill's turn, as it does for the search skills (the
   hard-coded `DETERMINISTIC_TABLE_SKILLS` list is gone; a bundled fallback remains).
@@ -1336,6 +1367,70 @@ error message with the suggested action appended to it, a rejected call's
 Do not reintroduce a tinted surface or an always-visible reason paragraph;
 `chat-tool-call__detail` is now only the reason under a failed/rejected
 `ask_user` question.
+
+### Add-ons are downloaded plugins: one folder under `src/addons/<id>/`
+
+An add-on is a heavy platform piece the application does **not** ship: it is
+downloaded the first time a feature needs it. Full detail, layout, lockfile
+policy and security notes: `docs/addon-architecture.md`. Two exist today —
+`page-audit` (`js`: Lighthouse + `puppeteer-core`) and `copilot-cli`
+(`binary`: `copilot.exe`, for the interactive sign-in).
+
+- **Pinned by the build.** `src/main/addons/pins.json` is generated by
+  `scripts/build-addons.mjs` (`version` + `apiVersion` per id) and committed.
+  The application accepts only that pair; the pinned version is installed from
+  `addons.json` (same GitHub folders as `update.json`, same proxy) and older
+  versions are deleted after a successful install.
+- **Installed under `%LOCALAPPDATA%\etoolbox-daisy\addons\<id>\<version>\`**
+  (`appPaths.addons`). No Settings UI: removing an add-on means deleting its
+  folder, and it is downloaded again on next use. Every failure is typed
+  (`offline`, `hash`, `extract`, `version`, `apiVersion`, `kind`, `cancelled`)
+  and logged as `ADDON_FAILED`; `ADDON_INSTALLED` records a success.
+- **A JS add-on is its own npm package** (`src/addons/<id>/package.json` +
+  `package-lock.json`, `private`, `type: "module"`, **not** a workspace member
+  and **not** listed in the root `package.json` — electron-builder packages the
+  root's production dependencies, which is exactly what must not happen).
+  `npm ci` at the root runs `postinstall` → `npm run addons:install`.
+- **Loaded with a real `import()`.** A plain dynamic import is rewritten into
+  `require()` by the bundler, which cannot load an ESM folder outside the asar;
+  `src/main/addons/pageAudit.ts` keeps one runtime `import()` (a documented
+  `new Function`) and is the pattern to copy.
+- **The add-on imports only its own files and `src/shared`** — never
+  `src/main`, `src/renderer`, `src/tools` or `src/agents` — and Electron types
+  only. The application hands it everything it needs (the window factory, the
+  pane session, the address policy). ESLint enforces both directions; the
+  fixture is `tests/fixtures/eslint-violations/addon-boundary-violation.ts`.
+- **Development never downloads.** `npm run build` / `npm run dev` run
+  `npm run addons:build`, which writes `out/addons/<id>/` (bundled `index.js`,
+  `addon.json`, a junction to the add-on's `node_modules`);
+  `src/main/addons/devSource.ts` returns that folder and `ensure` never touches
+  the network. `scripts/app-build.mjs` copies the built add-ons into
+  `<install>/resources/addons` for a run-from-source install. `electron-builder.yml`
+  excludes `out/addons/**` and `src/addons/**` from the asar.
+- **`EDAISY_ADDON_SOURCE=<folder>`** (unpackaged only) forces the download path
+  against a local folder — `tests/e2e/addon-download.spec.ts`.
+
+#### Recipe: add an add-on
+
+1. `src/addons/<id>/addon.json` — `{ id, version, kind, apiVersion: 1, … }`;
+   `id` must equal the folder name. A JS add-on adds `package.json`
+   (`private`, `type: "module"`, its **own** version) and `index.ts` exporting
+   the factory; a binary one adds `files: { <name>: <relative path> }`.
+2. `npm install --prefix src/addons/<id>` (its lockfile), then
+   `npm run addons:build` — which also rewrites and commits
+   `src/main/addons/pins.json`.
+3. Give the feature a lazy capability: a `ToolHost` one
+   (`src/main/addons/pageAudit.ts` is the model: `ensure` → `import()` → the
+   add-on's factory, with the install's progress written to the calling tool's
+   line) or an `AgentHost` one (`resolveAddonFile(id, file, { onProgress })`).
+   A failure must become the capability's own typed outcome, never a throw.
+4. Remove the dependency from the root `package.json` if it was there; add the
+   exclusion to `electron-builder.yml` only if the package was a root dependency.
+5. Tests: `tests/unit/main/addons/` (manifest, store, manager, the capability);
+   a built-app case in `tests/e2e/addon-download.spec.ts` style if the download
+   path matters.
+6. Record evidence in the current archive and update
+   `docs/addon-architecture.md`.
 
 ### `resources/skills/` and the skill subsystem
 
@@ -1704,9 +1799,13 @@ groups `9001_group`..`9005_group` (the type group plus up to
 
 ### In-app updates (`src/main/updates/`)
 
-The app swaps only `resources/app.asar` (17 MB; the install is 648 MB), driven
+The app swaps only `resources/app.asar` (22.6 MB since the add-ons left the
+asar, 135.4 MB before; the install is 477 MB), driven
 by a hand-rolled `update.json` in plain GitHub folders - no `electron-updater`.
-Full description and the release procedure: `docs/updates.md`.
+Full description and the release procedure: `docs/updates.md`. The **add-on
+catalogue** `addons.json` lives in the same folder and is published by the same
+workflow, zips first and `update.json` last (see "Add-ons" above and
+`docs/addon-architecture.md`).
 
 - **Places.** The Settings **Updates** tab's `updates.url` (https only) is tried
   first, then `updates.urls` in `package.json`. A `github.com/.../tree/<ref>/<path>`
@@ -1752,7 +1851,8 @@ Full description and the release procedure: `docs/updates.md`.
 
 - `tests/unit/**` — mirrors `src/` one-for-one (`tests/unit/agents/<name>/` for
   an agent folder, `tests/unit/tools/` for tools, `tests/unit/main/agents/` for
-  registry/hub). jsdom for renderer tests.
+  registry/hub, `tests/unit/addons/page-audit/` for an add-on's own code,
+  `tests/unit/main/addons/` for the manager). jsdom for renderer tests.
 - `tests/integration/**` — real sockets, real proxies, real CA, real runtime
   (`proxy-runtime.test.ts`, `agent-runtime.test.ts`).
 - `tests/live/**/*.live.spec.ts` — opt-in scenarios against the real app, real
@@ -1777,7 +1877,10 @@ are reserved by the plan; nothing lives there yet.
 
 ```bash
 npm run verify       # typecheck + lint + format:check + vitest   ← the gate
-npm run build        # electron-vite build + the separate webview-preload build
+npm run build        # addons:build + electron-vite build + the separate webview-preload build
+npm run addons:install  # each add-on's own npm ci (run by postinstall too)
+npm run addons:build    # out/addons/<id>/ + src/main/addons/pins.json
+npm run addons:zip      # the published archives + dist-addons/addons.json
 npm run test         # vitest only
 npm run test:e2e     # Playwright, against the BUILT app — build first
 npm run package:win  # x64 portable zip (also package:mac: x64 + arm64 zips)
@@ -1793,7 +1896,20 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4604 passed / 13 skipped** (+14 against the
+Current baseline: **`npm run test` → 4651 passed / 13 skipped** (+47 against the
+4604 below - **heavy add-ons** (2026-10-25): Lighthouse/`puppeteer-core` and
+`copilot.exe` left the base install for add-ons downloaded on first use
+(`src/addons/<id>/`, `src/main/addons/`, `scripts/build-addons.mjs`), so
+`app.asar` went 135.4 MB → 22.6 MB and `win-unpacked` 767 MB → 477 MB. New:
+`AgentHost.resolveAddonFile` + `reportAuthProgress` and the `agent:auth-progress`
+push; `PageAuditFailureKind` gained `'unavailable'`; the archive fetch+verify was
+factored into `src/main/updates/download.ts`; `@github/copilot` moved to
+devDependencies; ESLint rule 10 (an add-on folder is a plugin,
+`lighthouse`/`puppeteer-core` are add-on-only). Playwright is **166 tests** (+3,
+`addon-download.spec.ts`, 9/9 under `--repeat-each=3`); a full run was not
+re-measured. See §5 "Add-ons", `docs/addon-architecture.md` and
+`docs/verification/followons-2026-10.md` "Heavy add-ons ... (2026-10-25)".
+Before that it was **`npm run test` → 4604 passed / 13 skipped** (+14 against the
 4590 below - **a confirmation in a message row is modal** (2026-10-25): a
 `showPrompt` row makes the region it was raised over - the page-view slot, so the
 Settings/History panel, the hosts picker or the home veil - `inert` and veils it
@@ -3136,6 +3252,14 @@ build** — one tsconfig per process (`tsconfig.main/preload/renderer/shared/age
    side-effect-only imports and existing behavior. Tool folders under
    `src/tools/**` import shared code through the `shared` barrel
    (`'../../shared'`), not deep paths.
+10. **An add-on folder is a plugin and `lighthouse`/`puppeteer-core` are
+    add-on-only dependencies.** ESLint-enforced: `src/addons/<name>/` may import
+    only its own files and `src/shared`, and Electron **types** only; nothing
+    outside `src/addons` may import an add-on; and `lighthouse` /
+    `puppeteer-core` may be imported only from the `page-audit` add-on. The
+    TypeScript project references say the same (the main/renderer/preload
+    programs do not reference `tsconfig.addons.json`). Proof fixture:
+    `tests/fixtures/eslint-violations/addon-boundary-violation.ts`.
 
 ---
 
@@ -3446,6 +3570,7 @@ file).
 | Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live browser session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/webview/proxyResolution.ts`). |
 | `address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
+| Add-ons: packaged audit and interactive sign-in | **Owner-pending.** Both download paths are proven in the built app (`addon-download.spec.ts`, 9/9), and the Copilot failure/progress path is unit-tested; but no real Lighthouse audit has run from the installed add-on, and no interactive Copilot sign-in has downloaded `copilot.exe` on a clean profile. The publish workflow was never run. Mac payloads unrun. See `docs/addon-architecture.md`, `docs/backlog.md` "Add-ons". |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 
 ---

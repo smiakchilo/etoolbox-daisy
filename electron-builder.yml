@@ -6,15 +6,24 @@ directories:
 files:
   - out/**/*
   - package.json
-  # The Copilot SDK/CLI platform packages ship payload this app never uses:
-  # src/agents/copilot only ever spawns copilot-runtime.exe (via the explicit-path
-  # RuntimeConnection, see runtimePaths.ts/copilotClient.ts) and copilot.exe
-  # (only for `login --web-flow`, see auth.ts). Everything below is dead
-  # weight for those two entry points - the `plugins/computer-use` MCP
-  # plugin, the bundled `ripgrep`/`tgrep` search binaries (the hardened tool
-  # policy in toolPolicy.ts never allows any tool that would shell out to
-  # them), and the `builtin-skills` markdown payload (enableSkills is forced
-  # off outside the one-off skill test noted in requirements-decisions.md).
+  # Add-ons are downloaded on first use, never installed: the built ones are
+  # development-only and their sources must not ship. `src/main/addons/pins.json`
+  # names the exact version each build needs.
+  - '!out/addons/**'
+  - '!src/addons/**'
+  # The Copilot CLI packages (`copilot.exe`, 138 MB) are a binary add-on
+  # (`copilot-cli`), downloaded the first time the user signs in interactively.
+  # They are devDependencies, so they are not packaged at all; the agent session
+  # still runs against the SDK package's `copilot-runtime.exe`.
+  #
+  # The SDK's platform package ships payload this app never uses: src/agents/copilot
+  # only ever spawns copilot-runtime.exe (via the explicit-path RuntimeConnection,
+  # see runtimePaths.ts/copilotClient.ts). Everything below is dead weight for
+  # that one entry point - the `plugins/computer-use` MCP plugin, the bundled
+  # `ripgrep`/`tgrep` search binaries (the hardened tool policy in toolPolicy.ts
+  # never allows any tool that would shell out to them), and the
+  # `builtin-skills` markdown payload (enableSkills is forced off outside the
+  # one-off skill test noted in requirements-decisions.md).
   # Trimmed after confirming empirically (docs/verification.md Step 02) that
   # tests/integration/agent-runtime.test.ts-equivalent behavior still passes
   # against the packaged output with these patterns applied.
@@ -22,51 +31,29 @@ files:
   - '!node_modules/@github/copilot-sdk-win32-x64/ripgrep/**'
   - '!node_modules/@github/copilot-sdk-win32-x64/tgrep/**'
   - '!node_modules/@github/copilot-sdk-win32-x64/builtin-skills/**'
-  - '!node_modules/@github/copilot-win32-x64/plugins/**'
-  - '!node_modules/@github/copilot-win32-x64/ripgrep/**'
-  - '!node_modules/@github/copilot-win32-x64/tgrep/**'
-  - '!node_modules/@github/copilot-win32-x64/builtin-skills/**'
   # The macOS equivalents of the same dead weight (darwin packages have no
-  # OneAuth/msal payload). The CLI package's own `runtime.node` is deliberately
-  # kept here: dropping it was only proven for the Windows login flow, and the
-  # macOS login is unverified.
+  # OneAuth/msal payload).
   - '!node_modules/@github/copilot-sdk-darwin-*/{plugins,ripgrep,tgrep,builtin-skills}/**'
-  - '!node_modules/@github/copilot-darwin-*/{plugins,ripgrep,tgrep,builtin-skills}/**'
   # MSAL / OneAuth are Microsoft identity-broker binaries. This app only ever
-  # authenticates a GitHub account via the CLI's OAuth web flow, and the
-  # resulting credential is stored through the Windows Credential Manager
-  # (wincred/keytar), not through OneAuth. Verified empirically (U6,
-  # docs/verification.md Step 02): with all six files renamed away in both
-  # packages, reading an existing credential still reports
-  # `isAuthenticated: true, authType: "user"`, and a fresh login still
-  # succeeds AND still writes a real vault entry with no plaintext fallback.
-  # Excluding them also drops the Microsoft-licensed payload entirely.
+  # authenticates a GitHub account via the CLI's OAuth web flow (now in the
+  # `copilot-cli` add-on), and the resulting credential is stored through the
+  # Windows Credential Manager (wincred/keytar), not through OneAuth. Verified
+  # empirically (U6, docs/verification.md Step 02): with all six files renamed
+  # away, reading an existing credential still reports
+  # `isAuthenticated: true, authType: "user"`, and a fresh login still succeeds
+  # AND still writes a real vault entry with no plaintext fallback.
   - '!node_modules/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/OneAuthInterop.*'
   - '!node_modules/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/msalruntime.dll'
   - '!node_modules/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/msal-node-runtime.node'
-  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/OneAuthInterop.*'
-  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/msalruntime.dll'
-  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/msal-node-runtime.node'
-  # `@github/copilot-win32-x64` is used for exactly one thing: spawning
-  # `copilot.exe login --web-flow` (auth.ts). The agent session itself runs
-  # against the SDK package's `copilot-runtime.exe`. `copilot.exe` is a
-  # self-contained 138 MB binary and does not need this package's separate
-  # 79 MB `runtime.node` copy to perform a login - verified empirically (U6,
-  # docs/verification.md Step 02): with it renamed away, a synthetic web-flow
-  # login still succeeds and still writes a vault-backed credential. The SDK
-  # package keeps its own copy, which is the one actually loaded at runtime.
-  - '!node_modules/@github/copilot-win32-x64/prebuilds/win32-x64/runtime.node'
-# Both platform packages contain native binaries (copilot-runtime.exe,
-# copilot.exe, and their .node/.dll dependencies) that must be real files on
-# disk to be spawned/dlopen'd - they cannot be loaded from inside the asar
-# archive. electron-builder's default heuristic already auto-detects and
+# The SDK's `copilot-runtime.exe` (and its .node/.dll dependencies) must be real
+# files on disk to be spawned/dlopen'd - they cannot be loaded from inside the
+# asar archive. electron-builder's default heuristic already auto-detects and
 # unpacks packages containing native modules, but this is made explicit per
-# the Step 02 requirement instead of relying on that implicit behavior.
+# the Step 02 requirement instead of relying on that implicit behavior. The
+# Copilot CLI packages are not packaged at all (see `files` above).
 asarUnpack:
   - node_modules/@github/copilot-sdk-win32-x64/**
-  - node_modules/@github/copilot-win32-x64/**
   - node_modules/@github/copilot-sdk-darwin-*/**
-  - node_modules/@github/copilot-darwin-*/**
 extraResources:
   - from: resources
     to: resources

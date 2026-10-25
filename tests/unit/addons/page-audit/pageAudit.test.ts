@@ -1,98 +1,97 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PAGE_AUDIT_MAX_FAILURES } from '../../../src/shared';
+import type { BrowserWindowConstructorOptions } from 'electron';
+import { PAGE_AUDIT_MAX_FAILURES } from '../../../../src/shared';
+import {
+  createPageAudit,
+  inspectAuditRequest,
+  lighthouseFailures,
+  parseTarget,
+} from '../../../../src/addons/page-audit/pageAudit';
+
+/**
+ * The audit is an add-on: it creates no window of its own and performs no DNS
+ * resolution. Both are injected by the application, so these tests drive the
+ * window and the address policy directly instead of mocking Electron.
+ */
 
 interface FakeWindow {
-  readonly options: { readonly webPreferences?: Record<string, unknown> };
+  readonly options: BrowserWindowConstructorOptions;
   readonly webContents: FakeWebContents;
   destroyed: boolean;
+  isDestroyed(): boolean;
+  destroy(): void;
+  loadURL(url: string): Promise<void>;
 }
 
 interface FakeWebContents {
   readonly id: number;
-  readonly listeners: Map<string, Set<(...args: never[]) => void>>;
   readonly stop: ReturnType<typeof vi.fn>;
   readonly debugger: Record<string, unknown>;
   setFrameRate: () => void;
   setWindowOpenHandler: () => void;
   setWebRTCIPHandlingPolicy: (policy: string) => void;
   on: (event: string, listener: (...args: never[]) => void) => void;
-  removeListener: () => void;
   getTitle: () => string;
   getURL: () => string;
   loadUrl: (url: string) => Promise<void>;
 }
 
-const electronMock = vi.hoisted(() => {
+function createWindowFactory(): {
+  readonly windows: FakeWindow[];
+  setLoadUrl(handler: (url: string) => Promise<void>): void;
+  reset(): void;
+  create(options: FakeWindow['options']): FakeWindow;
+} {
   const windows: FakeWindow[] = [];
   let loadUrl: (url: string) => Promise<void> = () => new Promise<void>(() => undefined);
   let nextId = 7;
 
-  class FakeBrowserWindow implements FakeWindow {
-    readonly webContents: FakeWebContents;
-    destroyed = false;
-    readonly options: FakeWindow['options'];
-
-    constructor(options: FakeWindow['options'] = {}) {
-      this.options = options;
-      const listeners = new Map<string, Set<(...args: never[]) => void>>();
-      this.webContents = {
-        id: nextId,
-        listeners,
-        stop: vi.fn(),
-        debugger: {
-          attach: vi.fn(),
-          detach: vi.fn(),
-          sendCommand: vi.fn(),
-          on: vi.fn(),
-          removeListener: vi.fn(),
-        },
-        setFrameRate: vi.fn(),
-        setWindowOpenHandler: vi.fn(),
-        setWebRTCIPHandlingPolicy: vi.fn(),
-        on: (event: string, listener: (...args: never[]) => void) => {
-          const set = listeners.get(event) ?? new Set();
-          set.add(listener);
-          listeners.set(event, set);
-        },
+  const create = (options: FakeWindow['options']): FakeWindow => {
+    const webContents: FakeWebContents = {
+      id: nextId,
+      stop: vi.fn(),
+      debugger: {
+        attach: vi.fn(),
+        detach: vi.fn(),
+        sendCommand: vi.fn(),
+        on: vi.fn(),
         removeListener: vi.fn(),
-        getTitle: () => 'audit',
-        getURL: () => 'https://a.example/',
-        loadUrl: (url: string) => loadUrl(url),
-      };
-      nextId += 1;
-      windows.push(this);
-    }
-
-    isDestroyed(): boolean {
-      return this.destroyed;
-    }
-
-    loadURL(url: string): Promise<void> {
-      return this.webContents.loadUrl(url);
-    }
-
-    destroy(): void {
-      this.destroyed = true;
-    }
-  }
+      },
+      setFrameRate: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      setWebRTCIPHandlingPolicy: vi.fn(),
+      on: vi.fn(),
+      getTitle: () => 'audit',
+      getURL: () => 'https://a.example/',
+      loadUrl: (url: string) => loadUrl(url),
+    };
+    nextId += 1;
+    const window: FakeWindow = {
+      options,
+      webContents,
+      destroyed: false,
+      isDestroyed: () => window.destroyed,
+      destroy: () => {
+        window.destroyed = true;
+      },
+      loadURL: (url: string) => webContents.loadUrl(url),
+    };
+    windows.push(window);
+    return window;
+  };
 
   return {
     windows,
-    setLoadUrl: (handler: (url: string) => Promise<void>) => {
+    setLoadUrl: (handler) => {
       loadUrl = handler;
     },
     reset: () => {
       windows.length = 0;
       loadUrl = () => new Promise<void>(() => undefined);
     },
-    BrowserWindow: FakeBrowserWindow,
+    create,
   };
-});
-
-vi.mock('electron', () => ({ BrowserWindow: electronMock.BrowserWindow }));
-
-const { createPageAudit, inspectAuditRequest, lighthouseFailures, parseTarget } =
-  await import('../../../src/main/pageAudit');
+}
 
 type Lhr = Parameters<typeof lighthouseFailures>[0];
 
@@ -152,6 +151,11 @@ function session() {
     },
     hasHandler: () => requestHandler !== undefined,
   };
+}
+
+/** An address policy that trusts the two public hosts these tests use. */
+function addressPolicy(allow: (url: URL) => boolean = (url) => url.hostname === 'a.example') {
+  return vi.fn((url: URL) => Promise.resolve({ allowed: allow(url) }));
 }
 
 describe('parseTarget', () => {
@@ -238,32 +242,33 @@ describe('inspectAuditRequest', () => {
   it.each(['data:text/html,hi', 'blob:https://a.example/123', 'about:blank'])(
     'allows the local address %s',
     async (url) => {
+      const inspectTarget = addressPolicy();
       expect(
-        await inspectAuditRequest(url, {
-          isConfiguredOrigin: configured,
-          resolveAddresses: () => Promise.resolve(['10.0.0.5']),
-        }),
+        await inspectAuditRequest(url, { isConfiguredOrigin: configured, inspectTarget }),
       ).toEqual({ allowed: true });
+      expect(inspectTarget).not.toHaveBeenCalled();
     },
   );
 
   it("allows a configured host's own origin without resolving it", async () => {
-    const resolveAddresses = vi.fn(() => Promise.resolve(['10.0.0.5']));
+    const inspectTarget = addressPolicy();
 
     expect(
       await inspectAuditRequest('https://author.example:4502/content/a.html', {
         isConfiguredOrigin: configured,
-        resolveAddresses,
+        inspectTarget,
       }),
     ).toEqual({ allowed: true });
-    expect(resolveAddresses).not.toHaveBeenCalled();
+    expect(inspectTarget).not.toHaveBeenCalled();
   });
 
   it('allows another public address through the shared address policy', async () => {
+    const inspectTarget = addressPolicy((url) => url.hostname === 'cdn.example');
+
     expect(
       await inspectAuditRequest('https://cdn.example/x.js', {
         isConfiguredOrigin: configured,
-        resolveAddresses: () => Promise.resolve(['93.184.216.34']),
+        inspectTarget,
       }),
     ).toEqual({ allowed: true });
   });
@@ -277,7 +282,7 @@ describe('inspectAuditRequest', () => {
     expect(
       await inspectAuditRequest(url, {
         isConfiguredOrigin: configured,
-        resolveAddresses: () => Promise.resolve(['10.0.0.5']),
+        inspectTarget: () => Promise.resolve({ allowed: false }),
       }),
     ).toEqual({ allowed: false, reason: 'it is a local or internal address' });
   });
@@ -286,7 +291,7 @@ describe('inspectAuditRequest', () => {
     expect(
       await inspectAuditRequest('not a url', {
         isConfiguredOrigin: configured,
-        resolveAddresses: () => Promise.resolve(['93.184.216.34']),
+        inspectTarget: () => Promise.resolve({ allowed: true }),
       }),
     ).toEqual({ allowed: false, reason: 'it is not a valid address' });
   });
@@ -296,50 +301,57 @@ describe('createPageAudit', () => {
   const request = { url: undefined, categories: ['seo'], formFactor: 'mobile' } as const;
 
   function runner(currentUrl: string | undefined) {
-    return createPageAudit({
-      paneSession: {} as never,
-      anonymousSession: () => {
-        throw new Error('no session expected');
-      },
-      currentUrl: () => currentUrl,
-      isConfiguredOrigin: () => false,
-      resolveAddresses: () => Promise.resolve(['10.0.0.5']),
-    });
+    const windows = createWindowFactory();
+    return {
+      windows,
+      run: createPageAudit({
+        paneSession: {} as never,
+        anonymousSession: () => {
+          throw new Error('no session expected');
+        },
+        createWindow: (options) => windows.create(options) as never,
+        currentUrl: () => currentUrl,
+        isConfiguredOrigin: () => false,
+        inspectTarget: () => Promise.resolve({ allowed: false }),
+      }),
+    };
   }
 
   function auditRunner(
     currentUrl: string | undefined,
     probe = session(),
     isConfiguredOrigin: (origin: string) => boolean = () => false,
+    inspectTarget = addressPolicy(),
   ) {
-    electronMock.reset();
-    const resolveAddresses = vi.fn(() => Promise.resolve(['93.184.216.34']));
+    const windows = createWindowFactory();
     return {
       probe,
-      resolveAddresses,
+      windows,
+      inspectTarget,
       run: createPageAudit({
         paneSession: probe as never,
         anonymousSession: () => probe as never,
+        createWindow: (options) => windows.create(options) as never,
         currentUrl: () => currentUrl,
         isConfiguredOrigin,
-        resolveAddresses,
+        inspectTarget,
       }),
     };
   }
 
   it('has nothing to audit when the pane shows no page', async () => {
-    expect(await runner(undefined)(request, undefined)).toEqual({ kind: 'no_page' });
+    expect(await runner(undefined).run(request, undefined)).toEqual({ kind: 'no_page' });
   });
 
   it('refuses an address that is not a web address', async () => {
     expect(
-      await runner('https://a.example/')({ ...request, url: 'ftp://a.example/' }, undefined),
+      await runner('https://a.example/').run({ ...request, url: 'ftp://a.example/' }, undefined),
     ).toEqual({ kind: 'invalid_url' });
   });
 
   it('refuses a page outside the configured hosts that resolves to a private address', async () => {
     expect(
-      await runner('https://a.example/')(
+      await runner('https://a.example/').run(
         { ...request, url: 'https://intranet.example/' },
         undefined,
       ),
@@ -347,12 +359,12 @@ describe('createPageAudit', () => {
   });
 
   it('hardens the audit window and closes it when the caller aborts', async () => {
-    const { run, probe } = auditRunner(undefined);
+    const { run, probe, windows } = auditRunner(undefined);
     const controller = new AbortController();
 
     const outcome = run({ ...request, url: 'https://a.example/' }, controller.signal);
-    await vi.waitFor(() => expect(electronMock.windows).toHaveLength(1));
-    const window = electronMock.windows[0];
+    await vi.waitFor(() => expect(windows.windows).toHaveLength(1));
+    const window = windows.windows[0];
     controller.abort();
 
     expect(await outcome).toEqual({ kind: 'cancelled' });
@@ -372,8 +384,8 @@ describe('createPageAudit', () => {
   });
 
   it('reports a refused request when the page load fails because of it', async () => {
-    const { run, probe } = auditRunner(undefined);
-    electronMock.setLoadUrl(async () => {
+    const { run, probe, windows } = auditRunner(undefined);
+    windows.setLoadUrl(async () => {
       const verdict = await probe.deliver('http://169.254.169.254/latest');
       expect(verdict).toEqual({ cancel: true });
       throw new Error('net::ERR_BLOCKED_BY_CLIENT');
@@ -389,12 +401,16 @@ describe('createPageAudit', () => {
   });
 
   it('calls a document refused by a second, different resolution a blocked audit', async () => {
-    const { run, probe, resolveAddresses } = auditRunner(undefined);
     // Public for the pre-check, private for the request filter: exactly the
     // rebinding sequence the filter exists to catch.
-    resolveAddresses.mockResolvedValueOnce(['93.184.216.34']);
-    resolveAddresses.mockResolvedValue(['10.0.0.5']);
-    electronMock.setLoadUrl(async () => {
+    const answers = [{ allowed: true }, { allowed: false }];
+    const inspectTarget = vi.fn(() =>
+      Promise.resolve(
+        answers.length > 0 ? (answers.shift() ?? { allowed: false }) : { allowed: false },
+      ),
+    );
+    const { run, probe, windows } = auditRunner(undefined, session(), () => false, inspectTarget);
+    windows.setLoadUrl(async () => {
       await probe.deliver('https://a.example/');
       throw new Error('net::ERR_BLOCKED_BY_CLIENT');
     });
@@ -405,18 +421,19 @@ describe('createPageAudit', () => {
   });
 
   it("filters a configured host's audit too, leaving other views alone", async () => {
-    const { run, probe } = auditRunner(
+    const { run, probe, windows } = auditRunner(
       undefined,
       session(),
       (origin) => origin === 'https://author.example',
+      addressPolicy((url) => url.hostname === 'author.example'),
     );
     const controller = new AbortController();
     const outcome = run(
       { ...request, url: 'https://author.example/content/a.html' },
       controller.signal,
     );
-    await vi.waitFor(() => expect(electronMock.windows).toHaveLength(1));
-    const window = electronMock.windows[0];
+    await vi.waitFor(() => expect(windows.windows).toHaveLength(1));
+    const window = windows.windows[0];
     if (window === undefined) throw new Error('no audit window');
 
     // The window's own request to a private address is refused...
@@ -441,12 +458,12 @@ describe('createPageAudit', () => {
   });
 
   it('refuses a further audit when the queue is full', async () => {
-    const { run } = auditRunner(undefined);
+    const { run, windows } = auditRunner(undefined);
     const controllers = [new AbortController(), new AbortController(), new AbortController()];
     const accepted = controllers.map((controller) =>
       run({ ...request, url: 'https://a.example/' }, controller.signal),
     );
-    await vi.waitFor(() => expect(electronMock.windows).toHaveLength(1));
+    await vi.waitFor(() => expect(windows.windows).toHaveLength(1));
 
     const refused = await run({ ...request, url: 'https://a.example/' }, undefined);
     if (refused.kind !== 'failed') throw new Error('expected the queued audit to be refused');

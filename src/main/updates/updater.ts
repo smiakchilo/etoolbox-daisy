@@ -1,12 +1,13 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 
 import type { AgentFetch, UpdateStatus } from '../../shared';
 import type { Logger } from '../logger';
+import { downloadVerifiedArchive } from './download';
 import {
   compareVersions,
   fileUrlIn,
   MAX_MANIFEST_BYTES,
+  MAX_UPDATE_ARCHIVE_BYTES,
   resolveFolderUrl,
   UPDATE_MANIFEST_FILE,
   updateManifestSchema,
@@ -132,18 +133,12 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
 
   async function download(update: PendingUpdate, targetAsar: string): Promise<string> {
     const fetchFn = await deps.createFetch();
-    const response = await fetchFn(fileUrlIn(update.folder, update.file.name), {
-      signal: AbortSignal.timeout(ARCHIVE_TIMEOUT_MS),
-    });
-    if (!response.ok || !response.url.startsWith('https:')) {
-      throw new Error('download refused');
-    }
-    const bytes = Buffer.from(await response.arrayBuffer());
-    const expected = Buffer.from(update.file.sha512, 'hex');
-    const actual = createHash('sha512').update(bytes).digest();
-    if (bytes.length !== update.file.size || !timingSafeEqual(actual, expected)) {
-      throw new Error('download failed verification');
-    }
+    const bytes = await downloadVerifiedArchive(
+      fetchFn,
+      fileUrlIn(update.folder, update.file.name),
+      update.file,
+      { timeoutMs: ARCHIVE_TIMEOUT_MS, maxBytes: MAX_UPDATE_ARCHIVE_BYTES },
+    );
     const staged = `${targetAsar}.new`;
     await writeFile(staged, bytes);
     return staged;

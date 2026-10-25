@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src/addons",
+    "outDir": ".tsc-out/addons",
+    "types": ["node"]
+  },
+  "include": ["src/addons/**/*.ts"],
+  "references": [{ "path": "./tsconfig.shared.json" }]
+}

@@ -20,12 +20,10 @@ export interface RuntimePathsEnv {
   readonly arch?: string;
 }
 
-/** Where a platform's Copilot payload lives and what its executables are called. */
+/** Where a platform's Copilot payload lives and what its executable is called. */
 interface PlatformLayout {
   readonly sdkPackage: string;
-  readonly cliPackage: string;
   readonly runtimeSegments: string[];
-  readonly cliSegments: string[];
 }
 
 function resolvePlatformLayout(env: RuntimePathsEnv): PlatformLayout {
@@ -38,9 +36,7 @@ function resolvePlatformLayout(env: RuntimePathsEnv): PlatformLayout {
   const exe = platform === 'win32' ? '.exe' : '';
   return {
     sdkPackage: `@github/copilot-sdk-${suffix}`,
-    cliPackage: `@github/copilot-${suffix}`,
     runtimeSegments: ['prebuilds', suffix, `copilot-runtime${exe}`],
-    cliSegments: [`copilot${exe}`],
   };
 }
 
@@ -82,12 +78,6 @@ function resolveExePath(packageName: string, exeSegments: string[], env: Runtime
 export function resolveSdkRuntimeExePath(env: RuntimePathsEnv): string {
   const layout = resolvePlatformLayout(env);
   return resolveExePath(layout.sdkPackage, layout.runtimeSegments, env);
-}
-
-/** Resolves the absolute path to the bundled `copilot` executable (the CLI, used only for `login`). */
-export function resolveCliExePath(env: RuntimePathsEnv): string {
-  const layout = resolvePlatformLayout(env);
-  return resolveExePath(layout.cliPackage, layout.cliSegments, env);
 }
 
 /**

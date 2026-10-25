@@ -96,6 +96,7 @@ function buildHost(
       bundledSkillDirectories: [],
     }),
     modelPreferences: () => ({ model: null, reasoningEffort: null }),
+    resolveAddonFile: () => Promise.resolve({ ok: false, error: { message: 'not installed' } }),
   };
   return { host, installed, resolveConnection };
 }

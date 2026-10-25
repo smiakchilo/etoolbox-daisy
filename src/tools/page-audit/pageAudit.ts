@@ -134,6 +134,7 @@ const ERROR_MESSAGES = {
   invalid_url: 'The URL must be an absolute http(s) address or a path starting with "/"',
   no_page: 'The browser pane is not showing a page, and no URL was given',
   timeout: 'The audit did not finish before the deadline',
+  unavailable: 'The page audit add-on is not installed and could not be downloaded',
   unsupported: 'Auditing a page is not available in this build',
 } as const satisfies Record<PageAuditFailureKind | 'unsupported', string>;
 
@@ -152,6 +153,7 @@ const ERROR_MAPPINGS: Readonly<Record<ErrorMessageKey, ErrorMapping>> = {
   invalid_url: { code: 'INVALID_ARGUMENT', retryable: false, requiredAction: 'none' },
   no_page: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'select_server' },
   timeout: { code: 'TIMEOUT', retryable: true, requiredAction: 'none' },
+  unavailable: { code: 'STORAGE_ERROR', retryable: true, requiredAction: 'none' },
   unsupported: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'none' },
 };
 

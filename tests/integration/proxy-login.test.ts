@@ -2,9 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { assertNoPlaintextCredentials } from '../../src/agents/copilot/auth';
-import { resolveCliExePath } from '../../src/agents/copilot/runtimePaths';
-import type { RuntimePathsEnv } from '../../src/agents/copilot/runtimePaths';
 import { generateTestCa, issueTrustedLeafCert, issueUntrustedLeafCert } from './support/testCa';
+import { resolveCopilotCliExe } from '../support/copilotCliPath';
 import {
   reserveClosedPort,
   startTestProxy,
@@ -67,11 +66,7 @@ import { cleanupVaultEntry, runSyntheticWebFlowLogin } from './support/synthetic
  * this machine).
  */
 
-function pathsEnv(): RuntimePathsEnv {
-  return { isPackaged: false, resourcesPath: 'unused-in-dev', devRootDir: process.cwd() };
-}
-
-const CLI_EXE = resolveCliExePath(pathsEnv());
+const CLI_EXE = resolveCopilotCliExe();
 
 const SCRATCH_ROOT = path.join(process.cwd(), 'test-results', 'proxy-matrix-login');
 mkdirSync(SCRATCH_ROOT, { recursive: true });

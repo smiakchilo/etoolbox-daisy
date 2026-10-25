@@ -14,13 +14,11 @@ import {
 import {
   createHardenedCopilotClient,
   getAuthStatus as getSdkAuthStatus,
-  resolveDefaultRuntimePathsEnv,
   toAuthStatus,
   type CopilotClient,
 } from './copilotClient';
 import { meta } from './meta';
 import { loadModelCatalog } from './modelCatalog';
-import { resolveCliExePath } from './runtimePaths';
 import { createCopilotRuntimeManager } from './runtimeManager';
 import { createSdkAgentService } from './sdkAgentService';
 import { mapModelUsage } from './sessionDiagnostics';
@@ -112,7 +110,19 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
     if (inFlightLogin !== undefined) {
       return { status: 'failed', message: 'A login is already in progress' };
     }
-    const cliExePath = resolveCliExePath(resolveDefaultRuntimePathsEnv());
+    // `copilot.exe` is a binary add-on: it is downloaded on first use, not part
+    // of the installation (it is ~138 MB for a sign-in that happens once).
+    const reportProgress = (fraction: number): void => {
+      host.reportAuthProgress?.(
+        meta.id,
+        `Downloading sign-in component ${String(Math.round(fraction * 100))}%`,
+      );
+    };
+    const resolvedCli = await host.resolveAddonFile('copilot-cli', 'cli', {
+      onProgress: reportProgress,
+    });
+    if (!resolvedCli.ok) return { status: 'failed', message: resolvedCli.error.message };
+    const cliExePath = resolvedCli.value;
     const copilotHomeDir = host.stateDirectory;
     mkdirSync(copilotHomeDir, { recursive: true });
     // The sign-in child reaches GitHub through the proxy the user selected for

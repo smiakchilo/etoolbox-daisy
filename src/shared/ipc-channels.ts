@@ -23,6 +23,12 @@ export const AGENT_GET_AUTH_PRESENCE_CHANNEL = 'agent:get-auth-presence' as cons
 export const AGENT_LOGIN_CHANNEL = 'agent:login' as const;
 export const AGENT_CANCEL_LOGIN_CHANNEL = 'agent:cancel-login' as const;
 export const AGENT_LOGOUT_CHANNEL = 'agent:logout' as const;
+/**
+ * A push from main while a sign-in is preparing something (the one case today:
+ * downloading the Copilot CLI add-on). The Agents tab paints it as the
+ * provider's sign-in status line; it is never journaled and never blocks.
+ */
+export const AGENT_AUTH_PROGRESS_CHANNEL = 'agent:auth-progress' as const;
 
 // Dedicated settings IPC surface (step 04) - see src/main/ipc/settings.ts and
 // src/shared/settings-ipc.ts. Read-only snapshot plus write-only secret

@@ -1,0 +1,12 @@
+{
+  "name": "@edaisy/addon-page-audit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Lighthouse page audit add-on for EToolbox Daisy",
+  "dependencies": {
+    "lighthouse": "13.5.0",
+    "puppeteer-core": "25.16.0"
+  }
+}

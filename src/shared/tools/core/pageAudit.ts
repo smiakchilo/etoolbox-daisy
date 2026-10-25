@@ -1,8 +1,9 @@
 /**
  * The vocabulary of the `page_audit` capability: what a tool asks the
  * application to audit, and what the application answers. The audit itself (a
- * hidden browser window running Lighthouse) lives in the main process; the tool
- * sees only these types, so it stays free of Electron and of Lighthouse.
+ * hidden browser window running Lighthouse) lives in the **page-audit add-on**,
+ * downloaded on first use; the tool sees only these types, so it stays free of
+ * Electron and of Lighthouse.
  */
 
 /** The Lighthouse categories an audit can score. */
@@ -63,7 +64,18 @@ export interface PageAuditReport {
 }
 
 export type PageAuditFailureKind =
-  'blocked' | 'cancelled' | 'failed' | 'invalid_url' | 'no_page' | 'timeout';
+  | 'blocked'
+  | 'cancelled'
+  | 'failed'
+  | 'invalid_url'
+  | 'no_page'
+  | 'timeout'
+  /**
+   * The page-audit add-on is not installed and could not be downloaded (or is
+   * not the version/API version this build pins). Distinct from `failed`: no
+   * audit was attempted, and retrying later may succeed.
+   */
+  | 'unavailable';
 
 export interface PageAuditFailed {
   readonly kind: PageAuditFailureKind;
