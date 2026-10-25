@@ -536,15 +536,39 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     }
   }
 
-  function clearTurnIfTerminal(): void {
-    if (
-      sessionStatus.state === 'idle' ||
-      sessionStatus.state === 'closed' ||
-      sessionStatus.state === 'error'
-    ) {
-      activeTurn = undefined;
-      reflection = undefined;
-    }
+  /**
+   * Whether `event` is the one that ends the turn it belongs to: an `error`, or a
+   * session that has genuinely moved to `idle`/`closed`/`error`. `cancelling` is
+   * not terminal - a cancellation is a request, and the turn is still winding
+   * down until its `idle` arrives.
+   */
+  function isTerminalTurnEvent(event: AgentEvent): boolean {
+    return (
+      event.type === 'error' ||
+      (event.type === 'session.state.changed' &&
+        (event.state === 'idle' || event.state === 'closed' || event.state === 'error'))
+    );
+  }
+
+  /**
+   * Drops the turn bookkeeping when an event ends the turn.
+   *
+   * Deliberately driven by the event, never by "is the session idle right now?":
+   * `sendMessage` registers the turn *before* the adapter emits `sending`, and a
+   * chat-scoped event legitimately arrives inside that window - a resumed
+   * session reports its model (`session.model_change`, mapped to a turn-less
+   * `model.changed` with `cause: "runtime-reported"`) while the adapter applies
+   * the stored model preference to it. Reading the state there saw `idle` and
+   * discarded the turn that had just been registered; every event of the real
+   * turn was then dropped as unowned (no "Thinking" billet, no tool billets, no
+   * answer), and every tool that needs `currentToolContext()` failed with "no
+   * active chat/turn to bind to". Only the *first* prompt after a restore hit it,
+   * because only a resumed session has its model applied at prompt time.
+   */
+  function clearTurnIfTerminal(event: AgentEvent): void {
+    if (!isTerminalTurnEvent(event)) return;
+    activeTurn = undefined;
+    reflection = undefined;
   }
 
   function isReflectionInFlight(): boolean {
@@ -633,12 +657,14 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     const collector = turnSignals;
     if (collector === undefined || activeTurn?.turnId !== collector.turnId) return;
     collector.observe(event, nested);
-    if (sessionStatus.state === 'closed' || sessionStatus.state === 'error') {
-      turnSignals = undefined;
-      return;
-    }
-    if (sessionStatus.state !== 'idle') return;
+    // Only the turn's own terminal event settles its collector, for the same
+    // reason `clearTurnIfTerminal` reads the event rather than the state: a
+    // chat-scoped event can arrive while the session is still idle but the
+    // turn has already been registered, and it must not throw that turn's
+    // signals away before the turn has even started.
+    if (!isTerminalTurnEvent(event)) return;
     turnSignals = undefined;
+    if (event.type !== 'session.state.changed' || event.state !== 'idle') return;
     const signals = collector.reflectionSignals();
     if (signals.length === 0 || deps.reflectionPrompt === undefined) return;
     const chatId = activeChatId;
@@ -687,7 +713,7 @@ export function createAgentChatController(deps: AgentChatControllerDeps): AgentC
     sessionStatus = applied.value;
     recordTurnMembership(event);
     observeTurnSignals(event, nested);
-    clearTurnIfTerminal();
+    clearTurnIfTerminal(event);
     for (const listener of [...forwardListeners]) listener(event);
   }
 

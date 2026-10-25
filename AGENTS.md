@@ -474,6 +474,23 @@ active agent falls back to the first definition; with none the chat pane says
 `createBrokeredQueryExecute`, `resolveBundledResourcesDirectory`,
 `startAppRuntime`, `exposeFakeAgentServiceForTests`).
 
+**A turn lives from `sendMessage` to its own terminal event — never "while the
+session is idle".** `AgentChatController` registers `activeTurn` before the
+adapter is asked to send, and every turn-scoped event is filtered by it
+(`isOwnedEvent`), as is `currentToolContext()`. So the turn is cleared only by
+`isTerminalTurnEvent` (an `error`, or a `session.state.changed` to
+`idle`/`closed`/`error`) — deliberately not by reading `sessionStatus.state`,
+because a **chat-scoped** event lands between registration and the turn's own
+`sending`: a resumed Copilot session applies the stored model at prompt time, the
+SDK reports `session.model_change`, and it is mapped to a turn-less `model.changed`
+(`cause: "runtime-reported"`). Reading the state there once discarded the fresh
+turn, which dropped the whole turn's events for the renderer (no "Thinking", no
+billets, no answer) and made every tool that needs the tool context fail with
+`no active chat/turn to bind to` — the "first prompt after a restore does
+nothing" defect. The same rule governs `observeTurnSignals`'s collector. See
+`docs/verification/followons-2026-10.md` "The first prompt after a restore shows
+its work".
+
 `chatJournal.ts` (the append-only writer) and `chatJournalReader.ts` (a bounded,
 tolerant read) are accompanied by `chatHistory.ts`: `snapshotChatHistoryIds`
 lists the chats directory's observably present ids once (file names and mtimes
@@ -1950,7 +1967,26 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4667 passed / 13 skipped** (+16 against the
+Current baseline: **`npm run test` → 4671 passed / 13 skipped** (+4 against the
+4667 below - **the first prompt after a restore shows its work** (2026-10-26): a
+turn's lifetime is now driven by the event that ends it, not by "is the session
+idle right now?" - a resumed Copilot session reports its model (`session.model_change`
+-> a turn-less `model.changed`) between `sendMessage` registering the turn and the
+adapter's `sending`, and reading the state there discarded that turn, so the whole
+turn's events were dropped for the renderer (no "Thinking", no billets, no answer)
+and every tool that needs `currentToolContext()` failed with `no active chat/turn
+to bind to`. New `isTerminalTurnEvent` + `clearTurnIfTerminal(event)` +
+`observeTurnSignals` settling on the same event, 4 cases in the new
+`tests/unit/main/agentChatControllerTurnBinding.test.ts`, and the opt-in live
+scenario `tests/live/first-prompt-after-restore.live.spec.ts`, which reproduced it
+in the real app before the fix (`thinking=false`, no new billet, `states=idle`
+only, answer never painted) and passes after (`thinking=true`, one billet,
+`idle/sending/streaming`, answer painted). Playwright stays 169 tests - the new
+scenario is opt-in (`tests/live/`), and the chat-related specs were re-run (36
+green). See §5's "A turn lives from `sendMessage` to its own terminal event" and
+`docs/verification/followons-2026-10.md` "The first prompt after a restore shows
+its work (2026-10-26)".
+Before that it was **`npm run test` → 4667 passed / 13 skipped** (+16 against the
 4651 below - **the table gutter has two bands** (2026-10-25/26): the header band
 (the column-header row and the message surface above it, the heading included)
 and the footer band (the total line and the message surface below the table).
