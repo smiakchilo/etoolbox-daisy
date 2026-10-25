@@ -17,10 +17,10 @@ import { renderLinkSegment } from './linkSegmentDom';
 import {
   createHoverActionPopover,
   type HoverAction,
-  type HoverActionAlignment,
+  type HoverActionPlacement,
   type HoverActionPopover,
 } from './hoverActionPopover';
-import { tableGutterFrom, tableHoverActions } from './tableHover';
+import { tableGutterFrom, tableHoverActions, type TableGutterBand } from './tableHover';
 import { type TableExportData } from './tableExport';
 import { createMarkdownRenderer, type MarkdownRenderer } from './renderMarkdown';
 import {
@@ -563,6 +563,25 @@ function reconcileChildren(parent: HTMLElement, nodes: readonly HTMLElement[]): 
 }
 
 /**
+ * One affordance the travelling hover popover can be shown for: a message link's
+ * Edit/CRX, or one of a `format_table` run's two gutter **bands**
+ * (`tableHover.ts`) - the header band above the rows, or the footer band below
+ * them. A band carries the shell it belongs to, because every part of one band
+ * (its chrome element and the message surface spread around it) is ONE
+ * affordance: the popover is positioned where the pointer entered it and then
+ * holds still.
+ */
+type HoverTarget =
+  | { readonly kind: 'link'; readonly anchor: HTMLElement }
+  | {
+      readonly kind: 'gutter';
+      readonly anchor: HTMLElement;
+      readonly shell: HTMLElement;
+      readonly band: TableGutterBand;
+      readonly placement: HoverActionPlacement;
+    };
+
+/**
  * Renders a `TranscriptStore`'s items into `element`.
  *
  * Each item gets one persistent DOM node, cached by `keyFor` and reused
@@ -638,9 +657,10 @@ export function createTranscriptView(
   const popover: HoverActionPopover | undefined = createHoverActionPopover({
     getContainer: () => element.closest('sp-theme') ?? document.body,
   });
-  // The element the popover is currently shown for, so repeated `pointerover`
-  // events over one of them do not rebuild its buttons.
-  let hoveredAnchor: HTMLElement | undefined;
+  // The affordance the popover is currently shown for, so repeated `pointerover`
+  // events over it do not rebuild its buttons - and so moving within one
+  // message's gutter never re-anchors (and so never moves) the popover.
+  let hovered: HoverTarget | undefined;
 
   /** The icon a pane link's popover action wears - Edit or CRX. */
   function linkActionIcon(id: 'edit' | 'crx'): keyof HTMLElementTagNameMap {
@@ -661,19 +681,60 @@ export function createTranscriptView(
   }
 
   /**
-   * Every pointer-reactive affordance: a pane link/partial, or a
-   * `format_table` gutter - the header row or the total line, never an ordinary
-   * data row (`tableHover.ts`). The two can never be the same element. The
-   * alignment differs: a link keeps the popover centred above it, while the
-   * gutter (whose anchor spans the table) right-aligns it to the table's edge.
+   * Every pointer-reactive affordance: a pane link/partial, or one of a
+   * `format_table` gutter's two **bands** - the header band (the header row and
+   * the message surface above it) or the footer band (the total line and the
+   * surface below the table), never an ordinary data row or the side padding
+   * alongside the rows (`tableHover.ts`). The two can never be the same element.
+   * The alignment differs: a link keeps the popover centred above it, while the
+   * gutter (whose anchor spans the table or its footer) right-aligns it to the
+   * table's edge.
    */
-  function hoverTargetFrom(
-    target: EventTarget | null,
-  ): { anchor: HTMLElement; align: HoverActionAlignment } | undefined {
+  function hoverTargetFrom(target: EventTarget | null, pointerY: number): HoverTarget | undefined {
     const link = paneLinkFrom(target);
-    if (link !== null) return { anchor: link, align: 'center' };
-    const gutter = tableGutterFrom(target);
-    return gutter === undefined ? undefined : { anchor: gutter.anchor, align: 'end' };
+    if (link !== null) return { kind: 'link', anchor: link };
+    const gutter = tableGutterFrom(target, pointerY);
+    return gutter === undefined
+      ? undefined
+      : {
+          kind: 'gutter',
+          anchor: gutter.anchor,
+          shell: gutter.shell,
+          band: gutter.band,
+          placement: gutter.placement,
+        };
+  }
+
+  /**
+   * Whether `a` and `b` are the same affordance. Two hits of one message's band
+   * are the same affordance **whatever element they resolved to** (the band's
+   * chrome or the message surface spread around it): the popover is positioned
+   * once, where the pointer entered, and then holds still - otherwise moving one
+   * pixel off the header row into the message's own background would re-anchor
+   * it and the buttons would jump. The other band is a different affordance with
+   * its own position, so crossing from the header band to the footer band (a
+   * deliberate trip past the rows) does re-anchor.
+   */
+  function sameHoverTarget(a: HoverTarget | undefined, b: HoverTarget | undefined): boolean {
+    if (a === undefined || b === undefined || a.kind !== b.kind) return false;
+    if (a.kind === 'link' && b.kind === 'link') return a.anchor === b.anchor;
+    if (a.kind === 'gutter' && b.kind === 'gutter') {
+      return a.shell === b.shell && a.band === b.band;
+    }
+    return false;
+  }
+
+  /**
+   * Whether the pointer, now over `related` at viewport y `pointerY`, is still
+   * inside the affordance the popover is shown for. A gutter means the same band
+   * of the same message: the band's own chrome and the message surface spread
+   * around it - not the rows (a cell is its own affordance) and not the side
+   * padding alongside them.
+   */
+  function pointerInside(target: HoverTarget, related: Node, pointerY: number): boolean {
+    if (target.kind === 'link') return target.anchor.contains(related);
+    const hit = tableGutterFrom(related, pointerY);
+    return hit !== undefined && hit.shell === target.shell && hit.band === target.band;
   }
 
   /**
@@ -708,21 +769,20 @@ export function createTranscriptView(
 
   element.addEventListener('pointerover', (event) => {
     if (popover === undefined) return;
-    const target = hoverTargetFrom(event.target);
-    if (target === undefined || target.anchor === hoveredAnchor) return;
+    const target = hoverTargetFrom(event.target, event.clientY);
+    if (target === undefined || sameHoverTarget(target, hovered)) return;
     const actions = hoverActionsFor(target.anchor);
     if (actions.length === 0) return;
-    hoveredAnchor = target.anchor;
-    popover.show(target.anchor, actions, target.align);
+    hovered = target;
+    popover.show(target.anchor, actions, target.kind === 'gutter' ? target.placement : 'top');
   });
 
   element.addEventListener('pointerout', (event) => {
-    if (popover === undefined || hoveredAnchor === undefined) return;
-    if (hoverTargetFrom(event.target)?.anchor !== hoveredAnchor) return;
+    if (popover === undefined || hovered === undefined) return;
     const related = event.relatedTarget as Node | null;
-    // Moving to a child of the same anchor (or into the popover) must not hide it.
-    if (related !== null && hoveredAnchor.contains(related)) return;
-    hoveredAnchor = undefined;
+    // Moving within the same affordance (or into the popover) must not hide it.
+    if (related !== null && pointerInside(hovered, related, event.clientY)) return;
+    hovered = undefined;
     popover.scheduleHide();
   });
 
@@ -842,7 +902,7 @@ export function createTranscriptView(
     if (anchor === null || href === null) return;
     event.preventDefault();
     popover?.hideNow();
-    hoveredAnchor = undefined;
+    hovered = undefined;
     if (anchor.hasAttribute(MESSAGE_EXTERNAL_ATTRIBUTE)) {
       options.onOpenExternal?.(href);
     } else {
@@ -1522,7 +1582,7 @@ export function createTranscriptView(
       // A repaint replaces the message nodes, so any open popover is now
       // anchored to a detached element - close it rather than leave it floating.
       popover?.hideNow();
-      hoveredAnchor = undefined;
+      hovered = undefined;
       const items = store.items();
       const { skip, messages, runIds } = planTableRuns(store, items);
       const lastItem = items[items.length - 1];

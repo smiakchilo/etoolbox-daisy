@@ -987,14 +987,28 @@ src/tools/<name>/
   run rendered - carried cell-by-cell, row by row, so a blanked repeated page path
   still resolves and a `Load more` append continues it. The segment-to-DOM
   rendering is shared in `linkSegmentDom.ts`; a column header only picks a
-  presentation class (clamp/wrap), never linkification. **Its gutter - the
-  column-header row and the total line, never an ordinary data row - offers
-  Copy and Export**, in the same travelling hover popover the Edit/CRX link
-  actions use (the region + actions are `tableHover.ts`'s
-  `tableGutterFrom`/`tableHoverActions`; the popover itself is the now-generic
-  `hoverActionPopover.ts`, `HoverAction[]` instead of link actions only). Copy
-  writes tab-separated `text/plain` plus an HTML `<table>` to the clipboard so a
-  paste into Excel/Google Sheets keeps the grid; Export hands a CSV
+  presentation class (clamp/wrap), never linkification. **Its gutter has two
+  bands - the header band (the column-header row, and, while the message holds
+  nothing but the table, its heading and its total line, the message surface
+  above it) and the footer band (the total line, and the message surface below
+  the table) - and offers Copy and Export**, in the same travelling hover
+  popover the Edit/CRX link actions use (the regions + actions are
+  `tableHover.ts`'s `tableGutterFrom`/`tableHoverActions`, with
+  `isTableDataRow` excluding the rows and the side padding alongside them lying
+  in neither band; the popover itself is the now-generic `hoverActionPopover.ts`,
+  `HoverAction[]` instead of link actions only, and its `HoverActionPlacement`
+  puts a gutter popover at the anchor's top-right (`top-end`) or - for a table
+  that draws no total line - at its bottom-right (`bottom-end`), so the buttons
+  hang **below** the table instead of rising over its last row). A message that
+  carries prose of its own keeps the popover on the table's own chrome. **Each
+  band is one affordance:** the popover is positioned where the pointer enters a
+  band and is never re-anchored while it stays there, so moving one pixel off the
+  header row into the message's own background leaves the buttons exactly where
+  they are - `transcriptView.ts`'s `HoverTarget` compares gutter hits by
+  **shell and band**, not by the element they resolved to, while crossing to the
+  other band deliberately re-anchors it. Copy writes tab-separated
+  `text/plain` plus an HTML `<table>` to the clipboard so a paste into
+  Excel/Google Sheets keeps the grid; Export hands a CSV
   (comma/CRLF/UTF-8-BOM) to main, which shows the OS save dialog and writes the
   file (`table-export:save-csv`, `src/main/ipc/tableExport.ts`). Both serialize
   the displayed table - header, data rows, and the total line as a trailing row,
@@ -1936,7 +1950,36 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4651 passed / 13 skipped** (+47 against the
+Current baseline: **`npm run test` → 4667 passed / 13 skipped** (+16 against the
+4651 below - **the table gutter has two bands** (2026-10-25/26): the header band
+(the column-header row and the message surface above it, the heading included)
+and the footer band (the total line and the message surface below the table).
+An ordinary data row is still never the gutter (hovering a cell is that cell's
+own link/CRX popover), the side padding alongside the rows belongs to neither
+band, and a message that carries prose of its own keeps the popover on the
+table's own chrome. `tableHover.ts` gained `isTableDataRow`, the band split in
+`tableGutterFrom` (driven by the pointer's y) and a `placement` per hit;
+`hoverActionPopover.ts`'s `HoverActionPlacement` (`top` / `top-end` /
+`bottom-end`) lets a gutter popover hang off the anchor's bottom edge, so a table
+*without* a total line shows the buttons **below its bottom edge**, beside the
+pointer, instead of up over its last row. **Each band is one affordance**:
+`transcriptView.ts`'s `HoverTarget` compares gutter hits by shell **and band**, so
+the popover is positioned where the pointer enters it and never re-anchors within
+it (the reported 1-pixel jump off the header); its `pointerInside` also closes
+the popover when the pointer moves into the rows or the inert side padding. The
++16 is 5 net `tableHover` cases plus the other working-tree changes (the freeze
+itself adds no unit case - jsdom has no Spectrum overlay); Playwright is **169
+tests** (+3 in `table-export.spec.ts`: the two bands, the per-band freeze, and
+the total-less footer placement - 7/7 green). Five mutations were caught (the
+container branch disabled, the data-row exclusion removed from the region test,
+the `pointerout` exclusion removed, the gutter identity compared by element
+instead of by shell+band, and the total-less footer anchored to the last row
+instead of the table's bottom edge - the last one reproduces the reported ~90px
+rise over the last row). See §5's `format_table` bullet and
+`docs/verification/followons-2026-10.md` "The table's Copy/Export gutter covers
+the whole message (2026-10-25)" and "The table gutter becomes two bands, with a
+placement" (2026-10-26).
+Before that it was **`npm run test` → 4651 passed / 13 skipped** (+47 against the
 4604 below - **heavy add-ons** (2026-10-25): Lighthouse/`puppeteer-core` and
 `copilot.exe` left the base install for add-ons downloaded on first use
 (`src/addons/<id>/`, `src/main/addons/`, `scripts/build-addons.mjs`), so

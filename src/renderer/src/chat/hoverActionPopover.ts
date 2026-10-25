@@ -34,18 +34,28 @@ export interface HoverAction {
   readonly onActivate: () => void;
 }
 
-/** Where the popover sits relative to its anchor: centred above it, or right-aligned to its end edge. */
-export type HoverActionAlignment = 'center' | 'end';
+/**
+ * Where the popover sits relative to its anchor, named after Spectrum's own
+ * placement values: `"top"` centred above it (a link), `"top-end"` right-aligned
+ * above it (a table's header row, total line or message surface), `"bottom-end"`
+ * right-aligned below it (a table's own bottom edge, for a table that draws no
+ * total line - so the buttons sit beside the pointer instead of rising over the
+ * last row).
+ */
+export type HoverActionPlacement = 'top' | 'top-end' | 'bottom-end';
 
 export interface HoverActionPopover {
   /**
    * Shows the popover for `anchor`, replacing its buttons with `actions`.
-   * `align` places it centred above the anchor (the default - a link) or, with
-   * `'end'`, right-aligned to the anchor's own right edge (a `format_table`
-   * gutter, which anchors on the full-width header row / total line, so the
-   * popover hugs the table's right edge instead of straddling its middle).
+   * `placement` decides which point of the anchor it hangs off, so the gutter's
+   * buttons hug the table's right edge instead of straddling its middle - and a
+   * table's bottom edge can carry them *below* itself.
    */
-  show(anchor: HTMLElement, actions: readonly HoverAction[], align?: HoverActionAlignment): void;
+  show(
+    anchor: HTMLElement,
+    actions: readonly HoverAction[],
+    placement?: HoverActionPlacement,
+  ): void;
   /** Hides after a short grace, so moving from the anchor into the popover keeps it open. */
   scheduleHide(): void;
   /** Hides immediately. */
@@ -82,7 +92,7 @@ export function createHoverActionPopover(
 
   let trigger: VirtualTrigger | undefined;
   let pending:
-    | { anchor: HTMLElement; actions: readonly HoverAction[]; align: HoverActionAlignment }
+    | { anchor: HTMLElement; actions: readonly HoverAction[]; placement: HoverActionPlacement }
     | undefined;
   let attached = false;
   let disposed = false;
@@ -96,7 +106,7 @@ export function createHoverActionPopover(
       if (pending !== undefined) {
         const queued = pending;
         pending = undefined;
-        show(queued.anchor, queued.actions, queued.align);
+        show(queued.anchor, queued.actions, queued.placement);
       }
     },
   );
@@ -144,7 +154,7 @@ export function createHoverActionPopover(
   function show(
     anchor: HTMLElement,
     actions: readonly HoverAction[],
-    align: HoverActionAlignment = 'center',
+    placement: HoverActionPlacement = 'top',
   ): void {
     if (disposed) return;
     // Showing for a new anchor must cancel any hide still pending from the
@@ -154,7 +164,7 @@ export function createHoverActionPopover(
     // timer would still fire and close the popover the pointer just moved to.
     cancelHide();
     if (trigger === undefined) {
-      pending = { anchor, actions, align };
+      pending = { anchor, actions, placement };
       return;
     }
     if (!attached) {
@@ -164,18 +174,16 @@ export function createHoverActionPopover(
     buttons.replaceChildren(...actions.map(buildButton));
     // The anchor is a zero-size `VirtualTrigger` point, so the *placement* is
     // what aligns the popover against it: `top` centres the popover on the
-    // point, `top-end` puts the popover's right edge on the point (right-align
-    // to the anchor's own right edge). Changing `placement` while open makes
-    // the overlay re-run its positioning, so a move from a link to a gutter (or
-    // back) re-lays out rather than opening at the previous alignment.
+    // point, `top-end` puts its right edge on the anchor's top-right corner,
+    // and `bottom-end` puts its right edge on the anchor's bottom-right corner
+    // (below the anchor). Changing `placement` while open makes the overlay
+    // re-run its positioning, so a move from a link to a gutter (or back)
+    // re-lays out rather than opening at the previous alignment.
     const rect = anchor.getBoundingClientRect();
-    const placement = align === 'end' ? 'top-end' : 'top';
     if (overlay.placement !== placement) overlay.placement = placement;
-    if (align === 'end') {
-      trigger.updateBoundingClientRect(rect.right, rect.top);
-    } else {
-      trigger.updateBoundingClientRect(rect.left + rect.width / 2, rect.top);
-    }
+    const x = placement === 'top' ? rect.left + rect.width / 2 : rect.right;
+    const y = placement === 'bottom-end' ? rect.bottom : rect.top;
+    trigger.updateBoundingClientRect(x, y);
     overlay.open = true;
   }
 

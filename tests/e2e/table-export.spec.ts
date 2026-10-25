@@ -2,7 +2,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { type ScriptedStep } from '../../src/main/agents/fakeAgentService';
 import { type ElectronApp, launchApp } from '../support/e2e/app';
 import { sendViaComposer, waitForComposerReady } from '../support/e2e/composer';
@@ -20,6 +20,14 @@ import { byTestId } from '../support/selectors';
  *
  *  - hovering the column header row (the gutter) opens the travelling popover
  *    with Copy/Export, while hovering an ordinary data row does not;
+ *  - the message's own surface forms two **bands**: the header band (the header
+ *    row and the surface above it, the heading included) and the footer band
+ *    (the total line and the surface below the table); its data rows and the
+ *    side padding alongside them belong to neither;
+ *  - each band is ONE affordance: the popover is positioned where the pointer
+ *    enters it and is not re-anchored while it stays there, so moving one pixel
+ *    off the header into the message background never makes the buttons jump -
+ *    while crossing to the other band does move it, deliberately;
  *  - Copy writes BOTH a tab-separated `text/plain` and an HTML `<table>` to the
  *    real OS clipboard (read back in the main process);
  *  - Export hands the CSV to main, which shows the save dialog (stubbed here to
@@ -61,24 +69,59 @@ async function waitForTranscriptSettled(shell: Page): Promise<void> {
 }
 
 /**
- * Opens the gutter popover and waits until both actions are in it.
+ * Opens the gutter popover by hovering `target` and waits until both actions are
+ * in it.
  *
  * Hovering once can be undone by the settling scroll above; this also re-hovers
  * (moving the pointer away first, so a fresh `pointerover` fires) until the open
  * popover holds both buttons.
  */
-async function hoverGutterUntilOpen(shell: Page): Promise<void> {
+async function hoverUntilOpen(
+  shell: Page,
+  target: Locator,
+  position?: { readonly x: number; readonly y: number },
+): Promise<void> {
   await waitForTranscriptSettled(shell);
   await expect
     .poll(
       async () => {
         await shell.mouse.move(1, 1);
-        await shell.locator('.chat-table-message sp-table-head').hover();
+        await (position === undefined ? target.hover() : target.hover({ position }));
         return shell.locator(`${OPEN_OVERLAY} sp-action-button`).count();
       },
       { timeout: 15_000 },
     )
     .toBe(2);
+}
+
+/** Open the gutter popover from the table's own chrome (the column header row). */
+async function hoverGutterUntilOpen(shell: Page): Promise<void> {
+  await hoverUntilOpen(shell, shell.locator('.chat-table-message sp-table-head'));
+}
+
+interface PopoverRect {
+  readonly top: number;
+  readonly bottom: number;
+  readonly right: number;
+}
+
+/** The open popover's position, or null while it is closed. */
+async function popoverRect(shell: Page): Promise<PopoverRect | null> {
+  return shell.evaluate((selector): PopoverRect | null => {
+    const popover = document.querySelector(`${selector} sp-popover`);
+    if (popover === null) return null;
+    const rect = popover.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, right: rect.right };
+  }, OPEN_OVERLAY);
+}
+
+/** Whether the popover is still at `anchored` (a 1px tolerance for Spectrum's own rounding). */
+function atAnchor(rect: PopoverRect | null, anchored: PopoverRect): boolean {
+  return (
+    rect !== null &&
+    Math.abs(rect.top - anchored.top) <= 1 &&
+    Math.abs(rect.right - anchored.right) <= 1
+  );
 }
 
 /** A scripted `format_table` call carrying `data` verbatim (the app paints the table from the call's args). */
@@ -87,7 +130,7 @@ function formatTableStep(data: unknown): ScriptedStep {
     kind: 'toolCall',
     call: {
       toolName: 'format_table',
-      arguments: { data: data as never, mode: 'new' },
+      arguments: { data: data as never, mode: 'new', title: 'Failed audits' },
       decision: {
         kind: 'approved',
         outcome: {
@@ -173,6 +216,87 @@ test.describe('format_table gutter: copy and export', () => {
     await expect(shell.locator(OPEN_OVERLAY)).toHaveCount(0);
   });
 
+  test('both message bands open Copy/Export; its data rows and side padding do not', async () => {
+    // The header band: the message's own surface above the table, outside the
+    // header row - the top-left padding the report highlighted.
+    await hoverUntilOpen(shell, shell.locator('.chat-table-message'), { x: 4, y: 4 });
+    await expect(shell.locator(COPY_BUTTON)).toBeVisible();
+    await expect(shell.locator(EXPORT_BUTTON)).toBeVisible();
+
+    // The heading above the table belongs to the same band.
+    await hoverUntilOpen(shell, shell.locator('.chat-table-message__title'));
+
+    // The footer band: the message's own surface below the table.
+    const message = await shell.locator('.chat-table-message').boundingBox();
+    const table = await shell.locator('.chat-table-message sp-table').boundingBox();
+    if (message === null || table === null) throw new Error('the scripted table did not lay out');
+    await hoverUntilOpen(shell, shell.locator('.chat-table-message'), {
+      x: message.width / 2,
+      y: message.height - 3,
+    });
+
+    // The side padding alongside the rows belongs to neither band: no popover.
+    await shell.mouse.move(1, 1);
+    await shell.mouse.move(message.x + 3, table.y + table.height / 2);
+    await expect(shell.locator(OPEN_OVERLAY)).toHaveCount(0);
+
+    // ...and neither does an ordinary data row, which is its cells' own
+    // affordance.
+    await shell.locator('.chat-table-message sp-table-body sp-table-row').first().hover();
+    await expect(shell.locator(OPEN_OVERLAY)).toHaveCount(0);
+  });
+
+  test('each band holds its position, and the two bands sit in different places', async () => {
+    await waitForTranscriptSettled(shell);
+    const head = await shell.locator('.chat-table-message sp-table-head').boundingBox();
+    const table = await shell.locator('.chat-table-message sp-table').boundingBox();
+    const total = await shell.locator('.chat-table-message__total').boundingBox();
+    if (head === null || table === null || total === null) {
+      throw new Error('the scripted table did not lay out');
+    }
+    const headCentre = { x: head.x + head.width / 2, y: head.y + head.height / 2 };
+
+    await expect
+      .poll(
+        async () => {
+          await shell.mouse.move(1, 1);
+          await shell.mouse.move(headCentre.x, headCentre.y);
+          return shell.locator(`${OPEN_OVERLAY} sp-action-button`).count();
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(2);
+    const headerBand = await popoverRect(shell);
+    if (headerBand === null) throw new Error('the popover did not open');
+
+    // One pixel above the header row is the message's own background, but still
+    // the header band: the buttons must stay exactly where they are - this is the
+    // reported jump when moving off the header.
+    await shell.mouse.move(headCentre.x, table.y - 1);
+    await expect.poll(async () => atAnchor(await popoverRect(shell), headerBand)).toBe(true);
+
+    // The footer band is a different affordance with its own position: on the
+    // total line, well below the header band.
+    await shell.mouse.move(total.x + total.width / 2, total.y + total.height / 2);
+    await expect
+      .poll(async () => (await popoverRect(shell))?.top ?? 0)
+      .toBeGreaterThan(headerBand.top + 5);
+    const footerBand = await popoverRect(shell);
+    if (footerBand === null) throw new Error('the footer popover did not open');
+    // The footer popover sits ON the total line (its bottom edge at the line's
+    // top), not somewhere over the rows above it.
+    expect(Math.abs(footerBand.bottom - total.y)).toBeLessThanOrEqual(8);
+
+    // ...and it holds still too: one pixel below the total line is the message's
+    // own background in the same band.
+    await shell.mouse.move(total.x + total.width / 2, total.y + total.height + 1);
+    await expect.poll(async () => atAnchor(await popoverRect(shell), footerBand)).toBe(true);
+
+    // A data row is not part of either band: the popover closes instead.
+    await shell.mouse.move(headCentre.x, table.y + table.height / 2);
+    await expect(shell.locator(OPEN_OVERLAY)).toHaveCount(0);
+  });
+
   test('Copy writes tab-separated text and an HTML table to the clipboard', async () => {
     // Clear the clipboard first: otherwise the poll below can pass on content
     // left there by an earlier run, before the new write lands.
@@ -246,5 +370,49 @@ test.describe('format_table gutter: copy and export', () => {
     // between an overlay and its trigger.
     expect(Math.abs(popover.right - table.right)).toBeLessThanOrEqual(16);
     expect(popover.left).toBeGreaterThan(table.left + (table.right - table.left) / 2);
+  });
+
+  // Last: it adds a second (total-less) table to this shared transcript, so the
+  // unscoped `.chat-table-message` selectors above must not run after it.
+  test('a table with no total line hangs the popover below its bottom edge, beside the pointer', async () => {
+    await scriptTurn(app, {
+      steps: [formatTableStep({ rows: [{ 'jcr:path': '/content/site/c' }] })],
+    });
+    await sendViaComposer(shell, '/search waldo');
+    await flushFake(app);
+    await expect(shell.locator('.chat-table-message')).toHaveCount(2, { timeout: 30_000 });
+
+    const message = shell.locator('.chat-table-message').last();
+    const table = message.locator('sp-table');
+    await expect(table).toBeVisible();
+    const messageBox = await message.boundingBox();
+    const tableBox = await table.boundingBox();
+    if (messageBox === null || tableBox === null) {
+      throw new Error('the second table did not lay out');
+    }
+
+    await waitForTranscriptSettled(shell);
+    // The message's own bottom padding: below the table, where a total line would
+    // have been.
+    const pointerY = messageBox.y + messageBox.height - 3;
+    await shell.mouse.move(1, 1);
+    await shell.mouse.move(messageBox.x + messageBox.width / 2, pointerY);
+    await expect(shell.locator(`${OPEN_OVERLAY} sp-action-button`)).toHaveCount(2, {
+      timeout: 15_000,
+    });
+
+    const rect = await popoverRect(shell);
+    if (rect === null) throw new Error('the popover did not open');
+    const tableBottom = tableBox.y + tableBox.height;
+    // Below the table's bottom edge - not up over its last row, whose height
+    // would make the gap between the pointer and the buttons unpredictable...
+    expect(rect.top).toBeGreaterThanOrEqual(tableBottom - 2);
+    // ...right-aligned to the table...
+    expect(Math.abs(rect.right - (tableBox.x + tableBox.width))).toBeLessThanOrEqual(16);
+    // ...and beside the pointer, so the distance does not depend on the rows.
+    expect(Math.abs(rect.top - pointerY)).toBeLessThanOrEqual(24);
+
+    await shell.mouse.move(1, 1);
+    await expect(shell.locator(OPEN_OVERLAY)).toHaveCount(0);
   });
 });
