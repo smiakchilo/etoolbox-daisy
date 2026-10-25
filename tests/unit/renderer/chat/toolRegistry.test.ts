@@ -88,11 +88,11 @@ describe('discovered renderers (the real src/tools folders)', () => {
       'environment_facts',
       'format_table',
       'http_fetch',
+      'load_skill',
       'memo',
       'memo_reflection',
       'page_audit',
       'page_read',
-      'skill',
       'skill_resource',
       'skill_script',
     ]);

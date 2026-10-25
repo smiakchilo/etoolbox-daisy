@@ -160,8 +160,8 @@ export interface ToolHost {
    */
   readonly pageAudit?: PageAuditRunner;
   /**
-   * The skills the application loaded (bundled and the user's): the one way a
-   * skill tool reaches a skill's body, its files or its scripts. The model
+   * The skills the application loaded (bundled and the user's): the one way the
+   * skill tools reach a skill's body, its files or its scripts. The model
    * names a skill and a path relative to it; the application resolves both and
    * never lets either leave the skill's own folder.
    */

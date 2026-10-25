@@ -142,7 +142,7 @@ export function toolCalls(journal: Journal, toolName?: string): readonly ToolCal
   return toolName === undefined ? all : all.filter((call) => call.toolName === toolName);
 }
 
-/** The `skill` calls, with the skill name read from the call's arguments. */
+/** The `load_skill` calls, with the skill name read from the call's arguments. */
 export function skillCalls(
   journal: Journal,
 ): readonly (ToolCallEntry & { readonly skillName: string | undefined })[] {

@@ -359,7 +359,7 @@ export function parseAgentChatHistoryListResult(candidate: unknown): AgentChatHi
  * name it is invoked by and the description shown beside it. Main reads these
  * from the application's own `resources/skills/<name>/SKILL.md` front matter and
  * never sends a skill's body - the renderer only ever re-emits the name in a
- * prompt, and the model loads the body through the runtime's `skill` tool.
+ * prompt, and the model loads the body through the runtime's `load_skill` tool.
  * `tableOnly` (present only when true) tells the transcript that the skill's
  * answer is one application-rendered table, so the model's prose is suppressed.
  */

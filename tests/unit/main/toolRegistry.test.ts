@@ -500,10 +500,10 @@ describe('discovered tools (the real src/tools folders)', () => {
       'environment_facts',
       'format_table',
       'http_fetch',
+      'load_skill',
       'memo',
       'page_audit',
       'page_read',
-      'skill',
       'skill_resource',
       'skill_script',
     ]);
@@ -519,10 +519,10 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:environment_facts',
       'custom:format_table',
       'custom:http_fetch',
+      'custom:load_skill',
       'custom:memo',
       'custom:page_audit',
       'custom:page_read',
-      'custom:skill',
       'custom:skill_resource',
       'custom:skill_script',
     ]);

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createFakeSkillHost } from '../../support/fakeSkillHost';
 import { type SkillSummary, type ToolHost, err, ok } from '../../../src/shared';
-import { tool as skillTool } from '../../../src/tools/skill/tool';
+import { tool as skillTool } from '../../../src/tools/load-skill/tool';
 import { tool as skillResourceTool } from '../../../src/tools/skill-resource/tool';
 import { tool as skillScriptTool } from '../../../src/tools/skill-script/tool';
 import { createCountingIdGenerator } from '../../support/testIds';
@@ -52,7 +52,7 @@ function successPayload(result: { ok: boolean; value?: unknown }): Record<string
 
 describe('skill manifests', () => {
   it.each([
-    ['skill', skillTool],
+    ['load_skill', skillTool],
     ['skill_resource', skillResourceTool],
     ['skill_script', skillScriptTool],
   ] as const)(
@@ -100,7 +100,7 @@ describe('skill executor', () => {
     const payload = successPayload(await execute({ name: 'demo' }, callContext));
 
     expect(payload).toMatchObject({
-      operation: 'skill',
+      operation: 'load_skill',
       skill: 'demo',
       activatedBy: 'model',
       source: 'user',

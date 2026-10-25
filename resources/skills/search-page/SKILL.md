@@ -39,7 +39,7 @@ Never answer with templates or components: the table must list **pages**.
 **A value that starts with `/`** is already a template path - go to step 3.
 
 **Anything else is a name or title.** Load the `page-template` skill with the
-`skill` tool and follow it: it lists the templates under `/conf` and `/apps`,
+`load_skill` tool and follow it: it lists the templates under `/conf` and `/apps`,
 keeps the project's, matches the phrase and asks you when the choice is
 ambiguous. Use the path (or paths) it gives you. Never search for the phrase as
 text and never invent a path.

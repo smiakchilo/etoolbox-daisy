@@ -15,7 +15,7 @@ import {
 } from '../../shared';
 
 /**
- * The `skill` tool, self-contained: loads a skill's instructions into the
+ * The `load_skill` tool, self-contained: loads a skill's instructions into the
  * conversation. It replaces the agent runtimes' own `skill` tool, so a skill is
  * loaded the same way for every agent, and the result tells the model which of
  * the skill's own files it can reach with `skill_resource` / `skill_script`.

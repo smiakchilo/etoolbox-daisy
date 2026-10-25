@@ -24,7 +24,7 @@ import { mapOpenRouterUsage, readUsageTotals } from './usageDiagnostics';
  * OpenRouter's {@link AgentRuntime}: turns the host's neutral services
  * (connection, proxy fetcher, toolkit, model preferences, service install) into
  * an SDK-backed `AgentService`. Everything OpenRouter-specific - the API key,
- * the model catalogue, the skill tool - stays behind this file.
+ * the model catalogue, the `load_skill` tool - stays behind this file.
  *
  * Unlike Copilot there is no child process to start or stop; the client is a
  * stateless HTTP wrapper, so "recycling" just rebuilds it with a fresh key /

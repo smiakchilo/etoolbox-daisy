@@ -162,7 +162,7 @@ function skillRequested(sequence: number, skillName: string): AgentEvent {
     chatId,
     sequence,
     toolCallId: skillToolCallId,
-    toolName: 'skill',
+    toolName: 'load_skill',
     arguments: { name: skillName },
   });
 }
@@ -182,7 +182,7 @@ function skillResult(sequence: number, data: Record<string, unknown>): AgentEven
 function modelSkillResult(sequence: number, skillName: string): AgentEvent {
   return skillResult(sequence, {
     ok: true,
-    operation: 'skill',
+    operation: 'load_skill',
     skill: skillName,
     activatedBy: 'model',
     resultType: 'success',
@@ -193,7 +193,7 @@ function modelSkillResult(sequence: number, skillName: string): AgentEvent {
 function userSkillResult(sequence: number, skillName: string): AgentEvent {
   return skillResult(sequence, {
     ok: true,
-    operation: 'skill',
+    operation: 'load_skill',
     skill: skillName,
     activatedBy: 'user',
     resultType: 'success',
@@ -275,7 +275,7 @@ describe('createTranscriptStore', () => {
         { kind: 'toolCall', toolCallId: skillToolCallId },
       ]);
       expect(store.toolCallFor(skillToolCallId)).toMatchObject({
-        toolName: 'skill',
+        toolName: 'load_skill',
         status: { kind: 'succeeded' },
       });
     });
@@ -305,7 +305,7 @@ describe('createTranscriptStore', () => {
 
       expect(store.items()).toContainEqual({ kind: 'toolCall', toolCallId: skillToolCallId });
       expect(store.toolCallFor(skillToolCallId)).toMatchObject({
-        toolName: 'skill',
+        toolName: 'load_skill',
         status: { kind: 'failed' },
       });
     });
@@ -389,7 +389,7 @@ describe('createTranscriptStore', () => {
         { kind: 'toolCall', toolCallId: skillToolCallId },
         { kind: 'message', messageId, turnId },
       ]);
-      expect(store.toolCallFor(skillToolCallId)).toMatchObject({ toolName: 'skill' });
+      expect(store.toolCallFor(skillToolCallId)).toMatchObject({ toolName: 'load_skill' });
     });
   });
 

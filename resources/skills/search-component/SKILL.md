@@ -186,7 +186,7 @@ The filters this skill offers:
 | another page property | `{ "property": "<content-node property>", "value": "<value>" }` |
 
 - **A template named by title or name is not a path.** Load the `page-template`
-  skill with the `skill` tool and follow it to resolve the phrase; never invent a
+  skill with the `load_skill` tool and follow it to resolve the phrase; never invent a
   path and never search for the title as text. A value that starts with `/` is
   already the path.
 - Several templates are several `cq:template` filters that share a `group` label

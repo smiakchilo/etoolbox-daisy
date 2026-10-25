@@ -247,7 +247,7 @@ test.describe('deterministic search tables', () => {
     // An explicit `/name` turn names the skill in the user's own message, so the
     // controller's load marker stays out of the transcript (only a load the
     // model chose gets a billet).
-    await expect(shell.locator('.chat-tool-call').filter({ hasText: 'skill' })).toHaveCount(0);
+    await expect(shell.locator('.chat-tool-call').filter({ hasText: 'load_skill' })).toHaveCount(0);
 
     // The one-click action is visible; clicking it resumes the turn.
     await expect(shell.locator('.chat-ask__action')).toHaveText(/\S/);
@@ -341,7 +341,7 @@ test.describe('deterministic search tables', () => {
   test('a skill the model chose on its own (no /name) hides its prose, keeps the table and shows the load', async () => {
     // A natural-language prompt: `isDeterministicTablePrompt` (driven by the skills' `table-only` flag) is false at send,
     // so the prose can only be suppressed retroactively, by the turn's own
-    // `skill` call. The leading delta proves the message item is removed even
+    // `load_skill` call. The leading delta proves the message item is removed even
     // though it was created before the skill was loaded. The load itself is a
     // billet, so a reader can tell the model reached for a skill on its own.
     const AUTO_PATH = '/content/wknd/auto-inferred-only';
@@ -356,7 +356,7 @@ test.describe('deterministic search tables', () => {
         {
           kind: 'toolCall',
           call: {
-            toolName: 'skill',
+            toolName: 'load_skill',
             arguments: { name: 'search' },
             decision: { kind: 'approved', outcome: { ok: true, data: {} } },
           },
@@ -381,7 +381,7 @@ test.describe('deterministic search tables', () => {
     // search turn leaks prose around its table.
     await expect(shell.locator('.chat-message--assistant:not(.chat-table-message)')).toHaveCount(0);
     // The model-chosen load is visible as its own billet, naming the skill.
-    const skillBillets = shell.locator('.chat-tool-call').filter({ hasText: 'skill' });
+    const skillBillets = shell.locator('.chat-tool-call').filter({ hasText: 'load_skill' });
     await expect(skillBillets).toHaveCount(1);
     await expect(skillBillets.locator('.chat-tool-call__summary')).toHaveText('search');
   });

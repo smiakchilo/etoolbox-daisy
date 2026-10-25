@@ -151,7 +151,7 @@ export interface AgentChatControllerDeps {
    *
    * Only the text the model reads is rewritten - the display prompt and the
    * journal always keep the user's own text (see `sendMessage` below) - and a
-   * loaded skill is journaled as a synthetic `skill` call so "was it loaded?"
+   * loaded skill is journaled as a synthetic `load_skill` call so "was it loaded?"
    * is answerable from the log.
    */
   readonly resolveSkillPrompt?: (

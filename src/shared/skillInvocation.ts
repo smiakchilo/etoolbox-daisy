@@ -12,11 +12,11 @@
  */
 
 /**
- * The model-facing name of the app's `skill` tool (`src/tools/skill/`), which
- * loads a skill the same way for every agent. The transcript store treats a
- * call to it as internal plumbing rather than a user-visible tool call.
+ * The model-facing name of the app's `load_skill` tool (`src/tools/load-skill/`),
+ * which loads a skill the same way for every agent. The transcript store treats
+ * a call to it as internal plumbing rather than a user-visible tool call.
  */
-export const SKILL_TOOL_NAME = 'skill';
+export const SKILL_TOOL_NAME = 'load_skill';
 
 /** One bundled skill as the model sees it: the name to load and why. */
 export interface SkillCatalogueEntry {

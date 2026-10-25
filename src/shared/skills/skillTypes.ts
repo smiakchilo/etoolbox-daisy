@@ -5,7 +5,7 @@ import type { Result } from '../result';
  * The skill subsystem's shared vocabulary (docs/skill-subsystem-plan.md). A
  * skill is a folder with a `SKILL.md` and optional `references/` and
  * `scripts/`. Main owns reading them (`src/main/skills/`); the three skill
- * tools (`skill`, `skill_resource`, `skill_script`) and the prompt composition
+ * tools (`load_skill`, `skill_resource`, `skill_script`) and the prompt composition
  * see only this module's types, through `ToolHost.skills`.
  */
 

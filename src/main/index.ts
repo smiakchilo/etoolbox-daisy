@@ -1191,7 +1191,7 @@ if (!gotSingleInstanceLock) {
               // activation text; the user's own text is kept for the transcript and
               // the journal by the controller.
               // The skill's memos ride inside its activation, as with the
-              // `skill` tool.
+              // `load_skill` tool.
               resolveSkillPrompt: async (prompt) => {
                 const token = readLeadingSkillToken(prompt);
                 const memos = token === undefined ? '' : await memoHost.skillMemos(token.name);

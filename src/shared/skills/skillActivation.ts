@@ -27,8 +27,8 @@ function describeFiles(files: readonly SkillFileEntry[]): string {
 }
 
 /**
- * The text a skill is loaded as, whether the model called `skill` or the user
- * typed `/name`: the body without its front matter, introduced by a header that
+ * The text a skill is loaded as, whether the model called `load_skill` or the
+ * user typed `/name`: the body without its front matter, introduced by a header that
  * says which of the skill's own files exist and how to reach them. A skill's
  * files are reachable only through the two tools, never by a path, so the
  * header is what keeps the model from guessing at the filesystem.
@@ -67,7 +67,7 @@ export function renderSkillActivation(activation: SkillActivation, memos = ''): 
 
 /**
  * The line that follows an explicitly loaded skill in a `/name` prompt, so the
- * model does not call `skill` for what it already holds.
+ * model does not call `load_skill` for what it already holds.
  */
 export function renderSkillAlreadyLoadedNote(name: string): string {
   return `The "${name}" skill above is already loaded - do not call the \`${SKILL_TOOL_NAME}\` tool for it.`;
@@ -86,7 +86,7 @@ export interface SkillPromptResolution {
 /**
  * Rewrites a prompt that begins with a *known* `/skillname` into the text the
  * model actually receives: the skill's activation block (the very text the
- * `skill` tool would return), the line saying it is already loaded, and - when
+ * `load_skill` tool would return), the line saying it is already loaded, and - when
  * the user typed more - that text framed as the skill's input. The model never
  * sees the literal `/skillname` token, and a bare appended word is otherwise
  * read as an unrelated remark (observed live, 2026-10-06: `/search Waldo` loaded

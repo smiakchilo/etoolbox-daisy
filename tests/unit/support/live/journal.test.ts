@@ -97,7 +97,7 @@ describe('queries', () => {
         arguments: { path: '/x' },
         result: NOT_FOUND,
       }),
-      ...toolRecords(2_300, { id: 'call-c', name: 'skill', arguments: { name: 'search' } }),
+      ...toolRecords(2_300, { id: 'call-c', name: 'load_skill', arguments: { name: 'search' } }),
       assistantRecord(2_400, ''),
       assistantRecord(2_500, 'the answer'),
       turnSummaryRecord(2_600),

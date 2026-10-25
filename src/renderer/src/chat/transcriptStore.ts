@@ -432,13 +432,13 @@ export function createTranscriptStore(
   }
 
   /**
-   * Decides, on settle, whether a `skill` call becomes a visible billet.
+   * Decides, on settle, whether a `load_skill` call becomes a visible billet.
    *
    * A skill the model chose to load is real work: a reader investigating why a
    * session went wrong must be able to tell whether one was loaded at all, and
    * which. An explicit `/name` prompt is different - the user's own message
    * already names the skill - so the controller records it as a synthetic
-   * `skill` call whose result says `activatedBy: 'user'` (see
+   * `load_skill` call whose result says `activatedBy: 'user'` (see
    * `agentChatController.ts`), and that call stays out of the transcript.
    *
    * The item is created here rather than on `requested` because the two are
@@ -463,14 +463,14 @@ export function createTranscriptStore(
   /**
    * Marks `turnId` as text-suppressed, removing any assistant `message` item it
    * has already created. Idempotent: a second call (the pane's `markTurnSuppressed`
-   * followed by the turn's own `skill` call, say) is a no-op.
+   * followed by the turn's own `load_skill` call, say) is a no-op.
    */
   function suppressTurn(turnId: TurnId): void {
     if (suppressedTurns.has(turnId)) return;
     suppressedTurns.add(turnId);
     // Suppression is normally recorded before the turn's first event (the pane
     // marks an explicit `/search` on send), but the model choosing a skill on
-    // its own can only be known from its `skill` call mid-turn. Any message item
+    // its own can only be known from its `load_skill` call mid-turn. Any message item
     // already created for this turn is removed here so the invariant - a
     // suppressed turn has no assistant message - holds regardless of ordering.
     for (let index = order.length - 1; index >= 0; index -= 1) {

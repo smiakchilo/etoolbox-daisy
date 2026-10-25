@@ -11,7 +11,7 @@ import {
 } from '../../../shared';
 
 /**
- * `skill`'s transcript composition: the collapsed line names the skill, and the
+ * `load_skill`'s transcript composition: the collapsed line names the skill, and the
  * expanded rows say where it came from and what it brought with it. The source
  * and counts come from the succeeded payload, so they appear once the call has
  * completed. A model-chosen load is shown as this billet; the controller's

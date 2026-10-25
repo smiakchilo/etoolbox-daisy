@@ -440,7 +440,7 @@ src/agents/<name>/
     Report the model and the usage per the "Diagnostics and usage contract"
     above (`createModelObserver`, `buildModelUsage`): the user reads those totals.
 6. **Hardening is per-agent.** Copilot's `toolPolicy.ts` denies every built-in
-   tool except the AEM tools and `skill`; a new SDK must get an equivalent
+   tool except the AEM tools and `load_skill`; a new SDK must get an equivalent
    deny-by-default policy (and equivalent verification, cf. AGENTS.md §8 skill
    facts) *before* it may see a tool. Read-only against AEM stays absolute (§7.4).
 7. Keep all SDK-specific paths robust to **code-splitting**: agent code lives in
@@ -1446,7 +1446,7 @@ the one template-name-to-path resolution, loaded by `search-page` and
 `docs/skill-subsystem-plan.md`). No SDK ever sees a skill directory: Copilot's own
 skill loading is off and its built-in `skill` tool is replaced (every app tool sets
 `overridesBuiltInTool`), OpenRouter has no skill code of its own. Three ordinary
-tool plugins carry it — `skill` (`{ name }`: loads a skill's body), `skill_resource`
+tool plugins carry it — `load_skill` (`{ name }`: loads a skill's body), `skill_resource`
 (`{ skill, path, startLine? }`: reads a file or lists a folder of the skill) and
 `skill_script` (`{ skill, script, input? }`: runs a `scripts/**/*.js` module) —
 each through the new `ToolHost.skills: SkillHost`
@@ -1534,16 +1534,16 @@ and user) with its technical `description` — onto the session instructions
 `toolkit.instructions` in `src/main/index.ts` once the store has loaded), so
 the model can choose a skill from its description the way other harnesses do;
 `user-invocable: false` skills are in that catalogue too (they are the
-agent-only ones). Loading is the `skill` tool call (`SKILL_TOOL_NAME`), and
+agent-only ones). Loading is the `load_skill` tool call (`SKILL_TOOL_NAME`), and
 `transcriptStore.ts` shows it as a billet when the model chose it - so a reader
 (or an investigation into a session that went wrong) can tell whether a skill
 was loaded at all, and which one - while using it to suppress a search skill's
-prose (below). That call's billet is the existing `skill` renderer's (the
-collapsed summary is the bare skill name - the header already says `skill` -
+prose (below). That call's billet is the existing `load_skill` renderer's (the
+collapsed summary is the bare skill name - the header already says `load_skill` -
 expanding to Source / Files / Scripts); a *failed* load is shown
 too, as a FAILED billet. An explicit `/name` is resolved by `resolveSkillPrompt`
 (`src/shared/skills/skillActivation.ts`), which frames the input and the
-controller journals a synthetic `skill` call pair after a successful send; its
+controller journals a synthetic `load_skill` call pair after a successful send; its
 result says `activatedBy: 'user'`, which keeps it out of the transcript (the
 user's own message already names the skill). The three skill tools' billets
 read `<skill>` / `Read <skill>/<path>` /
@@ -1600,7 +1600,7 @@ live (`docs/compatibility.md` §11.6). The application suppresses the model's ow
 `/semantic-search`, `/search-component` or `/search-page` turn two ways: at send for a turn whose
 prompt invokes one of them (`isDeterministicTablePrompt` in
 `src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model loads
-one on its own (`transcriptStore.ts`'s `skill` handling), so the table is the
+one on its own (`transcriptStore.ts`'s `load_skill` handling), so the table is the
 whole answer. See the `format_table` bullet in the tools section above and
 `docs/verification.md` "Skills are auto-inferred from their descriptions ...
 (2026-10-11)" and "`search-component`: the component-instance shape ... (2026-10-13)".
@@ -1640,7 +1640,7 @@ arrived, so the word "rules" is used throughout.)
 | `project-rules.md` | The frame around a project's rules, sent on the model prompt | `{{project}}` and `{{rules}}` - each exactly once (`renderProjectRules`) |
 | `project-rules-ended.md` | The one-line note sent when a chat moves from a project with rules to one without | none |
 | `memos.md` | The frame around the generic memos plus the memo-writing guidance, sent on a conversation's first prompt | `{{memos}}` (`renderGenericMemos`) |
-| `skill-memos.md` | The frame around a skill's memos, appended to the `skill` tool's result | `{{memos}}` (`renderSkillMemos`) |
+| `skill-memos.md` | The frame around a skill's memos, appended to the `load_skill` tool's result | `{{memos}}` (`renderSkillMemos`) |
 | `memo-reflection.md` | The quiet reflection prompt sent after a turn with failure signals | `{{signals}}` (`renderReflectionPrompt`) |
 
 `session.md` and `skills.md` carry the read-only policy, so `loadRuleResources`
@@ -1720,7 +1720,7 @@ the contract is `src/shared/memos/` (`MemoHost`, `MEMO_TRIGGERS`, limits).
   stays enabled (`ComposerStatus.reflecting`) and a user send aborts it quietly.
 - **Loading**, fresh from disk on use: generic memos ride on a conversation's first
   prompt and after an open/resume (`memos.md`, newest first within 16 KB); a
-  skill's memos are appended to the `skill` tool's result (`skill-memos.md`, 8 KB),
+  skill's memos are appended to the `load_skill` tool's result (`skill-memos.md`, 8 KB),
   for a model-chosen load and an explicit `/name` alike. Over-budget memos are
   silently skipped (notice deferred, `docs/backlog.md` "Memos").
 - **The stored-memo notice** is the pane's sticky `showNotice` row: "Memo was
@@ -3319,9 +3319,9 @@ catch this — only real OS input can.
 **Skills are loaded by the app, not the SDK (supersedes "skills are not
 auto-injected").** Earlier the Copilot runtime loaded skill directories and
 needed exactly one built-in tool named `skill`; that path is gone. The app's own
-`skill`/`skill_resource`/`skill_script` tools serve both agents (see
+`load_skill`/`skill_resource`/`skill_script` tools serve both agents (see
 `resources/skills/` above). Proven live 2026-10-17 (Copilot, `mai-code-1.1-flash`):
-the app's `skill` tool (argument `name`) is the one the model calls - the SDK
+the app's `load_skill` tool (argument `name`) is the one the model calls - the SDK
 built-in never runs, so `overridesBuiltInTool` replaces it - and a `skill-selftest`
 turn loaded the skill, read its file and ran its script, in both an explicit
 `/name` turn and an inferred one (`docs/verification/followons-2026-10.md`). The

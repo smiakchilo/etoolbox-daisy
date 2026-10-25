@@ -34,7 +34,7 @@ export function expectToolNotCalled(journal: Journal, toolName: string): void {
   }
 }
 
-/** The `skill` call that loaded `skillName`; throws when the model never loaded it. */
+/** The `load_skill` call that loaded `skillName`; throws when the model never loaded it. */
 export function expectSkillLoaded(journal: Journal, skillName: string): ToolCallEntry {
   const calls = skillCalls(journal).filter((call) => call.skillName === skillName);
   const [first] = calls;

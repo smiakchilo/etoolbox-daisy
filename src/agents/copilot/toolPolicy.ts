@@ -221,8 +221,8 @@ type HardenedResumeOverrides = Omit<
 
 /**
  * The runtime's own skill machinery stays off (`enableSkills: false`): a skill
- * is loaded by the application's `skill` tool like any other app tool, listed in
- * `availableTools` as `custom:skill`, so no runtime-side skill directory exists.
+ * is loaded by the application's `load_skill` tool like any other app tool, listed in
+ * `availableTools` as `custom:load_skill`, so no runtime-side skill directory exists.
  */
 function buildHardenedConfig<TOverrides extends object>(
   policy: HardenedToolPolicy,

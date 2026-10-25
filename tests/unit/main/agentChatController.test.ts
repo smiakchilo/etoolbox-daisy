@@ -1482,7 +1482,7 @@ describe('agentChatController skill prompt rewrite', () => {
     await controller.sendMessage({ chatId, prompt: '/search what tool?' });
 
     expect(received.find((event) => event.type === 'tool.call.requested')).toMatchObject({
-      toolName: 'skill',
+      toolName: 'load_skill',
       arguments: { name: 'search' },
     });
     expect(received.find((event) => event.type === 'tool.result')).toMatchObject({

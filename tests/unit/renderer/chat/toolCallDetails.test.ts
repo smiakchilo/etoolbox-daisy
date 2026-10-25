@@ -285,11 +285,11 @@ describe('describeToolCall - browser_navigate', () => {
 
 describe('describeToolCall - skill tools', () => {
   it('skill: names the skill while pending and adds source and counts once it succeeded', () => {
-    const pending = describeToolCall('skill', { name: 'demo' });
+    const pending = describeToolCall('load_skill', { name: 'demo' });
     const done = describeToolCall(
-      'skill',
+      'load_skill',
       { name: 'demo' },
-      { operation: 'skill', skill: 'demo', source: 'user', fileCount: 4, scriptCount: 2 },
+      { operation: 'load_skill', skill: 'demo', source: 'user', fileCount: 4, scriptCount: 2 },
     );
 
     expect(pending.summary).toBe('demo');
@@ -301,14 +301,14 @@ describe('describeToolCall - skill tools', () => {
 
   it('skill: omits the scripts row when the skill has none and tells built-in from user', () => {
     const user = describeToolCall(
-      'skill',
+      'load_skill',
       { name: 'demo' },
-      { operation: 'skill', skill: 'demo', source: 'user', fileCount: 1, scriptCount: 0 },
+      { operation: 'load_skill', skill: 'demo', source: 'user', fileCount: 1, scriptCount: 0 },
     );
     const bundled = describeToolCall(
-      'skill',
+      'load_skill',
       { name: 'demo' },
-      { operation: 'skill', skill: 'demo', source: 'bundled', fileCount: 1, scriptCount: 0 },
+      { operation: 'load_skill', skill: 'demo', source: 'bundled', fileCount: 1, scriptCount: 0 },
     );
 
     expect(user.parameters).toHaveLength(3);
@@ -370,7 +370,7 @@ describe('describeToolCall - skill tools', () => {
   });
 
   it('falls back to the generic rows when a skill tool call has no usable arguments', () => {
-    for (const name of ['skill', 'skill_resource', 'skill_script']) {
+    for (const name of ['load_skill', 'skill_resource', 'skill_script']) {
       const details = describeToolCall(name, { unexpected: 1 });
       expect(details.parameters.length).toBeGreaterThan(0);
     }

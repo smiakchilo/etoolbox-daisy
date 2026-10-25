@@ -9,13 +9,13 @@ import type { ToolExecutor } from '../../shared';
  * reaches the service only through these structural interfaces.
  */
 
-/** One tool the model may call, mapped from the host toolkit (plus the skill tool). */
+/** One tool the model may call, mapped from the host toolkit (plus the `load_skill` tool). */
 export interface ToolSpec {
   readonly name: string;
   readonly description: string;
   /**
    * The tool's model-facing JSON Schema parameters (the host's
-   * `ToolDescriptor.parameters`, or a hand-written schema for the skill tool).
+   * `ToolDescriptor.parameters`, or a hand-written schema for the `load_skill` tool).
    */
   readonly parameters: unknown;
   readonly executor: ToolExecutor;
