@@ -94,6 +94,8 @@ function makeHost(): AgentHost {
   };
 }
 
+type AddonOutcome = Awaited<ReturnType<AgentHost['resolveAddonFile']>>;
+
 describe('createCopilotRuntime login', () => {
   it('reports the CLI add-on download as sign-in progress', async () => {
     const reportAuthProgress = vi.fn();
@@ -121,6 +123,65 @@ describe('createCopilotRuntime login', () => {
       status: 'failed',
       message: 'not installed',
     });
+  });
+
+  it('rejects a second sign-in while the component is still downloading', async () => {
+    let settle: ((outcome: AddonOutcome) => void) | undefined;
+    let downloads = 0;
+    const host: AgentHost = {
+      ...makeHost(),
+      resolveAddonFile: () => {
+        downloads += 1;
+        if (downloads > 1) return Promise.resolve({ ok: false, error: { message: 'no cli' } });
+        return new Promise<AddonOutcome>((resolve) => {
+          settle = resolve;
+        });
+      },
+    };
+    const runtime = createCopilotRuntime(host);
+
+    const first = runtime.login?.(undefined);
+    await expect(runtime.login?.(undefined)).resolves.toEqual({
+      status: 'failed',
+      message: 'A login is already in progress',
+    });
+
+    settle?.({ ok: false, error: { message: 'the download failed' } });
+    await expect(first).resolves.toEqual({ status: 'failed', message: 'the download failed' });
+
+    // The claim is released once the first attempt settles, so a later click is
+    // not refused for ever.
+    await expect(runtime.login?.(undefined)).resolves.toEqual({
+      status: 'failed',
+      message: 'no cli',
+    });
+  });
+
+  it('aborts the component download when the sign-in is cancelled', async () => {
+    let downloadSignal: AbortSignal | undefined;
+    const host: AgentHost = {
+      ...makeHost(),
+      resolveAddonFile: (_id, _file, options) =>
+        new Promise<AddonOutcome>((resolve) => {
+          const signal = options?.signal;
+          downloadSignal = signal;
+          signal?.addEventListener(
+            'abort',
+            () => resolve({ ok: false, error: { message: 'cancelled' } }),
+            { once: true },
+          );
+        }),
+    };
+    const runtime = createCopilotRuntime(host);
+
+    const attempt = runtime.login?.(undefined);
+    // The download is requested synchronously, so the signal is already known.
+    expect(downloadSignal?.aborted).toBe(false);
+
+    runtime.cancelLogin?.();
+
+    expect(downloadSignal?.aborted).toBe(true);
+    await expect(attempt).resolves.toEqual({ status: 'cancelled' });
   });
 });
 

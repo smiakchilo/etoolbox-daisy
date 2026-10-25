@@ -13,11 +13,17 @@ const appTsconfigs = [
   './tsconfig.shared.json',
 ];
 
-// Rule 1 (all app code except agent folders, `src/agents/<name>/`): the
-// provider SDKs may only be imported from an agent folder, per
-// docs/implementation-plan.md ("Import the SDK only through the agent adapter").
-// Lighthouse and Puppeteer belong to the page-audit add-on for the same reason:
-// they are downloaded on first use, not part of the application.
+// Rule 1 (all app code except agent and add-on folders, `src/agents/<name>/`
+// and `src/addons/<name>/`): the provider SDKs may only be imported from an
+// agent folder, per docs/implementation-plan.md ("Import the SDK only through
+// the agent adapter"). Lighthouse and Puppeteer belong to the page-audit add-on
+// for the same reason: they are downloaded on first use, not part of the
+// application.
+//
+// The add-on pattern is folded in here rather than given its own blanket config
+// block: in ESLint's flat config a later `no-restricted-imports` *replaces* an
+// earlier one, so a separate `src/**` block would silently drop the
+// shared-purity and tool/agent plugin boundaries those blocks install.
 const sdkOutsideAgentRestriction = [
   'error',
   {
@@ -50,18 +56,6 @@ const sdkOutsideAgentRestriction = [
           'puppeteer-core belongs to the page-audit add-on (src/addons/page-audit); the app loads it from there.',
       },
     ],
-  },
-];
-
-// Rule 1b (`src/**` except add-on folders): nothing in the application may
-// import an add-on. An add-on is a downloaded plugin, discovered only through
-// its `addon.json`, and the TypeScript project references enforce the same
-// boundary - the main/renderer/preload programs do not reference
-// `tsconfig.addons.json`.
-const appAddonImportRestriction = [
-  'error',
-  {
-    paths: sdkOutsideAgentRestriction[1].paths,
     patterns: [
       {
         regex: '^(\\.\\./)+addons/',
@@ -130,6 +124,11 @@ const sharedPurityRestriction = [
       {
         group: ['node:*'],
         message: 'src/shared must not import Node built-ins.',
+      },
+      {
+        regex: '^(\\.\\./)+addons/',
+        message:
+          'An add-on is a downloaded plugin: only its own folder may import it (use the add-on manager).',
       },
     ],
   },
@@ -294,14 +293,6 @@ export default tseslint.config(
     rules: {
       'no-restricted-imports': toolTopLevelRestriction,
       'no-restricted-globals': sharedGlobalsRestriction,
-    },
-  },
-  {
-    // Nothing in the application may import a downloaded add-on.
-    files: ['src/**/*.ts'],
-    ignores: ['src/addons/**'],
-    rules: {
-      'no-restricted-imports': appAddonImportRestriction,
     },
   },
   {

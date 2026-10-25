@@ -53,6 +53,10 @@ type ReasoningEffort = NonNullable<SessionConfig['reasoningEffort']>;
 
 export function createCopilotRuntime(host: AgentHost): AgentRuntime {
   let inFlightLogin: LoginProcessHandle | undefined;
+  /** True from the instant a sign-in starts until it settles, whatever stage it reached. */
+  let loginActive = false;
+  /** Aborts the sign-in component's download, so `cancelLogin` reaches every stage. */
+  let loginAbort: AbortController | undefined;
 
   const startRuntime = async (client: CopilotClient | undefined): Promise<void> => {
     if (client === undefined) return;
@@ -107,33 +111,49 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
   });
 
   const login = async (settings: AppSettings | undefined): Promise<LoginOutcome> => {
-    if (inFlightLogin !== undefined) {
+    // Claimed before the first await. The signing-in component is a ~138 MB
+    // download on first use, so a second click during it must not start a
+    // second flow - and `cancelLogin` must be able to reach that download.
+    if (loginActive) {
       return { status: 'failed', message: 'A login is already in progress' };
     }
-    // `copilot.exe` is a binary add-on: it is downloaded on first use, not part
-    // of the installation (it is ~138 MB for a sign-in that happens once).
-    const reportProgress = (fraction: number): void => {
-      host.reportAuthProgress?.(
-        meta.id,
-        `Downloading sign-in component ${String(Math.round(fraction * 100))}%`,
-      );
-    };
-    const resolvedCli = await host.resolveAddonFile('copilot-cli', 'cli', {
-      onProgress: reportProgress,
-    });
-    if (!resolvedCli.ok) return { status: 'failed', message: resolvedCli.error.message };
-    const cliExePath = resolvedCli.value;
-    const copilotHomeDir = host.stateDirectory;
-    mkdirSync(copilotHomeDir, { recursive: true });
-    // The sign-in child reaches GitHub through the proxy the user selected for
-    // the runtime, rather than bypassing it.
-    const { proxy } = await host.resolveConnection(meta.id, settings);
-    const handle = startWebFlowLogin(
-      cliExePath,
-      proxy === undefined ? { copilotHomeDir } : { copilotHomeDir, proxy },
-    );
-    inFlightLogin = handle;
+    loginActive = true;
+    const abort = new AbortController();
+    loginAbort = abort;
     try {
+      // `copilot.exe` is a binary add-on: it is downloaded on first use, not part
+      // of the installation (it is ~138 MB for a sign-in that happens once).
+      const reportProgress = (fraction: number): void => {
+        host.reportAuthProgress?.(
+          meta.id,
+          `Downloading sign-in component ${String(Math.round(fraction * 100))}%`,
+        );
+      };
+      const resolvedCli = await host.resolveAddonFile('copilot-cli', 'cli', {
+        onProgress: reportProgress,
+        signal: abort.signal,
+      });
+      if (!resolvedCli.ok) {
+        // The add-on manager reports an aborted download as a `cancelled`
+        // failure without a reason, so the abort is recognised here instead.
+        return abort.signal.aborted
+          ? { status: 'cancelled' }
+          : { status: 'failed', message: resolvedCli.error.message };
+      }
+      const cliExePath = resolvedCli.value;
+      const copilotHomeDir = host.stateDirectory;
+      mkdirSync(copilotHomeDir, { recursive: true });
+      // The sign-in child reaches GitHub through the proxy the user selected for
+      // the runtime, rather than bypassing it.
+      const { proxy } = await host.resolveConnection(meta.id, settings);
+      // Cancelled while the CLI was being prepared: do not spawn a window the
+      // user already dismissed.
+      if (abort.signal.aborted) return { status: 'cancelled' };
+      const handle = startWebFlowLogin(
+        cliExePath,
+        proxy === undefined ? { copilotHomeDir } : { copilotHomeDir, proxy },
+      );
+      inFlightLogin = handle;
       const outcome = await handle.outcome;
       if (outcome.status === 'success') {
         // Fail closed even on a reported success: if the CLI ever wrote
@@ -147,6 +167,8 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
       return outcome;
     } finally {
       inFlightLogin = undefined;
+      loginAbort = undefined;
+      loginActive = false;
     }
   };
 
@@ -234,6 +256,8 @@ export function createCopilotRuntime(host: AgentHost): AgentRuntime {
     getAuthPresence: () => getCopilotAuthPresence(host.stateDirectory),
     login,
     cancelLogin: () => {
+      // Reaches every stage: the add-on download as well as the spawned CLI.
+      loginAbort?.abort();
       inFlightLogin?.cancel();
     },
     logout,
