@@ -62,6 +62,11 @@
   max-inline-size: none;
   flex: 0 0 auto;
   margin: 0;
+  /* The containing block for the attention wash (`attention.css` inset its
+     `::after` into the row) - the same role `position: relative` plays on the
+     composer frame. The row's `overflow: hidden` above then clips the wash to
+     the strip's own box. */
+  position: relative;
   /* The component itself does not set this, so `min-block-size` would otherwise
      be measured on the *content* box: 8px padding above and below would push a
      single-line row to 64px instead of the intended 48px pinned height. */
@@ -129,6 +134,63 @@
     animation: none;
     --mod-alert-banner-min-height: var(--spectrum-alert-banner-minimum-height, 48px);
   }
+}
+
+/*
+ * The region a blocking confirmation owns.
+ *
+ * `settings/statusBanner.ts` puts this class on the region its prompt blocks -
+ * the browser pane's page-view slot, so the Settings panel, the History panel,
+ * the hosts picker or the home veil behind the prompt - for as long as the
+ * prompt is showing, and removes it when the row is answered or cancelled. The
+ * accompanying `inert` attribute, not this class, is what actually blocks: it
+ * takes the whole subtree out of pointer hit-testing, the tab order and the
+ * accessibility tree in one declarative switch, so every control behind the
+ * prompt (rows, combos, close cross, scrollbars) is unreachable without
+ * disabling any of them individually.
+ *
+ * This class is therefore the *visual* half only: a **white veil** laid over
+ * the region, which fades everything under it - text, glyphs, row separators -
+ * to the weight of disabled content while the surface itself stays light.
+ *
+ * Deliberately not `sp-underlay`'s dark scrim (`--spectrum-overlay-opacity`):
+ * the prompt row is a dark neutral strip, and a 40% black veil turned the panel
+ * behind it into near the same mid-gray, so the question and the blocked
+ * content blended into one another. A light veil does the opposite - the
+ * content recedes, the dark strip stands out, and because the region's own
+ * surfaces are already near-white the veil reads as "this faded off" rather
+ * than as a second panel painted over it (no extra DOM node either: it is this
+ * rule's pseudo-element).
+ *
+ * `pointer-events: none` keeps it purely visual - it can never become the thing
+ * a click lands on; `inert` is the block. The prompt row itself lives BELOW the
+ * slot, outside this veil, so its copy and OK stay fully legible and clickable
+ * (`tests/e2e/panel-banner-not-covered.spec.ts` holds that adjacency).
+ *
+ * `z-index: 3` puts the veil above everything the region's own content stacks:
+ * the highest in-pane z-index is a colour field's 2 (its swatch, above its 1px
+ * focus frame). A later rule that stacks something inside this region higher
+ * than 3 would poke through it.
+ */
+.banner-blocked-scope {
+  /*
+   * How much white sits over the blocked region. At 0.62 the content shows
+   * through at 38% - the weight of Spectrum's disabled content - so text and
+   * icons fade with the surface rather than staying at full contrast on a
+   * greyed-out background.
+   */
+  --banner-blocked-veil-opacity: 0.62;
+  /* The containing block for the veil below. */
+  position: relative;
+}
+
+.banner-blocked-scope::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgba(var(--spectrum-white-rgb, 255, 255, 255), var(--banner-blocked-veil-opacity));
+  pointer-events: none;
 }
 
 /* Message text block in prompt rows (the copy sits in this span). Inline-level

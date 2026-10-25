@@ -125,7 +125,17 @@ test.describe('Chat transcript: session id footer and interruption notices', () 
     // Right: the reveal icon (no literal session id anymore).
     const anchor = shell.locator(SESSION_ID);
     await expect(anchor).toBeVisible();
-    await expect(anchor.locator('sp-icon-text-align-justify')).toHaveCount(1);
+    // It is a *registered* custom element - jsdom cannot prove that, so read the
+    // tag the built app actually created and ask the registry about it. Which
+    // glyph it is belongs to `history.spec.ts`, which holds this control and the
+    // History panel's Reveal to the same one.
+    const iconTag = await anchor.evaluate(
+      (element) => element.firstElementChild?.tagName.toLowerCase() ?? '',
+    );
+    expect(iconTag).not.toBe('');
+    expect(
+      await shell.evaluate((tag: string) => customElements.get(tag) !== undefined, iconTag),
+    ).toBe(true);
 
     await stubShowItemInFolder(app);
     await anchor.click();

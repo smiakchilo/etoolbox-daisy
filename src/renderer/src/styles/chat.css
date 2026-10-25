@@ -116,6 +116,31 @@
   display: none;
 }
 
+/*
+ * The reveal glyph rides a hair high.
+ *
+ * The anchor centres its child *box* against the footer row (measured: the
+ * anchor's 16px box and the 11px summary's line box share one centre), but two
+ * things push the visible folder above that centre: the icon's artwork fills the
+ * upper part of its viewBox, so its ink is not centred inside its own box, and
+ * the 11px line's x-height centre sits slightly below the line-box centre. The
+ * combination reads as the folder floating above the text. Lowering the glyph by
+ * 1px optically centres the *ink* without touching the line box, the row height
+ * or the anchor's own alignment (`vertical-align` cannot do it here - the icon
+ * is a flex item of the inline-flex anchor, not an inline box).
+ *
+ * Measured on the built app by reading the window's pixels: the folder's ink
+ * spans rows 2-12 of its 16px box and the summary's ink rows 4-13 of its 15px
+ * line, so at 1px the folder's ink centre sits 1px above the text's - level to
+ * the eye, because a chunky glyph reads lower than a thin one. 2px matched the
+ * two ink centres numerically and looked low, which is why the optical value is
+ * 1px rather than the arithmetic one.
+ */
+.chat-session-id__icon {
+  position: relative;
+  top: 1px;
+}
+
 .chat-session-id:hover,
 .chat-session-id:focus-visible {
   color: var(--spectrum-accent-background-color-default, #0265dc);
@@ -927,40 +952,4 @@
   flex-direction: column;
   gap: var(--spectrum-spacing-100, 8px);
   width: 100%;
-}
-
-/* The one-time attention flash: when a new `ask_user` question replaces the
-   text input, the composer frame is washed in the accent blue and fades back to
-   its resting background - white for the radio/checkbox variants, the gray
-   strip for the dropdown/actions ones. The fade runs on a pseudo-element
-   overlay (not the frame's own background) so it lands exactly on whatever the
-   variant rests on, with no colour pop; `pointer-events: none` keeps it out of
-   the way of the controls it covers, and `forwards` holds it invisible until
-   `composer.ts` drops the class on `animationend` (which is also what makes a
-   repaint unable to replay it). */
-.chat-composer__frame--attention::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--spectrum-accent-background-color-default, #0265dc);
-  pointer-events: none;
-  animation: chat-composer-attention var(--spectrum-animation-duration-2000, 1s)
-    var(--spectrum-animation-ease-out, ease-out) forwards;
-}
-
-@keyframes chat-composer-attention {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-composer__frame--attention::after {
-    animation: none;
-    opacity: 0;
-  }
 }

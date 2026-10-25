@@ -1,0 +1,61 @@
+/*
+ * The one attention flash, shared by the two surfaces that ask the reader to
+ * look at something that has just appeared:
+ *
+ *  - the composer frame when an `ask_user` question replaces the text input
+ *    (`.chat-composer__frame--attention`, added by `chat/composer.ts`), and
+ *  - a blocking confirmation prompt in a banner row
+ *    (`.banner-row--attention`, added by `settings/statusBanner.ts`).
+ *
+ * Both are a one-time accent-blue wash over the whole surface that fades back
+ * to whatever the surface rests on - white for the radio/checkbox composer
+ * variants or the gray strip for the dropdown/actions ones, the banner's own
+ * neutral fill for a prompt row. The declarations live here, once, in a grouped
+ * selector so the two can never drift into two different flashes: a change to
+ * "the attention flash" is a change to both surfaces.
+ *
+ * The fade runs on a pseudo-element overlay (never the surface's own
+ * background) so it lands exactly on whatever the variant or presentation rests
+ * on, with no colour pop; `pointer-events: none` keeps it out of the way of the
+ * controls it covers, and `forwards` holds it invisible until the owning module
+ * drops the class on `animationend` (which is also what makes a repaint unable
+ * to replay it). Both owners remove the class and force a reflow before
+ * re-adding it, so a second flash arriving within the same second still
+ * replays instead of being coalesced into the running animation.
+ *
+ * The surface must be a containing block (`position: relative`) and clip the
+ * wash (the composer frame is already both; `.banner-row` sets `position:
+ * relative` for this and clips with its own `overflow: hidden`).
+ */
+
+.chat-composer__frame--attention::after,
+.banner-row--attention::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--spectrum-accent-background-color-default, #0265dc);
+  pointer-events: none;
+  /* `position: absolute` is what puts the wash above the shadow-DOM content of
+     a component host (`sp-alert-banner`): positioned descendants paint after
+     in-flow content in the same stacking context. */
+  animation: app-attention-flash var(--spectrum-animation-duration-2000, 1s)
+    var(--spectrum-animation-ease-out, ease-out) forwards;
+}
+
+@keyframes app-attention-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer__frame--attention::after,
+  .banner-row--attention::after {
+    animation: none;
+    opacity: 0;
+  }
+}

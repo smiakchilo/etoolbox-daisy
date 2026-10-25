@@ -146,6 +146,15 @@ test.describe('History panel', () => {
       await expect(firstRow.locator(byTestId('history-resume'))).toBeVisible();
       await expect(secondRow.locator(byTestId('history-resume'))).toHaveCount(0);
 
+      // Reveal in folder and the chat footer's reveal-log control are the same
+      // action, so they must wear the same glyph: two names for one thing cannot
+      // drift apart.
+      const glyph = (locator: ReturnType<Page['locator']>) =>
+        locator.evaluate((element) => element.firstElementChild?.tagName.toLowerCase() ?? '');
+      expect(await glyph(firstRow.locator(byTestId('history-reveal')))).toBe(
+        await glyph(page.locator(byTestId('chat-reveal-log'))),
+      );
+
       // Resume is an icon button wearing the replay glyph, and the glyph is a
       // *registered* custom element - not an unknown tag (which jsdom cannot
       // prove, so it is asserted here against the built app).

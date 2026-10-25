@@ -241,6 +241,114 @@ describe('createBrowserPane page panel', () => {
   });
 });
 
+describe('createBrowserPane blocking confirmations', () => {
+  const viewSlotOf = (pane: ReturnType<typeof createBrowserPane>): HTMLElement =>
+    pane.element.querySelector<HTMLElement>('.browser-view-slot') as HTMLElement;
+  const surfaceOf = (pane: ReturnType<typeof createBrowserPane>): HTMLElement =>
+    pane.element.querySelector<HTMLElement>('.surface-status-banner') as HTMLElement;
+
+  /** Raises the shared History/Settings-style confirmation on the pane's row. */
+  function prompt(pane: ReturnType<typeof createBrowserPane>): ReturnType<typeof vi.fn> {
+    const onConfirm = vi.fn();
+    pane.surfaceStatus.showPrompt('Press {action} to delete the conversation', {
+      label: 'OK',
+      testId: 'banner-confirm',
+      onActivate: onConfirm,
+    });
+    return onConfirm;
+  }
+
+  it('blocks the page-view slot while a confirmation is up, never the row itself', () => {
+    const pane = build();
+    const viewSlot = viewSlotOf(pane);
+    prompt(pane);
+
+    // The panel that raised it is what becomes unreachable and dimmed...
+    expect(viewSlot.hasAttribute('inert')).toBe(true);
+    expect(viewSlot.classList.contains('banner-blocked-scope')).toBe(true);
+    // ...while the row carrying the question stays live and outside that region,
+    // so its copy and OK remain readable and clickable.
+    expect(viewSlot.contains(surfaceOf(pane))).toBe(false);
+
+    (surfaceOf(pane).querySelector('[data-testid="banner-confirm"]') as HTMLElement).click();
+    expect(viewSlot.hasAttribute('inert')).toBe(false);
+    expect(viewSlot.classList.contains('banner-blocked-scope')).toBe(false);
+  });
+
+  it('cancels a live confirmation when the panel that raised it is closed', () => {
+    const pane = build();
+    emitNavigationState();
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+    const onConfirm = prompt(pane);
+    expect(pane.surfaceStatus.isPromptShowing?.()).toBe(true);
+
+    pane.element.querySelector<HTMLElement>('.hosts-panel__close')?.click();
+
+    expect(pane.surfaceStatus.isPromptShowing?.()).toBe(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(viewSlotOf(pane).hasAttribute('inert')).toBe(false);
+  });
+
+  it('cancels a live confirmation when another panel replaces its own', () => {
+    const pane = build();
+    const other = createPanel({
+      title: 'Other',
+      content: document.createElement('div'),
+      closeAriaLabel: 'Close',
+      onDismiss: () => undefined,
+    });
+    pane.appendPanel(other);
+    emitNavigationState();
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+    const onConfirm = prompt(pane);
+
+    pane.panelHost.open(other);
+
+    expect(pane.surfaceStatus.isPromptShowing?.()).toBe(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(viewSlotOf(pane).hasAttribute('inert')).toBe(false);
+    other.dispose();
+  });
+
+  it('cancels a live confirmation when the home veil is cleared for a navigation', () => {
+    const pane = build();
+    emitNavigationState();
+    // Force the veil over the loaded page (the Home screen's own "Update
+    // available" button is the prompt that lives there).
+    pane.showHome();
+    const onConfirm = prompt(pane);
+    expect(pane.surfaceStatus.isPromptShowing?.()).toBe(true);
+
+    // The agent moving the pane is an application-caused navigation: it reveals
+    // the page, where a DOM scrim could not paint and `inert` could not reach.
+    emitAgentNavigation();
+
+    expect(pane.surfaceStatus.isPromptShowing?.()).toBe(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(viewSlotOf(pane).hasAttribute('inert')).toBe(false);
+  });
+
+  it('leaves the panel open when Escape answers the confirmation', () => {
+    const pane = build();
+    emitNavigationState();
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
+    pane.element.querySelector<HTMLElement>('#hosts-button')?.click();
+    const onConfirm = prompt(pane);
+    expect(viewHost?.hidden).toBe(true);
+
+    document.body.dispatchEvent(
+      new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(pane.surfaceStatus.isPromptShowing?.()).toBe(false);
+    // The panel's own Escape handler never ran, so the user is still where they
+    // were - only the question was answered "no".
+    expect(viewHost?.hidden).toBe(true);
+    expect(viewSlotOf(pane).hasAttribute('inert')).toBe(false);
+  });
+});
+
 describe('createBrowserPane message lifecycle', () => {
   it('shows the loading banner while switching is active and closes it when switching ends', () => {
     vi.useFakeTimers();

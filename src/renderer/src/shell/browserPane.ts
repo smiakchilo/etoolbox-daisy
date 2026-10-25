@@ -171,10 +171,10 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
   let homeForced = false;
 
   // The pane-owned status slot for the panels it hosts (Settings today). It is
-  // created here, not by the panel, and lives in `pagePanel` below the view
-  // slot so its feedback outlives a dismissed panel. `createStatusBanner`
-  // defaults to the `surface-status-banner` surface class.
-  const surfaceStatus = createStatusBanner();
+  // created below, after the view slot, because a confirmation prompt needs that
+  // slot as its blocking scope - and lives in `pagePanel` below the view slot so
+  // its feedback outlives a dismissed panel. `createStatusBanner` defaults to
+  // the `surface-status-banner` surface class.
 
   const picker = createHostsPanel({
     onSelect(origin: string): void {
@@ -278,6 +278,13 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     children: [home.element, viewHost.element, picker.element],
   });
 
+  // The pane-owned status/prompt row for the panels it hosts. Created with the
+  // view slot as its blocking scope: a confirmation prompt raised from a panel
+  // (or the home veil, or the hosts picker) makes that region inert and dims it
+  // until the question is answered, so a prompt can only ever be about what is
+  // on screen behind it.
+  const surfaceStatus = createStatusBanner({ blockingScope: viewSlot });
+
   // The status/prompt row sits BELOW the view slot (statusbar-style), so it is
   // physically outside every panel's region: a panel can never cover the error
   // or loading copy. Opening a panel no longer hides the row - the row
@@ -360,13 +367,29 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     const panelWasOpen = activePanel !== undefined;
     if (!panelWasOpen && !homeForced) return;
     homeForced = false;
-    if (panelWasOpen) closeActivePanel();
-    else updateViewVisibility();
+    if (panelWasOpen) {
+      // `closeActivePanel` cancels a live confirmation with the panel.
+      closeActivePanel();
+    } else {
+      // The veil alone was up (the Home screen's "Update available" button can
+      // raise the one prompt that lives there). Clearing it puts the native view
+      // back in the slot, where this DOM scrim cannot paint and `inert` cannot
+      // reach - so the prompt goes rather than outliving the region it blocked.
+      surfaceStatus.cancelPrompt();
+      updateViewVisibility();
+    }
     syncHomeChrome();
   }
 
   function openPanel(panel: Panel): void {
     if (activePanel === panel) return;
+    // A confirmation is anchored to the rows of the panel that raised it: the
+    // prompt's action closure reads that panel's own state (History's
+    // `deleting`, a Settings row's `removeArmed`). Letting it ride over a panel
+    // switch would leave an OK that acts on rows no longer on screen - the old
+    // row's removal armed, the new panel's list unwatched. Dropping it here means
+    // a prompt never outlives the panel it belongs to.
+    surfaceStatus.cancelPrompt();
     // A whole-size panel covers the page the find bar searches: the bar is a
     // control of the page and is dismissed with it.
     findBar.close();
@@ -383,6 +406,10 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   function closeActivePanel(): void {
     if (activePanel === undefined) return;
+    // Cancel before the panel goes: clearing the prompt first also unblocks the
+    // slot, so the scrim is gone before the returning layer (the native view in
+    // particular, which no DOM scrim can paint over) is revealed.
+    surfaceStatus.cancelPrompt();
     const panel = activePanel;
     activePanel = undefined;
     // Hide the panel first (via its own close), then restore whichever of the

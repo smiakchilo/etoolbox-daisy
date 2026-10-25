@@ -2,6 +2,9 @@ import type { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BANNER_ACTION_MARKER,
+  BANNER_ATTENTION_ANIMATION,
+  BANNER_ATTENTION_CLASS,
+  BANNER_BLOCKED_SCOPE_CLASS,
   BANNER_CLOSING_CLASS,
   BANNER_ROW_LOADING_CLASS,
   BANNER_TRANSITION_DURATION_MS,
@@ -32,6 +35,13 @@ import { installJsdomGlobals } from '../../../support/jsdomGlobals';
  * - `showPrompt` is sticky, dismissible, replaces anything, and renders its
  *   one `sp-action-button` (the browser banner's action-button idiom, not an
  *   accent `sp-button`) which invokes `onActivate`.
+ * - a prompt is also modal when the banner was given a `blockingScope`: that
+ *   region is `inert` and wears the scrim class until the prompt is answered,
+ *   dismissed, cancelled, cleared or the banner disposed - and every other
+ *   presentation leaves it alone. Escape answers "no" ahead of the panel's own
+ *   Escape handler; `cancelPrompt` is the programmatic form of the same "no".
+ * - a prompt draws the one-time attention flash the ask_user question gets; the
+ *   same prompt re-affirmed does not replay it.
  * - `showNotice` is the same sticky, dismissible row with one action button,
  *   but ranks *below* an error and above a transient status: the chat pane's
  *   "Exported to table-….csv <Open in folder>" acknowledgement. Acting on it
@@ -606,6 +616,188 @@ describe('createStatusBanner clearError', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('the blocking confirmation', () => {
+  const scoped = (): { scope: HTMLElement; banner: StatusBanner } => {
+    const scope = document.createElement('div');
+    document.body.append(scope);
+    return { scope, banner: createStatusBanner({ blockingScope: scope }) };
+  };
+
+  /** Fires the row's own fade's `animationend`, exactly as the browser does. */
+  function endFlash(banner: StatusBanner): void {
+    const event = new dom.window.Event('animationend');
+    Object.defineProperty(event, 'animationName', { value: BANNER_ATTENTION_ANIMATION });
+    banner.element.dispatchEvent(event);
+  }
+
+  const flashShowing = (banner: StatusBanner): boolean =>
+    banner.element.classList.contains(BANNER_ATTENTION_CLASS);
+  const isBlocked = (scope: HTMLElement): boolean =>
+    scope.hasAttribute('inert') && scope.classList.contains(BANNER_BLOCKED_SCOPE_CLASS);
+
+  it('takes its scope out of reach and dims it for a prompt, and releases it on the answer', () => {
+    const { scope, banner } = scoped();
+    const onActivate = vi.fn();
+    expect(isBlocked(scope)).toBe(false);
+
+    banner.showPrompt('Press {action} to remove the host', { label: 'OK', onActivate });
+
+    // Both halves of the modal state: `inert` (pointer, tab order, assistive
+    // technology) and the class that paints the scrim.
+    expect(scope.hasAttribute('inert')).toBe(true);
+    expect(scope.classList.contains(BANNER_BLOCKED_SCOPE_CLASS)).toBe(true);
+
+    const button = banner.element.querySelector('sp-action-button') as HTMLElement;
+    button.click();
+
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(isBlocked(scope)).toBe(false);
+    banner.dispose();
+  });
+
+  it('blocks for a prompt only - no status, error, notice or standing row touches the scope', () => {
+    const { scope, banner } = scoped();
+    banner.showStatus('Saving\u2026');
+    expect(isBlocked(scope)).toBe(false);
+    banner.showError('Save failed');
+    expect(isBlocked(scope)).toBe(false);
+    banner.showNotice('Exported to table-1.csv', {
+      label: 'Open in folder',
+      onActivate: () => undefined,
+    });
+    expect(isBlocked(scope)).toBe(false);
+    banner.setStanding([document.createTextNode('No agent available')]);
+    expect(isBlocked(scope)).toBe(false);
+    banner.dispose();
+  });
+
+  it('flashes once for a prompt, not for the same prompt re-affirmed, and again for the next', () => {
+    const { banner } = scoped();
+    const action: StatusBannerAction = { label: 'OK', onActivate: () => undefined };
+    expect(flashShowing(banner)).toBe(false);
+
+    banner.showPrompt('Press {action} to delete the conversation', action);
+    expect(flashShowing(banner)).toBe(true);
+
+    endFlash(banner);
+    expect(flashShowing(banner)).toBe(false);
+
+    // The same copy and action is the same presentation: the row is kept rather
+    // than rebuilt, so a re-assert (a caller repeating itself) cannot re-flash.
+    banner.showPrompt('Press {action} to delete the conversation', action);
+    expect(flashShowing(banner)).toBe(false);
+
+    // A different question is a new prompt and draws the eye again.
+    banner.showPrompt('Press {action} to remove the host', action);
+    expect(flashShowing(banner)).toBe(true);
+    banner.dispose();
+  });
+
+  it('never flashes for a row that is not a confirmation', () => {
+    const { banner } = scoped();
+    banner.showStatus('Saving\u2026');
+    banner.showError('Save failed');
+    banner.showNotice('Exported to table-1.csv', {
+      label: 'Open in folder',
+      onActivate: () => undefined,
+    });
+    expect(flashShowing(banner)).toBe(false);
+    banner.dispose();
+  });
+
+  it('answers "no" on Escape, without running the action and without closing the panel', () => {
+    const { scope, banner } = scoped();
+    const onActivate = vi.fn();
+    banner.showPrompt('Press {action} to remove the host', { label: 'OK', onActivate });
+    // Stands in for the whole-size panel's own document-capture Escape handler,
+    // which closes the panel: the prompt must get to the event first.
+    const panelEscape = vi.fn();
+    document.addEventListener('keydown', panelEscape, true);
+    try {
+      document.body.dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    } finally {
+      document.removeEventListener('keydown', panelEscape, true);
+    }
+
+    expect(panelEscape).not.toHaveBeenCalled();
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(banner.isPromptShowing()).toBe(false);
+    expect(isBlocked(scope)).toBe(false);
+    banner.dispose();
+  });
+
+  it('leaves Escape to everyone else while no prompt is showing', () => {
+    const { banner } = scoped();
+    const other = vi.fn();
+    document.addEventListener('keydown', other, true);
+    try {
+      document.body.dispatchEvent(
+        new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    } finally {
+      document.removeEventListener('keydown', other, true);
+    }
+    expect(other).toHaveBeenCalledTimes(1);
+    banner.dispose();
+  });
+
+  it('drops only a prompt on cancelPrompt, leaving anything else on the row alone', () => {
+    const { scope, banner } = scoped();
+    // With no prompt showing, cancel is a no-op - so the pane can assert "no
+    // pending confirmation" after closing a panel without wiping the save error
+    // it wants to keep on screen.
+    banner.showError('Save failed');
+    banner.cancelPrompt();
+    expect(banner.element.textContent).toBe('Save failed');
+
+    // A prompt takes the single row. Cancelling it is a "no": the action never
+    // runs, the scope is released, and whatever sits beneath returns - the
+    // standing floor, never a status/error the prompt itself had displaced.
+    banner.setStanding([document.createTextNode('Standing')]);
+    const onActivate = vi.fn();
+    banner.showPrompt('Press {action} to remove the host', { label: 'OK', onActivate });
+    banner.cancelPrompt();
+    expect(banner.isPromptShowing()).toBe(false);
+    expect(onActivate).not.toHaveBeenCalled();
+    expect(isBlocked(scope)).toBe(false);
+    expect(banner.element.textContent).toBe('Standing');
+    banner.dispose();
+  });
+
+  it('unblocks the scope when the row is cleared or the banner is disposed', () => {
+    const first = scoped();
+    first.banner.showPrompt('Press {action} to remove the host', {
+      label: 'OK',
+      onActivate: () => undefined,
+    });
+    expect(isBlocked(first.scope)).toBe(true);
+    first.banner.clear();
+    expect(isBlocked(first.scope)).toBe(false);
+    first.banner.dispose();
+
+    const second = scoped();
+    second.banner.showPrompt('Press {action} to remove the host', {
+      label: 'OK',
+      onActivate: () => undefined,
+    });
+    expect(isBlocked(second.scope)).toBe(true);
+    second.banner.dispose();
+    expect(isBlocked(second.scope)).toBe(false);
+  });
+
+  it('shows prompts normally on a banner with no scope (the chat pane)', () => {
+    const banner = createStatusBanner();
+    const onActivate = vi.fn();
+    banner.showPrompt('Press {action} to delete the conversation', { label: 'OK', onActivate });
+    expect(banner.isPromptShowing()).toBe(true);
+    (banner.element.querySelector('sp-action-button') as HTMLElement).click();
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    banner.dispose();
   });
 });
 

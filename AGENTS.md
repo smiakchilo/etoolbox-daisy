@@ -605,7 +605,8 @@ replaced by `snapshotChatHistoryIds` + `readChatHistoryPage` in
 
 The rows carry no buttons of their own: **one set of actions travels**. The
 panel builds `Resume` (the `sp-icon-replay` glyph), `Reveal in folder`
-(`sp-icon-file-txt`, the chat footer's own `revealJournal` call - main derives
+(`sp-icon-folder-open-outline`, the chat footer's own `revealJournal` call - the
+two reveal controls wear the same glyph - main derives
 the journal path from the id) and `Delete` once, and re-parents that one element
 into whichever row the reader hovers or tabs to (`mouseenter`/`focusin`), so
 each row reserves the same strip and no row carries a second set; the click
@@ -618,9 +619,40 @@ confirmation is the one shared destructive-confirm method
 (`confirmDestructiveAction`, `settings/statusBanner.ts`): a sticky, one-button
 `Press {action} to <phrase>` prompt in the pane-owned
 status row, the same one Settings uses to remove a host/project/proxy - never a
-row-local second dialog, and it outlives the panel. The panel is handed that
+row-local second dialog. The panel is handed that
 sink (`browserPane.surfaceStatus`) rather than creating a banner of its own. The
-chat toolbar's History button and the
+
+**A confirmation prompt is modal, and the strip is how it is shown - not how
+modal it is.** A `showPrompt` row asks a yes-or-no question about what is on
+screen, so while it is up the region it was raised over is taken out of reach:
+the banner is created with the page-view slot as its `blockingScope`
+(`createStatusBanner({ blockingScope: viewSlot })`), and the prompt sets `inert`
+on that slot plus `banner-blocked-scope`, which lays a **white veil** over it
+(62% `--spectrum-white-rgb`, so the content under it shows through at the weight
+of disabled content) over the Settings/History panel,
+the hosts picker or the home veil behind it (`styles/banner.css`). `inert` is
+the whole block - pointer, tab order and the accessibility tree - so no control
+behind a prompt needs disabling individually, and the row itself sits below the
+slot, outside the scrim, so its copy and OK stay live. The row also runs the
+**same one-time accent wash a new `ask_user` question runs**, defined once for
+both surfaces in `styles/attention.css` (`banner-row--attention` here,
+`chat-composer__frame--attention` there, one `@keyframes`). Two rules keep the
+blocking honest: **Escape answers "no"** and only drops the prompt - the banner
+listens in the window's capture phase, ahead of the panel's own document-capture
+Escape handler, so the panel stays - and **leaving the panel cancels the
+prompt** (`browserPane.ts` calls `surfaceStatus.cancelPrompt()` in
+`openPanel`, `closeActivePanel` and the veil-clearing branch of
+`revealPageForExternalNavigation`), because a prompt is anchored to the rows
+that raised it and a prompt left over another panel would act on rows no longer
+on screen. Everything else in the row is unchanged and **not** blocking:
+`showNotice` (Open in folder / Details), `showError` (including a failed
+navigation's `Reload`), `showStatus`, the standing floor and the loading row.
+The browser toolbar's own certificate and unknown-origin prompts
+(`browserToolbar.ts`) are deliberately **not** modal: they answer a refused
+navigation rather than protect a panel, and the page behind them is the native
+`WebContentsView`, which no DOM scrim can paint over - see `docs/backlog.md`.
+
+The chat toolbar's History button and the
 browser pane's home screen (its "History" action, beside "Select a host" and
 "Settings") both open it through the same
 `BrowserPanelHost`; the shell owns resume (it starts `browser.switchServer` for
@@ -1761,7 +1793,36 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4590 passed / 13 skipped** (+57 against the
+Current baseline: **`npm run test` → 4604 passed / 13 skipped** (+14 against the
+4590 below - **a confirmation in a message row is modal** (2026-10-25): a
+`showPrompt` row makes the region it was raised over - the page-view slot, so the
+Settings/History panel, the hosts picker or the home veil - `inert` and veils it
+in white (the content fades to disabled weight while the surface stays light, so
+the dark strip below stands out), runs the same one-time accent wash a new
+`ask_user`
+question runs (one definition, in the new `styles/attention.css`), answers "no"
+on Escape ahead of the panel's own handler, and is cancelled when its panel is
+left or replaced. `showNotice` (Open in folder / Details), `showError` (a failed
+navigation's `Reload` included), `showStatus`, the standing floor and the loading
+row are untouched, and the browser toolbar's certificate/origin prompts stay
+non-modal by owner decision. Shared-surface change, no `contracts/` change:
+`StatusBanner` gained `cancelPrompt()` and `createStatusBanner` a `blockingScope`
+option, and `lib/alertBanner.ts` gained `flashBannerRow` + the
+`BANNER_ATTENTION_*`/`BANNER_BLOCKED_SCOPE_CLASS` exports. The +14 is 9
+`statusBanner` and 5 `browserPane` cases; Playwright is **163 tests** (+2,
+`blocking-confirmation.spec.ts`, which reads the built app's own pixels through
+the new `tests/support/e2e/pixels.ts`), the touched specs all ran green
+(blocking-confirmation, history, panel-banner-not-covered, settings-updates,
+saved-sign-ins, home-screen, settings-panel-close, settings-skills, and
+settings-hosts 4/4 on repeat after its documented one-off flake), and no full
+Playwright run was re-measured. A same-day addendum turned the dark scrim into a
+**white veil** (content at disabled weight, the surface stays light) and gave the
+History panel's Reveal and the chat footer's reveal-log control the same
+`sp-icon-folder-open-outline` glyph, with the history spec now comparing the two
+icons rather than pinning either. See §5's "A confirmation prompt is modal" and
+`docs/verification/followons-2026-10.md` "A confirmation in a message row is
+modal ... (2026-10-25)". Before that it was
+**`npm run test` → 4590 passed / 13 skipped** (+57 against the
 4533 below - **the security review follow-on** (2026-10-25): outside fetches pin the
 validated address and fail closed on a resolution error, the address table covers the
 full non-public IPv4/IPv6 sets, bodies are capped in bytes with the caller's own limit,

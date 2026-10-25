@@ -177,8 +177,9 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
 
   /**
    * Reveals the conversation's journal file in the OS file manager - the same
-   * call the chat pane's footer uses; the path is main's, derived from the id,
-   * and a failure is reported in the pane's banner.
+   * call the chat pane's footer uses, wearing the same `folder-open-outline`
+   * glyph, so the two "reveal" controls read as one action; the path is main's,
+   * derived from the id, and a failure is reported in the pane's banner.
    */
   function buildRevealButton(): HTMLElement {
     const reveal = el('sp-action-button', {
@@ -190,7 +191,7 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
         'data-testid': 'history-reveal',
       },
     });
-    const revealIcon = document.createElement('sp-icon-file-txt');
+    const revealIcon = document.createElement('sp-icon-folder-open-outline');
     revealIcon.setAttribute('slot', 'icon');
     reveal.append(revealIcon);
     reveal.addEventListener('click', () => {

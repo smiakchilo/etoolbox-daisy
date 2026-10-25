@@ -30,6 +30,19 @@
  *   one action dismisses it before the action runs, so whatever the confirmed
  *   work reports next (a status, an error, a reload) is visible rather than
  *   hidden behind a prompt that has already been answered.
+ * - `showPrompt` is also the one **modal** presentation: a confirmation asks a
+ *   yes-or-no question about what is on screen, so while it is up the region it
+ *   was raised over is taken out of reach - no clicking another Delete, no
+ *   editing a field, no closing the panel behind it - and dimmed behind a
+ *   semi-opaque scrim. The region is `options.blockingScope` (the browser pane
+ *   hands it the page-view slot, so the panel/veil that raised the prompt is
+ *   what is blocked); the banner sets `inert` on it and
+ *   {@link BANNER_BLOCKED_SCOPE_CLASS}, and clears both when the prompt goes.
+ *   A prompt that appears gets the one-time attention flash too - the same
+ *   accent wash a new `ask_user` question gets (see `styles/attention.css`).
+ *   Escape answers "no" and only drops the prompt (the panel stays); every
+ *   other way of leaving the panel cancels the prompt with it, so a prompt can
+ *   never outlive the rows it was anchored to - see `shell/browserPane.ts`.
  * - `setStanding` is the persistent floor: shown only while no `show*`
  *   presentation is active, and restored when one clears. The chat pane
  *   expresses its standing conditions this way rather than as a second
@@ -59,6 +72,7 @@
 import {
   applyBannerPresentation,
   BANNER_ACTION_MARKER,
+  BANNER_BLOCKED_SCOPE_CLASS,
   BANNER_TRANSITION_DURATION_MS,
   buildBannerCopy,
   buildBannerPrompt,
@@ -67,6 +81,7 @@ import {
   createBannerActionButton,
   createBannerProgressLine,
   createBannerRow,
+  flashBannerRow,
   isBannerClosing,
   restoreBannerRow,
   revealBannerRow,
@@ -90,6 +105,10 @@ export interface StatusBannerSink {
    * Activating the action dismisses the prompt first (like a notice), so the
    * outcome the confirmation starts - a status, an error, a reload - can take
    * the row; a prompt left up would outrank and mask it.
+   *
+   * When the banner was given a `blockingScope`, a prompt is modal: that region
+   * is inert and dimmed until the prompt is answered, dismissed or cancelled,
+   * and the row runs one attention flash as it appears.
    */
   showPrompt(copy: string, action: StatusBannerAction): void;
   /**
@@ -114,6 +133,17 @@ export interface StatusBanner extends StatusBannerSink {
   readonly element: HTMLElement;
   /** True while a sticky two-click/action prompt row is showing. */
   isPromptShowing(): boolean;
+  /**
+   * Drops a showing confirm prompt without running its action, falling back to
+   * whatever is beneath it - the banner's "no". Unlike {@link clear} it leaves
+   * the standing floor and any dismissal state intact, and unlike answering it
+   * runs nothing. A no-op when no prompt is showing, so a caller can assert "no
+   * pending confirmation" without disturbing a status or an error. The browser
+   * pane uses it when the panel a prompt was raised from is closed or replaced
+   * (the prompt is anchored to rows that are going away), and Escape reaches
+   * the same path.
+   */
+  cancelPrompt(): void;
   /**
    * Drops a showing error row and falls back to whatever is beneath it (the
    * standing floor, or nothing). A no-op when the active presentation is not an
@@ -216,6 +246,15 @@ export interface StatusBannerOptions {
    * in a Playwright strict-mode locator.
    */
   readonly surfaceClassName?: string;
+  /**
+   * The region a confirm prompt blocks while it is showing - the pane's
+   * page-view slot, so whatever raised the prompt (a Settings/History panel,
+   * the hosts picker, the home veil) becomes unreachable and dimmed. The banner
+   * sets `inert` and {@link BANNER_BLOCKED_SCOPE_CLASS} on it for the prompt's
+   * lifetime. Absent means prompts are not modal, which is honest for a surface
+   * with no region behind it (the chat pane's status slot).
+   */
+  readonly blockingScope?: HTMLElement;
 }
 
 export function createStatusBanner(options: StatusBannerOptions = {}): StatusBanner {
@@ -332,12 +371,35 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
   // standing floor (if any).
   function dismissSlot(): void {
     slot = null;
+    syncBlocking();
     if (standing !== null) showStanding();
     else hideRow();
   }
 
   function canShow(candidate: BannerSlot): boolean {
     return slot === null ? true : SLOT_RANK[candidate] >= SLOT_RANK[slot];
+  }
+
+  // Applies the modal half of a prompt to the region it was raised over: `inert`
+  // (pointer, tab order and the accessibility tree, in one switch - so every
+  // control behind the prompt is unreachable without disabling any of them) and
+  // the scrim class. Both are cleared the moment the prompt stops being the
+  // active presentation, whichever way it went (answered, crossed out,
+  // cancelled, cleared, disposed). Named apart from `present` so it can be
+  // called from every path that changes `slot`, instead of only where content is
+  // painted - a prompt answered by its own button must not leave the panel inert.
+  function syncBlocking(): void {
+    const scope = options.blockingScope;
+    if (scope === undefined) return;
+    const blocking = slot === 'prompt';
+    // The attribute, not just the IDL property: `inert` is a plain boolean
+    // attribute, and setting it (rather than the property) keeps the blocking
+    // state readable in the DOM - for CSS, for `querySelector` and for a test -
+    // and independent of whether a given DOM implementation exposes the IDL
+    // reflection (jsdom does not, so a property-only form would silently no-op
+    // in the unit suite while working in the app).
+    scope.toggleAttribute('inert', blocking);
+    scope.classList.toggle(BANNER_BLOCKED_SCOPE_CLASS, blocking);
   }
 
   function present(next: BannerSlot, content: readonly Node[], signature: string): boolean {
@@ -353,6 +415,7 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     const wasVisible = banner.hasAttribute('open') && !isBannerClosing(banner);
     if (collapseTimer !== null) finalizeHide();
     slot = next;
+    syncBlocking();
     banner.replaceChildren(...content);
     // The shared close-control rule: a transient status (auto-clearing, nothing
     // to wave away) has no close control; error/notice/prompt rows do, like the
@@ -365,14 +428,19 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     // Already showing: a same-height content swap (status -> error) must not
     // replay the reveal. A fresh row (or one cancelled mid-collapse) reveals.
     if (!wasVisible) revealBannerRow(banner);
+    // A confirmation draws the eye once, with the very wash a new `ask_user`
+    // question gets. Keyed on the slot, not on the caller, so every route to a
+    // prompt flashes and no other row ever does.
+    if (next === 'prompt') flashBannerRow(banner);
     return true;
   }
 
   function inlineActionContent(copy: string, action: StatusBannerAction): readonly Node[] {
     // A size-s `sp-action-button`, exactly like the browser banner's OK
-    // buttons (browserToolbar.ts) - deliberately NOT an accent `sp-button`,
-    // so the confirm/notice reads as a status-strip action, not a blocking
-    // dialog.
+    // buttons (browserToolbar.ts) - deliberately NOT an accent `sp-button`. The
+    // prompt is modal (the region behind it is inert and dimmed) but it still
+    // *reads* as a status-strip action: the blocking is signified by the scrim
+    // and the flash, never by restyling the control into a dialog's primary.
     const actionButton = createBannerActionButton(action.label, action.testId);
     actionButton.addEventListener('click', () => action.onActivate());
     return buildBannerPrompt(copy, [actionButton]);
@@ -393,12 +461,35 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
     hideRow();
   });
 
+  // Escape answers "no" to a confirmation, and nothing else. The listener runs
+  // in the window's *capture* phase so it is ahead of the whole-size panel's own
+  // document-capture Escape handler: without it, Escape would close the panel
+  // *behind* the prompt (leaving the confirmation pointing at rows that are
+  // gone), and it would do so even though that panel is inert. The panel stays;
+  // only the prompt is dropped, exactly like its own close cross. Inert while no
+  // prompt is showing, so every other Escape (the find bar, a panel) is
+  // untouched.
+  const handleKeydown = (event: KeyboardEvent): void => {
+    if (slot !== 'prompt' || event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    dismissSlot();
+  };
+  window.addEventListener('keydown', handleKeydown, true);
+
   return {
     get element() {
       return banner;
     },
     isPromptShowing(): boolean {
       return slot === 'prompt';
+    },
+    cancelPrompt(): void {
+      // Only a prompt is dropped; anything else on the row is left alone, so the
+      // pane can assert "no pending confirmation" after closing a panel without
+      // disturbing a save's status or an error it wants to keep showing.
+      if (slot !== 'prompt') return;
+      dismissSlot();
     },
     clearError(): void {
       // Only an error row is dropped; a prompt outranks an error, so `slot`
@@ -473,11 +564,17 @@ export function createStatusBanner(options: StatusBannerOptions = {}): StatusBan
       standingPresentation = 'plain';
       standingDismissed = false;
       slot = null;
+      // Unblock the scope even though nothing is painted: a caller that clears
+      // the row while a confirmation was up must not leave the region inert.
+      syncBlocking();
       hideRow();
     },
     dispose(): void {
       cancelAutoClear();
+      slot = null;
+      syncBlocking();
       finalizeHide();
+      window.removeEventListener('keydown', handleKeydown, true);
       banner.remove();
     },
   };

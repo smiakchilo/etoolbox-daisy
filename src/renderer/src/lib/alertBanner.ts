@@ -58,6 +58,26 @@ import { el } from './dom';
 export const BANNER_ROW_CLASS = 'banner-row';
 /** The shared loading-presentation class: a light-gray fill and a progress line. */
 export const BANNER_ROW_LOADING_CLASS = 'banner-row--loading';
+/**
+ * The shared attention-flash class, added for one prompt and dropped when the
+ * fade ends. Its declarations - and the `@keyframes` - are shared with the
+ * composer's ask-user flash in `styles/attention.css`, so a confirmation prompt
+ * and a new question are literally the same wash; see {@link flashBannerRow}.
+ */
+export const BANNER_ATTENTION_CLASS = 'banner-row--attention';
+/** The `@keyframes` name a row's `animationend` listener filters the flash on. */
+export const BANNER_ATTENTION_ANIMATION = 'app-attention-flash';
+/**
+ * The class a blocking confirmation puts on the region it blocks (the pane's
+ * page-view slot: the panel, the home veil or the hosts picker behind it). The
+ * class paints a white veil over the region - everything under it fades to the
+ * weight of disabled content while the surface stays light - so the dark prompt
+ * strip below stands out against it. The *blocking* itself is the `inert`
+ * attribute the owning banner also sets, so pointer, keyboard and assistive
+ * technology are all covered by one declarative switch rather than by per
+ * control disabling.
+ */
+export const BANNER_BLOCKED_SCOPE_CLASS = 'banner-blocked-scope';
 /** The shared message-copy wrapper class. */
 export const BANNER_ROW_COPY_CLASS = 'banner-row__copy';
 /**
@@ -139,6 +159,22 @@ export function collapseBannerRow(row: HTMLElement): boolean {
 }
 
 /**
+ * Runs a row's one-time attention flash: the accent wash shared with the
+ * composer's ask-user question (see `styles/attention.css`). Once per prompt,
+ * removed by the row's own `animationend` listener as the fade ends - which is
+ * also what stops a repaint from replaying it. Removing the class and forcing a
+ * layout flush first means a prompt arriving before the previous flash has
+ * finished (two Delete presses well under a second apart) still replays it,
+ * instead of being coalesced into the running animation - exactly the composer's
+ * behaviour.
+ */
+export function flashBannerRow(row: HTMLElement): void {
+  row.classList.remove(BANNER_ATTENTION_CLASS);
+  void row.offsetWidth;
+  row.classList.add(BANNER_ATTENTION_CLASS);
+}
+
+/**
  * Builds the `sp-alert-banner` row for a given surface. `surfaceClass` names
  * the owning surface (`browser-toolbar-message` or `surface-status-banner`);
  * the element always carries `variant="neutral"` and starts `dismissible` - the
@@ -156,10 +192,14 @@ export function createBannerRow(surfaceClass: string): HTMLElement {
   // The reveal class also removes the component's 48px minimum for the
   // animation's duration; drop it the instant the animation ends so the
   // resting height is restored (a lingering class would leave a plain text row
-  // shorter than its 48px minimum).
+  // shorter than its 48px minimum). The attention wash is dropped the same way,
+  // keyed on its own animation name so the row's reveal never clears it and
+  // vice versa.
   row.addEventListener('animationend', (event) => {
     if (event.animationName === 'banner-row-reveal') {
       row.classList.remove(BANNER_REVEALING_CLASS);
+    } else if (event.animationName === BANNER_ATTENTION_ANIMATION) {
+      row.classList.remove(BANNER_ATTENTION_CLASS);
     }
   });
   return row;

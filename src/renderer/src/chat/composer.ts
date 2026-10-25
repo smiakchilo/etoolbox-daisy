@@ -54,14 +54,16 @@ const SEND_ACCENT_CLASS = 'chat-composer__send--enabled';
 /**
  * The one-time attention flash the composer frame runs when a new `ask_user`
  * question replaces the text input - a blue wash over the frame that fades back
- * to whatever background the visible variant rests on (see `chat.css`'s
- * `chat-composer-attention`). The class is added once per question and removed
- * on `animationend`, so the pane's periodic repaint can never replay it.
+ * to whatever background the visible variant rests on. The declarations (and
+ * the `@keyframes`) are shared with a blocking confirmation's banner row in
+ * `styles/attention.css`, so this module names only the animation it listens
+ * for. The class is added once per question and removed on `animationend`, so
+ * the pane's periodic repaint can never replay it.
  */
 export const ATTENTION_CLASS = 'chat-composer__frame--attention';
 
 /** The `@keyframes` name the frame's `animationend` listener filters on. */
-export const ATTENTION_ANIMATION = 'chat-composer-attention';
+export const ATTENTION_ANIMATION = 'app-attention-flash';
 
 /**
  * Puts the composer frame into its "button strip" look - no visible border, a

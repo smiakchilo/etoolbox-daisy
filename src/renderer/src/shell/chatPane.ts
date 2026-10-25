@@ -1507,7 +1507,9 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       'data-testid': 'chat-reveal-log',
     },
   });
-  sessionIdAnchor.append(el('sp-icon-text-align-justify', { attrs: { size: 's' } }));
+  sessionIdAnchor.append(
+    el('sp-icon-folder-open-outline', { attrs: { class: 'chat-session-id__icon', size: 's' } }),
+  );
   sessionIdAnchor.addEventListener('click', (event) => {
     event.preventDefault();
     if (chatId === undefined) return;

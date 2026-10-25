@@ -1,5 +1,5 @@
-import {describe, expect, it, vi} from 'vitest';
-import {PAGE_AUDIT_MAX_FAILURES} from '../../../src/shared';
+import { describe, expect, it, vi } from 'vitest';
+import { PAGE_AUDIT_MAX_FAILURES } from '../../../src/shared';
 
 interface FakeWindow {
   readonly options: { readonly webPreferences?: Record<string, unknown> };
@@ -147,7 +147,7 @@ function session() {
     deliver: async (url: string, webContentsId?: number): Promise<{ cancel?: boolean }> => {
       if (requestHandler === undefined) throw new Error('no request filter installed');
       return await new Promise<{ cancel?: boolean }>((resolve) => {
-        requestHandler?.(webContentsId === undefined ? {url} : {url, webContentsId}, resolve);
+        requestHandler?.(webContentsId === undefined ? { url } : { url, webContentsId }, resolve);
       });
     },
     hasHandler: () => requestHandler !== undefined,
