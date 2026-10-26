@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
+import { CLI_CACHE_DIRECTORY } from './cli/cache';
 import type { ProxyEnvOverrides } from './copilotClient';
 
 /**
@@ -178,6 +179,11 @@ const PLAINTEXT_TOKEN_PATTERNS: readonly RegExp[] = [
  * `logs/` directory, with the actual secret in the OS-backed credential
  * vault. Any plaintext token material anywhere under this directory is
  * treated as a hard failure, not a warning.
+ *
+ * The CLI cache (`<home>/cli`, see `./cli/cache.ts`) is skipped: those are
+ * digest-verified binaries this agent downloaded, not text the CLI wrote, and
+ * reading a 140 MB executable as UTF-8 on every sign-in is both slow and prone
+ * to matching token-shaped bytes inside a binary.
  */
 export async function assertNoPlaintextCredentials(copilotHomeDir: string): Promise<void> {
   let entries: string[];
@@ -189,6 +195,7 @@ export async function assertNoPlaintextCredentials(copilotHomeDir: string): Prom
   }
 
   for (const entry of entries) {
+    if (entry.split(path.sep)[0] === CLI_CACHE_DIRECTORY) continue;
     const fullPath = path.join(copilotHomeDir, entry);
     let content: string;
     try {

@@ -43,7 +43,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, the **derived** runtime descriptor that alone decides swap vs. fresh install, publish workflow, sandbox).                                                                              | Read before changing the updater or cutting a release. |
 | `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
 | `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the two example skills in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the examples are guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
-| `docs/addon-architecture.md` | The add-on model: pinned versions in `src/main/addons/pins.json`, the `addons.json` catalogue, the install store, `out/addons` in development, the recipe for adding one. | Read before touching `src/main/addons/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
+| `docs/addon-architecture.md` | The add-on model: content identities in `src/main/addons/pins.json`, the `addons.json` catalogue, the install store, `out/addons` in development, the recipe for adding one, and why the Copilot CLI is not an add-on. | Read before touching `src/main/addons/`, `src/agents/copilot/cli/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
 
 ---
 
@@ -93,7 +93,7 @@ commit unless the user asks.**
 │  (discovered by src/main/agents/registry.ts, run by agents/hub.ts)   │
 │                                                                      │
 │  src/addons/<id>/  ← downloaded add-ons, loaded at run time with a    │
-│    page-audit/ (Lighthouse) · copilot-cli/ (copilot.exe for sign-in) │
+│    page-audit/ (Lighthouse)                                          │
 │   real import(); pinned by src/main/addons/pins.json, installed by    │
 │   src/main/addons/, never in the asar (docs/addon-architecture.md)    │
 └──────────┬───────────────────────────────────┬───────────────────────┘
@@ -346,15 +346,23 @@ src/agents/<name>/
   `agentSettingsSchema` (`active`, `proxy`, `model`, `reasoningEffort`,
   `token`); an agent that needs other settings would have to extend that shared
   contract - **say so and ask**.
-- **An agent that needs an external executable asks the host for it.** Copilot's
-  interactive sign-in spawns `copilot.exe`, which is the `copilot-cli` **binary
-  add-on**, not part of the install: the agent calls
-  `AgentHost.resolveAddonFile(id, file, { onProgress })` and gets an absolute
-  path (or a typed `err`, which it reports as a failed sign-in - never a throw).
-  The download's progress goes to `AgentHost.reportAuthProgress`, which main
-  pushes as `agent:auth-progress` and the Settings Agents tab shows in the
-  provider's sign-in status. An agent never names a folder, only an id and a
-  file, so no path from an agent can leave the add-on store.
+- **An agent that needs an external executable obtains it itself.** Copilot's
+  interactive sign-in spawns a **GitHub Copilot CLI** (`copilot login
+  --web-flow`) that nobody ships for it, so the agent resolves one inside its own
+  folder (`src/agents/copilot/cli/`): a CLI already on the machine (known install
+  roots, then `PATH`; launchers are resolved *through*, never executed), the
+  agent's own verified cache (`<stateDirectory>/cli/<version>/`), or the latest
+  GitHub release for this platform, checked against the digest the release
+  publishes. There is no pin - the CLI updates itself - only a supported minimum
+  (`COPILOT_CLI_MINIMUM_VERSION`). It takes the host's `createProxyFetch` and
+  answers progress through `AgentHost.reportAuthProgress`, which main pushes as
+  `agent:auth-progress` and the Settings Agents tab shows in the provider's
+  sign-in status. **No agent-specific capability crosses `AgentHost`**: the
+  application has no Copilot knowledge, and the resolver's `download.ts` is the
+  agent's own (an agent may not import `src/main`, so the updater's helper is not
+  reused). The cache lives under the agent's state directory, and
+  `auth.ts`'s plaintext-credential scan skips that one subtree - it holds
+  digest-verified binaries, not text the CLI wrote.
 - **Diagnostics and usage contract (every agent, incl. a future Claude).**
   `model.changed` / `model.usage` / `context.usage` / `model.call.failed`
   events. The first three are journaled **and forwarded** to the renderer: the
@@ -1403,25 +1411,38 @@ Do not reintroduce a tinted surface or an always-visible reason paragraph;
 
 An add-on is a heavy platform piece the application does **not** ship: it is
 downloaded the first time a feature needs it. Full detail, layout, lockfile
-policy and security notes: `docs/addon-architecture.md`. Two exist today —
-`page-audit` (`js`: Lighthouse + `puppeteer-core`) and `copilot-cli`
-(`binary`: `copilot.exe`, for the interactive sign-in).
+policy and security notes: `docs/addon-architecture.md`. One exists today —
+`page-audit` (Lighthouse + `puppeteer-core`). The Copilot CLI is **not** an
+add-on any more: it is GitHub's release channel and is resolved at sign-in time
+by the agent that uses it (`src/agents/copilot/cli/`).
 
-- **Pinned by the build.** `src/main/addons/pins.json` is generated by
-  `scripts/build-addons.mjs` (`version` + `apiVersion` per id) and committed.
-  The application accepts only that pair; the pinned version is installed from
-  `addons.json` (same GitHub folders as `update.json`, same proxy) and older
-  versions are deleted after a successful install.
-- **Installed under `%LOCALAPPDATA%\etoolbox-daisy\addons\<id>\<version>\`**
+- **Pinned by content, not by a version.** `src/main/addons/pins.json` is
+  generated by `scripts/build-addons.mjs` (`identity` + `apiVersion` per id) and
+  committed. The identity is the first 16 hex characters of a sha256 over the
+  add-on's own sources, so it changes exactly when the add-on changes: an
+  unchanged add-on is never re-published or re-downloaded, and a changed one can
+  never be served under an identity an install already has. There is no version
+  number to bump or forget, and `apiVersion` stays the compatibility contract.
+- **Installed under `%LOCALAPPDATA%\etoolbox-daisy\addons\<id>\<identity>\`**
   (`appPaths.addons`). No Settings UI: removing an add-on means deleting its
   folder, and it is downloaded again on next use. Every failure is typed
-  (`offline`, `hash`, `extract`, `version`, `apiVersion`, `kind`, `cancelled`)
+  (`offline`, `hash`, `extract`, `identity`, `apiVersion`, `cancelled`)
   and logged as `ADDON_FAILED`; `ADDON_INSTALLED` records a success.
+- **No binary add-ons.** The capability existed only for `copilot.exe` and its
+  build path hard-coded `@github/copilot-<platform>`, so it was removed with it.
+  The deferred SDK-runtime add-on must first add an explicit payload source to
+  `addon.json` (`docs/backlog.md`).
 - **A JS add-on is its own npm package** (`src/addons/<id>/package.json` +
   `package-lock.json`, `private`, `type: "module"`, **not** a workspace member
   and **not** listed in the root `package.json` — electron-builder packages the
   root's production dependencies, which is exactly what must not happen).
   `npm ci` at the root runs `postinstall` → `npm run addons:install`.
+- **Every private package carries the application's version.** An add-on's
+  `package.json` version must equal the root's, and `npm run addons:build`
+  fails when it does not (`npm install --prefix src/addons/<id>
+  --package-lock-only` syncs its lockfile after a bump). The version is
+  **excluded from the identity** - it is bookkeeping, not content - so an app
+  release never re-downloads an unchanged add-on.
 - **Loaded with a real `import()`.** A plain dynamic import is rewritten into
   `require()` by the bundler, which cannot load an ESM folder outside the asar;
   `src/main/addons/pageAudit.ts` keeps one runtime `import()` (a documented
@@ -1443,18 +1464,19 @@ policy and security notes: `docs/addon-architecture.md`. Two exist today —
 
 #### Recipe: add an add-on
 
-1. `src/addons/<id>/addon.json` — `{ id, version, kind, apiVersion: 1, … }`;
-   `id` must equal the folder name. A JS add-on adds `package.json`
-   (`private`, `type: "module"`, its **own** version) and `index.ts` exporting
-   the factory; a binary one adds `files: { <name>: <relative path> }`.
+1. `src/addons/<id>/addon.json` — `{ id, apiVersion: 1, entry: "index.js" }`;
+   `id` must equal the folder name, and there is **no version**: the build
+   derives the identity from the add-on's sources. A JS add-on adds
+   `package.json` (`private`, `type: "module"`) and `index.ts` exporting the
+   factory.
 2. `npm install --prefix src/addons/<id>` (its lockfile), then
    `npm run addons:build` — which also rewrites and commits
    `src/main/addons/pins.json`.
 3. Give the feature a lazy capability: a `ToolHost` one
    (`src/main/addons/pageAudit.ts` is the model: `ensure` → `import()` → the
    add-on's factory, with the install's progress written to the calling tool's
-   line) or an `AgentHost` one (`resolveAddonFile(id, file, { onProgress })`).
-   A failure must become the capability's own typed outcome, never a throw.
+   line). A failure must become the capability's own typed outcome, never a
+   throw.
 4. Remove the dependency from the root `package.json` if it was there; add the
    exclusion to `electron-builder.yml` only if the package was a root dependency.
 5. Tests: `tests/unit/main/addons/` (manifest, store, manager, the capability);
@@ -1984,7 +2006,43 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4698 passed / 13 skipped** (+27 against the
+Current baseline: **`npm run test` → 4740 passed / 13 skipped** (+42 against the
+4698 below - **add-ons carry a content identity, and the Copilot CLI is resolved
+by its own agent instead of shipped** (2026-10-26): an add-on has **no version of
+its own** any more - `scripts/build-addons.mjs` derives a 16-hex sha256 over its
+sources, so the identity changes exactly when the content does (an unchanged
+add-on is never re-published or re-downloaded), and every private package's
+`package.json` version must equal the application's (build-enforced; excluded
+from the hash). `copilot-cli` and binary add-on support are **gone**:
+`src/agents/copilot/cli/` resolves the sign-in CLI - newest of {an installed copy
+above `COPILOT_CLI_MINIMUM_VERSION` 1.0.83, the agent's own verified cache under
+`<stateDirectory>/cli`}, else the latest GitHub release
+(`github-copilot-<ver>-<platform>-<arch>.tgz`, sha256 from the release API, ustar
+extraction), else a typed failure pointing at the token field. It is **agent
+logic, not an application service**: `AgentHost` gained nothing (the
+`resolveCopilotCli` capability drafted mid-change was removed again), the agent
+takes `createProxyFetch` and reports through `reportAuthProgress`, and it carries
+its own `download.ts` because an agent may not import `src/main`. `auth.ts`'s
+plaintext-credential scan skips `<stateDirectory>/cli` (digest-verified binaries,
+not CLI output). `ArchiveExpectation` became
+`{ digest: { algorithm, hex }, size }` so the one verified downloader serves
+GitHub's sha256 too. ESLint gained a second agent-boundary block for a folder
+nested one level inside an agent (`src/agents/*/*/**/*.ts`), where `src/shared`
+is one `../` further away. Zips are now byte-reproducible (sorted entries, fixed
+timestamp) and `merge-addons.mjs` refuses two archives under one platform key.
++42 measured: 43 cases in `tests/unit/agents/copilot/cli/` (6 version, 8
+discovery, 6 tar, 7 release, 11 resolver, 5 probe), 1 merge-conflict case and the
+sign-in's version-reporting case, less the binary-add-on cases (3 in
+`manifest.test.ts`, 2 `resolveFile` in `manager.test.ts`) deleted with the
+capability. (The delta is measured against the number this file recorded; the
+tree had also carried uncommitted work since that run.)
+Playwright `addon-download.spec.ts` 3/3 against the rebuilt app (the spec now
+reads the pinned identity from `pins.json`); the full suite was not re-run (170
+tests, no new cases). Five mutations caught (floor, newest-wins, the darwin
+loader symlink, the merge digest guard, the private-version rule). See
+`docs/verification/followons-2026-10.md` "Add-ons carry a content identity, and
+the Copilot CLI is resolved instead of shipped (2026-10-26)".
+Before that it was **`npm run test` → 4698 passed / 13 skipped** (+27 against the
 4671 below - **the runtime layer decides the update, and the bundled resources
 ship inside the asar** (2026-10-26): the manual `updates.runtimeGeneration`
 counter is **gone**, not deprecated - `package.json`, `composition.ts`, the
@@ -3743,7 +3801,7 @@ file).
 | Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live browser session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/webview/proxyResolution.ts`). |
 | `address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
-| Add-ons: packaged audit and interactive sign-in | **Owner-pending.** Both download paths are proven in the built app (`addon-download.spec.ts`, 9/9), and the Copilot failure/progress path is unit-tested; but no real Lighthouse audit has run from the installed add-on, and no interactive Copilot sign-in has downloaded `copilot.exe` on a clean profile. The publish workflow was never run. Mac payloads unrun. See `docs/addon-architecture.md`, `docs/backlog.md` "Add-ons". |
+| Add-ons and the Copilot CLI | **Owner-pending.** The add-on download path is proven in the built app (`addon-download.spec.ts`, 9/9), and the Copilot resolver is unit-tested end to end (discovery, digest, extraction, cache, ladder); but no real Lighthouse audit has run from the installed add-on, and no interactive Copilot sign-in has run against a **resolved** CLI on a clean profile - the old `copilot-cli` add-on's copy-out was never exercised either. The publish workflow was never run. Mac payloads and Mac CLI resolution unrun. See `docs/addon-architecture.md`, `docs/backlog.md` "Add-ons". |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 
 ---

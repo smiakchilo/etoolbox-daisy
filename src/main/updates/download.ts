@@ -8,12 +8,30 @@ import type { AgentFetch } from '../../shared';
  * sha512 and a size before it is used", so the hashing rule lives here once.
  */
 
+/**
+ * The digest a manifest published for its archive. `sha512` is the
+ * application's own update channel and add-on catalogue; `sha256` is what
+ * GitHub's release API publishes for a third-party asset (the Copilot CLI).
+ */
+export interface ArchiveDigest {
+  readonly algorithm: 'sha256' | 'sha512';
+  /** Lower- or upper-case hex, as the manifest wrote it. */
+  readonly hex: string;
+}
+
 /** What a manifest promised about one archive. */
 export interface ArchiveExpectation {
-  /** Hex sha512 of the archive's bytes. */
-  readonly sha512: string;
+  readonly digest: ArchiveDigest;
   /** Exact byte length. */
   readonly size: number;
+}
+
+/** The expectation an update manifest and an add-on catalogue both use. */
+export function sha512Expectation(file: {
+  readonly sha512: string;
+  readonly size: number;
+}): ArchiveExpectation {
+  return { digest: { algorithm: 'sha512', hex: file.sha512 }, size: file.size };
 }
 
 export type ArchiveVerdict = 'ok' | 'hash' | 'size';
@@ -21,10 +39,10 @@ export type ArchiveVerdict = 'ok' | 'hash' | 'size';
 /** Compares downloaded bytes with the manifest's hash and size. Never throws. */
 export function verifyArchive(bytes: Uint8Array, expected: ArchiveExpectation): ArchiveVerdict {
   if (bytes.byteLength !== expected.size) return 'size';
-  const actual = createHash('sha512').update(bytes).digest();
+  const actual = createHash(expected.digest.algorithm).update(bytes).digest();
   let claimed: Buffer;
   try {
-    claimed = Buffer.from(expected.sha512, 'hex');
+    claimed = Buffer.from(expected.digest.hex, 'hex');
   } catch {
     return 'hash';
   }

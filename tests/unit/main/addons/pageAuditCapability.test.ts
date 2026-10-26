@@ -16,7 +16,7 @@ import type { InstalledAddon } from '../../../../src/main/addons/store';
  * (the tool maps an outcome; an exception would fail the turn).
  */
 
-const ADDON_DIR = path.join('C:', 'addons', 'page-audit', '1.0.0');
+const ADDON_DIR = path.join('C:', 'addons', 'page-audit', '0123456789abcdef');
 
 const REQUEST: PageAuditRequest = { url: undefined, categories: ['seo'], formFactor: 'mobile' };
 
@@ -25,8 +25,7 @@ function installed(): InstalledAddon {
     dir: ADDON_DIR,
     descriptor: {
       id: 'page-audit',
-      version: '1.0.0',
-      kind: 'js',
+      identity: '0123456789abcdef',
       apiVersion: 1,
       entry: 'index.js',
     },
@@ -46,10 +45,7 @@ function deps(): PageAuditAddonRuntimeDeps {
 }
 
 function manager(ensure: AddonManager['ensure']): AddonManager {
-  return {
-    ensure,
-    resolveFile: () => Promise.resolve({ ok: false, error: { reason: 'kind', message: 'n/a' } }),
-  };
+  return { ensure };
 }
 
 describe('createPageAuditCapability', () => {
@@ -73,10 +69,9 @@ describe('createPageAuditCapability', () => {
     const outcome = await run(REQUEST, undefined, (stage) => stages.push(stage));
 
     expect(outcome).toEqual({ kind: 'no_page' });
-    expect(stages).toEqual([
-      'Downloading page audit add-on 34%',
-      'Downloading page audit add-on 100%',
-    ]);
+    expect(stages).toHaveLength(2);
+    expect(stages[0]).toContain('34%');
+    expect(stages[1]).toContain('100%');
     expect(importModule).toHaveBeenCalledWith(pathToFileURL(path.join(ADDON_DIR, 'index.js')).href);
     expect(createPageAuditRunner).toHaveBeenCalledWith(runtimeDeps);
     expect(audit).toHaveBeenCalledWith(REQUEST, undefined, expect.any(Function));

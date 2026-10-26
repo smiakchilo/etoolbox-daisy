@@ -34,7 +34,20 @@ for (const { catalog } of partials) {
     addons[id] ??= {};
     for (const [version, entry] of Object.entries(versions)) {
       addons[id][version] ??= { platforms: {} };
-      Object.assign(addons[id][version].platforms, entry.platforms);
+      for (const [platformKey, archive] of Object.entries(entry.platforms ?? {})) {
+        const existing = addons[id][version].platforms[platformKey];
+        // The same platform key must name the same bytes. A JS add-on is
+        // published as `any` by every runner, so this is what catches two
+        // matrices producing different archives under one catalogue entry.
+        if (existing !== undefined && existing.sha512 !== archive.sha512) {
+          console.error(
+            `\n${id} ${version} ${platformKey}: two builds published different archives ` +
+              `(${existing.sha512.slice(0, 12)}… vs ${archive.sha512.slice(0, 12)}…).`,
+          );
+          process.exit(1);
+        }
+        addons[id][version].platforms[platformKey] = archive;
+      }
     }
   }
 }

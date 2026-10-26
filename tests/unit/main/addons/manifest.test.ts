@@ -18,10 +18,10 @@ function catalogue(): unknown {
   return {
     addons: {
       'page-audit': {
-        '1.0.0': {
+        '0123456789abcdef': {
           platforms: {
             [ADDON_PLATFORM_ANY]: {
-              file: 'page-audit-1.0.0-any.zip',
+              file: 'page-audit-0123456789abcdef-any.zip',
               sha512: 'a'.repeat(128),
               size: 1024,
             },
@@ -33,7 +33,7 @@ function catalogue(): unknown {
 }
 
 describe('addonCatalogSchema', () => {
-  it('accepts a catalogue with one version and an any-platform archive', () => {
+  it('accepts a catalogue with one identity and an any-platform archive', () => {
     expect(addonCatalogSchema.safeParse(catalogue()).success).toBe(true);
   });
 
@@ -43,7 +43,8 @@ describe('addonCatalogSchema', () => {
       somethingNew?: boolean;
     };
     withExtra.somethingNew = true;
-    const platform = withExtra.addons['page-audit']?.['1.0.0']?.platforms[ADDON_PLATFORM_ANY];
+    const platform =
+      withExtra.addons['page-audit']?.['0123456789abcdef']?.platforms[ADDON_PLATFORM_ANY];
     if (platform !== undefined) {
       Reflect.set(platform, 'notes', 'a newer field');
     }
@@ -61,56 +62,39 @@ describe('addonCatalogSchema', () => {
       addons: Record<string, Record<string, { platforms: Record<string, object> }>>;
     };
     Object.assign(
-      broken.addons['page-audit']?.['1.0.0']?.platforms[ADDON_PLATFORM_ANY] ?? {},
+      broken.addons['page-audit']?.['0123456789abcdef']?.platforms[ADDON_PLATFORM_ANY] ?? {},
       patch,
     );
 
     expect(addonCatalogSchema.safeParse(broken).success).toBe(false);
   });
 
-  it('refuses a version that is not dotted numeric', () => {
+  it('refuses an identity that is not a content digest', () => {
     const broken = catalogue() as {
       addons: Record<string, Record<string, unknown>>;
     };
-    broken.addons['page-audit'] = { latest: broken.addons['page-audit']?.['1.0.0'] };
+    broken.addons['page-audit'] = {
+      latest: broken.addons['page-audit']?.['0123456789abcdef'],
+    };
 
     expect(addonCatalogSchema.safeParse(broken).success).toBe(false);
   });
 });
 
 describe('addonDescriptorSchema', () => {
-  const js = { id: 'page-audit', version: '1.0.0', kind: 'js', apiVersion: 1, entry: 'index.js' };
+  const js = {
+    id: 'page-audit',
+    identity: '0123456789abcdef',
+    apiVersion: 1,
+    entry: 'index.js',
+  };
 
-  it('accepts a js descriptor with an entry', () => {
+  it('accepts a descriptor with an entry', () => {
     expect(addonDescriptorSchema.safeParse(js).success).toBe(true);
   });
 
-  it('accepts a binary descriptor with named files', () => {
-    expect(
-      addonDescriptorSchema.safeParse({
-        id: 'copilot-cli',
-        version: '1.0.83',
-        kind: 'binary',
-        apiVersion: 1,
-        files: { cli: 'copilot.exe' },
-      }).success,
-    ).toBe(true);
-  });
-
-  it('refuses a js descriptor with no entry', () => {
+  it('refuses a descriptor with no entry', () => {
     expect(addonDescriptorSchema.safeParse({ ...js, entry: undefined }).success).toBe(false);
-  });
-
-  it('refuses a binary descriptor with no files', () => {
-    expect(
-      addonDescriptorSchema.safeParse({
-        id: 'copilot-cli',
-        version: '1.0.83',
-        kind: 'binary',
-        apiVersion: 1,
-        files: {},
-      }).success,
-    ).toBe(false);
   });
 
   it.each(['../escape.js', '/absolute.js', 'C:/windows.js', 'a/../../b.js'])(
@@ -120,8 +104,8 @@ describe('addonDescriptorSchema', () => {
     },
   );
 
-  it('refuses a descriptor kind it does not know', () => {
-    expect(addonDescriptorSchema.safeParse({ ...js, kind: 'native' }).success).toBe(false);
+  it('refuses an identity of the wrong shape', () => {
+    expect(addonDescriptorSchema.safeParse({ ...js, identity: '1.0.0' }).success).toBe(false);
   });
 
   it('keeps a relative nested path working', () => {

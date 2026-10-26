@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { AgentFetch } from '../../shared';
 import { type Result, err, ok } from '../../shared';
 import type { Logger } from '../logger';
@@ -26,7 +25,7 @@ import {
  */
 
 export type AddonFailureReason =
-  'cancelled' | 'extract' | 'hash' | 'apiVersion' | 'kind' | 'version' | 'offline';
+  'cancelled' | 'extract' | 'hash' | 'apiVersion' | 'identity' | 'offline';
 
 export interface AddonFailure {
   readonly reason: AddonFailureReason;
@@ -40,14 +39,8 @@ export interface EnsureAddonOptions {
 }
 
 export interface AddonManager {
-  /** The folder and descriptor of the pinned version, installed if needed. */
+  /** The folder and descriptor of the pinned identity, installed if needed. */
   ensure(id: string, options?: EnsureAddonOptions): Promise<Result<InstalledAddon, AddonFailure>>;
-  /** Reads a named file a binary add-on provides, installing it if needed. */
-  resolveFile(
-    id: string,
-    file: string,
-    options?: EnsureAddonOptions,
-  ): Promise<Result<string, AddonFailure>>;
 }
 
 export interface AddonManagerOptions {
@@ -70,8 +63,7 @@ const FAILURE_MESSAGES: Readonly<Record<AddonFailureReason, string>> = {
   extract: 'The downloaded add-on could not be installed',
   hash: 'The downloaded add-on did not match its published checksum',
   apiVersion: 'The downloaded add-on is not compatible with this version of the application',
-  kind: 'The downloaded add-on is not the kind this feature needs',
-  version: 'The downloaded add-on is not the version this application needs',
+  identity: 'The downloaded add-on is not the copy this application needs',
   offline: 'The add-on is not installed and could not be downloaded',
 };
 
@@ -94,8 +86,8 @@ export function createAddonManager(options: AddonManagerOptions): AddonManager {
   function loadDev(id: string, pin: AddonPin, dir: string): Result<InstalledAddon, AddonFailure> {
     const descriptor = readAddonDescriptor(dir);
     if (descriptor === undefined) return err(failure('extract'));
-    if (descriptor.id !== id) return err(failure('version'));
-    if (descriptor.version !== pin.version) return err(failure('version'));
+    if (descriptor.id !== id) return err(failure('identity'));
+    if (descriptor.identity !== pin.identity) return err(failure('identity'));
     if (descriptor.apiVersion !== pin.apiVersion) return err(failure('apiVersion'));
     return ok({ dir, descriptor });
   }
@@ -127,7 +119,7 @@ export function createAddonManager(options: AddonManagerOptions): AddonManager {
         if (isAborted(settings.signal)) return err(failure('cancelled'));
         const catalog = await readAddonCatalog(source, { fetch });
         if (catalog === undefined) continue;
-        const archive = archiveFor(catalog, id, pin.version, options.platformKey);
+        const archive = archiveFor(catalog, id, pin.identity, options.platformKey);
         if (archive === undefined) continue;
         try {
           const bytes = await downloadAddonArchive(source, archive, {
@@ -144,10 +136,10 @@ export function createAddonManager(options: AddonManagerOptions): AddonManager {
             error instanceof AddonInstallError
               ? error.reason === 'apiVersion'
                 ? 'apiVersion'
-                : error.reason === 'version'
-                  ? 'version'
+                : error.reason === 'identity'
+                  ? 'identity'
                   : error.reason === 'id'
-                    ? 'version'
+                    ? 'identity'
                     : 'extract'
               : error instanceof ArchiveDownloadError
                 ? error.reason === 'hash' || error.reason === 'size'
@@ -178,19 +170,5 @@ export function createAddonManager(options: AddonManagerOptions): AddonManager {
     });
   }
 
-  async function resolveFile(
-    id: string,
-    file: string,
-    settings: EnsureAddonOptions = {},
-  ): Promise<Result<string, AddonFailure>> {
-    const ensured = await ensure(id, settings);
-    if (!ensured.ok) return ensured;
-    const relative = ensured.value.descriptor.files?.[file];
-    if (ensured.value.descriptor.kind !== 'binary' || relative === undefined) {
-      return err(failure('kind'));
-    }
-    return ok(path.join(ensured.value.dir, ...relative.split('/')));
-  }
-
-  return { ensure, resolveFile };
+  return { ensure };
 }

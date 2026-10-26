@@ -6,7 +6,7 @@ export type AddonProbeResult =
   | {
       readonly ok: true;
       readonly dir: string;
-      readonly version: string;
+      readonly identity: string;
       readonly apiVersion: number;
       readonly progress: readonly number[];
     }

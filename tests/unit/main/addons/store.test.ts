@@ -6,23 +6,24 @@ import { createAddonStore, readAddonDescriptor } from '../../../../src/main/addo
 import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
- * The install store: one folder per id and version, installed atomically and
- * trimmed to the pinned version. Every rule below is about what is on disk after
- * a failure - a half-extracted add-on must never be loadable.
+ * The install store: one folder per id and content identity, installed
+ * atomically and trimmed to the pinned identity. Every rule below is about what
+ * is on disk after a failure - a half-extracted add-on must never be loadable.
  */
 
 const scratch = createScratchDirs('main-addons', 'store-');
 
 afterEach(() => scratch.cleanup());
 
-const PIN = { version: '1.0.0', apiVersion: 1 };
+const IDENTITY = '0123456789abcdef';
+const OTHER_IDENTITY = 'fedcba9876543210';
+const PIN = { identity: IDENTITY, apiVersion: 1 };
 
 function archive(
   files: Record<string, string | Uint8Array>,
   descriptor = {
     id: 'page-audit',
-    version: '1.0.0',
-    kind: 'js' as const,
+    identity: IDENTITY,
     apiVersion: 1,
     entry: 'index.js',
   },
@@ -53,36 +54,37 @@ describe('createAddonStore', () => {
       archive({ 'index.js': 'export {};' }),
     );
 
-    expect(installed.dir).toBe(path.join(root, 'page-audit', '1.0.0'));
-    expect(installed.descriptor).toMatchObject({ id: 'page-audit', version: '1.0.0' });
+    expect(installed.dir).toBe(path.join(root, 'page-audit', IDENTITY));
+    expect(installed.descriptor).toMatchObject({ id: 'page-audit', identity: IDENTITY });
     expect(readFileSync(path.join(installed.dir, 'index.js'), 'utf8')).toBe('export {};');
     expect(store.readInstalled('page-audit', PIN)).toMatchObject({ dir: installed.dir });
   });
 
-  it('keeps only the pinned version after a successful install', () => {
+  it('keeps only the pinned identity after a successful install', () => {
     const root = makeStore();
     const store = createAddonStore({ root });
     store.installArchive(
       'page-audit',
-      { version: '0.9.0', apiVersion: 1 },
+      { identity: OTHER_IDENTITY, apiVersion: 1 },
       archive(
         {},
         {
           id: 'page-audit',
-          version: '0.9.0',
-          kind: 'js',
+          identity: OTHER_IDENTITY,
           apiVersion: 1,
           entry: 'index.js',
         },
       ),
     );
-    const stale = path.join(root, 'page-audit', '0.9.0');
+    const stale = path.join(root, 'page-audit', OTHER_IDENTITY);
     expect(existsSync(stale)).toBe(true);
 
     store.installArchive('page-audit', PIN, archive({ 'index.js': 'export {};' }));
 
     expect(existsSync(stale)).toBe(false);
-    expect(store.readInstalled('page-audit', { version: '0.9.0', apiVersion: 1 })).toBeUndefined();
+    expect(
+      store.readInstalled('page-audit', { identity: OTHER_IDENTITY, apiVersion: 1 }),
+    ).toBeUndefined();
   });
 
   it('refuses an archive that is not a zip and leaves nothing installed', () => {
@@ -92,20 +94,19 @@ describe('createAddonStore', () => {
     expect(() => store.installArchive('page-audit', PIN, strToU8('not a zip'))).toThrowError(
       /archive/,
     );
-    expect(existsSync(path.join(root, 'page-audit', '1.0.0'))).toBe(false);
+    expect(existsSync(path.join(root, 'page-audit', IDENTITY))).toBe(false);
   });
 
   it.each([
     ['a different id', { id: 'another-addon' }, 'id'],
-    ['a different version', { version: '2.0.0' }, 'version'],
+    ['a different identity', { identity: OTHER_IDENTITY }, 'identity'],
     ['a different API version', { apiVersion: 2 }, 'apiVersion'],
   ])('refuses %s and leaves no partial folder', (_label, patch, reason) => {
     const root = makeStore();
     const store = createAddonStore({ root });
     const descriptor = {
       id: 'page-audit',
-      version: '1.0.0',
-      kind: 'js' as const,
+      identity: IDENTITY,
       apiVersion: 1,
       entry: 'index.js',
       ...patch,
@@ -114,8 +115,8 @@ describe('createAddonStore', () => {
     expect(() =>
       store.installArchive('page-audit', PIN, archive({ 'index.js': 'export {};' }, descriptor)),
     ).toThrowError(new RegExp(reason));
-    expect(existsSync(path.join(root, 'page-audit', '1.0.0'))).toBe(false);
-    expect(existsSync(path.join(root, 'page-audit', '1.0.0.partial'))).toBe(false);
+    expect(existsSync(path.join(root, 'page-audit', IDENTITY))).toBe(false);
+    expect(existsSync(path.join(root, 'page-audit', `${IDENTITY}.partial`))).toBe(false);
   });
 
   it('refuses an entry that would escape the add-on folder', () => {
@@ -125,19 +126,18 @@ describe('createAddonStore', () => {
     expect(() =>
       store.installArchive('page-audit', PIN, archive({ '../escape.js': 'x' })),
     ).toThrowError(/extract/);
-    expect(existsSync(path.join(root, 'page-audit', '1.0.0'))).toBe(false);
+    expect(existsSync(path.join(root, 'page-audit', IDENTITY))).toBe(false);
   });
 
-  it('does not treat a folder of another version as the pinned one', () => {
+  it('does not treat another identity’s folder as the pinned one', () => {
     const root = makeStore();
-    const directory = path.join(root, 'page-audit', '2.0.0');
+    const directory = path.join(root, 'page-audit', OTHER_IDENTITY);
     mkdirSync(directory, { recursive: true });
     writeFileSync(
       path.join(directory, 'addon.json'),
       JSON.stringify({
         id: 'page-audit',
-        version: '2.0.0',
-        kind: 'js',
+        identity: OTHER_IDENTITY,
         apiVersion: 1,
         entry: 'index.js',
       }),

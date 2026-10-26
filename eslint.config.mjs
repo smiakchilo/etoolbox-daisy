@@ -215,6 +215,27 @@ const agentRestriction = [
     ],
   },
 ];
+
+/**
+ * The same boundary for a folder nested one level inside an agent
+ * (`src/agents/<name>/<sub>/`), where `src/shared` is one `../` further away:
+ * one `../` stays inside the agent, two would be a sibling agent, three reach
+ * `src` - and there only `shared` is allowed. A second level of nesting needs
+ * its own entry here, which is deliberate: it keeps the rule exact rather than
+ * "anything goes below two levels".
+ */
+const agentNestedRestriction = [
+  'error',
+  {
+    patterns: [
+      {
+        regex: '^(?:\\.\\./){2}(?!\\.\\./shared(?:/|$))',
+        message:
+          'An agent folder may import only its own files and src/shared - not the app or another agent.',
+      },
+    ],
+  },
+];
 const nodeOnlyGlobals = ['process', '__dirname', '__filename', 'require', 'global', 'Buffer'];
 
 export default tseslint.config(
@@ -322,6 +343,14 @@ export default tseslint.config(
     files: ['src/agents/**/*.ts'],
     rules: {
       'no-restricted-imports': agentRestriction,
+    },
+  },
+  {
+    // A nested folder inside an agent is one `../` further from src/shared, so
+    // it gets the matching boundary (see `agentNestedRestriction`).
+    files: ['src/agents/*/*/**/*.ts'],
+    rules: {
+      'no-restricted-imports': agentNestedRestriction,
     },
   },
   {

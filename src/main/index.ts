@@ -11,7 +11,6 @@ import {
   answerWith,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
-  ok,
   readLeadingSkillToken,
   renderSkillCatalogue,
   resolveSkillPrompt,
@@ -1150,18 +1149,6 @@ if (!gotSingleInstanceLock) {
           // Settings reaches the next prompt without a restart. Deliberately
           // synchronous - `sendPrompt` must not wait on a disk read.
           modelPreferences: () => modelPreferenceCache.current(),
-          // A binary add-on's file (Copilot's `copilot.exe`, used only for the
-          // interactive sign-in). The pinned add-on is downloaded on first use;
-          // the agent names an id and a file, never a path.
-          resolveAddonFile: async (id, file, addonOptions) => {
-            const resolved = await addons.resolveFile(id, file, {
-              ...(addonOptions?.onProgress === undefined
-                ? {}
-                : { onProgress: addonOptions.onProgress }),
-              ...(addonOptions?.signal === undefined ? {} : { signal: addonOptions.signal }),
-            });
-            return resolved.ok ? ok(resolved.value) : err({ message: resolved.error.message });
-          },
           // Shown in the Agents tab's sign-in status while the download runs.
           reportAuthProgress: (agentId, text) => {
             if (!mainWindow.isDestroyed()) {

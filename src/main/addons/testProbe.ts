@@ -19,7 +19,7 @@ export interface AddonTestProbe {
     | {
         readonly ok: true;
         readonly dir: string;
-        readonly version: string;
+        readonly identity: string;
         readonly apiVersion: number;
         readonly progress: readonly number[];
       }
@@ -38,7 +38,7 @@ export function createAddonTestProbe(manager: AddonManager): AddonTestProbe {
         ? {
             ok: true,
             dir: result.value.dir,
-            version: result.value.descriptor.version,
+            identity: result.value.descriptor.identity,
             apiVersion: result.value.descriptor.apiVersion,
             progress,
           }

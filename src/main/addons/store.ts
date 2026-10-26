@@ -12,15 +12,18 @@ import type { AddonPin } from './pins';
 /**
  * Where add-ons live and how one is installed.
  *
- * Layout: `<dataRoot>/addons/<id>/<version>/`, holding the archive's contents
- * plus the `addon.json` it shipped. The install is atomic: the archive is
- * extracted into `<version>.partial`, its descriptor is checked against the pin,
- * and only then is it renamed into place. Other versions of the same id are
- * removed after a successful install, so the folder never keeps an add-on this
- * build will never use.
+ * Layout: `<dataRoot>/addons/<id>/<identity>/`, holding the archive's contents
+ * plus the `addon.json` it shipped. The identity is a digest of the add-on's
+ * own sources, computed at build time, so a changed add-on lands in a new
+ * folder and an unchanged one is reused.
+ *
+ * The install is atomic: the archive is extracted into `<identity>.partial`,
+ * its descriptor is checked against the pin, and only then is it renamed into
+ * place. Other identities of the same id are removed after a successful
+ * install, so the folder never keeps an add-on this build will never use.
  */
 
-export type AddonInstallFailure = 'archive' | 'extract' | 'id' | 'kind' | 'version' | 'apiVersion';
+export type AddonInstallFailure = 'archive' | 'extract' | 'id' | 'identity' | 'apiVersion';
 
 /** A typed install fault; the manager maps it to a user-facing reason. */
 export class AddonInstallError extends Error {
@@ -42,16 +45,16 @@ export interface AddonStoreOptions {
 }
 
 export interface AddonStore {
-  directoryFor(id: string, version: string): string;
-  /** The installed pinned version, when the folder is present and valid. */
+  directoryFor(id: string, identity: string): string;
+  /** The installed pinned identity, when the folder is present and valid. */
   readInstalled(id: string, pin: AddonPin): InstalledAddon | undefined;
   /**
-   * Extracts `archive` into the pinned version's folder and returns it. Throws
+   * Extracts `archive` into the pinned identity's folder and returns it. Throws
    * {@link AddonInstallError} when the archive is unusable or is not the pinned
    * add-on; a thrown install leaves no trace at the final path.
    */
   installArchive(id: string, pin: AddonPin, archive: Uint8Array): InstalledAddon;
-  /** Deletes every version of `id` except `keep`, and any leftover partial folder. */
+  /** Deletes every identity of `id` except `keep`, and any leftover partial folder. */
   removeOtherVersions(id: string, keep: string): void;
 }
 
@@ -73,8 +76,8 @@ export function readAddonDescriptor(dir: string): AddonDescriptor | undefined {
 }
 
 export function createAddonStore(options: AddonStoreOptions): AddonStore {
-  function directoryFor(id: string, version: string): string {
-    return path.join(options.root, id, version);
+  function directoryFor(id: string, identity: string): string {
+    return path.join(options.root, id, identity);
   }
 
   function readDescriptor(dir: string): AddonDescriptor | undefined {
@@ -82,12 +85,12 @@ export function createAddonStore(options: AddonStoreOptions): AddonStore {
   }
 
   function readInstalled(id: string, pin: AddonPin): InstalledAddon | undefined {
-    const dir = directoryFor(id, pin.version);
+    const dir = directoryFor(id, pin.identity);
     const descriptor = readDescriptor(dir);
     if (descriptor === undefined) return undefined;
     if (
       descriptor.id !== id ||
-      descriptor.version !== pin.version ||
+      descriptor.identity !== pin.identity ||
       descriptor.apiVersion !== pin.apiVersion
     ) {
       return undefined;
@@ -125,7 +128,7 @@ export function createAddonStore(options: AddonStoreOptions): AddonStore {
     }
     if (descriptor === undefined) return new AddonInstallError('extract');
     if (descriptor.id !== id) return new AddonInstallError('id');
-    if (descriptor.version !== pin.version) return new AddonInstallError('version');
+    if (descriptor.identity !== pin.identity) return new AddonInstallError('identity');
     if (descriptor.apiVersion !== pin.apiVersion) return new AddonInstallError('apiVersion');
     return descriptor;
   }
@@ -138,7 +141,7 @@ export function createAddonStore(options: AddonStoreOptions): AddonStore {
       throw new AddonInstallError('archive');
     }
 
-    const finalDir = directoryFor(id, pin.version);
+    const finalDir = directoryFor(id, pin.identity);
     const partialDir = `${finalDir}${PARTIAL_SUFFIX}`;
     rmSync(partialDir, { recursive: true, force: true });
     mkdirSync(partialDir, { recursive: true });
@@ -150,7 +153,7 @@ export function createAddonStore(options: AddonStoreOptions): AddonStore {
     try {
       rmSync(finalDir, { recursive: true, force: true });
       renameSync(partialDir, finalDir);
-      removeOtherVersions(id, pin.version);
+      removeOtherVersions(id, pin.identity);
       return { dir: finalDir, descriptor };
     } catch {
       rmSync(partialDir, { recursive: true, force: true });

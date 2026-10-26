@@ -12,8 +12,8 @@ import { createScratchDirs } from '../../../support/scratchDirs';
 
 /**
  * The manager is the only way a feature reaches its add-on. Its contract is
- * narrow and load-bearing: the pinned version or a typed failure, one install at
- * a time per id, and never a network step for a build that carries its own
+ * narrow and load-bearing: the pinned identity or a typed failure, one install
+ * at a time per id, and never a network step for a build that carries its own
  * add-ons.
  */
 
@@ -21,12 +21,13 @@ const scratch = createScratchDirs('main-addons', 'manager-');
 
 afterEach(() => scratch.cleanup());
 
-const PIN = { version: '1.0.0', apiVersion: 1 };
+const IDENTITY = '0123456789abcdef';
+const OTHER_IDENTITY = 'fedcba9876543210';
+const PIN = { identity: IDENTITY, apiVersion: 1 };
 
 const JS_DESCRIPTOR: AddonDescriptor = {
   id: 'page-audit',
-  version: '1.0.0',
-  kind: 'js',
+  identity: IDENTITY,
   apiVersion: 1,
   entry: 'index.js',
 };
@@ -44,7 +45,7 @@ function publish(
   options: { readonly descriptor?: AddonDescriptor; readonly wrongHash?: boolean } = {},
 ): void {
   const bytes = addonZip(options.descriptor);
-  const file = 'page-audit-1.0.0-any.zip';
+  const file = `page-audit-${IDENTITY}-any.zip`;
   writeFileSync(path.join(directory, file), bytes);
   const sha512 = createHash('sha512').update(bytes).digest('hex');
   writeFileSync(
@@ -52,7 +53,7 @@ function publish(
     JSON.stringify({
       addons: {
         'page-audit': {
-          '1.0.0': {
+          [IDENTITY]: {
             platforms: {
               any: {
                 file,
@@ -87,7 +88,7 @@ function harness(overrides: Partial<AddonManagerOptions> = {}) {
 }
 
 describe('ensure', () => {
-  it('installs the pinned version from the catalogue and reports progress', async () => {
+  it('installs the pinned identity from the catalogue and reports progress', async () => {
     const { manager, addonsRoot, sourceDirectory } = harness();
     publish(sourceDirectory);
     const progress: number[] = [];
@@ -98,11 +99,11 @@ describe('ensure', () => {
 
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) return;
-    expect(ensured.value.dir).toBe(path.join(addonsRoot, 'page-audit', '1.0.0'));
+    expect(ensured.value.dir).toBe(path.join(addonsRoot, 'page-audit', IDENTITY));
     expect(progress.at(-1)).toBe(1);
   });
 
-  it('answers the installed pinned version on the next call without a catalogue read', async () => {
+  it('answers the installed pinned identity on the next call without a catalogue read', async () => {
     const { manager, sourceDirectory, readSources } = harness();
     publish(sourceDirectory);
     expect((await manager.ensure('page-audit')).ok).toBe(true);
@@ -140,7 +141,7 @@ describe('ensure', () => {
       ok: false,
       error: { reason: 'hash' },
     });
-    expect(existsSync(path.join(addonsRoot, 'page-audit', '1.0.0'))).toBe(false);
+    expect(existsSync(path.join(addonsRoot, 'page-audit', IDENTITY))).toBe(false);
   });
 
   it('refuses an add-on built against another API version', async () => {
@@ -153,13 +154,13 @@ describe('ensure', () => {
     });
   });
 
-  it('refuses an add-on of another version', async () => {
+  it('refuses an add-on of another identity', async () => {
     const { manager, sourceDirectory } = harness();
-    publish(sourceDirectory, { descriptor: { ...JS_DESCRIPTOR, version: '2.0.0' } });
+    publish(sourceDirectory, { descriptor: { ...JS_DESCRIPTOR, identity: OTHER_IDENTITY } });
 
     expect(await manager.ensure('page-audit')).toMatchObject({
       ok: false,
-      error: { reason: 'version' },
+      error: { reason: 'identity' },
     });
   });
 
@@ -198,53 +199,15 @@ describe('ensure', () => {
     mkdirSync(devDirectory, { recursive: true });
     writeFileSync(
       path.join(devDirectory, 'addon.json'),
-      JSON.stringify({ ...JS_DESCRIPTOR, version: '0.9.0' }),
+      JSON.stringify({ ...JS_DESCRIPTOR, identity: OTHER_IDENTITY }),
     );
     const { manager, readSources } = harness({ devDirectory: () => devDirectory });
 
     expect(await manager.ensure('page-audit')).toMatchObject({
       ok: false,
-      error: { reason: 'version' },
+      error: { reason: 'identity' },
     });
     expect(readSources).not.toHaveBeenCalled();
-  });
-});
-
-describe('resolveFile', () => {
-  it("answers a binary add-on's named file", async () => {
-    const devDirectory = path.join(path.join(scratch.create(), 'dev'), 'copilot-cli');
-    mkdirSync(devDirectory, { recursive: true });
-    writeFileSync(
-      path.join(devDirectory, 'addon.json'),
-      JSON.stringify({
-        id: 'copilot-cli',
-        version: '1.0.83',
-        kind: 'binary',
-        apiVersion: 1,
-        files: { cli: 'copilot.exe' },
-      }),
-    );
-    const { manager } = harness({
-      pins: { 'copilot-cli': { version: '1.0.83', apiVersion: 1 } },
-      devDirectory: () => devDirectory,
-    });
-
-    expect(await manager.resolveFile('copilot-cli', 'cli')).toMatchObject({
-      ok: true,
-      value: path.join(devDirectory, 'copilot.exe'),
-    });
-  });
-
-  it('refuses a file a js add-on does not provide', async () => {
-    const devDirectory = path.join(path.join(scratch.create(), 'dev'), 'page-audit');
-    mkdirSync(devDirectory, { recursive: true });
-    writeFileSync(path.join(devDirectory, 'addon.json'), JSON.stringify(JS_DESCRIPTOR));
-    const { manager } = harness({ devDirectory: () => devDirectory });
-
-    expect(await manager.resolveFile('page-audit', 'cli')).toMatchObject({
-      ok: false,
-      error: { reason: 'kind' },
-    });
   });
 });
 

@@ -3,17 +3,19 @@
  * pins this build needs (`src/main/addons/pins.json`) and - with `--zip` - the
  * published archives and catalogue (`dist-addons/`).
  *
+ * An add-on carries **no version of its own**. Its identity is derived from its
+ * content here (a sha256 over its sources, as the first 16 hex characters), so
+ * it changes exactly when the add-on changes: an unchanged add-on is never
+ * re-published and never re-downloaded, and a changed one can never be served
+ * under an identity an install already has.
+ *
  * A JS add-on is bundled with esbuild into one ESM `index.js`, with its own
  * runtime dependencies left external, and its `node_modules` is linked beside
- * it so Node resolves them the ordinary way. A binary add-on is the platform
- * package's executable, copied into its own folder.
+ * it so Node resolves them the ordinary way.
  *
  * `npm run build` and `npm run dev` run this without `--zip`: a build from this
  * repository carries its add-ons (`out/addons`) and never downloads one. Only
  * `npm run addons:zip` (used by the publish workflow) writes `dist-addons/`.
- * A `--zip` run reuses an add-on `out/addons` already holds when that is at
- * least as new as the add-on's sources, so a release does not build (and, for
- * `copilot-cli`, copy) every add-on twice.
  *
  * Usage: node scripts/build-addons.mjs [--zip]
  */
@@ -25,7 +27,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -41,6 +42,9 @@ const outDir = join(root, 'out', 'addons');
 const distDir = join(root, 'dist-addons');
 const pinsFile = join(root, 'src', 'main', 'addons', 'pins.json');
 const withZip = process.argv.includes('--zip');
+
+/** A JS add-on is platform-independent, so its archive has one platform key. */
+const PLATFORM_ANY = 'any';
 
 function fail(message) {
   console.error(`\n${message}`);
@@ -65,84 +69,74 @@ function addonFolders() {
     .sort();
 }
 
-/** The expected package name of a platform-specific Copilot payload. */
-function copilotCliPackage(platform, arch) {
-  return `@github/copilot-${platform}-${arch}`;
-}
-
-/** A binary add-on's file list for this platform (`copilot.exe` is `copilot` elsewhere). */
-function platformFiles(descriptor) {
-  return Object.fromEntries(
-    Object.entries(descriptor.files ?? {}).map(([name, relativePath]) => [
-      name,
-      process.platform === 'win32'
-        ? String(relativePath)
-        : String(relativePath).replace(/\.exe$/, ''),
-    ]),
-  );
-}
-
-/** The newest modification time of an add-on's own sources (its install is not a source). */
-function newestSourceMtime(directory) {
-  let newest = 0;
+/**
+ * The add-on's own sources, as sorted relative paths. An installed dependency
+ * tree and dot-entries are not sources; the lockfile is (it pins them).
+ */
+function sourceFiles(directory) {
+  const files = [];
   const visit = (current) => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
       if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
       const full = join(current, entry.name);
-      if (entry.isDirectory()) {
-        visit(full);
-      } else if (entry.isFile()) {
-        newest = Math.max(newest, statSync(full).mtimeMs);
-      }
+      if (entry.isDirectory()) visit(full);
+      else if (entry.isFile()) files.push(relative(directory, full));
     }
   };
   visit(directory);
-  return newest;
+  return files.sort();
+}
+
+/**
+ * An add-on's npm `version` follows the application's (a private package carries
+ * the app version), so it must not participate in the identity: otherwise every
+ * release would re-download an unchanged add-on. The version fields are removed
+ * before hashing; everything else in the two manifests is content.
+ */
+function withoutVersionMetadata(file, bytes) {
+  if (file !== 'package.json' && file !== 'package-lock.json') return bytes;
+  const parsed = JSON.parse(bytes.toString('utf8'));
+  delete parsed.version;
+  if (file === 'package-lock.json' && parsed.packages?.[''] !== undefined) {
+    delete parsed.packages[''].version;
+  }
+  return Buffer.from(JSON.stringify(parsed), 'utf8');
+}
+
+/**
+ * The add-on's content identity: what it is, not what someone called it. Two
+ * builds of the same sources always agree; any edit - including a dependency
+ * bump in the lockfile - changes it, while an app version bump does not.
+ */
+function identityFor(directory) {
+  const hash = createHash('sha256');
+  for (const file of sourceFiles(directory)) {
+    hash.update(file.replace(/\\/g, '/'));
+    hash.update('\0');
+    hash.update(withoutVersionMetadata(file, readFileSync(join(directory, file))));
+    hash.update('\0');
+  }
+  return hash.digest('hex').slice(0, 16);
 }
 
 /**
  * Whether `--zip` can reuse what `out/addons/<id>` already holds instead of
- * building the add-on a second time.
- *
- * The release workflow zips straight after `npm run build`, so those artifacts
- * are exactly what a rebuild would produce - and rebuilding `copilot-cli` copies
- * its ~138 MB payload again. An edited add-on, or a bumped `@github/copilot`,
- * still rebuilds.
+ * building the add-on a second time. The identity answers that exactly: the
+ * release workflow zips straight after `npm run build`, so those artifacts are
+ * what a rebuild would produce.
  */
 function isBuildFresh(directory, descriptor) {
   const target = join(outDir, descriptor.id);
-
-  if (descriptor.kind === 'binary') {
-    // A copied file keeps the payload's timestamps on Windows, so mtime cannot
-    // tell whether the executable beside it is still the pinned one. The
-    // descriptor written at build time records the version (and file list) it
-    // was copied from, so that is compared instead.
-    const descriptorFile = join(target, 'addon.json');
-    const built = readJson(descriptorFile);
-    const files = platformFiles(descriptor);
-    if (Object.keys(files).length === 0) return false;
-    if (built?.version !== copilotVersion()) return false;
-    if (JSON.stringify(built.files) !== JSON.stringify(files)) return false;
-    if (statSync(descriptorFile).mtimeMs < newestSourceMtime(directory)) return false;
-    return Object.values(files).every((relativePath) =>
-      existsSync(join(target, ...String(relativePath).split('/'))),
-    );
-  }
-
-  const entry = join(target, 'index.js');
-  return existsSync(entry) && statSync(entry).mtimeMs >= newestSourceMtime(directory);
-}
-
-function copilotVersion() {
-  const pkg = readJson(join(root, 'node_modules', '@github', 'copilot', 'package.json'));
-  return pkg?.version;
+  const built = readJson(join(target, 'addon.json'));
+  return built?.identity === identityFor(directory) && existsSync(join(target, 'index.js'));
 }
 
 /**
  * Bundles a JS add-on's `index.ts` into `out/addons/<id>/index.js` with its own
- * dependencies external, and links its installed `node_modules` beside it.
+ * dependencies external, links its installed `node_modules` beside it, and
+ * writes the descriptor carrying the identity.
  */
-async function buildJsAddon(directory, descriptor, pkg) {
+async function buildJsAddon(directory, descriptor, pkg, identity) {
   const id = descriptor.id;
   const target = join(outDir, id);
   rmSync(target, { recursive: true, force: true });
@@ -160,7 +154,20 @@ async function buildJsAddon(directory, descriptor, pkg) {
     logLevel: 'silent',
   });
 
-  copyFileSync(join(directory, 'addon.json'), join(target, 'addon.json'));
+  writeFileSync(
+    join(target, 'addon.json'),
+    `${JSON.stringify(
+      {
+        id,
+        identity,
+        apiVersion: descriptor.apiVersion,
+        entry: descriptor.entry,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
   copyFileSync(join(directory, 'package.json'), join(target, 'package.json'));
 
   const modules = join(directory, 'node_modules');
@@ -176,45 +183,21 @@ async function buildJsAddon(directory, descriptor, pkg) {
   );
 }
 
-/** Copies, into `target`, the files a binary add-on consists of. */
-function buildBinaryAddon(directory, descriptor, version, target) {
-  const pkg = readJson(join(directory, 'package.json'));
-  const payloadPackage = copilotCliPackage(process.platform, process.arch);
-  const payloadDirectory = join(root, 'node_modules', ...payloadPackage.split('/'));
-  if (!existsSync(payloadDirectory)) {
-    fail(`The binary add-on "${descriptor.id}" needs ${payloadPackage}, which is not installed.`);
-  }
-  // The payload executable has no `.exe` outside Windows; the descriptor in the
-  // source tree is written for Windows.
-  const files = platformFiles(descriptor);
-  for (const [name, relativePath] of Object.entries(files)) {
-    const source = join(payloadDirectory, ...String(relativePath).split('/'));
-    if (!existsSync(source)) {
-      fail(`The binary add-on "${descriptor.id}" is missing its "${name}" file (${source}).`);
-    }
-    const destination = join(target, ...String(relativePath).split('/'));
-    mkdirSync(dirname(destination), { recursive: true });
-    copyFileSync(source, destination);
-  }
-  // The descriptor's version is the payload package's, so a bumped dependency
-  // can never leave a folder claiming an older version than its pins.
-  writeFileSync(
-    join(target, 'addon.json'),
-    `${JSON.stringify({ ...descriptor, version, files }, null, 2)}\n`,
-    'utf8',
-  );
-  if (pkg !== undefined)
-    copyFileSync(join(directory, 'package.json'), join(target, 'package.json'));
-}
-
 function sha512(bytes) {
   return createHash('sha512').update(bytes).digest('hex');
 }
 
-/** Collects a folder into the shape `zipSync` takes. */
+/**
+ * Collects a folder into the shape `zipSync` takes, in sorted order so the
+ * archive is byte-for-byte reproducible (three release runners build the same
+ * platform-independent add-on, and the catalogue publishes one sha512).
+ */
 function collectFiles(directory, prefix = '') {
   const entries = {};
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+  const children = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+  for (const entry of children) {
     const full = join(directory, entry.name);
     const name = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isDirectory()) {
@@ -226,12 +209,19 @@ function collectFiles(directory, prefix = '') {
   return entries;
 }
 
+/**
+ * A fixed timestamp for every entry. A zip otherwise records "now" per file,
+ * which would make the same add-on produce a different sha512 on every runner.
+ */
+const ZIP_TIMESTAMP = new Date('1980-01-01T00:00:00Z');
+
 /** A real production install for the published archive (never a junction). */
 function stageJsAddon(directory, descriptor, staging) {
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
   copyFileSync(join(outDir, descriptor.id, 'index.js'), join(staging, 'index.js'));
-  copyFileSync(join(directory, 'addon.json'), join(staging, 'addon.json'));
+  // The built descriptor carries the identity; the source one does not.
+  copyFileSync(join(outDir, descriptor.id, 'addon.json'), join(staging, 'addon.json'));
   copyFileSync(join(directory, 'package.json'), join(staging, 'package.json'));
   const lock = join(directory, 'package-lock.json');
   if (existsSync(lock)) copyFileSync(lock, join(staging, 'package-lock.json'));
@@ -257,23 +247,27 @@ function resolveNpmCli() {
   ].find((candidate) => existsSync(candidate));
 }
 
-/** Merges one archive into `dist-addons/addons.json`, keeping older versions. */
-function publishArchive(id, version, platformKey, file) {
+/** Merges one archive into `dist-addons/addons.json`, keeping older identities. */
+function publishArchive(id, identity, platformKey, file) {
   mkdirSync(distDir, { recursive: true });
   const catalogFile = join(distDir, 'addons.json');
   const catalog = readJson(catalogFile) ?? { addons: {} };
   catalog.addons ??= {};
   catalog.addons[id] ??= {};
-  catalog.addons[id][version] ??= { platforms: {} };
-  catalog.addons[id][version].platforms[platformKey] = file;
+  catalog.addons[id][identity] ??= { platforms: {} };
+  catalog.addons[id][identity].platforms[platformKey] = file;
   writeFileSync(catalogFile, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
 }
 
 async function main() {
   const folders = addonFolders();
   if (folders.length === 0) fail('No add-on folder (src/addons/<id>/addon.json) was found.');
+  const appVersion = readJson(join(root, 'package.json'))?.version;
+  if (typeof appVersion !== 'string') fail('The application package.json has no version.');
 
   const pins = {};
+  const identities = new Map();
+  const packages = new Map();
   for (const directory of folders) {
     const descriptor = readJson(join(directory, 'addon.json'));
     const pkg = readJson(join(directory, 'package.json'));
@@ -285,40 +279,35 @@ async function main() {
     if (typeof descriptor.apiVersion !== 'number') {
       fail(`The "${descriptor.id}" add-on has no apiVersion.`);
     }
-    if (descriptor.kind === 'binary') {
-      const version = copilotVersion();
-      if (version === undefined) {
-        fail(`The "${descriptor.id}" binary add-on needs @github/copilot in node_modules.`);
-      }
-      pins[descriptor.id] = { version, apiVersion: descriptor.apiVersion };
-    } else {
-      if (pkg === undefined) fail(`src/addons/${folderName}/package.json is missing.`);
-      if (pkg.version !== descriptor.version) {
-        fail(
-          `The "${descriptor.id}" add-on's addon.json version (${descriptor.version}) does not match its package.json version (${pkg.version}).`,
-        );
-      }
-      pins[descriptor.id] = { version: descriptor.version, apiVersion: descriptor.apiVersion };
+    if (typeof descriptor.entry !== 'string' || descriptor.entry === '') {
+      fail(`The "${descriptor.id}" add-on has no entry.`);
     }
+    if (pkg === undefined) fail(`src/addons/${folderName}/package.json is missing.`);
+    // A private package carries the application's version - one rule for every
+    // private package in the repository, so an add-on never drifts from the
+    // build that ships it. The add-on's *identity* is separate and derived.
+    if (pkg.version !== appVersion) {
+      fail(
+        `The "${descriptor.id}" add-on's package.json version (${pkg.version}) must match the ` +
+          `application's (${appVersion}). Run "npm install --prefix src/addons/${descriptor.id}" ` +
+          'after changing it, so its lockfile agrees.',
+      );
+    }
+    const identity = identityFor(directory);
+    identities.set(directory, identity);
+    packages.set(directory, pkg);
+    pins[descriptor.id] = { identity, apiVersion: descriptor.apiVersion };
   }
 
   mkdirSync(outDir, { recursive: true });
   for (const directory of folders) {
     const descriptor = readJson(join(directory, 'addon.json'));
-    const pkg = readJson(join(directory, 'package.json'));
     const target = join(outDir, descriptor.id);
     if (withZip && isBuildFresh(directory, descriptor)) {
       console.log(`Reusing ${relative(root, target)}`);
       continue;
     }
-    if (descriptor.kind === 'js') {
-      if (pkg === undefined) fail(`src/addons/${descriptor.id}/package.json is missing.`);
-      await buildJsAddon(directory, descriptor, pkg);
-    } else {
-      rmSync(target, { recursive: true, force: true });
-      mkdirSync(target, { recursive: true });
-      buildBinaryAddon(directory, descriptor, pins[descriptor.id].version, target);
-    }
+    await buildJsAddon(directory, descriptor, packages.get(directory), identities.get(directory));
     console.log(`Built add-on ${descriptor.id} into ${relative(root, target)}`);
   }
 
@@ -338,20 +327,18 @@ async function main() {
   mkdirSync(distDir, { recursive: true });
   for (const directory of folders) {
     const descriptor = readJson(join(directory, 'addon.json'));
-    const pin = pins[descriptor.id];
-    const staging =
-      descriptor.kind === 'js' ? join(outDir, `${descriptor.id}-zip`) : join(outDir, descriptor.id);
-    if (descriptor.kind === 'js') stageJsAddon(directory, descriptor, staging);
-    const platformKey = descriptor.kind === 'js' ? 'any' : `${process.platform}-${process.arch}`;
-    const fileName = `${descriptor.id}-${pin.version}-${platformKey}.zip`;
-    const zipped = zipSync(collectFiles(staging), { level: 6 });
+    const identity = identities.get(directory);
+    const staging = join(outDir, `${descriptor.id}-zip`);
+    stageJsAddon(directory, descriptor, staging);
+    const fileName = `${descriptor.id}-${identity}-${PLATFORM_ANY}.zip`;
+    const zipped = zipSync(collectFiles(staging), { level: 6, mtime: ZIP_TIMESTAMP });
     writeFileSync(join(distDir, fileName), zipped);
-    publishArchive(descriptor.id, pin.version, platformKey, {
+    publishArchive(descriptor.id, identity, PLATFORM_ANY, {
       file: fileName,
       sha512: sha512(zipped),
       size: zipped.byteLength,
     });
-    if (descriptor.kind === 'js') rmSync(staging, { recursive: true, force: true });
+    rmSync(staging, { recursive: true, force: true });
     console.log(`Packaged ${fileName} (${(zipped.byteLength / 1024 / 1024).toFixed(1)} MB)`);
   }
   console.log(`Wrote ${relative(root, join(distDir, 'addons.json'))}`);

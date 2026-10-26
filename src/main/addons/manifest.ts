@@ -4,9 +4,12 @@ import { z } from 'zod';
  * The add-on catalogue the publisher maintains (`addons.json`), and the
  * descriptor every installed add-on folder carries (`addon.json`).
  *
- * An add-on is a folder the application downloads on first use. Its version and
- * `apiVersion` are pinned by the running build (`pins.json`), so a published
- * catalogue may hold many versions at once and this build downloads only the one
+ * An add-on is a folder the application downloads on first use. Its identity is
+ * **derived from its own content** by `scripts/build-addons.mjs` and pinned by
+ * the running build (`pins.json`), so there is no version for a human to
+ * remember, bump or forget: an unchanged add-on keeps its identity (and is
+ * never downloaded again), and a changed one gets a new one. A published
+ * catalogue may hold many identities at once; this build downloads only the one
  * it names.
  */
 
@@ -19,13 +22,17 @@ export const ADDON_DESCRIPTOR_FILE = 'addon.json';
 /** Upper bound for the catalogue itself. */
 export const MAX_ADDON_CATALOG_BYTES = 64 * 1024;
 
-/** Upper bound for one add-on archive (the Copilot CLI payload is the largest). */
+/** Upper bound for one add-on archive. */
 export const MAX_ADDON_ARCHIVE_BYTES = 400 * 1024 * 1024;
 
 /** A catalogue entry that applies to every platform. */
 export const ADDON_PLATFORM_ANY = 'any';
 
-const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
+/**
+ * A content identity: the first 16 hex characters of a sha256 over the
+ * add-on's own sources (see `identityFor` in `scripts/build-addons.mjs`).
+ */
+const identitySchema = z.string().regex(/^[0-9a-f]{16}$/);
 
 const addonIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 
@@ -36,7 +43,7 @@ const addonArchiveSchema = z.object({
 });
 
 /**
- * `addons.json`: every id, every published version, one archive per
+ * `addons.json`: every id, every published identity, one archive per
  * `<platform>-<arch>` (or `any`). Deliberately not strict, like `update.json`: a
  * catalogue published by a newer toolchain may carry fields this build does not
  * know, and ignoring them is the forward-compatible reading.
@@ -45,7 +52,7 @@ export const addonCatalogSchema = z.object({
   addons: z.record(
     addonIdSchema,
     z.record(
-      versionSchema,
+      identitySchema,
       z.object({
         platforms: z.record(z.string(), addonArchiveSchema),
       }),
@@ -60,29 +67,15 @@ export type AddonArchive = z.infer<typeof addonArchiveSchema>;
 export const addonDescriptorSchema = z
   .object({
     id: addonIdSchema,
-    version: versionSchema,
-    kind: z.enum(['js', 'binary']),
+    identity: identitySchema,
     apiVersion: z.number().int().positive(),
-    /** Relative path of the ESM entry point; required for a `js` add-on. */
-    entry: z
-      .string()
-      .regex(/^[A-Za-z0-9._/-]{1,200}$/)
-      .optional(),
-    /** Named files a `binary` add-on provides, as relative paths. */
-    files: z.record(z.string().regex(/^[a-z][a-z0-9-]{0,31}$/), z.string()).optional(),
+    /** Relative path of the ESM entry point. */
+    entry: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/),
   })
   .strict()
   .superRefine((descriptor, context) => {
-    if (descriptor.kind === 'js' && descriptor.entry === undefined) {
-      context.addIssue({ code: 'custom', message: 'a js add-on needs an entry' });
-    }
-    if (descriptor.kind === 'binary' && Object.keys(descriptor.files ?? {}).length === 0) {
-      context.addIssue({ code: 'custom', message: 'a binary add-on needs files' });
-    }
-    for (const value of [descriptor.entry, ...Object.values(descriptor.files ?? {})]) {
-      if (value !== undefined && !isSafeRelativePath(value)) {
-        context.addIssue({ code: 'custom', message: `unsafe path: ${value}` });
-      }
+    if (!isSafeRelativePath(descriptor.entry)) {
+      context.addIssue({ code: 'custom', message: `unsafe path: ${descriptor.entry}` });
     }
   });
 

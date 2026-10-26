@@ -1,7 +1,5 @@
 {
   "id": "page-audit",
-  "version": "1.0.0",
-  "kind": "js",
   "apiVersion": 1,
   "entry": "index.js"
 }

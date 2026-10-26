@@ -1,7 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentFetch } from '../../shared';
-import { downloadVerifiedArchive, verifyArchive, ArchiveDownloadError } from '../updates/download';
+import {
+  downloadVerifiedArchive,
+  sha512Expectation,
+  verifyArchive,
+  ArchiveDownloadError,
+} from '../updates/download';
 import { fileUrlIn } from '../updates/manifest';
 import {
   ADDON_CATALOG_FILE,
@@ -63,14 +68,14 @@ export async function readAddonCatalog(
   }
 }
 
-/** The archive this platform runs for one pinned version, or `undefined`. */
+/** The archive this platform runs for one pinned identity, or `undefined`. */
 export function archiveFor(
   catalog: AddonCatalog,
   id: string,
-  version: string,
+  identity: string,
   platformKey: string,
 ): AddonArchive | undefined {
-  const platforms = catalog.addons[id]?.[version]?.platforms;
+  const platforms = catalog.addons[id]?.[identity]?.platforms;
   if (platforms === undefined) return undefined;
   return platforms[platformKey] ?? platforms[ADDON_PLATFORM_ANY];
 }
@@ -87,7 +92,7 @@ export async function downloadAddonArchive(
     if (bytes.byteLength > MAX_ADDON_ARCHIVE_BYTES) {
       throw new ArchiveDownloadError('size', 'the add-on archive is too large');
     }
-    const verdict = verifyArchive(bytes, archive);
+    const verdict = verifyArchive(bytes, sha512Expectation(archive));
     if (verdict !== 'ok') {
       throw new ArchiveDownloadError(verdict, `the add-on archive did not verify (${verdict})`);
     }
@@ -98,7 +103,7 @@ export async function downloadAddonArchive(
   return await downloadVerifiedArchive(
     options.fetch,
     fileUrlIn(source.url, archive.file),
-    archive,
+    sha512Expectation(archive),
     {
       timeoutMs: ADDON_DOWNLOAD_TIMEOUT_MS,
       maxBytes: MAX_ADDON_ARCHIVE_BYTES,

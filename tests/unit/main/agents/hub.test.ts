@@ -109,7 +109,6 @@ function build(
         throw new Error('not used');
       },
       modelPreferences: () => ({ model: null, reasoningEffort: null }),
-      resolveAddonFile: () => Promise.resolve({ ok: false, error: { message: 'not installed' } }),
     },
     installService,
     markUnavailable,
@@ -307,7 +306,6 @@ describe('createAgentHub', () => {
           throw new Error('not used');
         },
         modelPreferences: () => ({ model: null, reasoningEffort: null }),
-        resolveAddonFile: () => Promise.resolve({ ok: false, error: { message: 'not installed' } }),
       },
       installService,
       markUnavailable: () => Promise.resolve(),

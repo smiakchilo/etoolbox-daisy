@@ -4,8 +4,9 @@ import path from 'node:path';
 /**
  * The Copilot CLI executable an integration test spawns.
  *
- * In the application the CLI is a **binary add-on** (`src/addons/copilot-cli`),
- * downloaded on first sign-in - so production code no longer resolves it from
+ * In the application the CLI is **resolved at sign-in time** by the agent itself
+ * (`src/agents/copilot/cli/`: an installed copy, its own cache, or the latest
+ * verified GitHub release), so production code no longer resolves it from
  * `node_modules`. A test run is a development checkout with `@github/copilot`
  * installed as a devDependency, and spawning the real CLI is the point of these
  * integration tests, so they resolve it here.

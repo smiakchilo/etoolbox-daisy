@@ -82,9 +82,6 @@ export function createPageAuditCapability(options: PageAuditCapabilityOptions): 
       );
     }
     const { dir, descriptor } = ensured.value;
-    if (descriptor.kind !== 'js' || descriptor.entry === undefined) {
-      throw new AddonUnavailableError('unavailable', 'The page audit add-on is not usable');
-    }
     const module = (await importModule(
       pathToFileURL(path.join(dir, ...descriptor.entry.split('/'))).href,
     )) as PageAuditAddonModule;

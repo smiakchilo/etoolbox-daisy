@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentHost, ModelUsageBody } from '../../../../src/shared';
 import {
   describeAgentOneShotConformance,
@@ -40,7 +40,31 @@ vi.mock('../../../../src/agents/copilot/runtimeManager', () => ({
   }),
 }));
 
+/**
+ * The CLI resolver is this agent's own (`./cli`, exercised by its own suite);
+ * here it is scripted so the sign-in's stages - progress, single flight,
+ * cancellation - can be driven without a 120 MB download.
+ */
+const cli = vi.hoisted(() => ({ resolve: vi.fn() }));
+
+vi.mock('../../../../src/agents/copilot/cli', () => ({
+  createCopilotCli: () => ({ resolve: cli.resolve }),
+}));
+
+/** The spawned sign-in is not this file's subject; its stages are. */
+const signIn = vi.hoisted(() => ({ start: vi.fn() }));
+
+vi.mock('../../../../src/agents/copilot/auth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../src/agents/copilot/auth')>();
+  return { ...actual, startWebFlowLogin: signIn.start };
+});
+
 import { createCopilotRuntime } from '../../../../src/agents/copilot/runtime';
+import type {
+  CopilotCliFailure,
+  ResolvedCopilotCli,
+} from '../../../../src/agents/copilot/cli/resolver';
+import type { Result } from '../../../../src/shared';
 
 function makeSession(
   reply: string | undefined,
@@ -90,33 +114,50 @@ function makeHost(): AgentHost {
       bundledSkillDirectories: [],
     }),
     modelPreferences: () => ({ model: 'mai-code-1.1-flash', reasoningEffort: 'low' }),
-    resolveAddonFile: () => Promise.resolve({ ok: false, error: { message: 'not installed' } }),
   };
 }
 
-type AddonOutcome = Awaited<ReturnType<AgentHost['resolveAddonFile']>>;
+type CliOutcome = Result<ResolvedCopilotCli, CopilotCliFailure>;
 
 describe('createCopilotRuntime login', () => {
-  it('reports the CLI add-on download as sign-in progress', async () => {
+  beforeEach(() => {
+    cli.resolve.mockReset();
+  });
+
+  it('reports CLI download progress while the sign-in is being prepared', async () => {
     const reportAuthProgress = vi.fn();
-    const host: AgentHost = {
-      ...makeHost(),
-      reportAuthProgress,
-      resolveAddonFile: (_id, _file, options) => {
-        options?.onProgress?.(0.4);
-        return Promise.resolve({ ok: false, error: { message: 'the download failed' } });
-      },
-    };
-    const runtime = createCopilotRuntime(host);
+    cli.resolve.mockImplementation((options: { onProgress?: (fraction: number) => void }) => {
+      options.onProgress?.(0.4);
+      return Promise.resolve({ ok: false, error: { message: 'the download failed' } });
+    });
+    const runtime = createCopilotRuntime({ ...makeHost(), reportAuthProgress });
 
     await expect(runtime.login?.(undefined)).resolves.toEqual({
       status: 'failed',
       message: 'the download failed',
     });
-    expect(reportAuthProgress).toHaveBeenCalledWith('copilot', 'Downloading sign-in component 40%');
+    expect(reportAuthProgress).toHaveBeenLastCalledWith('copilot', expect.stringContaining('40%'));
   });
 
-  it('reports a failed sign-in, never throwing, when the add-on is unavailable', async () => {
+  it('says which CLI version it is using', async () => {
+    const reportAuthProgress = vi.fn();
+    cli.resolve.mockResolvedValue({
+      ok: true,
+      value: { path: 'C:\\cli\\copilot.exe', version: '1.0.103', source: 'download' },
+    });
+    signIn.start.mockReturnValue({
+      outcome: Promise.resolve({ status: 'cancelled' }),
+      cancel: () => undefined,
+    });
+    const runtime = createCopilotRuntime({ ...makeHost(), reportAuthProgress });
+
+    await expect(runtime.login?.(undefined)).resolves.toEqual({ status: 'cancelled' });
+
+    expect(reportAuthProgress).toHaveBeenCalledWith('copilot', expect.stringContaining('1.0.103'));
+  });
+
+  it('reports a failed sign-in, never throwing, when no CLI can be resolved', async () => {
+    cli.resolve.mockResolvedValue({ ok: false, error: { message: 'not installed' } });
     const runtime = createCopilotRuntime(makeHost());
 
     await expect(runtime.login?.(undefined)).resolves.toEqual({
@@ -125,20 +166,17 @@ describe('createCopilotRuntime login', () => {
     });
   });
 
-  it('rejects a second sign-in while the component is still downloading', async () => {
-    let settle: ((outcome: AddonOutcome) => void) | undefined;
-    let downloads = 0;
-    const host: AgentHost = {
-      ...makeHost(),
-      resolveAddonFile: () => {
-        downloads += 1;
-        if (downloads > 1) return Promise.resolve({ ok: false, error: { message: 'no cli' } });
-        return new Promise<AddonOutcome>((resolve) => {
-          settle = resolve;
-        });
-      },
-    };
-    const runtime = createCopilotRuntime(host);
+  it('rejects a second sign-in while the CLI is still downloading', async () => {
+    let settle: ((outcome: CliOutcome) => void) | undefined;
+    cli.resolve
+      .mockImplementationOnce(
+        () =>
+          new Promise<CliOutcome>((resolve) => {
+            settle = resolve;
+          }),
+      )
+      .mockResolvedValue({ ok: false, error: { message: 'no cli' } });
+    const runtime = createCopilotRuntime(makeHost());
 
     const first = runtime.login?.(undefined);
     await expect(runtime.login?.(undefined)).resolves.toEqual({
@@ -157,25 +195,25 @@ describe('createCopilotRuntime login', () => {
     });
   });
 
-  it('aborts the component download when the sign-in is cancelled', async () => {
+  it('aborts the CLI download when the sign-in is cancelled', async () => {
     let downloadSignal: AbortSignal | undefined;
-    const host: AgentHost = {
-      ...makeHost(),
-      resolveAddonFile: (_id, _file, options) =>
-        new Promise<AddonOutcome>((resolve) => {
-          const signal = options?.signal;
-          downloadSignal = signal;
-          signal?.addEventListener(
+    cli.resolve.mockImplementation(
+      (options: { signal?: AbortSignal }) =>
+        new Promise<CliOutcome>((resolve) => {
+          downloadSignal = options.signal;
+          options.signal?.addEventListener(
             'abort',
             () => resolve({ ok: false, error: { message: 'cancelled' } }),
             { once: true },
           );
         }),
-    };
-    const runtime = createCopilotRuntime(host);
+    );
+    const runtime = createCopilotRuntime(makeHost());
 
     const attempt = runtime.login?.(undefined);
-    // The download is requested synchronously, so the signal is already known.
+    // The connection is resolved (and proxied) before the CLI is looked for, so
+    // the signal arrives a microtask later than the click.
+    await vi.waitFor(() => expect(downloadSignal).toBeDefined());
     expect(downloadSignal?.aborted).toBe(false);
 
     runtime.cancelLogin?.();

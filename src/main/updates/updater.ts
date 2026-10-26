@@ -2,7 +2,7 @@ import { rm, writeFile } from 'node:fs/promises';
 
 import type { AgentFetch, UpdateRuntimePart, UpdateStatus } from '../../shared';
 import type { Logger } from '../logger';
-import { downloadVerifiedArchive } from './download';
+import { downloadVerifiedArchive, sha512Expectation } from './download';
 import {
   compareVersions,
   fileUrlIn,
@@ -155,7 +155,7 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     const bytes = await downloadVerifiedArchive(
       fetchFn,
       fileUrlIn(update.folder, update.file.name),
-      update.file,
+      sha512Expectation(update.file),
       { timeoutMs: ARCHIVE_TIMEOUT_MS, maxBytes: MAX_UPDATE_ARCHIVE_BYTES },
     );
     const staged = `${targetAsar}.new`;
