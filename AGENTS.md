@@ -1609,7 +1609,11 @@ plain string — no separate "comment" is required. The `/skillname` rewrite in
 `src/shared/skillInvocation.ts` frames the trailing text as the skill's input
 and forbids asking the user to restate it; the skill bodies then say that input
 is the search string. Both halves are load-bearing: without the framing the
-model loads the skill and asks what to search for (observed live). The bodies
+model loads the skill and asks what to search for (observed live). A bare
+`/name` gets the same treatment: the activation is followed by a directive to run
+the procedure from its first step and *not* to answer with an acknowledgement of
+the skill - without it a weak model treated the whole message as background
+material and called no tool (measured live 2026-10-26). The bodies
 are written for **both** paths: an explicit `/name` turn and a turn where the
 model loaded the skill on its own.
 
@@ -1649,12 +1653,16 @@ keeping those whose own page resource type
 static) falls under the component roots, and matches the phrase; the search is one
 `aem_query_format_ask` call on `cq:Page` with `cq:template` and
 `sling:resourceType` filters; its query shapes are documented, not yet verified
-live (`docs/compatibility.md` §11.6). The application suppresses the model's own prose for a `/search`,
-`/semantic-search`, `/search-component` or `/search-page` turn two ways: at send for a turn whose
-prompt invokes one of them (`isDeterministicTablePrompt` in
-`src/renderer/src/chat/transcriptViewModel.ts`), and mid-turn when the model loads
-one on its own (`transcriptStore.ts`'s `load_skill` handling), so the table is the
-whole answer. See the `format_table` bullet in the tools section above and
+live (`docs/compatibility.md` §11.6). The application hides the model's own prose for a `/search`,
+`/semantic-search`, `/search-component` or `/search-page` turn, **but only once that turn's
+`format_table` has actually landed**: the turn is marked table-only at send
+(`isDeterministicTablePrompt` in `src/renderer/src/chat/transcriptViewModel.ts`) or
+mid-turn when the model loads one on its own (`transcriptStore.ts`'s `load_skill`
+handling), and the prose is dropped when the turn's own `presentation: 'message'`
+tool settles - so the table is the whole answer, while a model that ignores the
+skill keeps the prose it wrote, which is then the turn's only output (a prompt-time
+suppression left such a turn painting nothing at all; measured 2026-10-26). See
+the `format_table` bullet in the tools section above and
 `docs/verification.md` "Skills are auto-inferred from their descriptions ...
 (2026-10-11)" and "`search-component`: the component-instance shape ... (2026-10-13)".
 
@@ -2006,7 +2014,20 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4740 passed / 13 skipped** (+42 against the
+Current baseline: **`npm run test` → 4744 passed / 13 skipped** (+4 against the
+4740 below - **a table-only turn is hidden only once its table lands** (2026-10-26):
+suppression moved from the prompt to the turn's own `presentation: 'message'`
+tool settling, so a model that answers a table-only skill with prose and calls no
+tool keeps that prose instead of leaving a turn that paints nothing at all (the
+reported "`/check-page` does nothing the first time" - see §5 and
+`docs/verification/followons-2026-10.md`). `TranscriptStore.markTurnSuppressed` is
+`markTableOnlyTurn`; a bare `/name` prompt now also gets a directive to run the
+skill's procedure. The +4 is 3 net `transcriptStore` cases (deferred suppression,
+the no-table regression, the billet-is-not-a-table guard, the clear() reset) and 2
+`journalReplay` cases, and Playwright is **171 tests** (+1:
+`search-tables.spec.ts`'s no-table case, which failed against the built app with
+the old prompt-time suppression). Before that it was **`npm run test` → 4740
+passed / 13 skipped** (+42 against the
 4698 below - **add-ons carry a content identity, and the Copilot CLI is resolved
 by its own agent instead of shipped** (2026-10-26): an add-on has **no version of
 its own** any more - `scripts/build-addons.mjs` derives a 16-hex sha256 over its

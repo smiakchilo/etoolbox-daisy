@@ -45,12 +45,13 @@ export function replayJournalIntoTranscript(
         // The application's own reflection prompt was never the user's message.
         if (record.origin === 'reflection') break;
         transcriptStore.applyUserPrompt(record.turnId, record.prompt);
-        // The suppression decision is re-derived from the replayed prompt, so a
+        // The table-only decision is re-derived from the replayed prompt, so a
         // search turn's prose stays hidden after a restart exactly as it was
-        // live. Done here (between the prompt and its events) so no message
-        // item is ever created for a suppressed turn.
+        // live - and, symmetrically, a turn that produced no table keeps its
+        // prose. The mark is only an expectation; the store hides the text when
+        // the turn's own `format_table` lands.
         if (shouldSuppressTurn(record.prompt)) {
-          transcriptStore.markTurnSuppressed(record.turnId);
+          transcriptStore.markTableOnlyTurn(record.turnId);
         }
         break;
       case 'agent.event':

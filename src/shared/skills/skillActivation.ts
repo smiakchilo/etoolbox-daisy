@@ -86,11 +86,19 @@ export interface SkillPromptResolution {
 /**
  * Rewrites a prompt that begins with a *known* `/skillname` into the text the
  * model actually receives: the skill's activation block (the very text the
- * `load_skill` tool would return), the line saying it is already loaded, and - when
- * the user typed more - that text framed as the skill's input. The model never
- * sees the literal `/skillname` token, and a bare appended word is otherwise
- * read as an unrelated remark (observed live, 2026-10-06: `/search Waldo` loaded
- * the skill, then the model asked "What would you like to search for?").
+ * `load_skill` tool would return), the line saying it is already loaded, and
+ * then what the user is asking for - that text framed as the skill's input when
+ * they typed more, or the directive to run the skill now when they typed only
+ * its name. The model never sees the literal `/skillname` token, and a bare
+ * appended word is otherwise read as an unrelated remark (observed live,
+ * 2026-10-06: `/search Waldo` loaded the skill, then the model asked "What
+ * would you like to search for?").
+ *
+ * A bare `/name` needs that directive as much as the framed input does: without
+ * it the activation is only background prose, and a model can answer with an
+ * acknowledgement of the material instead of running the procedure (observed
+ * live, 2026-10-26: the first `/check-page` of a session replied "Understood.
+ * I'll follow ... in mind" and called no tool at all).
  *
  * Everything else - no leading token, or a token naming no loadable skill - is
  * returned unchanged. The caller keeps the user's own text for display and the
@@ -113,8 +121,14 @@ export function resolveSkillPrompt(
   if (token.rest !== '') {
     parts.push(
       "The text below is the user's input for this skill. Act on it directly by starting the " +
-        "skill's procedure with it, from its first step; do not ask the user to restate it." +
-        `\n\n${token.rest}`,
+        "skill's procedure with it, from its first step; do not ask the user to restate it, and " +
+        `do not answer with an acknowledgement of the skill.\n\n${token.rest}`,
+    );
+  } else {
+    parts.push(
+      'The user invoked this skill just now. Run its procedure from its first step, using the ' +
+        "conversation's current context; do not reply with an acknowledgement of the skill, a " +
+        'summary of it, or a question about what to do.',
     );
   }
   return { modelPrompt: parts.join('\n\n'), activatedSkill: activation.name };

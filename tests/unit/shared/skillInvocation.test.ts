@@ -135,12 +135,19 @@ describe('resolveSkillPrompt', () => {
     expect(modelPrompt).not.toContain('/search');
   });
 
-  it('adds no input frame when the user typed only the name', () => {
+  it('asks the model to run the skill when the user typed only the name', () => {
     const { modelPrompt, activatedSkill } = resolveSkillPrompt('/query-results', lookup);
     expect(activatedSkill).toBe('query-results');
+    // The activation and the already-loaded note come first, and a directive to
+    // run the procedure follows them - without one the model can answer with an
+    // acknowledgement of the material instead of doing anything.
+    expect(modelPrompt.indexOf(renderSkillActivation(activations.get('query-results')!))).toBe(0);
+    expect(modelPrompt.indexOf(renderSkillAlreadyLoadedNote('query-results'))).toBeGreaterThan(0);
     expect(modelPrompt.trimEnd().endsWith(renderSkillAlreadyLoadedNote('query-results'))).toBe(
-      true,
+      false,
     );
+    // No user input was appended, and the literal token never reaches the model.
+    expect(modelPrompt).not.toContain('/query-results');
   });
 
   it('leaves ordinary text untouched', () => {

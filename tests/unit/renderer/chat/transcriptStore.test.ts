@@ -153,6 +153,15 @@ function toolProgress(sequence: number, text: string): AgentEvent {
   });
 }
 
+/**
+ * A settled `format_table` call - the answer a table-only skill is supposed to
+ * produce, and the only thing that hides that turn's prose (see
+ * `markTableOnlyTurn`).
+ */
+function tableLanded(sequence: number): AgentEvent[] {
+  return [toolRequested(sequence, 'format_table'), toolResultSucceeded(sequence + 1)];
+}
+
 const skillToolCallId: ToolCallId = toolCallIdSchema.parse('skill-call-1');
 
 /** A `skill` tool call (the skill loader) for `skillName`. */
@@ -241,24 +250,75 @@ describe('createTranscriptStore', () => {
       expect(store.textForMessage(messageId)).toBe('I checked the page, done.');
     });
 
-    it('creates no message item at all for a turn marked suppressed', () => {
+    it("keeps a table-only turn's prose until its table lands, then hides it", () => {
       const store = createTranscriptStore();
       store.applyUserPrompt(turnId, '/search waldo');
-      store.markTurnSuppressed(turnId);
+      store.markTableOnlyTurn(turnId);
       store.applyEvent(messageStarted(0));
       store.applyEvent(delta(1, 'I searched...'));
-      store.applyEvent(completed(2, 'I searched...'));
-      expect(store.items().some((item) => item.kind === 'message')).toBe(false);
-      // The user's own prompt is still shown.
-      expect(store.items()).toEqual([{ kind: 'userPrompt', turnId }]);
+      // Nothing is hidden yet: without a table, this prose *is* the turn's output.
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'message', messageId, turnId },
+      ]);
+
+      for (const event of tableLanded(2)) store.applyEvent(event);
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'toolCall', toolCallId },
+      ]);
     });
 
-    it('forgets suppression on clear()', () => {
+    it('keeps the only output of a table-only turn that produced no table', () => {
+      // Measured 2026-10-26: the first `/check-page` after a launch answered with
+      // one prose message and called no tool. Hiding that prose left the reader
+      // with a turn that showed nothing at all - the pane went from "Thinking"
+      // straight back to an empty transcript, indistinguishable from a broken
+      // skill or add-on.
       const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, '/search waldo');
-      store.markTurnSuppressed(turnId);
-      store.clear();
+      store.applyUserPrompt(turnId, '/check-page');
+      store.markTableOnlyTurn(turnId);
       store.applyEvent(messageStarted(0));
+      store.applyEvent(delta(1, 'Understood.'));
+      store.applyEvent(completed(2, 'Understood.'));
+      store.applyEvent(
+        agentEventSchema.parse({
+          type: 'session.state.changed',
+          chatId,
+          sequence: 3,
+          turnId,
+          state: 'idle',
+        }),
+      );
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'message', messageId, turnId },
+      ]);
+      expect(store.textForMessage(messageId)).toBe('Understood.');
+    });
+
+    it('keeps the prose when a table-only turn settles a billet tool but no table', () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, '/check-page');
+      store.markTableOnlyTurn(turnId);
+      store.applyEvent(toolRequested(0, 'aem_get_json'));
+      store.applyEvent(toolApproved(1));
+      store.applyEvent(toolResultSucceeded(2));
+      store.applyEvent(messageStarted(3));
+      store.applyEvent(delta(4, 'That page has a title.'));
+
+      // A billet's settle is not the answer: only the skill's own table is.
+      expect(store.items().some((item) => item.kind === 'message')).toBe(true);
+    });
+
+    it('forgets the table-only expectation on clear()', () => {
+      const store = createTranscriptStore();
+      store.markTableOnlyTurn(turnId);
+      store.clear();
+      store.applyUserPrompt(turnId, '/search waldo');
+      store.applyEvent(messageStarted(0));
+      for (const event of tableLanded(1)) store.applyEvent(event);
       expect(store.items().some((item) => item.kind === 'message')).toBe(true);
     });
   });
@@ -336,15 +396,19 @@ describe('createTranscriptStore', () => {
       store.applyEvent(messageStarted(2));
       store.applyEvent(delta(3, 'I will search for that.'));
       store.applyEvent(completed(4, 'I will search for that.'));
+      expect(store.items().some((item) => item.kind === 'message')).toBe(true);
+
+      for (const event of tableLanded(5)) store.applyEvent(event);
       expect(store.items().some((item) => item.kind === 'message')).toBe(false);
       // The load stays visible; only the model's prose is suppressed.
       expect(store.items()).toEqual([
         { kind: 'userPrompt', turnId },
         { kind: 'toolCall', toolCallId: skillToolCallId },
+        { kind: 'toolCall', toolCallId },
       ]);
     });
 
-    it('removes prose that arrived before the skill was loaded', () => {
+    it('removes prose that arrived before the table landed', () => {
       for (const skillName of ['semantic-search', 'search-component', 'search-page']) {
         const store = createTranscriptStore();
         store.applyUserPrompt(turnId, 'text about Waldo, ranked by meaning');
@@ -354,10 +418,12 @@ describe('createTranscriptStore', () => {
 
         store.applyEvent(skillRequested(2, skillName));
         store.applyEvent(modelSkillResult(3, skillName));
+        for (const event of tableLanded(4)) store.applyEvent(event);
 
         expect(store.items()).toEqual([
           { kind: 'userPrompt', turnId },
           { kind: 'toolCall', toolCallId: skillToolCallId },
+          { kind: 'toolCall', toolCallId },
         ]);
       }
     });
@@ -371,6 +437,7 @@ describe('createTranscriptStore', () => {
         store.applyEvent(modelSkillResult(1, 'lighthouse-check'));
         store.applyEvent(messageStarted(2));
         store.applyEvent(delta(3, 'Running the audit.'));
+        for (const event of tableLanded(4)) store.applyEvent(event);
         expect(store.items().some((item) => item.kind === 'message')).toBe(false);
       } finally {
         resetTableOnlySkills();

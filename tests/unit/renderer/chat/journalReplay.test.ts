@@ -407,4 +407,73 @@ describe('replayJournalIntoTranscript', () => {
     replayJournalIntoTranscript([], store);
     expect(store.items()).toEqual([]);
   });
+
+  describe('a table-only turn', () => {
+    const isSearchPrompt = (prompt: string): boolean => prompt.startsWith('/search');
+
+    function tableCall(): ChatJournalRecord[] {
+      const requested: ChatJournalAgentEventRecord = {
+        recordType: 'agent.event',
+        at: 4,
+        event: {
+          type: 'tool.call.requested',
+          chatId: CHAT,
+          sequence: 1,
+          toolCallId: 'table-1' as ToolCallId,
+          toolName: 'format_table',
+          arguments: { mode: 'new', data: [] },
+        },
+      };
+      const result: ChatJournalAgentEventRecord = {
+        recordType: 'agent.event',
+        at: 5,
+        event: {
+          type: 'tool.result',
+          chatId: CHAT,
+          sequence: 2,
+          toolCallId: 'table-1' as ToolCallId,
+          outcome: { ok: true, data: { operation: 'format_table', rowCount: 0, mode: 'new' } },
+        },
+      };
+      return [requested, result];
+    }
+
+    it('hides its prose once its table is in the journal', () => {
+      const store = createTranscriptStore();
+      replayJournalIntoTranscript(
+        [
+          userPrompt('turn-1', '/search waldo'),
+          completedMessage('turn-1', 'msg-1', 'Here are the results.'),
+          ...tableCall(),
+        ],
+        store,
+        isSearchPrompt,
+      );
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId: 'turn-1' },
+        { kind: 'toolCall', toolCallId: 'table-1' },
+      ]);
+    });
+
+    it('keeps its prose when the journal holds no table at all', () => {
+      // The defect measured 2026-10-26: the model answered a table-only skill
+      // with prose and no tool call. Suppressing the turn at the prompt buried
+      // the turn's only output, so a resumed transcript showed an empty turn.
+      const store = createTranscriptStore();
+      replayJournalIntoTranscript(
+        [
+          userPrompt('turn-1', '/search waldo'),
+          completedMessage('turn-1', 'msg-1', 'Nothing found.'),
+        ],
+        store,
+        isSearchPrompt,
+      );
+
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId: 'turn-1' },
+        { kind: 'message', messageId: 'msg-1', turnId: 'turn-1' },
+      ]);
+    });
+  });
 });

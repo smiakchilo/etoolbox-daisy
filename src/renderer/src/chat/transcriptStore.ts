@@ -1,4 +1,5 @@
 import { createMessageStream, type MessageStream } from './messageStream';
+import { toolRendererRegistry } from './toolRegistry';
 import { isTableOnlySkill } from './transcriptViewModel';
 import {
   type AgentEvent,
@@ -102,15 +103,16 @@ export interface TranscriptStore {
    */
   applyUserPrompt(turnId: TurnId, prompt: string): void;
   /**
-   * Marks `turnId` as text-suppressed: no assistant `message` item is created
-   * for it, so the model's own prose never appears in the transcript. Used for
-   * a turn that invoked a search skill, whose answer is a `format_table`
-   * message, not prose. Must be called before the turn's first message event
-   * (the pane calls it immediately after `applyUserPrompt`, before any event
-   * can arrive); a suppressed turn is suppressed on live events and on journal
-   * replay alike.
+   * Marks `turnId` as a table-only turn: one that invoked a skill whose answer
+   * is a `format_table` message rather than prose. Its assistant text is hidden
+   * **once that table lands** - never before, because a model that ignores the
+   * skill produces prose and no table, and that prose is then the turn's only
+   * output (see `suppressTurnOnTableMessage`). Must be called before the turn's
+   * first message event (the pane calls it immediately after `applyUserPrompt`,
+   * before any event can arrive); the same mark is re-derived from the replayed
+   * prompt, so the rule holds live and after a restart alike.
    */
-  markTurnSuppressed(turnId: TurnId): void;
+  markTableOnlyTurn(turnId: TurnId): void;
   /**
    * The items the transcript should render now, in first-seen order. Durable
    * items are always included; the trailing `thinking` item is appended while
@@ -244,9 +246,17 @@ export function createTranscriptStore(
   // in O(1) and can drop a call that an interruption abandoned without having
   // to invent a terminal status for it.
   const runningToolCalls = new Set<ToolCallId>();
-  // Turns whose assistant prose is hidden (a search skill's turn, whose answer
-  // is a `format_table` message). See `markTurnSuppressed`.
+  // Turns that invoked a table-only skill (their answer is a `format_table`
+  // message, not prose). See `markTableOnlyTurn` - the prose is hidden only once
+  // that table actually lands.
+  const tableOnlyTurns = new Set<TurnId>();
+  // Turns whose assistant prose is hidden (a table-only turn whose table landed,
+  // or the application's own memo reflection). See `suppressTurn`.
   const suppressedTurns = new Set<TurnId>();
+  // Which turn each tool call belongs to. A `tool.result` is not turn-scoped,
+  // and hiding a table-only turn's prose depends on recognising *that turn's*
+  // table, so the attribution is recorded when the call is requested.
+  const toolCallTurns = new Map<ToolCallId, TurnId>();
   let dirty = false;
   // Monotonic id source for interruption notices, so each notice gets its own
   // cached DOM node in the view and two notices can never share a cache key.
@@ -461,18 +471,73 @@ export function createTranscriptStore(
   }
 
   /**
+   * The turn a tool event belongs to. Not every tool event carries a `turnId`,
+   * so the owning turn is the most recent turn-scoped event's, else the turn
+   * currently being answered (set by `applyUserPrompt`).
+   */
+  function toolEventTurn(): TurnId | undefined {
+    return lastEventTurnId ?? currentTurnId;
+  }
+
+  /**
+   * Records which turn a tool call belongs to, so its result (which is not
+   * turn-scoped) can still be attributed to it - see
+   * `suppressTurnOnTableMessage`.
+   */
+  function recordToolCallTurn(toolCallId: ToolCallId): void {
+    const turnId = toolEventTurn();
+    if (turnId !== undefined) toolCallTurns.set(toolCallId, turnId);
+  }
+
+  /**
+   * Hides a table-only turn's prose **once its table has landed**, never before.
+   *
+   * A table-only skill's answer is the `format_table` message, so the model's
+   * surrounding prose would only duplicate or contradict it (see
+   * `markTableOnlyTurn`). Deciding that at the table rather than at the prompt
+   * is what keeps an ignored skill honest: a model that answers with prose and
+   * calls no table produced the turn's only output, and hiding it left the
+   * reader with a turn that showed nothing at all (measured 2026-10-26 - the
+   * first `/check-page` after a launch produced one prose message and no audit,
+   * so the pane went from "Thinking" straight back to an empty transcript).
+   *
+   * A `presentation: 'message'` tool is the one that paints a message instead
+   * of a billet (the same predicate the view uses to paint the table), so no
+   * tool name is named here.
+   */
+  function suppressTurnOnTableMessage(event: ToolResultEvent): void {
+    if (!event.outcome.ok) return;
+    const call = toolCalls.get(event.toolCallId);
+    const turnId = toolCallTurns.get(event.toolCallId);
+    if (call === undefined || turnId === undefined) return;
+    if (!tableOnlyTurns.has(turnId)) return;
+    if (toolRendererRegistry.presentationOf(call.toolName) !== 'message') return;
+    suppressTurn(turnId);
+  }
+
+  /**
+   * Notes that the turn being applied invoked a table-only skill. Idempotent,
+   * and it hides nothing yet: `suppressTurnOnTableMessage` does that when the
+   * table arrives.
+   */
+  function markTableOnlyCurrentTurn(): void {
+    const turnId = toolEventTurn();
+    if (turnId !== undefined) tableOnlyTurns.add(turnId);
+  }
+
+  /**
    * Marks `turnId` as text-suppressed, removing any assistant `message` item it
-   * has already created. Idempotent: a second call (the pane's `markTurnSuppressed`
-   * followed by the turn's own `load_skill` call, say) is a no-op.
+   * has already created. Idempotent: a second call (a table that lands after the
+   * turn was already suppressed, say) is a no-op.
    */
   function suppressTurn(turnId: TurnId): void {
     if (suppressedTurns.has(turnId)) return;
     suppressedTurns.add(turnId);
-    // Suppression is normally recorded before the turn's first event (the pane
-    // marks an explicit `/search` on send), but the model choosing a skill on
-    // its own can only be known from its `load_skill` call mid-turn. Any message item
-    // already created for this turn is removed here so the invariant - a
-    // suppressed turn has no assistant message - holds regardless of ordering.
+    // A table-only turn's table can land after some of the model's prose has
+    // already been painted (a "let me look" line before the tool call), and the
+    // application's own reflection turn is recognised mid-turn, so any message
+    // item already created for this turn is removed here - the invariant is that
+    // a suppressed turn has no assistant message, whatever the event order.
     for (let index = order.length - 1; index >= 0; index -= 1) {
       const item = order[index];
       if (item?.kind === 'message' && item.turnId === turnId) {
@@ -526,19 +591,16 @@ export function createTranscriptStore(
           // `revealSkillLoad`), so a reader can tell whether a skill was loaded
           // and which one. Its one immediate transcript effect is that a skill
           // whose answer *is* its own rendered output (a search skill's table)
-          // suppresses this turn's prose, so a skill the model chose on its own
-          // is handled exactly like `/search` (see `suppressTurn`). It is
+          // marks this turn table-only, so a skill the model chose on its own is
+          // handled exactly like `/search` (see `markTableOnlyTurn`). It is
           // emitted by both agents under this exact name (see
           // `src/shared/skillInvocation.ts`).
           if (event.toolName === SKILL_TOOL_NAME) {
             const skillName = event.arguments['name'];
-            if (
-              typeof skillName === 'string' &&
-              isTableOnlySkill(skillName) &&
-              currentTurnId !== undefined
-            ) {
-              suppressTurn(currentTurnId);
+            if (typeof skillName === 'string' && isTableOnlySkill(skillName)) {
+              markTableOnlyCurrentTurn();
             }
+            recordToolCallTurn(event.toolCallId);
             // Recorded but not yet shown: whether this is a model-chosen load or
             // the controller's marker for an explicit `/name` prompt is only
             // known from its result.
@@ -555,9 +617,11 @@ export function createTranscriptStore(
           // An automatic reflection turn is the application's, not the user's:
           // its billet stays (it is the reader's only sign the turn ran), but
           // the model's prose in it is not an answer to anything they asked.
-          if (event.toolName === MEMO_REFLECTION_TOOL_NAME && lastEventTurnId !== undefined) {
-            suppressTurn(lastEventTurnId);
+          if (event.toolName === MEMO_REFLECTION_TOOL_NAME) {
+            const reflectionTurn = toolEventTurn();
+            if (reflectionTurn !== undefined) suppressTurn(reflectionTurn);
           }
+          recordToolCallTurn(event.toolCallId);
           ensureToolCallItem(event.toolCallId);
           runningToolCalls.add(event.toolCallId);
           toolCalls.set(event.toolCallId, {
@@ -585,6 +649,7 @@ export function createTranscriptStore(
               ? { kind: 'succeeded', data: event.outcome.data }
               : { kind: 'failed', error: event.outcome.error },
           );
+          suppressTurnOnTableMessage(event);
           revealSkillLoad(event);
           return;
         case 'tool.call.progress':
@@ -628,8 +693,8 @@ export function createTranscriptStore(
       awaitingAssistantText = true;
       dirty = true;
     },
-    markTurnSuppressed(turnId) {
-      suppressTurn(turnId);
+    markTableOnlyTurn(turnId) {
+      tableOnlyTurns.add(turnId);
     },
     setTurnInFlight(inFlight) {
       if (turnInFlight === inFlight) return;
@@ -720,7 +785,9 @@ export function createTranscriptStore(
       userPrompts.clear();
       toolCalls.clear();
       runningToolCalls.clear();
+      tableOnlyTurns.clear();
       suppressedTurns.clear();
+      toolCallTurns.clear();
       currentTurnId = undefined;
       lastEventTurnId = undefined;
       awaitingAssistantText = false;

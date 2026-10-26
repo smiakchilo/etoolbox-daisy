@@ -386,6 +386,26 @@ test.describe('deterministic search tables', () => {
     await expect(skillBillets.locator('.chat-tool-call__summary')).toHaveText('search');
   });
 
+  test('a table-only turn that produced no table keeps the model text instead of painting nothing', async () => {
+    // Measured 2026-10-26: the first `/check-page` of a session answered with one
+    // prose message and called no tool. Hiding prose at the prompt buried the
+    // turn's only output, so the pane went from "Thinking" back to an empty
+    // transcript - indistinguishable from a broken skill or add-on. The prose is
+    // hidden only once the skill's table has actually landed.
+    const messagesBefore = await shell
+      .locator('.chat-message--assistant:not(.chat-table-message)')
+      .count();
+    const tablesBefore = await shell.locator('.chat-table-message').count();
+    await scriptTurn(app, { steps: [{ kind: 'delta', text: 'Understood.' }] });
+    await sendViaComposer(shell, '/search waldo');
+    await flushFake(app);
+
+    const messages = shell.locator('.chat-message--assistant:not(.chat-table-message)');
+    await expect(messages).toHaveCount(messagesBefore + 1);
+    await expect(messages.last()).toContainText('Understood.');
+    await expect(shell.locator('.chat-table-message')).toHaveCount(tablesBefore);
+  });
+
   test('a counting total shows a spinner, then updates in place without rebuilding the table', async () => {
     // The application runs a background honest count when page 1's total is a
     // lower bound; while it runs every `format_table` call carries

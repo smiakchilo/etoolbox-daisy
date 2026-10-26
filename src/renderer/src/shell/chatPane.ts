@@ -1234,7 +1234,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     // A search skill's answer is the `format_table` message, not the model's
     // prose - suppress this turn's assistant text so only the table shows.
     if (isDeterministicTablePrompt(prompt)) {
-      transcriptStore.markTurnSuppressed(result.turnId);
+      transcriptStore.markTableOnlyTurn(result.turnId);
     }
     refreshEmptyState();
     // Sending is deliberate: show the user's own message and the reply that
