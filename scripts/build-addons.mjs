@@ -198,6 +198,12 @@ function collectFiles(directory, prefix = '') {
     a.name.localeCompare(b.name),
   );
   for (const entry of children) {
+    // `npm ci` writes a `.bin` shim directory whose contents are
+    // platform-specific (regular-file `.cmd`/`.ps1` shims on Windows, symlinks
+    // elsewhere). It is never used at run time - the add-on is loaded by
+    // `import()`, which resolves through `node_modules`, not through `.bin` - so
+    // drop it to keep the `any` archive byte-for-byte identical on every runner.
+    if (entry.name === '.bin') continue;
     const full = join(directory, entry.name);
     const name = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
     if (entry.isDirectory()) {
