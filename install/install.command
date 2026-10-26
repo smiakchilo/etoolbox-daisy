@@ -30,7 +30,7 @@ set -euo pipefail
 NODE_VERSION="24.20.0"
 NODE_SHA256_ARM64="40e5607e5ecb3db9192723776da2d75d966260fc74a7a9e731c1bd67dda96bc8"
 NODE_SHA256_X64="9e5b2644cf107befb6aefca676b96d3296bc10138096f022ed378d6233ed81f4"
-NODE_SIGNER="OpenJS Foundation"
+NODE_SIGNER="Node.js Foundation"
 # The oldest installed Node.js the build tools declare support for: Electron 44,
 # electron-vite 5 and vite 7 all answer 22.12. An older one is refused here
 # rather than failing halfway through the build.
@@ -119,7 +119,7 @@ if [ -z "$NODE_BIN" ]; then
   rm "$WORK/$NODE_TGZ"
   NODE_BIN="$WORK/node/bin"
   codesign --verify --strict "$NODE_BIN/node"
-  if ! codesign -dvv "$NODE_BIN/node" 2>&1 | grep -q "^Authority=Developer ID Application: $NODE_SIGNER"; then
+  if ! codesign -dvv "$NODE_BIN/node" 2>&1 | grep "^Authority=Developer ID Application: $NODE_SIGNER"; then
     echo "node is not signed by $NODE_SIGNER."
     exit 1
   fi
