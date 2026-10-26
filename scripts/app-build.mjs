@@ -44,11 +44,60 @@ if (!isWindows && !isMac) {
 const outDir = realpathSync.native(outArg);
 const packageDir = join(root, 'release');
 
-// Child processes (npm scripts call `node`) must find the Node running this script.
+// Child processes (npm scripts call `node`) must find the Node running this
+// script.
 const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === 'path') ?? 'PATH';
+
+// On Windows they must also be able to resolve `powershell.exe` by name:
+// electron-builder's node-module collector spawns that bare name, and Windows
+// resolves a bare name through PATH only. install.cmd reaches PowerShell by
+// absolute path, so a machine whose PATH carries no Windows PowerShell passed
+// every pre-check and then died at packaging with "spawn powershell.exe ENOENT".
+//
+// What has to be resolvable is the *name*, not a particular version: `v1.0` is
+// the legacy folder Windows PowerShell ships in (5.1 is still the last and still
+// lives there), and a PATH entry that already carries the executable - wherever
+// it is - is accepted as it stands. PowerShell 7's `pwsh.exe` is a different
+// program that electron-builder never spawns, so it cannot stand in.
+const windowsPowerShellDirs = isWindows
+  ? [
+      join(
+        process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows',
+        'System32',
+        'WindowsPowerShell',
+        'v1.0',
+      ),
+      // The 32-bit build, whose folder a 32-bit process is redirected to from
+      // System32 anyway; listed so an unusual PATH still has a fixed point.
+      join(
+        process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows',
+        'SysWOW64',
+        'WindowsPowerShell',
+        'v1.0',
+      ),
+    ]
+  : [];
+const resolvesPowerShell = (pathValue) =>
+  (pathValue ?? '')
+    .split(delimiter)
+    .map((entry) => entry.trim().replace(/^"(.*)"$/, '$1'))
+    .filter((entry) => entry !== '')
+    .some((entry) => existsSync(join(entry, 'powershell.exe')));
+let powerShellDir;
+if (isWindows && !resolvesPowerShell(process.env[pathKey])) {
+  powerShellDir = windowsPowerShellDirs.find((dir) => existsSync(join(dir, 'powershell.exe')));
+  if (powerShellDir === undefined) {
+    fail(
+      `powershell.exe was not found: not on PATH, and not at ${windowsPowerShellDirs.join(' or ')}. The build tools run npm through Windows PowerShell, so the app cannot be packaged without it (PowerShell 7's pwsh.exe is not used).`,
+    );
+  }
+}
+
 const env = {
   ...process.env,
-  [pathKey]: `${dirname(process.execPath)}${delimiter}${process.env[pathKey] ?? ''}`,
+  [pathKey]: [dirname(process.execPath), process.env[pathKey], powerShellDir]
+    .filter((entry) => entry !== undefined && entry !== '')
+    .join(delimiter),
   // No signing identity is looked for or used: the result is for this machine.
   CSC_IDENTITY_AUTO_DISCOVERY: 'false',
 };
