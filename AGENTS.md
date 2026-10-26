@@ -42,7 +42,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained.                                                                                                                                     | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
 | `docs/updates.md` | How in-app updates work and the release procedure (version bump, the **derived** runtime descriptor that alone decides swap vs. fresh install, publish workflow, sandbox).                                                                              | Read before changing the updater or cutting a release. |
 | `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
-| `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the two example skills in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the examples are guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
+| `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the example skill in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the example is guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
 | `docs/addon-architecture.md` | The add-on model: content identities in `src/main/addons/pins.json`, the `addons.json` catalogue, the install store, `out/addons` in development, the recipe for adding one, and why the Copilot CLI is not an add-on. | Read before touching `src/main/addons/`, `src/agents/copilot/cli/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
 
 ---
@@ -1097,8 +1097,23 @@ src/tools/<name>/
   and at a wall-clock budget without materialising the match list.
   `page_audit` `{ url?, categories?, formFactor? }` runs Lighthouse in a hidden offscreen
   `WebContents` over an in-process CDP transport — **inside the `page-audit` add-on**
-  (`src/addons/page-audit/pageAudit.ts`, `pageAuditTransport.ts`; the application's
-  `src/main/addons/pageAudit.ts` loads it on the first audit). `ToolHost.pageAudit`
+  (`src/addons/page-audit/pageAudit.ts`, `pageAuditTransport.ts`, `evidence.ts`; the
+  application's `src/main/addons/pageAudit.ts` loads it on the first audit).
+  **It is a composite that paints the whole report itself** (`uses: ['format_table']`,
+  through the tool-to-tool bridge): one score table (`Category`/`Score`/`Status` with
+  the pass ≥ 90 / warn ≥ 50 / fail thresholds), then **one table per issue** - every
+  audit that did not pass, **and every weight-0 `informative` insight Lighthouse
+  measured a saving for** (`metricSavings` > 0 ms or `wastedBytes` > 0; Lighthouse 13's
+  performance category weights only its five metrics, so its actionable findings are
+  those insights; a breakdown-only insight that just explains a metric stays out) -
+  carrying Lighthouse's own evidence - the columns from the audit's `details.headings`
+  (a failing element as `nodeLabel — selector — snippet — explanation`, an insecure URL,
+  a `url:line:column` source location, a console message, sub-items in their own
+  trailing column) - and, for an audit with no items, a single `What to fix` row holding
+  Lighthouse's own explanation. Nothing is capped (`PAGE_AUDIT_MAX_FAILURES` and
+  `failureCount` are gone), so the report is the full rundown; the same evidence stays
+  in the tool result, so the model can discuss a fix afterwards. The tables are painted
+  by the app, never copied by the model. `ToolHost.pageAudit`
   is the add-on's `PageAuditRunner`, serialized with at most two waiting (a
   third is refused as retryable), 120 s deadline; a
   non-configured origin uses a cookie-less `audit-anonymous` session. **Every** audit's
@@ -1487,13 +1502,17 @@ by the agent that uses it (`src/agents/copilot/cli/`).
 
 ### `resources/skills/` and the skill subsystem
 
-Nine bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
-`search-component`, `search-page`, `navigate` and `remember` (all user-invocable — they appear in the
+Ten bundled skills, each a `SKILL.md`: `search`, `semantic-search`,
+`search-component`, `search-page`, `navigate`, `check-page` and `remember` (all
+user-invocable — they appear in the
 composer's `/` autocomplete), plus `daisy-conventions`, `query-results` and
 `page-template` (auxiliary — `user-invocable: false`, so the model still gets
 them in its catalogue but the `/` menu does not list them). `page-template` holds
 the one template-name-to-path resolution, loaded by `search-page` and
 `search-component` alike; do not copy that procedure into either skill.
+`check-page` is the Lighthouse report: one `page_audit` call, and the tool paints
+the score table and one table per issue with Lighthouse's evidence (it was the
+second `docs/examples/skills/` example before it became bundled).
 
 **One app-owned mechanism, identical for every agent** (plan:
 `docs/skill-subsystem-plan.md`). No SDK ever sees a skill directory: Copilot's own
@@ -1553,9 +1572,8 @@ subsections (skills, rules, the memos pair), separated by the **one
 `.subsection-gap` utility** (24px, in `settings.css`, also on the
 Hosts/Projects/Proxies multifield list and the Agents provider cards) rather than
 a bespoke rule per tab. There is no per-skill list. Writing and installing a
-custom skill (front matter, `table-only`, the example skills `lighthouse-check` and
-`links-check`) is documented in `docs/custom-skills.md` and
-`docs/examples/skills/`. Test ids:
+custom skill (front matter, `table-only`, the example skill `links-check`) is
+documented in `docs/custom-skills.md` and `docs/examples/skills/`. Test ids:
 `settings-tab-skills`, `skills-open-folder`, `skills-reload`, `rules-open-folder`,
 `memos-open-folder`, `data-field="memos-enabled"`.
 
@@ -2014,7 +2032,40 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4744 passed / 13 skipped** (+4 against the
+Current baseline: **`npm run test` → 4759 passed / 13 skipped** (+2 against the
+4757 below - **`check-page` is a bundled skill** (2026-10-26): the Lighthouse
+report moved out of `docs/examples/skills/` into `resources/skills/check-page/`,
+with a bundled skill's `MANDATORY ...` description, its user-facing label and
+`table-only: true`; `links-check` is the remaining example. The `+2` is the two
+per-skill cases the new folder adds (`bundledSkills.test.ts`'s front-matter case
+and its displayed-summary case) plus `searchPageSize.test.ts`'s per-skill case,
+less the example case `exampleSkills.test.ts` loses. The table-only set is now
+`check-page` plus the four search skills. See §5 and
+`docs/verification/followons-2026-10.md`. Before that it was
+**`npm run test` → 4757 passed / 13 skipped** (+13 against the
+4744 below - **`page_audit` paints the full evidence** (2026-10-26): the audit
+result now carries every issue's own evidence (one table of columns and rows per
+audit, from Lighthouse's `details`: failing elements with selector, snippet and
+explanation, insecure URLs, deprecated APIs with `file:line:column`, console
+messages, sub-items) and **`page_audit` is a composite that paints the whole
+report itself** - `uses: ['format_table']`, the score table then one table per
+issue - so nothing is copied between tools by the model and nothing is capped
+(`PAGE_AUDIT_MAX_FAILURES`/`failureCount` are gone). An "issue" is an audit that
+did not pass **or** a weight-0 `informative` insight Lighthouse measured a saving
+for, which is where Lighthouse 13's performance findings live (owner decision).
+The check-page skill now just calls it. See §5 and
+`docs/verification/followons-2026-10.md`. The +13 is
+the new `tests/unit/addons/page-audit` cases (table evidence, a node's four parts,
+sub-items, a key-less heading's sub-items, the no-items fallback, the cell-length
+ceiling, no cap, and the measured-saving rule), the new
+`tests/unit/tools/pageAudit.test.ts` cases (the evidence kept in the result, the
+three painted tables, the evidence copied verbatim, the score status, and nothing
+painted on a failure) and the shipped `page_audit` case in
+`toolRegistry.test.ts`, less the assertions the old cap made.
+Playwright stays **171 tests** - the one touched case
+(`search-tables.spec.ts`'s Property cell) now finds the cell by column, because
+every plain table cell wraps at any character. Before that it was
+**`npm run test` → 4744 passed / 13 skipped** (+4 against the
 4740 below - **a table-only turn is hidden only once its table lands** (2026-10-26):
 suppression moved from the prompt to the turn's own `presentation: 'message'`
 tool settling, so a model that answers a table-only skill with prose and calls no

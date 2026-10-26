@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BrowserWindowConstructorOptions } from 'electron';
-import { PAGE_AUDIT_MAX_FAILURES } from '../../../../src/shared';
 import {
   createPageAudit,
   inspectAuditRequest,
@@ -106,6 +105,10 @@ function lhr(): Lhr {
           { id: 'passed', weight: 3 },
           { id: 'info', weight: 0 },
           { id: 'manual', weight: 2 },
+          { id: 'related', weight: 1 },
+          { id: 'meta', weight: 1 },
+          { id: 'saving', weight: 0 },
+          { id: 'breakdown', weight: 0 },
         ],
       },
       performance: {
@@ -117,12 +120,103 @@ function lhr(): Lhr {
       },
     },
     audits: {
-      light: { title: 'Light', score: 0, scoreDisplayMode: 'binary' },
-      heavy: { title: 'Heavy', score: 0.2, scoreDisplayMode: 'numeric', displayValue: '3 s' },
+      light: {
+        title: 'Light',
+        score: 0,
+        scoreDisplayMode: 'binary',
+        details: {
+          type: 'table',
+          headings: [{ key: 'node', valueType: 'node', label: 'Failing Elements' }],
+          items: [
+            {
+              node: {
+                type: 'node',
+                nodeLabel: 'h4',
+                selector: 'h4.card__title',
+                snippet: '<h4 class="card__title">Our products</h4>',
+                explanation: 'Heading level 4 is not sequentially descending',
+              },
+            },
+          ],
+        },
+      },
+      heavy: {
+        title: 'Heavy',
+        score: 0.2,
+        scoreDisplayMode: 'numeric',
+        displayValue: '3 s',
+        details: {
+          type: 'opportunity',
+          headings: [
+            { key: 'url', valueType: 'url', label: 'URL' },
+            { key: 'wastedBytes', valueType: 'bytes', label: 'Wasted' },
+          ],
+          items: [
+            {
+              url: { type: 'url', value: 'https://cdn.example/x.css' },
+              wastedBytes: 2048,
+            },
+          ],
+        },
+      },
       passed: { title: 'Passed', score: 1, scoreDisplayMode: 'binary' },
       info: { title: 'Info', score: 0, scoreDisplayMode: 'binary' },
       manual: { title: 'Manual', score: null, scoreDisplayMode: 'manual' },
       slow: { title: 'Slow', score: 0.4, scoreDisplayMode: 'numeric', displayValue: '' },
+      related: {
+        title: 'Related elements',
+        score: 0,
+        scoreDisplayMode: 'binary',
+        details: {
+          type: 'table',
+          headings: [
+            {
+              key: 'node',
+              valueType: 'node',
+              label: 'Element',
+              subItemsHeading: { key: 'relatedNode', valueType: 'node' },
+            },
+          ],
+          items: [
+            {
+              node: { type: 'node', selector: 'a.cta' },
+              subItems: {
+                type: 'subitems',
+                items: [{ relatedNode: { type: 'node', selector: '#footer' } }],
+              },
+            },
+          ],
+        },
+      },
+      meta: {
+        title: 'No meta description',
+        score: 0,
+        scoreDisplayMode: 'binary',
+        description:
+          'The page has no meta description. [Learn more](https://developer.chrome.com/meta).',
+      },
+      saving: {
+        title: 'Render blocking requests',
+        score: null,
+        scoreDisplayMode: 'informative',
+        displayValue: 'Est savings of 300 ms',
+        metricSavings: { LCP: 300 },
+        details: {
+          type: 'table',
+          headings: [{ key: 'url', valueType: 'url', label: 'URL' }],
+          items: [{ url: { type: 'url', value: 'https://cdn.example/blocking.css' } }],
+        },
+      },
+      breakdown: {
+        title: 'LCP breakdown',
+        score: null,
+        scoreDisplayMode: 'informative',
+        details: {
+          type: 'table',
+          headings: [{ key: 'label', valueType: 'text', label: 'Subpart' }],
+          items: [{ label: 'Time to first byte' }],
+        },
+      },
     },
   };
 }
@@ -195,32 +289,45 @@ describe('parseTarget', () => {
 });
 
 describe('lighthouseFailures', () => {
-  it('lists only weighted, scored, failing audits, heaviest first, each once', () => {
-    const { failures, total } = lighthouseFailures(lhr(), ['seo', 'performance']);
+  it('lists every audit that did not pass, heaviest first, each once', () => {
+    const failures = lighthouseFailures(lhr(), ['seo', 'performance']);
 
     expect(failures.map((f) => [f.category, f.id])).toEqual([
       ['seo', 'heavy'],
       ['seo', 'light'],
+      ['seo', 'related'],
+      ['seo', 'meta'],
+      ['seo', 'info'],
+      ['seo', 'saving'],
       ['performance', 'slow'],
     ]);
-    expect(total).toBe(3);
   });
 
   it('keeps a display value only when there is one', () => {
-    const { failures } = lighthouseFailures(lhr(), ['seo', 'performance']);
+    const failures = lighthouseFailures(lhr(), ['seo', 'performance']);
 
     expect(failures[0]?.displayValue).toBe('3 s');
-    expect('displayValue' in (failures[2] ?? {})).toBe(false);
+    expect('displayValue' in (failures[4] ?? {})).toBe(false);
+  });
+
+  it('includes an insight Lighthouse measured a saving for, not one that only explains a metric', () => {
+    const failures = lighthouseFailures(lhr(), ['seo']);
+    const saving = failures.find((failure) => failure.id === 'saving');
+
+    expect(failures.map((failure) => failure.id)).toContain('saving');
+    expect(failures.map((failure) => failure.id)).not.toContain('breakdown');
+    expect(saving).toMatchObject({ score: null, displayValue: 'Est savings of 300 ms' });
+    expect(saving?.evidence.rows).toEqual([{ url: 'https://cdn.example/blocking.css' }]);
   });
 
   it('only looks at the categories asked for', () => {
-    const { failures } = lighthouseFailures(lhr(), ['performance']);
+    const failures = lighthouseFailures(lhr(), ['performance']);
 
     expect(failures.map((f) => f.id)).toEqual(['heavy', 'slow']);
   });
 
-  it('caps the list but still counts every failure', () => {
-    const count = PAGE_AUDIT_MAX_FAILURES + 7;
+  it('lists every failure: nothing is dropped or capped', () => {
+    const count = 60;
     const ids = Array.from({ length: count }, (_, i) => `a${String(i)}`);
     const big: Lhr = {
       categories: { seo: { score: 0, auditRefs: ids.map((id) => ({ id, weight: 1 })) } },
@@ -229,10 +336,129 @@ describe('lighthouseFailures', () => {
       ),
     };
 
-    const { failures, total } = lighthouseFailures(big, ['seo']);
+    expect(lighthouseFailures(big, ['seo'])).toHaveLength(count);
+  });
 
-    expect(failures).toHaveLength(PAGE_AUDIT_MAX_FAILURES);
-    expect(total).toBe(count);
+  it('carries the table Lighthouse reported, with its own headings', () => {
+    const failures = lighthouseFailures(lhr(), ['seo']);
+
+    expect(failures[0]?.evidence).toEqual({
+      columns: [
+        { key: 'url', label: 'URL' },
+        { key: 'wastedBytes', label: 'Wasted' },
+      ],
+      rows: [{ url: 'https://cdn.example/x.css', wastedBytes: '2.0 KB' }],
+    });
+  });
+
+  it('renders a failing element as its label, selector, snippet and explanation', () => {
+    const failures = lighthouseFailures(lhr(), ['seo']);
+    const [row] = failures[1]?.evidence.rows ?? [];
+    const cell = row?.['node'] ?? '';
+
+    expect(cell).toContain('h4');
+    expect(cell).toContain('h4.card__title');
+    expect(cell).toContain('<h4 class="card__title">Our products</h4>');
+    expect(cell).toContain('not sequentially descending');
+  });
+
+  it('renders nested sub-items in their own column', () => {
+    const failures = lighthouseFailures(lhr(), ['seo']);
+
+    expect(failures[2]?.evidence.columns.map((column) => column.label)).toEqual([
+      'Element',
+      'Sub items',
+    ]);
+    expect(failures[2]?.evidence.rows[0]?.['evidence-sub-items']).toContain('#footer');
+  });
+
+  it('keeps a sub-item that only a key-less heading describes', () => {
+    const legacy: Lhr = {
+      categories: { performance: { score: 0, auditRefs: [{ id: 'legacy', weight: 1 }] } },
+      audits: {
+        legacy: {
+          title: 'Legacy JavaScript',
+          score: 0,
+          scoreDisplayMode: 'binary',
+          details: {
+            type: 'table',
+            headings: [
+              {
+                key: 'url',
+                valueType: 'url',
+                label: 'URL',
+                subItemsHeading: { key: 'location', valueType: 'source-location' },
+              },
+              // The deprecated signal's own column has no key, so it builds no
+              // column - but its sub-items still have to appear.
+              { key: null, valueType: 'code', label: '', subItemsHeading: { key: 'signal' } },
+            ],
+            items: [
+              {
+                url: { type: 'url', value: 'https://a.example/app.js' },
+                subItems: {
+                  type: 'subitems',
+                  items: [
+                    {
+                      signal: 'URLSearchParams',
+                      location: {
+                        type: 'source-location',
+                        url: 'https://a.example/app.js',
+                        line: 41,
+                        column: 7,
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const [failure] = lighthouseFailures(legacy, ['performance']);
+    const subItems = failure?.evidence.rows[0]?.['evidence-sub-items'] ?? '';
+
+    expect(failure?.evidence.columns.map((column) => column.label)).toEqual(['URL', 'Sub items']);
+    expect(subItems).toContain('URLSearchParams');
+    expect(subItems).toContain('https://a.example/app.js:42:7');
+  });
+
+  it("shows Lighthouse's own explanation for an audit with no items", () => {
+    const failures = lighthouseFailures(lhr(), ['seo']);
+
+    const [row] = failures[3]?.evidence.rows ?? [];
+    expect(failures[3]?.evidence.columns).toEqual([{ key: 'detail', label: 'What to fix' }]);
+    expect(row?.['detail']).toContain('The page has no meta description');
+    expect(row?.['detail']).toContain('https://developer.chrome.com/meta');
+  });
+
+  it('keeps every item but bounds one over-long cell, so a row stays readable', () => {
+    const text = 'x'.repeat(9000);
+    const verbose: Lhr = {
+      categories: { seo: { score: 0, auditRefs: [{ id: 'verbose', weight: 1 }] } },
+      audits: {
+        verbose: {
+          title: 'Verbose',
+          score: 0,
+          scoreDisplayMode: 'binary',
+          details: {
+            type: 'table',
+            headings: [{ key: 'description', valueType: 'code', label: 'Description' }],
+            items: [{ description: text }, { description: 'short' }],
+          },
+        },
+      },
+    };
+
+    const [failure] = lighthouseFailures(verbose, ['seo']);
+    const rows = failure?.evidence.rows ?? [];
+
+    expect(rows).toHaveLength(2);
+    expect(rows[1]?.['description']).toBe('short');
+    expect(rows[0]?.['description']?.length).toBeLessThan(text.length);
+    expect(rows[0]?.['description']?.endsWith('…')).toBe(true);
   });
 });
 

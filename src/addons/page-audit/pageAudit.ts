@@ -1,6 +1,5 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron';
 import {
-  PAGE_AUDIT_MAX_FAILURES,
   type PageAuditCategory,
   type PageAuditFailed,
   type PageAuditFailure,
@@ -9,6 +8,7 @@ import {
   type PageAuditRunner,
   type PageAuditScore,
 } from '../../shared';
+import { type LighthouseAudit, auditEvidence, hasMeasuredSaving } from './evidence';
 import { DebuggerTransport } from './pageAuditTransport';
 
 export const PAGE_AUDIT_TIMEOUT_MS = 120_000;
@@ -71,12 +71,7 @@ export interface LighthouseResult {
   >;
   readonly audits: Record<
     string,
-    | {
-        readonly title: string;
-        readonly score: number | null;
-        readonly scoreDisplayMode: string;
-        readonly displayValue?: string;
-      }
+    | (LighthouseAudit & { readonly score: number | null; readonly scoreDisplayMode: string })
     | undefined
   >;
   readonly runtimeError?: { readonly message?: string; readonly code?: string };
@@ -110,23 +105,36 @@ export function parseTarget(
   return candidate;
 }
 
+/**
+ * Every audit that did not pass, heaviest first, each once, with the evidence
+ * Lighthouse reported for it (see `evidence.ts`) - plus every weight-0
+ * `informative` insight Lighthouse measured a saving for, because that is where
+ * Lighthouse 13 keeps the performance category's actionable findings (its only
+ * weighted audits are the five metrics). Nothing is capped: a report that lists
+ * ten audits without saying what failed is what this replaced.
+ */
 export function lighthouseFailures(
   lhr: LighthouseResult,
   categories: readonly PageAuditCategory[],
-): { readonly failures: PageAuditFailure[]; readonly total: number } {
+): readonly PageAuditFailure[] {
   const seen = new Set<string>();
-  const all: PageAuditFailure[] = [];
+  const failures: PageAuditFailure[] = [];
   for (const category of categories) {
     const refs = [...(lhr.categories[category]?.auditRefs ?? [])].sort(
       (a, b) => b.weight - a.weight,
     );
     for (const ref of refs) {
       const audit = lhr.audits[ref.id];
-      if (audit === undefined || seen.has(ref.id) || ref.weight <= 0) continue;
-      if (UNSCORED_MODES.has(audit.scoreDisplayMode)) continue;
-      if (audit.score === null || audit.score >= 1) continue;
+      if (audit === undefined || seen.has(ref.id)) continue;
+      if (UNSCORED_MODES.has(audit.scoreDisplayMode)) {
+        // Not a pass/fail audit. An insight that measured a saving is still a
+        // finding; a breakdown, a manual check or an error is not.
+        if (audit.scoreDisplayMode !== 'informative' || !hasMeasuredSaving(audit)) continue;
+      } else if (audit.score === null || audit.score >= 1) {
+        continue;
+      }
       seen.add(ref.id);
-      all.push({
+      failures.push({
         category,
         id: ref.id,
         title: audit.title,
@@ -134,10 +142,11 @@ export function lighthouseFailures(
         ...(audit.displayValue === undefined || audit.displayValue === ''
           ? {}
           : { displayValue: audit.displayValue }),
+        evidence: auditEvidence(audit),
       });
     }
   }
-  return { failures: all.slice(0, PAGE_AUDIT_MAX_FAILURES), total: all.length };
+  return failures;
 }
 
 /** A request the audit window was not allowed to make. */
@@ -356,14 +365,13 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
         category,
         score: lhr.categories[category]?.score ?? null,
       }));
-      const { failures, total } = lighthouseFailures(lhr, request.categories);
+      const failures = lighthouseFailures(lhr, request.categories);
       return {
         kind: 'report',
         url,
         formFactor: request.formFactor,
         scores,
         failures,
-        failureCount: total,
         ...(lhr.runtimeError?.message === undefined
           ? {}
           : { runtimeError: lhr.runtimeError.message }),

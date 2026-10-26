@@ -21,6 +21,11 @@ function describeScores(value: JsonValue | undefined): string | undefined {
   return parts.length === 0 ? undefined : parts.join(', ');
 }
 
+/** How many audits did not pass - the report's own list, never a separate count. */
+function countFailures(value: JsonValue | undefined): string | undefined {
+  return Array.isArray(value) ? String(value.length) : undefined;
+}
+
 function describeCall(
   args: Readonly<Record<string, JsonValue>>,
   data?: JsonValue,
@@ -36,7 +41,7 @@ function describeCall(
       ['Categories', categories === '' ? undefined : categories],
       ['Form factor', asText(args['formFactor']) ?? asText(result?.['formFactor'])],
       ['Scores', describeScores(result?.['scores'])],
-      ['Failed audits', asCount(result?.['failureCount'])],
+      ['Issues', countFailures(result?.['failures'])],
     ]),
   };
 }

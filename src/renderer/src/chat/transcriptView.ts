@@ -958,11 +958,13 @@ export function createTranscriptView(
   /**
    * Fills a table cell from the linkifier's segments for its value. A cell with
    * no link is plain text (`textContent`), wrapped in its column's presentation
-   * class - clamped for `Value`/`Citation`, wrapped-at-any-character for
-   * `Property`/`Node`/`Component`. A cell that is (or contains) a path renders
-   * its segments through the shared `renderLinkSegment`, so the anchor or the
-   * partial span is the cell's own content: the **value** decides whether it
-   * links, never the column header - exactly as in prose.
+   * class: a long `Value`/`Citation` is clamped to ten lines, and **every other
+   * column wraps at any character** - a selector, a snippet or a URL from an
+   * audit's evidence is one long token that must never widen the table. A cell
+   * that is (or contains) a path renders its segments through the shared
+   * `renderLinkSegment`, so the anchor or the partial span is the cell's own
+   * content: the **value** decides whether it links, never the column header -
+   * exactly as in prose.
    */
   function appendCellContent(
     cell: HTMLElement,
@@ -986,11 +988,10 @@ export function createTranscriptView(
     }
     if (!segments.some((segment) => segment.kind === 'link')) {
       const span = el('span', { text: value });
-      if (header === 'Value' || header === 'Citation') {
-        span.className = 'chat-table-message__clamp';
-      } else if (header === 'Property' || header === 'Node' || header === 'Component') {
-        span.className = 'chat-table-message__wrap';
-      }
+      span.className =
+        header === 'Value' || header === 'Citation'
+          ? 'chat-table-message__clamp'
+          : 'chat-table-message__wrap';
       cell.append(span);
       return;
     }

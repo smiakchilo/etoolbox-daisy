@@ -20,9 +20,6 @@ export const PAGE_AUDIT_FORM_FACTORS = ['mobile', 'desktop'] as const;
 
 export type PageAuditFormFactor = (typeof PAGE_AUDIT_FORM_FACTORS)[number];
 
-/** The most failing audits one report lists, so the result stays a table-sized answer. */
-export const PAGE_AUDIT_MAX_FAILURES = 40;
-
 export interface PageAuditRequest {
   /**
    * What to audit: an absolute http(s) URL, a path starting with `/` (read on the
@@ -40,13 +37,41 @@ export interface PageAuditScore {
   readonly score: number | null;
 }
 
+/** One column of an issue's evidence table, named by Lighthouse's own heading. */
+export interface PageAuditEvidenceColumn {
+  readonly key: string;
+  readonly label: string;
+}
+
+/**
+ * What exactly failed, as Lighthouse itself reported it: one table's worth of
+ * columns and rows (the failing elements with their selector and snippet, the
+ * insecure URLs, the deprecated APIs and where they are called, the console
+ * messages, ...). It is data for the report the application paints - one table
+ * per issue - and for the user and the model reading it afterwards.
+ *
+ * Never empty: an audit Lighthouse reports no items for carries its own
+ * explanation of the problem as a single row instead (see the add-on).
+ */
+export interface PageAuditEvidence {
+  readonly columns: readonly PageAuditEvidenceColumn[];
+  readonly rows: readonly Readonly<Record<string, string>>[];
+}
+
+/**
+ * One audit that reported something to fix: an audit whose score is below 1, or
+ * a weight-0 `informative` insight Lighthouse measured a saving for (the
+ * performance category's actionable findings in Lighthouse 13). Its `score` is
+ * `null` when Lighthouse gives it no score.
+ */
 export interface PageAuditFailure {
   readonly category: PageAuditCategory;
   readonly id: string;
   readonly title: string;
-  /** 0 to 1, or `null` for an audit that has no numeric score. */
+  /** 0 to 1, or `null` for an insight Lighthouse does not score. */
   readonly score: number | null;
   readonly displayValue?: string;
+  readonly evidence: PageAuditEvidence;
 }
 
 export interface PageAuditReport {
@@ -55,10 +80,8 @@ export interface PageAuditReport {
   readonly url: string;
   readonly formFactor: PageAuditFormFactor;
   readonly scores: readonly PageAuditScore[];
-  /** Audits that did not pass, most important first, capped at `PAGE_AUDIT_MAX_FAILURES`. */
+  /** The audits that reported something to fix, most important first. */
   readonly failures: readonly PageAuditFailure[];
-  /** How many audits did not pass before the cap. */
-  readonly failureCount: number;
   /** Lighthouse's own message when the page could not be audited properly. */
   readonly runtimeError?: string;
 }

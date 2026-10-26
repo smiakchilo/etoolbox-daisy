@@ -529,6 +529,62 @@ describe('discovered tools (the real src/tools folders)', () => {
   });
 });
 
+describe('the shipped page_audit report', () => {
+  it('paints its score table and one evidence table per failed audit, through format_table', async () => {
+    const nested: {
+      readonly toolName: string;
+      readonly args: Readonly<Record<string, JsonValue>>;
+    }[] = [];
+    const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
+      host: {
+        ...host,
+        pageAudit: () =>
+          Promise.resolve({
+            kind: 'report',
+            url: 'https://aem.example.com/content/x.html',
+            formFactor: 'desktop',
+            scores: [{ category: 'accessibility', score: 0.42 }],
+            failures: [
+              {
+                category: 'accessibility',
+                id: 'heading-order',
+                title: 'Heading elements are not in a sequentially-descending order',
+                score: 0,
+                evidence: {
+                  columns: [{ key: 'node', label: 'Failing Elements' }],
+                  rows: [{ node: 'h4 — h4.card__title — <h4 class="card__title">Hi</h4>' }],
+                },
+              },
+            ],
+          }),
+      },
+      loaders: discoverToolLoaders(),
+      nestedCalls: {
+        onCallStarted: (call) => nested.push({ toolName: call.toolName, args: call.args }),
+        onCallSettled: () => undefined,
+      },
+    });
+    expect(registry.failures).toEqual([]);
+
+    const executor = registry.toolHandlers['page_audit'];
+    if (executor === undefined) throw new Error('page_audit is not registered');
+    const result = await executor({}, { toolCallId: newToolCallId(ids), signal: undefined });
+
+    expect(result.ok).toBe(true);
+    expect(nested.map((call) => [call.toolName, call.args['title']])).toEqual([
+      ['format_table', 'Lighthouse - https://aem.example.com/content/x.html (desktop)'],
+      [
+        'format_table',
+        'Accessibility · Heading elements are not in a sequentially-descending order',
+      ],
+    ]);
+    expect(nested[1]?.args['data']).toEqual([
+      { node: 'h4 — h4.card__title — <h4 class="card__title">Hi</h4>' },
+    ]);
+  });
+});
+
 describe('buildToolRegistry session instructions template', () => {
   const build = (template: string) =>
     buildToolRegistry({

@@ -150,13 +150,15 @@ export interface ToolHost {
     maxBytes?: number,
   ) => Promise<BrokerOutcome>;
   /**
-   * Audits one page with Lighthouse and returns its scores and failing audits.
-   * The application runs it in a hidden browser window it owns: a configured
-   * host's page loads with the pane's session, any other page without cookies.
-   * Every request such a page makes is held to the same address policy as
-   * `externalFetch`, but Chromium resolves the name itself, so that check is
-   * best effort rather than pinned (see `docs/compatibility.md` §11.8). Absent
-   * in a host that cannot audit pages.
+   * Audits one page with Lighthouse and returns its scores and every failing
+   * audit, each with the evidence Lighthouse reported for it (the failing
+   * elements, the insecure URLs, the console messages, ...). The application
+   * runs it in a hidden browser window it owns: a configured host's page loads
+   * with the pane's session, any other page without cookies. Every request such
+   * a page makes is held to the same address policy as `externalFetch`, but
+   * Chromium resolves the name itself, so that check is best effort rather than
+   * pinned (see `docs/compatibility.md` §11.8). Absent in a host that cannot
+   * audit pages.
    */
   readonly pageAudit?: PageAuditRunner;
   /**

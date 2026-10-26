@@ -288,15 +288,14 @@ test.describe('deterministic search tables', () => {
     const message = shell.locator('.chat-table-message').last();
     await expect(message.locator('.chat-table-message__total')).toHaveText(ONE_MATCH);
     // The new column semantics: Path is the concrete node the property lives
-    // on, Property the bare name, and the Property cell the wrap-at-any-
-    // character class the Path link also gets.
+    // on, Property the bare name, and the Property cell wrapped at any
+    // character so a long value cannot widen the table (every plain cell does).
     await expect(message.locator('sp-table-head-cell')).toHaveCount(4);
     await expect(message.locator('sp-table-body sp-table-cell').nth(1)).toContainText(
       '/content/wknd/us/en/about/waldo/jcr:content',
     );
-    await expect(message.locator('sp-table-body .chat-table-message__wrap')).toHaveText(
-      'jcr:description',
-    );
+    const propertyCell = message.locator('sp-table-body sp-table-cell').nth(2);
+    await expect(propertyCell.locator('.chat-table-message__wrap')).toHaveText('jcr:description');
     // The total line reads beneath the table.
     const totalAwaitingClick = await message.evaluate((element) => {
       const total = element.querySelector('.chat-table-message__total');

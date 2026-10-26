@@ -559,9 +559,10 @@
   text-decoration: none;
 }
 
-/* The Property column (a bare property name) and the Component column (a
-   component's path within a page): wrapped at any character exactly like the
-   Path column's link, so a long value cannot widen the table. */
+/* Every table cell except a clamped `Value`/`Citation`: wrapped at any
+   character exactly like the Path column's link, so a long value - a property
+   name, a component's path, an audit's CSS selector or HTML snippet - cannot
+   widen the table. */
 .chat-table-message__wrap {
   overflow-wrap: anywhere;
 }

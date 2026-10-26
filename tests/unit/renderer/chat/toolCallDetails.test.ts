@@ -105,14 +105,14 @@ describe('describeToolCall - page_audit', () => {
         url: 'https://example.com/b',
         formFactor: 'mobile',
         scores: [{ category: 'seo', score: 80 }],
-        failureCount: 7,
+        failures: [{ id: 'one' }, { id: 'two' }],
       },
     );
 
     expect(pending.summary).toBe('https://example.com/a');
     expect(valuesOf(pending)).toContain('seo, performance');
     expect(done.summary).toBe('https://example.com/b');
-    expect(valuesOf(done)).toEqual(expect.arrayContaining(['seo 80', '7']));
+    expect(valuesOf(done)).toEqual(expect.arrayContaining(['seo 80', '2']));
   });
 
   it('still describes a call that names nothing', () => {

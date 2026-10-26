@@ -55,13 +55,14 @@ describe('bundled skills', () => {
     },
   );
 
-  it('flags exactly the search skills as table-only, so their prose is suppressed', () => {
+  it('flags exactly the skills whose whole answer is their table(s) as table-only', () => {
     const tableOnly = skills.filter(
       (name) =>
         parseSkillFrontMatter(readFileSync(path.join(skillsDir, name, 'SKILL.md'), 'utf8'))
           ?.tableOnly === true,
     );
     expect(tableOnly.sort()).toEqual([
+      'check-page',
       'search',
       'search-component',
       'search-page',
