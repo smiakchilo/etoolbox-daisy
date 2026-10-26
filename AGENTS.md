@@ -40,7 +40,7 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits.                                                                                                                       | Read before adding, removing or restructuring an agent/SDK. |
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`).                                                                                                                                                                                                         | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained.                                                                                                                                     | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
-| `docs/updates.md` | How in-app updates work and the release procedure (version bump, publish workflow, `runtimeGeneration`, sandbox).                                                                                                                             | Read before changing the updater or cutting a release. |
+| `docs/updates.md` | How in-app updates work and the release procedure (version bump, the **derived** runtime descriptor that alone decides swap vs. fresh install, publish workflow, sandbox).                                                                              | Read before changing the updater or cutting a release. |
 | `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
 | `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the two example skills in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the examples are guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
 | `docs/addon-architecture.md` | The add-on model: pinned versions in `src/main/addons/pins.json`, the `addons.json` catalogue, the install store, `out/addons` in development, the recipe for adding one. | Read before touching `src/main/addons/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
@@ -1657,7 +1657,8 @@ gone).
 
 The application's own rules: the model-facing prose that is not a skill, as markdown
 so it reads as text in the repository. Application-owned, shipped with `resources/`
-(`extraResources`), read by main from the install location only
+inside `app.asar` (so an update delivers it), read by main from the install
+location only
 (`resolveBundledResourcesDirectory`). It parallels `resources/skills/` (bundled) and
 `~\etoolbox-daisy\skills` (the user's); here `resources/rules/` is the bundled side
 of `~\etoolbox-daisy\rules`. (Renamed from `resources/instructions/` when user rules
@@ -1841,13 +1842,29 @@ workflow, zips first and `update.json` last (see "Add-ons" above and
 - **Places.** The Settings **Updates** tab's `updates.url` (https only) is tried
   first, then `updates.urls` in `package.json`. A `github.com/.../tree/<ref>/<path>`
   URL is rewritten to `raw.githubusercontent.com`. The first strictly newer
-  manifest with a `<platform>-<arch>` entry wins; `minInstalled` above the
-  install's `updates.runtimeGeneration` means "installer required", not a swap.
-- **Modules.** `manifest.ts` (parse/validate, file-name and sha512 rules),
-  `updater.ts` (single-flight check, download + verify + stage, status),
-  `applier.ts` (swap script, `.bak` kept), `proxy.ts` (reuses the browser's
-  default proxy, else the active agent's), `composition.ts` (the sandbox
-  switch); `ipc/updates.ts` carries `updates:check` / `updates:apply` /
+  manifest with a `<platform>-<arch>` entry wins.
+- **Whether an archive may be swapped in is derived, not declared.** A swap
+  replaces one file (`resources/app.asar`), so the manifest names the runtime
+  layer its archive needs - `runtime: { format, electron, payload }`, where
+  `payload` is a path-and-size hash of `resources/app.asar.unpacked` - and the
+  app describes the layer it is running (`src/main/updates/runtime.ts`:
+  `process.versions.electron` plus the same hash of the payload beside its own
+  archive) and compares. A difference is "installer required", not a swap, and
+  the status names the parts that differ (`UpdateRuntimePart`). The producer side
+  is `scripts/runtime-descriptor.mjs`, run by `package-update.mjs` against the
+  packaged output; `tests/unit/main/updates/runtimeDescriptorScript.test.ts`
+  holds the two implementations together byte for byte. Bumping Electron,
+  changing `asarUnpack` or shipping a new Copilot runtime therefore needs no
+  manual step, and cannot be forgotten. It is the **only** mechanism: an archive
+  entry without a descriptor is refused rather than guessed at, and there is no
+  counter anywhere (`updates.runtimeGeneration` / `minInstalled` were removed
+  outright).
+- **Modules.** `manifest.ts` (parse/validate, file-name and sha512 rules,
+  the runtime descriptor), `runtime.ts` (the descriptor: hash, comparison,
+  installed side), `updater.ts` (single-flight check, download + verify + stage,
+  status), `applier.ts` (swap script, `.bak` kept), `proxy.ts` (reuses the
+  browser's default proxy, else the active agent's), `composition.ts` (the
+  sandbox switch); `ipc/updates.ts` carries `updates:check` / `updates:apply` /
   `updates:get-status` and the `updates:status-changed` push. Main owns the
   status; the renderer only renders it.
 - **UI.** The **Updates** tab (last in Settings): Check and, on the same line,
@@ -1967,7 +1984,40 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4671 passed / 13 skipped** (+4 against the
+Current baseline: **`npm run test` → 4698 passed / 13 skipped** (+27 against the
+4671 below - **the runtime layer decides the update, and the bundled resources
+ship inside the asar** (2026-10-26): the manual `updates.runtimeGeneration`
+counter is **gone**, not deprecated - `package.json`, `composition.ts`, the
+manifest's `minInstalled` and the updater's fallback were all removed. An in-app
+update replaces one file (`resources/app.asar`), so the manifest names the runtime
+layer its archive needs - `runtime: { format, electron, payload }`, `payload`
+being a path-and-size hash of `app.asar.unpacked` - and the app describes the
+layer it is running (`src/main/updates/runtime.ts`) and compares; a difference is
+`installerRequired`, `UpdateRuntimePart` names which part
+(`format`/`electron`/`payload`) so Settings can say what needs the fresh install,
+and an archive entry carrying **no** descriptor is refused rather than guessed at.
+The producer is `scripts/runtime-descriptor.mjs`, run by `package-update.mjs`.
+`resources/` (skills, rules, icons) moved from `extraResources` into `app.asar`
+with it, so an asar-only update finally delivers them; measured on Electron 44
+that `readdir(withFileTypes)`, `lstat`, `readFile`, `realpath` and
+`nativeImage.createFromPath` all work inside an asar. +27: 13
+`runtime.test.ts`, 3 `runtimeDescriptorScript.test.ts` (the release script and the
+app agree byte for byte), and 11 across `manifest.test.ts` (+7), `updater.test.ts`
+(+3) and `updatesSection.test.ts` (+1); `composition.test.ts` lost the counter
+cases. Playwright is **170 tests**; `settings-updates.spec.ts` is 2 - and its swap
+case now derives the dev install's descriptor with
+`scripts/runtime-descriptor.mjs`, so the built app is driven through the
+*equality* path as well as the refusal. `settings-skills`/`skill-autocomplete`/
+`home-screen` re-ran green (7). The packaged app was also launched and its home
+screen read over the DevTools protocol: six bundled skills out of the archive, and
+`package-update.mjs` on that build wrote `electron 44.9.3` + one payload hash.
+Three mutations caught, each restored afterwards: the payload hash without sizes
+(unit); `checkRuntime` always compatible (the built-app refusal case at
+`expect(updates-apply).toBeHidden()`); and the app's hash pinned to a constant
+(the built-app *swap* case, which proves it depends on the descriptors being
+equal). See §5's "Whether an archive may be swapped in is derived" and
+`docs/updates.md`.
+Before that it was **`npm run test` → 4671 passed / 13 skipped** (+4 against the
 4667 below - **the first prompt after a restore shows its work** (2026-10-26): a
 turn's lifetime is now driven by the event that ends it, not by "is the session
 idle right now?" - a resumed Copilot session reports its model (`session.model_change`
@@ -3407,11 +3457,15 @@ turn loaded the skill, read its file and ran its script, in both an explicit
 description limit still applies to the **model-facing** catalogue: keep skill
 descriptions short (`docs/compatibility.md` §4.5).
 
-**Resource paths.** `resources/skills` is shipped through `electron-builder.yml`'s
-`extraResources: { from: resources, to: resources }`; the store reads it from
-`path.join(process.resourcesPath, "resources", "skills")` when packaged and from
-`out/main/../../resources/skills` when not
-(`resolveBundledResourcesDirectory`).
+**Resource paths.** `resources/` (skills, rules, icons) ships **inside**
+`app.asar` (`electron-builder.yml`'s `files`), so an in-app update delivers it with
+the swap; nothing else but the unpacked agent runtime is left outside the archive.
+The store reads it from `path.join(app.getAppPath(), "resources", "skills")` when
+packaged and from `out/main/../../resources/skills` when not
+(`resolveBundledResourcesDirectory`). Measured on Electron 44: `readdir` with
+`withFileTypes`, `lstat` (with real sizes), `readFile`, `realpath` and
+`nativeImage.createFromPath` all work against paths inside an asar, so the skill
+store's real-path containment still fails closed for a missing file.
 
 **`BrokerOutcome`** is `{ kind: "response", status, contentType, bodyText }` —
 not `kind: "ok"`, and the body is **not** parsed for you.

@@ -1,6 +1,6 @@
 import { rm, writeFile } from 'node:fs/promises';
 
-import type { AgentFetch, UpdateStatus } from '../../shared';
+import type { AgentFetch, UpdateRuntimePart, UpdateStatus } from '../../shared';
 import type { Logger } from '../logger';
 import { downloadVerifiedArchive } from './download';
 import {
@@ -14,14 +14,18 @@ import {
   type UpdateFile,
   type UpdateManifest,
 } from './manifest';
+import { describeRuntimeDifferences, type RuntimeDescriptor } from './runtime';
 
 const MANIFEST_TIMEOUT_MS = 15_000;
 const ARCHIVE_TIMEOUT_MS = 5 * 60_000;
 
 export interface UpdaterDependencies {
   readonly installedVersion: string;
-  /** The runtime generation this install ships; a manifest's `minInstalled` above it needs a fresh installation. */
-  readonly runtimeGeneration: number;
+  /**
+   * This install's runtime layer, as it physically is - `undefined` when it
+   * cannot be described, which is never read as "compatible".
+   */
+  readonly readInstalledRuntime: () => Promise<RuntimeDescriptor | undefined>;
   /** `<platform>-<arch>`, the key into a manifest's `files`. */
   readonly platformKey: string;
   /** The folders built into the app, checked after the custom one. */
@@ -92,6 +96,16 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     if (busy) return status;
     busy = true;
     setStatus({ kind: 'checking' });
+    /**
+     * This install's own runtime layer, described at most once per check and
+     * only when a candidate archive names one to compare against. An install
+     * that cannot be described reads as `undefined`, which never matches.
+     */
+    let installedRuntime: Promise<RuntimeDescriptor | undefined> | undefined;
+    const currentRuntime = (): Promise<RuntimeDescriptor | undefined> => {
+      installedRuntime ??= deps.readInstalledRuntime().catch(() => undefined);
+      return installedRuntime;
+    };
     try {
       const custom = deps.customUrl();
       const folders = [...(custom === undefined ? [] : [custom]), ...deps.builtinUrls]
@@ -107,9 +121,14 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
         if (file === undefined || compareVersions(manifest.version, deps.installedVersion) <= 0) {
           continue;
         }
-        if (file.minInstalled > deps.runtimeGeneration) {
+        const installerRequired = await checkRuntime(file, currentRuntime);
+        if (installerRequired !== undefined) {
           pending = undefined;
-          return setStatus({ kind: 'installerRequired', version: manifest.version });
+          return setStatus({
+            kind: 'installerRequired',
+            version: manifest.version,
+            ...(installerRequired.length === 0 ? {} : { changed: [...installerRequired] }),
+          });
         }
         pending = { folder, file };
         return setStatus({
@@ -171,6 +190,26 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
   }
 
   return { getStatus: () => status, check, apply };
+}
+
+/**
+ * Whether `file` may be swapped into this install.
+ *
+ * `undefined` means yes. An empty list means no, and refuses to guess why - the
+ * archive does not say which runtime layer it needs, or this install cannot
+ * describe the one it has. Neither case is treated as compatible: with no
+ * counter behind it any more, a descriptor is the only evidence there is. A
+ * non-empty list names the parts that differ, which the Settings tab shows.
+ */
+async function checkRuntime(
+  file: UpdateFile,
+  currentRuntime: () => Promise<RuntimeDescriptor | undefined>,
+): Promise<readonly UpdateRuntimePart[] | undefined> {
+  if (file.runtime === undefined) return [];
+  const installed = await currentRuntime();
+  if (installed === undefined) return [];
+  const changed = describeRuntimeDifferences(installed, file.runtime);
+  return changed.length === 0 ? undefined : changed;
 }
 
 function failNotUpdatable(): never {

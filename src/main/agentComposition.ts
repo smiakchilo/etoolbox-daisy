@@ -243,19 +243,19 @@ export function createBridgeCurrentContext(
  * location - never from settings, the user's home directory, the project
  * directory, or anything a response could influence.
  *
- * Packaged builds get `resources/` copied next to the app by
- * electron-builder's `extraResources` (`from: resources`, `to: resources`),
- * which lands under `process.resourcesPath`. Unpackaged runs execute from
+ * Packaged builds carry `resources/` **inside** `app.asar` (electron-builder.yml's
+ * `files`), so it travels with an in-app update and lands under the app path -
+ * `resources/app.asar/resources` on disk. Unpackaged runs execute from
  * `out/main`, two levels below the repository root where `resources/` lives.
  */
 export function resolveBundledResourcesDirectory(params: {
   readonly isPackaged: boolean;
-  readonly resourcesPath: string;
+  readonly appPath: string;
   readonly mainDir: string;
   readonly join: (...segments: readonly string[]) => string;
 }): string {
   return params.isPackaged
-    ? params.join(params.resourcesPath, 'resources')
+    ? params.join(params.appPath, 'resources')
     : params.join(params.mainDir, '..', '..', 'resources');
 }
 

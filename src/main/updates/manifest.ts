@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { runtimeDescriptorSchema } from './runtime';
+
 /** The manifest file every update folder carries next to its per-platform archives. */
 export const UPDATE_MANIFEST_FILE = 'update.json';
 
@@ -15,8 +17,14 @@ const updateFileSchema = z.object({
   name: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
   sha512: z.string().regex(/^[0-9a-fA-F]{128}$/),
   size: z.number().int().positive().max(MAX_UPDATE_ARCHIVE_BYTES),
-  /** The oldest installed runtime generation this archive runs on; newer needs a fresh installation. */
-  minInstalled: z.number().int().nonnegative().default(0),
+  /**
+   * The runtime layer this archive needs; an install whose own layer differs
+   * (Electron, the unpacked agent runtime) cannot swap it in and is told to
+   * install a fresh copy instead. Derived by `scripts/runtime-descriptor.mjs`,
+   * never written by hand - see `./runtime.ts`. An archive that carries none is
+   * not offered at all: there is nothing else to vouch for it.
+   */
+  runtime: runtimeDescriptorSchema.optional(),
 });
 
 /**

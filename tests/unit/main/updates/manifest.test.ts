@@ -61,9 +61,49 @@ describe('updateManifestSchema', () => {
     files: { 'win32-x64': { name: 'app.asar', sha512: HASH, size: 10 } },
   };
 
-  it('defaults minInstalled and tolerates unknown fields', () => {
+  it('tolerates unknown fields', () => {
     const parsed = updateManifestSchema.parse({ ...valid, extra: true });
-    expect(parsed.files['win32-x64']?.minInstalled).toBe(0);
+    expect(parsed.version).toBe('1.2.3');
+  });
+
+  it('carries the runtime layer an archive needs', () => {
+    const parsed = updateManifestSchema.parse({
+      ...valid,
+      files: {
+        'win32-x64': {
+          name: 'app.asar',
+          sha512: HASH,
+          size: 10,
+          runtime: { format: 1, electron: '44.9.3', payload: 'b'.repeat(32) },
+        },
+      },
+    });
+    expect(parsed.files['win32-x64']?.runtime).toEqual({
+      format: 1,
+      electron: '44.9.3',
+      payload: 'b'.repeat(32),
+    });
+  });
+
+  it('leaves the runtime absent when the archive names none', () => {
+    expect(updateManifestSchema.parse(valid).files['win32-x64']?.runtime).toBeUndefined();
+  });
+
+  it.each([
+    ['an unknown descriptor format', { format: 2, electron: '44.9.3', payload: 'b'.repeat(32) }],
+    ['a truncated payload hash', { format: 1, electron: '44.9.3', payload: 'b' }],
+    ['a payload that is not a hash', { format: 1, electron: '44.9.3', payload: 'z'.repeat(32) }],
+    ['a non-version Electron', { format: 1, electron: 'latest', payload: 'b'.repeat(32) }],
+    [
+      'an unknown runtime key',
+      { format: 1, electron: '44.9.3', payload: 'b'.repeat(32), extra: true },
+    ],
+  ])('rejects a runtime descriptor with %s', (_label, runtime) => {
+    const manifest = {
+      ...valid,
+      files: { 'win32-x64': { name: 'app.asar', sha512: HASH, size: 10, runtime } },
+    };
+    expect(updateManifestSchema.safeParse(manifest).success).toBe(false);
   });
 
   it.each([

@@ -814,22 +814,22 @@ describe('runAfterFrameLoad', () => {
 describe('resolveBundledResourcesDirectory', () => {
   const join = (...segments: readonly string[]): string => segments.join('/');
 
-  it('reads from the packaged resources directory when packaged', () => {
+  it('reads from the archive the app runs from when packaged', () => {
     expect(
       resolveBundledResourcesDirectory({
         isPackaged: true,
-        resourcesPath: 'C:/Program Files/EToolbox Daisy/resources',
+        appPath: 'C:/Program Files/EToolbox Daisy/resources/app.asar',
         mainDir: 'C:/Program Files/EToolbox Daisy/resources/app.asar/out/main',
         join,
       }),
-    ).toBe('C:/Program Files/EToolbox Daisy/resources/resources');
+    ).toBe('C:/Program Files/EToolbox Daisy/resources/app.asar/resources');
   });
 
   it('reads from the repository resources directory when unpackaged', () => {
     expect(
       resolveBundledResourcesDirectory({
         isPackaged: false,
-        resourcesPath: 'C:/ignored',
+        appPath: 'C:/ignored',
         mainDir: 'E:/repo/out/main',
         join,
       }),
@@ -842,11 +842,12 @@ describe('resolveBundledResourcesDirectory', () => {
     // user's environment could redirect where skills are loaded from.
     const packaged = resolveBundledResourcesDirectory({
       isPackaged: true,
-      resourcesPath: 'C:/app/resources',
+      appPath: 'C:/app/resources/app.asar',
       mainDir: 'C:/app/resources/app.asar/out/main',
       join,
     });
     expect(packaged).not.toMatch(/Users|home|AppData/i);
-    expect(packaged.endsWith('resources/resources')).toBe(true);
+    expect(packaged.startsWith('C:/app/resources/app.asar/')).toBe(true);
+    expect(packaged.endsWith('/resources')).toBe(true);
   });
 });

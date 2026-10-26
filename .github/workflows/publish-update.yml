@@ -3,11 +3,13 @@ name: Publish update
 # Builds app.asar on each OS/arch (Windows x64, macOS arm64 and Intel) and commits the merged update.json plus the archives
 # to update/ on the default branch, where installed apps read them. The same run
 # builds and publishes the add-on archives (`docs/addon-architecture.md`).
-# Run it by hand after bumping `version` in package.json. If a release changes
-# native dependencies or the Electron version, bump `updates.runtimeGeneration`
-# too, so older installs are told to reinstall instead of loading an incompatible
-# asar. A release that changes an add-on's version needs nothing extra: the pins
-# travel inside the new asar, and this run publishes the zips it names.
+# Run it by hand after bumping `version` in package.json. Nothing else needs
+# raising: `scripts/runtime-descriptor.mjs` derives the runtime layer the archive
+# needs (Electron + the unpacked Copilot payload) from the packaged output, and an
+# install whose own layer differs is told to reinstall instead of swapping
+# (`src/main/updates/runtime.ts`). A release that changes an add-on's version
+# needs nothing extra either: the pins travel inside the new asar, and this run
+# publishes the zips it names.
 on:
   workflow_dispatch:
     inputs:

@@ -813,7 +813,7 @@ if (!gotSingleInstanceLock) {
     // rejects here and the application does not start without them.
     const bundledResourcesDirectory = resolveBundledResourcesDirectory({
       isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
       mainDir: currentDir,
       join: (...segments) => path.join(...segments),
     });

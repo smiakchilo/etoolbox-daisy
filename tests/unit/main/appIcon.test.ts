@@ -31,14 +31,17 @@ function seedIcons(resourcesDir: string): string[] {
 }
 
 describe('resolveAppIconPath', () => {
-  it('resolves an existing icon inside resources next to the app when packaged', () => {
-    const resourcesPath = createScratchRoot();
-    const seeded = seedIcons(path.join(resourcesPath, 'resources'));
+  it('resolves an existing icon inside the archive when packaged', () => {
+    const resources = createScratchRoot();
+    // The code only joins paths, so a directory named `app.asar` stands in for
+    // the archive - that keeps `existsSync` real.
+    const appPath = path.join(resources, 'app.asar');
+    const seeded = seedIcons(path.join(appPath, 'resources'));
 
     const resolved = resolveAppIconPath({
       platform: 'win32',
       isPackaged: true,
-      resourcesPath,
+      appPath,
       mainDir: 'unused',
       join,
       exists: existsSync,
@@ -57,7 +60,7 @@ describe('resolveAppIconPath', () => {
     const resolved = resolveAppIconPath({
       platform: 'win32',
       isPackaged: false,
-      resourcesPath: 'unused',
+      appPath: 'unused',
       mainDir,
       join,
       exists: existsSync,
@@ -74,7 +77,7 @@ describe('resolveAppIconPath', () => {
       resolveAppIconPath({
         platform,
         isPackaged: false,
-        resourcesPath: 'unused',
+        appPath: 'unused',
         mainDir: path.join(root, 'out', 'main'),
         join,
         exists: existsSync,
@@ -92,7 +95,7 @@ describe('resolveAppIconPath', () => {
       resolveAppIconPath({
         platform: 'win32',
         isPackaged: true,
-        resourcesPath: createScratchRoot(),
+        appPath: path.join(createScratchRoot(), 'app.asar'),
         mainDir: 'unused',
         join,
         exists: existsSync,

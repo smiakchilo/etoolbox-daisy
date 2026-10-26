@@ -5,6 +5,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentFetch, UpdateStatus } from '../../../../src/shared';
+import type { RuntimeDescriptor } from '../../../../src/main/updates/runtime';
+import { RUNTIME_DESCRIPTOR_FORMAT } from '../../../../src/main/updates/runtime';
 import { createUpdater, type UpdaterDependencies } from '../../../../src/main/updates/updater';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
@@ -13,6 +15,17 @@ afterEach(() => scratch.cleanup());
 
 const ARCHIVE = Buffer.from('new-app-archive');
 const sha512 = (bytes: Buffer): string => createHash('sha512').update(bytes).digest('hex');
+
+/** The runtime layer this install is on; a manifest names it to be swappable. */
+const INSTALLED_RUNTIME: RuntimeDescriptor = {
+  format: RUNTIME_DESCRIPTOR_FORMAT,
+  electron: '44.9.3',
+  payload: 'a'.repeat(32),
+};
+
+function runtime(overrides: Partial<RuntimeDescriptor> = {}): unknown {
+  return { ...INSTALLED_RUNTIME, ...overrides };
+}
 
 function manifestFor(version: string, overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -23,6 +36,9 @@ function manifestFor(version: string, overrides: Record<string, unknown> = {}): 
         name: 'app.asar',
         sha512: sha512(ARCHIVE),
         size: ARCHIVE.length,
+        // The runtime this install is on, so the archive is swappable by
+        // default; `{ runtime: undefined }` drops the key entirely.
+        runtime: runtime(),
         ...overrides,
       },
     },
@@ -61,7 +77,7 @@ function harness(
   const statuses: UpdateStatus[] = [];
   const deps: UpdaterDependencies = {
     installedVersion: '1.0.0',
-    runtimeGeneration: 1,
+    readInstalledRuntime: () => Promise.resolve(INSTALLED_RUNTIME),
     platformKey: 'win32-x64',
     builtinUrls: ['https://example.com/builtin'],
     customUrl: () => undefined,
@@ -135,15 +151,65 @@ describe('updater check', () => {
     expect((await harness(fetchFn).updater.check()).kind).toBe('failed');
   });
 
-  it('asks for an installer when the archive needs a newer runtime', async () => {
+  it('refuses an archive that does not say which runtime layer it needs', async () => {
     const fetchFn = serve({
       'https://example.com/builtin/update.json': () =>
-        reply(manifestFor('2.0.0', { minInstalled: 2 })),
+        reply(manifestFor('2.0.0', { runtime: undefined })),
     });
     expect(await harness(fetchFn).updater.check()).toEqual({
       kind: 'installerRequired',
       version: '2.0.0',
     });
+  });
+
+  it('says which part of the runtime layer blocked the update', async () => {
+    const cases: ReadonlyArray<[Partial<RuntimeDescriptor>, string]> = [
+      [{ payload: 'b'.repeat(32) }, 'payload'],
+      [{ electron: '45.0.0' }, 'electron'],
+    ];
+    for (const [moved, expected] of cases) {
+      const fetchFn = serve({
+        'https://example.com/builtin/update.json': () =>
+          reply(manifestFor('2.0.0', { runtime: runtime(moved) })),
+      });
+      expect(await harness(fetchFn).updater.check()).toEqual({
+        kind: 'installerRequired',
+        version: '2.0.0',
+        changed: [expected],
+      });
+    }
+  });
+
+  it('refuses an archive whose runtime cannot be compared with this install', async () => {
+    const fetchFn = serve({
+      'https://example.com/builtin/update.json': () =>
+        reply(manifestFor('2.0.0', { runtime: runtime() })),
+    });
+    const unreadable = () => Promise.resolve(undefined);
+    expect(await harness(fetchFn, { readInstalledRuntime: unreadable }).updater.check()).toEqual({
+      kind: 'installerRequired',
+      version: '2.0.0',
+    });
+
+    const throws = () => Promise.reject(new Error('permission denied'));
+    expect((await harness(fetchFn, { readInstalledRuntime: throws }).updater.check()).kind).toBe(
+      'installerRequired',
+    );
+  });
+
+  it('reads the installed runtime at most once per check', async () => {
+    const fetchFn = serve({
+      'https://custom.example.com/update.json': () =>
+        reply(JSON.stringify({ version: '9.0.0', files: {} })),
+      'https://example.com/builtin/update.json': () =>
+        reply(manifestFor('2.0.0', { runtime: runtime() })),
+    });
+    const readInstalledRuntime = vi.fn(() => Promise.resolve(INSTALLED_RUNTIME));
+    await harness(fetchFn, {
+      customUrl: () => 'https://custom.example.com/',
+      readInstalledRuntime,
+    }).updater.check();
+    expect(readInstalledRuntime).toHaveBeenCalledTimes(1);
   });
 
   it('ignores non-https sources', async () => {

@@ -1,4 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:https';
@@ -19,6 +20,33 @@ import { byField, byTestId } from '../support/selectors';
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'settings-updates-scratch');
 
+/**
+ * The runtime layer a dev run of the built app describes, derived with the
+ * release's own script (never by importing `src/`, so the spec keeps driving the
+ * app as a black box): the Electron it is launched with, and the payload beside
+ * its own archive - which a dev run does not have, so the hash is of nothing.
+ */
+function devRuntimeDescriptor(): Record<string, unknown> {
+  const repoRoot = path.resolve(__dirname, '../..');
+  const electronVersion = (
+    JSON.parse(
+      readFileSync(path.join(repoRoot, 'node_modules', 'electron', 'package.json'), 'utf8'),
+    ) as { version: string }
+  ).version;
+  const printed = execFileSync(
+    process.execPath,
+    [
+      path.join(repoRoot, 'scripts', 'runtime-descriptor.mjs'),
+      '--describe',
+      `${repoRoot}.unpacked`,
+      '--electron',
+      electronVersion,
+    ],
+    { encoding: 'utf8' },
+  );
+  return JSON.parse(printed) as Record<string, unknown>;
+}
+
 test('the Updates tab finds a newer version and swaps the archive of the sandbox install', async () => {
   test.setTimeout(180_000);
 
@@ -37,6 +65,9 @@ test('the Updates tab finds a newer version and swaps the archive of the sandbox
         name: archiveName,
         sha512: createHash('sha512').update(newArchive).digest('hex'),
         size: newArchive.length,
+        // Only an archive that names the layer this install is running on is
+        // offered at all - there is no counter to fall back on.
+        runtime: devRuntimeDescriptor(),
       },
     },
   };
@@ -129,6 +160,84 @@ test('the Updates tab finds a newer version and swaps the archive of the sandbox
       .toEqual(newArchive);
     expect(readFileSync(`${targetAsar}.bak`, 'utf8')).toBe('old archive');
     await expect(applyButton).toBeHidden();
+  } finally {
+    await app.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test('a manifest naming a different runtime layer asks for a fresh installation instead', async () => {
+  test.setTimeout(180_000);
+
+  const { root, home, appData, localAppData } = createScratchDirs(scratchBase);
+  const sandbox = path.join(root, 'install');
+  const targetAsar = path.join(sandbox, 'resources', 'app.asar');
+  mkdirSync(path.dirname(targetAsar), { recursive: true });
+  writeFileSync(targetAsar, 'old archive');
+
+  const archiveName = 'app-99.1.0.asar';
+  const newArchive = Buffer.from('runtime-mismatched archive');
+  // A runtime no installation has: the app derives its own layer from the
+  // Electron it runs and the payload beside its archive, so this can never match
+  // by accident.
+  const manifest = {
+    version: '99.1.0',
+    files: {
+      [`${process.platform}-${process.arch}`]: {
+        name: archiveName,
+        sha512: createHash('sha512').update(newArchive).digest('hex'),
+        size: newArchive.length,
+        runtime: { format: 1, electron: '99.0.0', payload: 'b'.repeat(32) },
+      },
+    },
+  };
+
+  const ca = await generateTestCa();
+  const leaf = await issueTrustedLeafCert('localhost', ca);
+  const caFile = path.join(root, 'ca.pem');
+  writeFileSync(caFile, ca.cert);
+  const server = createServer({ key: leaf.key, cert: leaf.cert }, (request, response) => {
+    if (request.url === '/updates/update.json') {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(manifest));
+    } else {
+      response.statusCode = 404;
+      response.end();
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+
+  const app = await electron.launch({
+    args: [mainEntry],
+    env: {
+      ...scratchEnv({ home, appData, localAppData }),
+      EDAISY_UPDATE_SANDBOX: sandbox,
+      NODE_EXTRA_CA_CERTS: caFile,
+    },
+  });
+  try {
+    const shell = await app.firstWindow();
+    await shell.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+    await shell.locator(byTestId('chat-settings')).click();
+    await shell.locator(byTestId('settings-panel')).first().waitFor({
+      state: 'visible',
+      timeout: 60_000,
+    });
+    await shell.locator(byTestId('settings-tab-updates')).click();
+    const panel = shell.locator('.settings-panel__tab-panel[selected]');
+
+    const urlInput = panel.locator(byField('updates-url') + ' input');
+    await urlInput.fill(`https://localhost:${String(port)}/updates`);
+    await urlInput.press('Enter');
+    await panel.locator(byTestId('updates-check')).click();
+
+    const status = panel.locator(byTestId('updates-status'));
+    await expect(status).toContainText('99.1.0', { timeout: 30_000 });
+    // Refused, not offered: no Update button, and the archive was never fetched.
+    await expect(panel.locator(byTestId('updates-apply'))).toBeHidden();
+    expect(readFileSync(targetAsar, 'utf8')).toBe('old archive');
+    expect(existsSync(`${targetAsar}.bak`)).toBe(false);
   } finally {
     await app.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));

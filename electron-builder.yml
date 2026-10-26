@@ -6,6 +6,11 @@ directories:
 files:
   - out/**/*
   - package.json
+  # The application's own data (the bundled skills, the model-facing rules, the
+  # icons) ships **inside** the asar, so an in-app update delivers it with the
+  # swap. Anything outside the archive cannot be updated that way, which is why
+  # only the unpacked agent runtime is left out (see `asarUnpack` below).
+  - resources/**/*
   # Add-ons are downloaded on first use, never installed: the built ones are
   # development-only and their sources must not ship. `src/main/addons/pins.json`
   # names the exact version each build needs.
@@ -54,9 +59,11 @@ files:
 asarUnpack:
   - node_modules/@github/copilot-sdk-win32-x64/**
   - node_modules/@github/copilot-sdk-darwin-*/**
-extraResources:
-  - from: resources
-    to: resources
+# No `extraResources`: everything outside the asar is frozen at installation time
+# (an in-app update replaces `resources/app.asar` and nothing else), so the
+# bundled skills/rules/icons live in the archive. The unpacked agent runtime above
+# is the one deliberate exception - it must be real files on disk - and it is what
+# the update check's runtime descriptor compares (`src/main/updates/runtime.ts`).
 win:
   # `resources/icon.png` is the single source of truth. `resources/icon.ico`
   # (this field, and the file the app reads for its window/taskbar icon at

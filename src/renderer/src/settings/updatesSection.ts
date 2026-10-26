@@ -1,6 +1,6 @@
 import { el } from '../lib/dom';
 import { subscribeUpdateStatus } from '../lib/updateStatusFeed';
-import type { AppSettingsSnapshot, UpdateStatus } from '../../../shared';
+import type { AppSettingsSnapshot, UpdateRuntimePart, UpdateStatus } from '../../../shared';
 import { createContextualHelp, helpAccessibleName, labelledField } from './fieldHelp';
 import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } from './statusBanner';
 
@@ -39,6 +39,22 @@ const UPDATE_LABEL = 'Update';
 const URL_LABEL = 'Custom update URL';
 const STARTUP_LABEL = 'Check for updates on startup';
 
+/** How a part of the runtime layer reads in a status phrase. */
+const RUNTIME_PART_LABELS: Readonly<Record<UpdateRuntimePart, string>> = {
+  format: 'the update mechanism',
+  electron: 'the Electron version',
+  payload: 'the agent runtime',
+};
+
+/**
+ * Says which part of the runtime layer blocks the update: a fresh installation
+ * is only understandable if the reader is told what changed.
+ */
+function describeChangedRuntime(changed: readonly UpdateRuntimePart[] | undefined): string {
+  if (changed === undefined || changed.length === 0) return '';
+  return ` (${changed.map((part) => RUNTIME_PART_LABELS[part]).join(' and ')} changed)`;
+}
+
 /** The phrase the section shows beside its buttons; empty when there is nothing to say. */
 export function describeUpdateStatus(status: UpdateStatus): string {
   switch (status.kind) {
@@ -51,7 +67,7 @@ export function describeUpdateStatus(status: UpdateStatus): string {
     case 'available':
       return `Version ${status.version} is available`;
     case 'installerRequired':
-      return `Version ${status.version} needs a fresh installation`;
+      return `Version ${status.version} needs a fresh installation${describeChangedRuntime(status.changed)}`;
     case 'applying':
       return 'Updating\u2026';
     case 'failed':

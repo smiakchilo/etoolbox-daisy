@@ -44,7 +44,7 @@ export function getAppIconPath(): string | undefined {
     cachedAppIconPath = resolveAppIconPath({
       platform: process.platform,
       isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
       mainDir: currentDir,
       join: (...segments) => path.join(...segments),
       exists: existsSync,

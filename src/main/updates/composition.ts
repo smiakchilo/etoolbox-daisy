@@ -8,21 +8,16 @@ import type { SecretStore } from '../secretStore';
 import { macBundlePath, startApplyScript } from './applier';
 import { platformKey } from './manifest';
 import { createUpdateFetch } from './proxy';
+import { describeInstalledRuntime } from './runtime';
 import { createUpdater, type Updater } from './updater';
 
-/** The `updates` object of `package.json`: where updates live and which runtime this install ships. */
+/** The `updates` object of `package.json`: the folders an install checks for updates. */
 const updatesPackageSchema = z.object({
-  updates: z
-    .object({
-      urls: z.array(z.string()).default([]),
-      runtimeGeneration: z.number().int().nonnegative().default(1),
-    })
-    .default({ urls: [], runtimeGeneration: 1 }),
+  updates: z.object({ urls: z.array(z.string()).default([]) }).default({ urls: [] }),
 });
 
 export interface UpdateBuildInfo {
   readonly urls: readonly string[];
-  readonly runtimeGeneration: number;
 }
 
 /** Reads `<appPath>/package.json`; a missing or malformed file means "no built-in sources". */
@@ -31,7 +26,7 @@ export function readUpdateBuildInfo(appPath: string): UpdateBuildInfo {
     const raw: unknown = JSON.parse(readFileSync(path.join(appPath, 'package.json'), 'utf8'));
     return updatesPackageSchema.parse(raw).updates;
   } catch {
-    return { urls: [], runtimeGeneration: 1 };
+    return { urls: [] };
   }
 }
 
@@ -79,7 +74,11 @@ export function createAppUpdater(options: AppUpdaterOptions): Updater {
   const sandboxed = !options.isPackaged;
   return createUpdater({
     installedVersion: options.installedVersion,
-    runtimeGeneration: build.runtimeGeneration,
+    readInstalledRuntime: () =>
+      describeInstalledRuntime({
+        appPath: options.appPath,
+        electronVersion: process.versions.electron,
+      }),
     platformKey: platformKey(options.platform, options.arch),
     builtinUrls: build.urls,
     customUrl: () => options.readSettings().updates.url,

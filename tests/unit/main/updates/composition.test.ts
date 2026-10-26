@@ -17,21 +17,20 @@ function appWith(packageJson: string | undefined): string {
 }
 
 describe('readUpdateBuildInfo', () => {
-  it('reads the built-in sources and the runtime generation', () => {
+  it('reads the built-in sources', () => {
     const appPath = appWith(
-      JSON.stringify({
-        updates: { urls: ['https://github.com/o/r/tree/main/updates'], runtimeGeneration: 3 },
-      }),
+      JSON.stringify({ updates: { urls: ['https://github.com/o/r/tree/main/updates'] } }),
     );
     expect(readUpdateBuildInfo(appPath)).toEqual({
       urls: ['https://github.com/o/r/tree/main/updates'],
-      runtimeGeneration: 3,
     });
   });
 
-  it('defaults the generation to 1 when only the sources are given', () => {
-    const appPath = appWith(JSON.stringify({ updates: { urls: ['https://x.example/u'] } }));
-    expect(readUpdateBuildInfo(appPath).runtimeGeneration).toBe(1);
+  it('tolerates an updates block that carries more than the sources', () => {
+    const appPath = appWith(
+      JSON.stringify({ updates: { urls: ['https://x.example/u'], somethingNewer: 3 } }),
+    );
+    expect(readUpdateBuildInfo(appPath)).toEqual({ urls: ['https://x.example/u'] });
   });
 
   it.each([
@@ -41,7 +40,7 @@ describe('readUpdateBuildInfo', () => {
     ['a wrongly-typed block', JSON.stringify({ updates: { urls: 'x' } })],
   ])('means no built-in sources for %s', (_label, content) => {
     const info = readUpdateBuildInfo(appWith(content));
-    expect(info).toEqual({ urls: [], runtimeGeneration: 1 });
+    expect(info).toEqual({ urls: [] });
   });
 });
 

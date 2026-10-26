@@ -21,6 +21,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import { describeRuntime, readElectronVersion } from './runtime-descriptor.mjs';
+
 const root = path.resolve(import.meta.dirname, '..');
 const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
@@ -58,6 +60,13 @@ function pack(outDirectory) {
   mkdirSync(outDirectory, { recursive: true });
   copyFileSync(asar, path.join(outDirectory, name));
   const bytes = readFileSync(asar);
+  // The runtime layer this archive needs: the Electron it was packaged against
+  // and the unpacked payload beside it. The installed app describes its own and
+  // refuses the swap when they differ (src/main/updates/runtime.ts).
+  const runtime = describeRuntime({
+    unpackedDirectory: `${asar}.unpacked`,
+    electronVersion: readElectronVersion(root),
+  });
   const partial = {
     version,
     files: {
@@ -65,7 +74,7 @@ function pack(outDirectory) {
         name,
         sha512: createHash('sha512').update(bytes).digest('hex'),
         size: statSync(asar).size,
-        minInstalled: packageJson.updates?.runtimeGeneration ?? 1,
+        runtime,
       },
     },
   };
@@ -73,7 +82,9 @@ function pack(outDirectory) {
     path.join(outDirectory, `update.${key}.json`),
     `${JSON.stringify(partial, null, 2)}\n`,
   );
-  console.log(`Packed ${name} (${partial.files[key].size} bytes)`);
+  console.log(
+    `Packed ${name} (${partial.files[key].size} bytes, runtime ${runtime.electron}/${runtime.payload})`,
+  );
 }
 
 function merge(directory) {

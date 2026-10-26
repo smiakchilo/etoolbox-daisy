@@ -221,6 +221,26 @@ describe('createUpdatesSection', () => {
     }
   });
 
+  it('says what part of the runtime layer needs the fresh installation', () => {
+    const section = buildSection();
+    const apply = query<Field>(section.element, byTestId('updates-apply'));
+    const status = (): string =>
+      query(section.element, byTestId('updates-status')).textContent ?? '';
+
+    pushStatus({ kind: 'installerRequired', version: '2.0.0' });
+    const bare = status();
+    expect(apply.hasAttribute('hidden')).toBe(true);
+    expect(bare).toContain('2.0.0');
+
+    pushStatus({ kind: 'installerRequired', version: '2.0.0', changed: ['payload', 'electron'] });
+    const explained = status();
+    expect(explained).toContain('2.0.0');
+    expect(explained).not.toBe(bare);
+    // A status phrase is a label: the app's copy never ends with a period.
+    expect(bare.endsWith('.')).toBe(false);
+    expect(explained.endsWith('.')).toBe(false);
+  });
+
   it('unsubscribes from status pushes on dispose', () => {
     buildSection().dispose();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
