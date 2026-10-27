@@ -53,6 +53,15 @@ jobs:
       - name: Collect this platform's add-on catalogue
         shell: bash
         run: cp dist-addons/addons.json release/update/addons.${{ matrix.name }}.json
+      # A JS add-on is platform-independent (`any`) and byte-identical on every
+      # runner, so its archive is uploaded exactly once - by one matrix leg. The
+      # other legs still publish their catalogue, which is what the merge step's
+      # determinism check compares. Uploading the same-named `.zip` from all three
+      # legs would collide under `download-artifact`'s `merge-multiple`.
+      - name: Collect the platform-independent add-on archives
+        if: matrix.name == 'win32-x64'
+        shell: bash
+        run: cp dist-addons/*.zip release/update/
       - uses: actions/upload-artifact@v6
         with:
           name: update-${{ matrix.name }}
