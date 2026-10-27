@@ -14,7 +14,7 @@
     ]
   },
   "scripts": {
-    "postinstall": "npm run addons:install",
+    "postinstall": "npm run addons:install && npm run addons:build",
     "addons:install": "node scripts/addons-install.mjs",
     "addons:build": "node scripts/build-addons.mjs",
     "addons:zip": "node scripts/build-addons.mjs --zip",
