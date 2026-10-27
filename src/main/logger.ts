@@ -159,6 +159,31 @@ function isKnownLogCode(code: string): code is DiagnosticCode | ToolErrorCode {
 export const LOG_OUTCOMES = ['success', 'failure', 'timeout', 'cancelled'] as const;
 export type LogOutcome = (typeof LOG_OUTCOMES)[number];
 
+/**
+ * Closed vocabulary for *why* an operation failed, alongside
+ * {@link LogOutcome}. Like `outcome` it exists so a call site never has to pass
+ * a free-text message: `UPDATE_CHECK_FAILED` says which of these a source hit,
+ * and the source's `url`/`statusCode`/`durationMs` fields say where and when.
+ */
+export const LOG_REASONS = [
+  /** The request failed in transit; no narrower evidence was available. */
+  'network',
+  /** The application's own deadline elapsed. */
+  'timeout',
+  /** A response arrived but was not ok; `statusCode` carries the status. */
+  'http-status',
+  /** The response (after redirects) was not https, so it was refused. */
+  'insecure',
+  /** The response body was larger than the caller's cap. */
+  'too-large',
+  /** The body was not a manifest this build understands. */
+  'invalid-manifest',
+  /** A failure with no narrower cause: an exception outside the request itself. */
+  'unexpected',
+] as const;
+
+export type LogReason = (typeof LOG_REASONS)[number];
+
 export type LogLevel = 'info' | 'warn' | 'error';
 
 // ---------------------------------------------------------------------------
@@ -235,6 +260,10 @@ export interface LogFields {
   readonly count?: number;
   readonly statusCode?: number;
   readonly outcome?: LogOutcome;
+  /** Why a failed operation failed, from the closed {@link LOG_REASONS} set. */
+  readonly reason?: LogReason;
+  /** Whether the request was routed through a configured proxy. */
+  readonly proxied?: boolean;
   readonly ids?: LogIds;
   readonly url?: LoggableUrl;
 }
@@ -279,6 +308,8 @@ const logFieldsValidationSchema = z
     count: z.number().nonnegative().int().optional(),
     statusCode: z.number().int().min(100).max(599).optional(),
     outcome: z.enum(LOG_OUTCOMES).optional(),
+    reason: z.enum(LOG_REASONS).optional(),
+    proxied: z.boolean().optional(),
     ids: logIdsSchema.optional(),
     url: loggableUrlValidationSchema.optional(),
   })
@@ -297,6 +328,8 @@ function buildRecord(
   if (fields.count !== undefined) record['count'] = fields.count;
   if (fields.statusCode !== undefined) record['statusCode'] = fields.statusCode;
   if (fields.outcome !== undefined) record['outcome'] = fields.outcome;
+  if (fields.reason !== undefined) record['reason'] = fields.reason;
+  if (fields.proxied !== undefined) record['proxied'] = fields.proxied;
   if (fields.ids !== undefined) {
     const ids: Record<string, string> = {};
     if (fields.ids.requestId !== undefined) ids['requestId'] = fields.ids.requestId;

@@ -7,7 +7,7 @@ import type { Logger } from '../logger';
 import type { SecretStore } from '../secretStore';
 import { macBundlePath, startApplyScript } from './applier';
 import { platformKey } from './manifest';
-import { createUpdateFetch } from './proxy';
+import { createUpdateFetch, isUpdateProxyConfigured } from './proxy';
 import { describeInstalledRuntime } from './runtime';
 import { createUpdater, type Updater } from './updater';
 
@@ -83,6 +83,7 @@ export function createAppUpdater(options: AppUpdaterOptions): Updater {
     builtinUrls: build.urls,
     customUrl: () => options.readSettings().updates.url,
     createFetch: () => createUpdateFetch(options.readSettings(), options.secretStore),
+    usesProxy: () => isUpdateProxyConfigured(options.readSettings()),
     targetAsar,
     install: (stagedAsar) => {
       if (targetAsar === undefined) throw new Error('not updatable in place');

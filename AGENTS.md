@@ -2035,7 +2035,21 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4759 passed / 13 skipped** (+2 against the
+Current baseline: **`npm run test` → 4788 passed / 13 skipped** (+10 against the
+4778 the tree measured before this change, which had drifted +19 past the 4759
+recorded below - **`UPDATE_CHECK_FAILED` says which source failed and why**
+(2026-10-27): each update source that cannot be read now logs its own line with
+the source URL, `durationMs`, whether a configured proxy carried the request
+(`proxied`) and a closed `reason` (`network`, `timeout`, `http-status` +
+`statusCode`, `insecure`, `too-large`, `invalid-manifest`; the check's own
+failure logs `unexpected`), and the aggregate line carries `count` so "every
+source failed" is distinguishable from "no source was configured". The logger
+gained its closed `LOG_REASONS` vocabulary and the `proxied` flag; the updater
+reads the proxy selection through a new `usesProxy` dependency. The +10 is 8
+`updater` cases (one per reason, the proxy flag, and the no-source aggregate)
+and 2 `logger` cases (the fields are written; a forged reason is rejected). See
+§5 and `docs/verification/followons-2026-10.md`). Before that it was
+**`npm run test` → 4759 passed / 13 skipped** (+2 against the
 4757 below - **`check-page` is a bundled skill** (2026-10-26): the Lighthouse
 report moved out of `docs/examples/skills/` into `resources/skills/check-page/`,
 with a bundled skill's `MANDATORY ...` description, its user-facing label and

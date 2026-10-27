@@ -8,6 +8,7 @@ import {
   type DiagnosticCode,
   type LoggableUrl,
   type Logger,
+  type LogReason,
 } from '../../../src/main/logger';
 import { createScratchDirs } from '../../support/scratchDirs';
 
@@ -108,6 +109,27 @@ describe('createLogger: normal diagnostic lines', () => {
     const parsed = JSON.parse(lines[0] ?? '') as Record<string, unknown>;
     expect(parsed['code']).toBe('TIMEOUT');
     expect(parsed['level']).toBe('error');
+  });
+
+  it('writes a failure reason and whether a proxy carried the request', () => {
+    const dir = createScratchRoot();
+    const logger = createLogger(dir);
+
+    logger.warn('UPDATE_CHECK_FAILED', {
+      outcome: 'failure',
+      reason: 'network',
+      proxied: true,
+      durationMs: 10_044,
+    });
+
+    const parsed = JSON.parse(readLogLines(dir)[0] ?? '') as Record<string, unknown>;
+    expect(parsed).toMatchObject({
+      code: 'UPDATE_CHECK_FAILED',
+      outcome: 'failure',
+      reason: 'network',
+      proxied: true,
+      durationMs: 10_044,
+    });
   });
 });
 
@@ -239,11 +261,13 @@ describe('createLogger: canaries', () => {
 
   it('structurally impossible: canary text does not fit any field type on LogFields', () => {
     // LogFields has no field whose type is a bare string: durationMs/count/
-    // statusCode are numbers, outcome is a closed enum, ids are branded
-    // opaque identifiers, url is the branded LoggableUrl. A password/token/
-    // cookie string is not assignable to any of them without `as`.
+    // statusCode are numbers, outcome/reason are closed enums, proxied is a
+    // boolean, ids are branded opaque identifiers, url is the branded
+    // LoggableUrl. A password/token/cookie string is not assignable to any of
+    // them without `as`.
     type Fields = NonNullable<Parameters<Logger['info']>[1]>;
     expectTypeOf<string>().not.toExtend<NonNullable<Fields['outcome']>>();
+    expectTypeOf<string>().not.toExtend<NonNullable<Fields['reason']>>();
     expectTypeOf<string>().not.toExtend<NonNullable<Fields['durationMs']>>();
   });
 
@@ -335,6 +359,18 @@ describe('createLogger: canaries', () => {
 
     const raw = readLogBytes(dir).toString('utf8');
     expect(raw).not.toContain('CANARY-FORGED-CODE');
+    expect(logger.getHealth().lastFailureCode).toBe('INVALID_FIELDS');
+  });
+
+  it('forged reason cannot smuggle free text into a log line', () => {
+    const dir = createScratchRoot();
+    const logger = createLogger(dir);
+    const forgedReason = PASSWORD_CANARY as LogReason;
+
+    logger.warn('UPDATE_CHECK_FAILED', { reason: forgedReason });
+
+    const raw = readLogBytes(dir).toString('utf8');
+    expect(raw).not.toContain(PASSWORD_CANARY);
     expect(logger.getHealth().lastFailureCode).toBe('INVALID_FIELDS');
   });
 });

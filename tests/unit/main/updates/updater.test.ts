@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentFetch, UpdateStatus } from '../../../../src/shared';
+import type { Logger } from '../../../../src/main/logger';
 import type { RuntimeDescriptor } from '../../../../src/main/updates/runtime';
 import { RUNTIME_DESCRIPTOR_FORMAT } from '../../../../src/main/updates/runtime';
 import { createUpdater, type UpdaterDependencies } from '../../../../src/main/updates/updater';
@@ -82,6 +83,7 @@ function harness(
     builtinUrls: ['https://example.com/builtin'],
     customUrl: () => undefined,
     createFetch: () => Promise.resolve(fetchFn),
+    usesProxy: () => false,
     targetAsar: undefined,
     install: () => ({ restart: true }),
     quit: vi.fn(),
@@ -90,6 +92,11 @@ function harness(
     ...overrides,
   };
   return { updater: createUpdater(deps), statuses, deps };
+}
+
+/** The `UPDATE_CHECK_FAILED` warnings a check logged, in order. */
+function loggedWarnings(deps: UpdaterDependencies): Array<Parameters<Logger['warn']>> {
+  return vi.mocked(deps.logger.warn).mock.calls.filter(([code]) => code === 'UPDATE_CHECK_FAILED');
 }
 
 describe('updater check', () => {
@@ -148,7 +155,9 @@ describe('updater check', () => {
       'https://example.com/builtin/update.json': () =>
         reply(manifestFor('2.0.0'), { url: 'http://example.com/update.json' }),
     });
-    expect((await harness(fetchFn).updater.check()).kind).toBe('failed');
+    const { updater, deps } = harness(fetchFn);
+    expect((await updater.check()).kind).toBe('failed');
+    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'insecure' });
   });
 
   it('refuses an archive that does not say which runtime layer it needs', async () => {
@@ -226,6 +235,82 @@ describe('updater check', () => {
     const { updater } = harness(fetchFn);
     await Promise.all([updater.check(), updater.check()]);
     expect(fetchFn.calls).toHaveLength(1);
+  });
+});
+
+describe('updater check diagnostics', () => {
+  it('logs nothing for a source it read successfully', async () => {
+    const fetchFn = serve({
+      'https://example.com/builtin/update.json': () => reply(manifestFor('1.0.0')),
+    });
+    const { updater, deps } = harness(fetchFn);
+    await updater.check();
+    expect(deps.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('says which source failed, why, and over which route', async () => {
+    const fetchFn = serve({
+      'https://example.com/builtin/update.json': () => reply('missing', { ok: false }),
+    });
+    const { updater, deps } = harness(fetchFn, { usesProxy: () => true });
+    await updater.check();
+    const warnings = loggedWarnings(deps);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]?.[1]).toMatchObject({
+      outcome: 'failure',
+      reason: 'http-status',
+      statusCode: 404,
+      proxied: true,
+      url: { origin: 'https://example.com', path: '/builtin/update.json' },
+    });
+    expect(warnings[0]?.[1]?.durationMs).toBeTypeOf('number');
+  });
+
+  it('records a transport failure, and whether a proxy carried it', async () => {
+    const { updater, deps } = harness(serve({}), { usesProxy: () => true });
+    await updater.check();
+    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({
+      outcome: 'failure',
+      reason: 'network',
+      proxied: true,
+    });
+  });
+
+  it('records a request that ran out of time', async () => {
+    const fetchFn = serve({
+      'https://example.com/builtin/update.json': () => {
+        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+      },
+    });
+    const { updater, deps } = harness(fetchFn);
+    await updater.check();
+    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'timeout' });
+  });
+
+  it.each([
+    ['not JSON at all', 'not json'],
+    ['a manifest this build cannot read', JSON.stringify({ version: 'newest', files: {} })],
+  ])('treats %s as a malformed manifest, not an unreachable source', async (_label, body) => {
+    const fetchFn = serve({ 'https://example.com/builtin/update.json': () => reply(body) });
+    const { updater, deps } = harness(fetchFn);
+    await updater.check();
+    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'invalid-manifest' });
+  });
+
+  it('records a source whose body is above the cap', async () => {
+    const oversized = JSON.stringify({ version: '1.1.0', files: {}, pad: 'x'.repeat(70_000) });
+    const fetchFn = serve({ 'https://example.com/builtin/update.json': () => reply(oversized) });
+    const { updater, deps } = harness(fetchFn);
+    await updater.check();
+    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'too-large' });
+  });
+
+  it('distinguishes "no source configured" from "every source failed"', async () => {
+    const { updater, deps } = harness(serve({}), { builtinUrls: [], customUrl: () => undefined });
+    await updater.check();
+    const warnings = loggedWarnings(deps);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.[1]).toMatchObject({ outcome: 'failure', count: 0 });
   });
 });
 
