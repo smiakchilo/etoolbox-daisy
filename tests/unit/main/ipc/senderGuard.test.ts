@@ -173,6 +173,7 @@ beforeEach(() => {
     navigate: () => Promise.resolve(record('navigate')),
     openForAgent: () => Promise.resolve({ kind: 'no_view' }),
     openExternal: () => Promise.resolve(record('openExternal')),
+    highlightElement: () => Promise.resolve({ ok: true, found: true }),
     switchServer: () => Promise.resolve(record('switchServer')),
     goBack: () => Promise.resolve(record('goBack')),
     goForward: () => Promise.resolve(record('goForward')),

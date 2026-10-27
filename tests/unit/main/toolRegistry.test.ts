@@ -530,7 +530,7 @@ describe('discovered tools (the real src/tools folders)', () => {
 });
 
 describe('the shipped page_audit report', () => {
-  it('paints its score table and one evidence table per failed audit, through format_table', async () => {
+  it('returns its scores and evidence in the result, with no nested tool calls', async () => {
     const nested: {
       readonly toolName: string;
       readonly args: Readonly<Record<string, JsonValue>>;
@@ -551,10 +551,22 @@ describe('the shipped page_audit report', () => {
                 id: 'heading-order',
                 title: 'Heading elements are not in a sequentially-descending order',
                 score: 0,
-                evidence: {
-                  columns: [{ key: 'node', label: 'Failing Elements' }],
-                  rows: [{ node: 'h4 — h4.card__title — <h4 class="card__title">Hi</h4>' }],
-                },
+                evidence: [
+                  {
+                    kind: 'table',
+                    columns: [{ key: 'node', label: 'Failing Elements' }],
+                    rows: [
+                      [
+                        {
+                          kind: 'selector',
+                          selector: 'h4.card__title',
+                          snippet: '<h4 class="card__title">Hi</h4>',
+                          label: 'h4',
+                        },
+                      ],
+                    ],
+                  },
+                ],
               },
             ],
           }),
@@ -572,16 +584,22 @@ describe('the shipped page_audit report', () => {
     const result = await executor({}, { toolCallId: newToolCallId(ids), signal: undefined });
 
     expect(result.ok).toBe(true);
-    expect(nested.map((call) => [call.toolName, call.args['title']])).toEqual([
-      ['format_table', 'Lighthouse - https://aem.example.com/content/x.html (desktop)'],
-      [
-        'format_table',
-        'Accessibility · Heading elements are not in a sequentially-descending order',
-      ],
-    ]);
-    expect(nested[1]?.args['data']).toEqual([
-      { node: 'h4 — h4.card__title — <h4 class="card__title">Hi</h4>' },
-    ]);
+    // The report is painted by the renderer from the result; no nested
+    // `format_table` call is made.
+    expect(nested).toEqual([]);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        resultType: 'success',
+        failures: [
+          {
+            evidence: [
+              { kind: 'table', rows: [[{ kind: 'selector', selector: 'h4.card__title' }]] },
+            ],
+          },
+        ],
+      },
+    });
   });
 });
 

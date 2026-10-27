@@ -4,6 +4,7 @@ import {
   BROWSER_FIND_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
+  BROWSER_HIGHLIGHT_ELEMENT_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
   BROWSER_OPEN_EXTERNAL_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
@@ -15,6 +16,7 @@ import {
 import {
   approveCertificateExceptionRequestSchema,
   findRequestSchema,
+  highlightElementRequestSchema,
   navigateRequestSchema,
   openExternalRequestSchema,
   stopFindRequestSchema,
@@ -141,6 +143,16 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
       const parsed = openExternalRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadResult(parsed.error.message);
       return deps.controller.openExternal(parsed.data);
+    },
+  );
+
+  ipcMain.handle(
+    BROWSER_HIGHLIGHT_ELEMENT_CHANNEL,
+    async (event, rawRequest: unknown): Promise<unknown> => {
+      if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
+      const parsed = highlightElementRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadResult(parsed.error.message);
+      return deps.controller.highlightElement(parsed.data);
     },
   );
 

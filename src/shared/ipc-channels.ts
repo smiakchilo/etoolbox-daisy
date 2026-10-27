@@ -230,6 +230,14 @@ export const BROWSER_STOP_FIND_CHANNEL = 'browser:stop-find' as const;
 /** Push channel: main -> renderer, one `found-in-page` result for a find target. */
 export const BROWSER_FIND_RESULT_CHANNEL = 'browser:find-result' as const;
 
+/**
+ * `browser:highlight-element` - the chat pane asks main to scroll the browser
+ * pane to a CSS selector (a Lighthouse report's failing element) and highlight
+ * it. Main resolves to the element's `found` state, so the pane can say when the
+ * selector no longer matches the page being shown. See src/shared/browser-ipc.ts.
+ */
+export const BROWSER_HIGHLIGHT_ELEMENT_CHANNEL = 'browser:highlight-element' as const;
+
 // Agent chat IPC surface (step 07) - see src/main/ipc/agentChat.ts and
 // src/shared/agent-chat-ipc.ts. Puts the `AgentService` behind IPC for a
 // renderer chat pane, distinct from the `agent:*` sign-in/out surface above.

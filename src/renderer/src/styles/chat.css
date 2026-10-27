@@ -593,6 +593,229 @@
    (`.chat-tool-call__icon--negative`) and the status word are the visible
    signal, and the reason is the last row of the expanded details. */
 
+/* ── The `page_audit` report ──────────────────────────────────────────────
+   One structured message of collapsible rubric sections, each holding its
+   audits as collapsible entries. Headings use the same weight/size as a
+   `format_table` message title (600, 14px) - never a larger heading. */
+
+/* A heading is `[chevron][gap][title]`; a body is indented by exactly the
+   chevron box plus the gap, so its content starts under the heading's text -
+   the indent the reader sees as one level of nesting. */
+.chat-report-section,
+.chat-report-entry {
+  --chat-report-chevron: 16px;
+  --chat-report-gap: 6px;
+  --chat-report-indent: calc(var(--chat-report-chevron) + var(--chat-report-gap));
+}
+
+.chat-report-message {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.chat-report-section__toggle,
+.chat-report-entry__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--chat-report-gap);
+  width: 100%;
+  padding: 2px 0;
+  margin: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  /* Keep a just-expanded heading a little below the transcript's top edge when
+     `toggleReportEntry` scrolls it back into view after an accordion collapse. */
+  scroll-margin-block: 8px;
+}
+
+.chat-report-section__toggle {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.chat-report-section__chevron,
+.chat-report-entry__chevron {
+  flex: 0 0 var(--chat-report-chevron);
+  width: var(--chat-report-chevron);
+  transition: transform 120ms ease;
+}
+
+.chat-report-section__toggle--collapsed .chat-report-section__chevron,
+.chat-report-entry__toggle:not(.chat-report-entry__toggle--expanded) .chat-report-entry__chevron {
+  transform: rotate(-90deg);
+}
+
+.chat-report-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-inline-start: var(--chat-report-indent);
+}
+
+.chat-report-entry__toggle {
+  font-weight: 500;
+}
+
+.chat-report-entry__title {
+  font-weight: 500;
+}
+
+.chat-report-entry__value {
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+.chat-report-entry__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block: 4px;
+  padding-inline-start: var(--chat-report-indent);
+}
+
+/* The author-origin `display: flex` above outranks the UA `[hidden]` rule, so a
+   collapsed section/entry would stay visible without these explicit rules (the
+   same pattern as `.chat-tool-call__params[hidden]` and `.chat-message--thinking`);
+   and the same reason the toggles carry `aria-expanded`. */
+.chat-report-section__body[hidden],
+.chat-report-entry__body[hidden] {
+  display: none;
+}
+
+/* A report table block is a `chat-table-message` shell (the same class a
+   `format_table` run renders), so the shared gutter gives it the Copy/Export
+   popover; inside an entry body its own margin is dropped - the body's gap
+   spaces it. */
+.chat-report-table {
+  margin: 0;
+}
+
+.chat-report-table__table {
+  width: 100%;
+  --mod-table-row-font-size: var(--spectrum-font-size-100, 14px);
+  --mod-table-header-font-size: var(--spectrum-font-size-100, 14px);
+}
+
+.chat-report-table__table sp-table-row {
+  cursor: auto;
+}
+
+.chat-report-table__table sp-table-head-cell:first-child,
+.chat-report-table__table sp-table-cell:first-child {
+  flex: 0 0 2.5rem;
+  padding-inline: 8px;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.chat-report-table__status {
+  white-space: nowrap;
+}
+
+/* A failing element's parts: label, the clickable selector, the raw HTML as a
+   code snippet, and the explanation - laid out as a compact column. */
+.chat-report-cell__node,
+.chat-report-node {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-report-cell__label {
+  font-weight: 500;
+}
+
+.chat-report-selector {
+  align-self: flex-start;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--spectrum-accent-color-1000, #004f8a);
+  cursor: pointer;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+/* Every link in the report is accent-coloured with no underline, exactly like a
+   `format_table` cell's link (`.chat-table-message a`) - the colour alone marks
+   it, so a dense report reads calmly. */
+.chat-report-message a {
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+/* The raw HTML of a failing element, drawn as a code snippet but in the app's
+   own reading font and size (never a monospace/serif fallback), on the exact
+   shade a hovered table row paints (`rgba(0,0,0,.07)` over the row's white =
+   #ededed) - a solid colour, so hovering the row it sits in does not darken it
+   with a second overlay - with a thin border, generous padding and wrapping at
+   any character. */
+.chat-report-cell__snippet {
+  display: block;
+  margin: 4px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--spectrum-gray-300, #dcdcdc);
+  border-radius: 4px;
+  background: #ededed;
+  color: var(--spectrum-gray-700, #4b4b4b);
+  font: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.chat-report-cell__explanation {
+  color: var(--spectrum-gray-700, #4b4b4b);
+}
+
+/* A `list` cell (a table's sub-items): one paragraph per item, separated by the
+   table's inter-row gap so they read as distinct entries rather than one blob. */
+.chat-report-cell__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-report-cell__list-item {
+  margin: 0;
+}
+
+/* A checklist block: each labelled check on its own line. */
+.chat-report-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chat-report-checklist__item {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.chat-report-checklist__label {
+  font-weight: 500;
+}
+
+/* A plain text block (an audit with no items: Lighthouse's explanation). */
+.chat-report-text {
+  margin: 0;
+}
+
+/* A request tree's first column, indented by its depth. */
+.chat-report-tree__request {
+  display: inline-block;
+  padding-inline-start: calc(var(--tree-depth, 0) * 16px);
+  overflow-wrap: anywhere;
+}
+
 .chat-composer {
   flex: 0 0 auto;
   padding: 0 8px 8px 0;

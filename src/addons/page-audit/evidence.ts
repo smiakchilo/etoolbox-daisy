@@ -1,17 +1,27 @@
-import type { PageAuditEvidence, PageAuditEvidenceColumn } from '../../shared';
+import type {
+  ToolReportBlock,
+  ToolReportCell,
+  ToolReportColumn,
+  ToolReportNodeBlock,
+  ToolReportTableBlock,
+  ToolReportTreeBlock,
+  ToolReportTreeNode,
+} from '../../shared';
 
 /**
- * Turns one failed Lighthouse audit into the **evidence table** the report
- * paints under it: the columns Lighthouse itself declares and one row per item
- * (a failing element with its selector and snippet, an insecure URL, a
- * deprecated API and where it is called, a console message, ...).
+ * Turns one failed Lighthouse audit into the **report blocks** the transcript
+ * paints under it: usually one table, but an insight can carry several - a
+ * table plus the element it names, a checklist, a nested request tree. Each
+ * block is typed data, never markup: the renderer draws a table's columns and
+ * rows, a failing element's label/selector/snippet/explanation, and a tree as
+ * an indented table.
  *
  * The shapes are Lighthouse's own (`types/lhr/audit-details.d.ts`): a `table`
  * or `opportunity` carries headings and items, a `list` carries sections or
- * bare items, a `checklist` a label/value map. Debug data, screenshots,
- * filmstrips and treemaps are not evidence a reader can act on (a screenshot is
- * a base64 image), so an audit carrying only those falls back to Lighthouse's
- * own explanation of the problem - the same row every audit with no items gets.
+ * bare items, a `checklist` a label/value map, a `network-tree` a nested chain
+ * map. Debug data, screenshots, filmstrips and treemaps are not evidence a
+ * reader can act on (a screenshot is a base64 image), so an audit carrying only
+ * those falls back to Lighthouse's own explanation of the problem.
  */
 
 /** One column heading of a Lighthouse details table. */
@@ -41,9 +51,9 @@ export interface LighthouseAudit {
 }
 
 /**
- * `format_table` (which paints this) caps a table at 20 columns and a column
- * label at 60 characters, so the evidence is shaped to fit rather than being
- * refused.
+ * `format_table` (which paints report tables through the same machinery) caps a
+ * table at 20 columns and a column label at 60 characters, so the evidence is
+ * shaped to fit rather than being refused.
  */
 const MAX_COLUMNS = 20;
 const MAX_LABEL_LENGTH = 60;
@@ -55,12 +65,10 @@ const MAX_LABEL_LENGTH = 60;
  */
 const MAX_CELL_LENGTH = 2000;
 
-const FALLBACK_COLUMN_KEY = 'detail';
-const FALLBACK_COLUMN_LABEL = 'What to fix';
 const SUB_ITEMS_COLUMN_KEY = 'evidence-sub-items';
 const SUB_ITEMS_COLUMN_LABEL = 'Sub items';
 
-type Row = Record<string, string>;
+type KeyedHeading = LighthouseHeading & { readonly key: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -108,14 +116,8 @@ function formatNumber(value: number, valueType: string | undefined, displayUnit?
   return unit === '%' ? `${String(value)}%` : `${String(value)} ${unit}`;
 }
 
-/** A failing element: what it is, how to find it, what it looks like, why it failed. */
-function nodeText(node: Record<string, unknown>): string {
-  return unique([
-    asText(node['nodeLabel']),
-    asText(node['selector']),
-    asText(node['snippet']),
-    asText(node['explanation']),
-  ]).join(' — ');
+function cellText(text: string): string {
+  return text.length <= MAX_CELL_LENGTH ? text : `${text.slice(0, MAX_CELL_LENGTH - 1)}…`;
 }
 
 /** `url:line:column`, rendered one-indexed the way Lighthouse's report does. */
@@ -154,28 +156,83 @@ function linkText(value: Record<string, unknown>): string {
   return url === undefined || url === text ? text : `${text} (${url})`;
 }
 
-/** One value of a Lighthouse details item, as the cell text a reader can act on. */
-export function formatValue(value: unknown, valueType?: string, displayUnit?: string): string {
-  if (value === undefined || value === null) return '';
+function isEmptyCell(cell: ToolReportCell): boolean {
+  switch (cell.kind) {
+    case 'text':
+      return cell.value === '';
+    case 'selector':
+      return cell.selector === '' && (cell.snippet ?? '') === '' && (cell.label ?? '') === '';
+    case 'list':
+      return cell.items.length === 0;
+  }
+}
+
+/** The display text of a cell, for joining a sub-item's parts into one paragraph. */
+function textOfCell(cell: ToolReportCell): string {
+  switch (cell.kind) {
+    case 'text':
+      return cell.value;
+    case 'selector':
+      return unique([cell.label, cell.selector, cell.snippet, cell.explanation]).join(' — ');
+    case 'list':
+      return cell.items
+        .map(textOfCell)
+        .filter((part) => part !== '')
+        .join('; ');
+  }
+}
+
+/** A failing element: what it is, how to find it, what it looks like, why it failed. */
+function selectorCell(value: Record<string, unknown>): ToolReportCell {
+  const selector = asText(value['selector']);
+  const snippet = asText(value['snippet']);
+  const label = asText(value['nodeLabel']);
+  const explanation = asText(value['explanation']);
+  if (selector === undefined) {
+    // A node without a selector still reads as text (label/snippet/explanation).
+    const text = unique([label, snippet, explanation]).join(' — ');
+    return { kind: 'text', value: cellText(text) };
+  }
+  return {
+    kind: 'selector',
+    selector,
+    ...(snippet === undefined ? {} : { snippet: cellText(snippet) }),
+    ...(label === undefined ? {} : { label }),
+    ...(explanation === undefined ? {} : { explanation: cellText(explanation) }),
+  };
+}
+
+/** One value of a Lighthouse details item, as a typed cell the renderer draws. */
+function formatCell(value: unknown, valueType?: string, displayUnit?: string): ToolReportCell {
+  if (value === undefined || value === null) return { kind: 'text', value: '' };
   if (typeof value === 'string') {
     // A `thumbnail` column carries a base64 data URL: an image, not evidence
     // anyone can read in a cell.
-    return value.startsWith('data:image/') ? '' : value;
+    return value.startsWith('data:image/')
+      ? { kind: 'text', value: '' }
+      : { kind: 'text', value: cellText(value) };
   }
-  if (typeof value === 'number') return formatNumber(value, valueType, displayUnit);
-  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (typeof value === 'number') {
+    return { kind: 'text', value: formatNumber(value, valueType, displayUnit) };
+  }
+  if (typeof value === 'boolean') return { kind: 'text', value: value ? 'yes' : 'no' };
   const array = asArray(value);
   if (array !== undefined) {
-    return array
-      .map((entry) => formatValue(entry, valueType, displayUnit))
-      .filter((part) => part !== '')
-      .join('; ');
+    return {
+      kind: 'text',
+      value: cellText(
+        array
+          .map((entry) => textOfCell(formatCell(entry, valueType, displayUnit)))
+          .filter((part) => part !== '')
+          .join('; '),
+      ),
+    };
   }
   if (!isRecord(value)) {
     try {
-      return JSON.stringify(value) ?? '';
+      return { kind: 'text', value: cellText(JSON.stringify(value) ?? '') };
     } catch {
-      return '';
+      return { kind: 'text', value: '' };
     }
   }
 
@@ -183,37 +240,40 @@ export function formatValue(value: unknown, valueType?: string, displayUnit?: st
   // Lighthouse's own report renderer.
   switch (asText(value['type'])) {
     case 'node':
-      return nodeText(value);
+      return selectorCell(value);
     case 'source-location':
-      return sourceLocationText(value);
+      return { kind: 'text', value: cellText(sourceLocationText(value)) };
     case 'link':
-      return linkText(value);
+      return { kind: 'text', value: cellText(linkText(value)) };
     case 'url':
     case 'code':
     case 'text':
-      return asText(value['value']) ?? '';
+      return { kind: 'text', value: cellText(asText(value['value']) ?? '') };
     case 'numeric':
       return typeof value['value'] === 'number'
-        ? formatNumber(value['value'], valueType, displayUnit)
-        : '';
+        ? { kind: 'text', value: formatNumber(value['value'], valueType, displayUnit) }
+        : { kind: 'text', value: '' };
     case 'baseline-status':
-      return asText(value['displayString']) ?? asText(value['status']) ?? '';
+      return {
+        kind: 'text',
+        value: cellText(asText(value['displayString']) ?? asText(value['status']) ?? ''),
+      };
     case 'subitems': {
       const items = asArray(value['items']) ?? [];
-      return items
-        .map((entry) => formatValue(entry, valueType))
-        .filter((part) => part !== '')
-        .join('; ');
+      const cells = items
+        .map((entry) => formatCell(entry, valueType, displayUnit))
+        .filter((cell) => !isEmptyCell(cell));
+      return { kind: 'list', items: cells };
     }
     default: {
       // An ICU message object, or a shape Lighthouse added and we do not know:
       // show what it carries rather than dropping the evidence.
       const direct = asText(value);
-      if (direct !== undefined) return direct;
+      if (direct !== undefined) return { kind: 'text', value: cellText(direct) };
       try {
-        return JSON.stringify(value);
+        return { kind: 'text', value: cellText(JSON.stringify(value)) };
       } catch {
-        return '';
+        return { kind: 'text', value: '' };
       }
     }
   }
@@ -224,33 +284,32 @@ function columnLabel(heading: LighthouseHeading, fallbackKey: string): string {
   return label.length <= MAX_LABEL_LENGTH ? label : `${label.slice(0, MAX_LABEL_LENGTH - 1)}…`;
 }
 
-function cellText(text: string): string {
-  return text.length <= MAX_CELL_LENGTH ? text : `${text.slice(0, MAX_CELL_LENGTH - 1)}…`;
-}
-
-/** The nested rows a table row carries (`subItems`), in one trailing cell. */
+/** The nested rows a table row carries (`subItems`), one paragraph per item. */
 function subItemsCell(
   record: Record<string, unknown>,
   headings: readonly LighthouseHeading[],
-): string {
+): ToolReportCell | undefined {
   const raw = record['subItems'];
   const items = isRecord(raw) ? asArray(raw['items']) : asArray(raw);
-  if (items === undefined || items.length === 0) return '';
-  const parts = items.flatMap((item) => {
+  if (items === undefined || items.length === 0) return undefined;
+  const cells = items.flatMap((item): ToolReportCell[] => {
     const sub = isRecord(item) ? item : undefined;
-    if (sub === undefined) return [formatValue(item)];
-    const values = headings.flatMap((heading) => {
-      const subHeading = heading.subItemsHeading;
-      if (subHeading?.key === undefined) return [];
-      const value = formatValue(sub[subHeading.key], subHeading.valueType);
-      return value === '' ? [] : [value];
-    });
-    return [values.length === 0 ? formatValue(item) : unique(values).join(' — ')];
+    let text: string;
+    if (sub === undefined) {
+      text = textOfCell(formatCell(item));
+    } else {
+      const values = headings.flatMap((heading) => {
+        const subHeading = heading.subItemsHeading;
+        if (subHeading?.key === undefined) return [];
+        return textOfCell(formatCell(sub[subHeading.key], subHeading.valueType));
+      });
+      text = values.length === 0 ? textOfCell(formatCell(item)) : unique(values).join(' — ');
+    }
+    return text === '' ? [] : [{ kind: 'text', value: cellText(text) }];
   });
-  return unique(parts).join('; ');
+  const kept = cells.filter((cell) => !isEmptyCell(cell));
+  return kept.length === 0 ? undefined : { kind: 'list', items: kept };
 }
-
-type KeyedHeading = LighthouseHeading & { readonly key: string };
 
 /**
  * Every heading of a details table. A heading with a `null` key builds no
@@ -267,14 +326,14 @@ function keyedHeadings(headings: readonly LighthouseHeading[]): readonly KeyedHe
   );
 }
 
-/** A `table`/`opportunity` details object: one row per item, one column per heading. */
-function tableEvidence(headings: unknown, items: unknown): PageAuditEvidence | undefined {
+/** A `table`/`opportunity` details object: one table block, one column per heading. */
+function tableBlock(headings: unknown, items: unknown): ToolReportTableBlock | undefined {
   const all = readHeadings(headings);
   const keyed = keyedHeadings(all);
   const records = (asArray(items) ?? []).filter(isRecord);
   if (keyed.length === 0 || records.length === 0) return undefined;
 
-  const columns: PageAuditEvidenceColumn[] = [];
+  const columns: ToolReportColumn[] = [];
   const byKey = new Map<string, KeyedHeading>();
   for (const heading of keyed) {
     if (byKey.has(heading.key) || columns.length >= MAX_COLUMNS) continue;
@@ -282,21 +341,20 @@ function tableEvidence(headings: unknown, items: unknown): PageAuditEvidence | u
     columns.push({ key: heading.key, label: columnLabel(heading, heading.key) });
   }
 
-  const subItems = records.map((record) => cellText(subItemsCell(record, all)));
-  const hasSubItems = subItems.some((cell) => cell !== '');
-  const rows: Row[] = records.map((record, index) => {
-    const row: Row = {};
+  const subItems = records.map((record) => subItemsCell(record, all));
+  const hasSubItems = subItems.some((cell) => cell !== undefined);
+  const rows: ToolReportCell[][] = records.map((record, index) => {
+    const row: ToolReportCell[] = [];
     for (const column of columns) {
       const heading = byKey.get(column.key);
-      row[column.key] = cellText(
-        formatValue(record[column.key], heading?.valueType, heading?.displayUnit),
-      );
+      row.push(formatCell(record[column.key], heading?.valueType, heading?.displayUnit));
     }
-    if (hasSubItems) row[SUB_ITEMS_COLUMN_KEY] = subItems[index] ?? '';
+    if (hasSubItems) row.push(subItems[index] ?? { kind: 'text', value: '' });
     return row;
   });
 
   return {
+    kind: 'table',
     columns: hasSubItems
       ? [...columns, { key: SUB_ITEMS_COLUMN_KEY, label: SUB_ITEMS_COLUMN_LABEL }]
       : columns,
@@ -322,85 +380,143 @@ function listSections(items: unknown): readonly ListSection[] {
   });
 }
 
-/** A `list` details object: its sections, each with its own title and table. */
-function listEvidence(items: unknown): PageAuditEvidence | undefined {
-  const sections = listSections(items);
-  if (sections.length === 0) return undefined;
-
-  const tables = sections.flatMap((section) => {
-    const value = isRecord(section.value) ? section.value : undefined;
-    if (value === undefined || value['type'] !== 'table') return [];
-    const evidence = tableEvidence(value['headings'], value['items']);
-    return evidence === undefined ? [] : [{ title: section.title, evidence }];
-  });
-
-  if (tables.length === sections.length) {
-    const columns: PageAuditEvidenceColumn[] = [];
-    const seen = new Set<string>();
-    for (const table of tables) {
-      for (const column of table.evidence.columns) {
-        if (seen.has(column.key) || columns.length >= MAX_COLUMNS) continue;
-        seen.add(column.key);
-        columns.push(column);
-      }
-    }
-    const titled = tables.some((table) => table.title !== undefined);
-    const rows: Row[] = [];
-    for (const table of tables) {
-      for (const row of table.evidence.rows) {
-        const shaped: Row = {};
-        for (const column of columns) shaped[column.key] = row[column.key] ?? '';
-        if (titled) shaped[SUB_ITEMS_COLUMN_KEY] = table.title ?? '';
-        rows.push(shaped);
-      }
-    }
-    return {
-      columns: titled ? [...columns, { key: SUB_ITEMS_COLUMN_KEY, label: 'Section' }] : columns,
-      rows,
-    };
-  }
-
-  const rows: Row[] = sections.map((section) => ({
-    [FALLBACK_COLUMN_KEY]: cellText(
-      unique([section.title, formatValue(section.value)]).join(' — '),
-    ),
-  }));
-  if (rows.every((row) => row[FALLBACK_COLUMN_KEY] === '')) return undefined;
-  return {
-    columns: [{ key: FALLBACK_COLUMN_KEY, label: FALLBACK_COLUMN_LABEL }],
-    rows,
-  };
-}
-
 /** A `checklist` details object: each labelled check with its result. */
-function checklistEvidence(items: unknown): PageAuditEvidence | undefined {
+function checklistBlock(items: unknown): ToolReportBlock | undefined {
   if (!isRecord(items)) return undefined;
-  const rows: Row[] = Object.entries(items).map(([key, entry]) => {
+  const entries: { readonly label: string; readonly value: string }[] = [];
+  for (const [key, entry] of Object.entries(items)) {
     const item = isRecord(entry) ? entry : undefined;
     const label = asText(item?.['label']) ?? key;
     const value = item?.['value'];
-    return {
-      [FALLBACK_COLUMN_KEY]: cellText(
-        `${label}: ${typeof value === 'boolean' ? (value ? 'yes' : 'no') : formatValue(value)}`,
-      ),
-    };
-  });
-  if (rows.length === 0) return undefined;
+    entries.push({
+      label,
+      value: typeof value === 'boolean' ? (value ? 'yes' : 'no') : textOfCell(formatCell(value)),
+    });
+  }
+  if (entries.length === 0) return undefined;
+  return { kind: 'checklist', items: entries };
+}
+
+/** A `network-tree` details object: its nested request chains, flattened into an indented table. */
+function networkTreeBlock(value: Record<string, unknown>): ToolReportTreeBlock | undefined {
+  const chains = isRecord(value['chains']) ? value['chains'] : undefined;
+  if (chains === undefined) return undefined;
+  const roots = buildTreeNodes(chains);
+  if (roots.length === 0) return undefined;
+  return { kind: 'tree', roots };
+}
+
+function buildTreeNodes(chains: Record<string, unknown>): ToolReportTreeNode[] {
+  const nodes: ToolReportTreeNode[] = [];
+  for (const entry of Object.values(chains)) {
+    if (!isRecord(entry)) continue;
+    const url = asText(entry['url']);
+    if (url === undefined) continue;
+    const duration = entry['navStartToEndTime'];
+    const bytes = entry['transferSize'];
+    nodes.push({
+      url,
+      ...(typeof duration === 'number' ? { durationMs: duration } : {}),
+      ...(typeof bytes === 'number' ? { transferBytes: bytes } : {}),
+      ...(entry['isLongest'] === true ? { isLongest: true } : {}),
+      children: isRecord(entry['children']) ? buildTreeNodes(entry['children']) : [],
+    });
+  }
+  return nodes;
+}
+
+/** A `node` value rendered as a standalone block (a list's element section). */
+function nodeBlock(value: Record<string, unknown>): ToolReportNodeBlock {
+  const cell = selectorCell(value);
+  if (cell.kind !== 'selector') {
+    return { kind: 'node', explanation: textOfCell(cell) };
+  }
   return {
-    columns: [{ key: FALLBACK_COLUMN_KEY, label: FALLBACK_COLUMN_LABEL }],
-    rows,
+    kind: 'node',
+    ...(cell.label === undefined ? {} : { label: cell.label }),
+    selector: cell.selector,
+    ...(cell.snippet === undefined ? {} : { snippet: cell.snippet }),
+    ...(cell.explanation === undefined ? {} : { explanation: cell.explanation }),
   };
+}
+
+/** Applies a list-section title to a titled block (a table or tree), or prepends it to a text block. */
+function titledBlock(block: ToolReportBlock, title: string | undefined): ToolReportBlock {
+  if (title === undefined) return block;
+  if (block.kind === 'table') return { ...block, title };
+  if (block.kind === 'tree') return { ...block, title };
+  if (block.kind === 'checklist' || block.kind === 'node') return block;
+  return { ...block, value: `${title} — ${block.value}` };
+}
+
+/** A `list` details object: one block per section (a table, a checklist, a tree, a node). */
+function listBlocks(items: unknown): ToolReportBlock[] | undefined {
+  const sections = listSections(items);
+  if (sections.length === 0) return undefined;
+  const blocks: ToolReportBlock[] = [];
+  for (const section of sections) {
+    const value = isRecord(section.value) ? section.value : undefined;
+    if (value === undefined) {
+      const cell = formatCell(section.value);
+      const text =
+        section.title === undefined
+          ? textOfCell(cell)
+          : unique([section.title, textOfCell(cell)]).join(' — ');
+      if (text !== '') blocks.push({ kind: 'text', value: cellText(text) });
+      continue;
+    }
+    const type = asText(value['type']);
+    if (
+      type === 'table' ||
+      type === 'opportunity' ||
+      (type === undefined && value['headings'] !== undefined)
+    ) {
+      const table = tableBlock(value['headings'], value['items']);
+      if (table !== undefined) blocks.push(titledBlock(table, section.title));
+      continue;
+    }
+    if (type === 'checklist') {
+      const checklist = checklistBlock(value['items']);
+      if (checklist !== undefined) blocks.push(titledBlock(checklist, section.title));
+      continue;
+    }
+    if (type === 'network-tree') {
+      const tree = networkTreeBlock(value);
+      if (tree !== undefined) blocks.push(titledBlock(tree, section.title));
+      continue;
+    }
+    // A node (the LCP element), or a shape Lighthouse added: a node block, or text.
+    if (type === 'node') {
+      const node = nodeBlock(value);
+      blocks.push(
+        section.title === undefined
+          ? node
+          : { ...node, label: unique([section.title, node.label]).join(' — ') },
+      );
+      continue;
+    }
+    const cell = formatCell(value);
+    const text =
+      section.title === undefined
+        ? textOfCell(cell)
+        : unique([section.title, textOfCell(cell)]).join(' — ');
+    if (text !== '') blocks.push({ kind: 'text', value: cellText(text) });
+  }
+  return blocks.length === 0 ? undefined : blocks;
 }
 
 /**
  * The explanation Lighthouse gives for an audit that reports no items, with a
- * markdown link turned into text plus its address so the cell stays readable.
+ * markdown link turned into text plus its address (the address is linkified when
+ * the report paints the block) so it stays readable.
+ *
+ * The entry's heading already names the audit and shows its display value, so
+ * this is only Lighthouse's own explanation - repeating the title and the value
+ * here used to flatten three separate facts into one run.
  */
 export function describeProblem(audit: LighthouseAudit): string {
   const description = asText(audit.description)?.replace(/\[([^\]]+)]\(([^)\s]+)\)/g, '$1 ($2)');
-  return (
-    unique([description, audit.displayValue, audit.title]).join(' ') || 'This audit did not pass'
-  );
+  return description ?? asText(audit.title) ?? 'This audit did not pass';
 }
 
 /**
@@ -429,22 +545,27 @@ export function hasMeasuredSaving(audit: LighthouseAudit): boolean {
   );
 }
 
-/** The evidence for one failed audit. Never empty. */
-export function auditEvidence(audit: LighthouseAudit): PageAuditEvidence {
+/** The evidence blocks for one failed audit. Never empty. */
+export function auditEvidence(audit: LighthouseAudit): ToolReportBlock[] {
   const details = audit.details;
   if (details !== undefined) {
-    const evidence =
+    const blocks =
       (details.type === 'table' ||
       details.type === 'opportunity' ||
       (details.type === undefined && details.headings !== undefined)
-        ? tableEvidence(details.headings, details.items)
+        ? (() => {
+            const table = tableBlock(details.headings, details.items);
+            return table === undefined ? undefined : [table];
+          })()
         : undefined) ??
-      (details.type === 'list' ? listEvidence(details.items) : undefined) ??
-      (details.type === 'checklist' ? checklistEvidence(details.items) : undefined);
-    if (evidence !== undefined) return evidence;
+      (details.type === 'list' ? listBlocks(details.items) : undefined) ??
+      (details.type === 'checklist'
+        ? (() => {
+            const checklist = checklistBlock(details.items);
+            return checklist === undefined ? undefined : [checklist];
+          })()
+        : undefined);
+    if (blocks !== undefined) return blocks;
   }
-  return {
-    columns: [{ key: FALLBACK_COLUMN_KEY, label: FALLBACK_COLUMN_LABEL }],
-    rows: [{ [FALLBACK_COLUMN_KEY]: cellText(describeProblem(audit)) }],
-  };
+  return [{ kind: 'text', value: cellText(describeProblem(audit)) }];
 }

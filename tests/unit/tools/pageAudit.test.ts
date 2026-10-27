@@ -5,10 +5,8 @@ import {
   type PageAuditReport,
   type PageAuditRequest,
   type PageAuditRunner,
-  type ToolHost,
   PAGE_AUDIT_CATEGORIES,
   chatIdSchema,
-  ok,
   requestIdSchema,
   serverIdSchema,
   turnIdSchema,
@@ -51,10 +49,7 @@ const REPORT: PageAuditReport = {
       id: 'meta-description',
       title: 'No meta description',
       score: 0,
-      evidence: {
-        columns: [{ key: 'detail', label: 'What to fix' }],
-        rows: [{ detail: 'The page has no meta description.' }],
-      },
+      evidence: [{ kind: 'text', value: 'The page has no meta description.' }],
     },
     {
       category: 'performance',
@@ -62,10 +57,22 @@ const REPORT: PageAuditReport = {
       title: 'Slow LCP',
       score: 0.5,
       displayValue: '4.2 s',
-      evidence: {
-        columns: [{ key: 'node', label: 'Failing elements' }],
-        rows: [{ node: 'h1 — h1.hero — <h1 class="hero">Welcome</h1>' }],
-      },
+      evidence: [
+        {
+          kind: 'table',
+          columns: [{ key: 'node', label: 'Failing elements' }],
+          rows: [
+            [
+              {
+                kind: 'selector',
+                selector: 'h1.hero',
+                snippet: '<h1 class="hero">Welcome</h1>',
+                label: 'h1',
+              },
+            ],
+          ],
+        },
+      ],
     },
   ],
 };
@@ -140,7 +147,7 @@ describe('executePageAudit', () => {
     });
     if (result.ok) {
       expect(result.failures[1]).toMatchObject({ score: 50, displayValue: '4.2 s' });
-      expect(result.failures[1]?.evidence.rows).toHaveLength(1);
+      expect(result.failures[1]?.evidence).toHaveLength(1);
       expect('displayValue' in (result.failures[0] ?? {})).toBe(false);
       expect('runtimeError' in result).toBe(false);
     }
@@ -208,10 +215,7 @@ describe('renderPageAuditSuccess', () => {
         id: 'meta-description',
         title: 'No meta',
         score: 0,
-        evidence: {
-          columns: [{ key: 'detail', label: 'What to fix' }],
-          rows: [{ detail: 'No meta description.' }],
-        },
+        evidence: [{ kind: 'text', value: 'No meta description.' }],
       },
     ],
     auditedAt: 1,
@@ -222,7 +226,44 @@ describe('renderPageAuditSuccess', () => {
 
     expect(text).toContain(success.url);
     expect(text).toContain('meta-description');
-    expect(text).toContain('1 item(s) in `evidence`');
+    // The evidence itself is in the model-facing text, so the model can discuss
+    // or fix what the report found (a tool's text is all the model sees).
+    expect(text).toContain('No meta description.');
+  });
+
+  it('renders a failing element and a table row as text the model can reason about', () => {
+    const text = renderPageAuditSuccess({
+      ...success,
+      failures: [
+        {
+          category: 'performance',
+          id: 'target-size',
+          title: 'Touch targets',
+          score: 0,
+          evidence: [
+            {
+              kind: 'table',
+              columns: [{ key: 'node', label: 'Failing Elements' }],
+              rows: [
+                [
+                  {
+                    kind: 'selector',
+                    selector: 'h6.txto-title',
+                    snippet: '<h6 class="txto-title">Hi</h6>',
+                    explanation: 'Heading order invalid',
+                  },
+                ],
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(text).toContain('Failing Elements: ');
+    expect(text).toContain('h6.txto-title');
+    expect(text).toContain('<h6 class="txto-title">Hi</h6>');
+    expect(text).toContain('Heading order invalid');
   });
 
   it('is only the head when nothing failed', () => {
@@ -233,20 +274,15 @@ describe('renderPageAuditSuccess', () => {
 });
 
 describe('createPageAuditExecutor', () => {
-  type InvokeTool = ToolHost['invokeTool'];
-
   function executor(
     audit: PageAuditRunner | undefined,
     options: {
       report?: (toolCallId: never, text: string) => void;
-      invokeTool?: InvokeTool;
     } = {},
   ) {
     return createPageAuditExecutor({
       audit,
       report: options.report as never,
-      invokeTool:
-        options.invokeTool ?? (() => Promise.resolve(ok({ resultType: 'success' } as never))),
       currentContext: () => ({
         origin: 'https://author.example',
         serverId: serverIdSchema.parse('server-1'),
@@ -258,10 +294,6 @@ describe('createPageAuditExecutor', () => {
       clock: () => 1_700_000_000_000,
       idGenerator: createCountingIdGenerator('id'),
     });
-  }
-
-  function invokeSpy() {
-    return vi.fn<InvokeTool>(() => Promise.resolve(ok({ resultType: 'success' })));
   }
 
   function context() {
@@ -290,67 +322,18 @@ describe('createPageAuditExecutor', () => {
       ok: true,
       value: {
         failures: [
-          { evidence: { columns: [{ key: 'detail', label: 'What to fix' }] } },
-          { evidence: { rows: [{ node: expect.any(String) as unknown }] } },
+          { evidence: [{ kind: 'text', value: 'The page has no meta description.' }] },
+          {
+            evidence: [
+              {
+                kind: 'table',
+                rows: [[{ kind: 'selector', selector: 'h1.hero' }]],
+              },
+            ],
+          },
         ],
       },
     });
-  });
-
-  it('paints the score table, then one table per failed audit', async () => {
-    const invokeTool = invokeSpy();
-
-    await executor(runnerReturning(REPORT), { invokeTool })({}, context());
-
-    expect(invokeTool.mock.calls).toHaveLength(3);
-    const titles = invokeTool.mock.calls.map(([name, args]) => [
-      name,
-      (args as Record<string, unknown>)['title'],
-    ]);
-    expect(titles).toEqual([
-      ['format_table', 'Lighthouse - https://author.example/page.html (mobile)'],
-      ['format_table', 'SEO · No meta description'],
-      ['format_table', 'Performance · Slow LCP — 4.2 s'],
-    ]);
-  });
-
-  it("hands each audit's own evidence to the table verbatim", async () => {
-    const invokeTool = invokeSpy();
-
-    await executor(runnerReturning(REPORT), { invokeTool })({}, context());
-
-    const failureCall = invokeTool.mock.calls[2];
-    expect(failureCall?.[1]).toMatchObject({
-      mode: 'new',
-      title: 'Performance · Slow LCP — 4.2 s',
-      columns: REPORT.failures[1]?.evidence.columns,
-      data: REPORT.failures[1]?.evidence.rows,
-    });
-  });
-
-  it('paints a pass/warn/fail status per score, and n/a for a missing one', async () => {
-    const invokeTool = invokeSpy();
-
-    await executor(runnerReturning(REPORT), { invokeTool })({}, context());
-
-    expect(invokeTool.mock.calls[0]?.[1]).toMatchObject({
-      data: [
-        { category: 'Performance', score: 46, status: 'fail' },
-        { category: 'SEO', score: 'n/a', status: 'warn' },
-      ],
-    });
-  });
-
-  it('paints nothing when the audit itself failed', async () => {
-    const invokeTool = invokeSpy();
-
-    const result = await executor(runnerReturning({ kind: 'no_page' }), { invokeTool })(
-      {},
-      context(),
-    );
-
-    expect(result).toMatchObject({ ok: false });
-    expect(invokeTool.mock.calls).toHaveLength(0);
   });
 
   it('forwards the stages the runner reports as live progress', async () => {

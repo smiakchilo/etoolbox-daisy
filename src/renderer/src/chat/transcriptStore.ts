@@ -503,7 +503,9 @@ export function createTranscriptStore(
    *
    * A `presentation: 'message'` tool is the one that paints a message instead
    * of a billet (the same predicate the view uses to paint the table), so no
-   * tool name is named here.
+   * tool name is named here. A `presentation: 'report'` tool (`page_audit`) is
+   * the same case: its structured report is the answer, and the model's prose
+   * around it ("No response.") must not be painted.
    */
   function suppressTurnOnTableMessage(event: ToolResultEvent): void {
     if (!event.outcome.ok) return;
@@ -511,7 +513,8 @@ export function createTranscriptStore(
     const turnId = toolCallTurns.get(event.toolCallId);
     if (call === undefined || turnId === undefined) return;
     if (!tableOnlyTurns.has(turnId)) return;
-    if (toolRendererRegistry.presentationOf(call.toolName) !== 'message') return;
+    const presentation = toolRendererRegistry.presentationOf(call.toolName);
+    if (presentation !== 'message' && presentation !== 'report') return;
     suppressTurn(turnId);
   }
 

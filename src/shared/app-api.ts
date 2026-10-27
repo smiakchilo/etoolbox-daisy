@@ -44,6 +44,8 @@ import type {
   CertificateBlockedInfo,
   FindRequest,
   FindResult,
+  HighlightElementRequest,
+  HighlightElementResult,
   OpenExternalRequest,
   StopFindRequest,
   ViewBounds,
@@ -299,6 +301,12 @@ export interface DaisyBrowserApi {
    * any other scheme.
    */
   openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult>;
+  /**
+   * Scrolls the browser pane to a CSS selector (a report's failing element) and
+   * highlights it. Resolves with the element's `found` state, so the caller can
+   * note when the selector no longer matches the page being shown.
+   */
+  highlightElement(request: HighlightElementRequest): Promise<HighlightElementResult>;
   switchServer(serverId: string): Promise<BrowserIpcVoidResult>;
   /** Fire-and-forget: reports the renderer's `.browser-view-host` bounds. Never awaited. */
   setViewBounds(bounds: ViewBounds): void;

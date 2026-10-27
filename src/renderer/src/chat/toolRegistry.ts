@@ -5,6 +5,7 @@ import {
   type ToolConversationItem,
   type ToolPresentation,
   type ToolRendererModule,
+  type ToolReportMessage,
   type ToolTableMessage,
 } from '../../../shared';
 
@@ -40,6 +41,12 @@ export interface ToolRendererRegistry {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ): ToolTableMessage | undefined;
+  /** The structured report a `'report'` tool paints; `undefined` otherwise. */
+  readReportMessage(
+    toolName: string,
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ): ToolReportMessage | undefined;
   readonly toolNames: readonly string[];
 }
 
@@ -84,6 +91,15 @@ export function createToolRendererRegistry(
     },
     readConversation(toolName, args, data) {
       const read = byName.get(toolName)?.readConversation;
+      if (read === undefined) return undefined;
+      try {
+        return read(args, data);
+      } catch {
+        return undefined;
+      }
+    },
+    readReportMessage(toolName, args, data) {
+      const read = byName.get(toolName)?.readReportMessage;
       if (read === undefined) return undefined;
       try {
         return read(args, data);

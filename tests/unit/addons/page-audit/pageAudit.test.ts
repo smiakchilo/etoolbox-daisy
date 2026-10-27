@@ -252,6 +252,39 @@ function addressPolicy(allow: (url: URL) => boolean = (url) => url.hostname === 
   return vi.fn((url: URL) => Promise.resolve({ allowed: allow(url) }));
 }
 
+/** The display text of one report cell, for `.toContain` assertions. */
+function textOf(cell: unknown): string {
+  if (typeof cell !== 'object' || cell === null) return '';
+  const c = cell as {
+    readonly kind: string;
+    readonly value?: string;
+    readonly selector?: string;
+    readonly snippet?: string;
+    readonly label?: string;
+    readonly explanation?: string;
+    readonly items?: readonly unknown[];
+  };
+  switch (c.kind) {
+    case 'text':
+      return c.value ?? '';
+    case 'selector':
+      return [c.label, c.selector, c.snippet, c.explanation]
+        .filter((part) => part !== undefined && part !== '')
+        .join(' — ');
+    case 'list':
+      return (c.items ?? []).map(textOf).join('; ');
+    default:
+      return '';
+  }
+}
+
+/** The `value` of a `text` cell, or `undefined` for any other cell kind. */
+function cellValue(cell: unknown): string | undefined {
+  if (typeof cell !== 'object' || cell === null) return undefined;
+  const c = cell as { readonly kind: string; readonly value?: string };
+  return c.kind === 'text' ? c.value : undefined;
+}
+
 describe('parseTarget', () => {
   const current = 'https://author.example:4502/editor.html/content/a.html#frag';
 
@@ -317,7 +350,13 @@ describe('lighthouseFailures', () => {
     expect(failures.map((failure) => failure.id)).toContain('saving');
     expect(failures.map((failure) => failure.id)).not.toContain('breakdown');
     expect(saving).toMatchObject({ score: null, displayValue: 'Est savings of 300 ms' });
-    expect(saving?.evidence.rows).toEqual([{ url: 'https://cdn.example/blocking.css' }]);
+    expect(saving?.evidence).toEqual([
+      {
+        kind: 'table',
+        columns: [{ key: 'url', label: 'URL' }],
+        rows: [[{ kind: 'text', value: 'https://cdn.example/blocking.css' }]],
+      },
+    ]);
   });
 
   it('only looks at the categories asked for', () => {
@@ -342,34 +381,53 @@ describe('lighthouseFailures', () => {
   it('carries the table Lighthouse reported, with its own headings', () => {
     const failures = lighthouseFailures(lhr(), ['seo']);
 
-    expect(failures[0]?.evidence).toEqual({
-      columns: [
-        { key: 'url', label: 'URL' },
-        { key: 'wastedBytes', label: 'Wasted' },
-      ],
-      rows: [{ url: 'https://cdn.example/x.css', wastedBytes: '2.0 KB' }],
-    });
+    expect(failures[0]?.evidence).toEqual([
+      {
+        kind: 'table',
+        columns: [
+          { key: 'url', label: 'URL' },
+          { key: 'wastedBytes', label: 'Wasted' },
+        ],
+        rows: [
+          [
+            { kind: 'text', value: 'https://cdn.example/x.css' },
+            { kind: 'text', value: '2.0 KB' },
+          ],
+        ],
+      },
+    ]);
   });
 
   it('renders a failing element as its label, selector, snippet and explanation', () => {
     const failures = lighthouseFailures(lhr(), ['seo']);
-    const [row] = failures[1]?.evidence.rows ?? [];
-    const cell = row?.['node'] ?? '';
+    const block = failures[1]?.evidence[0];
 
-    expect(cell).toContain('h4');
-    expect(cell).toContain('h4.card__title');
-    expect(cell).toContain('<h4 class="card__title">Our products</h4>');
-    expect(cell).toContain('not sequentially descending');
+    expect(block).toMatchObject({
+      kind: 'table',
+      rows: [
+        [
+          {
+            kind: 'selector',
+            selector: 'h4.card__title',
+            snippet: '<h4 class="card__title">Our products</h4>',
+            label: 'h4',
+            explanation: 'Heading level 4 is not sequentially descending',
+          },
+        ],
+      ],
+    });
   });
 
   it('renders nested sub-items in their own column', () => {
     const failures = lighthouseFailures(lhr(), ['seo']);
+    const block = failures[2]?.evidence[0];
 
-    expect(failures[2]?.evidence.columns.map((column) => column.label)).toEqual([
-      'Element',
-      'Sub items',
-    ]);
-    expect(failures[2]?.evidence.rows[0]?.['evidence-sub-items']).toContain('#footer');
+    expect(
+      block?.kind === 'table' ? block.columns.map((column) => column.label) : undefined,
+    ).toEqual(['Element', 'Sub items']);
+    const subItems = block?.kind === 'table' ? block.rows[0]?.[1] : undefined;
+    expect(subItems).toMatchObject({ kind: 'list' });
+    expect(textOf(subItems)).toContain('#footer');
   });
 
   it('keeps a sub-item that only a key-less heading describes', () => {
@@ -418,20 +476,56 @@ describe('lighthouseFailures', () => {
     };
 
     const [failure] = lighthouseFailures(legacy, ['performance']);
-    const subItems = failure?.evidence.rows[0]?.['evidence-sub-items'] ?? '';
-
-    expect(failure?.evidence.columns.map((column) => column.label)).toEqual(['URL', 'Sub items']);
-    expect(subItems).toContain('URLSearchParams');
-    expect(subItems).toContain('https://a.example/app.js:42:7');
+    const block = failure?.evidence[0];
+    expect(
+      block?.kind === 'table' ? block.columns.map((column) => column.label) : undefined,
+    ).toEqual(['URL', 'Sub items']);
+    const subItems = block?.kind === 'table' ? block.rows[0]?.[1] : undefined;
+    const text = textOf(subItems);
+    expect(text).toContain('URLSearchParams');
+    expect(text).toContain('https://a.example/app.js:42:7');
   });
 
   it("shows Lighthouse's own explanation for an audit with no items", () => {
     const failures = lighthouseFailures(lhr(), ['seo']);
 
-    const [row] = failures[3]?.evidence.rows ?? [];
-    expect(failures[3]?.evidence.columns).toEqual([{ key: 'detail', label: 'What to fix' }]);
-    expect(row?.['detail']).toContain('The page has no meta description');
-    expect(row?.['detail']).toContain('https://developer.chrome.com/meta');
+    expect(failures[3]?.evidence).toEqual([
+      {
+        kind: 'text',
+        value: expect.stringContaining('The page has no meta description') as unknown,
+      },
+    ]);
+    expect(textOf(failures[3]?.evidence[0])).toContain('https://developer.chrome.com/meta');
+  });
+
+  it('keeps only the explanation for an itemless audit - not the title or display value', () => {
+    const metric: Lhr = {
+      categories: { performance: { score: 0.4, auditRefs: [{ id: 'tbt', weight: 1 }] } },
+      audits: {
+        tbt: {
+          title: 'Total Blocking Time',
+          description:
+            'Sum of all time periods between FCP and Time to Interactive, when task length exceeded 50ms. ' +
+            '[Learn more about the Total Blocking Time metric](https://developer.chrome.com/docs/lighthouse/performance/lighthouse-total-blocking-time/).',
+          displayValue: '190 ms',
+          score: 0.4,
+          scoreDisplayMode: 'numeric',
+        },
+      },
+    };
+
+    const [failure] = lighthouseFailures(metric, ['performance']);
+
+    // The heading already names the audit and its value, so the body is only
+    // Lighthouse's explanation (the markdown link flattened to text + address).
+    expect(failure?.evidence).toEqual([
+      {
+        kind: 'text',
+        value:
+          'Sum of all time periods between FCP and Time to Interactive, when task length exceeded 50ms. ' +
+          'Learn more about the Total Blocking Time metric (https://developer.chrome.com/docs/lighthouse/performance/lighthouse-total-blocking-time/).',
+      },
+    ]);
   });
 
   it('keeps every item but bounds one over-long cell, so a row stays readable', () => {
@@ -453,12 +547,13 @@ describe('lighthouseFailures', () => {
     };
 
     const [failure] = lighthouseFailures(verbose, ['seo']);
-    const rows = failure?.evidence.rows ?? [];
+    const block = failure?.evidence[0];
+    const rows = block?.kind === 'table' ? block.rows : [];
 
     expect(rows).toHaveLength(2);
-    expect(rows[1]?.['description']).toBe('short');
-    expect(rows[0]?.['description']?.length).toBeLessThan(text.length);
-    expect(rows[0]?.['description']?.endsWith('…')).toBe(true);
+    expect(cellValue(rows[1]?.[0])).toBe('short');
+    expect(cellValue(rows[0]?.[0])?.length).toBeLessThan(text.length);
+    expect(cellValue(rows[0]?.[0])?.endsWith('…')).toBe(true);
   });
 });
 

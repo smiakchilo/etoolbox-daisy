@@ -269,6 +269,24 @@ describe('createTranscriptStore', () => {
       ]);
     });
 
+    it("hides a page_audit report turn's prose - the report is the answer", () => {
+      const store = createTranscriptStore();
+      store.applyUserPrompt(turnId, '/check-page');
+      store.markTableOnlyTurn(turnId);
+      store.applyEvent(toolRequested(0, 'page_audit'));
+      store.applyEvent(toolApproved(1));
+      store.applyEvent(toolResultSucceeded(2));
+      store.applyEvent(messageStarted(3));
+      store.applyEvent(completed(4, 'No response.'));
+
+      // The `page_audit` report (presentation 'report') is the turn's answer, so
+      // the model's own "No response." prose is not painted.
+      expect(store.items()).toEqual([
+        { kind: 'userPrompt', turnId },
+        { kind: 'toolCall', toolCallId },
+      ]);
+    });
+
     it('keeps the only output of a table-only turn that produced no table', () => {
       // Measured 2026-10-26: the first `/check-page` after a launch answered with
       // one prose message and called no tool. Hiding that prose left the reader

@@ -90,8 +90,123 @@ export interface ToolTableMessage {
  * messages, with no billet at all. `'message'` is for a tool whose call renders
  * its own assistant message rather than a call line (`format_table`): the
  * transcript hides the billet and paints the returned message instead.
+ * `'report'` is for a tool whose *settled* call paints a structured, sectioned
+ * report message below its ordinary summary billet (`page_audit`): the billet
+ * carries progress while the call runs and its one-line summary afterwards, and
+ * the report holds the headings and tables the reader navigates.
  */
-export type ToolPresentation = 'billet' | 'conversation' | 'message';
+export type ToolPresentation = 'billet' | 'conversation' | 'message' | 'report';
+
+// ---------------------------------------------------------------------------
+// Report presentation (a structured, sectioned assistant message)
+// ---------------------------------------------------------------------------
+
+/** A cell of a report table; its `kind` decides how it is drawn. */
+export type ToolReportCell =
+  /** Plain text; absolute URLs and AEM paths are linkified exactly as in prose. */
+  | { readonly kind: 'text'; readonly value: string }
+  /**
+   * A failing element: a label, a CSS `selector` (drawn as a pseudo-link that
+   * scrolls the live page to it and highlights it), the element's raw HTML
+   * `snippet` (drawn as a code block, never parsed as markup) and an optional
+   * `explanation`.
+   */
+  | {
+      readonly kind: 'selector';
+      readonly selector: string;
+      readonly snippet?: string;
+      readonly label?: string;
+      readonly explanation?: string;
+    }
+  /** Several values in one cell, each drawn as its own paragraph (a table's sub-items). */
+  | { readonly kind: 'list'; readonly items: readonly ToolReportCell[] };
+
+/** How a report table column's cells are drawn. */
+export type ToolReportColumnKind = 'text' | 'status';
+
+export interface ToolReportColumn {
+  readonly key: string;
+  readonly label: string;
+  readonly kind?: ToolReportColumnKind;
+}
+
+export interface ToolReportTableBlock {
+  readonly kind: 'table';
+  /** A caption shown above the table, when the block has one. */
+  readonly title?: string;
+  readonly columns: readonly ToolReportColumn[];
+  readonly rows: readonly (readonly ToolReportCell[])[];
+}
+
+export interface ToolReportChecklistBlock {
+  readonly kind: 'checklist';
+  readonly items: readonly { readonly label: string; readonly value: string }[];
+}
+
+/** A single element the report names (e.g. the LCP element), not inside a table. */
+export interface ToolReportNodeBlock {
+  readonly kind: 'node';
+  readonly label?: string;
+  readonly selector?: string;
+  readonly snippet?: string;
+  readonly explanation?: string;
+}
+
+export interface ToolReportTreeNode {
+  readonly url: string;
+  readonly durationMs?: number;
+  readonly transferBytes?: number;
+  /** The critical path Lighthouse marked as the longest. */
+  readonly isLongest?: boolean;
+  readonly children: readonly ToolReportTreeNode[];
+}
+
+/** A nested request tree (the network dependency tree), drawn as an indented table. */
+export interface ToolReportTreeBlock {
+  readonly kind: 'tree';
+  /** A caption shown above the tree, when the block has one. */
+  readonly title?: string;
+  readonly roots: readonly ToolReportTreeNode[];
+}
+
+export interface ToolReportTextBlock {
+  readonly kind: 'text';
+  readonly value: string;
+}
+
+export type ToolReportBlock =
+  | ToolReportTableBlock
+  | ToolReportChecklistBlock
+  | ToolReportNodeBlock
+  | ToolReportTreeBlock
+  | ToolReportTextBlock;
+
+/** One failed audit under a rubric heading: a second-level, accordion-collapsed entry. */
+export interface ToolReportEntry {
+  /** Stable within a report, used for the accordion (e.g. `performance:largest-contentful-paint`). */
+  readonly id: string;
+  readonly title: string;
+  readonly displayValue?: string;
+  readonly score?: number;
+  readonly blocks: readonly ToolReportBlock[];
+}
+
+/** A rubric (Performance / Accessibility / ...): a top-level, expanded-by-default heading. */
+export interface ToolReportSection {
+  readonly title: string;
+  readonly entries: readonly ToolReportEntry[];
+}
+
+/**
+ * A `presentation: 'report'` tool's settled call paints this one structured
+ * message: an optional leading summary table, then one rubric section per
+ * non-empty category, each holding its audits' evidence blocks.
+ */
+export interface ToolReportMessage {
+  /** The always-visible lead (the page_audit category score table). */
+  readonly summary: ToolReportTableBlock | undefined;
+  readonly sections: readonly ToolReportSection[];
+}
 
 /**
  * The question/answer pair a `presentation: 'conversation'` tool paints into
@@ -153,6 +268,16 @@ export interface ToolRendererModule {
     args: Readonly<Record<string, JsonValue>>,
     data?: JsonValue,
   ) => ToolTableMessage | undefined;
+  /**
+   * Required for a `presentation: 'report'` tool: composes the structured report
+   * message to paint from the call's own result. Returns `undefined` when this
+   * build does not recognise the call, in which case the view shows nothing for
+   * it (the call's billet remains).
+   */
+  readonly readReportMessage?: (
+    args: Readonly<Record<string, JsonValue>>,
+    data?: JsonValue,
+  ) => ToolReportMessage | undefined;
 }
 
 /**

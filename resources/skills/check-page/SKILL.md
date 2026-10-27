@@ -18,13 +18,13 @@ the categories ("accessibility only") or a desktop run.
    desktop. Do not retry a successful audit.
 2. If the call fails with `select_server`, ask the user to open a page or pick a host and
    stop. Any other failure is reported in one sentence with the tool's own reason.
-3. Add nothing. `page_audit` puts the whole report on screen itself: the score table,
-   then one table per issue - every failed audit, and every performance insight
-   Lighthouse measured a saving for - with the evidence it found: the failing
-   elements with their selector and snippet, the insecure URLs, the deprecated APIs
-   and where they are called, the console messages. Do not call `format_table`, do
-   not repeat a score, an audit or a row, and write no summary or list around the
-   tables.
+3. Add nothing. `page_audit` puts the whole report on screen itself, as one structured
+   message: the category scores, then one collapsible section per category holding each
+   issue - every failed audit, and every performance insight Lighthouse measured a saving
+   for - with the evidence it found: the failing elements with their selector and
+   snippet, the insecure URLs, the deprecated APIs and where they are called, the console
+   messages. Do not call `format_table`, do not repeat a score, an audit or a row, and
+   write no summary or list around the report.
 
 ## Discussing a failure
 

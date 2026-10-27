@@ -1,6 +1,12 @@
-import type { JsonValue, TableCellKind, ToolTableMessage } from '../../../shared';
+import type {
+  JsonValue,
+  TableCellKind,
+  ToolReportMessage,
+  ToolTableMessage,
+} from '../../../shared';
 import { el } from '../lib/dom';
 import { statusLightVariant } from './tableCells';
+import { applyReportState, renderReportMessage, reportSignature } from './reportView';
 import {
   EMPTY_AEM_LINKIFY_STATE,
   EMPTY_LINK_CONTEXT,
@@ -112,6 +118,12 @@ export interface TranscriptViewOptions {
    * inert.
    */
   readonly onExportTable?: (data: TableExportData) => void;
+  /**
+   * Invoked with the CSS selector of a report's failing element when the reader
+   * activates its pseudo-link, so the host scrolls the browser pane to it and
+   * highlights it. Absent (a unit test) means the link is inert.
+   */
+  readonly onHighlightElement?: (selector: string) => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -245,7 +257,10 @@ function hiddenWhileAwaitingInput(store: TranscriptStore, item: TranscriptItem):
   const view = store.toolCallFor(item.toolCallId);
   if (view === undefined) return false;
   if (view.status.kind !== 'requested' && view.status.kind !== 'approved') return false;
-  return toolRendererRegistry.presentationOf(view.toolName) === 'billet';
+  const presentation = toolRendererRegistry.presentationOf(view.toolName);
+  // A `report` tool's running call is a billet too (progress + summary), so it
+  // hides while the turn waits on a question exactly as an ordinary billet does.
+  return presentation === 'billet' || presentation === 'report';
 }
 
 /**
@@ -615,6 +630,12 @@ export function createTranscriptView(
   let expandedThinking = false;
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
   const getKnownSkillNames = options.getKnownSkillNames ?? (() => []);
+  // Report accordion state (a `page_audit` report): rubrics are expanded by
+  // default and individually collapsible; exactly one audit entry is expanded
+  // at a time. Rendered once per shell, then only its state is re-applied.
+  const collapsedRubrics = new Set<string>();
+  let expandedReportEntry: string | undefined;
+  const renderedReports = new WeakMap<HTMLElement, string>();
 
   // The rendered table state of the message shell each run currently owns.
   // `updateShell` runs for every item on every repaint (a streaming delta
@@ -627,6 +648,12 @@ export function createTranscriptView(
   // actually change, and a page appended to a run grows the same `<sp-table>`
   // in place - see `applyTableMessage`.
   const renderedTables = new WeakMap<HTMLElement, RenderedTable>();
+
+  // The export data of each table a `page_audit` report painted, keyed by its
+  // `.chat-table-message` shell. Report tables are not `format_table` runs, so
+  // they have no `RenderedTable`; this is what `hoverActionsFor` reads to give
+  // them the same Copy/Export gutter.
+  const reportTableExports = new WeakMap<HTMLElement, TableExportData>();
 
   // The body state of the tool-call billet last rendered into each shell. A
   // repaint that changes only a running call's progress line must NOT rebuild
@@ -756,15 +783,17 @@ export function createTranscriptView(
       }));
     }
     const shell = anchor.closest<HTMLElement>('.chat-table-message');
-    const table = shell === null ? undefined : renderedTables.get(shell);
-    if (table === undefined) return [];
-    return tableHoverActions(
-      { columns: table.columns, rows: table.rows, total: table.total },
-      {
-        onCopy: (data) => options.onCopyTable?.(data),
-        onExport: (data) => options.onExportTable?.(data),
-      },
-    );
+    if (shell === null) return [];
+    const table = renderedTables.get(shell);
+    const data: TableExportData | undefined =
+      table === undefined
+        ? reportTableExports.get(shell)
+        : { columns: table.columns, rows: table.rows, total: table.total };
+    if (data === undefined) return [];
+    return tableHoverActions(data, {
+      onCopy: (value) => options.onCopyTable?.(value),
+      onExport: (value) => options.onExportTable?.(value),
+    });
   }
 
   element.addEventListener('pointerover', (event) => {
@@ -869,6 +898,43 @@ export function createTranscriptView(
     applyThinkingExpansion(shell, expanded);
   }
 
+  /** Re-applies the report accordion state to one rendered report, in place. */
+  function applyReportStateTo(container: HTMLElement): void {
+    applyReportState(container, {
+      collapsedRubrics,
+      expandedEntry: expandedReportEntry,
+    });
+  }
+
+  /** Toggles one rubric section (expanded by default, individually collapsible). */
+  function toggleReportRubric(toggle: Element): void {
+    const title = toggle.getAttribute('data-report-rubric') ?? '';
+    if (title === '') return;
+    if (collapsedRubrics.has(title)) collapsedRubrics.delete(title);
+    else collapsedRubrics.add(title);
+    const container = toggle.closest<HTMLElement>('.chat-report-message');
+    if (container !== null) applyReportStateTo(container);
+  }
+
+  /** Toggles one audit entry (collapsed by default, one open at a time). */
+  function toggleReportEntry(toggle: Element): void {
+    const id = toggle.getAttribute('data-report-entry') ?? '';
+    if (id === '') return;
+    expandedReportEntry = expandedReportEntry === id ? undefined : id;
+    // The accordion is global: applying to every report also collapses the
+    // previously expanded entry in another report.
+    for (const container of element.querySelectorAll<HTMLElement>('.chat-report-message')) {
+      applyReportStateTo(container);
+    }
+    if (expandedReportEntry === id) {
+      // A large entry above may have just collapsed, shrinking the content and
+      // moving this one up and out of view. Bring the heading the reader just
+      // expanded back on screen (its body follows beneath it); `nearest` does
+      // nothing when it is already visible, so a normal click never jumps.
+      toggle.scrollIntoView?.({ block: 'nearest' });
+    }
+  }
+
   // One delegated listener, attached for the view's lifetime. A click on a
   // tool-call billet toggles its disclosure; otherwise it only acts on anchors
   // the markdown renderer stamped as openable (`data-daisy-link`), so an
@@ -894,6 +960,25 @@ export function createTranscriptView(
     if (resume !== null) {
       event.preventDefault();
       options.onResume?.();
+      return;
+    }
+    const rubricToggle = target?.closest?.('button[data-report-rubric]') ?? null;
+    if (rubricToggle !== null) {
+      event.preventDefault();
+      toggleReportRubric(rubricToggle);
+      return;
+    }
+    const entryToggle = target?.closest?.('button[data-report-entry]') ?? null;
+    if (entryToggle !== null) {
+      event.preventDefault();
+      toggleReportEntry(entryToggle);
+      return;
+    }
+    const selectorLink = target?.closest?.('[data-daisy-selector]') ?? null;
+    if (selectorLink !== null) {
+      event.preventDefault();
+      const selector = selectorLink.getAttribute('data-daisy-selector');
+      if (selector !== null && selector !== '') options.onHighlightElement?.(selector);
       return;
     }
     const anchor =
@@ -1364,6 +1449,32 @@ export function createTranscriptView(
     return { skip, messages, runIds };
   }
 
+  /**
+   * The report message each `presentation: 'report'` tool call paints, keyed by
+   * its tool-call id. Only a settled call produces one; while the call runs its
+   * billet (with progress) is the whole presentation.
+   */
+  function planReportMessages(
+    store: TranscriptStore,
+    items: readonly TranscriptItem[],
+  ): ReadonlyMap<string, ToolReportMessage> {
+    const reports = new Map<string, ToolReportMessage>();
+    for (const item of items) {
+      if (item.kind !== 'toolCall') continue;
+      const view = store.toolCallFor(item.toolCallId);
+      if (view === undefined || toolRendererRegistry.presentationOf(view.toolName) !== 'report') {
+        continue;
+      }
+      const message = toolRendererRegistry.readReportMessage(
+        view.toolName,
+        view.args,
+        succeededData(view),
+      );
+      if (message !== undefined) reports.set(item.toolCallId, message);
+    }
+    return reports;
+  }
+
   function createShell(item: TranscriptItem): HTMLElement {
     switch (item.kind) {
       case 'userPrompt':
@@ -1586,6 +1697,7 @@ export function createTranscriptView(
       hovered = undefined;
       const items = store.items();
       const { skip, messages, runIds } = planTableRuns(store, items);
+      const reports = planReportMessages(store, items);
       const lastItem = items[items.length - 1];
       const seenKeys = new Set<string>();
       // The running billet is moved after every settled entry (see below), so
@@ -1639,6 +1751,32 @@ export function createTranscriptView(
           }
         }
         (isOngoing(store, item, tableMessage) ? ongoingNodes : settledNodes).push(shell);
+        // A `report` tool's settled call also paints one structured report
+        // message below its billet. Rendered once (cached by signature), then
+        // only its accordion state is re-applied in place.
+        const reportMessage = item.kind === 'toolCall' ? reports.get(item.toolCallId) : undefined;
+        if (reportMessage !== undefined && item.kind === 'toolCall') {
+          const reportKey = `report:${item.toolCallId}`;
+          seenKeys.add(reportKey);
+          let reportShell = cache.get(reportKey);
+          if (reportShell === undefined) {
+            reportShell = el('div', {
+              attrs: { class: 'chat-message chat-message--assistant chat-report-message' },
+            });
+            cache.set(reportKey, reportShell);
+          }
+          const signature = reportSignature(reportMessage);
+          if (renderedReports.get(reportShell) !== signature) {
+            const rendered = renderReportMessage(reportMessage, getLinkContext());
+            reportShell.replaceChildren(...rendered.nodes);
+            for (const table of rendered.tables) {
+              reportTableExports.set(table.shell, table.data);
+            }
+            renderedReports.set(reportShell, signature);
+          }
+          applyReportStateTo(reportShell);
+          settledNodes.push(reportShell);
+        }
       }
       renderedRunSignatures = nextRunSignatures;
       const nodes = [...settledNodes, ...ongoingNodes];

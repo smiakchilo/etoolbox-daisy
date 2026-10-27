@@ -31,6 +31,7 @@ import {
   BROWSER_GO_FORWARD_CHANNEL,
   BROWSER_NAVIGATE_CHANNEL,
   DEV_TOOLS_ARGUMENT,
+  BROWSER_HIGHLIGHT_ELEMENT_CHANNEL,
   BROWSER_OPEN_EXTERNAL_CHANNEL,
   BROWSER_RELOAD_CHANNEL,
   BROWSER_SET_VIEW_BOUNDS_CHANNEL,
@@ -82,6 +83,8 @@ import {
   findRequestSchema,
   navigateRequestSchema,
   openExternalRequestSchema,
+  highlightElementRequestSchema,
+  highlightElementResultSchema,
   parseAddProjectResult,
   parseAddProxyResult,
   parseAddServerResult,
@@ -194,6 +197,8 @@ import {
   type FindResult,
   type GetModelSelectionResult,
   type GetSettingsSnapshotResult,
+  type HighlightElementRequest,
+  type HighlightElementResult,
   type LoginOutcome,
   type LogoutResult,
   type OpenExternalRequest,
@@ -627,6 +632,14 @@ const daisyApi: DaisyAppApi = {
       const parsedRequest = openExternalRequestSchema.parse(request);
       const raw: unknown = await ipcRenderer.invoke(BROWSER_OPEN_EXTERNAL_CHANNEL, parsedRequest);
       return parseBrowserIpcVoidResult(raw);
+    },
+    async highlightElement(request: HighlightElementRequest): Promise<HighlightElementResult> {
+      const parsedRequest = highlightElementRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(
+        BROWSER_HIGHLIGHT_ELEMENT_CHANNEL,
+        parsedRequest,
+      );
+      return highlightElementResultSchema.parse(raw);
     },
     async switchServer(serverId: string): Promise<BrowserIpcVoidResult> {
       const request = switchServerRequestSchema.parse({ serverId });

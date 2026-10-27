@@ -1,5 +1,5 @@
-import { app, shell } from 'electron';
-import type { BrowserWindow, WebContents } from 'electron';
+import { app, ipcMain, shell } from 'electron';
+import type { BrowserWindow, IpcMainEvent, WebContents } from 'electron';
 import {
   APP_SHORTCUT_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
@@ -8,6 +8,11 @@ import {
   BROWSER_STATE_CHANGED_CHANNEL,
   BROWSER_SWITCH_STATE_CHANGED_CHANNEL,
 } from '../../shared';
+import {
+  WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL,
+  WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL,
+  webviewBridgeHighlightReplySchema,
+} from '../../shared/contracts/webviewBridge';
 import type {
   AppShortcutAction,
   ApproveCertificateExceptionRequest,
@@ -15,6 +20,8 @@ import type {
   BrowserIpcVoidResult,
   FindRequest,
   FindTarget,
+  HighlightElementRequest,
+  HighlightElementResult,
   OpenExternalRequest,
   OpenPageOutcome,
   OpenPageTarget,
@@ -165,6 +172,12 @@ export interface BrowserController {
    * `security.ts`'s deny-by-default window guard requires.
    */
   openExternal(request: OpenExternalRequest): Promise<BrowserIpcVoidResult>;
+  /**
+   * Scrolls the browser pane to a CSS selector (a report's failing element) and
+   * highlights it with a persistent outline. Resolves with whether the selector
+   * matched an element on the live page, so the pane can note when it did not.
+   */
+  highlightElement(request: HighlightElementRequest): Promise<HighlightElementResult>;
   switchServer(serverId: ServerId): Promise<BrowserIpcVoidResult>;
   goBack(): Promise<BrowserIpcVoidResult>;
   goForward(): Promise<BrowserIpcVoidResult>;
@@ -594,6 +607,46 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       });
     }
     return ok();
+  }
+
+  // ── Element highlight (a report's selector link) ────────────────────────
+  // The chat pane asks main to scroll the browser pane to a Lighthouse node's
+  // selector and outline it. This is a user interaction, so it is a direct
+  // fire-and-ack channel - not `bridgeBroker`, whose deadlines/staleness/
+  // auth-latching belong to agent tool reads. The preload answers on its own
+  // reply channel; the reply is matched to its request id.
+  let highlightCounter = 0;
+  const pendingHighlights = new Map<string, (found: boolean) => void>();
+  const highlightReplyListener = (event: IpcMainEvent, rawReply: unknown): void => {
+    if (event.sender.id !== hostView.webContents.id) return;
+    const parsed = webviewBridgeHighlightReplySchema.safeParse(rawReply);
+    if (!parsed.success) return;
+    const resolve = pendingHighlights.get(parsed.data.requestId);
+    if (resolve === undefined) return;
+    pendingHighlights.delete(parsed.data.requestId);
+    resolve(parsed.data.found);
+  };
+  ipcMain.on(WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL, highlightReplyListener);
+
+  function highlightElement(request: HighlightElementRequest): Promise<HighlightElementResult> {
+    const contents = hostView.webContents;
+    if (contents.isDestroyed()) {
+      return Promise.resolve({ ok: true, found: false });
+    }
+    const requestId = `highlight-${String((highlightCounter += 1))}`;
+    return new Promise<HighlightElementResult>((resolve) => {
+      // A reply that never arrives (the preload did not load) must not leave the
+      // promise pending forever: answer "not found" after a short wait.
+      const timer = setTimeout(() => {
+        if (pendingHighlights.delete(requestId)) resolve({ ok: true, found: false });
+      }, 2000);
+      timer.unref();
+      pendingHighlights.set(requestId, (found) => {
+        clearTimeout(timer);
+        resolve({ ok: true, found });
+      });
+      contents.send(WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL, { requestId, selector: request.selector });
+    });
   }
 
   async function switchServer(
@@ -1040,6 +1093,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
 
   function destroy(): void {
     app.removeListener('certificate-error', certificateBlockedListener);
+    ipcMain.removeListener(WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL, highlightReplyListener);
     // Bumped before the view goes away so anything still waiting on a reply
     // from it is invalidated rather than left pending against a dead frame.
     navigationEpoch.bump('view_destroyed');
@@ -1066,6 +1120,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     navigate,
     openForAgent,
     openExternal,
+    highlightElement,
     switchServer,
     goBack,
     goForward,

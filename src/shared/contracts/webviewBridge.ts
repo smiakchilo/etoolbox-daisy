@@ -41,6 +41,28 @@ export const WEBVIEW_BRIDGE_REPLY_CHANNEL = 'webview-bridge:reply' as const;
 export const WEBVIEW_BRIDGE_READY_CHANNEL = 'webview-bridge:ready' as const;
 /** main -> preload: read matching elements from the document the pane is showing. */
 export const WEBVIEW_BRIDGE_READ_CHANNEL = 'webview-bridge:read' as const;
+/**
+ * main -> preload: scroll to a CSS selector and highlight it. This is a user
+ * interaction (a report's selector link), not an agent tool read, so it is a
+ * fire-and-ack command on its own channel rather than a `webviewBridgeRead` -
+ * the preload answers on {@link WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL}.
+ */
+export const WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL = 'webview-bridge:highlight' as const;
+/** preload -> main: whether the selector matched an element on the shown page. */
+export const WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL = 'webview-bridge:highlight-reply' as const;
+
+/** main -> preload: one highlight command. The selector is handed to `querySelector` only. */
+export const webviewBridgeHighlightCommandSchema = z.object({
+  requestId: z.string().min(1),
+  selector: z.string().min(1).max(500),
+});
+export type WebviewBridgeHighlightCommand = z.infer<typeof webviewBridgeHighlightCommandSchema>;
+
+/** preload -> main: the highlight's outcome, correlated by id. */
+export const webviewBridgeHighlightReplySchema = z
+  .object({ requestId: z.string().min(1), found: z.boolean() })
+  .strict();
+export type WebviewBridgeHighlightReply = z.infer<typeof webviewBridgeHighlightReplySchema>;
 
 /** Per-item and total character budgets the preload applies to a DOM read. */
 export const DOM_READ_TEXT_LIMIT = 2000;

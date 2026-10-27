@@ -51,6 +51,7 @@ const { openExternalMock } = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({
   app: { on: vi.fn(), removeListener: vi.fn() },
+  ipcMain: { on: vi.fn(), removeListener: vi.fn() },
   screen: { on: vi.fn(), removeListener: vi.fn() },
   shell: { openExternal: openExternalMock },
   WebContentsView: class {},

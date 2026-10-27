@@ -2018,3 +2018,144 @@ describe('ongoing billet placement and the expansion accordion', () => {
     expect(thinkingToggle?.getAttribute('aria-expanded')).toBe('true');
   });
 });
+
+describe('page_audit report presentation', () => {
+  const PAGE_AUDIT_DATA = {
+    ok: true,
+    operation: 'page_audit',
+    url: 'https://author.example/page.html',
+    formFactor: 'desktop',
+    scores: [{ category: 'performance', score: 70 }],
+    failures: [
+      {
+        category: 'performance',
+        id: 'largest-contentful-paint',
+        title: 'Largest Contentful Paint',
+        score: 33,
+        displayValue: '3.0 s',
+        evidence: [
+          {
+            kind: 'table',
+            columns: [
+              { key: 'node', label: 'Element' },
+              { key: 'url', label: 'URL' },
+            ],
+            rows: [
+              [
+                {
+                  kind: 'selector',
+                  selector: 'h4.card__title',
+                  snippet: '<h4 class="card__title">Hi</h4>',
+                  label: 'h4',
+                },
+                { kind: 'text', value: 'https://cdn.example/x.css' },
+              ],
+            ],
+          },
+        ],
+      },
+    ],
+    textResultForLlm: 'audit done',
+    resultType: 'success',
+  };
+
+  function renderReport(
+    options?: Parameters<typeof createTranscriptView>[1],
+  ): ReturnType<typeof createTranscriptView> {
+    const view = createTranscriptView(markdownRenderer, options);
+    const store = createTranscriptStore();
+    store.applyEvent(toolRequestedWithArgs(0, 'page_audit', {}));
+    store.applyEvent(
+      agentEventSchema.parse({
+        type: 'tool.result',
+        chatId,
+        sequence: 1,
+        toolCallId,
+        outcome: { ok: true, data: PAGE_AUDIT_DATA },
+      }),
+    );
+    view.repaint(store);
+    return view;
+  }
+
+  it('paints one report message below the billet', () => {
+    const view = renderReport();
+
+    expect(view.element.querySelector('.chat-report-message')).not.toBeNull();
+    expect(view.element.querySelector('.chat-report-section__title')?.textContent).toBe(
+      'Performance',
+    );
+  });
+
+  it('expands and collapses a level-2 entry on click', () => {
+    const view = renderReport();
+    const toggle = view.element.querySelector<HTMLElement>('button[data-report-entry]');
+    const body = view.element.querySelector<HTMLElement>('[data-report-entry-body]');
+    expect(toggle).not.toBeNull();
+    expect(body?.hasAttribute('hidden')).toBe(true);
+
+    clickElement(toggle as HTMLElement);
+
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(body?.hasAttribute('hidden')).toBe(false);
+
+    clickElement(toggle as HTMLElement);
+
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(body?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('collapses and re-expands a level-1 rubric on click', () => {
+    const view = renderReport();
+    const toggle = view.element.querySelector<HTMLElement>('button[data-report-rubric]');
+    const body = view.element.querySelector<HTMLElement>('[data-report-rubric-body]');
+    expect(body?.hasAttribute('hidden')).toBe(false);
+
+    clickElement(toggle as HTMLElement);
+
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(body?.hasAttribute('hidden')).toBe(true);
+
+    clickElement(toggle as HTMLElement);
+
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(body?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('opens a link inside an entry instead of toggling its section', () => {
+    const onOpenExternal = vi.fn();
+    const view = renderReport({ onOpenExternal });
+    // Expand the entry so its content is the surface being clicked.
+    clickElement(
+      view.element.querySelector<HTMLElement>('button[data-report-entry]') as HTMLElement,
+    );
+
+    const link = view.element.querySelector<HTMLElement>('.chat-report-entry__body a');
+    expect(link).not.toBeNull();
+    clickElement(link as HTMLElement);
+
+    expect(onOpenExternal).toHaveBeenCalledTimes(1);
+    // The rubric did not collapse: the click reached the link, not the section.
+    expect(
+      view.element.querySelector<HTMLElement>('[data-report-rubric-body]')?.hasAttribute('hidden'),
+    ).toBe(false);
+  });
+
+  it('highlights an element when its selector pseudo-link is clicked', () => {
+    const onHighlightElement = vi.fn();
+    const view = renderReport({ onHighlightElement });
+    clickElement(
+      view.element.querySelector<HTMLElement>('button[data-report-entry]') as HTMLElement,
+    );
+
+    const selector = view.element.querySelector<HTMLElement>('button[data-daisy-selector]');
+    expect(selector?.getAttribute('data-daisy-selector')).toBe('h4.card__title');
+    clickElement(selector as HTMLElement);
+
+    expect(onHighlightElement).toHaveBeenCalledWith('h4.card__title');
+    // The rubric did not collapse.
+    expect(
+      view.element.querySelector<HTMLElement>('[data-report-rubric-body]')?.hasAttribute('hidden'),
+    ).toBe(false);
+  });
+});

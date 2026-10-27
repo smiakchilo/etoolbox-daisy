@@ -144,6 +144,7 @@ export function splitLeadingSkill(
  * replay that runs before the skill list has loaded still suppresses their prose.
  */
 const BUNDLED_TABLE_ONLY_SKILLS: readonly string[] = [
+  'check-page',
   'search',
   'semantic-search',
   'search-page',

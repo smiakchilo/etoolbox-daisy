@@ -4,14 +4,18 @@ import {
   type WebviewBridgeDomResult,
   WEBVIEW_BRIDGE_CANCEL_CHANNEL,
   WEBVIEW_BRIDGE_FETCH_CHANNEL,
+  WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL,
+  WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL,
   WEBVIEW_BRIDGE_READ_CHANNEL,
   WEBVIEW_BRIDGE_READY_CHANNEL,
   WEBVIEW_BRIDGE_REPLY_CHANNEL,
   webviewBridgeCancelCommandSchema,
   webviewBridgeFetchCommandSchema,
+  webviewBridgeHighlightCommandSchema,
   webviewBridgeReadCommandSchema,
 } from '../shared/contracts/webviewBridge';
 import { performBridgeFetch } from './bridgeFetch';
+import { performBridgeHighlight } from './bridgeHighlight';
 import { performBridgeRead } from './bridgeRead';
 import { installCredentialCapture } from './credentialCapture';
 
@@ -117,6 +121,24 @@ ipcRenderer.on(WEBVIEW_BRIDGE_CANCEL_CHANNEL, (_event, rawCommand: unknown) => {
   // receive a late reply for it.
   inFlight.delete(parsed.data.requestId);
   controller.abort();
+});
+
+// A highlight is a user interaction, not a tool read: it is synchronous, so it
+// needs no abort handle, and it answers on its own channel rather than the
+// bridge's reply channel (which the broker owns for fetch/read).
+ipcRenderer.on(WEBVIEW_BRIDGE_HIGHLIGHT_CHANNEL, (_event, rawCommand: unknown) => {
+  const parsed = webviewBridgeHighlightCommandSchema.safeParse(rawCommand);
+  if (!parsed.success) return;
+  let found = false;
+  try {
+    found = performBridgeHighlight(parsed.data.selector, window.document);
+  } catch {
+    // The document could not be decorated; `found` stays false.
+  }
+  ipcRenderer.send(WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL, {
+    requestId: parsed.data.requestId,
+    found,
+  });
 });
 
 // Announced only after both listeners are registered, so main never treats

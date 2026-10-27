@@ -6,6 +6,8 @@
  * Electron and of Lighthouse.
  */
 
+import type { ToolReportBlock } from './toolRenderer';
+
 /** The Lighthouse categories an audit can score. */
 export const PAGE_AUDIT_CATEGORIES = [
   'performance',
@@ -44,19 +46,18 @@ export interface PageAuditEvidenceColumn {
 }
 
 /**
- * What exactly failed, as Lighthouse itself reported it: one table's worth of
- * columns and rows (the failing elements with their selector and snippet, the
- * insecure URLs, the deprecated APIs and where they are called, the console
- * messages, ...). It is data for the report the application paints - one table
- * per issue - and for the user and the model reading it afterwards.
+ * What exactly failed, as Lighthouse itself reported it: a sequence of report
+ * blocks - usually one table (the failing elements with their selector and
+ * snippet, the insecure URLs, the deprecated APIs and where they are called,
+ * the console messages, ...), but an insight can carry several (a table plus
+ * the element it names, a checklist, a nested request tree). The application
+ * paints these under the issue's heading; they are also data for the user and
+ * the model reading them afterwards.
  *
  * Never empty: an audit Lighthouse reports no items for carries its own
- * explanation of the problem as a single row instead (see the add-on).
+ * explanation of the problem as a single text block instead (see the add-on).
  */
-export interface PageAuditEvidence {
-  readonly columns: readonly PageAuditEvidenceColumn[];
-  readonly rows: readonly Readonly<Record<string, string>>[];
-}
+export type PageAuditEvidence = readonly ToolReportBlock[];
 
 /**
  * One audit that reported something to fix: an audit whose score is below 1, or

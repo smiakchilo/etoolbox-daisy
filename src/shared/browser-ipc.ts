@@ -271,6 +271,27 @@ export const openExternalRequestSchema = z
 export type OpenExternalRequest = Readonly<z.infer<typeof openExternalRequestSchema>>;
 
 /**
+ * `browser:highlight-element` - a CSS selector naming an element to scroll to
+ * and highlight in the browser pane. The selector comes from the page-audit
+ * report (Lighthouse's own node selector), never from the model; it is handed
+ * to `querySelector` and nowhere else, so an untrusted value cannot run code.
+ */
+export const highlightElementRequestSchema = z
+  .object({ selector: z.string().min(1).max(500) })
+  .strict();
+export type HighlightElementRequest = Readonly<z.infer<typeof highlightElementRequestSchema>>;
+
+/**
+ * The outcome of `browser:highlight-element`: `ok` means the command reached the
+ * live page; `found` says whether the selector matched an element there (so the
+ * pane can note when the audited page has since changed).
+ */
+export const highlightElementResultSchema = z
+  .object({ ok: z.literal(true), found: z.boolean() })
+  .strict();
+export type HighlightElementResult = Readonly<z.infer<typeof highlightElementResultSchema>>;
+
+/**
  * `browser:approve-certificate-exception`. Carries `serverId` (which
  * persisted server entry to attach the exception to, via
  * `applyServerTargetingChange`) alongside the exact `exception` a human
