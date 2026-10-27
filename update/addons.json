@@ -1,0 +1,15 @@
+{
+  "addons": {
+    "page-audit": {
+      "95874191c4d370f0": {
+        "platforms": {
+          "any": {
+            "file": "page-audit-95874191c4d370f0-any.zip",
+            "sha512": "127cf9834f683cbc2afb27b7ada5ccc492c81345762a44ae14b26f8015e69e05a1581b3789f72b8a272b4b60185e313e77bfacab232f1c05214d619a07798dbb",
+            "size": 34362442
+          }
+        }
+      }
+    }
+  }
+}
