@@ -34,6 +34,11 @@ describe('resolveFolderUrl', () => {
     expect(url?.href).toBe('https://raw.githubusercontent.com/acme/app/master/updates/');
   });
 
+  it('reads a branch root, which is how the update branch is addressed', () => {
+    const url = resolveFolderUrl('https://github.com/acme/app/tree/update');
+    expect(url?.href).toBe('https://raw.githubusercontent.com/acme/app/update/');
+  });
+
   it('keeps other https folders and ends them with a slash', () => {
     expect(resolveFolderUrl('https://example.com/dist')?.href).toBe('https://example.com/dist/');
   });

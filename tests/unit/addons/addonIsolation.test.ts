@@ -16,7 +16,6 @@ import { addonPins } from '../../../src/shared/addons/pins';
  *
  * - `src/addons/**` (the add-on itself, its tests and its docs);
  * - `src/shared/addons/pins.json` (the generated pin, which *is* the contract);
- * - `update/**` (the published catalogue and archives folder);
  * - `docs/**` and `AGENTS.md` (the written record).
  *
  * The forbidden words are read from the add-on folders themselves, never typed
@@ -65,7 +64,7 @@ const TEXT_EXTENSIONS = new Set([
 /** Files that are allowed to name an add-on. Repo-relative, `/` separators. */
 const ALLOWED_PATHS = ['src/shared/addons/pins.json', 'AGENTS.md'];
 
-const ALLOWED_PREFIXES = ['src/addons/', 'update/', 'docs/'];
+const ALLOWED_PREFIXES = ['src/addons/', 'docs/'];
 
 /** Lockfiles are generated dependency trees, not application source. */
 const SKIPPED_FILES = new Set(['package-lock.json']);

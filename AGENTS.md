@@ -1957,19 +1957,23 @@ groups `9001_group`..`9005_group` (the type group plus up to
 The app swaps only `resources/app.asar` (22.6 MB since the add-ons left the
 asar, 135.4 MB before; the install is 477 MB), driven
 by a hand-rolled `update.json` in plain GitHub folders - no `electron-updater`.
-Full description and the release procedure: `docs/updates.md`. The **add-on
-catalogue** `addons.json` lives in the same folder and is published by the same
-workflow, zips first and `update.json` last (see "Add-ons" above and
-`docs/addon-architecture.md`); the folder keeps only the archives that catalogue
-names (the publish step deletes the rest), and each published `update.json`
-carries an `addons` node - its id -> identity map, written by
-`scripts/package-update.mjs` and deliberately not read by the app - so the
-release, not the folder, records what a version pinned.
+Full description and the release procedure: `docs/updates.md`. The distribution
+lives on a dedicated **`update` branch** (files at its root; `package.json`'s
+`updates.urls` points at `tree/update`), never on the default branch: the publish
+job force-pushes one parentless commit per release, so a clone of the code never
+downloads a release's archives and the branch never accumulates them. The branch
+holds `update.json`, `addons.json` and the archives that catalogue names - the
+publish step deletes any other zip, because the app resolves every add-on
+download through the catalogue and an unnamed archive is unreachable. Each
+published `update.json` carries an `addons` node - its id -> identity map, written
+by `scripts/package-update.mjs` and deliberately not read by the app - so the
+release, not a kept archive, records what a version pinned.
 
 - **Places.** The Settings **Updates** tab's `updates.url` (https only) is tried
   first, then `updates.urls` in `package.json`. A `github.com/.../tree/<ref>/<path>`
-  URL is rewritten to `raw.githubusercontent.com`. The first strictly newer
-  manifest with a `<platform>-<arch>` entry wins.
+  URL is rewritten to `raw.githubusercontent.com`; a `tree/<ref>` URL (a branch
+  root, which is how `update` is addressed) becomes that branch's root. The first
+  strictly newer manifest with a `<platform>-<arch>` entry wins.
 - **Whether an archive may be swapped in is derived, not declared.** A swap
   replaces one file (`resources/app.asar`), so the manifest names the runtime
   layer its archive needs - `runtime: { format, electron, payload }`, where

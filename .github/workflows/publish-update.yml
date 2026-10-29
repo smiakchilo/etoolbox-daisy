@@ -1,8 +1,10 @@
 name: Publish update
 
-# Builds app.asar on each OS/arch (Windows x64, macOS arm64 and Intel) and commits the merged update.json plus the archives
-# to update/ on the default branch, where installed apps read them. The same run
-# builds and publishes the add-on archives (`docs/addon-architecture.md`).
+# Builds app.asar on each OS/arch (Windows x64, macOS arm64 and Intel) and
+# publishes the merged update.json plus the archives to the **`update` branch**,
+# where installed apps read them. Nothing is committed to the default branch, so
+# cloning the code never downloads a release's binaries. The same run builds and
+# publishes the add-on archives (`docs/addon-architecture.md`).
 # Run it by hand after bumping `version` in package.json. Nothing else needs
 # raising: `scripts/runtime-descriptor.mjs` derives the runtime layer the archive
 # needs (Electron + the unpacked Copilot payload) from the packaged output, and an
@@ -82,38 +84,43 @@ jobs:
         run: node scripts/package-update.mjs --merge incoming
       - name: Merge add-on catalogues
         run: node scripts/merge-addons.mjs incoming
-      # The add-ons are published first, `update.json` last: an install that sees
-      # the new manifest pins the add-on identities that build needs, so those
-      # zips must already be in the folder. The folder is then kept equal to the
-      # catalogue: the app resolves every add-on download through `addons.json`,
-      # so an archive it does not name is unreachable dead weight (34 MB each).
-      - name: Publish the add-ons
+      # The distribution lives on its own branch and is rebuilt from scratch on
+      # every release: one parentless commit holds exactly this release's files,
+      # so it never accumulates archives and the code branch never carries them.
+      # Being one commit also makes publishing atomic - no install can see an
+      # `update.json` naming an add-on archive that is not there yet.
+      - name: Publish the update branch
         run: |
-          mkdir -p update
-          cp incoming/*.zip update/
-          cp incoming/addons.json update/addons.json
-          node - <<'NODE'
+          set -euo pipefail
+          staging="$(mktemp -d)"
+          cp incoming/*.zip incoming/addons.json incoming/*.asar incoming/update.json "$staging/"
+          # Keep the branch equal to the catalogue: the app resolves every add-on
+          # download through `addons.json`, so an archive it does not name is
+          # unreachable dead weight (34 MB each).
+          node - "$staging" <<'NODE'
           const fs = require('node:fs');
           const path = require('node:path');
-          const catalog = JSON.parse(fs.readFileSync('update/addons.json', 'utf8'));
+          const directory = process.argv[2];
+          const catalog = JSON.parse(fs.readFileSync(path.join(directory, 'addons.json'), 'utf8'));
           const keep = new Set();
           for (const identities of Object.values(catalog.addons ?? {}))
             for (const entry of Object.values(identities))
               for (const archive of Object.values(entry.platforms ?? {})) keep.add(archive.file);
-          for (const file of fs.readdirSync('update'))
-            if (file.endsWith('.zip') && !keep.has(file)) fs.rmSync(path.join('update', file));
+          for (const file of fs.readdirSync(directory))
+            if (file.endsWith('.zip') && !keep.has(file)) fs.rmSync(path.join(directory, file));
           NODE
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add update
-          git commit -m "Publish add-ons" || echo "No add-ons to publish"
-          git push
-      - name: Commit update/
-        run: |
-          rm -f update/app-*.asar
-          cp incoming/app-*.asar incoming/update.json update/
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add update
-          git commit -m "Publish update" || echo "Nothing to publish"
-          git push
+          # A commit with no parent, built from the staging folder and pushed by
+          # object id: nothing is checked out or committed in the working tree, so
+          # the branch is replaced however it was before.
+          index="$(mktemp -d)/index"
+          git_dir="$(git rev-parse --absolute-git-dir)"
+          version="$(node -p "require('./incoming/update.json').version")"
+          (
+            cd "$staging"
+            GIT_DIR="$git_dir" GIT_WORK_TREE="$staging" GIT_INDEX_FILE="$index" git add --all .
+          )
+          tree="$(GIT_DIR="$git_dir" GIT_INDEX_FILE="$index" git write-tree)"
+          export GIT_AUTHOR_NAME=github-actions GIT_AUTHOR_EMAIL=github-actions@users.noreply.github.com
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          commit="$(GIT_DIR="$git_dir" git commit-tree "$tree" -m "Publish update $version")"
+          git push --force origin "$commit:refs/heads/update"

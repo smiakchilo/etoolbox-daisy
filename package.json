@@ -9,8 +9,8 @@
   "license": "MIT",
   "updates": {
     "urls": [
-      "https://github.com/exadel-inc/etoolbox-daisy/tree/master/update",
-      "https://github.com/smiakchilo/etoolbox-daisy/tree/master/update"
+      "https://github.com/exadel-inc/etoolbox-daisy/tree/update",
+      "https://github.com/smiakchilo/etoolbox-daisy/tree/update"
     ]
   },
   "scripts": {
