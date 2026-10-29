@@ -1,5 +1,4 @@
 import {
-  type AddonPins,
   type BilletSpec,
   type BilletValueSpec,
   type JsonValue,
@@ -10,6 +9,7 @@ import {
   asRecord,
   parameterRows,
 } from '../../../shared';
+import type { AddonPins } from '../../../shared/addons/pins';
 
 /**
  * The transcript's renderer for the tools an add-on contributes, built from the

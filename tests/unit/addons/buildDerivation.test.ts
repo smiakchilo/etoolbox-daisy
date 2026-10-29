@@ -1,8 +1,10 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  addonFolders,
   addonSkillFolders,
+  bundleAddon,
   contributionsFor,
   deriveSkill,
   identityFor,
@@ -11,7 +13,7 @@ import {
   sourceFiles,
   type TakenNames,
 } from '../../../scripts/build-addons.mjs';
-import { addonPins } from '../../../src/shared';
+import { addonPins } from '../../../src/shared/addons/pins';
 import { parseSkillFrontMatter } from '../../../src/main/skills/skillFrontMatter';
 import { createScratchDirs } from '../../support/scratchDirs';
 
@@ -240,6 +242,34 @@ describe('the build hashes exactly what ships', () => {
     const inputs = inlinedInputsFrom(metafile, root);
 
     expect(inputs).toEqual(['src/shared/result.ts']);
+  });
+
+  it('bundles every add-on without the generated pins, which it could not read yet', async () => {
+    // The pins are written *by* this build, at its end, and they are git-ignored.
+    // A bundle that reached them would need the file before it exists - a clean
+    // checkout (every CI leg) has none, so the build would fail outright - and it
+    // would hash generated output into the add-on's own identity, so every build
+    // would mint a new one and every release would re-publish and re-download the
+    // add-on. An add-on imports the shared barrel for the host contract; the
+    // barrel therefore does not re-export the pins.
+    const folders = addonFolders();
+    expect(folders.length).toBeGreaterThan(0);
+
+    for (const directory of folders) {
+      const pkg = JSON.parse(readFileSync(path.join(directory, 'package.json'), 'utf8')) as {
+        dependencies?: Record<string, string>;
+      };
+
+      const built = await bundleAddon(directory, pkg);
+
+      // Not vacuous: the bundle really does read the shared barrel.
+      expect(built.inlinedInputs).toContain('src/shared/index.ts');
+      expect(built.inlinedInputs.filter((input) => input.endsWith('pins.json'))).toEqual([]);
+      const code = Buffer.from(built.code).toString('utf8');
+      for (const pin of Object.values(addonPins)) {
+        expect(code).not.toContain(pin.identity);
+      }
+    }
   });
 });
 

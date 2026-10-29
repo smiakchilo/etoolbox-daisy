@@ -6,9 +6,9 @@ import {
   type ToolRendererModule,
   type ToolReportMessage,
   type ToolTableMessage,
-  addonPins,
   describeGenericArgs,
 } from '../../../shared';
+import { addonPins } from '../../../shared/addons/pins';
 import { contributeToolRenderers } from './contributedTools';
 
 export type { ToolCallDetails, ToolCallParameter } from '../../../shared';

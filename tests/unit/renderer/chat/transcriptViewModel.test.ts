@@ -10,7 +10,7 @@ import {
   setTableOnlySkills,
   splitLeadingSkill,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
-import { addonPins } from '../../../../src/shared';
+import { addonPins } from '../../../../src/shared/addons/pins';
 import type { ToolCallStatus } from '../../../../src/renderer/src/chat/transcriptStore';
 import { REQUIRED_ACTIONS, requestIdSchema, type ToolError } from '../../../../src/shared';
 

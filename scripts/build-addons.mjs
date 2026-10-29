@@ -368,8 +368,9 @@ async function bundleAddon(directory, pkg) {
   const output = result.outputFiles?.[0];
   if (output === undefined)
     fail(`Could not bundle ${relative(root, join(directory, 'index.ts'))}.`);
-  const identity = identityFor(directory, inlinedInputsFrom(result.metafile, directory));
-  return { code: output.contents, identity };
+  const inlinedInputs = inlinedInputsFrom(result.metafile, directory);
+  const identity = identityFor(directory, inlinedInputs);
+  return { code: output.contents, identity, inlinedInputs };
 }
 
 /** Writes the built add-on into `out/addons/<id>/`, replacing what was there. */
@@ -599,7 +600,9 @@ async function main() {
 }
 
 export {
+  addonFolders,
   addonSkillFolders,
+  bundleAddon,
   contributionsFor,
   deriveSkill,
   identityFor,

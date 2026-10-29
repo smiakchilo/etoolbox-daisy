@@ -1,9 +1,9 @@
 import {
   type InterruptionReason,
   type RequiredAction,
-  addonPins,
   readLeadingSkillToken,
 } from '../../../shared';
+import { addonPins } from '../../../shared/addons/pins';
 import type { ToolCallStatus } from './transcriptStore';
 
 /**

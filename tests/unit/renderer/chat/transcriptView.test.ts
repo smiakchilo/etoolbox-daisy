@@ -1,7 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import {
-  addonPins,
   agentEventSchema,
   chatIdSchema,
   messageIdSchema,
@@ -15,6 +14,7 @@ import {
   type ToolCallId,
   type TurnId,
 } from '../../../../src/shared';
+import { addonPins } from '../../../../src/shared/addons/pins';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import { createTranscriptView } from '../../../../src/renderer/src/chat/transcriptView';
 import { createMarkdownRenderer } from '../../../../src/renderer/src/chat/renderMarkdown';

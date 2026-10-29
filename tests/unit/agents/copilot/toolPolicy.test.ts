@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addonPins } from '../../../../src/shared';
+import { addonPins } from '../../../../src/shared/addons/pins';
 import {
   createHardenedSession,
   denyAllPermissions,

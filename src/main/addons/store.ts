@@ -1,7 +1,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
-import type { AddonPin } from '../../shared';
+import type { AddonPin } from '../../shared/addons/pins';
 import {
   ADDON_DESCRIPTOR_FILE,
   addonDescriptorSchema,

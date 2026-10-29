@@ -38,6 +38,8 @@ export function loadAppParsers(): Promise<{
   readonly frontMatter: { parseSkillFrontMatter(markdown: string): unknown };
 }>;
 
+export function addonFolders(): readonly string[];
+
 export function addonSkillFolders(directory: string): readonly string[];
 
 export function deriveSkill(folder: string, name: string, parsers: unknown): DeriveSkillProblem;
@@ -57,3 +59,12 @@ export function inlinedInputsFrom(
 ): readonly string[];
 
 export function identityFor(directory: string, inlinedInputs: readonly string[]): string;
+
+export function bundleAddon(
+  directory: string,
+  pkg: { readonly dependencies?: Readonly<Record<string, string>> },
+): Promise<{
+  readonly code: Uint8Array;
+  readonly identity: string;
+  readonly inlinedInputs: readonly string[];
+}>;

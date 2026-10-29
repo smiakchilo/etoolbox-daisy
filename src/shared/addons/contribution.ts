@@ -1,9 +1,5 @@
 import { z } from 'zod';
-import {
-  SKILL_DESCRIPTION_MAX_LENGTH,
-  SKILL_NAME_PATTERN,
-  isRunnableScriptPath,
-} from '../skills';
+import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_PATTERN, isRunnableScriptPath } from '../skills';
 
 /**
  * What an add-on contributes: its tools, and the catalogue entries of its

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { addonPins, type AppSettings } from '../../shared';
+import { type AppSettings } from '../../shared';
+import { addonPins } from '../../shared/addons/pins';
 import type { Logger } from '../logger';
 import type { SecretStore } from '../secretStore';
 import { readUpdateBuildInfo } from '../updates/composition';

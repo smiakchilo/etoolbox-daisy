@@ -8,8 +8,6 @@ import {
   MAX_NESTED_TOOL_DEPTH,
 } from '../../../src/main/tools/registry';
 import {
-  addonPins,
-  pinnedAddonIds,
   type ToolExecutor,
   type InternalToolModule,
   type JsonValue,
@@ -21,6 +19,7 @@ import {
   newToolCallId,
   newTurnId,
 } from '../../../src/shared';
+import { addonPins, pinnedAddonIds } from '../../../src/shared/addons/pins';
 import { createContributedToolModules } from '../../../src/main/tools/addonProxy';
 import { NO_SKILLS } from '../../support/fakeSkillHost';
 import { createCountingIdGenerator } from '../../support/testIds';

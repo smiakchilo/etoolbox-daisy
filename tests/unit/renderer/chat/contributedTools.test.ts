@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  type AddonPins,
   type JsonValue,
   type ToolReportMessage,
   TOOL_REPORT_PAYLOAD_KEY,
 } from '../../../../src/shared';
+import type { AddonPins } from '../../../../src/shared/addons/pins';
 import {
   contributeToolRenderers,
   describeContributedCall,

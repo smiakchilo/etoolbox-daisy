@@ -4,7 +4,7 @@ import {
   toolRendererRegistry,
 } from '../../../../src/renderer/src/chat/toolRegistry';
 import type { ToolRendererModule } from '../../../../src/shared';
-import { addonPins } from '../../../../src/shared';
+import { addonPins } from '../../../../src/shared/addons/pins';
 
 function rendererModule(overrides: Partial<ToolRendererModule> = {}): ToolRendererModule {
   return {

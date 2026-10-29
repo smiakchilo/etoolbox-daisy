@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AddonHost,
   type AddonHiddenWindowOptions,
-  type AddonPins,
   type ContributedTool,
   type ToolHost,
   ADDON_API_VERSION,
@@ -14,6 +13,7 @@ import {
   newTurnId,
   ok,
 } from '../../../../src/shared';
+import type { AddonPins } from '../../../../src/shared/addons/pins';
 import { createAddonLoader, type AddonHostHandle } from '../../../../src/main/addons';
 import type { AddonManager } from '../../../../src/main/addons';
 import { addonPartitionName, createAddonHost } from '../../../../src/main/addons';

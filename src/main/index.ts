@@ -9,16 +9,15 @@ import {
   type SkillSummary,
   AGENT_AUTH_PROGRESS_CHANNEL,
   answerWith,
-  addonPins,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
   ok,
-  pinnedAddonIds,
   readLeadingSkillToken,
   renderSkillCatalogue,
   resolveSkillPrompt,
   UPDATES_STATUS_CHANGED_CHANNEL,
 } from '../shared';
+import { addonPins, pinnedAddonIds } from '../shared/addons/pins';
 import { createViewSession } from './webview';
 import { createWebviewBridgeBroker } from './webview/bridgeBroker';
 import { createWebviewBridgeTransport } from './webview/bridgeTransport';

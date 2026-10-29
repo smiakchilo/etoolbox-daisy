@@ -1,32 +1,32 @@
-import type {BrowserWindow, Session} from 'electron';
-import {z} from 'zod';
+import type { BrowserWindow, Session } from 'electron';
+import { z } from 'zod';
 import {
-    type AddonHost,
-    type AddonToolFactory,
-    createToolError,
-    createToolExecutor,
-    envelopeCommonShape,
-    type JsonValue,
-    newRequestId,
-    requestIdSchema,
-    type ToolExecutor,
-    type ToolOutcome,
-    type ToolReportBlock,
-    type ToolReportCell,
-    type ToolReportEntry,
-    type ToolReportMessage,
-    type ToolReportSection,
-    type ToolReportTableBlock,
-    type ToolReportTreeNode,
+  type AddonHost,
+  type AddonToolFactory,
+  createToolError,
+  createToolExecutor,
+  envelopeCommonShape,
+  type JsonValue,
+  newRequestId,
+  requestIdSchema,
+  type ToolExecutor,
+  type ToolOutcome,
+  type ToolReportBlock,
+  type ToolReportCell,
+  type ToolReportEntry,
+  type ToolReportMessage,
+  type ToolReportSection,
+  type ToolReportTableBlock,
+  type ToolReportTreeNode,
 } from '../../shared';
-import {createPageAudit} from './pageAudit';
+import { createPageAudit } from './pageAudit';
 import {
-    PAGE_AUDIT_CATEGORIES,
-    PAGE_AUDIT_FORM_FACTORS,
-    type PageAuditCategory,
-    type PageAuditFailureKind,
-    type PageAuditFormFactor,
-    type PageAuditRunner,
+  PAGE_AUDIT_CATEGORIES,
+  PAGE_AUDIT_FORM_FACTORS,
+  type PageAuditCategory,
+  type PageAuditFailureKind,
+  type PageAuditFormFactor,
+  type PageAuditRunner,
 } from './types';
 
 /**
@@ -335,72 +335,72 @@ function toPercent(score: number | null): number | null {
  */
 export function createPageAuditExecutorFactory(run: PageAuditRunner): AddonToolFactory {
   return (toolHost): ToolExecutor => {
-      return (args, context) =>
-        createToolExecutor({
-            operation: 'page_audit',
-            argsSchema: pageAuditArgsSchema,
-            requestSchema: pageAuditRequestSchema,
-            render: renderPageAuditSuccess,
-            toPayload: (result): JsonValue =>
-                ({
-                    ...result,
-                    report: buildPageAuditReport(result),
-                    textResultForLlm: renderPageAuditSuccess(result),
-                    resultType: 'success',
-                }) as unknown as JsonValue,
-            execute: async (
-                envelope: PageAuditRequestEnvelope,
-            ): Promise<ToolOutcome<PageAuditSuccess>> => {
-                toolHost.reportToolProgress?.(context.toolCallId, 'Auditing the page');
-                const outcome = await run(
-                    {
-                        url: envelope.args.url,
-                        categories: envelope.args.categories ?? PAGE_AUDIT_CATEGORIES,
-                        formFactor: envelope.args.formFactor ?? PAGE_AUDIT_DEFAULT_FORM_FACTOR,
-                    },
-                    context.signal,
-                    (stage) => toolHost.reportToolProgress?.(context.toolCallId, stage),
-                );
-                if (outcome.kind !== 'report') {
-                    const mapping = ERROR_MAPPINGS[outcome.kind];
-                    return {
-                        ok: false,
-                        error: createToolError(
-                            mapping.code,
-                            ERROR_MESSAGES[outcome.kind],
-                            newRequestId(toolHost.idGenerator),
-                            {retryable: mapping.retryable, requiredAction: mapping.requiredAction},
-                        ),
-                    };
-                }
-                return {
-                    ok: true,
-                    operation: 'page_audit',
-                    requestId: envelope.requestId,
-                    url: outcome.url,
-                    formFactor: outcome.formFactor,
-                    scores: outcome.scores.map((entry) => ({
-                        category: entry.category,
-                        score: toPercent(entry.score),
-                    })),
-                    failures: outcome.failures.map((failure) => ({
-                        category: failure.category,
-                        id: failure.id,
-                        title: failure.title,
-                        score: toPercent(failure.score),
-                        ...(failure.displayValue === undefined ? {} : {displayValue: failure.displayValue}),
-                        evidence: failure.evidence,
-                    })),
-                    ...(outcome.runtimeError === undefined ? {} : {runtimeError: outcome.runtimeError}),
-                    auditedAt: toolHost.clock(),
-                };
+    return (args, context) =>
+      createToolExecutor({
+        operation: 'page_audit',
+        argsSchema: pageAuditArgsSchema,
+        requestSchema: pageAuditRequestSchema,
+        render: renderPageAuditSuccess,
+        toPayload: (result): JsonValue =>
+          ({
+            ...result,
+            report: buildPageAuditReport(result),
+            textResultForLlm: renderPageAuditSuccess(result),
+            resultType: 'success',
+          }) as unknown as JsonValue,
+        execute: async (
+          envelope: PageAuditRequestEnvelope,
+        ): Promise<ToolOutcome<PageAuditSuccess>> => {
+          toolHost.reportToolProgress?.(context.toolCallId, 'Auditing the page');
+          const outcome = await run(
+            {
+              url: envelope.args.url,
+              categories: envelope.args.categories ?? PAGE_AUDIT_CATEGORIES,
+              formFactor: envelope.args.formFactor ?? PAGE_AUDIT_DEFAULT_FORM_FACTOR,
             },
-            runtimeDeps: {},
-            currentContext: toolHost.currentContext,
-            clock: toolHost.clock,
-            idGenerator: toolHost.idGenerator,
-            failureFallbackMessage: 'The page audit failed',
-        })(args, context);
+            context.signal,
+            (stage) => toolHost.reportToolProgress?.(context.toolCallId, stage),
+          );
+          if (outcome.kind !== 'report') {
+            const mapping = ERROR_MAPPINGS[outcome.kind];
+            return {
+              ok: false,
+              error: createToolError(
+                mapping.code,
+                ERROR_MESSAGES[outcome.kind],
+                newRequestId(toolHost.idGenerator),
+                { retryable: mapping.retryable, requiredAction: mapping.requiredAction },
+              ),
+            };
+          }
+          return {
+            ok: true,
+            operation: 'page_audit',
+            requestId: envelope.requestId,
+            url: outcome.url,
+            formFactor: outcome.formFactor,
+            scores: outcome.scores.map((entry) => ({
+              category: entry.category,
+              score: toPercent(entry.score),
+            })),
+            failures: outcome.failures.map((failure) => ({
+              category: failure.category,
+              id: failure.id,
+              title: failure.title,
+              score: toPercent(failure.score),
+              ...(failure.displayValue === undefined ? {} : { displayValue: failure.displayValue }),
+              evidence: failure.evidence,
+            })),
+            ...(outcome.runtimeError === undefined ? {} : { runtimeError: outcome.runtimeError }),
+            auditedAt: toolHost.clock(),
+          };
+        },
+        runtimeDeps: {},
+        currentContext: toolHost.currentContext,
+        clock: toolHost.clock,
+        idGenerator: toolHost.idGenerator,
+        failureFallbackMessage: 'The page audit failed',
+      })(args, context);
   };
 }
 

@@ -4,11 +4,11 @@ import {
   ADDON_API_VERSION,
   type AddonActivation,
   type AddonModule,
-  type AddonPins,
   type Result,
   err,
   ok,
 } from '../../shared';
+import type { AddonPins } from '../../shared/addons/pins';
 import type { AddonManager } from './manager';
 import type { AddonHostHandle } from './addonHost';
 

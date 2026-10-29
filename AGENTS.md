@@ -1474,6 +1474,16 @@ is resolved at sign-in time by the agent that uses it
   `e2e/` excluded) **and** every `src/shared` module its bundle inlines, so it
   changes exactly when what ships changes. There is no version number to bump or
   forget, and `apiVersion` (`ADDON_API_VERSION`) stays the compatibility contract.
+  **The pins are not re-exported by `src/shared/addons/index.ts`**, and that is
+  load-bearing: an add-on imports that barrel for the `AddonHost`/`AddonModule`
+  contract, so a re-export would pull the generated JSON into every add-on's
+  bundle - which needs the file before the script that writes it has run (a clean
+  checkout has none, so `npm ci`'s `postinstall` failed on CI with `Could not
+  resolve "./pins.json"`) and hashes generated output into the identity (a new
+  identity on every build, so every release re-published and re-downloaded an
+  unchanged add-on). Anything that wants the pins imports
+  `src/shared/addons/pins` itself; `tests/unit/addons/buildDerivation.test.ts`
+  bundles each real add-on and fails if the pins reach it.
 - **Advertised before download.** At startup the app registers a **proxy** per
   pinned tool (`src/main/tools/addonProxy.ts`) and an index entry per pinned skill,
   so the model, the session instructions, the composer's `/` list and the home
@@ -2097,7 +2107,18 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4841 passed / 13 skipped** (+53 against the
+Current baseline: **`npm run test` → 4842 passed / 13 skipped** (+1 against the
+4841 below - **a clean checkout builds the add-ons again, and their identity
+stops changing** (2026-10-29): the shared barrel no longer re-exports the
+generated pins, so an add-on's bundle neither needs `src/shared/addons/pins.json`
+before `scripts/build-addons.mjs` has written it (the "Publish update" CI leg's
+`Could not resolve "./pins.json"`) nor hashes that generated file into the
+add-on's own content identity (which changed on every build, so no release could
+reuse an installed add-on); the +1 is the new `buildDerivation` case that bundles
+each real add-on and fails if the pins reach it. See §5's add-ons bullet and
+`docs/verification/followons-2026-10.md` "A clean checkout can build the add-ons
+again, and their identity stops changing (2026-10-29)". Before that it was
+**`npm run test` → 4841 passed / 13 skipped** (+53 against the
 4788 below - **an add-on contributes its own tools and skills, and nothing
 outside it names them** (2026-10-28): the `page_audit` tool and the
 `/check-page` skill moved into `src/addons/page-audit/`, with its types, its

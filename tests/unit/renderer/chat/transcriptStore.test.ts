@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addonPins,
   agentEventSchema,
   chatIdSchema,
   MEMO_REFLECTION_TOOL_NAME,
@@ -15,6 +14,7 @@ import {
   type ToolCallId,
   type TurnId,
 } from '../../../../src/shared';
+import { addonPins } from '../../../../src/shared/addons/pins';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import {
   resetTableOnlySkills,
