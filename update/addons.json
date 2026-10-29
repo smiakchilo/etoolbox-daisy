@@ -1,12 +1,12 @@
 {
   "addons": {
     "page-audit": {
-      "95874191c4d370f0": {
+      "31d53ac7b937f194": {
         "platforms": {
           "any": {
-            "file": "page-audit-95874191c4d370f0-any.zip",
-            "sha512": "127cf9834f683cbc2afb27b7ada5ccc492c81345762a44ae14b26f8015e69e05a1581b3789f72b8a272b4b60185e313e77bfacab232f1c05214d619a07798dbb",
-            "size": 34362442
+            "file": "page-audit-31d53ac7b937f194-any.zip",
+            "sha512": "8c5d16bf7db2546659d1a69d18a0f7480be5de7973400988c93b668dd4b6ea4b12309a73739fbf888fa72e1b8cfcac442f85fc73c0562efbf054d2feb99e53dc",
+            "size": 34625320
           }
         }
       }
