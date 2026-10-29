@@ -2116,7 +2116,16 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4845 passed / 13 skipped** (+3 against the
+Current baseline: **`npm run test` → 4846 passed / 13 skipped** (+1 against the
+4845 below - **the published update lives on its own `update` branch**
+(2026-10-29): `package.json`'s `updates.urls` points at `tree/update`, the
+publish job force-pushes one parentless commit holding exactly that release's
+files, and `update/` is gone from `master` - so cloning the code no longer
+downloads a release's archives and the branch never accumulates them. The +1 is
+the `resolveFolderUrl` case for a branch-root URL (`tree/<ref>`). See
+`docs/verification/followons-2026-10.md` "The published update moved to its own
+branch". Before that it was **`npm run test` → 4845 passed / 13 skipped**
+(+3 against the
 4842 below - **add-on versions are bookkeeping, `update.json` records the pins,
 and the published `update/` folder is pruned** (2026-10-29): `npm run addons:build`
 no longer compares an add-on's `package.json` version with the application's
