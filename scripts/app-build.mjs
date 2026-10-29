@@ -141,7 +141,7 @@ function copyAddons(target) {
   cpSync(built, target, { recursive: true, force: true, dereference: true });
 }
 
-node('Installing dependencies (install scripts disabled)', [
+node('Installing dependencies safely', [
   npmCli,
   'ci',
   '--ignore-scripts',
