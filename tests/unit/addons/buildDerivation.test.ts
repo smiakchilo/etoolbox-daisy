@@ -226,6 +226,37 @@ describe('the build hashes exactly what ships', () => {
     expect(withShared).not.toBe(withoutShared);
   });
 
+  it('ignores the add-on’s own version, which is bookkeeping rather than content', () => {
+    const root = scratch.create();
+    write(root, 'index.ts', 'export const addon = 1;\n');
+    const lock = (version: string): string =>
+      JSON.stringify({
+        name: 'demo-addon',
+        version,
+        lockfileVersion: 3,
+        packages: { '': { name: 'demo-addon', version } },
+      });
+    write(root, 'package.json', JSON.stringify({ name: 'demo-addon', version: '1.0.0' }));
+    write(root, 'package-lock.json', lock('1.0.0'));
+    const before = identityFor(root, []);
+
+    // Raising the version is a procedural decision: the same bytes still ship.
+    write(root, 'package.json', JSON.stringify({ name: 'demo-addon', version: '1.0.1' }));
+    write(root, 'package-lock.json', lock('1.0.1'));
+    expect(identityFor(root, [])).toBe(before);
+
+    // Anything else in the lockfile is content, so a dependency bump does move it.
+    write(
+      root,
+      'package-lock.json',
+      JSON.stringify({
+        ...JSON.parse(lock('1.0.1')),
+        dependencies: { 'demo-dependency': '1.2.3' },
+      }),
+    );
+    expect(identityFor(root, [])).not.toBe(before);
+  });
+
   it('reads the inlined inputs from the bundle’s metafile, leaving out its own files', () => {
     const root = scratch.create();
     write(root, 'index.ts', 'export const addon = 1;\n');

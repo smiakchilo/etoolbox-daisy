@@ -3,12 +3,15 @@
  * pins this build needs (`src/shared/addons/pins.json`) and - with `--zip` - the
  * published archives and catalogue (`dist-addons/`).
  *
- * An add-on carries **no version of its own**. Its identity is derived from its
- * content here (a sha256 over its sources and the `src/shared` modules its bundle
- * inlines, as the first 16 hex characters), so it changes exactly when the
- * add-on changes: an unchanged add-on is never re-published and never
- * re-downloaded, and a changed one can never be served under an identity an
- * install already has. Its tests are its own business and never part of it.
+ * An add-on's identity is derived from its content here (a sha256 over its
+ * sources and the `src/shared` modules its bundle inlines, as the first 16 hex
+ * characters), so it changes exactly when the add-on changes: an unchanged add-on
+ * is never re-published and never re-downloaded, and a changed one can never be
+ * served under an identity an install already has. Its `package.json` version is
+ * bookkeeping - an add-on sits at its own value (`1.0.0`) until its owner raises
+ * it for some procedural reason - and is excluded from that hash, so raising it
+ * never re-publishes anything. Its tests are its own business and never part of
+ * it.
  *
  * **Tools are declared; skills are derived.** `addon.json` declares each tool
  * completely, and each `skills/<name>/SKILL.md` is parsed with the application's
@@ -109,10 +112,11 @@ function sourceFiles(directory) {
 }
 
 /**
- * An add-on's npm `version` follows the application's (a private package carries
- * the app version), so it must not participate in the identity: otherwise every
- * release would re-download an unchanged add-on. The version fields are removed
- * before hashing; everything else in the two manifests is content.
+ * An add-on's npm `version` is bookkeeping, not content: it is not compared with
+ * the application's, and it must not participate in the identity, or raising it
+ * for a procedural reason would re-publish and re-download the whole archive. The
+ * version fields are removed before hashing; everything else in the two manifests
+ * is content.
  */
 function withoutVersionMetadata(file, bytes) {
   if (file !== 'package.json' && file !== 'package-lock.json') return bytes;
@@ -130,8 +134,8 @@ function withoutVersionMetadata(file, bytes) {
  * inlines (`metafile.inputs` outside `node_modules`) - the `src/shared` modules
  * an add-on imports are content too, so a change to one must change the identity
  * of every add-on built against it. Two builds of the same sources always agree;
- * any edit - including a dependency bump in the lockfile - changes it, while an
- * app version bump and an edit to a test do not.
+ * any edit - including a dependency bump in the lockfile - changes it, while a
+ * version bump and an edit to a test do not.
  */
 function identityFor(directory, inlinedInputs) {
   const hash = createHash('sha256');
@@ -503,8 +507,6 @@ function publishArchive(id, identity, platformKey, file) {
 
 async function main() {
   const folders = addonFolders();
-  const appVersion = readJson(join(root, 'package.json'))?.version;
-  if (typeof appVersion !== 'string') fail('The application package.json has no version.');
 
   const parsers = await loadAppParsers();
   // What the application already owns: a contributed name may not collide with
@@ -531,16 +533,9 @@ async function main() {
       fail(`The "${descriptor.id}" add-on has no entry.`);
     }
     if (pkg === undefined) fail(`src/addons/${folderName}/package.json is missing.`);
-    // A private package carries the application's version - one rule for every
-    // private package in the repository, so an add-on never drifts from the
-    // build that ships it. The add-on's *identity* is separate and derived.
-    if (pkg.version !== appVersion) {
-      fail(
-        `The "${descriptor.id}" add-on's package.json version (${pkg.version}) must match the ` +
-          `application's (${appVersion}). Run "npm install --prefix src/addons/${descriptor.id}" ` +
-          'after changing it, so its lockfile agrees.',
-      );
-    }
+    // The package version is bookkeeping and deliberately not compared with the
+    // application's: an add-on sits at its own value until its owner raises it. It
+    // is excluded from the identity, so raising it changes nothing that ships.
     const validated = contributionsFor(directory, descriptor, parsers, taken);
     if (validated.problem !== undefined) fail(validated.problem);
     const contributions = validated.contributions;

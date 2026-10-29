@@ -7,9 +7,9 @@ name: Publish update
 # raising: `scripts/runtime-descriptor.mjs` derives the runtime layer the archive
 # needs (Electron + the unpacked Copilot payload) from the packaged output, and an
 # install whose own layer differs is told to reinstall instead of swapping
-# (`src/main/updates/runtime.ts`). A release that changes an add-on's version
-# needs nothing extra either: the pins travel inside the new asar, and this run
-# publishes the zips it names.
+# (`src/main/updates/runtime.ts`). A release that changes an add-on needs nothing
+# extra either: the pins travel inside the new asar, and this run publishes the
+# zips they name.
 on:
   workflow_dispatch:
     inputs:
@@ -83,14 +83,26 @@ jobs:
       - name: Merge add-on catalogues
         run: node scripts/merge-addons.mjs incoming
       # The add-ons are published first, `update.json` last: an install that sees
-      # the new manifest pins the add-on versions that build needs, so those zips
-      # must already be in the folder. Older add-on zips stay (older installs
-      # still pin them, and `addons.json` names every version).
+      # the new manifest pins the add-on identities that build needs, so those
+      # zips must already be in the folder. The folder is then kept equal to the
+      # catalogue: the app resolves every add-on download through `addons.json`,
+      # so an archive it does not name is unreachable dead weight (34 MB each).
       - name: Publish the add-ons
         run: |
           mkdir -p update
           cp incoming/*.zip update/
           cp incoming/addons.json update/addons.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const catalog = JSON.parse(fs.readFileSync('update/addons.json', 'utf8'));
+          const keep = new Set();
+          for (const identities of Object.values(catalog.addons ?? {}))
+            for (const entry of Object.values(identities))
+              for (const archive of Object.values(entry.platforms ?? {})) keep.add(archive.file);
+          for (const file of fs.readdirSync('update'))
+            if (file.endsWith('.zip') && !keep.has(file)) fs.rmSync(path.join('update', file));
+          NODE
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add update

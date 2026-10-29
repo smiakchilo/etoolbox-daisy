@@ -31,7 +31,9 @@ const updateFileSchema = z.object({
  * `update.json`: the newest version and one archive per `<platform>-<arch>`.
  * Deliberately not strict - a manifest published by a newer toolchain may carry
  * fields this build does not know, and ignoring them is the forward-compatible
- * reading.
+ * reading. One of those is the release's own `addons` bookkeeping (its id ->
+ * identity map, written by `scripts/package-update.mjs`): the application does
+ * not read it, because the same pins travel inside the archive it is running.
  */
 export const updateManifestSchema = z.object({
   version: versionSchema,

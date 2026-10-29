@@ -1509,11 +1509,12 @@ is resolved at sign-in time by the agent that uses it
   addons:build`, so the add-on dependencies and the generated `pins.json` are
   both ready without a manual step.
 - **Every private package carries the application's version.** An add-on's
-  `package.json` version must equal the root's, and `npm run addons:build`
-  fails when it does not (`npm install --prefix src/addons/<id>
-  --package-lock-only` syncs its lockfile after a bump). The version is
-  **excluded from the identity** - it is bookkeeping, not content - so an app
-  release never re-downloads an unchanged add-on.
+  `package.json` version is its own bookkeeping instead: it is **not** compared
+  with the root's any more (all add-ons sit at `1.0.0` until an owner raises one
+  for a procedural reason), and it is **excluded from the identity**, so raising
+  it re-publishes and re-downloads nothing. `npm install --prefix
+  src/addons/<id> --package-lock-only` keeps the lockfile's copy in step if you
+  do raise it.
 - **Loaded with a real `import()`.** A plain dynamic import is rewritten into
   `require()` by the bundler, which cannot load an ESM folder outside the asar;
   `src/main/addons/loader.ts` keeps one runtime `import()` (a documented
@@ -1959,7 +1960,11 @@ by a hand-rolled `update.json` in plain GitHub folders - no `electron-updater`.
 Full description and the release procedure: `docs/updates.md`. The **add-on
 catalogue** `addons.json` lives in the same folder and is published by the same
 workflow, zips first and `update.json` last (see "Add-ons" above and
-`docs/addon-architecture.md`).
+`docs/addon-architecture.md`); the folder keeps only the archives that catalogue
+names (the publish step deletes the rest), and each published `update.json`
+carries an `addons` node - its id -> identity map, written by
+`scripts/package-update.mjs` and deliberately not read by the app - so the
+release, not the folder, records what a version pinned.
 
 - **Places.** The Settings **Updates** tab's `updates.url` (https only) is tried
   first, then `updates.urls` in `package.json`. A `github.com/.../tree/<ref>/<path>`
@@ -2107,7 +2112,21 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4842 passed / 13 skipped** (+1 against the
+Current baseline: **`npm run test` → 4845 passed / 13 skipped** (+3 against the
+4842 below - **add-on versions are bookkeeping, `update.json` records the pins,
+and the published `update/` folder is pruned** (2026-10-29): `npm run addons:build`
+no longer compares an add-on's `package.json` version with the application's
+(`page-audit` now sits at `1.0.0`, still excluded from the identity, so its
+identity stayed `31d53ac7b937f194`); `scripts/package-update.mjs` writes
+`"addons": { "<id>": "<identity>" }` into `update.json` and refuses two matrix
+legs that pin different add-ons for one version; the publish job deletes every
+add-on archive the catalogue does not name, and the orphan
+`update/page-audit-95874191c4d370f0-any.zip` is gone. The +3 is one identity case
+(both version fields are ignored, a dependency change still moves the hash) and
+two merge-script cases (the pins are written; disagreement is refused). See
+`docs/verification/followons-2026-10.md` "Add-ons carry bookkeeping versions ...
+(2026-10-29)". Before that it was **`npm run test` → 4842 passed / 13 skipped**
+(+1 against the
 4841 below - **a clean checkout builds the add-ons again, and their identity
 stops changing** (2026-10-29): the shared barrel no longer re-exports the
 generated pins, so an add-on's bundle neither needs `src/shared/addons/pins.json`

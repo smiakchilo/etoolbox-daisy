@@ -7,6 +7,12 @@
 //
 // `--notes <text>` (or the UPDATE_NOTES environment variable) sets the release notes.
 //
+// `update.json` also names the add-on identities the published asar pins
+// (`"addons": { "<id>": "<identity>" }`). That map is bookkeeping: the same pins
+// travel inside `app.asar`, and the published folder keeps only the add-on
+// archives the current catalogue names, so this is the one record of what a
+// released version needed.
+//
 // Packing expects `electron-builder --dir` to have produced an unpacked app under
 // `release/`. Only `app.asar` is published: the updater swaps that one file and
 // never touches the rest of the install.
@@ -50,6 +56,29 @@ function compareVersions(a, b) {
   return 0;
 }
 
+/**
+ * The add-on identities the packaged asar pins, read from the generated pins the
+ * build wrote beside it. Published as `update.json`'s `addons` node, because the
+ * folder keeps only the archives the current catalogue names and so has no older
+ * pin record of its own.
+ */
+function readAddonPins() {
+  const file = path.join(root, 'src', 'shared', 'addons', 'pins.json');
+  let pins;
+  try {
+    pins = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    throw new Error(`Could not read ${file} - run "npm run build" before packaging the update.`);
+  }
+  const identities = {};
+  for (const id of Object.keys(pins).sort()) {
+    const identity = pins[id]?.identity;
+    if (typeof identity !== 'string') throw new Error(`The "${id}" pin has no identity.`);
+    identities[id] = identity;
+  }
+  return identities;
+}
+
 function pack(outDirectory) {
   const asar = findAsar(path.join(root, 'release'));
   if (asar === undefined)
@@ -69,6 +98,7 @@ function pack(outDirectory) {
   });
   const partial = {
     version,
+    addons: readAddonPins(),
     files: {
       [key]: {
         name,
@@ -101,8 +131,21 @@ function merge(directory) {
   for (const partial of partials) {
     if (partial.version === version) Object.assign(files, partial.files);
   }
+  // Every leg built the same sources, so the add-ons this version pins must
+  // agree; two answers mean one leg packaged something else.
+  const pinned = [
+    ...new Set(
+      partials
+        .filter((partial) => partial.version === version)
+        .map((partial) => JSON.stringify(partial.addons ?? {})),
+    ),
+  ];
+  if (pinned.length > 1) {
+    throw new Error(`The ${version} builds pin different add-ons:\n${pinned.join('\n')}`);
+  }
+  const addons = JSON.parse(pinned[0] ?? '{}');
   const notes = process.env.UPDATE_NOTES;
-  const manifest = { version, ...(notes ? { notes } : {}), files };
+  const manifest = { version, ...(notes ? { notes } : {}), addons, files };
   writeFileSync(path.join(directory, 'update.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`Wrote update.json for ${version}: ${Object.keys(files).join(', ')}`);
   return manifest;

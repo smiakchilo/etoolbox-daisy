@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   compareVersions,
@@ -7,6 +10,7 @@ import {
   resolveFolderUrl,
   updateManifestSchema,
 } from '../../../../src/main/updates/manifest';
+import { createScratchDirs } from '../../../support/scratchDirs';
 
 const HASH = 'a'.repeat(128);
 
@@ -116,5 +120,70 @@ describe('updateManifestSchema', () => {
     ['an oversized archive', { ...valid, files: { k: { name: 'a', sha512: HASH, size: 1e12 } } }],
   ])('rejects %s', (_label, manifest) => {
     expect(updateManifestSchema.safeParse(manifest).success).toBe(false);
+  });
+});
+
+/**
+ * The published `update.json` is written by `scripts/package-update.mjs`, which
+ * runs outside the application (in the release matrix, before the app exists).
+ * The folder now keeps only the current archives, so the manifest's `addons`
+ * node is the one record of what a released version pinned.
+ */
+const scratch = createScratchDirs('package-update', 'merge-');
+afterEach(() => scratch.cleanup());
+
+const releaseScript = path.resolve(__dirname, '../../../../scripts/package-update.mjs');
+
+function partial(version: string, platform: string, addons: Record<string, string>): string {
+  return JSON.stringify({
+    version,
+    addons,
+    files: { [platform]: { name: `app-${version}-${platform}.asar`, sha512: HASH, size: 10 } },
+  });
+}
+
+function merge(directory: string): void {
+  execFileSync(process.execPath, [releaseScript, '--merge', directory], {
+    encoding: 'utf8',
+    // Keep the expected failure's stack out of the test output; it is on the error.
+    stdio: 'pipe',
+  });
+}
+
+describe('the release merge', () => {
+  it('writes the pinned add-ons beside the archives', () => {
+    const directory = scratch.create();
+    const pins = { 'demo-addon': 'a'.repeat(16) };
+    writeFileSync(
+      path.join(directory, 'update.win32-x64.json'),
+      partial('1.2.3', 'win32-x64', pins),
+    );
+    writeFileSync(
+      path.join(directory, 'update.darwin-arm64.json'),
+      partial('1.2.3', 'darwin-arm64', pins),
+    );
+
+    merge(directory);
+
+    const manifest = JSON.parse(readFileSync(path.join(directory, 'update.json'), 'utf8')) as {
+      addons?: Record<string, string>;
+      files: Record<string, unknown>;
+    };
+    expect(manifest.addons).toEqual(pins);
+    expect(Object.keys(manifest.files).sort()).toEqual(['darwin-arm64', 'win32-x64']);
+  });
+
+  it('refuses legs that pin different add-ons for one version', () => {
+    const directory = scratch.create();
+    writeFileSync(
+      path.join(directory, 'update.win32-x64.json'),
+      partial('1.2.3', 'win32-x64', { 'demo-addon': 'a'.repeat(16) }),
+    );
+    writeFileSync(
+      path.join(directory, 'update.darwin-arm64.json'),
+      partial('1.2.3', 'darwin-arm64', { 'demo-addon': 'b'.repeat(16) }),
+    );
+
+    expect(() => merge(directory)).toThrow(/different add-ons/);
   });
 });
