@@ -3,8 +3,8 @@
   "files": {
     "darwin-arm64": {
       "name": "app-0.1.1-darwin-arm64.asar",
-      "sha512": "afdba792d8fa6a5b72b614c9c0e272208ed548d21ef68cf23adb8f97d219133acf017f1126a20d441f247e98ef626ee646b9d2e8328e62bf9f08cecbc105168f",
-      "size": 24718880,
+      "sha512": "310b8d9a7d4f7dfa7290e2f6764cc50d8db975cb494e67fb2e39c37ae7517dd45c1de0ad287ac1cd66e89361f2e2f6f96f92ffb12ff9e449b0c2fd1f91e97226",
+      "size": 24735998,
       "runtime": {
         "format": 1,
         "electron": "44.9.3",
@@ -13,8 +13,8 @@
     },
     "darwin-x64": {
       "name": "app-0.1.1-darwin-x64.asar",
-      "sha512": "927c04ec4eb53b8881e7a8717b1274bad3cf7ec24ea9afab7266497eefc9cd1f17333f832a2ad3716fae3536eb4e5b3766add7d7a8edb4a9ea352bf4bdb76ce2",
-      "size": 24719072,
+      "sha512": "04b565ac7733f009bd985c820b1e0491433d8b2ef16d0db8397e97340a5eee64785db3c9fa3d58c4eb6201a98a594e04a9b277901bea23d513c66cbe943bc048",
+      "size": 24736190,
       "runtime": {
         "format": 1,
         "electron": "44.9.3",
@@ -23,8 +23,8 @@
     },
     "win32-x64": {
       "name": "app-0.1.1-win32-x64.asar",
-      "sha512": "ff8b976778fd8a9ef6ac3f24ed81b5604346239fb327144bdad240737ea23ecddac2bb7c1b69855c2492e25781a3b2f45f86b6bf474b028132ae1b79856b2255",
-      "size": 24719248,
+      "sha512": "3a563e525e90da4402e43ec8c01ad9e9fb50bfc1ee255bb4ea8af66da52eee0e3b26caf295ff2a45f484eec0d7fb17a3a3d91680988322dfd7af54d2d526446b",
+      "size": 24736366,
       "runtime": {
         "format": 1,
         "electron": "44.9.3",
