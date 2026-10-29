@@ -1,14 +1,16 @@
-import { type SkillHost, err } from '../../src/shared';
+import { type SkillHost, type SkillOutcome, err } from '../../src/shared';
 
-const notLoaded = (name: string) =>
-  err({ code: 'NOT_FOUND' as const, message: `No skill named "${name}" is loaded.` });
+const notLoaded = (name: string): Promise<SkillOutcome<never>> =>
+  Promise.resolve(
+    err({ code: 'NOT_FOUND' as const, message: `No skill named "${name}" is loaded.` }),
+  );
 
 /** A `ToolHost.skills` that holds no skill: every lookup is `NOT_FOUND`. */
 export const NO_SKILLS: SkillHost = {
   list: () => [],
   activate: (name) => notLoaded(name),
-  readResource: (request) => Promise.resolve(notLoaded(request.skill)),
-  runScript: (request) => Promise.resolve(notLoaded(request.skill)),
+  readResource: (request) => notLoaded(request.skill),
+  runScript: (request) => notLoaded(request.skill),
 };
 
 export interface FakeSkillOptions {

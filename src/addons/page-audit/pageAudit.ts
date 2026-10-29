@@ -1,15 +1,16 @@
-import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron';
-import {
-  type PageAuditCategory,
-  type PageAuditFailed,
-  type PageAuditFailure,
-  type PageAuditOutcome,
-  type PageAuditRequest,
-  type PageAuditRunner,
-  type PageAuditScore,
-} from '../../shared';
+import type { BrowserWindow, Session } from 'electron';
+import type { AddonHost } from '../../shared';
 import { type LighthouseAudit, auditEvidence, hasMeasuredSaving } from './evidence';
 import { DebuggerTransport } from './pageAuditTransport';
+import type {
+  PageAuditCategory,
+  PageAuditFailed,
+  PageAuditFailure,
+  PageAuditOutcome,
+  PageAuditRequest,
+  PageAuditRunner,
+  PageAuditScore,
+} from './types';
 
 export const PAGE_AUDIT_TIMEOUT_MS = 120_000;
 /** How many audits may wait behind the one running before a further request is refused. */
@@ -17,42 +18,6 @@ export const PAGE_AUDIT_MAX_QUEUED = 2;
 const PAGE_LOAD_TIMEOUT_MS = 30_000;
 const WINDOW_WIDTH = 1280;
 const WINDOW_HEIGHT = 800;
-
-/**
- * Everything the add-on needs from the application. Nothing here is reachable
- * from the model: the tool passes only what it wants audited.
- *
- * The add-on never imports `src/main` (it is downloaded, so there is no
- * application source next to it) and never creates an Electron window of its
- * own: the application supplies both the window factory and the shared address
- * policy, so the audit's network position and its window are the application's
- * decisions, not the add-on's.
- */
-export interface PageAuditAddonDeps {
-  /** The browser pane's session: a configured host's page loads with its cookies. */
-  readonly paneSession: Session;
-  /** A session with no stored state, for a page that is not on a configured host. */
-  readonly anonymousSession: () => Session;
-  /** Creates the hidden audit window. The application owns the window module. */
-  readonly createWindow: (options: BrowserWindowConstructorOptions) => BrowserWindow;
-  /** The address the browser pane is showing, if it shows a page. */
-  readonly currentUrl: () => string | undefined;
-  readonly isConfiguredOrigin: (origin: string) => boolean;
-  /**
-   * The application's shared URL/address policy: whether a URL may be requested.
-   * It resolves names and refuses local, private and internal addresses - and,
-   * when the application reaches the network through a proxy, delegates address
-   * policy to that proxy (see `docs/compatibility.md` §11.8).
-   */
-  readonly inspectTarget: (url: URL) => Promise<{ readonly allowed: boolean }>;
-  readonly logger?: PageAuditLogger;
-  readonly timeoutMs?: number;
-}
-
-/** The one thing the audit logs: a failed run. */
-export interface PageAuditLogger {
-  warn(code: 'PAGE_AUDIT_FAILED'): void;
-}
 
 /** The part of a navigation event the audit uses. */
 interface PreventableEvent {
@@ -107,9 +72,9 @@ export function parseTarget(
 
 /**
  * Every audit that did not pass, heaviest first, each once, with the evidence
- * Lighthouse reported for it (see `evidence.ts`) - plus every weight-0
- * `informative` insight Lighthouse measured a saving for, because that is where
- * Lighthouse 13 keeps the performance category's actionable findings (its only
+ * the run reported for it (see `evidence.ts`) - plus every weight-0
+ * `informative` insight it measured a saving for, because that is where the
+ * latest scoring keeps the performance category's actionable findings (its only
  * weighted audits are the five metrics). Nothing is capped: a report that lists
  * ten audits without saying what failed is what this replaced.
  */
@@ -161,13 +126,13 @@ export type AuditRequestVerdict =
 /**
  * What the audit window may request. Its own configured hosts are trusted (their
  * pages and subresources are audited through the pane's session); `data:`,
- * `blob:` and `about:` are local; everything else has to pass the application's
- * address policy. Applied to every request - a configured host's page included -
- * and again to `will-navigate`/`will-redirect`.
+ * `blob:` and `about:` are local; everything else has to pass the host's address
+ * policy. Applied to every request - a configured host's page included - and
+ * again to `will-navigate`/`will-redirect`.
  */
 export async function inspectAuditRequest(
   address: string,
-  deps: Pick<PageAuditAddonDeps, 'isConfiguredOrigin' | 'inspectTarget'>,
+  host: Pick<AddonHost<BrowserWindow, Session>, 'hosts' | 'network'>,
 ): Promise<AuditRequestVerdict> {
   let url: URL;
   try {
@@ -178,8 +143,8 @@ export async function inspectAuditRequest(
   if (url.protocol === 'data:' || url.protocol === 'blob:' || url.protocol === 'about:') {
     return { allowed: true };
   }
-  if (deps.isConfiguredOrigin(url.origin)) return { allowed: true };
-  const target = await deps.inspectTarget(url);
+  if (host.hosts.isConfiguredOrigin(url.origin)) return { allowed: true };
+  const target = await host.network.inspectTarget(url.href);
   return target.allowed
     ? { allowed: true }
     : { allowed: false, reason: 'it is a local or internal address' };
@@ -198,11 +163,14 @@ function shortUrl(url: string): string {
 }
 
 /**
- * Runs Lighthouse on one page in a hidden, off-screen window the application
- * owns. Puppeteer drives that window's own debugger in-process (no debugging
- * port is opened). A configured host's page uses the pane's session, so a page
- * behind sign-in can be audited; any other page uses an empty session. Every
- * request either kind of page makes is held to `inspectAuditRequest`.
+ * Runs one audit in a hidden, off-screen window the **host** creates. Puppeteer
+ * drives that window's own debugger in-process (no debugging port is opened). A
+ * configured host's page uses the pane's session, so a page behind sign-in can
+ * be audited; any other page uses an empty isolated session. Every request
+ * either kind of page makes is held to `inspectAuditRequest`, and the add-on
+ * applies all of that window's hardening itself: no new windows, permissions
+ * scoped to the audit, no WebRTC over anything but the proxy, and a navigation
+ * guard.
  *
  * The request filter is a **best effort** against DNS rebinding: Chromium
  * resolves the name itself, so the address it connects to is not pinned to the
@@ -212,8 +180,11 @@ function shortUrl(url: string): string {
  * cannot open windows, ask for permissions or use WebRTC over anything but the
  * proxy.
  */
-export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
-  const timeoutMs = deps.timeoutMs ?? PAGE_AUDIT_TIMEOUT_MS;
+export function createPageAudit(
+  host: AddonHost<BrowserWindow, Session>,
+  options: { readonly timeoutMs?: number } = {},
+): PageAuditRunner {
+  const timeoutMs = options.timeoutMs ?? PAGE_AUDIT_TIMEOUT_MS;
   let queue: Promise<unknown> = Promise.resolve();
   let accepted = 0;
 
@@ -222,16 +193,16 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
     signal: AbortSignal | undefined,
     progress?: (stage: string) => void,
   ): Promise<PageAuditOutcome> {
-    const target = parseTarget(request.url, deps.currentUrl());
+    const target = parseTarget(request.url, host.pane.currentUrl());
     if (target === 'no_page') return { kind: 'no_page' };
     if (target === undefined) return { kind: 'invalid_url' };
 
-    const outside = !deps.isConfiguredOrigin(target.origin);
-    if (outside && !(await deps.inspectTarget(target)).allowed) {
+    const outside = !host.hosts.isConfiguredOrigin(target.origin);
+    if (outside && !(await host.network.inspectTarget(target.href)).allowed) {
       return { kind: 'blocked', message: 'The address is local, private or internal.' };
     }
 
-    const session = outside ? deps.anonymousSession() : deps.paneSession;
+    const session = outside ? host.sessions.isolated('anonymous') : host.sessions.pane();
     // An outside audit gets a dedicated session, so every request in it belongs
     // to the audit. A configured host's audit shares the pane's session, where
     // the user's own traffic must not be filtered: only the audit window's
@@ -245,19 +216,12 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
       if (refusals.length > 10) refusals.shift();
     };
 
-    const win = deps.createWindow({
-      show: false,
+    const win = host.browser.createHiddenWindow({
+      session,
+      offscreen: true,
+      backgroundThrottling: false,
       width: WINDOW_WIDTH,
       height: WINDOW_HEIGHT,
-      webPreferences: {
-        session,
-        sandbox: true,
-        offscreen: true,
-        backgroundThrottling: false,
-        contextIsolation: true,
-        nodeIntegration: false,
-        webSecurity: true,
-      },
     });
     const windowId = win.webContents.id;
     win.webContents.setFrameRate(30);
@@ -276,7 +240,7 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
         callback({});
         return;
       }
-      void inspectAuditRequest(details.url, deps).then((verdict) => {
+      void inspectAuditRequest(details.url, host).then((verdict) => {
         if (verdict.allowed) callback({});
         else {
           remember(details.url, verdict.reason);
@@ -296,7 +260,7 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
     // `onBeforeRequest` covers these too, but a navigation that is already known
     // to be refused is stopped before it starts a document load.
     const stopRefusedNavigation = (url: string): void => {
-      void inspectAuditRequest(url, deps).then((verdict) => {
+      void inspectAuditRequest(url, host).then((verdict) => {
         if (verdict.allowed) return;
         remember(url, verdict.reason);
         if (!win.isDestroyed()) win.webContents.stop();
@@ -305,7 +269,7 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
     const onWillNavigate = (_event: PreventableEvent, url: string): void =>
       stopRefusedNavigation(url);
     const onWillRedirect = (event: PreventableEvent, url: string): void => {
-      void inspectAuditRequest(url, deps).then((verdict) => {
+      void inspectAuditRequest(url, host).then((verdict) => {
         if (verdict.allowed) return;
         remember(url, verdict.reason);
         event.preventDefault();
@@ -400,12 +364,12 @@ export function createPageAudit(deps: PageAuditAddonDeps): PageAuditRunner {
         };
       }
       const message = error instanceof Error ? error.message : String(error);
-      deps.logger?.warn('PAGE_AUDIT_FAILED');
+      host.log({ code: 'runtime-failed' });
       return { kind: 'failed', message };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
-      // Tear the page down first: a hung Lighthouse iteration must not keep the
-      // window (and the CPU it burns) alive while `disconnect` waits.
+      // Tear the page down first: a hung iteration must not keep the window
+      // (and the CPU it burns) alive while `disconnect` waits.
       transport?.close();
       if (!win.isDestroyed()) win.destroy();
       try {

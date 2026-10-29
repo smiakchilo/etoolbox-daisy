@@ -232,8 +232,8 @@ export const BROWSER_FIND_RESULT_CHANNEL = 'browser:find-result' as const;
 
 /**
  * `browser:highlight-element` - the chat pane asks main to scroll the browser
- * pane to a CSS selector (a Lighthouse report's failing element) and highlight
- * it. Main resolves to the element's `found` state, so the pane can say when the
+ * pane to a CSS selector (a report's failing element) and highlight it. Main
+ * resolves to the element's `found` state, so the pane can say when the
  * selector no longer matches the page being shown. See src/shared/browser-ipc.ts.
  */
 export const BROWSER_HIGHLIGHT_ELEMENT_CHANNEL = 'browser:highlight-element' as const;

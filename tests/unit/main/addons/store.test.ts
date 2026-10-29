@@ -17,12 +17,12 @@ afterEach(() => scratch.cleanup());
 
 const IDENTITY = '0123456789abcdef';
 const OTHER_IDENTITY = 'fedcba9876543210';
-const PIN = { identity: IDENTITY, apiVersion: 1 };
+const PIN = { identity: IDENTITY, apiVersion: 1, contributions: { tools: [], skills: [] } };
 
 function archive(
   files: Record<string, string | Uint8Array>,
   descriptor = {
-    id: 'page-audit',
+    id: 'example-addon',
     identity: IDENTITY,
     apiVersion: 1,
     entry: 'index.js',
@@ -49,41 +49,45 @@ describe('createAddonStore', () => {
     const store = createAddonStore({ root });
 
     const installed = store.installArchive(
-      'page-audit',
+      'example-addon',
       PIN,
       archive({ 'index.js': 'export {};' }),
     );
 
-    expect(installed.dir).toBe(path.join(root, 'page-audit', IDENTITY));
-    expect(installed.descriptor).toMatchObject({ id: 'page-audit', identity: IDENTITY });
+    expect(installed.dir).toBe(path.join(root, 'example-addon', IDENTITY));
+    expect(installed.descriptor).toMatchObject({ id: 'example-addon', identity: IDENTITY });
     expect(readFileSync(path.join(installed.dir, 'index.js'), 'utf8')).toBe('export {};');
-    expect(store.readInstalled('page-audit', PIN)).toMatchObject({ dir: installed.dir });
+    expect(store.readInstalled('example-addon', PIN)).toMatchObject({ dir: installed.dir });
   });
 
   it('keeps only the pinned identity after a successful install', () => {
     const root = makeStore();
     const store = createAddonStore({ root });
     store.installArchive(
-      'page-audit',
-      { identity: OTHER_IDENTITY, apiVersion: 1 },
+      'example-addon',
+      { identity: OTHER_IDENTITY, apiVersion: 1, contributions: { tools: [], skills: [] } },
       archive(
         {},
         {
-          id: 'page-audit',
+          id: 'example-addon',
           identity: OTHER_IDENTITY,
           apiVersion: 1,
           entry: 'index.js',
         },
       ),
     );
-    const stale = path.join(root, 'page-audit', OTHER_IDENTITY);
+    const stale = path.join(root, 'example-addon', OTHER_IDENTITY);
     expect(existsSync(stale)).toBe(true);
 
-    store.installArchive('page-audit', PIN, archive({ 'index.js': 'export {};' }));
+    store.installArchive('example-addon', PIN, archive({ 'index.js': 'export {};' }));
 
     expect(existsSync(stale)).toBe(false);
     expect(
-      store.readInstalled('page-audit', { identity: OTHER_IDENTITY, apiVersion: 1 }),
+      store.readInstalled('example-addon', {
+        identity: OTHER_IDENTITY,
+        apiVersion: 1,
+        contributions: { tools: [], skills: [] },
+      }),
     ).toBeUndefined();
   });
 
@@ -91,10 +95,10 @@ describe('createAddonStore', () => {
     const root = makeStore();
     const store = createAddonStore({ root });
 
-    expect(() => store.installArchive('page-audit', PIN, strToU8('not a zip'))).toThrowError(
+    expect(() => store.installArchive('example-addon', PIN, strToU8('not a zip'))).toThrowError(
       /archive/,
     );
-    expect(existsSync(path.join(root, 'page-audit', IDENTITY))).toBe(false);
+    expect(existsSync(path.join(root, 'example-addon', IDENTITY))).toBe(false);
   });
 
   it.each([
@@ -105,7 +109,7 @@ describe('createAddonStore', () => {
     const root = makeStore();
     const store = createAddonStore({ root });
     const descriptor = {
-      id: 'page-audit',
+      id: 'example-addon',
       identity: IDENTITY,
       apiVersion: 1,
       entry: 'index.js',
@@ -113,10 +117,10 @@ describe('createAddonStore', () => {
     };
 
     expect(() =>
-      store.installArchive('page-audit', PIN, archive({ 'index.js': 'export {};' }, descriptor)),
+      store.installArchive('example-addon', PIN, archive({ 'index.js': 'export {};' }, descriptor)),
     ).toThrowError(new RegExp(reason));
-    expect(existsSync(path.join(root, 'page-audit', IDENTITY))).toBe(false);
-    expect(existsSync(path.join(root, 'page-audit', `${IDENTITY}.partial`))).toBe(false);
+    expect(existsSync(path.join(root, 'example-addon', IDENTITY))).toBe(false);
+    expect(existsSync(path.join(root, 'example-addon', `${IDENTITY}.partial`))).toBe(false);
   });
 
   it('refuses an entry that would escape the add-on folder', () => {
@@ -124,26 +128,26 @@ describe('createAddonStore', () => {
     const store = createAddonStore({ root });
 
     expect(() =>
-      store.installArchive('page-audit', PIN, archive({ '../escape.js': 'x' })),
+      store.installArchive('example-addon', PIN, archive({ '../escape.js': 'x' })),
     ).toThrowError(/extract/);
-    expect(existsSync(path.join(root, 'page-audit', IDENTITY))).toBe(false);
+    expect(existsSync(path.join(root, 'example-addon', IDENTITY))).toBe(false);
   });
 
   it('does not treat another identity’s folder as the pinned one', () => {
     const root = makeStore();
-    const directory = path.join(root, 'page-audit', OTHER_IDENTITY);
+    const directory = path.join(root, 'example-addon', OTHER_IDENTITY);
     mkdirSync(directory, { recursive: true });
     writeFileSync(
       path.join(directory, 'addon.json'),
       JSON.stringify({
-        id: 'page-audit',
+        id: 'example-addon',
         identity: OTHER_IDENTITY,
         apiVersion: 1,
         entry: 'index.js',
       }),
     );
 
-    expect(createAddonStore({ root }).readInstalled('page-audit', PIN)).toBeUndefined();
+    expect(createAddonStore({ root }).readInstalled('example-addon', PIN)).toBeUndefined();
   });
 
   it('treats a malformed descriptor as "not an add-on folder"', () => {

@@ -16,6 +16,7 @@ export * from './updates-ipc';
 export * from './agent-chat-ipc';
 export * from './skillInvocation';
 export * from './skills';
+export * from './addons';
 export * from './memos';
 export * from './contracts';
 export * from './tools';

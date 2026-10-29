@@ -3,8 +3,8 @@
  *
  * Add-ons are their own npm packages (not workspace members), because their
  * dependencies must NOT be in the application's `package.json`: electron-builder
- * packages the app's dependencies, and the whole point is that Lighthouse and
- * Puppeteer are downloaded on first use instead.
+ * packages the app's dependencies, and the whole point is that an add-on's own
+ * libraries are downloaded on first use instead.
  *
  * Runs from `postinstall`, so a plain `npm install` / `npm ci` is enough. A
  * build that passes `--ignore-scripts` (the run-from-source scripts do) must call

@@ -1,9 +1,8 @@
-import type { AgentFetch } from '../../shared';
+import type { AddonPin, AddonPins, AgentFetch } from '../../shared';
 import { type Result, err, ok } from '../../shared';
 import type { Logger } from '../logger';
 import { ArchiveDownloadError } from '../updates/download';
 import { type AddonSource, archiveFor, downloadAddonArchive, readAddonCatalog } from './downloader';
-import { type AddonPin, type AddonPins } from './pins';
 import {
   AddonInstallError,
   readAddonDescriptor,

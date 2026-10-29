@@ -15,8 +15,8 @@ import { createScratchDirs, type ScratchDirs } from '../support/e2e/profile';
  *
  * The probe drives the real manager in main (`tests/support/e2e/addons.ts`).
  * The fake agent scripts a tool call's outcome and never runs a real executor,
- * so a chat turn cannot reach an installed add-on - a real Lighthouse audit
- * needs the live suite. What is proven here is the download path itself, which
+ * so a chat turn cannot reach an installed add-on - running one for real needs
+ * the live suite. What is proven here is the download path itself, which
  * is where the failure modes are: the hash, the folder, the atomic rename.
  *
  * Run against the BUILT app:
@@ -27,8 +27,6 @@ import { createScratchDirs, type ScratchDirs } from '../support/e2e/profile';
 const scratchBase = path.resolve(__dirname, '../../test-results', 'addon-download-scratch');
 const fixtureRoot = path.resolve(__dirname, '../../test-results', 'addon-download-fixture');
 
-const PAGE_AUDIT = 'page-audit';
-
 /**
  * The identity the built app pins - read from the generated file, never typed
  * here: a fixture that invented one could not be installed, and one that
@@ -36,25 +34,37 @@ const PAGE_AUDIT = 'page-audit';
  */
 function pinnedIdentity(id: string): string {
   const pins = JSON.parse(
-    readFileSync(path.resolve(__dirname, '../../src/main/addons/pins.json'), 'utf8'),
+    readFileSync(path.resolve(__dirname, '../../src/shared/addons/pins.json'), 'utf8'),
   ) as Record<string, { readonly identity: string }>;
   const identity = pins[id]?.identity;
   if (identity === undefined) throw new Error(`pins.json names no ${id} identity`);
   return identity;
 }
 
-const IDENTITY = pinnedIdentity(PAGE_AUDIT);
+/** The first add-on this build pins; the spec skips when there is none. */
+function pinnedAddonId(): string | undefined {
+  const pins = JSON.parse(
+    readFileSync(path.resolve(__dirname, '../../src/shared/addons/pins.json'), 'utf8'),
+  ) as Record<string, unknown>;
+  return Object.keys(pins).sort()[0];
+}
+
+const ADDON_ID = pinnedAddonId() ?? '';
+
+test.skip(ADDON_ID === '', 'this build pins no add-on');
+
+const IDENTITY = ADDON_ID === '' ? '' : pinnedIdentity(ADDON_ID);
 
 /**
- * Writes a catalogue and one archive for the page-audit add-on: the files the
- * build produced (declared by the caller) plus a matching `addon.json`.
+ * Writes a catalogue and one archive for the pinned add-on: the files the build
+ * produced (declared by the caller) plus a matching `addon.json`.
  */
 function publish(options: { readonly corrupt?: boolean } = {}): string {
   mkdirSync(fixtureRoot, { recursive: true });
   const files: Record<string, Uint8Array> = {
     'addon.json': strToU8(
       JSON.stringify({
-        id: PAGE_AUDIT,
+        id: ADDON_ID,
         identity: IDENTITY,
         apiVersion: 1,
         entry: 'index.js',
@@ -64,7 +74,7 @@ function publish(options: { readonly corrupt?: boolean } = {}): string {
       'export function createPageAuditRunner() { return () => Promise.resolve({ kind: "no_page" }); }',
     ),
   };
-  const file = `${PAGE_AUDIT}-${IDENTITY}-any.zip`;
+  const file = `${ADDON_ID}-${IDENTITY}-any.zip`;
   const bytes = zipSync(files);
   // A corrupt download: the catalogue's hash is the good archive's, the file on
   // disk is not - exactly what a truncated or tampered transfer looks like.
@@ -76,7 +86,7 @@ function publish(options: { readonly corrupt?: boolean } = {}): string {
     path.join(fixtureRoot, 'addons.json'),
     JSON.stringify({
       addons: {
-        [PAGE_AUDIT]: {
+        [ADDON_ID]: {
           [IDENTITY]: {
             platforms: {
               any: {
@@ -107,12 +117,12 @@ test.describe('add-ons', () => {
     const source = publish();
     const { app, dirs } = await launch({ EDAISY_ADDON_SOURCE: source });
     try {
-      const result = await ensureAddon(app, PAGE_AUDIT);
+      const result = await ensureAddon(app, ADDON_ID);
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.dir).toBe(
-        path.join(dirs.localAppData, 'etoolbox-daisy', 'addons', PAGE_AUDIT, IDENTITY),
+        path.join(dirs.localAppData, 'etoolbox-daisy', 'addons', ADDON_ID, IDENTITY),
       );
       expect(result.identity).toBe(IDENTITY);
       expect(result.apiVersion).toBe(1);
@@ -133,11 +143,11 @@ test.describe('add-ons', () => {
     const source = publish({ corrupt: true });
     const { app, dirs } = await launch({ EDAISY_ADDON_SOURCE: source });
     try {
-      const result = await ensureAddon(app, PAGE_AUDIT);
+      const result = await ensureAddon(app, ADDON_ID);
 
       expect(result).toMatchObject({ ok: false, reason: 'hash' });
       expect(
-        existsSync(path.join(dirs.localAppData, 'etoolbox-daisy', 'addons', PAGE_AUDIT, IDENTITY)),
+        existsSync(path.join(dirs.localAppData, 'etoolbox-daisy', 'addons', ADDON_ID, IDENTITY)),
       ).toBe(false);
     } finally {
       await app.close();
@@ -148,14 +158,14 @@ test.describe('add-ons', () => {
     test.setTimeout(120_000);
     const { app, dirs } = await launch({});
     try {
-      const result = await ensureAddon(app, PAGE_AUDIT);
+      const result = await ensureAddon(app, ADDON_ID);
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
-      // `out/addons/page-audit` - the copy `npm run build` produced, not
-      // anything under the scratch technical folder.
-      expect(result.dir).toBe(path.resolve(__dirname, '../../out', 'addons', PAGE_AUDIT));
-      expect(existsSync(path.join(dirs.localAppData, 'etoolbox-daisy', 'addons', PAGE_AUDIT))).toBe(
+      // `out/addons/<id>` - the copy `npm run build` produced, not anything
+      // under the scratch technical folder.
+      expect(result.dir).toBe(path.resolve(__dirname, '../../out', 'addons', ADDON_ID));
+      expect(existsSync(path.join(dirs.localAppData, 'etoolbox-daisy', 'addons', ADDON_ID))).toBe(
         false,
       );
     } finally {

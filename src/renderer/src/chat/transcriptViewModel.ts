@@ -1,6 +1,7 @@
 import {
   type InterruptionReason,
   type RequiredAction,
+  addonPins,
   readLeadingSkillToken,
 } from '../../../shared';
 import type { ToolCallStatus } from './transcriptStore';
@@ -139,12 +140,16 @@ export function splitLeadingSkill(
 }
 
 /**
- * The bundled skills whose answer is a deterministic, application-rendered
- * table. They are the fallback of the table-only registry below, so a startup
- * replay that runs before the skill list has loaded still suppresses their prose.
+ * The skills whose answer is a deterministic, application-rendered table. They
+ * are the fallback of the table-only registry below, so a startup replay that
+ * runs before the skill list has loaded still suppresses their prose. The
+ * application's own are named here; an add-on's come from the pins, because the
+ * renderer must not name a skill an add-on owns.
  */
 const BUNDLED_TABLE_ONLY_SKILLS: readonly string[] = [
-  'check-page',
+  ...Object.values(addonPins).flatMap((pin) =>
+    pin.contributions.skills.filter((skill) => skill.tableOnly).map((skill) => skill.name),
+  ),
   'search',
   'semantic-search',
   'search-page',
@@ -182,7 +187,7 @@ export function isTableOnlySkill(name: string): boolean {
   return tableOnlySkills.has(name);
 }
 
-/** Whether `prompt` invokes a table-only skill (`/search`, `/lighthouse-check`, ...). */
+/** Whether `prompt` invokes a table-only skill (`/search`, or one the pins flag). */
 export function isDeterministicTablePrompt(prompt: string): boolean {
   const token = readLeadingSkillToken(prompt);
   return token !== undefined && isTableOnlySkill(token.name);

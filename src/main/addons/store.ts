@@ -1,13 +1,13 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { unzipSync } from 'fflate';
+import type { AddonPin } from '../../shared';
 import {
   ADDON_DESCRIPTOR_FILE,
   addonDescriptorSchema,
   isSafeRelativePath,
   type AddonDescriptor,
 } from './manifest';
-import type { AddonPin } from './pins';
 
 /**
  * Where add-ons live and how one is installed.

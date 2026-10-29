@@ -109,7 +109,7 @@ export const DIAGNOSTIC_CODES = [
   'SKILLS_RELOAD_FAILED',
   'ADDON_INSTALLED',
   'ADDON_FAILED',
-  'PAGE_AUDIT_FAILED',
+  'ADDON_RUNTIME_FAILED',
   'RULE_REJECTED',
   'RULES_IPC_SENDER_REJECTED',
   'RULES_FOLDER_OPEN_FAILED',
@@ -264,6 +264,8 @@ export interface LogFields {
   readonly reason?: LogReason;
   /** Whether the request was routed through a configured proxy. */
   readonly proxied?: boolean;
+  /** Which add-on a generic add-on event concerns (its pins id). */
+  readonly addonId?: string;
   readonly ids?: LogIds;
   readonly url?: LoggableUrl;
 }
@@ -310,6 +312,10 @@ const logFieldsValidationSchema = z
     outcome: z.enum(LOG_OUTCOMES).optional(),
     reason: z.enum(LOG_REASONS).optional(),
     proxied: z.boolean().optional(),
+    addonId: z
+      .string()
+      .regex(/^[a-z][a-z0-9-]{0,63}$/)
+      .optional(),
     ids: logIdsSchema.optional(),
     url: loggableUrlValidationSchema.optional(),
   })
@@ -330,6 +336,7 @@ function buildRecord(
   if (fields.outcome !== undefined) record['outcome'] = fields.outcome;
   if (fields.reason !== undefined) record['reason'] = fields.reason;
   if (fields.proxied !== undefined) record['proxied'] = fields.proxied;
+  if (fields.addonId !== undefined) record['addonId'] = fields.addonId;
   if (fields.ids !== undefined) {
     const ids: Record<string, string> = {};
     if (fields.ids.requestId !== undefined) ids['requestId'] = fields.ids.requestId;

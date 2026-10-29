@@ -1,17 +1,24 @@
 import { existsSync } from 'node:fs';
-import type { AppSettings } from '../../shared';
+import { addonPins, type AppSettings } from '../../shared';
 import type { Logger } from '../logger';
 import type { SecretStore } from '../secretStore';
 import { readUpdateBuildInfo } from '../updates/composition';
 import { resolveFolderUrl } from '../updates/manifest';
 import { createUpdateFetch } from '../updates/proxy';
+import { createAddonHost, type AddonHostDeps } from './addonHost';
 import { resolveDevAddonDirectory } from './devSource';
 import type { AddonSource } from './downloader';
-import { addonPins } from './pins';
 import { createAddonManager, type AddonManager } from './manager';
+import { createAddonLoader, type AddonLoader } from './loader';
 import { createAddonStore } from './store';
 
-export { createPageAuditCapability, type PageAuditAddonRuntimeDeps } from './pageAudit';
+export { createAddonHost, addonPartitionName, type AddonHostHandle } from './addonHost';
+export {
+  createAddonLoader,
+  type AddonLoadFailure,
+  type AddonLoadFailureKind,
+  type AddonLoader,
+} from './loader';
 export type { AddonFailure, AddonManager } from './manager';
 export { createAddonTestProbe, TEST_ADDONS_GLOBAL_KEY, type AddonTestProbe } from './testProbe';
 
@@ -79,5 +86,28 @@ export function createAppAddons(options: AppAddonsOptions): AddonManager {
       return { sources, fetch };
     },
     logger: options.logger,
+  });
+}
+
+export interface AppAddonLoaderOptions extends AddonHostDeps {
+  readonly manager: AddonManager;
+  readonly logger: Pick<Logger, 'warn'>;
+}
+
+/**
+ * The loader this build uses: one generic host per add-on id, created on first
+ * use, and one load per add-on shared by every tool and skill it contributes.
+ */
+export function createAppAddonLoader(options: AppAddonLoaderOptions): AddonLoader {
+  return createAddonLoader({
+    manager: options.manager,
+    pins: addonPins,
+    createHost: (id) =>
+      createAddonHost(id, {
+        paneSession: options.paneSession,
+        currentUrl: options.currentUrl,
+        isConfiguredOrigin: options.isConfiguredOrigin,
+        logger: options.logger,
+      }),
   });
 }

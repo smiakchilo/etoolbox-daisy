@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addonPins,
   agentEventSchema,
   chatIdSchema,
   MEMO_REFLECTION_TOOL_NAME,
@@ -269,17 +270,23 @@ describe('createTranscriptStore', () => {
       ]);
     });
 
-    it("hides a page_audit report turn's prose - the report is the answer", () => {
+    it("hides a report turn's prose - the report is the answer", () => {
+      // The report tool the pins declare: its result paints the answer itself.
+      const reportTool = Object.values(addonPins)
+        .flatMap((pin) => pin.contributions.tools)
+        .find((tool) => tool.presentation === 'report')?.name;
+      // A build with no pinned report tool has no such turn to replay.
+      if (reportTool === undefined) return;
       const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, '/check-page');
+      store.applyUserPrompt(turnId, '/search');
       store.markTableOnlyTurn(turnId);
-      store.applyEvent(toolRequested(0, 'page_audit'));
+      store.applyEvent(toolRequested(0, reportTool));
       store.applyEvent(toolApproved(1));
       store.applyEvent(toolResultSucceeded(2));
       store.applyEvent(messageStarted(3));
       store.applyEvent(completed(4, 'No response.'));
 
-      // The `page_audit` report (presentation 'report') is the turn's answer, so
+      // The report (presentation 'report') is the turn's answer, so
       // the model's own "No response." prose is not painted.
       expect(store.items()).toEqual([
         { kind: 'userPrompt', turnId },
@@ -288,13 +295,13 @@ describe('createTranscriptStore', () => {
     });
 
     it('keeps the only output of a table-only turn that produced no table', () => {
-      // Measured 2026-10-26: the first `/check-page` after a launch answered with
+      // Measured 2026-10-26: the first `/name` of a session answered with
       // one prose message and called no tool. Hiding that prose left the reader
       // with a turn that showed nothing at all - the pane went from "Thinking"
       // straight back to an empty transcript, indistinguishable from a broken
       // skill or add-on.
       const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, '/check-page');
+      store.applyUserPrompt(turnId, '/search');
       store.markTableOnlyTurn(turnId);
       store.applyEvent(messageStarted(0));
       store.applyEvent(delta(1, 'Understood.'));
@@ -318,7 +325,7 @@ describe('createTranscriptStore', () => {
 
     it('keeps the prose when a table-only turn settles a billet tool but no table', () => {
       const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, '/check-page');
+      store.applyUserPrompt(turnId, '/search');
       store.markTableOnlyTurn(turnId);
       store.applyEvent(toolRequested(0, 'aem_get_json'));
       store.applyEvent(toolApproved(1));
@@ -447,12 +454,12 @@ describe('createTranscriptStore', () => {
     });
 
     it('suppresses the prose of a custom skill the skill list flags as table-only', () => {
-      setTableOnlySkills([{ name: 'lighthouse-check', tableOnly: true }]);
+      setTableOnlySkills([{ name: 'demo-table', tableOnly: true }]);
       try {
         const store = createTranscriptStore();
         store.applyUserPrompt(turnId, 'audit this page');
-        store.applyEvent(skillRequested(0, 'lighthouse-check'));
-        store.applyEvent(modelSkillResult(1, 'lighthouse-check'));
+        store.applyEvent(skillRequested(0, 'demo-table'));
+        store.applyEvent(modelSkillResult(1, 'demo-table'));
         store.applyEvent(messageStarted(2));
         store.applyEvent(delta(3, 'Running the audit.'));
         for (const event of tableLanded(4)) store.applyEvent(event);

@@ -111,10 +111,11 @@ describe('resolveSkillPrompt', () => {
     ['search', { name: 'search', body: 'SEARCH-BODY', files: [] }],
     ['query-results', { name: 'query-results', body: 'RESULTS-BODY', files: [] }],
   ]);
-  const lookup = (name: string): SkillActivation | undefined => activations.get(name);
+  const lookup = (name: string): Promise<SkillActivation | undefined> =>
+    Promise.resolve(activations.get(name));
 
-  it('inlines the activation, the already-loaded note and the framed input', () => {
-    const resolution = resolveSkillPrompt('/search what tool?', lookup);
+  it('inlines the activation, the already-loaded note and the framed input', async () => {
+    const resolution = await resolveSkillPrompt('/search what tool?', lookup);
     const search = activations.get('search') as SkillActivation;
     expect(resolution.activatedSkill).toBe('search');
     expect(resolution.modelPrompt).toContain(renderSkillActivation(search));
@@ -122,21 +123,21 @@ describe('resolveSkillPrompt', () => {
     expect(resolution.modelPrompt.trimEnd().endsWith('what tool?')).toBe(true);
   });
 
-  it('leaves an unknown leading reference untouched', () => {
-    expect(resolveSkillPrompt('/content/wknd/us/en', lookup)).toEqual({
+  it('leaves an unknown leading reference untouched', async () => {
+    expect(await resolveSkillPrompt('/content/wknd/us/en', lookup)).toEqual({
       modelPrompt: '/content/wknd/us/en',
     });
   });
 
-  it('carries a bare search term through as this skill input (the /search Waldo case)', () => {
-    const { modelPrompt } = resolveSkillPrompt('/search Waldo', lookup);
+  it('carries a bare search term through as this skill input (the /search Waldo case)', async () => {
+    const { modelPrompt } = await resolveSkillPrompt('/search Waldo', lookup);
     expect(modelPrompt.trimEnd().endsWith('Waldo')).toBe(true);
     // The literal token is consumed, never shown to the model as a path to read.
     expect(modelPrompt).not.toContain('/search');
   });
 
-  it('asks the model to run the skill when the user typed only the name', () => {
-    const { modelPrompt, activatedSkill } = resolveSkillPrompt('/query-results', lookup);
+  it('asks the model to run the skill when the user typed only the name', async () => {
+    const { modelPrompt, activatedSkill } = await resolveSkillPrompt('/query-results', lookup);
     expect(activatedSkill).toBe('query-results');
     // The activation and the already-loaded note come first, and a directive to
     // run the procedure follows them - without one the model can answer with an
@@ -150,20 +151,20 @@ describe('resolveSkillPrompt', () => {
     expect(modelPrompt).not.toContain('/query-results');
   });
 
-  it('leaves ordinary text untouched', () => {
-    expect(resolveSkillPrompt('what is on this page?', lookup)).toEqual({
+  it('leaves ordinary text untouched', async () => {
+    expect(await resolveSkillPrompt('what is on this page?', lookup)).toEqual({
       modelPrompt: 'what is on this page?',
     });
   });
 
-  it('leaves a known-looking reference untouched when the skill cannot be loaded', () => {
-    expect(resolveSkillPrompt('/search hi', () => undefined)).toEqual({
+  it('leaves a known-looking reference untouched when the skill cannot be loaded', async () => {
+    expect(await resolveSkillPrompt('/search hi', () => Promise.resolve(undefined))).toEqual({
       modelPrompt: '/search hi',
     });
   });
 
-  it('carries the skill memos inside the activation, after the body', () => {
-    const { modelPrompt } = resolveSkillPrompt('/search Waldo', lookup, '  SKILL-MEMOS  ');
+  it('carries the skill memos inside the activation, after the body', async () => {
+    const { modelPrompt } = await resolveSkillPrompt('/search Waldo', lookup, '  SKILL-MEMOS  ');
     const body = modelPrompt.indexOf('SEARCH-BODY');
     const memos = modelPrompt.indexOf('SKILL-MEMOS');
     expect(body).toBeGreaterThanOrEqual(0);

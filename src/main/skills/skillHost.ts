@@ -68,6 +68,12 @@ const SCRIPT_FAILURE_CODES: Readonly<
 
 export interface SkillHostOptions {
   readonly store: SkillStore;
+  /**
+   * Makes sure the add-on carrying `name` is installed and its skills are read,
+   * or answers why it is not. Absent means this build has no add-ons; a
+   * contributed skill then simply fails as `NOT_FOUND`.
+   */
+  readonly prepareSkill?: (name: string) => Promise<SkillOutcome<void>>;
   /** The sandbox; injected so tests need no WASM. Defaults to the real runner, loaded on first use. */
   readonly runScript?: (request: ScriptRunRequest) => Promise<ScriptRunResult>;
   /** Told of a script that did not complete, for the diagnostics log. */
@@ -225,18 +231,43 @@ export function createSkillHost(options: SkillHostOptions): SkillHost {
     return (await import('./sandbox/scriptRunner')).runSkillScript(request);
   }
 
+  /**
+   * Resolves a skill, installing the add-on that carries it on first use. A
+   * contributed skill's body is not in the application; reading it means
+   * downloading the add-on, which is why nothing else does.
+   */
+  async function resolve(name: string): Promise<SkillOutcome<LoadedSkill>> {
+    const prepare = options.prepareSkill;
+    if (prepare !== undefined) {
+      const ready = await prepare(name);
+      if (!ready.ok) return err(ready.error);
+    }
+    const skill = store.get(name);
+    if (skill === undefined) return notFound(name);
+    if (skill.addonId !== undefined && skill.body === '' && skill.directory === '') {
+      // The add-on installed, but its folder does not carry this skill.
+      return err({
+        code: 'NOT_FOUND',
+        message: `The add-on that carries "${name}" does not provide it.`,
+      });
+    }
+    return ok(skill);
+  }
+
   return {
     list: () => store.list(),
 
-    activate(name) {
-      const skill = store.get(name);
-      if (skill === undefined) return notFound(name);
+    async activate(name) {
+      const target = await resolve(name);
+      if (!target.ok) return err(target.error);
+      const skill = target.value;
       return ok({ name: skill.summary.name, body: skill.body, files: skill.files });
     },
 
     async readResource(request: SkillResourceRequest): Promise<SkillOutcome<SkillResource>> {
-      const skill = store.get(request.skill);
-      if (skill === undefined) return notFound(request.skill);
+      const target = await resolve(request.skill);
+      if (!target.ok) return err(target.error);
+      const skill = target.value;
       const startLine = request.startLine ?? 1;
       if (!Number.isInteger(startLine) || startLine < 1) {
         return err({
@@ -284,8 +315,9 @@ export function createSkillHost(options: SkillHostOptions): SkillHost {
   async function runScriptNow(
     request: SkillScriptRequest,
   ): Promise<SkillOutcome<SkillScriptResult>> {
-    const skill = store.get(request.skill);
-    if (skill === undefined) return notFound(request.skill);
+    const target = await resolve(request.skill);
+    if (!target.ok) return err(target.error);
+    const skill = target.value;
     const normalised = normaliseSkillRelativePath(request.script);
     if ('reason' in normalised) {
       return err({ code: 'INVALID_ARGUMENT', message: normalised.reason });

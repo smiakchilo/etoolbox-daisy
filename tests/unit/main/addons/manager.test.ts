@@ -23,10 +23,10 @@ afterEach(() => scratch.cleanup());
 
 const IDENTITY = '0123456789abcdef';
 const OTHER_IDENTITY = 'fedcba9876543210';
-const PIN = { identity: IDENTITY, apiVersion: 1 };
+const PIN = { identity: IDENTITY, apiVersion: 1, contributions: { tools: [], skills: [] } };
 
 const JS_DESCRIPTOR: AddonDescriptor = {
-  id: 'page-audit',
+  id: 'example-addon',
   identity: IDENTITY,
   apiVersion: 1,
   entry: 'index.js',
@@ -35,7 +35,7 @@ const JS_DESCRIPTOR: AddonDescriptor = {
 function addonZip(descriptor: AddonDescriptor = JS_DESCRIPTOR): Uint8Array {
   return zipSync({
     'addon.json': strToU8(JSON.stringify(descriptor)),
-    'index.js': strToU8('export const createPageAuditRunner = () => undefined;'),
+    'index.js': strToU8('export const addon = { apiVersion: 1, activate: () => ({ tools: {} }) };'),
   });
 }
 
@@ -45,14 +45,14 @@ function publish(
   options: { readonly descriptor?: AddonDescriptor; readonly wrongHash?: boolean } = {},
 ): void {
   const bytes = addonZip(options.descriptor);
-  const file = `page-audit-${IDENTITY}-any.zip`;
+  const file = `example-addon-${IDENTITY}-any.zip`;
   writeFileSync(path.join(directory, file), bytes);
   const sha512 = createHash('sha512').update(bytes).digest('hex');
   writeFileSync(
     path.join(directory, ADDON_CATALOG_FILE),
     JSON.stringify({
       addons: {
-        'page-audit': {
+        'example-addon': {
           [IDENTITY]: {
             platforms: {
               any: {
@@ -77,7 +77,7 @@ function harness(overrides: Partial<AddonManagerOptions> = {}) {
   );
   const manager = createAddonManager({
     store: createAddonStore({ root: addonsRoot }),
-    pins: { 'page-audit': PIN },
+    pins: { 'example-addon': PIN },
     platformKey: 'win32-x64',
     devDirectory: () => undefined,
     readSources,
@@ -93,22 +93,22 @@ describe('ensure', () => {
     publish(sourceDirectory);
     const progress: number[] = [];
 
-    const ensured = await manager.ensure('page-audit', {
+    const ensured = await manager.ensure('example-addon', {
       onProgress: (fraction) => progress.push(fraction),
     });
 
     expect(ensured.ok).toBe(true);
     if (!ensured.ok) return;
-    expect(ensured.value.dir).toBe(path.join(addonsRoot, 'page-audit', IDENTITY));
+    expect(ensured.value.dir).toBe(path.join(addonsRoot, 'example-addon', IDENTITY));
     expect(progress.at(-1)).toBe(1);
   });
 
   it('answers the installed pinned identity on the next call without a catalogue read', async () => {
     const { manager, sourceDirectory, readSources } = harness();
     publish(sourceDirectory);
-    expect((await manager.ensure('page-audit')).ok).toBe(true);
+    expect((await manager.ensure('example-addon')).ok).toBe(true);
 
-    const again = await manager.ensure('page-audit');
+    const again = await manager.ensure('example-addon');
 
     expect(again.ok).toBe(true);
     expect(readSources).toHaveBeenCalledTimes(1);
@@ -119,8 +119,8 @@ describe('ensure', () => {
     publish(sourceDirectory);
 
     const [first, second] = await Promise.all([
-      manager.ensure('page-audit'),
-      manager.ensure('page-audit'),
+      manager.ensure('example-addon'),
+      manager.ensure('example-addon'),
     ]);
 
     expect(first.ok).toBe(true);
@@ -132,23 +132,23 @@ describe('ensure', () => {
     const { manager, addonsRoot, sourceDirectory } = harness();
     publish(sourceDirectory, { wrongHash: true });
 
-    expect(await manager.ensure('page-audit')).toMatchObject({
+    expect(await manager.ensure('example-addon')).toMatchObject({
       ok: false,
       error: { reason: 'hash' },
     });
     // A hash failure is not remembered: a retry tries again (and fails again).
-    expect(await manager.ensure('page-audit')).toMatchObject({
+    expect(await manager.ensure('example-addon')).toMatchObject({
       ok: false,
       error: { reason: 'hash' },
     });
-    expect(existsSync(path.join(addonsRoot, 'page-audit', IDENTITY))).toBe(false);
+    expect(existsSync(path.join(addonsRoot, 'example-addon', IDENTITY))).toBe(false);
   });
 
   it('refuses an add-on built against another API version', async () => {
     const { manager, sourceDirectory } = harness();
     publish(sourceDirectory, { descriptor: { ...JS_DESCRIPTOR, apiVersion: 2 } });
 
-    expect(await manager.ensure('page-audit')).toMatchObject({
+    expect(await manager.ensure('example-addon')).toMatchObject({
       ok: false,
       error: { reason: 'apiVersion' },
     });
@@ -158,7 +158,7 @@ describe('ensure', () => {
     const { manager, sourceDirectory } = harness();
     publish(sourceDirectory, { descriptor: { ...JS_DESCRIPTOR, identity: OTHER_IDENTITY } });
 
-    expect(await manager.ensure('page-audit')).toMatchObject({
+    expect(await manager.ensure('example-addon')).toMatchObject({
       ok: false,
       error: { reason: 'identity' },
     });
@@ -167,7 +167,7 @@ describe('ensure', () => {
   it('reports offline when no catalogue can be read', async () => {
     const { manager } = harness();
 
-    expect(await manager.ensure('page-audit')).toMatchObject({
+    expect(await manager.ensure('example-addon')).toMatchObject({
       ok: false,
       error: { reason: 'offline' },
     });
@@ -183,19 +183,19 @@ describe('ensure', () => {
   });
 
   it('uses the development copy and never reads a catalogue', async () => {
-    const devDirectory = path.join(path.join(scratch.create(), 'dev'), 'page-audit');
+    const devDirectory = path.join(path.join(scratch.create(), 'dev'), 'example-addon');
     mkdirSync(devDirectory, { recursive: true });
     writeFileSync(path.join(devDirectory, 'addon.json'), JSON.stringify(JS_DESCRIPTOR));
     const { manager, readSources } = harness({ devDirectory: () => devDirectory });
 
-    const ensured = await manager.ensure('page-audit');
+    const ensured = await manager.ensure('example-addon');
 
     expect(ensured).toMatchObject({ ok: true, value: { dir: devDirectory } });
     expect(readSources).not.toHaveBeenCalled();
   });
 
   it('fails a stale development copy rather than downloading behind it', async () => {
-    const devDirectory = path.join(path.join(scratch.create(), 'dev'), 'page-audit');
+    const devDirectory = path.join(path.join(scratch.create(), 'dev'), 'example-addon');
     mkdirSync(devDirectory, { recursive: true });
     writeFileSync(
       path.join(devDirectory, 'addon.json'),
@@ -203,7 +203,7 @@ describe('ensure', () => {
     );
     const { manager, readSources } = harness({ devDirectory: () => devDirectory });
 
-    expect(await manager.ensure('page-audit')).toMatchObject({
+    expect(await manager.ensure('example-addon')).toMatchObject({
       ok: false,
       error: { reason: 'identity' },
     });
@@ -231,10 +231,10 @@ describe('createAppAddons', () => {
       env: { EDAISY_ADDON_SOURCE: scratch.create() },
     });
 
-    await expect(packaged.ensure('page-audit')).resolves.toMatchObject({
+    await expect(packaged.ensure('example-addon')).resolves.toMatchObject({
       ok: false,
       error: { reason: 'offline' },
     });
-    expect(existsSync(path.join(addonsRoot, 'page-audit'))).toBe(false);
+    expect(existsSync(path.join(addonsRoot, 'example-addon'))).toBe(false);
   });
 });

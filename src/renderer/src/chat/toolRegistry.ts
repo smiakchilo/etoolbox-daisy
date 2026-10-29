@@ -1,13 +1,15 @@
 import type { JsonValue } from '../../../shared';
 import {
-  describeGenericArgs,
   type ToolCallDetails,
   type ToolConversationItem,
   type ToolPresentation,
   type ToolRendererModule,
   type ToolReportMessage,
   type ToolTableMessage,
+  addonPins,
+  describeGenericArgs,
 } from '../../../shared';
+import { contributeToolRenderers } from './contributedTools';
 
 export type { ToolCallDetails, ToolCallParameter } from '../../../shared';
 
@@ -58,6 +60,7 @@ function isRendererModule(value: unknown): value is ToolRendererModule {
 
 export function createToolRendererRegistry(
   modules: Readonly<Record<string, unknown>>,
+  contributed: readonly ToolRendererModule[] = [],
 ): ToolRendererRegistry {
   const byName = new Map<string, ToolRendererModule>();
   for (const key of Object.keys(modules).sort()) {
@@ -65,6 +68,11 @@ export function createToolRendererRegistry(
     if (isRendererModule(candidate) && !byName.has(candidate.toolName)) {
       byName.set(candidate.toolName, candidate);
     }
+  }
+  // An add-on's tools render from the pins; a folder renderer of the same name
+  // would be a build fault, so it can only ever be absent here.
+  for (const candidate of contributed) {
+    if (!byName.has(candidate.toolName)) byName.set(candidate.toolName, candidate);
   }
   return {
     toolNames: [...byName.keys()],
@@ -112,4 +120,5 @@ export function createToolRendererRegistry(
 
 export const toolRendererRegistry: ToolRendererRegistry = createToolRendererRegistry(
   import.meta.glob('../../../tools/*/renderer/index.ts', { eager: true }),
+  contributeToolRenderers(addonPins),
 );

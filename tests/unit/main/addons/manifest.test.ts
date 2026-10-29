@@ -17,11 +17,11 @@ import {
 function catalogue(): unknown {
   return {
     addons: {
-      'page-audit': {
+      'example-addon': {
         '0123456789abcdef': {
           platforms: {
             [ADDON_PLATFORM_ANY]: {
-              file: 'page-audit-0123456789abcdef-any.zip',
+              file: 'example-addon-0123456789abcdef-any.zip',
               sha512: 'a'.repeat(128),
               size: 1024,
             },
@@ -44,7 +44,7 @@ describe('addonCatalogSchema', () => {
     };
     withExtra.somethingNew = true;
     const platform =
-      withExtra.addons['page-audit']?.['0123456789abcdef']?.platforms[ADDON_PLATFORM_ANY];
+      withExtra.addons['example-addon']?.['0123456789abcdef']?.platforms[ADDON_PLATFORM_ANY];
     if (platform !== undefined) {
       Reflect.set(platform, 'notes', 'a newer field');
     }
@@ -62,7 +62,7 @@ describe('addonCatalogSchema', () => {
       addons: Record<string, Record<string, { platforms: Record<string, object> }>>;
     };
     Object.assign(
-      broken.addons['page-audit']?.['0123456789abcdef']?.platforms[ADDON_PLATFORM_ANY] ?? {},
+      broken.addons['example-addon']?.['0123456789abcdef']?.platforms[ADDON_PLATFORM_ANY] ?? {},
       patch,
     );
 
@@ -73,8 +73,8 @@ describe('addonCatalogSchema', () => {
     const broken = catalogue() as {
       addons: Record<string, Record<string, unknown>>;
     };
-    broken.addons['page-audit'] = {
-      latest: broken.addons['page-audit']?.['0123456789abcdef'],
+    broken.addons['example-addon'] = {
+      latest: broken.addons['example-addon']?.['0123456789abcdef'],
     };
 
     expect(addonCatalogSchema.safeParse(broken).success).toBe(false);
@@ -83,7 +83,7 @@ describe('addonCatalogSchema', () => {
 
 describe('addonDescriptorSchema', () => {
   const js = {
-    id: 'page-audit',
+    id: 'example-addon',
     identity: '0123456789abcdef',
     apiVersion: 1,
     entry: 'index.js',

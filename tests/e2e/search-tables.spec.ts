@@ -386,7 +386,7 @@ test.describe('deterministic search tables', () => {
   });
 
   test('a table-only turn that produced no table keeps the model text instead of painting nothing', async () => {
-    // Measured 2026-10-26: the first `/check-page` of a session answered with one
+    // Measured 2026-10-26: the first `/name` of a session answered with one
     // prose message and called no tool. Hiding prose at the prompt buried the
     // turn's only output, so the pane went from "Thinking" back to an empty
     // transcript - indistinguishable from a broken skill or add-on. The prose is

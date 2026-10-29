@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  addonPins,
   agentEventSchema,
   chatIdSchema,
   messageIdSchema,
@@ -2019,42 +2020,70 @@ describe('ongoing billet placement and the expansion accordion', () => {
   });
 });
 
-describe('page_audit report presentation', () => {
-  const PAGE_AUDIT_DATA = {
+/**
+ * The report tool the pins declare (no add-on's name is written here): its
+ * result carries the generic report message under `data.report`, and the
+ * transcript paints it below the ordinary billet. A build with no pinned report
+ * tool skips these cases, as the generic specs do.
+ */
+const REPORT_TOOL = Object.values(addonPins)
+  .flatMap((pin) => pin.contributions.tools)
+  .find((tool) => tool.presentation === 'report')?.name;
+
+describe.skipIf(REPORT_TOOL === undefined)('a contributed report presentation', () => {
+  const TOOL = REPORT_TOOL ?? '';
+
+  const REPORT_DATA = {
     ok: true,
-    operation: 'page_audit',
-    url: 'https://author.example/page.html',
-    formFactor: 'desktop',
-    scores: [{ category: 'performance', score: 70 }],
-    failures: [
-      {
-        category: 'performance',
-        id: 'largest-contentful-paint',
-        title: 'Largest Contentful Paint',
-        score: 33,
-        displayValue: '3.0 s',
-        evidence: [
-          {
-            kind: 'table',
-            columns: [
-              { key: 'node', label: 'Element' },
-              { key: 'url', label: 'URL' },
-            ],
-            rows: [
-              [
-                {
-                  kind: 'selector',
-                  selector: 'h4.card__title',
-                  snippet: '<h4 class="card__title">Hi</h4>',
-                  label: 'h4',
-                },
-                { kind: 'text', value: 'https://cdn.example/x.css' },
-              ],
-            ],
-          },
+    operation: TOOL,
+    report: {
+      summary: {
+        kind: 'table',
+        columns: [
+          { key: 'category', label: 'Category' },
+          { key: 'score', label: 'Score' },
+        ],
+        rows: [
+          [
+            { kind: 'text', value: 'Performance' },
+            { kind: 'text', value: '70' },
+          ],
         ],
       },
-    ],
+      sections: [
+        {
+          title: 'Performance',
+          entries: [
+            {
+              id: 'performance:largest-contentful-paint',
+              title: 'Largest Contentful Paint',
+              score: 33,
+              displayValue: '3.0 s',
+              blocks: [
+                {
+                  kind: 'table',
+                  columns: [
+                    { key: 'node', label: 'Element' },
+                    { key: 'url', label: 'URL' },
+                  ],
+                  rows: [
+                    [
+                      {
+                        kind: 'selector',
+                        selector: 'h4.card__title',
+                        snippet: '<h4 class="card__title">Hi</h4>',
+                        label: 'h4',
+                      },
+                      { kind: 'text', value: 'https://cdn.example/x.css' },
+                    ],
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
     textResultForLlm: 'audit done',
     resultType: 'success',
   };
@@ -2064,14 +2093,14 @@ describe('page_audit report presentation', () => {
   ): ReturnType<typeof createTranscriptView> {
     const view = createTranscriptView(markdownRenderer, options);
     const store = createTranscriptStore();
-    store.applyEvent(toolRequestedWithArgs(0, 'page_audit', {}));
+    store.applyEvent(toolRequestedWithArgs(0, TOOL, {}));
     store.applyEvent(
       agentEventSchema.parse({
         type: 'tool.result',
         chatId,
         sequence: 1,
         toolCallId,
-        outcome: { ok: true, data: PAGE_AUDIT_DATA },
+        outcome: { ok: true, data: REPORT_DATA },
       }),
     );
     view.repaint(store);

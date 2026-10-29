@@ -3,6 +3,7 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   type AgentChatSkill,
+  type ContributedSkill,
   SKILL_DESCRIPTION_MAX_LENGTH,
   SKILL_NAME_PATTERN,
   type SkillCatalogueEntry,
@@ -14,11 +15,17 @@ import {
 import { parseSkillFrontMatter, splitSkillMarkdown } from './skillFrontMatter';
 
 /**
- * The one reader of skills (docs/skill-subsystem-plan.md). It reads two
+ * The one reader of skills (docs/skill-subsystem-plan.md). It reads the
  * application-fixed folders - the bundled `resources/skills` and the user's
  * `<home>/etoolbox-daisy/skills` - validates every skill folder the same way,
  * and holds the result in memory: the body, a file index and the summary. A
  * skill of the user's with a bundled skill's name replaces it.
+ *
+ * A skill an **add-on** contributes is listed from the pins without a download:
+ * only its catalogue entry is known until the add-on is installed, and its body
+ * and files are read from `<install>/skills/<name>` the first time it is used
+ * (`hydrateAddon`). Its source ranks exactly like a bundled one; a clash is a
+ * build fault, so nothing is ever replaced by one.
  *
  * Skills are read once, at startup (`load()`); a change on disk applies after a
  * restart. The store never rejects: a missing folder is an empty source and a
@@ -41,6 +48,8 @@ export interface LoadedSkill {
   readonly body: string;
   /** Every file but `SKILL.md`, sorted by path. */
   readonly files: readonly SkillFileEntry[];
+  /** The add-on that carries this skill; absent for a bundled or a user skill. */
+  readonly addonId?: string;
 }
 
 export interface SkillRejection {
@@ -49,10 +58,23 @@ export interface SkillRejection {
   readonly reason: string;
 }
 
+/** One skill an add-on's pins declare: its catalogue entry and the add-on that carries it. */
+export interface AddonSkillPin {
+  readonly addonId: string;
+  readonly skill: ContributedSkill;
+}
+
 export interface SkillStoreOptions {
   readonly bundledDirectory: string;
   /** Omitted when the user folder is not wanted (tests, the fake agent). */
   readonly userDirectory?: string;
+  /** Every pinned add-on skill, listed without downloading anything. */
+  readonly addons?: readonly AddonSkillPin[];
+  /**
+   * The installed folder of an add-on, ensured on first use. `undefined` when the
+   * add-on could not be installed (its skill stays a catalogue entry only).
+   */
+  readonly addonDirectory?: (addonId: string) => Promise<string | undefined>;
   readonly onRejected?: (rejection: SkillRejection) => void;
 }
 
@@ -73,6 +95,14 @@ export interface SkillStore {
   invocable(): readonly AgentChatSkill[];
   /** The model's catalogue: every skill that allows model invocation, with the technical description. */
   modelCatalogue(): readonly SkillCatalogueEntry[];
+  /** The add-on carrying this skill, when it is a contributed one. */
+  addonOf(name: string): string | undefined;
+  /**
+   * Reads an installed add-on's skills from its own folder, once per identity.
+   * Answers whether they are readable now; a skill the pins declared but the
+   * folder does not carry is rejected and left as a catalogue entry.
+   */
+  hydrateAddon(addonId: string): Promise<boolean>;
 }
 
 class SkillRejected extends Error {}
@@ -231,16 +261,56 @@ function summarize(snapshot: StoreSnapshot): readonly SkillSummary[] {
   return snapshot.sorted.map((skill) => skill.summary);
 }
 
+function sortSkills(skills: ReadonlyMap<string, LoadedSkill>): readonly LoadedSkill[] {
+  return [...skills.values()].sort((left, right) =>
+    left.summary.name.localeCompare(right.summary.name),
+  );
+}
+
+/**
+ * A contributed skill before its add-on is installed: the catalogue entry the
+ * pins derive from its `SKILL.md`, with no body or files yet. Reading them would
+ * mean downloading the add-on, and nothing is downloaded at startup.
+ */
+function placeholderSkill(addonId: string, skill: ContributedSkill): LoadedSkill {
+  return {
+    summary: {
+      name: skill.name,
+      description: skill.description,
+      userDescription: skill.userDescription,
+      source: 'addon',
+      userInvocable: skill.userInvocable,
+      disableModelInvocation: skill.disableModelInvocation,
+      tableOnly: skill.tableOnly,
+      hasScripts: skill.hasScripts,
+    },
+    directory: '',
+    body: '',
+    files: [],
+    addonId,
+  };
+}
+
 export function createSkillStore(options: SkillStoreOptions): SkillStore {
   let snapshot = EMPTY_SNAPSHOT;
   let inFlight: Promise<readonly SkillSummary[]> | undefined;
   let reloading: Promise<readonly SkillSummary[]> | undefined;
+  const addonSkills = options.addons ?? [];
+  const addonBySkill = new Map(addonSkills.map((pin) => [pin.skill.name, pin.addonId]));
+  /** The add-ons whose skills have been read from disk already. */
+  const hydrated = new Set<string>();
+  const hydrating = new Map<string, Promise<boolean>>();
 
   async function read(): Promise<StoreSnapshot> {
     const rejections: SkillRejection[] = [];
     const merged = new Map<string, LoadedSkill>();
     for (const skill of await readSource(options.bundledDirectory, 'bundled', rejections)) {
       merged.set(skill.summary.name, skill);
+    }
+    // A contributed skill is listed exactly like a bundled one, from the pins.
+    // Its body is read from the installed add-on the first time it is used.
+    for (const pin of addonSkills) {
+      merged.set(pin.skill.name, placeholderSkill(pin.addonId, pin.skill));
     }
     if (options.userDirectory !== undefined) {
       // A user skill replaces a bundled one of the same name; a rejected one does not.
@@ -249,10 +319,8 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
       }
     }
     for (const rejection of rejections) options.onRejected?.(rejection);
-    const sorted = [...merged.values()].sort((left, right) =>
-      left.summary.name.localeCompare(right.summary.name),
-    );
-    return { skills: merged, sorted, rejections };
+    hydrated.clear();
+    return { skills: merged, sorted: sortSkills(merged), rejections };
   }
 
   function start(): Promise<readonly SkillSummary[]> {
@@ -281,6 +349,48 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
       snapshot = loaded;
       return summarize(loaded);
     });
+  }
+
+  /**
+   * Reads one installed add-on's skills. The folder is `<install>/skills`, and
+   * each skill is validated exactly like a bundled one: the same size, count and
+   * depth limits, no links, and a real-path containment check on every read.
+   */
+  async function hydrateOnce(addonId: string): Promise<boolean> {
+    const directory = await options.addonDirectory?.(addonId);
+    if (directory === undefined) return false;
+    const root = path.join(directory, 'skills');
+    const pins = addonSkills.filter((pin) => pin.addonId === addonId);
+    const rejections: SkillRejection[] = [];
+    const updated = new Map(snapshot.skills);
+    for (const pin of pins) {
+      const name = pin.skill.name;
+      // A user skill of the same name wins; the add-on's copy is not read.
+      if (updated.get(name)?.summary.source === 'user') continue;
+      try {
+        const skill = await readSkillFolder(path.join(root, name), name, 'addon');
+        updated.set(name, { ...skill, addonId });
+      } catch (error) {
+        rejections.push({
+          folder: name,
+          source: 'addon',
+          reason:
+            error instanceof SkillRejected
+              ? error.message
+              : (error as NodeJS.ErrnoException).code === 'ENOENT'
+                ? 'The add-on does not carry this skill.'
+                : 'The skill could not be read.',
+        });
+      }
+    }
+    for (const rejection of rejections) options.onRejected?.(rejection);
+    snapshot = {
+      skills: updated,
+      sorted: sortSkills(updated),
+      rejections: [...snapshot.rejections, ...rejections],
+    };
+    hydrated.add(addonId);
+    return true;
   }
 
   return {
@@ -324,5 +434,16 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
       snapshot.sorted
         .filter((skill) => !skill.summary.disableModelInvocation)
         .map(({ summary }) => ({ name: summary.name, description: summary.description })),
+    addonOf: (name) => addonBySkill.get(name),
+    hydrateAddon(addonId) {
+      if (hydrated.has(addonId)) return Promise.resolve(true);
+      const running = hydrating.get(addonId);
+      if (running !== undefined) return running;
+      const run = hydrateOnce(addonId).catch(() => false);
+      hydrating.set(addonId, run);
+      return run.finally(() => {
+        hydrating.delete(addonId);
+      });
+    },
   };
 }

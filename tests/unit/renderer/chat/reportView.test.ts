@@ -8,7 +8,7 @@ import type { ToolReportMessage } from '../../../../src/shared';
 import { EMPTY_LINK_CONTEXT } from '../../../../src/renderer/src/chat/linkTargets';
 
 /**
- * The `page_audit` report's DOM: its collapsible rubric sections and audit
+ * A report message's DOM: its collapsible rubric sections and audit
  * entries, and the evidence blocks under them - a table with a selector link
  * and code snippet, a checklist, a node, a request tree. The accordion state is
  * applied in place by `applyReportState`, mirroring a tool-call billet.

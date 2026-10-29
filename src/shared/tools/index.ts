@@ -23,7 +23,6 @@ export * from './core/navigation';
 export * from './core/currentPage';
 export * from './core/types';
 export * from './core/domRead';
-export * from './core/pageAudit';
 export * from './core/jcrPath';
 export * from './core/search';
 export * from './core/pageFill';

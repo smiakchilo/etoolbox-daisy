@@ -73,8 +73,12 @@ export function renderSkillAlreadyLoadedNote(name: string): string {
   return `The "${name}" skill above is already loaded - do not call the \`${SKILL_TOOL_NAME}\` tool for it.`;
 }
 
-/** Finds a skill's activation by name; `undefined` when there is no such skill or it cannot be loaded. */
-export type SkillActivationLookup = (name: string) => SkillActivation | undefined;
+/**
+ * Finds a skill's activation by name; `undefined` when there is no such skill or it
+ * cannot be loaded. Asynchronous because an add-on's skill lives on a folder the
+ * application may have to download first.
+ */
+export type SkillActivationLookup = (name: string) => Promise<SkillActivation | undefined>;
 
 /** What the model reads for a prompt, and which skill (if any) that prompt loaded. */
 export interface SkillPromptResolution {
@@ -97,22 +101,22 @@ export interface SkillPromptResolution {
  * A bare `/name` needs that directive as much as the framed input does: without
  * it the activation is only background prose, and a model can answer with an
  * acknowledgement of the material instead of running the procedure (observed
- * live, 2026-10-26: the first `/check-page` of a session replied "Understood.
- * I'll follow ... in mind" and called no tool at all).
+ * live, 2026-10-26: the first `/name` of a session replied "Understood. I'll
+ * follow ... in mind" and called no tool at all).
  *
  * Everything else - no leading token, or a token naming no loadable skill - is
  * returned unchanged. The caller keeps the user's own text for display and the
  * journal; only what the model reads is rewritten. `memos` is the named
  * skill's rendered memo block (see {@link renderSkillActivation}).
  */
-export function resolveSkillPrompt(
+export async function resolveSkillPrompt(
   prompt: string,
   lookup: SkillActivationLookup,
   memos = '',
-): SkillPromptResolution {
+): Promise<SkillPromptResolution> {
   const token = readLeadingSkillToken(prompt);
   if (token === undefined) return { modelPrompt: prompt };
-  const activation = lookup(token.name);
+  const activation = await lookup(token.name);
   if (activation === undefined) return { modelPrompt: prompt };
   const parts = [
     renderSkillActivation(activation, memos),

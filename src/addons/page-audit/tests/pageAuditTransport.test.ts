@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  type DebuggerLike,
-  DebuggerTransport,
-} from '../../../../src/addons/page-audit/pageAuditTransport';
+import { type DebuggerLike, DebuggerTransport } from '../pageAuditTransport';
 
 type MessageListener = (event: unknown, method: string, params: unknown, sessionId: string) => void;
 

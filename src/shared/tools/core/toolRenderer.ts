@@ -91,11 +91,19 @@ export interface ToolTableMessage {
  * its own assistant message rather than a call line (`format_table`): the
  * transcript hides the billet and paints the returned message instead.
  * `'report'` is for a tool whose *settled* call paints a structured, sectioned
- * report message below its ordinary summary billet (`page_audit`): the billet
- * carries progress while the call runs and its one-line summary afterwards, and
- * the report holds the headings and tables the reader navigates.
+ * report message below its ordinary summary billet: the billet carries progress
+ * while the call runs and its one-line summary afterwards, and the report holds
+ * the headings and tables the reader navigates. A `'report'` result carries that
+ * message under {@link TOOL_REPORT_PAYLOAD_KEY}.
  */
 export type ToolPresentation = 'billet' | 'conversation' | 'message' | 'report';
+
+/**
+ * Where a `presentation: 'report'` result keeps the report the transcript
+ * paints (`data.report`). The tool builds it - it is the tool's own evidence -
+ * and the renderer paints it without knowing what produced it.
+ */
+export const TOOL_REPORT_PAYLOAD_KEY = 'report';
 
 // ---------------------------------------------------------------------------
 // Report presentation (a structured, sectioned assistant message)
@@ -143,7 +151,7 @@ export interface ToolReportChecklistBlock {
   readonly items: readonly { readonly label: string; readonly value: string }[];
 }
 
-/** A single element the report names (e.g. the LCP element), not inside a table. */
+/** A single element the report names (e.g. the page's largest paint element), not inside a table. */
 export interface ToolReportNodeBlock {
   readonly kind: 'node';
   readonly label?: string;
@@ -156,7 +164,7 @@ export interface ToolReportTreeNode {
   readonly url: string;
   readonly durationMs?: number;
   readonly transferBytes?: number;
-  /** The critical path Lighthouse marked as the longest. */
+  /** The path the tool marked as the longest in the tree. */
   readonly isLongest?: boolean;
   readonly children: readonly ToolReportTreeNode[];
 }
@@ -181,7 +189,7 @@ export type ToolReportBlock =
   | ToolReportTreeBlock
   | ToolReportTextBlock;
 
-/** One failed audit under a rubric heading: a second-level, accordion-collapsed entry. */
+/** One finding under a report section: a second-level, accordion-collapsed entry. */
 export interface ToolReportEntry {
   /** Stable within a report, used for the accordion (e.g. `performance:largest-contentful-paint`). */
   readonly id: string;
@@ -191,7 +199,7 @@ export interface ToolReportEntry {
   readonly blocks: readonly ToolReportBlock[];
 }
 
-/** A rubric (Performance / Accessibility / ...): a top-level, expanded-by-default heading. */
+/** A report section (a group of findings): a top-level, expanded-by-default heading. */
 export interface ToolReportSection {
   readonly title: string;
   readonly entries: readonly ToolReportEntry[];
@@ -199,11 +207,11 @@ export interface ToolReportSection {
 
 /**
  * A `presentation: 'report'` tool's settled call paints this one structured
- * message: an optional leading summary table, then one rubric section per
- * non-empty category, each holding its audits' evidence blocks.
+ * message: an optional leading summary table, then one section per non-empty
+ * group, each holding its findings' evidence blocks.
  */
 export interface ToolReportMessage {
-  /** The always-visible lead (the page_audit category score table). */
+  /** The always-visible lead: the tool's own summary table, when it has one. */
   readonly summary: ToolReportTableBlock | undefined;
   readonly sections: readonly ToolReportSection[];
 }

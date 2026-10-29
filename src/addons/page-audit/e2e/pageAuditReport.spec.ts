@@ -2,29 +2,35 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { _electron as electron, expect, test, type Page } from '@playwright/test';
-import { agentEventSchema, chatIdSchema, defaultAppSettings } from '../../src/shared';
-import { mainEntry } from '../support/e2e/app';
-import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
-import { byTestId } from '../support/selectors';
+import { mainEntry } from '../../../../tests/support/e2e/app';
+import { createLaunchProfile, writeSettings } from '../../../../tests/support/e2e/profile';
+import { byTestId } from '../../../../tests/support/selectors';
 
 /**
- * The `page_audit` report, driven against the **built** app: its rubric sections
- * and audit entries collapse and expand (the real CSS, which jsdom cannot
- * check - a `display: flex` body would otherwise stay visible when `hidden` is
- * set), the evidence is indented under the heading text, and expanding a small
- * entry after a tall one keeps the just-expanded heading on screen.
+ * The audit report, driven against the **built** app: its sections and entries
+ * collapse and expand (the real CSS, which jsdom cannot check - a
+ * `display: flex` body would otherwise stay visible when `hidden` is set), the
+ * evidence is indented under the heading text, and expanding a small entry after
+ * a tall one keeps the just-expanded heading on screen.
  *
- * The report needs a Lighthouse result, which the fake agent cannot produce, so
- * the tests seed a chat journal holding one and open it with the dev
+ * The report needs a real audit result, which the fake agent cannot produce, so
+ * the tests seed a chat journal holding one - in exactly the shape this add-on's
+ * tool returns, the report message under `data.report` - and open it with the dev
  * `!!open <chatId>` trigger (unpackaged builds only). Everything else - the
  * transcript render, the accordion state, the linkifier, the scroll - is the
  * real app.
  *
  *   npm run build
- *   npx playwright test tests/e2e/page-audit-report.spec.ts
+ *   npx playwright test src/addons/page-audit/e2e
  */
 
-const scratchBase = path.resolve(__dirname, '../../test-results', 'page-audit-report-scratch');
+// The add-on's own package.json declares `"type": "module"`, so this spec runs
+// as ESM: `import.meta.dirname` is where `__dirname` would be.
+const scratchBase = path.resolve(
+  import.meta.dirname,
+  '../../../../test-results',
+  'page-audit-report-scratch',
+);
 
 type CellValue =
   | { readonly kind: 'text'; readonly value: string }
@@ -46,9 +52,9 @@ interface SeedOptions {
   readonly tall?: boolean;
 }
 
-/** Writes a chat journal holding one `page_audit` report, and returns its chat id. */
+/** Writes a chat journal holding one audit report, and returns its chat id. */
 function seedReportJournal(home: string, options: SeedOptions = {}): string {
-  const chatId = chatIdSchema.parse(randomUUID());
+  const chatId = randomUUID();
   const sessionId = randomUUID();
   const turnId = randomUUID();
   const toolCallId = randomUUID();
@@ -111,6 +117,8 @@ function seedReportJournal(home: string, options: SeedOptions = {}): string {
     })),
   ];
 
+  // The report message the tool builds itself: one lead table, then one section
+  // per category holding its findings' evidence (see `toolRenderer.ts`).
   const report = {
     ok: true,
     operation: 'page_audit',
@@ -118,57 +126,68 @@ function seedReportJournal(home: string, options: SeedOptions = {}): string {
     formFactor: 'desktop',
     scores: [{ category: 'performance', score: 70 }],
     failures,
+    report: {
+      summary: {
+        kind: 'table',
+        columns: [
+          { key: 'category', label: 'Category' },
+          { key: 'score', label: 'Score' },
+          { key: 'status', label: 'Status', kind: 'status' },
+        ],
+        rows: [
+          [
+            { kind: 'text', value: 'Performance' },
+            { kind: 'text', value: '70' },
+            { kind: 'text', value: 'warn' },
+          ],
+        ],
+      },
+      sections: [
+        {
+          title: 'Performance',
+          entries: failures.map((failure) => ({
+            id: `${failure.category}:${failure.id}`,
+            title: failure.title,
+            score: failure.score,
+            ...('displayValue' in failure ? { displayValue: failure.displayValue } : {}),
+            blocks: failure.evidence,
+          })),
+        },
+      ],
+    },
     textResultForLlm: 'done',
     resultType: 'success',
   };
 
-  const events = [
-    agentEventSchema.parse({
-      type: 'session.state.changed',
-      chatId,
-      sequence: 0,
-      turnId,
-      state: 'sending',
-    }),
-    agentEventSchema.parse({
+  const events: readonly Record<string, unknown>[] = [
+    { type: 'session.state.changed', chatId, sequence: 0, turnId, state: 'sending' },
+    {
       type: 'tool.call.requested',
       chatId,
       sequence: 1,
       toolCallId,
       toolName: 'page_audit',
       arguments: {},
-    }),
-    agentEventSchema.parse({
+    },
+    {
       type: 'tool.result',
       chatId,
       sequence: 2,
       toolCallId,
       outcome: { ok: true, data: report },
-    }),
+    },
     // A table-only turn's model sometimes emits a bogus closing line; the app
     // must suppress it (the report is the answer).
-    agentEventSchema.parse({
-      type: 'assistant.message.started',
-      chatId,
-      sequence: 3,
-      turnId,
-      messageId: messageId,
-    }),
-    agentEventSchema.parse({
+    { type: 'assistant.message.started', chatId, sequence: 3, turnId, messageId },
+    {
       type: 'assistant.message.completed',
       chatId,
       sequence: 4,
       turnId,
-      messageId: messageId,
+      messageId,
       content: 'No response.',
-    }),
-    agentEventSchema.parse({
-      type: 'session.state.changed',
-      chatId,
-      sequence: 5,
-      turnId,
-      state: 'idle',
-    }),
+    },
+    { type: 'session.state.changed', chatId, sequence: 5, turnId, state: 'idle' },
   ];
   const records = [
     { recordType: 'header', schemaVersion: 1, chatId, sessionId, startedAt: at },
@@ -191,7 +210,8 @@ async function openReport(
 ): Promise<{ readonly page: Page; readonly app: Awaited<ReturnType<typeof electron.launch>> }> {
   const env = createLaunchProfile(scratchBase, { fakeAgent: true }).env;
   const home = env['USERPROFILE'] ?? '';
-  writeSettings(home, defaultAppSettings());
+  // A minimal settings document: the loader defaults whatever is absent.
+  writeSettings(home, {});
   const chatId = seedReportJournal(home, options);
 
   const app = await electron.launch({ args: [mainEntry], env });
@@ -210,7 +230,7 @@ function display(page: Page, selector: string): Promise<string> {
     .evaluate((element) => getComputedStyle(element).display);
 }
 
-test('the page_audit report collapses and expands, indents its evidence, and keeps links real', async () => {
+test('the audit report collapses and expands, indents its evidence, and keeps links real', async () => {
   test.setTimeout(120_000);
   const { page, app } = await openReport();
   try {

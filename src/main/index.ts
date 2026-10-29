@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, safeStorage, session as electronSession, shell } from 'electron';
+import { app, BrowserWindow, Menu, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -9,8 +9,11 @@ import {
   type SkillSummary,
   AGENT_AUTH_PROGRESS_CHANNEL,
   answerWith,
+  addonPins,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
+  ok,
+  pinnedAddonIds,
   readLeadingSkillToken,
   renderSkillCatalogue,
   resolveSkillPrompt,
@@ -72,13 +75,14 @@ import { registerCredentialCaptureIpc } from './credentials/capture';
 import { createCredentialVault } from './credentials/credentialVault';
 import { createHostLoginListener } from './credentials/hostAuth';
 import { mergeDisabledFeatures } from './disabledFeatures';
-import { createExternalFetch, defaultResolve, inspectTarget } from './externalFetch';
+import { createExternalFetch } from './externalFetch';
 import {
   createAppAddons,
+  createAppAddonLoader,
   createAddonTestProbe,
-  createPageAuditCapability,
   TEST_ADDONS_GLOBAL_KEY,
 } from './addons';
+import { createContributedToolModules } from './tools/addonProxy';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
 import { registerAppInfoHandler } from './ipc/app-info';
@@ -771,7 +775,7 @@ if (!gotSingleInstanceLock) {
       () => loadSettingsSync(appPaths.settings).hosts,
       () => loadSettingsSync(appPaths.settings).projects,
     );
-    // Add-ons this build pins (`src/main/addons/pins.json`): downloaded on first
+    // Add-ons this build pins (`src/shared/addons/pins.json`): downloaded on first
     // use from the same folders `update.json` lives in, through the same proxy.
     // A build from this repository carries its own (`out/addons`), so `npm run
     // dev`, the E2E runs and a run-from-source installation never download one.
@@ -792,20 +796,34 @@ if (!gotSingleInstanceLock) {
       (globalThis as Record<string, unknown>)[TEST_ADDONS_GLOBAL_KEY] =
         createAddonTestProbe(addons);
     }
-    // Lighthouse lives in the page-audit add-on; the tool's capability loads it
-    // on the first audit, so nothing Lighthouse-related is imported at startup.
-    const pageAuditCapability = createPageAuditCapability({
+    // Every add-on this build pins is loaded through one generic host: ensure the
+    // pinned identity, import its entry, check its apiVersion, call `activate`
+    // once. Nothing is downloaded until a tool call or a skill load needs it, and
+    // everything one add-on contributes shares that one load.
+    const addonLoader = createAppAddonLoader({
       manager: addons,
-      createDeps: () => ({
-        paneSession: viewSession.session,
-        anonymousSession: () => electronSession.fromPartition('audit-anonymous'),
-        createWindow: (options) => new BrowserWindow(options),
-        currentUrl: () => browserController.currentDocumentUrl(),
-        isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
-        inspectTarget: (url) => inspectTarget(url, defaultResolve),
-        logger,
-      }),
+      paneSession: viewSession.session,
+      currentUrl: () => browserController.currentDocumentUrl(),
+      isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
+      logger,
     });
+    // The tools the pins declare, advertised from the first launch: each one is a
+    // proxy that forwards the model's arguments unchanged to the add-on's own
+    // executor once it is installed.
+    const contributedTools = createContributedToolModules({
+      tools: pinnedAddonIds().flatMap((id) =>
+        (addonPins[id]?.contributions.tools ?? []).map((tool) => ({ addonId: id, tool })),
+      ),
+      loader: addonLoader,
+    });
+    // An add-on's hidden windows are the application's to close: a leaked one
+    // would keep the process alive after the user closes the window, and none may
+    // outlive a quit.
+    const destroyAddonWindows = (): void => {
+      for (const id of pinnedAddonIds()) addonLoader.hostOf(id)?.destroyWindows();
+    };
+    mainWindow.once('closed', destroyAddonWindows);
+    app.once('before-quit', destroyAddonWindows);
     // The application's own markdown resources: the model-facing instructions
     // and the bundled skills. Resolved from the install location only. The
     // instruction templates carry the read-only policy, so a missing file
@@ -817,12 +835,17 @@ if (!gotSingleInstanceLock) {
       join: (...segments) => path.join(...segments),
     });
     const ruleResources = await loadRuleResources(path.join(bundledResourcesDirectory, 'rules'));
-    // The one skill store: the bundled skills plus the user's own folder,
-    // read once (`skillStore.load()` below, before the agent starts). The
-    // tools reach it through `ToolHost.skills`.
+    // The one skill store: the bundled skills, the skills every pinned add-on
+    // contributes (listed without a download) and the user's own folder, read
+    // once (`skillStore.load()` below, before the agent starts). The tools reach
+    // it through `ToolHost.skills`.
     const skillStore = createSkillStore({
       bundledDirectory: path.join(bundledResourcesDirectory, 'skills'),
       userDirectory: appPaths.skills,
+      addons: pinnedAddonIds().flatMap((id) =>
+        (addonPins[id]?.contributions.skills ?? []).map((skill) => ({ addonId: id, skill })),
+      ),
+      addonDirectory: (addonId) => Promise.resolve(addonLoader.directoryOf(addonId)),
       onRejected: () => {
         logger.warn('SKILL_REJECTED', { count: 1 });
       },
@@ -837,6 +860,22 @@ if (!gotSingleInstanceLock) {
     });
     const skillHost = createSkillHost({
       store: skillStore,
+      // A skill an add-on contributes is installed on first use: its body and
+      // files live in the add-on, which nothing downloads at startup. A failure
+      // here fails the call, with the proxy's own mapping.
+      prepareSkill: async (name) => {
+        const addonId = skillStore.addonOf(name);
+        if (addonId === undefined) return ok(undefined);
+        const loaded = await addonLoader.load(addonId);
+        if (!loaded.ok) {
+          return err({
+            code: loaded.error.kind === 'cancelled' ? 'CANCELLED' : 'STORAGE_ERROR',
+            message: loaded.error.message,
+          });
+        }
+        await skillStore.hydrateAddon(addonId);
+        return ok(undefined);
+      },
       onScriptFailed: () => {
         logger.warn('SKILL_SCRIPT_FAILED', { count: 1 });
       },
@@ -899,6 +938,7 @@ if (!gotSingleInstanceLock) {
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({
       loaders: discoverToolLoaders(),
+      contributed: contributedTools,
       instructionsTemplate: ruleResources.sessionTemplate,
       host: {
         skills: skillHost,
@@ -928,10 +968,6 @@ if (!gotSingleInstanceLock) {
             };
           },
         }),
-        // Lighthouse in a hidden window: a configured host's page loads with the
-        // pane's session, any other page with an empty in-memory one. The runner
-        // is lazy - the add-on is ensured on the first audit.
-        pageAudit: pageAuditCapability,
         clock: Date.now,
         idGenerator: randomUUID,
         // Diagnostics only: a tool reports how it classified the response body
@@ -1184,8 +1220,8 @@ if (!gotSingleInstanceLock) {
                 const memos = token === undefined ? '' : await memoHost.skillMemos(token.name);
                 return resolveSkillPrompt(
                   prompt,
-                  (name) => {
-                    const activation = skillHost.activate(name);
+                  async (name) => {
+                    const activation = await skillHost.activate(name);
                     return activation.ok ? activation.value : undefined;
                   },
                   memos,

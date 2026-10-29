@@ -272,8 +272,8 @@ export type OpenExternalRequest = Readonly<z.infer<typeof openExternalRequestSch
 
 /**
  * `browser:highlight-element` - a CSS selector naming an element to scroll to
- * and highlight in the browser pane. The selector comes from the page-audit
- * report (Lighthouse's own node selector), never from the model; it is handed
+ * and highlight in the browser pane. The selector comes from a report the
+ * application painted, never from the model; it is handed
  * to `querySelector` and nowhere else, so an untrusted value cannot run code.
  */
 export const highlightElementRequestSchema = z

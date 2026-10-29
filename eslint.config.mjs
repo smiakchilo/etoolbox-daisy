@@ -1,7 +1,43 @@
 import js from '@eslint/js';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import tseslint from 'typescript-eslint';
 
 const tsconfigRootDir = import.meta.dirname;
+
+const addonsRoot = join(tsconfigRootDir, 'src', 'addons');
+
+/**
+ * Every dependency an add-on declares, read from the add-ons' own
+ * `package.json` files at config load. Nothing here names a dependency: an
+ * add-on's third-party libraries belong to that add-on (they are downloaded with
+ * it and are not part of the application), so importing one anywhere else is the
+ * defect the rule below names - for whatever library an add-on adds tomorrow.
+ */
+function addonDependencyNames() {
+  if (!existsSync(addonsRoot)) return [];
+  const names = new Set();
+  for (const entry of readdirSync(addonsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const file = join(addonsRoot, entry.name, 'package.json');
+    if (!existsSync(file)) continue;
+    try {
+      const pkg = JSON.parse(readFileSync(file, 'utf8'));
+      for (const name of Object.keys(pkg.dependencies ?? {})) names.add(name);
+    } catch {
+      // A malformed add-on package.json is the build's to report, not lint's.
+    }
+  }
+  return [...names].sort();
+}
+
+const ADDON_DEPENDENCIES = addonDependencyNames();
+
+/** An add-on's own libraries, forbidden everywhere outside an add-on folder. */
+const addonDependencyPaths = ADDON_DEPENDENCIES.map((name) => ({
+  name,
+  message: `${name} belongs to an add-on; import it only inside that add-on's folder (src/addons/<id>/).`,
+}));
 
 const appTsconfigs = [
   './tsconfig.addons.json',
@@ -16,9 +52,10 @@ const appTsconfigs = [
 // Rule 1 (all app code except agent and add-on folders, `src/agents/<name>/`
 // and `src/addons/<name>/`): the provider SDKs may only be imported from an
 // agent folder, per docs/implementation-plan.md ("Import the SDK only through
-// the agent adapter"). Lighthouse and Puppeteer belong to the page-audit add-on
-// for the same reason: they are downloaded on first use, not part of the
-// application.
+// the agent adapter"). An add-on's own dependencies belong to that add-on for
+// the same reason: they are downloaded with it and are not part of the
+// application. Both lists are driven by data (the agent folder, each add-on's
+// package.json), so a new provider or add-on needs no edit here.
 //
 // The add-on pattern is folded in here rather than given its own blanket config
 // block: in ESLint's flat config a later `no-restricted-imports` *replaces* an
@@ -45,16 +82,7 @@ const sdkOutsideAgentRestriction = [
         name: '@openrouter/sdk',
         message: 'Import the OpenRouter SDK only inside an agent folder (src/agents/<name>/).',
       },
-      {
-        name: 'lighthouse',
-        message:
-          'lighthouse belongs to the page-audit add-on (src/addons/page-audit); the app loads it from there.',
-      },
-      {
-        name: 'puppeteer-core',
-        message:
-          'puppeteer-core belongs to the page-audit add-on (src/addons/page-audit); the app loads it from there.',
-      },
+      ...addonDependencyPaths,
     ],
     patterns: [
       {
@@ -69,8 +97,8 @@ const sdkOutsideAgentRestriction = [
 // Rule 6 (`src/addons/<name>/`): an add-on has no application source beside it
 // when it runs - it is downloaded to %LOCALAPPDATA% - so it may import only its
 // own files and src/shared, and it may import Electron *types* only (the
-// application supplies the live objects). Its own runtime dependencies
-// (lighthouse, puppeteer-core) are allowed.
+// application supplies the live objects). Its own runtime dependencies are
+// allowed.
 const addonRestriction = [
   'error',
   {
@@ -87,6 +115,37 @@ const addonRestriction = [
         regex: '^\\.\\./(?!\\.\\./shared(/|$))',
         message:
           'An add-on may import only its own files and src/shared - not the application or a sibling add-on.',
+      },
+    ],
+  },
+];
+
+// An add-on's tests live one level deeper (`src/addons/<id>/tests/`), where
+// `src/shared` is three `../` away and the shared test helpers four. They may
+// reach only those: the add-on's own files, `src/shared` and `tests/support`.
+const addonTestRestriction = [
+  'error',
+  {
+    paths: [
+      {
+        name: 'electron',
+        allowTypeImports: true,
+        message:
+          'An add-on may import Electron types only; the application supplies the live objects.',
+      },
+    ],
+    patterns: [
+      {
+        regex: '^(?:\\.\\./){3}(?!\\.\\./)(?!shared(?:/|$))',
+        message: `An add-on's tests may import only its own files, src/shared and tests/support.`,
+      },
+      {
+        regex: '^(?:\\.\\./){4}(?!\\.\\./)(?!tests/support(?:/|$))',
+        message: `An add-on's tests may import only its own files, src/shared and tests/support.`,
+      },
+      {
+        regex: '^(?:\\.\\./){5,}',
+        message: `An add-on's tests may import only its own files, src/shared and tests/support.`,
       },
     ],
   },
@@ -119,6 +178,7 @@ const sharedPurityRestriction = [
         message:
           'src/shared must not import the OpenRouter SDK; it belongs only in an agent folder.',
       },
+      ...addonDependencyPaths,
     ],
     patterns: [
       {
@@ -321,6 +381,13 @@ export default tseslint.config(
     files: ['src/addons/**/*.ts'],
     rules: {
       'no-restricted-imports': addonRestriction,
+    },
+  },
+  {
+    // An add-on's own tests and E2E specs, one level deeper than its sources.
+    files: ['src/addons/*/tests/**/*.ts', 'src/addons/*/e2e/**/*.ts'],
+    rules: {
+      'no-restricted-imports': addonTestRestriction,
     },
   },
   {

@@ -610,7 +610,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
   }
 
   // ── Element highlight (a report's selector link) ────────────────────────
-  // The chat pane asks main to scroll the browser pane to a Lighthouse node's
+  // The chat pane asks main to scroll the browser pane to an element by its CSS
   // selector and outline it. This is a user interaction, so it is a direct
   // fire-and-ack channel - not `bridgeBroker`, whose deadlines/staleness/
   // auth-latching belong to agent tool reads. The preload answers on its own

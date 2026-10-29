@@ -6,5 +6,6 @@
     "types": ["node"]
   },
   "include": ["src/addons/**/*.ts"],
+  "exclude": ["src/addons/*/tests/**", "src/addons/*/e2e/**"],
   "references": [{ "path": "./tsconfig.shared.json" }]
 }

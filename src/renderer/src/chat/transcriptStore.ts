@@ -498,13 +498,13 @@ export function createTranscriptStore(
    * is what keeps an ignored skill honest: a model that answers with prose and
    * calls no table produced the turn's only output, and hiding it left the
    * reader with a turn that showed nothing at all (measured 2026-10-26 - the
-   * first `/check-page` after a launch produced one prose message and no audit,
-   * so the pane went from "Thinking" straight back to an empty transcript).
+   * first `/name` of a session produced one prose message and no table, so the
+   * pane went from "Thinking" straight back to an empty transcript).
    *
    * A `presentation: 'message'` tool is the one that paints a message instead
    * of a billet (the same predicate the view uses to paint the table), so no
-   * tool name is named here. A `presentation: 'report'` tool (`page_audit`) is
-   * the same case: its structured report is the answer, and the model's prose
+   * tool name is named here. A `presentation: 'report'` tool is the same
+   * case: its structured report is the answer, and the model's prose
    * around it ("No response.") must not be painted.
    */
   function suppressTurnOnTableMessage(event: ToolResultEvent): void {

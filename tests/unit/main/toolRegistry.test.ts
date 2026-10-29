@@ -8,6 +8,8 @@ import {
   MAX_NESTED_TOOL_DEPTH,
 } from '../../../src/main/tools/registry';
 import {
+  addonPins,
+  pinnedAddonIds,
   type ToolExecutor,
   type InternalToolModule,
   type JsonValue,
@@ -19,6 +21,7 @@ import {
   newToolCallId,
   newTurnId,
 } from '../../../src/shared';
+import { createContributedToolModules } from '../../../src/main/tools/addonProxy';
 import { NO_SKILLS } from '../../support/fakeSkillHost';
 import { createCountingIdGenerator } from '../../support/testIds';
 import { REAL_SESSION_TEMPLATE, MINIMAL_SESSION_TEMPLATE } from '../../support/ruleResources';
@@ -502,7 +505,6 @@ describe('discovered tools (the real src/tools folders)', () => {
       'http_fetch',
       'load_skill',
       'memo',
-      'page_audit',
       'page_read',
       'skill_resource',
       'skill_script',
@@ -521,7 +523,6 @@ describe('discovered tools (the real src/tools folders)', () => {
       'custom:http_fetch',
       'custom:load_skill',
       'custom:memo',
-      'custom:page_audit',
       'custom:page_read',
       'custom:skill_resource',
       'custom:skill_script',
@@ -529,77 +530,72 @@ describe('discovered tools (the real src/tools folders)', () => {
   });
 });
 
-describe('the shipped page_audit report', () => {
-  it('returns its scores and evidence in the result, with no nested tool calls', async () => {
-    const nested: {
-      readonly toolName: string;
-      readonly args: Readonly<Record<string, JsonValue>>;
-    }[] = [];
+describe('the tools an add-on contributes', () => {
+  /**
+   * The pins are the only run-time source: a contributed tool is advertised
+   * from them before its add-on is downloaded, and each one is a proxy that
+   * loads the add-on on its first call. No add-on's name is written here.
+   */
+  const contributed = pinnedAddonIds().flatMap((id) =>
+    (addonPins[id]?.contributions.tools ?? []).map((tool) => ({ addonId: id, tool })),
+  );
+
+  /** A loader that never finishes: a call would hang, which is what "not loaded yet" means. */
+  const neverLoads = () => new Promise<never>(() => undefined);
+
+  function proxyModules() {
+    return createContributedToolModules({
+      tools: contributed,
+      loader: {
+        load: neverLoads,
+        directoryOf: () => undefined,
+        hostOf: () => undefined,
+      },
+    });
+  }
+
+  it('advertises every pinned tool, with its descriptor, allowlist entry and instructions', async () => {
     const registry = await buildToolRegistry({
       instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
-      host: {
-        ...host,
-        pageAudit: () =>
-          Promise.resolve({
-            kind: 'report',
-            url: 'https://aem.example.com/content/x.html',
-            formFactor: 'desktop',
-            scores: [{ category: 'accessibility', score: 0.42 }],
-            failures: [
-              {
-                category: 'accessibility',
-                id: 'heading-order',
-                title: 'Heading elements are not in a sequentially-descending order',
-                score: 0,
-                evidence: [
-                  {
-                    kind: 'table',
-                    columns: [{ key: 'node', label: 'Failing Elements' }],
-                    rows: [
-                      [
-                        {
-                          kind: 'selector',
-                          selector: 'h4.card__title',
-                          snippet: '<h4 class="card__title">Hi</h4>',
-                          label: 'h4',
-                        },
-                      ],
-                    ],
-                  },
-                ],
-              },
-            ],
-          }),
-      },
-      loaders: discoverToolLoaders(),
-      nestedCalls: {
-        onCallStarted: (call) => nested.push({ toolName: call.toolName, args: call.args }),
-        onCallSettled: () => undefined,
-      },
+      host,
+      loaders: {},
+      contributed: proxyModules(),
     });
+
     expect(registry.failures).toEqual([]);
+    expect([...registry.enabledNames].sort()).toEqual(
+      contributed.map((entry) => entry.tool.name).sort(),
+    );
+    for (const entry of contributed) {
+      expect(registry.allowlistEntries).toContain(entry.tool.allowlistEntry);
+      expect(registry.descriptors).toContainEqual(entry.tool.descriptor);
+      expect(registry.instructions).toContain(entry.tool.instructions);
+    }
+  });
 
-    const executor = registry.toolHandlers['page_audit'];
-    if (executor === undefined) throw new Error('page_audit is not registered');
-    const result = await executor({}, { toolCallId: newToolCallId(ids), signal: undefined });
-
-    expect(result.ok).toBe(true);
-    // The report is painted by the renderer from the result; no nested
-    // `format_table` call is made.
-    expect(nested).toEqual([]);
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        resultType: 'success',
-        failures: [
-          {
-            evidence: [
-              { kind: 'table', rows: [[{ kind: 'selector', selector: 'h4.card__title' }]] },
-            ],
+  it('isolates a contributed tool whose name duplicates another', async () => {
+    const [first] = contributed;
+    if (first === undefined) return;
+    const duplicate = { ...first.tool, instructions: 'A second copy.' };
+    const registry = await buildToolRegistry({
+      instructionsTemplate: MINIMAL_SESSION_TEMPLATE,
+      host,
+      loaders: {},
+      contributed: [
+        ...proxyModules(),
+        ...createContributedToolModules({
+          tools: [{ addonId: first.addonId, tool: duplicate }],
+          loader: {
+            load: neverLoads,
+            directoryOf: () => undefined,
+            hostOf: () => undefined,
           },
-        ],
-      },
+        }),
+      ],
     });
+
+    expect(registry.enabledNames.filter((name) => name === first.tool.name)).toHaveLength(1);
+    expect(registry.failures.map((failure) => failure.reason).join(' ')).toContain('Duplicate');
   });
 });
 

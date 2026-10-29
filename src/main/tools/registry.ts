@@ -191,6 +191,13 @@ function createInvokeTool(params: {
 
 export async function buildToolRegistry(params: {
   readonly loaders: ToolModuleLoaders;
+  /**
+   * Tools an add-on contributes, already described by the pins and proxied by
+   * the registry's caller (`src/main/tools/addonProxy.ts`). They register exactly
+   * like a folder tool - same isolation, same `uses` check - so a duplicate name
+   * or a missing part disables only that tool.
+   */
+  readonly contributed?: readonly ToolModule[];
   readonly host: ToolHostServices;
   /**
    * The session-instructions template (`resources/rules/session.md`),
@@ -234,48 +241,56 @@ export async function buildToolRegistry(params: {
       fail(source, `Failed to load: ${describe(caught)}`);
       continue;
     }
-    const tool = (mod as { tool?: unknown } | null)?.tool;
-    if (!isToolModule(tool)) {
+    register((mod as { tool?: unknown } | null)?.tool, source);
+  }
+  // A contributed tool is not downloaded - it is a proxy described by the pins -
+  // so it joins the same registration path after the folder tools.
+  for (const tool of params.contributed ?? []) {
+    register(tool, `addon:${tool.name}`);
+  }
+
+  function register(candidate: unknown, source: string): void {
+    if (!isToolModule(candidate)) {
       fail(source, 'Does not export a valid `tool` (ToolModule)');
-      continue;
+      return;
     }
-    if (tool.disabled === true) {
-      disabledNames.push(tool.name);
-      continue;
+    if (candidate.disabled === true) {
+      disabledNames.push(candidate.name);
+      return;
     }
-    if (handlers[tool.name] !== undefined) {
-      fail(source, `Duplicate tool name '${tool.name}'`);
-      continue;
+    if (handlers[candidate.name] !== undefined) {
+      fail(source, `Duplicate tool name '${candidate.name}'`);
+      return;
     }
+    const uses = candidate.uses ?? [];
     let executor: ToolExecutor;
     try {
-      const uses = tool.uses ?? [];
       const host: ToolHost = {
         ...params.host,
         invokeTool: createInvokeTool({
-          callerName: tool.name,
+          callerName: candidate.name,
           uses: new Set(uses),
           handlers,
           depths,
           host: params.host,
-          observer: tool.transparent === true ? undefined : params.nestedCalls,
+          observer: candidate.transparent === true ? undefined : params.nestedCalls,
         }),
       };
-      executor = tool.createExecutor(host);
-      handlers[tool.name] = executor;
-      usesByTool.set(tool.name, uses);
+      executor = candidate.createExecutor(host);
+      handlers[candidate.name] = executor;
+      usesByTool.set(candidate.name, uses);
     } catch (caught) {
       fail(source, `createExecutor threw: ${describe(caught)}`);
-      continue;
+      return;
     }
-    if (tool.internal === true) {
-      internalNames.push(tool.name);
-      continue;
+    if (candidate.internal === true) {
+      internalNames.push(candidate.name);
+      return;
     }
-    modelHandlers[tool.name] = executor;
-    descriptors.push(tool.descriptor);
-    allowlistEntries.push(tool.allowlistEntry);
-    instructions.push(tool.instructions);
+    modelHandlers[candidate.name] = executor;
+    descriptors.push(candidate.descriptor);
+    allowlistEntries.push(candidate.allowlistEntry);
+    instructions.push(candidate.instructions);
   }
 
   // A composite tool whose part is missing still registers - its own call

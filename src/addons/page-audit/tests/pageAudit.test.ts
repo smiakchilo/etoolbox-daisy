@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { BrowserWindowConstructorOptions } from 'electron';
+import type { BrowserWindow, Session } from 'electron';
+import type { AddonHiddenWindowOptions, AddonHost } from '../../../shared';
 import {
   createPageAudit,
   inspectAuditRequest,
   lighthouseFailures,
   parseTarget,
-} from '../../../../src/addons/page-audit/pageAudit';
+} from '../pageAudit';
 
 /**
  * The audit is an add-on: it creates no window of its own and performs no DNS
@@ -14,7 +15,7 @@ import {
  */
 
 interface FakeWindow {
-  readonly options: BrowserWindowConstructorOptions;
+  readonly options: AddonHiddenWindowOptions<unknown>;
   readonly webContents: FakeWebContents;
   destroyed: boolean;
   isDestroyed(): boolean;
@@ -250,6 +251,55 @@ function session() {
 /** An address policy that trusts the two public hosts these tests use. */
 function addressPolicy(allow: (url: URL) => boolean = (url) => url.hostname === 'a.example') {
   return vi.fn((url: URL) => Promise.resolve({ allowed: allow(url) }));
+}
+
+/**
+ * The generic host the add-on receives, as the tests drive it: a window factory
+ * over the fake windows, the sessions and the address policy. The application
+ * forces the safety-critical window options; the add-on asks only for what it
+ * chooses (a session, off-screen, no throttling, a size).
+ */
+function addonHost(
+  windows: ReturnType<typeof createWindowFactory>,
+  options: {
+    readonly currentUrl: string | undefined;
+    readonly paneSession?: unknown;
+    readonly isolatedSession?: () => unknown;
+    readonly isConfiguredOrigin?: (origin: string) => boolean;
+    readonly policy?: (url: URL) => Promise<{ allowed: boolean }>;
+    readonly log?: () => void;
+  },
+): AddonHost<BrowserWindow, Session> {
+  // The fake window stands in for Electron's own, and the fake session for the
+  // real one: these tests drive the add-on, not Electron.
+  return {
+    id: 'test-addon',
+    browser: {
+      createHiddenWindow: (settings) => windows.create(settings) as unknown as BrowserWindow,
+    },
+    sessions: {
+      pane: () => options.paneSession as Session,
+      isolated: () => (options.isolatedSession ?? (() => ({})))() as Session,
+    },
+    network: {
+      inspectTarget: (href) =>
+        (options.policy ?? (() => Promise.resolve({ allowed: false })))(new URL(href)),
+    },
+    hosts: { isConfiguredOrigin: options.isConfiguredOrigin ?? (() => false) },
+    pane: { currentUrl: () => options.currentUrl },
+    log: () => options.log?.(),
+  };
+}
+
+/** The two host capabilities `inspectAuditRequest` reads. */
+function policyHost(
+  isConfiguredOrigin: (origin: string) => boolean,
+  policy: (url: URL) => Promise<{ allowed: boolean }>,
+): Pick<AddonHost<BrowserWindow, Session>, 'hosts' | 'network'> {
+  return {
+    hosts: { isConfiguredOrigin },
+    network: { inspectTarget: (href) => policy(new URL(href)) },
+  };
 }
 
 /** The display text of one report cell, for `.toContain` assertions. */
@@ -564,9 +614,9 @@ describe('inspectAuditRequest', () => {
     'allows the local address %s',
     async (url) => {
       const inspectTarget = addressPolicy();
-      expect(
-        await inspectAuditRequest(url, { isConfiguredOrigin: configured, inspectTarget }),
-      ).toEqual({ allowed: true });
+      expect(await inspectAuditRequest(url, policyHost(configured, inspectTarget))).toEqual({
+        allowed: true,
+      });
       expect(inspectTarget).not.toHaveBeenCalled();
     },
   );
@@ -575,10 +625,10 @@ describe('inspectAuditRequest', () => {
     const inspectTarget = addressPolicy();
 
     expect(
-      await inspectAuditRequest('https://author.example:4502/content/a.html', {
-        isConfiguredOrigin: configured,
-        inspectTarget,
-      }),
+      await inspectAuditRequest(
+        'https://author.example:4502/content/a.html',
+        policyHost(configured, inspectTarget),
+      ),
     ).toEqual({ allowed: true });
     expect(inspectTarget).not.toHaveBeenCalled();
   });
@@ -587,10 +637,7 @@ describe('inspectAuditRequest', () => {
     const inspectTarget = addressPolicy((url) => url.hostname === 'cdn.example');
 
     expect(
-      await inspectAuditRequest('https://cdn.example/x.js', {
-        isConfiguredOrigin: configured,
-        inspectTarget,
-      }),
+      await inspectAuditRequest('https://cdn.example/x.js', policyHost(configured, inspectTarget)),
     ).toEqual({ allowed: true });
   });
 
@@ -601,19 +648,19 @@ describe('inspectAuditRequest', () => {
     ['a name resolving to a private address', 'https://rebind.example/x'],
   ])('refuses %s', async (_label, url) => {
     expect(
-      await inspectAuditRequest(url, {
-        isConfiguredOrigin: configured,
-        inspectTarget: () => Promise.resolve({ allowed: false }),
-      }),
+      await inspectAuditRequest(
+        url,
+        policyHost(configured, () => Promise.resolve({ allowed: false })),
+      ),
     ).toEqual({ allowed: false, reason: 'it is a local or internal address' });
   });
 
   it('refuses an address that does not parse', async () => {
     expect(
-      await inspectAuditRequest('not a url', {
-        isConfiguredOrigin: configured,
-        inspectTarget: () => Promise.resolve({ allowed: true }),
-      }),
+      await inspectAuditRequest(
+        'not a url',
+        policyHost(configured, () => Promise.resolve({ allowed: true })),
+      ),
     ).toEqual({ allowed: false, reason: 'it is not a valid address' });
   });
 });
@@ -625,16 +672,14 @@ describe('createPageAudit', () => {
     const windows = createWindowFactory();
     return {
       windows,
-      run: createPageAudit({
-        paneSession: {} as never,
-        anonymousSession: () => {
-          throw new Error('no session expected');
-        },
-        createWindow: (options) => windows.create(options) as never,
-        currentUrl: () => currentUrl,
-        isConfiguredOrigin: () => false,
-        inspectTarget: () => Promise.resolve({ allowed: false }),
-      }),
+      run: createPageAudit(
+        addonHost(windows, {
+          currentUrl,
+          isolatedSession: () => {
+            throw new Error('no session expected');
+          },
+        }),
+      ),
     };
   }
 
@@ -649,14 +694,15 @@ describe('createPageAudit', () => {
       probe,
       windows,
       inspectTarget,
-      run: createPageAudit({
-        paneSession: probe as never,
-        anonymousSession: () => probe as never,
-        createWindow: (options) => windows.create(options) as never,
-        currentUrl: () => currentUrl,
-        isConfiguredOrigin,
-        inspectTarget,
-      }),
+      run: createPageAudit(
+        addonHost(windows, {
+          currentUrl,
+          paneSession: probe,
+          isolatedSession: () => probe,
+          isConfiguredOrigin,
+          policy: inspectTarget,
+        }),
+      ),
     };
   }
 
@@ -694,12 +740,9 @@ describe('createPageAudit', () => {
     expect(window?.webContents.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith(
       'disable_non_proxied_udp',
     );
-    expect(window?.options.webPreferences).toMatchObject({
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      sandbox: true,
-    });
+    // What the add-on chooses; the host forces hidden/sandboxed/isolation.
+    expect(window?.options).toMatchObject({ offscreen: true, backgroundThrottling: false });
+    expect(window?.webContents.setFrameRate).toHaveBeenCalledWith(30);
     expect(probe.setPermissionCheckHandler).toHaveBeenCalled();
     expect(probe.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
   });

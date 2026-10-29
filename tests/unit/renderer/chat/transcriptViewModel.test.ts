@@ -10,6 +10,7 @@ import {
   setTableOnlySkills,
   splitLeadingSkill,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
+import { addonPins } from '../../../../src/shared';
 import type { ToolCallStatus } from '../../../../src/renderer/src/chat/transcriptStore';
 import { REQUIRED_ACTIONS, requestIdSchema, type ToolError } from '../../../../src/shared';
 
@@ -169,12 +170,12 @@ describe('isDeterministicTablePrompt', () => {
 
   it('follows the skill list: a custom table-only skill counts, a skill that lost its flag does not', () => {
     setTableOnlySkills([
-      { name: 'lighthouse-check', tableOnly: true },
+      { name: 'demo-table', tableOnly: true },
       { name: 'search' },
       { name: 'other', tableOnly: false },
     ]);
-    expect(isDeterministicTablePrompt('/lighthouse-check https://example.com')).toBe(true);
-    expect(isTableOnlySkill('lighthouse-check')).toBe(true);
+    expect(isDeterministicTablePrompt('/demo-table https://example.com')).toBe(true);
+    expect(isTableOnlySkill('demo-table')).toBe(true);
     expect(isDeterministicTablePrompt('/search waldo')).toBe(false);
     expect(isDeterministicTablePrompt('/other x')).toBe(false);
   });
@@ -184,5 +185,20 @@ describe('isDeterministicTablePrompt', () => {
     expect(isDeterministicTablePrompt('/search waldo')).toBe(false);
     resetTableOnlySkills();
     expect(isDeterministicTablePrompt('/search waldo')).toBe(true);
+  });
+});
+
+describe('a table-only skill an add-on contributes', () => {
+  it('is recognised from the pins before the skill list has loaded', () => {
+    const skill = Object.values(addonPins)
+      .flatMap((pin) => pin.contributions.skills)
+      .find((entry) => entry.tableOnly);
+    // A build with no pinned add-on has nothing to recognise.
+    if (skill === undefined) return;
+
+    resetTableOnlySkills();
+
+    expect(isTableOnlySkill(skill.name)).toBe(true);
+    expect(isDeterministicTablePrompt(`/${skill.name} something`)).toBe(true);
   });
 });

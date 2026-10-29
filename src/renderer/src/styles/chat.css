@@ -593,9 +593,9 @@
    (`.chat-tool-call__icon--negative`) and the status word are the visible
    signal, and the reason is the last row of the expanded details. */
 
-/* ── The `page_audit` report ──────────────────────────────────────────────
-   One structured message of collapsible rubric sections, each holding its
-   audits as collapsible entries. Headings use the same weight/size as a
+/* ── A report message ────────────────────────────────────────────────────
+   One structured message of collapsible sections, each holding its findings as
+   collapsible entries. Headings use the same weight/size as a
    `format_table` message title (600, 14px) - never a larger heading. */
 
 /* A heading is `[chevron][gap][title]`; a body is indented by exactly the
@@ -804,7 +804,7 @@
   font-weight: 500;
 }
 
-/* A plain text block (an audit with no items: Lighthouse's explanation). */
+/* A plain text block (a finding with no items: the tool's explanation). */
 .chat-report-text {
   margin: 0;
 }

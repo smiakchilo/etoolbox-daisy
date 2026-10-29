@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { addonContributionDeclarationSchema } from '../../shared';
 
 /**
  * The add-on catalogue the publisher maintains (`addons.json`), and the
@@ -71,6 +72,13 @@ export const addonDescriptorSchema = z
     apiVersion: z.number().int().positive(),
     /** Relative path of the ESM entry point. */
     entry: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/),
+    /**
+     * The tools this add-on offers, exactly as `addon.json` declared them. The
+     * **pins** are the only run-time source (this copy is what the build wrote
+     * into the install, for inspection); it is validated here so a hand-edited
+     * folder cannot look like an add-on whose contributions the app trusts.
+     */
+    contributes: addonContributionDeclarationSchema.optional(),
   })
   .strict()
   .superRefine((descriptor, context) => {

@@ -12,8 +12,9 @@ files:
   # only the unpacked agent runtime is left out (see `asarUnpack` below).
   - resources/**/*
   # Add-ons are downloaded on first use, never installed: the built ones are
-  # development-only and their sources must not ship. `src/main/addons/pins.json`
-  # names the exact version each build needs.
+  # development-only and their sources must not ship. The generated
+  # `src/shared/addons/pins.json` ships inside the asar and names the exact
+  # identity each build needs.
   - '!out/addons/**'
   - '!src/addons/**'
   # The Copilot CLI packages (`copilot.exe`, 138 MB) are a binary add-on

@@ -32,11 +32,11 @@ describe('merge-addons.mjs', () => {
   it('folds every platform and keeps an older published identity', () => {
     const directory = scratch.create();
     writePart(directory, 'win32-x64', {
-      'page-audit': { [FIRST]: { platforms: { any: archive('page-audit', FIRST) } } },
+      'example-addon': { [FIRST]: { platforms: { any: archive('example-addon', FIRST) } } },
       'another-addon': { [FIRST]: { platforms: { 'win32-x64': archive('another-addon', FIRST) } } },
     });
     writePart(directory, 'darwin-arm64', {
-      'page-audit': { [FIRST]: { platforms: { any: archive('page-audit', FIRST) } } },
+      'example-addon': { [FIRST]: { platforms: { any: archive('example-addon', FIRST) } } },
       'another-addon': {
         [FIRST]: { platforms: { 'darwin-arm64': archive('another-addon', FIRST) } },
         [SECOND]: { platforms: { 'darwin-arm64': archive('another-addon', SECOND) } },
@@ -51,7 +51,7 @@ describe('merge-addons.mjs', () => {
     expect(merged.addons['another-addon']?.[FIRST]?.platforms).toHaveProperty('win32-x64');
     expect(merged.addons['another-addon']?.[FIRST]?.platforms).toHaveProperty('darwin-arm64');
     expect(merged.addons['another-addon']?.[SECOND]?.platforms).toHaveProperty('darwin-arm64');
-    expect(merged.addons['page-audit']?.[FIRST]?.platforms).toHaveProperty('any');
+    expect(merged.addons['example-addon']?.[FIRST]?.platforms).toHaveProperty('any');
   });
 
   it('fails when there is no per-platform catalogue', () => {
@@ -63,13 +63,13 @@ describe('merge-addons.mjs', () => {
   it('fails when two runners publish different bytes for the same platform', () => {
     const directory = scratch.create();
     writePart(directory, 'win32-x64', {
-      'page-audit': { [FIRST]: { platforms: { any: archive('page-audit', FIRST) } } },
+      'example-addon': { [FIRST]: { platforms: { any: archive('example-addon', FIRST) } } },
     });
     writePart(directory, 'darwin-arm64', {
-      'page-audit': {
+      'example-addon': {
         [FIRST]: {
           platforms: {
-            any: { file: 'page-audit-other.zip', sha512: 'b'.repeat(128), size: 2048 },
+            any: { file: 'example-addon-other.zip', sha512: 'b'.repeat(128), size: 2048 },
           },
         },
       },

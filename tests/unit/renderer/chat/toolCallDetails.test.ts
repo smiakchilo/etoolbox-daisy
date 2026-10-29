@@ -92,36 +92,6 @@ describe('describeToolCall - page_read', () => {
   });
 });
 
-describe('describeToolCall - page_audit', () => {
-  it('summarises the URL and reads the scores from the finished result', () => {
-    const pending = describeToolCall('page_audit', {
-      url: 'https://example.com/a',
-      categories: ['seo', 'performance'],
-    });
-    const done = describeToolCall(
-      'page_audit',
-      {},
-      {
-        url: 'https://example.com/b',
-        formFactor: 'mobile',
-        scores: [{ category: 'seo', score: 80 }],
-        failures: [{ id: 'one' }, { id: 'two' }],
-      },
-    );
-
-    expect(pending.summary).toBe('https://example.com/a');
-    expect(valuesOf(pending)).toContain('seo, performance');
-    expect(done.summary).toBe('https://example.com/b');
-    expect(valuesOf(done)).toEqual(expect.arrayContaining(['seo 80', '2']));
-  });
-
-  it('still describes a call that names nothing', () => {
-    const details = describeToolCall('page_audit', {});
-
-    expect(details.parameters.length).toBeGreaterThan(0);
-  });
-});
-
 describe('describeToolCall - aem_query', () => {
   it('summarises the exact query and repeats it as a labelled parameter', () => {
     const details = describeToolCall('aem_query', {

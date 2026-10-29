@@ -376,3 +376,140 @@ describe('createSkillStore', () => {
     });
   });
 });
+
+describe('an add-on’s skills', () => {
+  /** A pinned skill entry, as the build derives it from the add-on's SKILL.md. */
+  function pinned(name: string, extra: Record<string, unknown> = {}) {
+    return {
+      addonId: 'demo-addon',
+      skill: {
+        name,
+        description: `About ${name}.`,
+        userDescription: '',
+        userInvocable: true,
+        disableModelInvocation: false,
+        tableOnly: false,
+        hasScripts: false,
+        ...extra,
+      },
+    };
+  }
+
+  /** An installed add-on folder: its skills live under `<install>/skills`. */
+  function installed(
+    skills: Record<string, { readonly body: string; readonly files?: Record<string, string> }>,
+  ): string {
+    const root = scratch.create();
+    for (const [name, spec] of Object.entries(skills)) {
+      const directory = path.join(root, 'skills', name);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(
+        path.join(directory, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: About ${name}.\n---\n\n${spec.body}\n`,
+        'utf8',
+      );
+      for (const [relative, content] of Object.entries(spec.files ?? {})) {
+        const target = path.join(directory, relative);
+        mkdirSync(path.dirname(target), { recursive: true });
+        writeFileSync(target, content, 'utf8');
+      }
+    }
+    return root;
+  }
+
+  it('lists a pinned skill before its add-on is downloaded', async () => {
+    const store = createSkillStore({
+      bundledDirectory: makeRoot({}),
+      addons: [pinned('demo-skill', { tableOnly: true })],
+    });
+    await store.load();
+
+    expect(store.list().map((skill) => [skill.name, skill.source, skill.tableOnly])).toEqual([
+      ['demo-skill', 'addon', true],
+    ]);
+    // Nothing was installed: only the catalogue entry is known.
+    expect(store.get('demo-skill')).toMatchObject({ body: '', files: [], addonId: 'demo-addon' });
+    expect(store.addonOf('demo-skill')).toBe('demo-addon');
+  });
+
+  it('reads the body and files from the installed folder on first use', async () => {
+    const directory = installed({
+      'demo-skill': { body: '# ADOPTED', files: { 'references/a.md': 'a' } },
+    });
+    const store = createSkillStore({
+      bundledDirectory: makeRoot({}),
+      addons: [pinned('demo-skill')],
+      addonDirectory: () => Promise.resolve(directory),
+    });
+    await store.load();
+
+    await expect(store.hydrateAddon('demo-addon')).resolves.toBe(true);
+
+    expect(store.get('demo-skill')?.body).toContain('# ADOPTED');
+    expect(store.get('demo-skill')?.files).toEqual([{ path: 'references/a.md', size: 1 }]);
+  });
+
+  it('lets a user skill of the same name win, and reads the add-on copy no further', async () => {
+    const addonDirectory = vi.fn(() =>
+      Promise.resolve(installed({ 'demo-skill': { body: '# ADDON-COPY' } })),
+    );
+    const store = createSkillStore({
+      bundledDirectory: makeRoot({}),
+      userDirectory: makeRoot({ 'demo-skill': { front: skillMd('demo-skill', 'User copy.') } }),
+      addons: [pinned('demo-skill')],
+      addonDirectory,
+    });
+    await store.load();
+
+    await store.hydrateAddon('demo-addon');
+
+    expect(store.get('demo-skill')?.summary.source).toBe('user');
+    expect(store.get('demo-skill')?.body).not.toContain('ADDON-COPY');
+  });
+
+  it('never downloads anything while loading or reloading', async () => {
+    const addonDirectory = vi.fn(() => Promise.resolve(installed({})));
+    const store = createSkillStore({
+      bundledDirectory: makeRoot({}),
+      addons: [pinned('demo-skill')],
+      addonDirectory,
+    });
+
+    await store.load();
+    await store.reload();
+
+    expect(addonDirectory).not.toHaveBeenCalled();
+    expect(store.list().map((skill) => skill.name)).toEqual(['demo-skill']);
+  });
+
+  it('rejects a pinned skill the installed folder does not carry, and says so', async () => {
+    const rejections: SkillRejection[] = [];
+    const store = createSkillStore({
+      bundledDirectory: makeRoot({}),
+      addons: [pinned('demo-skill')],
+      addonDirectory: () => Promise.resolve(installed({})),
+      onRejected: (rejection) => rejections.push(rejection),
+    });
+    await store.load();
+
+    await store.hydrateAddon('demo-addon');
+
+    expect(rejections).toEqual([
+      expect.objectContaining({ folder: 'demo-skill', source: 'addon' }),
+    ]);
+    // It stays a catalogue entry, so the composer and the model still see it.
+    expect(store.get('demo-skill')?.body).toBe('');
+  });
+
+  it('answers false when the add-on could not be installed at all', async () => {
+    const store = createSkillStore({
+      bundledDirectory: makeRoot({}),
+      addons: [pinned('demo-skill')],
+      addonDirectory: () => Promise.resolve(undefined),
+    });
+    await store.load();
+
+    await expect(store.hydrateAddon('demo-addon')).resolves.toBe(false);
+    expect(store.get('demo-skill')?.body).toBe('');
+  });
+});

@@ -5,7 +5,7 @@
     "outDir": ".tsc-out/tests",
     "types": ["node"]
   },
-  "include": ["tests/**/*.ts"],
+  "include": ["tests/**/*.ts", "src/addons/*/tests/**/*.ts", "src/addons/*/e2e/**/*.ts"],
   "exclude": ["tests/fixtures/**"],
   "references": [
     { "path": "./tsconfig.shared.json" },

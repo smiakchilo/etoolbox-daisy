@@ -84,15 +84,17 @@ describe('skill executor', () => {
         createFakeSkillHost({
           list: () => [summary()],
           activate: (name) =>
-            ok({
-              name,
-              body: 'Do the thing.',
-              files: [
-                { path: 'references/a.md', size: 3 },
-                { path: 'scripts/run.js', size: 9 },
-                { path: 'scripts/tool.py', size: 4 },
-              ],
-            }),
+            Promise.resolve(
+              ok({
+                name,
+                body: 'Do the thing.',
+                files: [
+                  { path: 'references/a.md', size: 3 },
+                  { path: 'scripts/run.js', size: 9 },
+                  { path: 'scripts/tool.py', size: 4 },
+                ],
+              }),
+            ),
         }),
       ),
     );
@@ -151,7 +153,7 @@ describe('skill executor', () => {
       ...makeHost(
         createFakeSkillHost({
           list: () => [summary()],
-          activate: (name) => ok({ name, body: 'Do the thing.', files: [] }),
+          activate: (name) => Promise.resolve(ok({ name, body: 'Do the thing.', files: [] })),
         }),
       ),
       memos: { enabled: () => true, skillMemos, write: vi.fn() },

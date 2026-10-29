@@ -4,6 +4,7 @@ import {
   toolRendererRegistry,
 } from '../../../../src/renderer/src/chat/toolRegistry';
 import type { ToolRendererModule } from '../../../../src/shared';
+import { addonPins } from '../../../../src/shared';
 
 function rendererModule(overrides: Partial<ToolRendererModule> = {}): ToolRendererModule {
   return {
@@ -18,6 +19,7 @@ describe('createToolRendererRegistry', () => {
     const registry = createToolRendererRegistry({
       './demo/renderer/index.ts': { renderer: rendererModule() },
     });
+
     expect(registry.describeCall('demo_tool', {}).summary).toBe('demo');
     expect(registry.toolNames).toEqual(['demo_tool']);
   });
@@ -77,24 +79,41 @@ describe('createToolRendererRegistry', () => {
 });
 
 describe('discovered renderers (the real src/tools folders)', () => {
-  it('finds the shipped tools', () => {
-    expect([...toolRendererRegistry.toolNames].sort()).toEqual([
-      'aem_get_json',
-      'aem_query',
-      'aem_query_format_ask',
-      'aem_semantic_search',
-      'ask_user',
-      'browser_navigate',
-      'environment_facts',
-      'format_table',
-      'http_fetch',
-      'load_skill',
-      'memo',
-      'memo_reflection',
-      'page_audit',
-      'page_read',
-      'skill_resource',
-      'skill_script',
-    ]);
+  it('finds the shipped tools the source folders carry', () => {
+    const contributed = Object.values(addonPins).flatMap((pin) =>
+      pin.contributions.tools.map((tool) => tool.name),
+    );
+    expect([...toolRendererRegistry.toolNames].sort()).toEqual(
+      [
+        'aem_get_json',
+        'aem_query',
+        'aem_query_format_ask',
+        'aem_semantic_search',
+        'ask_user',
+        'browser_navigate',
+        'environment_facts',
+        'format_table',
+        'http_fetch',
+        'load_skill',
+        'memo',
+        'memo_reflection',
+        'page_read',
+        'skill_resource',
+        'skill_script',
+        ...contributed,
+      ].sort(),
+    );
+  });
+});
+
+describe('a contributed tool', () => {
+  it('is rendered from the pins, before its add-on is downloaded', () => {
+    const contributed = Object.values(addonPins).flatMap((pin) =>
+      pin.contributions.tools.map((tool) => tool.name),
+    );
+    // A build with no pinned add-on contributes nothing to check.
+    for (const name of contributed) {
+      expect(toolRendererRegistry.toolNames).toContain(name);
+    }
   });
 });

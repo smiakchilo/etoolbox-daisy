@@ -6,6 +6,7 @@ import {
   SKILL_RESOURCE_MAX_LINES,
   createSkillHost,
 } from '../../../../src/main/skills/skillHost';
+import type { SkillOutcome } from '../../../../src/shared';
 import type {
   ScriptRunRequest,
   ScriptRunResult,
@@ -56,13 +57,13 @@ function failureOf<T>(outcome: { ok: boolean; error?: { code: string; message: s
 describe('createSkillHost.activate', () => {
   it('returns the body and the file index, and NOT_FOUND for an unknown skill', async () => {
     const { host } = await makeHost({ 'references/a.md': 'x' });
-    const activated = host.activate('demo');
+    const activated = await host.activate('demo');
     expect(activated.ok).toBe(true);
     if (activated.ok) {
       expect(activated.value.body).toContain('Body text');
       expect(activated.value.files.map((file) => file.path)).toEqual(['references/a.md']);
     }
-    expect(failureOf(host.activate('missing')).code).toBe('NOT_FOUND');
+    expect(failureOf(await host.activate('missing')).code).toBe('NOT_FOUND');
   });
 });
 
@@ -358,5 +359,103 @@ describe('createSkillHost.runScript', () => {
       script: 'scripts/run.js',
       kind,
     });
+  });
+});
+
+describe('a skill an add-on contributes', () => {
+  /**
+   * A store holding one pinned add-on skill that has not been read yet: the
+   * host's `prepareSkill` is what installs the add-on and hydrates it.
+   */
+  function addonHost(prepareSkill: (name: string) => Promise<SkillOutcome<void>>) {
+    const store = createSkillStore({
+      bundledDirectory: scratch.create(),
+      addons: [
+        {
+          addonId: 'demo-addon',
+          skill: {
+            name: 'demo',
+            description: 'A demo skill',
+            userDescription: '',
+            userInvocable: true,
+            disableModelInvocation: false,
+            tableOnly: false,
+            hasScripts: false,
+          },
+        },
+      ],
+    });
+    const host = createSkillHost({ store, prepareSkill });
+    return { store, host };
+  }
+
+  it('installs the add-on on first use, then answers the activation', async () => {
+    const install = scratch.create();
+    // An installed add-on carries its skills under `<install>/skills`.
+    writeSkill(path.join(install, 'skills'), { 'references/a.md': 'x' });
+    const store = createSkillStore({
+      bundledDirectory: scratch.create(),
+      addons: [
+        {
+          addonId: 'demo-addon',
+          skill: {
+            name: 'demo',
+            description: 'A demo skill',
+            userDescription: '',
+            userInvocable: true,
+            disableModelInvocation: false,
+            tableOnly: false,
+            hasScripts: false,
+          },
+        },
+      ],
+      addonDirectory: () => Promise.resolve(install),
+    });
+    const prepareSkill = vi.fn(async () => {
+      await store.hydrateAddon('demo-addon');
+      return { ok: true, value: undefined } as const;
+    });
+    const host = createSkillHost({ store, prepareSkill });
+    await store.load();
+
+    const activation = await host.activate('demo');
+
+    expect(prepareSkill).toHaveBeenCalledWith('demo');
+    expect(activation).toMatchObject({
+      ok: true,
+      value: { name: 'demo', files: [{ path: 'references/a.md', size: 1 }] },
+    });
+  });
+
+  it('fails the call when the add-on cannot be installed, with the loader’s own reason', async () => {
+    const { host } = addonHost(() =>
+      Promise.resolve({
+        ok: false,
+        error: { code: 'STORAGE_ERROR', message: 'The "demo-addon" add-on is not available' },
+      } as const),
+    );
+
+    const outcome = await host.activate('demo');
+
+    expect(failureOf(outcome as never)).toMatchObject({
+      code: 'STORAGE_ERROR',
+      message: expect.stringContaining('demo-addon') as unknown,
+    });
+    // The same mapping for the other two tools.
+    expect((await host.readResource({ skill: 'demo', path: 'x' })).ok).toBe(false);
+    expect(
+      (await host.runScript({ skill: 'demo', script: 'scripts/x.js', input: null, signal })).ok,
+    ).toBe(false);
+  });
+
+  it('reports a cancelled install as CANCELLED', async () => {
+    const { host } = addonHost(() =>
+      Promise.resolve({
+        ok: false,
+        error: { code: 'CANCELLED', message: 'The download was cancelled' },
+      } as const),
+    );
+
+    expect(failureOf((await host.activate('demo')) as never).code).toBe('CANCELLED');
   });
 });

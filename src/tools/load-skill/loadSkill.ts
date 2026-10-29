@@ -69,7 +69,7 @@ export function createSkillExecutor(host: ToolHost): ToolExecutor {
         ),
       );
     }
-    const activation = host.skills.activate(name);
+    const activation = await host.skills.activate(name);
     if (!activation.ok) {
       return Promise.resolve(
         err(createToolError(activation.error.code, activation.error.message, requestId)),

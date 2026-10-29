@@ -1,5 +1,11 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { ESLint } from 'eslint';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Reading the layered config is a cold-start cost of ESLint's own (it loads
+// every app tsconfig), so the first case is not a 5 s one on a fresh machine.
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * The architectural boundaries are enforced by `no-restricted-imports` blocks
@@ -100,6 +106,33 @@ function hasNodeBuiltinGroup(restriction: ImportRestriction): boolean {
   return restriction.patterns.some((pattern) => pattern.group.includes(NODE_BUILTIN_GROUP));
 }
 
+/** The first add-on folder that carries a package.json, and its dependencies. */
+function firstAddonWithDependencies(): {
+  readonly path: string;
+  readonly dependencies: readonly string[];
+} {
+  const root = path.join(process.cwd(), 'src', 'addons');
+  const names = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => existsSync(path.join(root, name, 'package.json')))
+    .sort();
+  for (const name of names) {
+    const parsed = JSON.parse(readFileSync(path.join(root, name, 'package.json'), 'utf8')) as {
+      readonly dependencies?: Record<string, string>;
+    };
+    const dependencies = Object.keys(parsed.dependencies ?? {});
+    if (dependencies.length > 0) {
+      return { path: `src/addons/${name}`, dependencies };
+    }
+  }
+  return { path: 'src/addons/example-addon', dependencies: [] };
+}
+
+const firstAddon = firstAddonWithDependencies();
+const firstAddonPath = firstAddon.path;
+const firstAddonDependencies = firstAddon.dependencies;
+
 describe('layered ESLint boundaries', () => {
   it('keeps src/shared pure (no Electron, no Node built-ins)', async () => {
     const shared = await restrictionFor('src/shared/tools/core/x.ts');
@@ -162,12 +195,31 @@ describe('layered ESLint boundaries', () => {
     }
   });
 
-  it('lets an add-on import lighthouse and puppeteer-core but not application source', async () => {
-    const addon = await restrictionFor('src/addons/page-audit/index.ts');
+  it('lets an add-on import its own dependencies but not application source', async () => {
+    const addon = await restrictionFor(`${firstAddonPath}/index.ts`);
 
-    expect(addon.paths).not.toContain('lighthouse');
-    expect(addon.paths).not.toContain('puppeteer-core');
+    // An add-on's own libraries are its business; the application's are not.
+    for (const dependency of firstAddonDependencies) expect(addon.paths).not.toContain(dependency);
     expect(addon.paths).toContain('electron');
     expect(hasPattern(addon, TOOL_ESCAPE_REGEX)).toBe(true);
+  });
+
+  it('restricts an add-on dependency outside add-on folders', async () => {
+    for (const path of ['src/main/index.ts', 'src/shared/tools/core/x.ts']) {
+      const restriction = await restrictionFor(path);
+      for (const dependency of firstAddonDependencies) {
+        expect(restriction.paths).toContain(dependency);
+      }
+    }
+  });
+
+  it("lets an add-on's own tests reach src/shared and tests/support, nothing else", async () => {
+    const tests = await restrictionFor(`${firstAddonPath}/tests/tool.test.ts`);
+
+    expect(tests.patterns.map((pattern) => pattern.regex)).toEqual([
+      '^(?:\\.\\./){3}(?!\\.\\./)(?!shared(?:/|$))',
+      '^(?:\\.\\./){4}(?!\\.\\./)(?!tests/support(?:/|$))',
+      '^(?:\\.\\./){5,}',
+    ]);
   });
 });

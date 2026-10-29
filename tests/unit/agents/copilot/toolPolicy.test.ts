@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { addonPins } from '../../../../src/shared';
 import {
   createHardenedSession,
   denyAllPermissions,
@@ -52,6 +53,23 @@ describe('denyAllPermissions', () => {
       kind: 'reject',
       feedback: expect.stringContaining('hardened tool policy') as string,
     });
+  });
+});
+
+describe('a tool an add-on contributes', () => {
+  it('is approved from its pins allowlist entry, by bare name and by source-qualified name', () => {
+    const tool = Object.values(addonPins)
+      .flatMap((pin) => pin.contributions.tools)
+      .at(0);
+    // A build with no pinned add-on has nothing to admit.
+    if (tool === undefined) return;
+    const ask = allowlistedToolPermissions({ availableTools: [tool.allowlistEntry] });
+
+    for (const toolName of [tool.name, tool.allowlistEntry]) {
+      expect(ask({ kind: 'custom-tool', toolName, toolDescription: '' }, {} as never)).toEqual({
+        kind: 'approve-once',
+      });
+    }
   });
 });
 

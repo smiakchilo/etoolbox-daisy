@@ -630,8 +630,8 @@ export function createTranscriptView(
   let expandedThinking = false;
   const getLinkContext = options.getLinkContext ?? (() => EMPTY_LINK_CONTEXT);
   const getKnownSkillNames = options.getKnownSkillNames ?? (() => []);
-  // Report accordion state (a `page_audit` report): rubrics are expanded by
-  // default and individually collapsible; exactly one audit entry is expanded
+  // Report accordion state: sections are expanded by default and
+  // individually collapsible; exactly one entry is expanded
   // at a time. Rendered once per shell, then only its state is re-applied.
   const collapsedRubrics = new Set<string>();
   let expandedReportEntry: string | undefined;
@@ -649,7 +649,7 @@ export function createTranscriptView(
   // in place - see `applyTableMessage`.
   const renderedTables = new WeakMap<HTMLElement, RenderedTable>();
 
-  // The export data of each table a `page_audit` report painted, keyed by its
+  // The export data of each table a report painted, keyed by its
   // `.chat-table-message` shell. Report tables are not `format_table` runs, so
   // they have no `RenderedTable`; this is what `hoverActionsFor` reads to give
   // them the same Copy/Export gutter.

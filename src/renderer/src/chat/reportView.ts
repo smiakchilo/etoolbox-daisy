@@ -18,9 +18,9 @@ import { statusLightVariant } from './tableCells';
 import type { TableExportData } from './tableExport';
 
 /**
- * The DOM rendering of a `presentation: 'report'` tool's settled message
- * (`page_audit`): one structured message of collapsible rubric sections, each
- * holding its audits as collapsible entries, each entry holding its evidence
+ * The DOM rendering of a `presentation: 'report'` tool's settled message:
+ * one structured message of collapsible sections, each holding its findings as
+ * collapsible entries, each entry holding its evidence
  * blocks (tables, checklists, a node, a nested request tree, or a text
  * paragraph). Every cell is set through `textContent`; nothing here parses
  * model- or page-authored markup, and a raw HTML snippet is drawn as a
@@ -406,7 +406,7 @@ function renderBlock(block: ToolReportBlock, context: LinkContext, tables: Table
     case 'tree':
       return renderTreeBlock(block, tables);
     case 'text': {
-      // A text block is a paragraph of Lighthouse's own prose (an audit with no
+      // A text block is a paragraph of the tool's own prose (a finding with no
       // items carries its explanation here); linkify it the same way a table
       // cell is, so the "Learn more" URL in it is clickable like every other.
       const rendered = renderText(block.value, '', context, EMPTY_AEM_LINKIFY_STATE);

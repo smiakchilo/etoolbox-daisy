@@ -62,7 +62,6 @@ describe('bundled skills', () => {
           ?.tableOnly === true,
     );
     expect(tableOnly.sort()).toEqual([
-      'check-page',
       'search',
       'search-component',
       'search-page',
