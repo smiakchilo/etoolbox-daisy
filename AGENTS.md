@@ -213,7 +213,22 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change **lets an add-on contribute its
+> The most recent shared-surface change **lets a saved sign-in exist without a
+> password** (2026-10-31): `contracts/credentials-ipc.ts`'s
+> `credentialCaptureSchema` accepts an empty `password` (a payload that names
+> neither half is still invalid), so an email-only identity-provider step -
+> Adobe IMS's and HPE's first pages - is remembered as a **username hint**
+> (`CredentialVault`'s `StoredCredential.hasPassword`, `recentUsernames()`, an
+> empty password), the fill script fills a username-only step and offers a
+> closed-shadow-root **suggestion list** of the remembered usernames on any
+> login field, and `autofill.ts` now injects into every http(s) document once
+> anything is remembered (cross-origin suggestions were the owner's choice) and
+> nothing at all on a fresh vault. `LOG_REASONS` gained `'no-username'`, and a
+> refused capture logs its origin and reason. **No file under
+> `src/shared/contracts/` changed.** See §5's `main/credentials/` paragraph and
+> `docs/verification/followons-2026-10.md` "A sign-in may be just an email
+> (2026-10-31)".
+> The shared-surface change before that **lets an add-on contribute its
 > own tools and skills** (2026-10-28): a new `src/shared/addons/` (the strict
 > contribution schema, the generic `AddonHost`/`AddonModule`/`ADDON_API_VERSION`,
 > and a pins parser, since removed with the pins when add-ons became
@@ -572,19 +587,32 @@ features, left as real windows for SSO - vs tabs, loaded in the same view),
 them back: `credentialVault.ts` (the store - `(origin, username)` keyed, the
 password in `secretStore`/DPAPI, a plaintext `sign-ins.json` index holding no
 password, everything loaded into memory once at startup so the fill and
-`login`-event paths are synchronous), `capture.ts` (the `credentials:captured`
+`login`-event paths are synchronous; an entry may be a **username hint** -
+`hasPassword: false`, an email an identity provider's first page asked for and
+no password ever followed - which `recentUsernames()` also serves as the
+cross-origin suggestion list), `capture.ts` (the `credentials:captured`
 listener; **the origin comes from `event.senderFrame.url`, never from the
-payload**, top frame and http(s) only), `autofill.ts` (attaches to every
-`WebContents` in the pane's session via `app.on('web-contents-created')` - so
-`window.open` SSO windows are covered - and injects on `dom-ready` /
-`did-navigate-in-page`), `fillScript.ts` (the injected script: empty fields
-only, one non-hidden password field only (AEM's sign-in form also carries hidden
-new/confirm-password fields), no `new-password`, no submit, bounded
-`MutationObserver`, and a typed different saved username swaps the password),
-and `hostAuth.ts` (an `isProxy: false` `app.on('login')` challenge is answered
+payload**, top frame and http(s) only; a payload may carry no password, and a
+refused capture logs its origin and `reason: 'no-username'`),
+`autofill.ts` (attaches to every `WebContents` in the pane's session via
+`app.on('web-contents-created')` - so `window.open` SSO windows are covered - and
+injects on `dom-ready` / `did-navigate-in-page`; **every** http(s) document once
+anything is remembered, because the suggestion list is deliberately global, but
+nothing at all on a fresh vault), `fillScript.ts` (the injected script: empty
+fields only, one *visible* password field only (AEM's sign-in form also carries
+hidden new/confirm-password fields, and a page's password-manager decoy -
+`aria-hidden` / `tabindex="-1"`, Adobe's `credential-hide-helper` - is not a
+field), no `new-password`, no submit, a bounded `MutationObserver` that keeps
+watching past a username-only first step into the password step that follows,
+a typed different saved username swaps the password, **an email-only step is
+filled from the same credential**, and a **closed-shadow-root suggestion list**
+offers the remembered usernames on any login/email field - never a password
+field - filtered as the user types, with Arrow/Enter/Escape and mousedown), and
+`hostAuth.ts` (an `isProxy: false` `app.on('login')` challenge is answered
 from the same vault - the sibling of `webview/proxyAuth.ts`, with the same
-one-time-callback discipline). The Settings "Browser" tab's saved-sign-in
-management is part of **Clear personal data**, which forgets the vault
+one-time-callback discipline; only an entry with `hasPassword` may answer it).
+The Settings "Browser" tab's saved-sign-in management is part of **Clear
+personal data**, which forgets the vault
 (`credentials:erase`, all-or-nothing, through the shared destructive-confirm
 prompt) in the same action as the pane's cookies and session storage; there is
 deliberately no list, no picker (see `docs/backlog.md` "Saved sign-ins: a
@@ -2107,11 +2135,15 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4816 passed / 1 failed / 13 skipped**
-(4830 total; the failure is the environment-bound
+Current baseline: **`npm run test` → 4833 passed / 1 failed / 13 skipped**
+(4847 total; the failure is the environment-bound
 `tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
-HEAD because this machine is signed in to Copilot - +15 against the 4801 run
-below, for **Clearing the pane's data: two scopes, one reload** (2026-10-31): the
+HEAD because this machine is signed in to Copilot - +17 against the 4816 run
+below, for **A sign-in may be just an email** (2026-10-31): the vault keeps a
+username hint (no password), the fill script fills a username-only step, and a
+closed-shadow-root suggestion list offers the remembered usernames on any login
+field; `saved-sign-ins.spec.ts` is 2 cases. It follows the 4816 run's
+**Clearing the pane's data: two scopes, one reload** (2026-10-31): the
 Browser tab's erase button became **Clear personal data** (saved sign-ins, the
 pane's cookies and session storage) and **Clear storage** (local data and every
 cache), both clearing through `browser:clear-data` and reloading the open page.

@@ -14,6 +14,12 @@ import type { SecretStore } from '../secretStore';
  * order of {@link CredentialVault.listForOrigin} is load-bearing: a successful
  * submit promotes its entry to the front.
  *
+ * **An entry may hold no password.** An identity provider's first page asks for
+ * an email and nothing else (Adobe's and HPE's sign-in pages do), so a submitted
+ * username is kept as a **hint** (`hasPassword: false`): it can prefill and
+ * suggest that field next time, and it can never answer an HTTP authentication
+ * challenge. A later password submission for the same pair upgrades the entry.
+ *
  * **Storage.** The password is DPAPI-encrypted by the existing
  * `secretStore` under `signin:<origin>|<username>`. The plaintext index
  * (`sign-ins.json`) holds only what the UI needs to reason about - origin,
@@ -36,7 +42,16 @@ import type { SecretStore } from '../secretStore';
 export interface StoredCredential {
   readonly origin: string;
   readonly username: string;
+  /** Empty when only the username was remembered (see {@link hasPassword}). */
   readonly password: string;
+  /**
+   * Whether a password is stored for this pair. `false` marks a **username
+   * hint** - an email/username an identity provider's first page asked for and
+   * never followed with a password (Adobe's and HPE's two-step pages do this).
+   * A hint prefills and suggests the name; it can never answer an HTTP
+   * authentication challenge.
+   */
+  readonly hasPassword: boolean;
   /** Epoch milliseconds of the last submission (or of the load that created it). */
   readonly lastUsedAt: number;
 }
@@ -48,13 +63,32 @@ export interface CredentialVault {
   listForOrigin(origin: string): readonly StoredCredential[];
   /** The origin's most recently used username, for a password step that omits it. */
   latestUsername(origin: string): string | undefined;
+  /**
+   * Every remembered username, most recently used first and deduplicated
+   * case-insensitively. This is what the email field's suggestion list offers,
+   * deliberately across origins: the same person signs in at Adobe and at the
+   * identity provider behind it, and typing the address twice is the annoyance
+   * this exists to remove.
+   */
+  recentUsernames(): readonly string[];
   /** How many sign-ins are stored. */
   count(): number;
-  /** Remembers one submitted pair, replacing that pair's password and promoting it. */
+  /**
+   * Remembers one submitted pair, replacing that pair's password and promoting
+   * it. An empty password records a username hint; for a pair that already has
+   * a password it keeps that password rather than downgrading the entry.
+   */
   record(input: { origin: string; username: string; password: string }): Promise<void>;
   /** Forgets every sign-in. Resolves with how many were removed. */
   eraseAll(): Promise<number>;
 }
+
+/**
+ * How many usernames the field's suggestion list may offer. The vault holds
+ * more (they are the same entries the prefill uses); this is only the size of
+ * the injected dropdown, which stops being useful long before it stops growing.
+ */
+export const MAX_SUGGESTED_USERNAMES = 10;
 
 export interface CredentialVaultOptions {
   /** The app's technical credentials folder (never the user-visible one). */
@@ -70,6 +104,8 @@ export const SIGN_IN_INDEX_FILE_NAME = 'sign-ins.json';
 interface IndexEntry {
   readonly origin: string;
   readonly username: string;
+  /** `false` for a username hint: there is no secret to read. */
+  readonly hasPassword: boolean;
   readonly lastUsedAt: number;
 }
 
@@ -111,6 +147,18 @@ function isIndexEntry(value: unknown): value is IndexEntry {
   );
 }
 
+/**
+ * Reads one index record, defaulting `hasPassword` to `true` for a record
+ * written before a username-only hint existed (such a record always had one).
+ * Only an explicit `false` suppresses the secret read; anything else asks for
+ * the secret, whose absence is then reported rather than silently dropped.
+ */
+function normalizeIndexEntry(value: unknown): IndexEntry | undefined {
+  if (!isIndexEntry(value)) return undefined;
+  const hasPassword = (value as { readonly hasPassword?: unknown }).hasPassword;
+  return { ...value, hasPassword: hasPassword !== false };
+}
+
 /** Reads the index, returning `undefined` when there is no usable file at all. */
 async function readIndex(filePath: string): Promise<readonly IndexEntry[] | undefined> {
   let raw: string;
@@ -128,7 +176,9 @@ async function readIndex(filePath: string): Promise<readonly IndexEntry[] | unde
   if (typeof parsed !== 'object' || parsed === null) return undefined;
   const entries = (parsed as { entries?: unknown }).entries;
   if (!Array.isArray(entries)) return undefined;
-  return entries.filter(isIndexEntry);
+  return entries
+    .map((entry) => normalizeIndexEntry(entry))
+    .filter((entry): entry is IndexEntry => entry !== undefined);
 }
 
 /** Write-temp-then-rename, the same atomicity the secret store uses. */
@@ -179,6 +229,11 @@ export function createCredentialVault(options: CredentialVaultOptions): Credenti
     const loaded: StoredCredential[] = [];
     await Promise.all(
       stored.map(async (entry) => {
+        if (!entry.hasPassword) {
+          // A username hint: the index is the whole record.
+          loaded.push({ ...entry, password: '' });
+          return;
+        }
         try {
           const password = await options.secrets.get(
             credentialSecretRef(entry.origin, entry.username),
@@ -211,6 +266,19 @@ export function createCredentialVault(options: CredentialVaultOptions): Credenti
       return entries.find((entry) => entry.origin === origin)?.username;
     },
 
+    recentUsernames() {
+      const seen = new Set<string>();
+      const usernames: string[] = [];
+      for (const entry of entries) {
+        const key = entry.username.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        usernames.push(entry.username);
+        if (usernames.length >= MAX_SUGGESTED_USERNAMES) break;
+      }
+      return usernames;
+    },
+
     count() {
       return entries.length;
     },
@@ -218,22 +286,40 @@ export function createCredentialVault(options: CredentialVaultOptions): Credenti
     async record(input) {
       await ready;
       await enqueue(async () => {
-        await options.secrets.set(
-          credentialSecretRef(input.origin, input.username),
-          input.password,
+        const existing = entries.find(
+          (entry) => entry.origin === input.origin && entry.username === input.username,
         );
+        // An empty password is a username hint. For a pair that already has a
+        // password it must not downgrade the entry, and the stored secret stays
+        // exactly as it is.
+        const keepsExistingPassword = input.password.length === 0;
+        const password = keepsExistingPassword ? (existing?.password ?? '') : input.password;
+        const hasPassword = password.length > 0;
+        if (!keepsExistingPassword) {
+          await options.secrets.set(
+            credentialSecretRef(input.origin, input.username),
+            input.password,
+          );
+        }
         const lastUsedAt = now();
         const next: StoredCredential[] = [
-          { ...input, lastUsedAt },
+          {
+            origin: input.origin,
+            username: input.username,
+            password,
+            hasPassword,
+            lastUsedAt,
+          },
           ...entries.filter(
             (entry) => !(entry.origin === input.origin && entry.username === input.username),
           ),
         ];
         await writeIndex(
           indexPath,
-          next.map(({ origin, username, lastUsedAt: used }) => ({
+          next.map(({ origin, username, hasPassword: stored, lastUsedAt: used }) => ({
             origin,
             username,
+            hasPassword: stored,
             lastUsedAt: used,
           })),
         );
@@ -248,9 +334,11 @@ export function createCredentialVault(options: CredentialVaultOptions): Credenti
       return enqueue(async () => {
         const removed = entries.length;
         const results = await Promise.allSettled(
-          entries.map((entry) =>
-            options.secrets.delete(credentialSecretRef(entry.origin, entry.username)),
-          ),
+          entries
+            .filter((entry) => entry.hasPassword)
+            .map((entry) =>
+              options.secrets.delete(credentialSecretRef(entry.origin, entry.username)),
+            ),
         );
         const failed = results.filter((result) => result.status === 'rejected').length;
         if (failed > 0) options.logger.warn('CREDENTIALS_ERASE_FAILED', { count: failed });

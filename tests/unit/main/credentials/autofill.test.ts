@@ -14,7 +14,13 @@ import { makeRecordingLogger } from '../../../support/ipcHandlerHarness';
 const ORIGIN = 'https://author.example.com';
 
 function credential(username: string, password: string): StoredCredential {
-  return { origin: ORIGIN, username, password, lastUsedAt: 1_000 };
+  return {
+    origin: ORIGIN,
+    username,
+    password,
+    hasPassword: password.length > 0,
+    lastUsedAt: 1_000,
+  };
 }
 
 let fake: FakeWebContents;
@@ -32,12 +38,19 @@ beforeEach(() => {
   fake.define('executeJavaScript', execute);
 });
 
+async function loadDocument(): Promise<void> {
+  fake.emit('dom-ready');
+  await flushMicrotasks();
+}
+
 function attach(
   credentials: readonly StoredCredential[],
   logger = makeRecordingLogger(),
+  usernames: readonly string[] = credentials.map((entry) => entry.username),
 ): { detach: () => void; logger: ReturnType<typeof makeRecordingLogger> } {
   const detach = attachCredentialAutofill(fake.webContents, {
     listForOrigin: (origin) => credentials.filter((entry) => entry.origin === origin),
+    recentUsernames: () => usernames,
     logger,
   });
   return { detach, logger };
@@ -59,8 +72,7 @@ describe('attachCredentialAutofill', () => {
   it('injects the origin’s saved sign-in on dom-ready', async () => {
     attach([credential('admin', 'secret')]);
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     expect(execute).toHaveBeenCalledTimes(1);
     const script = execute.mock.calls[0]?.[0];
@@ -68,12 +80,24 @@ describe('attachCredentialAutofill', () => {
     expect(script).toContain('secret');
   });
 
-  it('injects nothing for an origin with no saved sign-in', async () => {
+  it('offers the remembered usernames on an origin with no saved sign-in', async () => {
     url = 'https://other.example.com/';
     attach([credential('admin', 'secret')]);
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
+
+    // The same email is the address at Adobe and at the identity provider
+    // behind it, so the suggestion list is deliberately not origin-scoped.
+    expect(execute).toHaveBeenCalledTimes(1);
+    const script = execute.mock.calls[0]?.[0];
+    expect(script).toContain('admin');
+    expect(script).not.toContain('secret');
+  });
+
+  it('injects nothing at all when nothing is remembered', async () => {
+    attach([]);
+
+    await loadDocument();
 
     expect(execute).not.toHaveBeenCalled();
   });
@@ -82,8 +106,7 @@ describe('attachCredentialAutofill', () => {
     url = 'file:///c:/app/index.html';
     attach([credential('admin', 'secret')]);
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     expect(execute).not.toHaveBeenCalled();
   });
@@ -104,8 +127,7 @@ describe('attachCredentialAutofill', () => {
     attach([credential('admin', 'secret')]);
     destroyed = true;
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     expect(execute).not.toHaveBeenCalled();
   });
@@ -114,8 +136,7 @@ describe('attachCredentialAutofill', () => {
     execute.mockRejectedValueOnce(new Error('frame gone'));
     const { logger } = attach([credential('admin', 'secret')]);
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     expect(logger.warn).toHaveBeenCalledWith('CREDENTIAL_PREFILL_FAILED', { count: 1 });
   });
@@ -123,8 +144,7 @@ describe('attachCredentialAutofill', () => {
   it('logs a successful prefill against the origin, never the credential', async () => {
     const { logger } = attach([credential('admin', 'secret')]);
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     const [code, fields] = logger.info.mock.calls[0] ?? [];
     expect(code).toBe('CREDENTIAL_PREFILLED');
@@ -136,8 +156,7 @@ describe('attachCredentialAutofill', () => {
     execute.mockResolvedValue(false);
     const { logger } = attach([credential('admin', 'secret')]);
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     expect(logger.info).not.toHaveBeenCalled();
   });
@@ -146,8 +165,7 @@ describe('attachCredentialAutofill', () => {
     const { detach } = attach([credential('admin', 'secret')]);
     detach();
 
-    fake.emit('dom-ready');
-    await flushMicrotasks();
+    await loadDocument();
 
     expect(execute).not.toHaveBeenCalled();
     expect(fake.listenerCount('dom-ready')).toBe(0);

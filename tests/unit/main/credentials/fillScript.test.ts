@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildCredentialFillScript,
+  SUGGESTION_HOST_ATTRIBUTE,
   type FillCredential,
 } from '../../../../src/main/credentials/fillScript';
 
@@ -33,13 +34,23 @@ function page(markup: string): Page {
 }
 
 afterEach(() => {
-  for (const dom of pages.splice(0)) dom.window.close();
+  for (const dom of pages.splice(0)) {
+    const holder = dom.window as unknown as {
+      __daisySavedSignInFill?: { dispose?: () => void };
+    };
+    holder.__daisySavedSignInFill?.dispose?.();
+    dom.window.close();
+  }
 });
 
 const primary: FillCredential = { username: 'admin', password: 'secret' };
 
-function evalFill(target: Page, credentials: readonly FillCredential[]): unknown {
-  return target.window.eval(buildCredentialFillScript(credentials));
+function evalFill(
+  target: Page,
+  credentials: readonly FillCredential[],
+  suggestions: readonly string[] = [],
+): unknown {
+  return target.window.eval(buildCredentialFillScript(credentials, suggestions));
 }
 
 function valueOf(target: Page, selector: string): string {
@@ -122,17 +133,70 @@ describe('buildCredentialFillScript', () => {
     expect(valueOf(target, 'input[name="secret"]')).toBe('');
   });
 
-  it('does nothing on a username-only page (there is no password field to fill)', () => {
+  it('fills a username-only step and reports that it did', () => {
+    // An identity provider's first page asks only who the user is; the email
+    // field is the one thing a saved sign-in can still fill there.
     const target = page(`
       <form>
         <input type="email" name="loginfmt">
         <button type="submit">Next</button>
       </form>`);
 
-    // No password field: nothing to fill, and the page is not reported as a
-    // sign-in form. The two-step password page is a separate document.
+    expect(evalFill(target, [primary, { username: 'me@example.com', password: '' }])).toBe(true);
+    expect(valueOf(target, 'input[name="loginfmt"]')).toBe('admin');
+  });
+
+  it('does not fill an arbitrary text field on a page with no password field', () => {
+    const target = page(`
+      <form>
+        <input type="text" name="q">
+        <button type="submit">Search</button>
+      </form>`);
+
     expect(evalFill(target, [primary])).toBe(false);
-    expect(valueOf(target, 'input[name="loginfmt"]')).toBe('');
+    expect(valueOf(target, 'input[name="q"]')).toBe('');
+  });
+
+  it('ignores a password decoy the page hides from assistive tech', () => {
+    // Adobe's email page: the email field, and a password input whose only job
+    // is to decoy password managers (`credential-hide-helper`).
+    const target = page(`
+      <form id="EmailForm">
+        <input id="EmailPage-EmailField" type="email" name="username" value="">
+        <div class="credential-hide-helper">
+          <input autocomplete="current-password" aria-hidden="true" name="passwd"
+                 type="password" tabindex="-1">
+        </div>
+        <button type="submit">Continue</button>
+      </form>`);
+    const credential = { username: 'me@example.com', password: 'secret' };
+
+    expect(evalFill(target, [credential])).toBe(true);
+    expect(valueOf(target, '#EmailPage-EmailField')).toBe('me@example.com');
+    // The saved password must not be typed into a field the page never shows.
+    expect(valueOf(target, 'input[name="passwd"]')).toBe('');
+  });
+
+  it('keeps watching after a username-only step and fills the password step that follows', async () => {
+    const target = page(`
+      <form id="EmailForm">
+        <input type="email" name="username">
+        <button type="submit">Continue</button>
+      </form>`);
+    const credential = { username: 'me@example.com', password: 'secret' };
+
+    expect(evalFill(target, [credential])).toBe(true);
+    expect(valueOf(target, 'input[name="username"]')).toBe('me@example.com');
+
+    // The provider replaces its first step with the password step in the same
+    // document (no navigation, so no re-injection).
+    const next = target.document.createElement('form');
+    next.innerHTML =
+      '<input type="password" name="password"><button type="submit">Sign in</button>';
+    target.document.querySelector('#EmailForm')?.replaceWith(next);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(valueOf(target, 'input[name="password"]')).toBe('secret');
   });
 
   it('fills a password step whose username field is absent (step 2)', () => {
@@ -213,5 +277,91 @@ describe('buildCredentialFillScript', () => {
 
     expect(evalFill(target, [])).toBe(false);
     expect(valueOf(target, 'input[name="j_password"]')).toBe('');
+  });
+});
+
+describe('the username suggestion list', () => {
+  const suggestions = ['me@example.com', 'admin', 'someone@example.com'];
+
+  function focusField(target: Page, selector: string): HTMLInputElement {
+    const field = target.document.querySelector<HTMLInputElement>(selector);
+    if (field === null) throw new Error(`no ${selector}`);
+    field.dispatchEvent(new target.window.FocusEvent('focusin', { bubbles: true }));
+    return field;
+  }
+
+  function press(target: Page, field: HTMLInputElement, key: string): void {
+    field.dispatchEvent(
+      new target.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+    );
+  }
+
+  function suggestionHost(target: Page): Element | null {
+    return target.document.querySelector(`[${SUGGESTION_HOST_ATTRIBUTE}]`);
+  }
+
+  it('offers the remembered usernames on focus and fills the chosen one', () => {
+    const target = page(`
+      <form>
+        <input type="email" name="username">
+        <button type="submit">Continue</button>
+      </form>`);
+    evalFill(target, [], suggestions);
+
+    const field = focusField(target, 'input[name="username"]');
+    expect(suggestionHost(target)).not.toBeNull();
+
+    press(target, field, 'ArrowDown');
+    press(target, field, 'Enter');
+
+    expect(field.value).toBe('me@example.com');
+  });
+
+  it('filters the list as the user types', () => {
+    const target = page(`
+      <form>
+        <input type="email" name="username">
+        <button type="submit">Continue</button>
+      </form>`);
+    evalFill(target, [], suggestions);
+
+    const field = focusField(target, 'input[name="username"]');
+    field.value = 'some';
+    field.dispatchEvent(new target.window.Event('input', { bubbles: true }));
+    press(target, field, 'ArrowDown');
+    press(target, field, 'Enter');
+
+    expect(field.value).toBe('someone@example.com');
+  });
+
+  it('never opens on a password field', () => {
+    const target = page(`
+      <form>
+        <input type="text" name="user">
+        <input type="password" name="password">
+        <button type="submit">Sign in</button>
+      </form>`);
+    evalFill(target, [], suggestions);
+
+    const field = focusField(target, 'input[name="password"]');
+    press(target, field, 'ArrowDown');
+    press(target, field, 'Enter');
+
+    expect(suggestionHost(target)).toBeNull();
+    expect(field.value).toBe('');
+  });
+
+  it('retires its list and listeners when the script is injected again', () => {
+    const target = page(`
+      <form>
+        <input type="email" name="username">
+        <button type="submit">Continue</button>
+      </form>`);
+    evalFill(target, [], suggestions);
+    focusField(target, 'input[name="username"]');
+    expect(suggestionHost(target)).not.toBeNull();
+
+    evalFill(target, [], suggestions);
+    expect(suggestionHost(target)).toBeNull();
   });
 });

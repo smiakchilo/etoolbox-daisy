@@ -375,7 +375,11 @@ if (smokeTest) {
     app.on(
       'login',
       createHostLoginListener({
-        lookup: (origin) => credentialVault.listForOrigin(origin)[0],
+        // Only an entry that actually holds a password may answer an HTTP
+        // challenge; a username hint (an email-only sign-in) must never be sent
+        // as a credential with an empty password.
+        lookup: (origin) =>
+          credentialVault.listForOrigin(origin).find((entry) => entry.hasPassword),
       }),
     );
 
@@ -417,13 +421,14 @@ if (smokeTest) {
     // pane itself and every popup an SSO flow opens (`window.open` windows get a
     // real BrowserWindow, so they are separate `WebContents`). The listener is
     // registered before the view exists; a `WebContents` from any other session
-    // (the shell's own renderer) is ignored. `attachCredentialAutofill` checks
-    // the document's own origin before injecting anything, so a page the vault
-    // does not know is never touched.
+    // (the shell's own renderer) is ignored. The script writes only into a field
+    // the page presents as a login/email field, and only when something is
+    // remembered at all.
     app.on('web-contents-created', (_event, contents) => {
       if (contents.session !== viewSession.session) return;
       attachCredentialAutofill(contents, {
         listForOrigin: (origin) => credentialVault.listForOrigin(origin),
+        recentUsernames: () => credentialVault.recentUsernames(),
         logger,
       });
     });

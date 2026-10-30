@@ -7,26 +7,32 @@ import { buildCredentialFillScript } from './fillScript';
  * Prefilling a saved sign-in, per `WebContents`.
  *
  * This attaches to *every* `WebContents` in the browser pane's session - the
- * pane itself and every popup window a page opens through `window.open` - so
- * an identity-provider dialog that is a real window is prefilled too, without
+ * pane itself and every popup window a page opens through `window.open` - so an
+ * identity-provider dialog that is a real window is prefilled too, without
  * `windowOpenRouter.ts` knowing anything about credentials. The session check
  * that keeps the shell's own renderer out lives in `index.ts`, where the one
  * `Session` is in scope.
  *
- * **The origin gate is here, before anything is injected.** Main reads the URL
- * the document committed to, and only builds a fill script when the vault has a
- * credential for exactly that origin. A page on another origin is never sent a
- * script at all - not even an empty one - so the feature is invisible to every
- * site the user browses that has no saved sign-in.
+ * **What is injected where.** With nothing remembered, nothing is injected into
+ * any page - the feature is invisible on a fresh profile. Once something *is*
+ * remembered, the script goes into every main-frame http(s) document, because
+ * the suggestion list deliberately offers the remembered usernames across
+ * origins: the user's email is the same address at Adobe and at the identity
+ * provider behind it, and the dropdown is what removes the retyping. The script
+ * only ever writes into a field the page itself presents as a login/email field
+ * (and only an empty one), and its list lives in a closed shadow root the page
+ * cannot read.
  *
  * Two moments prefill a page: `dom-ready` (the first paint of a new document)
  * and `did-navigate-in-page` (a single-page application changing route without
  * a load - the shape Adobe's and Microsoft's identity providers both use). A
  * re-injection into the same document is safe: the script retires its own
- * previous listener and observer first (see `fillScript.ts`).
+ * previous listeners, observer and dropdown first (see `fillScript.ts`).
  */
 export interface CredentialAutofillDeps {
   readonly listForOrigin: (origin: string) => readonly StoredCredential[];
+  /** Every remembered username, most recent first - the suggestion list. */
+  readonly recentUsernames: () => readonly string[];
   readonly logger: Logger;
 }
 
@@ -52,13 +58,15 @@ export function attachCredentialAutofill(
     const origin = originOf(webContents.getURL());
     if (origin === undefined) return;
     const credentials = deps.listForOrigin(origin);
-    if (credentials.length === 0) return;
+    const suggestions = deps.recentUsernames();
+    // Nothing remembered yet: leave the page completely untouched.
+    if (credentials.length === 0 && suggestions.length === 0) return;
     try {
       const filled: unknown = await webContents.executeJavaScript(
-        buildCredentialFillScript(credentials),
+        buildCredentialFillScript(credentials, suggestions),
       );
-      // Only a successful prefill is logged, and only the origin: a page load on
-      // a saved origin that has no form (a content page after signing in) is the
+      // Only a successful fill is logged, and only the origin: a page load on an
+      // origin with nothing to fill (a content page after signing in) is the
       // common case and would otherwise fill the log.
       if (filled === true) {
         deps.logger.info('CREDENTIAL_PREFILLED', { url: toLoggableUrl(`${origin}/`) });

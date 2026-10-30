@@ -55,6 +55,7 @@ describe('decideCredentialCapture', () => {
       { username: 'admin' },
       { password: 'secret' },
       { username: '', password: '' },
+      { username: '  ', password: '' },
       { username: 'admin', password: 'x'.repeat(2000) },
       { username: 'admin', password: 'secret', origin: 'https://evil.example.com' },
       'nonsense',
@@ -67,6 +68,31 @@ describe('decideCredentialCapture', () => {
         ),
       ).toEqual({ kind: 'ignore', reason: 'invalid_payload' });
     }
+  });
+
+  it('stores an email-only step as a username hint', () => {
+    expect(
+      decideCredentialCapture(
+        { url: 'https://auth.services.adobe.com/en_US/index.html', isMainFrame: true },
+        { username: 'me@example.com', password: '' },
+        noFallback,
+      ),
+    ).toEqual({
+      kind: 'store',
+      origin: 'https://auth.services.adobe.com',
+      username: 'me@example.com',
+      password: '',
+    });
+  });
+
+  it('ignores an email-only capture with no username anywhere', () => {
+    expect(
+      decideCredentialCapture(
+        { url: 'https://auth.services.adobe.com/en_US/index.html', isMainFrame: true },
+        { username: '  ', password: '' },
+        noFallback,
+      ),
+    ).toEqual({ kind: 'ignore', reason: 'invalid_payload' });
   });
 
   it("falls back to the origin's newest username for an identity provider's password step", () => {

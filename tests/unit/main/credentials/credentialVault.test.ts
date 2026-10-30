@@ -93,12 +93,12 @@ describe('createCredentialVault', () => {
     await vault.record({ origin, username: 'admin', password: 'secret' });
 
     expect(vault.listForOrigin(origin)).toEqual([
-      { origin, username: 'admin', password: 'secret', lastUsedAt: 1_000 },
+      { origin, username: 'admin', password: 'secret', hasPassword: true, lastUsedAt: 1_000 },
     ]);
     const raw = await readFile(path.join(directory, SIGN_IN_INDEX_FILE_NAME), 'utf8');
     expect(raw).not.toContain('secret');
     expect(JSON.parse(raw)).toEqual({
-      entries: [{ origin, username: 'admin', lastUsedAt: 1_000 }],
+      entries: [{ origin, username: 'admin', hasPassword: true, lastUsedAt: 1_000 }],
     });
 
     const reloaded = createCredentialVault({
@@ -108,7 +108,7 @@ describe('createCredentialVault', () => {
     });
     await reloaded.ready;
     expect(reloaded.listForOrigin(origin)).toEqual([
-      { origin, username: 'admin', password: 'secret', lastUsedAt: 1_000 },
+      { origin, username: 'admin', password: 'secret', hasPassword: true, lastUsedAt: 1_000 },
     ]);
   });
 
@@ -176,7 +176,7 @@ describe('createCredentialVault', () => {
     await vault.ready;
 
     expect(vault.listForOrigin(origin)).toEqual([
-      { origin, username: 'author', password: 'kept', lastUsedAt: 1 },
+      { origin, username: 'author', password: 'kept', hasPassword: true, lastUsedAt: 1 },
     ]);
     expect(logger.warn).toHaveBeenCalledWith('CREDENTIAL_LOAD_FAILED', { count: 1 });
   });
@@ -217,6 +217,98 @@ describe('createCredentialVault', () => {
 
     expect(vault.listForOrigin(origin)).toHaveLength(1);
     expect(vault.count()).toBe(1);
+  });
+
+  it('records a username hint without writing or reading a secret', async () => {
+    const secrets = createFakeSecrets();
+    const vault = createCredentialVault({
+      directory,
+      secrets,
+      logger: makeRecordingLogger(),
+      now: () => 1_000,
+    });
+    await vault.ready;
+
+    await vault.record({ origin, username: 'me@example.com', password: '' });
+
+    expect(secrets.set).not.toHaveBeenCalled();
+    expect(vault.listForOrigin(origin)).toEqual([
+      {
+        origin,
+        username: 'me@example.com',
+        password: '',
+        hasPassword: false,
+        lastUsedAt: 1_000,
+      },
+    ]);
+    const raw = await readFile(path.join(directory, SIGN_IN_INDEX_FILE_NAME), 'utf8');
+    expect(JSON.parse(raw)).toEqual({
+      entries: [{ origin, username: 'me@example.com', hasPassword: false, lastUsedAt: 1_000 }],
+    });
+
+    const reloadSecrets = createFakeSecrets();
+    const reloaded = createCredentialVault({
+      directory,
+      secrets: reloadSecrets,
+      logger: makeRecordingLogger(),
+    });
+    await reloaded.ready;
+
+    // A hint is the index record itself: there is no secret to look for.
+    expect(reloadSecrets.get).not.toHaveBeenCalled();
+    expect(reloaded.listForOrigin(origin)[0]).toMatchObject({
+      username: 'me@example.com',
+      hasPassword: false,
+    });
+  });
+
+  it('upgrades a hint with a password, and a later hint does not erase it', async () => {
+    const secrets = createFakeSecrets();
+    const vault = createCredentialVault({
+      directory,
+      secrets,
+      logger: makeRecordingLogger(),
+      now: () => 1_000,
+    });
+    await vault.ready;
+
+    await vault.record({ origin, username: 'me@example.com', password: '' });
+    await vault.record({ origin, username: 'me@example.com', password: 'secret' });
+
+    expect(vault.listForOrigin(origin)[0]).toMatchObject({
+      password: 'secret',
+      hasPassword: true,
+    });
+
+    // Signing in again at an email-only step must not downgrade the entry.
+    await vault.record({ origin, username: 'me@example.com', password: '' });
+
+    expect(vault.listForOrigin(origin)[0]).toMatchObject({
+      password: 'secret',
+      hasPassword: true,
+    });
+    expect(secrets.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers remembered usernames newest first, deduplicated, and capped', async () => {
+    const vault = createCredentialVault({
+      directory,
+      secrets: createFakeSecrets(),
+      logger: makeRecordingLogger(),
+      now: () => 1_000,
+    });
+    await vault.ready;
+
+    for (let index = 0; index < 12; index += 1) {
+      await vault.record({ origin, username: `person-${index}@example.com`, password: '' });
+    }
+    await vault.record({ origin: otherOrigin, username: 'Person-2@example.com', password: '' });
+
+    const usernames = vault.recentUsernames();
+    expect(usernames[0]).toBe('Person-2@example.com');
+    expect(usernames).toHaveLength(10);
+    expect(new Set(usernames.map((name) => name.toLowerCase())).size).toBe(10);
+    expect(usernames).not.toContain('person-2@example.com');
   });
 
   it('erases every secret and the index', async () => {

@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { CREDENTIALS_CAPTURED_CHANNEL, credentialCaptureSchema } from '../../shared';
-import { toLoggableUrl, type Logger } from '../logger';
+import { toLoggableUrl, type Logger, type LogReason } from '../logger';
 import type { CredentialVault } from './credentialVault';
 
 /**
@@ -41,6 +41,11 @@ export type CaptureDecision =
  * Classifies one `credentials:captured` message. `latestUsernameFor` supplies
  * the origin's most recent username for the identity-provider password step
  * that keeps the name in page state rather than a field.
+ *
+ * A payload with no password is a **username hint** - an email-only page (Adobe,
+ * HPE) whose submission is worth remembering for the field's prefill and
+ * suggestion list. It needs a username, so it takes the same fallback path and
+ * the same `no_username` refusal as a password step.
  */
 export function decideCredentialCapture(
   frame: CaptureFrame | undefined,
@@ -72,18 +77,35 @@ export interface CredentialCaptureDeps {
   readonly logger: Logger;
 }
 
+type CaptureIgnoreReason = Extract<CaptureDecision, { kind: 'ignore' }>['reason'];
+
+/** The closed log vocabulary for a refused capture, where one exists. */
+const IGNORE_LOG_REASONS: Readonly<Partial<Record<CaptureIgnoreReason, LogReason>>> = {
+  no_username: 'no-username',
+  invalid_payload: 'unexpected',
+};
+
 /** Registers the one-way `credentials:captured` listener. */
 export function registerCredentialCaptureIpc(deps: CredentialCaptureDeps): void {
   ipcMain.on(CREDENTIALS_CAPTURED_CHANNEL, (event, payload: unknown) => {
     const frame = event.senderFrame;
-    const decision = decideCredentialCapture(
-      frame === null ? undefined : { url: frame.url, isMainFrame: frame.top === frame },
-      payload,
-      (origin) => deps.vault.latestUsername(origin),
+    const frameInfo =
+      frame === null ? undefined : { url: frame.url, isMainFrame: frame.top === frame };
+    const decision = decideCredentialCapture(frameInfo, payload, (origin) =>
+      deps.vault.latestUsername(origin),
     );
     if (decision.kind === 'ignore') {
       if (decision.reason !== 'not_main_frame') {
-        deps.logger.warn('CREDENTIAL_CAPTURE_IGNORED', { count: 1 });
+        // The origin and the reason are the whole diagnostic: without them the
+        // line cannot say *which* sign-in page was refused or why, which is
+        // exactly what a host whose form is not remembered needs.
+        deps.logger.warn('CREDENTIAL_CAPTURE_IGNORED', {
+          count: 1,
+          ...(IGNORE_LOG_REASONS[decision.reason] === undefined
+            ? {}
+            : { reason: IGNORE_LOG_REASONS[decision.reason] }),
+          ...(frameInfo === undefined ? {} : { url: toLoggableUrl(frameInfo.url) }),
+        });
       }
       return;
     }

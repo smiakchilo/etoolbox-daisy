@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
+import { SUGGESTION_HOST_ATTRIBUTE } from '../../src/main/credentials/fillScript';
 import {
   FIXTURE_PASSWORD,
   FIXTURE_USERNAME,
@@ -198,5 +200,154 @@ test('a sign-in is remembered, prefilled after sign-out and restart, and erased 
     }
   } finally {
     await aem.close();
+  }
+});
+
+/**
+ * The email-only first step of an identity provider (Adobe's and HPE's pages):
+ * a form that asks who you are, with a password input planted only to decoy
+ * password managers. The pane must remember the address, prefill it next time,
+ * and offer it in the field's suggestion list.
+ */
+interface EmailStepOrigin {
+  readonly origin: string;
+  close(): Promise<void>;
+}
+
+async function startEmailStepOrigin(): Promise<EmailStepOrigin> {
+  const page = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Sign in</title></head>
+<body>
+  <h1>Sign in</h1>
+  <form id="EmailForm">
+    <label for="email">E-mail address</label>
+    <input id="email" name="username" type="email" autocomplete="username">
+    <div class="credential-hide-helper">
+      <input name="passwd" type="password" autocomplete="current-password"
+             aria-hidden="true" tabindex="-1">
+    </div>
+    <button id="continue" type="submit">Continue</button>
+  </form>
+</body></html>`;
+
+  const server: Server = createServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(page);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('no server port');
+  return {
+    origin: `http://127.0.0.1:${address.port}`,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error === undefined ? resolve() : reject(error))),
+      ),
+  };
+}
+
+test('an email-only step is remembered, prefilled, and offered as a suggestion', async () => {
+  test.setTimeout(240_000);
+
+  const identityProvider = await startEmailStepOrigin();
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
+  const email = 'someone@example.com';
+
+  const base = defaultAppSettings();
+  writeSettings(
+    home,
+    appSettingsSchema.parse({
+      ...base,
+      hosts: [
+        ...base.hosts,
+        {
+          id: randomUUID(),
+          label: 'Identity provider',
+          origin: identityProvider.origin,
+          color: { kind: 'swatch', swatch: 'blue' },
+          revision: 0,
+        },
+      ],
+    }),
+  );
+
+  try {
+    const app = await launchApp({ home, appData, localAppData }, {});
+    try {
+      const window = await app.firstWindow();
+      await window
+        .locator(byTestId('browser-address'))
+        .waitFor({ state: 'visible', timeout: 60_000 });
+      const panel = window.locator(byTestId('hosts-panel'));
+      if (!(await panel.isVisible())) {
+        await window.locator(byTestId('browser-hosts-button')).click();
+      }
+      const item = window.locator(
+        `${byTestId('hosts-item')}[data-origin="${identityProvider.origin}"]`,
+      );
+      await item.waitFor({ state: 'visible', timeout: 30_000 });
+      await item.click();
+      const viewId = await findHostViewId(app, identityProvider.origin);
+      await expect
+        .poll(() => paneEvaluate<boolean>(app, viewId, '!!document.querySelector("#email")'), {
+          timeout: 30_000,
+        })
+        .toBe(true);
+
+      // Type the address and continue. The page has no usable password field,
+      // so the submission is remembered as a username hint.
+      await paneEvaluate<void>(
+        app,
+        viewId,
+        `(() => {
+          document.querySelector('#email').value = ${JSON.stringify(email)};
+          document.querySelector('#continue').click();
+        })()`,
+      );
+      await expect
+        .poll(() => readIndex(localAppData)?.entries?.[0], { timeout: 30_000 })
+        .toMatchObject({ username: email, hasPassword: false });
+
+      // A reload prefills the address without a password being involved.
+      await paneLoad(app, viewId, `${identityProvider.origin}/`);
+      await expect
+        .poll(
+          () =>
+            paneEvaluate<string>(
+              app,
+              viewId,
+              'document.querySelector("#email") ? document.querySelector("#email").value : "missing"',
+            ),
+          { timeout: 30_000 },
+        )
+        .toBe(email);
+
+      // Emptying the field and focusing it offers the remembered address; the
+      // first suggestion is reachable with the keyboard alone.
+      const hostSelector = JSON.stringify(`[${SUGGESTION_HOST_ATTRIBUTE}]`);
+      const chosen = await paneEvaluate<string>(
+        app,
+        viewId,
+        `(() => {
+          const field = document.querySelector('#email');
+          field.value = '';
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          field.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+          const open = document.querySelector(${hostSelector}) !== null;
+          field.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+          );
+          field.dispatchEvent(
+            new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+          );
+          return open ? field.value : 'no-list';
+        })()`,
+      );
+      expect(chosen).toBe(email);
+    } finally {
+      await app.close();
+    }
+  } finally {
+    await identityProvider.close();
   }
 });

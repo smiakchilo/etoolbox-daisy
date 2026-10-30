@@ -184,6 +184,8 @@ export const LOG_REASONS = [
   'too-large',
   /** The body was not a manifest this build understands. */
   'invalid-manifest',
+  /** A submission arrived that named no username, so nothing could be stored. */
+  'no-username',
   /** A failure with no narrower cause: an exception outside the request itself. */
   'unexpected',
 ] as const;

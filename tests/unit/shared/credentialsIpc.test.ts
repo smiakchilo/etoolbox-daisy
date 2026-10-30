@@ -45,8 +45,14 @@ describe('credentialCaptureSchema', () => {
     expect(credentialCaptureSchema.safeParse({ username: '', password: 'x' }).success).toBe(true);
   });
 
-  it('rejects an empty password', () => {
-    expect(credentialCaptureSchema.safeParse({ username: 'a', password: '' }).success).toBe(false);
+  it('accepts an email-only hint, and rejects a payload that names neither', () => {
+    expect(
+      credentialCaptureSchema.safeParse({ username: 'me@example.com', password: '' }).success,
+    ).toBe(true);
+    expect(credentialCaptureSchema.safeParse({ username: '', password: '' }).success).toBe(false);
+    expect(credentialCaptureSchema.safeParse({ username: '   ', password: '' }).success).toBe(
+      false,
+    );
   });
 
   it('rejects an oversized field', () => {

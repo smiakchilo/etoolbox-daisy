@@ -45,16 +45,28 @@ export function parseCredentialsIpcResult(candidate: unknown): CredentialsIpcRes
 }
 
 /**
- * One submitted sign-in form, as the preload reads it. `username` may be empty:
- * an identity provider's password step often keeps the name in a hidden field
- * or in page state, so main fills it in from the origin's most recent entry
- * rather than discarding an otherwise usable password.
+ * One submitted sign-in form, as the preload reads it.
+ *
+ * Either half may be empty, because the pane remembers two kinds of submission:
+ *
+ * - a password step, where `username` may be empty (an identity provider often
+ *   keeps the name in hidden page state or in a field of its own) - main then
+ *   falls back to the origin's most recent username rather than discarding an
+ *   otherwise usable password;
+ * - an email/username-only step (Adobe's and HPE's first pages), which reports
+ *   a `username` and no password, and is remembered as a hint the field can be
+ *   prefilled from next time.
+ *
+ * Neither empty is not a capture at all.
  */
 export const credentialCaptureSchema = z
   .object({
     username: z.string().max(320),
-    password: z.string().min(1).max(1024),
+    password: z.string().max(1024),
   })
-  .strict();
+  .strict()
+  .refine((capture) => capture.username.trim().length > 0 || capture.password.length > 0, {
+    message: 'A capture names a username, a password, or both.',
+  });
 
 export type CredentialCapture = Readonly<z.infer<typeof credentialCaptureSchema>>;

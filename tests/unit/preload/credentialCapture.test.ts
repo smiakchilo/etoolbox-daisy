@@ -179,6 +179,75 @@ describe('installCredentialCapture', () => {
     expect(send).toHaveBeenCalledWith({ username: 'someone@example.com', password: 'secret' });
   });
 
+  it('reports an email-only step as a hint, ignoring the provider’s password decoy', () => {
+    // Adobe's IMS email page: one email field and a password input whose only
+    // purpose is to decoy password managers (`credential-hide-helper`).
+    const element = form(`
+      <form id="EmailForm">
+        <input aria-label="Email address" id="EmailPage-EmailField" type="email"
+               autocomplete="email webauthn" name="username" value="">
+        <div class="credential-hide-helper">
+          <input autocomplete="current-password" aria-hidden="true" name="passwd"
+                 placeholder="Password" type="password" tabindex="-1">
+        </div>
+        <button type="submit">Continue</button>
+      </form>`);
+    installCredentialCapture(dom.window.document, send);
+    (dom.window.document.querySelector('#EmailPage-EmailField') as HTMLInputElement).value =
+      'me@example.com';
+
+    submit(element);
+
+    expect(send).toHaveBeenCalledWith({ username: 'me@example.com', password: '' });
+  });
+
+  it('reports an email-only step from a Continue click, not only a submit event', () => {
+    form(`
+      <form>
+        <input type="text" name="userid" value="me@example.com">
+        <button type="submit">Continue</button>
+      </form>`);
+    installCredentialCapture(dom.window.document, send);
+
+    (dom.window.document.querySelector('button') as HTMLButtonElement).click();
+
+    expect(send).toHaveBeenCalledWith({ username: 'me@example.com', password: '' });
+  });
+
+  it('reads the real password beside a decoy the page hides from assistive tech', () => {
+    const element = form(`
+      <form>
+        <input type="email" name="username" value="me@example.com">
+        <input type="password" name="password" value="secret">
+        <input type="password" aria-hidden="true" tabindex="-1" name="decoy">
+        <button type="submit">Sign in</button>
+      </form>`);
+    installCredentialCapture(dom.window.document, send);
+
+    submit(element);
+
+    expect(send).toHaveBeenCalledWith({ username: 'me@example.com', password: 'secret' });
+  });
+
+  it('never treats a search field or a non-email value as a username hint', () => {
+    const searchForm = form(`
+      <form>
+        <input type="search" name="q" value="me@example.com">
+        <button type="submit">Search</button>
+      </form>`);
+    installCredentialCapture(dom.window.document, send);
+    submit(searchForm);
+    expect(send).not.toHaveBeenCalled();
+
+    const userForm = form(`
+      <form>
+        <input type="text" name="userid" value="admin">
+        <button type="submit">Continue</button>
+      </form>`);
+    submit(userForm);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('stops reporting once disposed', () => {
     const element = form(GRANITE_FORM);
     const dispose = installCredentialCapture(dom.window.document, send);
