@@ -1,0 +1,38 @@
+{
+  "version": "0.1.2",
+  "addons": {
+    "page-audit": "31d53ac7b937f194"
+  },
+  "files": {
+    "darwin-arm64": {
+      "name": "app-0.1.2-darwin-arm64.asar",
+      "sha512": "90489cb97f48abea9d4c6be2d8db9c99013916dcd61392bc6fedeac6234d5f88dc8168bb462e8896a197998e8f5167f7234201bc588d194649ef1d39de803d3a",
+      "size": 24735984,
+      "runtime": {
+        "format": 1,
+        "electron": "44.9.3",
+        "payload": "4e40defe42498d092db00a14248f69e6"
+      }
+    },
+    "darwin-x64": {
+      "name": "app-0.1.2-darwin-x64.asar",
+      "sha512": "ba150327ea25d9f5531185464589c9280d81eaab0c4821b55cc1d55dddc44553051211a677a23acce8f7ebb513f3ee43538d07c5fef9f26c7129e7a6602a9b73",
+      "size": 24736176,
+      "runtime": {
+        "format": 1,
+        "electron": "44.9.3",
+        "payload": "66617b6f2d0baf596dd86034fc6e6eeb"
+      }
+    },
+    "win32-x64": {
+      "name": "app-0.1.2-win32-x64.asar",
+      "sha512": "8fc714cbd05eae6e7f8a09328f7b90429688da44b5abb204f86b6ecffa09353f72459e9b221633c1586e7f4ee3912effc926c3b8ff66eb4cb20d70898de71aa0",
+      "size": 24736352,
+      "runtime": {
+        "format": 1,
+        "electron": "44.9.3",
+        "payload": "d3fae21ee3b1adc0625aba12b1d66160"
+      }
+    }
+  }
+}
