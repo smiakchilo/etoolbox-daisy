@@ -10,10 +10,9 @@ import { SKILL_DESCRIPTION_MAX_LENGTH, SKILL_NAME_PATTERN, isRunnableScriptPath 
  * entry, the instructions and the transcript billet), and `scripts/build-addons.mjs`
  * derives each skill entry from that skill's own `SKILL.md` front matter with
  * this application's own parser. The build validates both and writes the result
- * into the pins (`src/shared/addons/pins.json`), which is the only run-time
- * source: the application advertises an add-on's tools and skills before it has
- * ever downloaded the add-on, and it reads their names, schemas and billets as
- * plain data.
+ * into the built add-on's `addon.json` (`out/addons/<id>/`), which is the only
+ * run-time source: the application reads their names, schemas and billets as
+ * plain data before it loads the add-on's code.
  *
  * Nothing here names an add-on. A tool declaration is data a tool's author
  * writes, not application knowledge.
@@ -87,9 +86,9 @@ export type ContributedTool = z.infer<typeof contributedToolSchema>;
 
 /**
  * One skill catalogue entry, derived from a skill's `SKILL.md` front matter at
- * build time. The skill's body and files stay in the add-on: only the catalogue
- * entry ships in the pins, so the composer, the home screen and the model's
- * catalogue can list the skill before the add-on is downloaded.
+ * build time. The skill's body and files stay in the add-on's folder: only the
+ * catalogue entry is read at startup, so the composer, the home screen and the
+ * model's catalogue can list the skill before the add-on is loaded.
  */
 export const contributedSkillSchema = z
   .object({
@@ -105,7 +104,7 @@ export const contributedSkillSchema = z
 
 export type ContributedSkill = z.infer<typeof contributedSkillSchema>;
 
-/** Everything one add-on contributes, as the pins carry it. */
+/** Everything one add-on contributes, as its built `addon.json` carries it. */
 export const addonContributionsSchema = z
   .object({
     tools: z.array(contributedToolSchema).default([]),

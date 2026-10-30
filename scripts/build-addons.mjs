@@ -1,38 +1,23 @@
 /**
- * Builds every add-on (`src/addons/<id>/`) into `out/addons/<id>/`, writes the
- * pins this build needs (`src/shared/addons/pins.json`) and - with `--zip` - the
- * published archives and catalogue (`dist-addons/`).
- *
- * An add-on's identity is derived from its content here (a sha256 over its
- * sources and the `src/shared` modules its bundle inlines, as the first 16 hex
- * characters), so it changes exactly when the add-on changes: an unchanged add-on
- * is never re-published and never re-downloaded, and a changed one can never be
- * served under an identity an install already has. Its `package.json` version is
- * bookkeeping - an add-on sits at its own value (`1.0.0`) until its owner raises
- * it for some procedural reason - and is excluded from that hash, so raising it
- * never re-publishes anything. Its tests are its own business and never part of
- * it.
+ * Builds every add-on (`src/addons/<id>/`) into `out/addons/<id>/`. The
+ * application, built from the same source, carries them (`resources/addons`) and
+ * reads them in place; nothing is published or downloaded.
  *
  * **Tools are declared; skills are derived.** `addon.json` declares each tool
  * completely, and each `skills/<name>/SKILL.md` is parsed with the application's
  * own front-matter parser to produce that skill's catalogue entry. Both are
  * validated here - one schema, one parser, shared with the app - and written into
- * the pins, which is the only run-time source: the application advertises an
- * add-on's tools and skills without ever downloading it. Nothing is downloaded
- * at startup, and a skill's body stays in the add-on.
+ * the built `addon.json`, which the application reads at startup to advertise an
+ * add-on's tools and skills before the add-on's code has been loaded. A skill's
+ * body stays in the add-on.
  *
  * A JS add-on is bundled with esbuild into one ESM `index.js`, with its own
  * runtime dependencies left external, and its `node_modules` is linked beside
  * it so Node resolves them the ordinary way. Its `skills/` folder ships beside
  * it; its `tests/` and `e2e/` never do.
  *
- * `npm run build` and `npm run dev` run this without `--zip`: a build from this
- * repository carries its add-ons (`out/addons`) and never downloads one. Only
- * `npm run addons:zip` (used by the publish workflow) writes `dist-addons/`.
- *
- * Usage: node scripts/build-addons.mjs [--zip]
+ * Usage: node scripts/build-addons.mjs
  */
-import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
   cpSync,
@@ -44,27 +29,16 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import { zipSync } from 'fflate';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const addonsSourceDir = join(root, 'src', 'addons');
 const outDir = join(root, 'out', 'addons');
 const parserDir = join(root, 'out', 'addons-build');
-const distDir = join(root, 'dist-addons');
-const pinsFile = join(root, 'src', 'shared', 'addons', 'pins.json');
 const toolsSourceDir = join(root, 'src', 'tools');
 const bundledSkillsDir = join(root, 'resources', 'skills');
-const withZip = process.argv.includes('--zip');
-
-/** Folders that are the add-on's own tests or tooling, never part of it. */
-const NON_SHIPPED_FOLDERS = new Set(['node_modules', 'tests', 'e2e']);
-
-/** A JS add-on is platform-independent, so its archive has one platform key. */
-const PLATFORM_ANY = 'any';
 
 const SKILL_FILE_NAME = 'SKILL.md';
 
@@ -89,87 +63,6 @@ function addonFolders() {
     .map((entry) => join(addonsSourceDir, entry.name))
     .filter((directory) => existsSync(join(directory, 'addon.json')))
     .sort();
-}
-
-/**
- * The add-on's own shipped sources, as sorted relative paths. An installed
- * dependency tree, a dot-entry, and the add-on's `tests/` and `e2e/` folders are
- * not sources (a test is not content: editing one must not re-publish the
- * add-on).
- */
-function sourceFiles(directory) {
-  const files = [];
-  const visit = (current) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      if (NON_SHIPPED_FOLDERS.has(entry.name) || entry.name.startsWith('.')) continue;
-      const full = join(current, entry.name);
-      if (entry.isDirectory()) visit(full);
-      else if (entry.isFile()) files.push(relative(directory, full));
-    }
-  };
-  visit(directory);
-  return files.sort();
-}
-
-/**
- * An add-on's npm `version` is bookkeeping, not content: it is not compared with
- * the application's, and it must not participate in the identity, or raising it
- * for a procedural reason would re-publish and re-download the whole archive. The
- * version fields are removed before hashing; everything else in the two manifests
- * is content.
- */
-function withoutVersionMetadata(file, bytes) {
-  if (file !== 'package.json' && file !== 'package-lock.json') return bytes;
-  const parsed = JSON.parse(bytes.toString('utf8'));
-  delete parsed.version;
-  if (file === 'package-lock.json' && parsed.packages?.[''] !== undefined) {
-    delete parsed.packages[''].version;
-  }
-  return Buffer.from(JSON.stringify(parsed), 'utf8');
-}
-
-/**
- * The add-on's content identity: what it is, not what someone called it. It
- * covers the folder's own shipped files **and** every repository file the bundle
- * inlines (`metafile.inputs` outside `node_modules`) - the `src/shared` modules
- * an add-on imports are content too, so a change to one must change the identity
- * of every add-on built against it. Two builds of the same sources always agree;
- * any edit - including a dependency bump in the lockfile - changes it, while a
- * version bump and an edit to a test do not.
- */
-function identityFor(directory, inlinedInputs) {
-  const hash = createHash('sha256');
-  for (const file of sourceFiles(directory)) {
-    hash.update(file.replace(/\\/g, '/'));
-    hash.update('\0');
-    hash.update(withoutVersionMetadata(file, readFileSync(join(directory, file))));
-    hash.update('\0');
-  }
-  for (const input of inlinedInputs) {
-    hash.update(input);
-    hash.update('\0');
-    hash.update(readFileSync(join(root, input)));
-    hash.update('\0');
-  }
-  return hash.digest('hex').slice(0, 16);
-}
-
-/**
- * The repository files an esbuild bundle inlines: everything it read that is not
- * an externed dependency, and not one of the add-on's own files (those are
- * already hashed above). Sorted, so every runner agrees.
- */
-function inlinedInputsFrom(metafile, directory) {
-  const ownDirectory = `${resolve(directory).replace(/\\/g, '/')}/`;
-  return (
-    Object.keys(metafile?.inputs ?? {})
-      .map((input) => input.replace(/\\/g, '/').replace(/^\.\//, ''))
-      .filter((input) => !input.includes('node_modules/'))
-      // Its own files are already hashed from the folder, tests included in that
-      // exclusion only through `sourceFiles`.
-      .filter((input) => !resolve(root, input).replace(/\\/g, '/').startsWith(ownDirectory))
-      .sort()
-  );
 }
 
 /**
@@ -230,8 +123,8 @@ function skillFilePaths(directory) {
 
 /**
  * Derives one skill's catalogue entry from its own `SKILL.md`, using the
- * application's parser - so the pins and the application can never disagree
- * about what a skill is.
+ * application's parser - so the built descriptor and the application can never
+ * disagree about what a skill is.
  */
 function deriveSkill(folder, name, parsers) {
   const markdown = readFileSync(join(folder, SKILL_FILE_NAME), 'utf8');
@@ -352,10 +245,7 @@ function contributionsFor(directory, descriptor, parsers, taken) {
   return { contributions: { tools, skills } };
 }
 
-/**
- * Bundles a JS add-on's `index.ts` with its own dependencies external, and
- * answers the built code plus the identity of exactly what went into it.
- */
+/** Bundles a JS add-on's `index.ts` with its own dependencies external. */
 async function bundleAddon(directory, pkg) {
   const external = ['electron', ...Object.keys(pkg.dependencies ?? {})];
   const result = await build({
@@ -366,19 +256,16 @@ async function bundleAddon(directory, pkg) {
     target: 'node22',
     external,
     write: false,
-    metafile: true,
     logLevel: 'silent',
   });
   const output = result.outputFiles?.[0];
   if (output === undefined)
     fail(`Could not bundle ${relative(root, join(directory, 'index.ts'))}.`);
-  const inlinedInputs = inlinedInputsFrom(result.metafile, directory);
-  const identity = identityFor(directory, inlinedInputs);
-  return { code: output.contents, identity, inlinedInputs };
+  return { code: output.contents };
 }
 
 /** Writes the built add-on into `out/addons/<id>/`, replacing what was there. */
-function writeAddon(directory, descriptor, pkg, built, contributions) {
+function writeAddon(directory, descriptor, built, contributions) {
   const id = descriptor.id;
   const target = join(outDir, id);
   rmSync(target, { recursive: true, force: true });
@@ -390,10 +277,9 @@ function writeAddon(directory, descriptor, pkg, built, contributions) {
     `${JSON.stringify(
       {
         id,
-        identity: built.identity,
         apiVersion: descriptor.apiVersion,
         entry: descriptor.entry,
-        contributes: { tools: contributions.tools },
+        contributes: { tools: contributions.tools, skills: contributions.skills },
       },
       null,
       2,
@@ -403,7 +289,7 @@ function writeAddon(directory, descriptor, pkg, built, contributions) {
   copyFileSync(join(directory, 'package.json'), join(target, 'package.json'));
 
   // A skill's body and files ship beside the bundle, because the application
-  // reads them in place from the installed folder the first time one is used.
+  // reads them in place from the add-on's folder the first time one is used.
   const skills = join(directory, 'skills');
   if (existsSync(skills)) cpSync(skills, join(target, 'skills'), { recursive: true });
 
@@ -420,91 +306,6 @@ function writeAddon(directory, descriptor, pkg, built, contributions) {
   );
 }
 
-function sha512(bytes) {
-  return createHash('sha512').update(bytes).digest('hex');
-}
-
-/**
- * Collects a folder into the shape `zipSync` takes, in sorted order so the
- * archive is byte-for-byte reproducible (three release runners build the same
- * platform-independent add-on, and the catalogue publishes one sha512).
- */
-function collectFiles(directory, prefix = '') {
-  const entries = {};
-  const children = readdirSync(directory, { withFileTypes: true }).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
-  for (const entry of children) {
-    // `npm ci` writes a `.bin` shim directory whose contents are
-    // platform-specific (regular-file `.cmd`/`.ps1` shims on Windows, symlinks
-    // elsewhere). It is never used at run time - the add-on is loaded by
-    // `import()`, which resolves through `node_modules`, not through `.bin` - so
-    // drop it to keep the `any` archive byte-for-byte identical on every runner.
-    if (entry.name === '.bin') continue;
-    const full = join(directory, entry.name);
-    const name = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.isDirectory()) {
-      Object.assign(entries, collectFiles(full, name));
-    } else if (entry.isFile()) {
-      entries[name] = new Uint8Array(readFileSync(full));
-    }
-  }
-  return entries;
-}
-
-/**
- * A fixed timestamp for every entry. A zip otherwise records "now" per file,
- * which would make the same add-on produce a different sha512 on every runner.
- */
-const ZIP_TIMESTAMP = new Date('1980-01-01T00:00:00Z');
-
-/** A real production install for the published archive (never a junction). */
-function stageJsAddon(directory, descriptor, staging) {
-  rmSync(staging, { recursive: true, force: true });
-  mkdirSync(staging, { recursive: true });
-  copyFileSync(join(outDir, descriptor.id, 'index.js'), join(staging, 'index.js'));
-  // The built descriptor carries the identity; the source one does not.
-  copyFileSync(join(outDir, descriptor.id, 'addon.json'), join(staging, 'addon.json'));
-  copyFileSync(join(directory, 'package.json'), join(staging, 'package.json'));
-  const lock = join(directory, 'package-lock.json');
-  if (existsSync(lock)) copyFileSync(lock, join(staging, 'package-lock.json'));
-  // An add-on's own skills ship with it, never installed from npm.
-  const skills = join(outDir, descriptor.id, 'skills');
-  if (existsSync(skills)) cpSync(skills, join(staging, 'skills'), { recursive: true });
-  const npmCli = resolveNpmCli();
-  if (npmCli === undefined) fail('npm was not found next to the running Node.js.');
-  const env = { ...process.env };
-  delete env['ELECTRON_RUN_AS_NODE'];
-  const result = spawnSync(
-    process.execPath,
-    [npmCli, 'ci', '--omit=dev', '--no-audit', '--no-fund'],
-    { cwd: staging, env, stdio: 'inherit' },
-  );
-  if (result.status !== 0) fail(`Could not install the ${descriptor.id} add-on for packaging.`);
-}
-
-function resolveNpmCli() {
-  const execPath = process.env['npm_execpath'];
-  if (execPath !== undefined && existsSync(execPath)) return execPath;
-  const nodeDir = dirname(process.execPath);
-  return [
-    join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-    join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
-  ].find((candidate) => existsSync(candidate));
-}
-
-/** Merges one archive into `dist-addons/addons.json`, keeping older identities. */
-function publishArchive(id, identity, platformKey, file) {
-  mkdirSync(distDir, { recursive: true });
-  const catalogFile = join(distDir, 'addons.json');
-  const catalog = readJson(catalogFile) ?? { addons: {} };
-  catalog.addons ??= {};
-  catalog.addons[id] ??= {};
-  catalog.addons[id][identity] ??= { platforms: {} };
-  catalog.addons[id][identity].platforms[platformKey] = file;
-  writeFileSync(catalogFile, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
-}
-
 async function main() {
   const folders = addonFolders();
 
@@ -516,7 +317,6 @@ async function main() {
     skills: new Map(bundledSkillNames().map((name) => [name, 'the application'])),
   };
 
-  const pins = {};
   const entries = [];
   for (const directory of folders) {
     const descriptor = readJson(join(directory, 'addon.json'));
@@ -533,77 +333,30 @@ async function main() {
       fail(`The "${descriptor.id}" add-on has no entry.`);
     }
     if (pkg === undefined) fail(`src/addons/${folderName}/package.json is missing.`);
-    // The package version is bookkeeping and deliberately not compared with the
-    // application's: an add-on sits at its own value until its owner raises it. It
-    // is excluded from the identity, so raising it changes nothing that ships.
     const validated = contributionsFor(directory, descriptor, parsers, taken);
     if (validated.problem !== undefined) fail(validated.problem);
-    const contributions = validated.contributions;
     const built = await bundleAddon(directory, pkg);
-    entries.push({ directory, descriptor, pkg, contributions, built });
-    pins[descriptor.id] = {
-      identity: built.identity,
-      apiVersion: descriptor.apiVersion,
-      contributions,
-    };
+    entries.push({ directory, descriptor, contributions: validated.contributions, built });
   }
 
   mkdirSync(outDir, { recursive: true });
-  for (const { directory, descriptor, pkg, contributions, built } of entries) {
-    const target = join(outDir, descriptor.id);
-    const installed = readJson(join(target, 'addon.json'));
-    if (withZip && installed?.identity === built.identity && existsSync(join(target, 'index.js'))) {
-      console.log(`Reusing ${relative(root, target)}`);
-      continue;
-    }
-    writeAddon(directory, descriptor, pkg, built, contributions);
-    console.log(`Built add-on ${descriptor.id} into ${relative(root, target)}`);
+  for (const { directory, descriptor, contributions, built } of entries) {
+    writeAddon(directory, descriptor, built, contributions);
+    console.log(
+      `Built add-on ${descriptor.id} into ${relative(root, join(outDir, descriptor.id))}`,
+    );
   }
-
-  mkdirSync(dirname(pinsFile), { recursive: true });
-  writeFileSync(
-    pinsFile,
-    `${JSON.stringify(
-      Object.fromEntries(Object.entries(pins).sort(([a], [b]) => a.localeCompare(b))),
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
-  console.log(`Wrote ${relative(root, pinsFile)}`);
-
-  if (!withZip) return;
-  if (entries.length === 0) fail('No add-on folder (src/addons/<id>/addon.json) was found.');
-
-  mkdirSync(distDir, { recursive: true });
-  for (const { directory, descriptor, built } of entries) {
-    const identity = built.identity;
-    const staging = join(outDir, `${descriptor.id}-zip`);
-    stageJsAddon(directory, descriptor, staging);
-    const fileName = `${descriptor.id}-${identity}-${PLATFORM_ANY}.zip`;
-    const zipped = zipSync(collectFiles(staging), { level: 6, mtime: ZIP_TIMESTAMP });
-    writeFileSync(join(distDir, fileName), zipped);
-    publishArchive(descriptor.id, identity, PLATFORM_ANY, {
-      file: fileName,
-      sha512: sha512(zipped),
-      size: zipped.byteLength,
-    });
-    rmSync(staging, { recursive: true, force: true });
-    console.log(`Packaged ${fileName} (${(zipped.byteLength / 1024 / 1024).toFixed(1)} MB)`);
-  }
-  console.log(`Wrote ${relative(root, join(distDir, 'addons.json'))}`);
 }
 
 export {
   addonFolders,
   addonSkillFolders,
+  appToolNames,
   bundleAddon,
+  bundledSkillNames,
   contributionsFor,
   deriveSkill,
-  identityFor,
-  inlinedInputsFrom,
   loadAppParsers,
-  sourceFiles,
 };
 
 // Running it builds; importing it (a test) only exposes the parts above.

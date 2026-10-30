@@ -17,7 +17,6 @@ import {
   resolveSkillPrompt,
   UPDATES_STATUS_CHANGED_CHANNEL,
 } from '../shared';
-import { addonPins, pinnedAddonIds } from '../shared/addons/pins';
 import { createViewSession } from './webview';
 import { createWebviewBridgeBroker } from './webview/bridgeBroker';
 import { createWebviewBridgeTransport } from './webview/bridgeTransport';
@@ -75,15 +74,11 @@ import { createCredentialVault } from './credentials/credentialVault';
 import { createHostLoginListener } from './credentials/hostAuth';
 import { mergeDisabledFeatures } from './disabledFeatures';
 import { createExternalFetch } from './externalFetch';
-import {
-  createAppAddons,
-  createAppAddonLoader,
-  createAddonTestProbe,
-  TEST_ADDONS_GLOBAL_KEY,
-} from './addons';
+import { addonsDirectory, createAppAddonLoader, scanAddons } from './addons';
 import { createContributedToolModules } from './tools/addonProxy';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
+import { registerAddonsIpcHandlers } from './ipc/addons';
 import { registerAppInfoHandler } from './ipc/app-info';
 import { registerBrowserIpcHandlers } from './ipc/browser';
 import { registerCredentialsIpcHandlers } from './ipc/credentials';
@@ -107,8 +102,9 @@ import { installWebContentsSecurityGuard } from './security';
 import { configuredAgentId, loadSettings, loadSettingsSync } from './settingsStore';
 import { createSkillHost } from './skills/skillHost';
 import { createSkillStore } from './skills/skillStore';
+import { isSmokeTestRun, runSmokeTest } from './smokeTest';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
-import { createAppUpdater, UPDATE_SANDBOX_ENV } from './updates/composition';
+import { createAppUpdater, UPDATE_STATUS_FILE_ENV } from './updates/composition';
 import { createUpdateFetch, isUpdateProxyConfigured } from './updates/proxy';
 import {
   APP_USER_MODEL_ID,
@@ -218,18 +214,33 @@ if (startupSettings.browser.disableNativeWebAuthn) {
 // app-managed directories read directly from `appPaths` by other modules
 // (settingsStore, secretStore, each agent's state directory, chat history), not
 // through `app.getPath`, so they are not set here.
-app.setPath('userData', appPaths.browser);
-app.setPath('sessionData', appPaths.browser);
-app.setPath('temp', appPaths.tmp);
-app.setPath('logs', appPaths.logs);
+//
+// A smoke-test run (the update script checking a fresh build) sets scratch
+// paths of its own and never takes the lock, so it cannot touch the user's data
+// or collide with the running application.
+const smokeTest = isSmokeTestRun(process.argv);
+if (!smokeTest) {
+  app.setPath('userData', appPaths.browser);
+  app.setPath('sessionData', appPaths.browser);
+  app.setPath('temp', appPaths.tmp);
+  app.setPath('logs', appPaths.logs);
+}
 
 // One process owns the application data. This must be checked before touching
 // the filesystem at all: a second launch must not create or write any of
 // the storage subdirectories, only hand its argv to the primary
 // instance (via requestSingleInstanceLock's own IPC, unrelated to our
 // storage tree) and exit.
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
-if (!gotSingleInstanceLock) {
+const gotSingleInstanceLock = smokeTest ? false : app.requestSingleInstanceLock();
+if (smokeTest) {
+  runSmokeTest(
+    addonsDirectory({
+      mainDirectory: currentDir,
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    }),
+  );
+} else if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -659,6 +670,19 @@ if (!gotSingleInstanceLock) {
       },
     });
 
+    // The add-ons this installation carries, read once: they are built from the
+    // same source and ship beside the archive, so no catalogue or download exists.
+    const scanned = scanAddons(
+      addonsDirectory({
+        mainDirectory: currentDir,
+        resourcesPath: process.resourcesPath,
+        isPackaged: app.isPackaged,
+      }),
+      () => {
+        logger.warn('ADDON_REJECTED', { count: 1 });
+      },
+    );
+
     registerRulesIpcHandlers({
       directory: appPaths.rules,
       logger,
@@ -676,6 +700,16 @@ if (!gotSingleInstanceLock) {
         }
         return ruleStore.count();
       },
+    });
+
+    registerAddonsIpcHandlers({
+      contributions: scanned.map((entry) => ({
+        id: entry.id,
+        contributions: entry.contributions,
+      })),
+      logger,
+      rendererDistDir,
+      mainWebContentsId: mainWindow.webContents.id,
     });
 
     // --- bridge tool / agent chat wiring (implementation-plan.md step 07) ---
@@ -774,44 +808,22 @@ if (!gotSingleInstanceLock) {
       () => loadSettingsSync(appPaths.settings).hosts,
       () => loadSettingsSync(appPaths.settings).projects,
     );
-    // Add-ons this build pins (`src/shared/addons/pins.json`): downloaded on first
-    // use from the same folders `update.json` lives in, through the same proxy.
-    // A build from this repository carries its own (`out/addons`), so `npm run
-    // dev`, the E2E runs and a run-from-source installation never download one.
-    const addons = createAppAddons({
-      addonsRoot: appPaths.addons,
-      mainDirectory: currentDir,
-      resourcesPath: process.resourcesPath,
-      appPath: app.getAppPath(),
-      isPackaged: app.isPackaged,
-      platformKey: `${process.platform}-${process.arch}`,
-      readSettings: () => loadSettingsSync(appPaths.settings),
-      secretStore,
-      logger,
-    });
-    if (!app.isPackaged) {
-      // Same-process test probe: the E2E suite installs an add-on from a local
-      // folder and reads where it landed. Never exposed in a packaged build.
-      (globalThis as Record<string, unknown>)[TEST_ADDONS_GLOBAL_KEY] =
-        createAddonTestProbe(addons);
-    }
-    // Every add-on this build pins is loaded through one generic host: ensure the
-    // pinned identity, import its entry, check its apiVersion, call `activate`
-    // once. Nothing is downloaded until a tool call or a skill load needs it, and
-    // everything one add-on contributes shares that one load.
+    // Every add-on is loaded through one generic host: import its entry, check its
+    // apiVersion, call `activate` once; everything one add-on contributes shares
+    // that one load. They are built from the same source and ship with the
+    // installation, so `scanned` is exactly what this version offers.
     const addonLoader = createAppAddonLoader({
-      manager: addons,
+      entries: scanned,
       paneSession: viewSession.session,
       currentUrl: () => browserController.currentDocumentUrl(),
       isConfiguredOrigin: (origin) => configuredHosts().some((host) => host.origin === origin),
       logger,
     });
-    // The tools the pins declare, advertised from the first launch: each one is a
-    // proxy that forwards the model's arguments unchanged to the add-on's own
-    // executor once it is installed.
+    // The tools the add-ons declare: each one is a proxy that forwards the model's
+    // arguments unchanged to the add-on's own executor, which loads on first use.
     const contributedTools = createContributedToolModules({
-      tools: pinnedAddonIds().flatMap((id) =>
-        (addonPins[id]?.contributions.tools ?? []).map((tool) => ({ addonId: id, tool })),
+      tools: scanned.flatMap((entry) =>
+        entry.contributions.tools.map((tool) => ({ addonId: entry.id, tool })),
       ),
       loader: addonLoader,
     });
@@ -819,7 +831,7 @@ if (!gotSingleInstanceLock) {
     // would keep the process alive after the user closes the window, and none may
     // outlive a quit.
     const destroyAddonWindows = (): void => {
-      for (const id of pinnedAddonIds()) addonLoader.hostOf(id)?.destroyWindows();
+      for (const entry of scanned) addonLoader.hostOf(entry.id)?.destroyWindows();
     };
     mainWindow.once('closed', destroyAddonWindows);
     app.once('before-quit', destroyAddonWindows);
@@ -841,8 +853,8 @@ if (!gotSingleInstanceLock) {
     const skillStore = createSkillStore({
       bundledDirectory: path.join(bundledResourcesDirectory, 'skills'),
       userDirectory: appPaths.skills,
-      addons: pinnedAddonIds().flatMap((id) =>
-        (addonPins[id]?.contributions.skills ?? []).map((skill) => ({ addonId: id, skill })),
+      addons: scanned.flatMap((entry) =>
+        entry.contributions.skills.map((skill) => ({ addonId: entry.id, skill })),
       ),
       addonDirectory: (addonId) => Promise.resolve(addonLoader.directoryOf(addonId)),
       onRejected: () => {
@@ -859,18 +871,14 @@ if (!gotSingleInstanceLock) {
     });
     const skillHost = createSkillHost({
       store: skillStore,
-      // A skill an add-on contributes is installed on first use: its body and
-      // files live in the add-on, which nothing downloads at startup. A failure
-      // here fails the call, with the proxy's own mapping.
+      // A skill an add-on contributes is read on first use: its body and files
+      // live in the add-on's folder. A failure here fails the call.
       prepareSkill: async (name) => {
         const addonId = skillStore.addonOf(name);
         if (addonId === undefined) return ok(undefined);
         const loaded = await addonLoader.load(addonId);
         if (!loaded.ok) {
-          return err({
-            code: loaded.error.kind === 'cancelled' ? 'CANCELLED' : 'STORAGE_ERROR',
-            message: loaded.error.message,
-          });
+          return err({ code: 'STORAGE_ERROR', message: loaded.error.message });
         }
         await skillStore.hydrateAddon(addonId);
         return ok(undefined);
@@ -908,15 +916,13 @@ if (!gotSingleInstanceLock) {
       mainWebContentsId: mainWindow.webContents.id,
     });
     const updater = createAppUpdater({
-      isPackaged: app.isPackaged,
-      appPath: app.getAppPath(),
       installedVersion: app.getVersion(),
       platform: process.platform,
-      arch: process.arch,
       pid: process.pid,
       executablePath: process.execPath,
+      resourcesPath: process.resourcesPath,
       scratchDirectory: appPaths.tmp,
-      sandbox: process.env[UPDATE_SANDBOX_ENV],
+      statusFileFromUpdate: process.env[UPDATE_STATUS_FILE_ENV],
       readSettings: () => loadSettingsSync(appPaths.settings),
       secretStore,
       logger,
@@ -933,6 +939,7 @@ if (!gotSingleInstanceLock) {
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
     });
+    void updater.resumeAfterUpdate();
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to
     // load or construct is logged and left out, never fatal.
     const toolRegistry = await buildToolRegistry({

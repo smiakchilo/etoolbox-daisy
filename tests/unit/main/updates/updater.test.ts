@@ -1,406 +1,293 @@
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import { setTimeout as realDelay } from 'node:timers/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  type UpdaterDependencies,
+  createUpdater,
+  isArchiveSource,
+  packageJsonUrl,
+} from '../../../../src/main/updates/updater';
 import type { AgentFetch, UpdateStatus } from '../../../../src/shared';
-import type { Logger } from '../../../../src/main/logger';
-import type { RuntimeDescriptor } from '../../../../src/main/updates/runtime';
-import { RUNTIME_DESCRIPTOR_FORMAT } from '../../../../src/main/updates/runtime';
-import { createUpdater, type UpdaterDependencies } from '../../../../src/main/updates/updater';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
-const scratch = createScratchDirs('updater', 'upd-');
-afterEach(() => scratch.cleanup());
+const scratch = createScratchDirs('updater', 'updater-');
 
-const ARCHIVE = Buffer.from('new-app-archive');
-const sha512 = (bytes: Buffer): string => createHash('sha512').update(bytes).digest('hex');
-
-/** The runtime layer this install is on; a manifest names it to be swappable. */
-const INSTALLED_RUNTIME: RuntimeDescriptor = {
-  format: RUNTIME_DESCRIPTOR_FORMAT,
-  electron: '44.9.3',
-  payload: 'a'.repeat(32),
-};
-
-function runtime(overrides: Partial<RuntimeDescriptor> = {}): unknown {
-  return { ...INSTALLED_RUNTIME, ...overrides };
-}
-
-function manifestFor(version: string, overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    version,
-    notes: 'fixes',
-    files: {
-      'win32-x64': {
-        name: 'app.asar',
-        sha512: sha512(ARCHIVE),
-        size: ARCHIVE.length,
-        // The runtime this install is on, so the archive is swappable by
-        // default; `{ runtime: undefined }` drops the key entirely.
-        runtime: runtime(),
-        ...overrides,
-      },
-    },
+function packageResponse(body: string, init: { status?: number; url?: string } = {}): Response {
+  const response = new Response(body, { status: init.status ?? 200 });
+  Object.defineProperty(response, 'url', {
+    value: init.url ?? 'https://raw.githubusercontent.com/o/r/master/package.json',
   });
-}
-
-function reply(payload: string | Buffer, init: { ok?: boolean; url?: string } = {}): Response {
-  const body = typeof payload === 'string' ? payload : new Uint8Array(payload);
-  const response = new Response(body, { status: init.ok === false ? 404 : 200 });
-  Object.defineProperty(response, 'url', { value: init.url ?? 'https://example.com/x' });
   return response;
 }
 
-/** Serves `routes` by URL; any other URL is unreachable. */
-function serve(routes: Record<string, () => Response>): AgentFetch & { calls: string[] } {
-  const calls: string[] = [];
-  const fetchFn = vi.fn((input: string | URL | Request) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    calls.push(url);
-    const route = routes[url];
-    return route === undefined
-      ? Promise.reject(new Error('unreachable'))
-      : Promise.resolve(route());
+function fetchReturning(...responses: Array<Response | Error>): AgentFetch {
+  const queue = [...responses];
+  return vi.fn((): Promise<Response> => {
+    const next = queue.shift();
+    if (next === undefined) return Promise.reject(new Error('no response queued'));
+    return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
   });
-  return Object.assign(fetchFn, { calls });
 }
 
-function harness(
-  fetchFn: AgentFetch,
-  overrides: Partial<UpdaterDependencies> = {},
-): {
-  updater: ReturnType<typeof createUpdater>;
-  statuses: UpdateStatus[];
-  deps: UpdaterDependencies;
-} {
+interface Harness {
+  readonly statusFile: string;
+  readonly goFile: string;
+  readonly statuses: UpdateStatus[];
+  readonly launch: ReturnType<typeof vi.fn<(source: string) => Promise<void>>>;
+  readonly quit: ReturnType<typeof vi.fn<() => void>>;
+  readonly logger: { error: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
+  readonly updater: ReturnType<typeof createUpdater>;
+}
+
+function build(overrides: Partial<UpdaterDependencies> = {}): Harness {
+  const statusFile = path.join(scratch.create(), 'status.txt');
   const statuses: UpdateStatus[] = [];
-  const deps: UpdaterDependencies = {
+  const launch = vi.fn<(source: string) => Promise<void>>(() => Promise.resolve());
+  const quit = vi.fn<() => void>();
+  const logger = { error: vi.fn(), warn: vi.fn() };
+  const updater = createUpdater({
     installedVersion: '1.0.0',
-    readInstalledRuntime: () => Promise.resolve(INSTALLED_RUNTIME),
-    platformKey: 'win32-x64',
-    builtinUrls: ['https://example.com/builtin'],
-    customUrl: () => undefined,
-    createFetch: () => Promise.resolve(fetchFn),
+    source: () => undefined,
+    createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.1.0"}'))),
     usesProxy: () => false,
-    targetAsar: undefined,
-    install: () => ({ restart: true }),
-    quit: vi.fn(),
-    logger: { error: vi.fn(), warn: vi.fn() },
+    statusFile,
+    startedByUpdate: false,
+    launch,
+    quit,
+    logger,
     onStatusChanged: (status) => statuses.push(status),
     ...overrides,
-  };
-  return { updater: createUpdater(deps), statuses, deps };
+  });
+  return { statusFile, goFile: `${statusFile}.go`, statuses, launch, quit, logger, updater };
 }
 
-/** The `UPDATE_CHECK_FAILED` warnings a check logged, in order. */
-function loggedWarnings(deps: UpdaterDependencies): Array<Parameters<Logger['warn']>> {
-  return vi.mocked(deps.logger.warn).mock.calls.filter(([code]) => code === 'UPDATE_CHECK_FAILED');
-}
-
-describe('updater check', () => {
-  it('reports a newer version with its notes', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-    });
-    const { updater } = harness(fetchFn);
-    expect(await updater.check()).toEqual({ kind: 'available', version: '1.1.0', notes: 'fixes' });
-  });
-
-  it('is up to date when the manifest is not newer', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.0.0')),
-    });
-    expect((await harness(fetchFn).updater.check()).kind).toBe('upToDate');
-  });
-
-  it('checks the custom folder before the built-in ones and stops at the first newer', async () => {
-    const fetchFn = serve({
-      'https://custom.example.com/dist/update.json': () => reply(manifestFor('2.0.0')),
-      'https://example.com/builtin/update.json': () => reply(manifestFor('3.0.0')),
-    });
-    const { updater } = harness(fetchFn, { customUrl: () => 'https://custom.example.com/dist' });
-    expect(await updater.check()).toMatchObject({ kind: 'available', version: '2.0.0' });
-    expect(fetchFn.calls).toEqual(['https://custom.example.com/dist/update.json']);
-  });
-
-  it('skips an unreachable or malformed source and uses the next', async () => {
-    const fetchFn = serve({
-      'https://custom.example.com/update.json': () => reply('not json'),
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.5.0')),
-    });
-    const { updater } = harness(fetchFn, { customUrl: () => 'https://custom.example.com/' });
-    expect(await updater.check()).toMatchObject({ kind: 'available', version: '1.5.0' });
-  });
-
-  it('skips a source that has nothing for this platform', async () => {
-    const fetchFn = serve({
-      'https://custom.example.com/update.json': () =>
-        reply(JSON.stringify({ version: '9.0.0', files: {} })),
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-    });
-    const { updater } = harness(fetchFn, { customUrl: () => 'https://custom.example.com/' });
-    expect(await updater.check()).toMatchObject({ version: '1.1.0' });
-  });
-
-  it('fails the check, quietly logged, when no source is reachable', async () => {
-    const { updater, deps } = harness(serve({}));
-    expect(await updater.check()).toEqual({ kind: 'failed', phase: 'check' });
-    expect(deps.logger.warn).toHaveBeenCalledWith('UPDATE_CHECK_FAILED', expect.anything());
-  });
-
-  it('refuses a response that was redirected off https', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () =>
-        reply(manifestFor('2.0.0'), { url: 'http://example.com/update.json' }),
-    });
-    const { updater, deps } = harness(fetchFn);
-    expect((await updater.check()).kind).toBe('failed');
-    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'insecure' });
-  });
-
-  it('refuses an archive that does not say which runtime layer it needs', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () =>
-        reply(manifestFor('2.0.0', { runtime: undefined })),
-    });
-    expect(await harness(fetchFn).updater.check()).toEqual({
-      kind: 'installerRequired',
-      version: '2.0.0',
-    });
-  });
-
-  it('says which part of the runtime layer blocked the update', async () => {
-    const cases: ReadonlyArray<[Partial<RuntimeDescriptor>, string]> = [
-      [{ payload: 'b'.repeat(32) }, 'payload'],
-      [{ electron: '45.0.0' }, 'electron'],
-    ];
-    for (const [moved, expected] of cases) {
-      const fetchFn = serve({
-        'https://example.com/builtin/update.json': () =>
-          reply(manifestFor('2.0.0', { runtime: runtime(moved) })),
-      });
-      expect(await harness(fetchFn).updater.check()).toEqual({
-        kind: 'installerRequired',
-        version: '2.0.0',
-        changed: [expected],
-      });
+/**
+ * Real file reads do not follow fake timers, so each poll tick is followed by real
+ * turns and a short real delay (the module's timers are not the faked globals).
+ */
+async function pollUntil(condition: () => boolean, ticks = 20, realMs = 5): Promise<void> {
+  for (let tick = 0; tick < ticks && !condition(); tick += 1) {
+    await vi.advanceTimersByTimeAsync(1000);
+    for (let turn = 0; turn < 5; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
     }
+    if (realMs > 0) await realDelay(realMs);
+  }
+  if (!condition()) throw new Error('pollUntil: the condition was never met');
+}
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  scratch.cleanup();
+});
+
+describe('source helpers', () => {
+  it('treats anything with a scheme as an archive and anything else as a ref', () => {
+    expect(isArchiveSource('https://example.com/a.zip')).toBe(true);
+    expect(isArchiveSource('release/1.0')).toBe(false);
   });
 
-  it('refuses an archive whose runtime cannot be compared with this install', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () =>
-        reply(manifestFor('2.0.0', { runtime: runtime() })),
-    });
-    const unreadable = () => Promise.resolve(undefined);
-    expect(await harness(fetchFn, { readInstalledRuntime: unreadable }).updater.check()).toEqual({
-      kind: 'installerRequired',
-      version: '2.0.0',
-    });
+  it('reads package.json at the given ref', () => {
+    expect(packageJsonUrl('release/1.0').pathname).toMatch(/\/release\/1\.0\/package\.json$/);
+  });
+});
 
-    const throws = () => Promise.reject(new Error('permission denied'));
-    expect((await harness(fetchFn, { readInstalledRuntime: throws }).updater.check()).kind).toBe(
-      'installerRequired',
+describe('check', () => {
+  it('offers a newer version of the configured ref', async () => {
+    const { updater } = build();
+    expect(await updater.check()).toEqual({ kind: 'available', version: '1.1.0' });
+  });
+
+  it('reports up to date for the same version', async () => {
+    const { updater } = build({
+      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.0.0"}'))),
+    });
+    expect((await updater.check()).kind).toBe('upToDate');
+  });
+
+  it('always offers an archive source without fetching anything', async () => {
+    const createFetch = vi.fn(() => Promise.resolve(fetchReturning()));
+    const { updater } = build({ source: () => 'https://example.com/a.zip', createFetch });
+    expect((await updater.check()).kind).toBe('available');
+    expect(createFetch).not.toHaveBeenCalled();
+  });
+
+  // noinspection HtmlRequiredLangAttribute
+  it.each([
+    ['an http error', packageResponse('', { status: 404 }), 'http-status'],
+    [
+      'an insecure final url',
+      packageResponse('{"version":"2.0.0"}', { url: 'http://x.example/p.json' }),
+      'insecure',
+    ],
+    ['an oversized body', packageResponse('x'.repeat(70 * 1024)), 'too-large'],
+    ['a body that is not json', packageResponse('<html>'), 'invalid-manifest'],
+    ['a version that is not semver', packageResponse('{"version":"latest"}'), 'invalid-manifest'],
+    ['a transport failure', new Error('offline'), 'network'],
+    ['a timeout', Object.assign(new Error('slow'), { name: 'TimeoutError' }), 'timeout'],
+  ])('fails on %s and logs why', async (_label, outcome, reason) => {
+    const { updater, logger } = build({
+      createFetch: () => Promise.resolve(fetchReturning(outcome)),
+      usesProxy: () => true,
+    });
+    expect(await updater.check()).toEqual({ kind: 'failed', phase: 'check' });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'UPDATE_CHECK_FAILED',
+      expect.objectContaining({ reason, proxied: true }),
     );
   });
 
-  it('reads the installed runtime at most once per check', async () => {
-    const fetchFn = serve({
-      'https://custom.example.com/update.json': () =>
-        reply(JSON.stringify({ version: '9.0.0', files: {} })),
-      'https://example.com/builtin/update.json': () =>
-        reply(manifestFor('2.0.0', { runtime: runtime() })),
+  it('records the status code of an http failure', async () => {
+    const { updater, logger } = build({
+      createFetch: () => Promise.resolve(fetchReturning(packageResponse('', { status: 503 }))),
     });
-    const readInstalledRuntime = vi.fn(() => Promise.resolve(INSTALLED_RUNTIME));
-    await harness(fetchFn, {
-      customUrl: () => 'https://custom.example.com/',
-      readInstalledRuntime,
-    }).updater.check();
-    expect(readInstalledRuntime).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores non-https sources', async () => {
-    const fetchFn = serve({});
-    const { updater } = harness(fetchFn, { builtinUrls: ['http://example.com/x'] });
     await updater.check();
-    expect(fetchFn.calls).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'UPDATE_CHECK_FAILED',
+      expect.objectContaining({ statusCode: 503 }),
+    );
   });
 
-  it('runs one check at a time', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-    });
-    const { updater } = harness(fetchFn);
+  it('shares one read between overlapping checks', async () => {
+    const createFetch = vi.fn(() =>
+      Promise.resolve(fetchReturning(packageResponse('{"version":"1.1.0"}'))),
+    );
+    const { updater } = build({ createFetch });
     await Promise.all([updater.check(), updater.check()]);
-    expect(fetchFn.calls).toHaveLength(1);
+    expect(createFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('never throws when the fetch factory does', async () => {
+    const { updater, logger } = build({
+      createFetch: () => Promise.reject(new Error('secret store unreadable')),
+    });
+    expect(await updater.check()).toEqual({ kind: 'failed', phase: 'check' });
+    expect(logger.error).toHaveBeenCalled();
   });
 });
 
-describe('updater check diagnostics', () => {
-  it('logs nothing for a source it read successfully', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.0.0')),
-    });
-    const { updater, deps } = harness(fetchFn);
-    await updater.check();
-    expect(deps.logger.warn).not.toHaveBeenCalled();
-  });
-
-  it('says which source failed, why, and over which route', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply('missing', { ok: false }),
-    });
-    const { updater, deps } = harness(fetchFn, { usesProxy: () => true });
-    await updater.check();
-    const warnings = loggedWarnings(deps);
-    expect(warnings).toHaveLength(2);
-    expect(warnings[0]?.[1]).toMatchObject({
-      outcome: 'failure',
-      reason: 'http-status',
-      statusCode: 404,
-      proxied: true,
-      url: { origin: 'https://example.com', path: '/builtin/update.json' },
-    });
-    expect(warnings[0]?.[1]?.durationMs).toBeTypeOf('number');
-  });
-
-  it('records a transport failure, and whether a proxy carried it', async () => {
-    const { updater, deps } = harness(serve({}), { usesProxy: () => true });
-    await updater.check();
-    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({
-      outcome: 'failure',
-      reason: 'network',
-      proxied: true,
-    });
-  });
-
-  it('records a request that ran out of time', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => {
-        throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
-      },
-    });
-    const { updater, deps } = harness(fetchFn);
-    await updater.check();
-    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'timeout' });
-  });
-
-  it.each([
-    ['not JSON at all', 'not json'],
-    ['a manifest this build cannot read', JSON.stringify({ version: 'newest', files: {} })],
-  ])('treats %s as a malformed manifest, not an unreachable source', async (_label, body) => {
-    const fetchFn = serve({ 'https://example.com/builtin/update.json': () => reply(body) });
-    const { updater, deps } = harness(fetchFn);
-    await updater.check();
-    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'invalid-manifest' });
-  });
-
-  it('records a source whose body is above the cap', async () => {
-    const oversized = JSON.stringify({ version: '1.1.0', files: {}, pad: 'x'.repeat(70_000) });
-    const fetchFn = serve({ 'https://example.com/builtin/update.json': () => reply(oversized) });
-    const { updater, deps } = harness(fetchFn);
-    await updater.check();
-    expect(loggedWarnings(deps)[0]?.[1]).toMatchObject({ reason: 'too-large' });
-  });
-
-  it('distinguishes "no source configured" from "every source failed"', async () => {
-    const { updater, deps } = harness(serve({}), { builtinUrls: [], customUrl: () => undefined });
-    await updater.check();
-    const warnings = loggedWarnings(deps);
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]?.[1]).toMatchObject({ outcome: 'failure', count: 0 });
-  });
-});
-
-describe('updater apply', () => {
-  function available(targetAsar: string, archive: Buffer = ARCHIVE) {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-      'https://example.com/builtin/app.asar': () => reply(archive),
-    });
-    return { fetchFn, ...harness(fetchFn, { targetAsar }) };
-  }
-
-  it('does nothing unless an update is available', async () => {
-    const { updater } = harness(serve({}));
+describe('apply', () => {
+  it('does nothing before an update was offered', async () => {
+    const { updater, launch } = build();
     expect((await updater.apply()).kind).toBe('idle');
+    expect(launch).not.toHaveBeenCalled();
   });
 
-  it('stages the verified archive, installs it and quits when asked to restart', async () => {
-    const target = path.join(scratch.create(), 'app.asar');
-    const staged: Buffer[] = [];
-    const install = vi.fn((stagedAsar: string) => {
-      staged.push(readFileSync(stagedAsar));
-      return { restart: true };
+  it('launches the offered source and follows the script to its ready stage', async () => {
+    const { updater, launch, quit, statusFile, goFile, statuses } = build({
+      source: () => 'release/1.0',
     });
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-      'https://example.com/builtin/app.asar': () => reply(ARCHIVE),
-    });
-    const quit = vi.fn();
-    const { updater } = harness(fetchFn, { targetAsar: target, install, quit });
     await updater.check();
     await updater.apply();
-    expect(install).toHaveBeenCalledWith(`${target}.new`);
-    expect(staged).toEqual([ARCHIVE]);
+    expect(launch).toHaveBeenCalledWith('release/1.0');
+
+    writeFileSync(statusFile, 'building|Building the app');
+    await pollUntil(() => statuses.some((s) => s.kind === 'applying' && s.stage === 'building'));
+    expect(statuses).toContainEqual({
+      kind: 'applying',
+      stage: 'building',
+      text: 'Building the app',
+    });
+    expect(quit).not.toHaveBeenCalled();
+
+    writeFileSync(statusFile, 'ready|Ready');
+    await pollUntil(() => quit.mock.calls.length > 0);
     expect(quit).toHaveBeenCalledTimes(1);
+    expect(existsSync(goFile)).toBe(true);
   });
 
-  it('settles as up to date after an in-process install that does not restart', async () => {
-    const target = path.join(scratch.create(), 'app.asar');
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-      'https://example.com/builtin/app.asar': () => reply(ARCHIVE),
-    });
-    const quit = vi.fn();
-    const { updater } = harness(fetchFn, {
-      targetAsar: target,
-      install: () => ({ restart: false }),
-      quit,
-    });
+  it('clears the previous run before launching', async () => {
+    const { updater, statusFile, goFile, launch } = build();
+    writeFileSync(statusFile, 'failed|old');
+    writeFileSync(goFile, '');
     await updater.check();
-    expect((await updater.apply()).kind).toBe('upToDate');
+    let leftovers = true;
+    launch.mockImplementation(() => {
+      leftovers = existsSync(statusFile) || existsSync(goFile);
+      return Promise.resolve();
+    });
+    await updater.apply();
+    expect(leftovers).toBe(false);
+  });
+
+  it('reports the reason when the script fails', async () => {
+    const { updater, statusFile, statuses, quit } = build();
+    await updater.check();
+    await updater.apply();
+    writeFileSync(statusFile, 'failed|build failed');
+    await pollUntil(() => statuses.some((s) => s.kind === 'failed'));
+    expect(statuses.at(-1)).toEqual({ kind: 'failed', phase: 'apply', reason: 'build failed' });
     expect(quit).not.toHaveBeenCalled();
   });
 
-  it('rejects an archive that fails the hash check and leaves nothing staged', async () => {
-    const target = path.join(scratch.create(), 'app.asar');
-    const tampered = Buffer.from('new-app-archivX');
-    const { updater, deps } = available(target, tampered);
+  it('fails when the script cannot be started', async () => {
+    const { updater, launch, logger } = build();
     await updater.check();
-    expect(await updater.apply()).toEqual({ kind: 'failed', phase: 'apply' });
-    expect(existsSync(`${target}.new`)).toBe(false);
-    expect(deps.logger.error).toHaveBeenCalledWith('UPDATE_APPLY_FAILED', expect.anything());
+    launch.mockRejectedValue(new Error('not an installed build'));
+    expect(await updater.apply()).toEqual({
+      kind: 'failed',
+      phase: 'apply',
+      reason: 'not an installed build',
+    });
+    expect(logger.error).toHaveBeenCalled();
   });
 
-  it('removes the staged file when the install step throws', async () => {
-    const target = path.join(scratch.create(), 'app.asar');
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-      'https://example.com/builtin/app.asar': () => reply(ARCHIVE),
-    });
-    const quit = vi.fn();
-    const { updater } = harness(fetchFn, {
-      targetAsar: target,
-      install: () => {
-        throw new Error('boom');
-      },
-      quit,
-    });
+  it('gives up on a script that stops reporting', async () => {
+    const { updater, statuses } = build();
     await updater.check();
+    await updater.apply();
+    await pollUntil(() => statuses.at(-1)?.kind === 'failed', 2000, 0);
+    expect(statuses.at(-1)).toMatchObject({ kind: 'failed', phase: 'apply' });
+  });
+
+  it('needs a fresh check before another attempt after a failure', async () => {
+    const { updater, launch } = build();
+    await updater.check();
+    launch.mockRejectedValueOnce(new Error('boom'));
+    await updater.apply();
     expect((await updater.apply()).kind).toBe('failed');
-    expect(existsSync(`${target}.new`)).toBe(false);
-    expect(quit).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resumeAfterUpdate', () => {
+  it('ignores a run that no update started', async () => {
+    const { updater, statusFile, statuses } = build();
+    writeFileSync(statusFile, 'swapped|Updated');
+    await updater.resumeAfterUpdate();
+    expect(statuses).toEqual([]);
   });
 
-  it('fails when this process cannot be updated in place', async () => {
-    const fetchFn = serve({
-      'https://example.com/builtin/update.json': () => reply(manifestFor('1.1.0')),
-    });
-    const { updater } = harness(fetchFn);
-    await updater.check();
-    expect(await updater.apply()).toEqual({ kind: 'failed', phase: 'apply' });
+  it('answers a swap with the started line and reports the new version', async () => {
+    const { updater, statusFile } = build({ startedByUpdate: true });
+    writeFileSync(statusFile, 'swapped|Updated');
+    await updater.resumeAfterUpdate();
+    expect(updater.getStatus()).toEqual({ kind: 'updated', version: '1.0.0' });
+    expect(readFileSync(statusFile, 'utf8')).toBe('started|1.0.0');
+  });
+
+  it.each(['reverted', 'failed'])(
+    'reports a %s update as failed with its reason',
+    async (stage) => {
+      const { updater, statusFile } = build({ startedByUpdate: true });
+      writeFileSync(statusFile, `${stage}|new version did not start`);
+      await updater.resumeAfterUpdate();
+      expect(updater.getStatus()).toEqual({
+        kind: 'failed',
+        phase: 'apply',
+        reason: 'new version did not start',
+      });
+    },
+  );
+
+  it('stays quiet when the status file is missing', async () => {
+    const { updater, statuses } = build({ startedByUpdate: true });
+    await updater.resumeAfterUpdate();
+    expect(statuses).toEqual([]);
   });
 });

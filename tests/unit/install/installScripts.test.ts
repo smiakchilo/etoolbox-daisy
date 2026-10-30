@@ -20,7 +20,7 @@ import { describe, expect, it } from 'vitest';
  * 4. **Windows tools are called by absolute path.** `certutil` was once called
  *    by name and an install died on "'certutil' is not recognized" with a
  *    misleading SHA-256 mismatch; a trimmed PATH must not decide whether the
- *    build works.
+ *    build works. The same holds for the update mode's process tools.
  * 5. **The packaging step can resolve `powershell.exe`.** `scripts/app-build.mjs`
  *    is the one place both installers share, and electron-builder spawns that
  *    bare name, so the build script - not the inherited PATH - has to supply it.
@@ -75,15 +75,35 @@ describe('build-from-source installers', () => {
   });
 
   it('calls each Windows tool by absolute path, never by bare name', () => {
-    for (const name of ['CURL', 'TAR', 'CERTUTIL', 'POWERSHELL']) {
+    const variables = [
+      'CURL',
+      'TAR',
+      'CERTUTIL',
+      'POWERSHELL',
+      'TASKLIST',
+      'TASKKILL',
+      'FINDSTR',
+      'PING',
+    ];
+    for (const name of variables) {
       expect(batchValue(cmdText, name)).toMatch(/^%SystemRoot%\\System32\\/i);
     }
-    const tools = ['curl', 'tar', 'certutil', 'powershell'];
+    const tools = [
+      'curl',
+      'tar',
+      'certutil',
+      'powershell',
+      'tasklist',
+      'taskkill',
+      'findstr',
+      'ping',
+    ];
+    const definition = new RegExp(`^set "(${variables.join('|')})=`, 'i');
     for (const line of cmdText.split('\r\n')) {
       // Comments, echoed messages and the definitions themselves only establish
       // the paths above; none of them runs a tool.
       if (/^\s*(rem|echo)\b/i.test(line)) continue;
-      if (/^set "(CURL|TAR|CERTUTIL|POWERSHELL)=/i.test(line)) continue;
+      if (definition.test(line)) continue;
       // Drop the `%NAME%` references, leaving what the command line actually names.
       const withoutVariables = line.replaceAll(/%[A-Za-z_]+%/g, '');
       for (const tool of tools) {
@@ -91,6 +111,16 @@ describe('build-from-source installers', () => {
         expect(bare, `bare "${tool}" call: ${line.trim()}`).toBe(false);
       }
     }
+  });
+
+  it('offers the same update mode in both installers', () => {
+    expect(cmdText).toMatch(/--update/);
+    expect(commandText).toMatch(/--update/);
+  });
+
+  it('ships the installers inside every build so the app can update itself', () => {
+    expect(buildScriptText).toMatch(/copyInstallScripts\(/);
+    expect(buildScriptText).toMatch(/['"]install['"]/);
   });
 
   it('makes powershell.exe resolvable for the packaging step', () => {

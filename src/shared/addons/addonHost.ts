@@ -7,7 +7,7 @@ import type { ToolHost } from '../tools';
  *
  * An add-on is a self-contained child application, like a DLL. It owns its
  * behaviour, its third-party libraries, its window and its session hardening.
- * The host process knows it only through its **pins entry** (its identity, its
+ * The host process knows it only through its built **`addon.json`** (its
  * `apiVersion` and what it contributes - plain data, see `./contribution.ts`)
  * and through the generic interface below, which carries no add-on's name and
  * none of its domain vocabulary.
@@ -16,9 +16,8 @@ import type { ToolHost } from '../tools';
  * the add-on instantiates them as Electron's own `BrowserWindow` and `Session`
  * with `import type`, and this module stays free of Electron.
  *
- * Any change to this interface's shape bumps {@link ADDON_API_VERSION}: a
- * downloaded add-on is code from an older (or newer) build, and it may only run
- * against the host it was written for.
+ * Any change to this interface's shape bumps {@link ADDON_API_VERSION}: an
+ * add-on may only run against the host it was written for.
  */
 export const ADDON_API_VERSION = 1;
 
@@ -35,7 +34,7 @@ export interface AddonActivation {
  * export is named `addon` (see `docs/addon-architecture.md`).
  */
 export interface AddonModule<TWindow = unknown, TSession = unknown> {
-  /** Must equal the pins entry's `apiVersion` and this build's {@link ADDON_API_VERSION}. */
+  /** Must equal the `addon.json`'s `apiVersion` and this build's {@link ADDON_API_VERSION}. */
   readonly apiVersion: number;
   activate(host: AddonHost<TWindow, TSession>): AddonActivation;
 }
@@ -76,7 +75,7 @@ export type AddonLogEvent = { readonly code: 'runtime-failed' };
  * the host does not claim to sandbox it.
  */
 export interface AddonHost<TWindow, TSession> {
-  /** The add-on's own id, as the pins name it. */
+  /** The add-on's own id (its folder name). */
   readonly id: string;
   readonly browser: {
     createHiddenWindow(options: AddonHiddenWindowOptions<TSession>): TWindow;

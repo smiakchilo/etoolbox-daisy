@@ -52,6 +52,7 @@ import type {
 } from './browser-ipc';
 import type { CredentialsIpcResult } from './credentials-ipc';
 import type { MemoFileRequest, MemosIpcResult } from './memos-ipc';
+import type { AddonContributionsResult } from './addons-ipc';
 import type { RulesOpenFolderResult, RulesReloadResult } from './rules-ipc';
 import type { UpdateStatus, UpdatesIpcResult } from './updates-ipc';
 import type { SkillsOpenFolderResult, SkillsReloadResult } from './skills-ipc';
@@ -133,6 +134,8 @@ export interface DaisyAppApi {
   readonly skills: DaisySkillsApi;
   /** The user-rules folder surface behind the Settings "Skills" tab. */
   readonly rules: DaisyRulesApi;
+  /** What the add-ons built into this install contribute (tools, skills, billets). */
+  readonly addons: DaisyAddonsApi;
   /** The self-learning memos surface: the Settings folder link and the notice's reveal. */
   readonly memos: DaisyMemosApi;
   /**
@@ -157,6 +160,11 @@ export interface DaisyShortcutApi {
    * keyboard shortcut resolved to. Returns an unsubscribe function.
    */
   onAction(listener: (action: AppShortcutAction) => void): () => void;
+}
+
+export interface DaisyAddonsApi {
+  /** The contributions of every add-on shipped with this install; main owns the paths. */
+  contributions(): Promise<AddonContributionsResult>;
 }
 
 export interface DaisyRulesApi {

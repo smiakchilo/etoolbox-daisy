@@ -19,12 +19,13 @@ import {
   newToolCallId,
   newTurnId,
 } from '../../../src/shared';
-import { addonPins, pinnedAddonIds } from '../../../src/shared/addons/pins';
 import { createContributedToolModules } from '../../../src/main/tools/addonProxy';
+import { builtAddonContributions } from '../../support/addonContributions';
 import { NO_SKILLS } from '../../support/fakeSkillHost';
 import { createCountingIdGenerator } from '../../support/testIds';
 import { REAL_SESSION_TEMPLATE, MINIMAL_SESSION_TEMPLATE } from '../../support/ruleResources';
 
+const builtContributions = await builtAddonContributions();
 const ids = createCountingIdGenerator('reg');
 const host: ToolHostServices = {
   bridge: { request: () => Promise.resolve({ kind: 'cancelled' }) },
@@ -531,12 +532,12 @@ describe('discovered tools (the real src/tools folders)', () => {
 
 describe('the tools an add-on contributes', () => {
   /**
-   * The pins are the only run-time source: a contributed tool is advertised
-   * from them before its add-on is downloaded, and each one is a proxy that
-   * loads the add-on on its first call. No add-on's name is written here.
+   * The built add-on descriptors are the only source: a contributed tool is
+   * advertised from them before its add-on is loaded, and each one is a proxy
+   * that loads the add-on on its first call. No add-on's name is written here.
    */
-  const contributed = pinnedAddonIds().flatMap((id) =>
-    (addonPins[id]?.contributions.tools ?? []).map((tool) => ({ addonId: id, tool })),
+  const contributed = builtContributions.flatMap((entry) =>
+    entry.contributions.tools.map((tool) => ({ addonId: entry.id, tool })),
   );
 
   /** A loader that never finishes: a call would hang, which is what "not loaded yet" means. */

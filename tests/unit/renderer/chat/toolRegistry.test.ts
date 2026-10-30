@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createToolRendererRegistry,
+  setContributedToolRenderers,
   toolRendererRegistry,
 } from '../../../../src/renderer/src/chat/toolRegistry';
 import type { ToolRendererModule } from '../../../../src/shared';
-import { addonPins } from '../../../../src/shared/addons/pins';
+import { builtAddonContributions } from '../../../support/addonContributions';
 
 function rendererModule(overrides: Partial<ToolRendererModule> = {}): ToolRendererModule {
   return {
@@ -78,11 +79,19 @@ describe('createToolRendererRegistry', () => {
   });
 });
 
+async function contributedToolNames(): Promise<string[]> {
+  return (await builtAddonContributions()).flatMap((entry) =>
+    entry.contributions.tools.map((tool) => tool.name),
+  );
+}
+
 describe('discovered renderers (the real src/tools folders)', () => {
-  it('finds the shipped tools the source folders carry', () => {
-    const contributed = Object.values(addonPins).flatMap((pin) =>
-      pin.contributions.tools.map((tool) => tool.name),
-    );
+  beforeAll(async () => {
+    setContributedToolRenderers(await builtAddonContributions());
+  });
+
+  it('finds the shipped tools the source folders carry', async () => {
+    const contributed = await contributedToolNames();
     expect([...toolRendererRegistry.toolNames].sort()).toEqual(
       [
         'aem_get_json',
@@ -107,11 +116,15 @@ describe('discovered renderers (the real src/tools folders)', () => {
 });
 
 describe('a contributed tool', () => {
-  it('is rendered from the pins, before its add-on is downloaded', () => {
-    const contributed = Object.values(addonPins).flatMap((pin) =>
-      pin.contributions.tools.map((tool) => tool.name),
-    );
-    // A build with no pinned add-on contributes nothing to check.
+  it('is rendered once the installed add-ons are reported', async () => {
+    setContributedToolRenderers([]);
+    const contributed = await contributedToolNames();
+    expect(contributed.length).toBeGreaterThan(0);
+    for (const name of contributed) {
+      expect(toolRendererRegistry.toolNames).not.toContain(name);
+    }
+
+    setContributedToolRenderers(await builtAddonContributions());
     for (const name of contributed) {
       expect(toolRendererRegistry.toolNames).toContain(name);
     }

@@ -8,22 +8,21 @@ import {
   err,
   ok,
 } from '../../shared';
-import type { AddonPins } from '../../shared/addons/pins';
-import type { AddonManager } from './manager';
 import type { AddonHostHandle } from './addonHost';
+import type { ScannedAddon } from './scan';
 
 /**
- * The one way the application loads an add-on: `ensure` its pinned identity,
- * `import()` its entry, check that its `apiVersion` is the one this build
- * speaks, and call `activate(host)` **once**.
+ * The one way the application loads an add-on: `import()` its built entry,
+ * check that its `apiVersion` is the one this build speaks, and call
+ * `activate(host)` **once**.
  *
- * Loading is single-flight per add-on and only a success is cached: a failed
- * download (or a corrupt add-on) is retried on the next call instead of being
- * remembered forever. Every failure is a typed outcome and never a throw, so a
- * tool call or a skill load reports it in the transcript.
+ * Loading is single-flight per add-on and only a success is cached: a broken
+ * add-on is retried on the next call instead of being remembered forever. Every
+ * failure is a typed outcome and never a throw, so a tool call or a skill load
+ * reports it in the transcript.
  */
 
-export type AddonLoadFailureKind = 'cancelled' | 'unavailable' | 'apiVersion';
+export type AddonLoadFailureKind = 'unavailable' | 'apiVersion';
 
 export interface AddonLoadFailure {
   readonly kind: AddonLoadFailureKind;
@@ -38,16 +37,10 @@ export interface LoadedAddon {
   readonly activation: AddonActivation;
 }
 
-export interface AddonLoadOptions {
-  readonly signal?: AbortSignal | undefined;
-  /** 0..1 while the archive arrives; the caller renders it on a progress line. */
-  readonly onProgress?: ((fraction: number) => void) | undefined;
-}
-
 export interface AddonLoader {
-  load(id: string, options?: AddonLoadOptions): Promise<Result<LoadedAddon, AddonLoadFailure>>;
+  load(id: string): Promise<Result<LoadedAddon, AddonLoadFailure>>;
   /**
-   * The installed folder of an add-on that has loaded successfully, if any.
+   * The folder of an add-on that has loaded successfully, if any.
    * A skill's files are read from here once its add-on has been activated.
    */
   directoryOf(id: string): string | undefined;
@@ -56,8 +49,8 @@ export interface AddonLoader {
 }
 
 export interface AddonLoaderOptions {
-  readonly manager: AddonManager;
-  readonly pins: AddonPins;
+  /** The add-ons this installation carries (`scanAddons`). */
+  readonly entries: readonly ScannedAddon[];
   /** Creates an add-on's host on first use; called at most once per id. */
   readonly createHost: (id: string) => AddonHostHandle;
   /** A real dynamic import, so a CommonJS main bundle still loads the ESM add-on. */
@@ -67,16 +60,16 @@ export interface AddonLoaderOptions {
 /**
  * `import()` from a bundle that Electron/Vite emits as CommonJS: a plain
  * dynamic import is rewritten into `require()` by the bundler, which cannot load
- * an ES module from outside the archive (the add-on is a downloaded folder with
+ * an ES module from outside the archive (an add-on is a folder of its own, with
  * its own `package.json`). The `Function` constructor keeps the import a real
  * run-time `import()`, and this is the one deliberate use in the application.
  */
 // eslint-disable-next-line @typescript-eslint/no-implied-eval -- a real ESM import(), not eval
-const runtimeImport = new Function('specifier', 'return import(specifier);') as (
+export const runtimeImport = new Function('specifier', 'return import(specifier);') as (
   specifier: string,
 ) => Promise<unknown>;
 
-function isAddonModule(value: unknown): value is AddonModule<unknown, unknown> {
+export function isAddonModule(value: unknown): value is AddonModule {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Record<string, unknown>;
   return typeof candidate['apiVersion'] === 'number' && typeof candidate['activate'] === 'function';
@@ -87,6 +80,7 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
   const loading = new Map<string, Promise<Result<LoadedAddon, AddonLoadFailure>>>();
   const hosts = new Map<string, AddonHostHandle>();
   const importModule = options.importModule ?? runtimeImport;
+  const entries = new Map(options.entries.map((entry) => [entry.id, entry]));
 
   function hostFor(id: string): AddonHostHandle {
     const existing = hosts.get(id);
@@ -96,28 +90,13 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
     return created;
   }
 
-  async function activate(
-    id: string,
-    settings: AddonLoadOptions,
-  ): Promise<Result<LoadedAddon, AddonLoadFailure>> {
-    const pin = options.pins[id];
-    if (pin === undefined) {
+  async function activate(id: string): Promise<Result<LoadedAddon, AddonLoadFailure>> {
+    const entry = entries.get(id);
+    if (entry === undefined) {
       return err({ kind: 'unavailable', message: `The "${id}" add-on is not part of this build` });
     }
-    const ensured = await options.manager.ensure(id, {
-      ...(settings.onProgress === undefined ? {} : { onProgress: settings.onProgress }),
-      ...(settings.signal === undefined ? {} : { signal: settings.signal }),
-    });
-    if (!ensured.ok) {
-      const kind: AddonLoadFailureKind =
-        ensured.error.reason === 'cancelled' ? 'cancelled' : 'unavailable';
-      return err({
-        kind,
-        message: `The "${id}" add-on is not available (${ensured.error.reason}). ${ensured.error.message}`,
-      });
-    }
-    const { dir, descriptor } = ensured.value;
-    if (descriptor.apiVersion !== pin.apiVersion || pin.apiVersion !== ADDON_API_VERSION) {
+    const { directory: dir, descriptor } = entry;
+    if (descriptor.apiVersion !== ADDON_API_VERSION) {
       return err({
         kind: 'apiVersion',
         message: `The "${id}" add-on does not work with this version of the application`,
@@ -142,7 +121,7 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
         message: `The "${id}" add-on is not usable`,
       });
     }
-    if (addon.apiVersion !== pin.apiVersion || addon.apiVersion !== ADDON_API_VERSION) {
+    if (addon.apiVersion !== ADDON_API_VERSION) {
       return err({
         kind: 'apiVersion',
         message: `The "${id}" add-on does not work with this version of the application`,
@@ -161,13 +140,13 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
       });
     }
 
-    // Everything the pins promise must actually be there, or the tool the model
-    // was shown would answer with a stack trace instead of a result.
+    // Everything the descriptor promises must actually be there, or the tool the
+    // model was shown would answer with a stack trace instead of a result.
     const offered = (activation as { tools?: unknown } | null)?.tools;
     if (typeof offered !== 'object' || offered === null) {
       return err({ kind: 'unavailable', message: `The "${id}" add-on is not usable` });
     }
-    for (const tool of pin.contributions.tools) {
+    for (const tool of entry.contributions.tools) {
       if (typeof (offered as Record<string, unknown>)[tool.name] !== 'function') {
         return err({
           kind: 'unavailable',
@@ -179,12 +158,12 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
   }
 
   return {
-    load(id, settings = {}) {
+    load(id) {
       const cached = loaded.get(id);
       if (cached !== undefined) return Promise.resolve(ok(cached));
       const running = loading.get(id);
       if (running !== undefined) return running;
-      const run = activate(id, settings).then((result) => {
+      const run = activate(id).then((result) => {
         if (result.ok) loaded.set(id, result.value);
         return result;
       });

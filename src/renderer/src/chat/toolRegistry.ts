@@ -1,5 +1,6 @@
 import type { JsonValue } from '../../../shared';
 import {
+  type AddonContributionsEntry,
   type ToolCallDetails,
   type ToolConversationItem,
   type ToolPresentation,
@@ -8,7 +9,6 @@ import {
   type ToolTableMessage,
   describeGenericArgs,
 } from '../../../shared';
-import { addonPins } from '../../../shared/addons/pins';
 import { contributeToolRenderers } from './contributedTools';
 
 export type { ToolCallDetails, ToolCallParameter } from '../../../shared';
@@ -69,8 +69,8 @@ export function createToolRendererRegistry(
       byName.set(candidate.toolName, candidate);
     }
   }
-  // An add-on's tools render from the pins; a folder renderer of the same name
-  // would be a build fault, so it can only ever be absent here.
+  // An add-on's tools render from their declaration; a folder renderer of the same
+  // name would be a build fault, so it can only ever be absent here.
   for (const candidate of contributed) {
     if (!byName.has(candidate.toolName)) byName.set(candidate.toolName, candidate);
   }
@@ -118,7 +118,33 @@ export function createToolRendererRegistry(
   };
 }
 
-export const toolRendererRegistry: ToolRendererRegistry = createToolRendererRegistry(
-  import.meta.glob('../../../tools/*/renderer/index.ts', { eager: true }),
-  contributeToolRenderers(addonPins),
-);
+let setter: (addons: readonly AddonContributionsEntry[]) => void = () => undefined;
+
+export const toolRendererRegistry: ToolRendererRegistry = createDelegatingRegistry();
+
+function createDelegatingRegistry(): ToolRendererRegistry {
+  const folderModules = import.meta.glob('../../../tools/*/renderer/index.ts', { eager: true });
+  let inner = createToolRendererRegistry(folderModules);
+  setter = (addons) => {
+    inner = createToolRendererRegistry(folderModules, contributeToolRenderers(addons));
+  };
+  return {
+    get toolNames() {
+      return inner.toolNames;
+    },
+    describeCall: (toolName, args, data) => inner.describeCall(toolName, args, data),
+    presentationOf: (toolName) => inner.presentationOf(toolName),
+    readConversation: (toolName, args, data) => inner.readConversation(toolName, args, data),
+    readTableMessage: (toolName, args, data) => inner.readTableMessage(toolName, args, data),
+    readReportMessage: (toolName, args, data) => inner.readReportMessage(toolName, args, data),
+  };
+}
+
+/**
+ * Installs the renderers for the tools the installed add-ons contribute. Main
+ * reports them over IPC, so the shell calls this once before it paints a
+ * transcript.
+ */
+export function setContributedToolRenderers(addons: readonly AddonContributionsEntry[]): void {
+  setter(addons);
+}

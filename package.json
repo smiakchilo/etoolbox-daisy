@@ -7,17 +7,10 @@
   "main": "out/main/index.js",
   "author": "EToolbox Daisy",
   "license": "MIT",
-  "updates": {
-    "urls": [
-      "https://github.com/exadel-inc/etoolbox-daisy/tree/update",
-      "https://github.com/smiakchilo/etoolbox-daisy/tree/update"
-    ]
-  },
   "scripts": {
     "postinstall": "npm run addons:install && npm run addons:build",
     "addons:install": "node scripts/addons-install.mjs",
     "addons:build": "node scripts/build-addons.mjs",
-    "addons:zip": "node scripts/build-addons.mjs --zip",
     "dev": "npm run icons && npm run addons:build && npm run build:webview-preload && electron-vite dev",
     "build": "npm run icons && npm run addons:build && electron-vite build && npm run build:webview-preload",
     "build:webview-preload": "electron-vite build --config electron.vite.webview-preload.config.ts",

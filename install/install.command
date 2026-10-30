@@ -20,10 +20,22 @@
 #
 # Usage:  ./install.command          build the latest source of the default branch
 #         ./install.command <ref>    build a branch, tag or commit instead
+#         ./install.command --update <ref-or-zip-url> <app-folder> <app-pid> <status-file>
+#                                    what the application runs to update itself
 # Double-clicking works too (run "chmod +x install.command" once if it is refused).
 # Behind a proxy, set HTTPS_PROXY first. Uses only tools that ship with macOS.
 # Set EDAISY_NODE=pinned to ignore an installed Node.js and always use the
 # verified download - that is the toolchain the build is tested with.
+#
+# --update is the same build, run by the application with no window of its own:
+#   - the new app is built into a staging folder beside the running one, which
+#     keeps working; progress goes to <status-file> as "stage|text" lines;
+#   - the staged app is started once with --smoke-test and must exit 0;
+#   - once the running app (<app-pid>) has exited, the old bundle is renamed
+#     "EToolbox Daisy.app.previous" and the new one takes its place;
+#   - when "<status-file>.go" exists the new app is started and must report
+#     "started|..." in the status file; if it does not, the old bundle is put back.
+# A failed build or smoke test leaves the installed app exactly as it was.
 set -euo pipefail
 
 # ---- Pinned inputs ----
@@ -37,10 +49,33 @@ NODE_SIGNER="Node.js Foundation"
 NODE_BASELINE_MAJOR=22
 NODE_BASELINE_MINOR=12
 REPO="smiakchilo/etoolbox-daisy"
-REF="${1:-master}"
+APP_NAME="EToolbox Daisy"
+UPDATE_MODE=0
+APP_DIR=""
+APP_PID=""
+STATUS_FILE=""
+if [ "${1:-}" = "--update" ]; then
+  [ "$#" -ge 5 ] || { echo "Usage: install.command --update <ref-or-zip-url> <app-folder> <app-pid> <status-file>"; exit 2; }
+  UPDATE_MODE=1
+  REF="$2"
+  APP_DIR="$3"
+  APP_PID="$4"
+  STATUS_FILE="$5"
+else
+  REF="${1:-master}"
+fi
 
-# The folder this file is in.
-OUT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Where the built app is written: the folder this file is in, or - for an update -
+# a staging folder beside the installed app.
+if [ "$UPDATE_MODE" = "1" ]; then
+  APP_BUNDLE="$APP_DIR/$APP_NAME.app"
+  PREV_BUNDLE="$APP_BUNDLE.previous"
+  OUT_DIR="$APP_DIR/.update-staging"
+  rm -rf "$OUT_DIR"
+  mkdir -p "$OUT_DIR"
+else
+  OUT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
 
 # A Rosetta-translated shell reports x86_64 on Apple Silicon; ask the hardware instead.
 if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || echo 0)" = "1" ]; then
@@ -56,9 +91,60 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/etoolbox-daisy-build.XXXXXX")"
 NODE_BIN=""
 SRC_DIR="$WORK/src"
 SOURCE_URL="${EDAISY_SOURCE_URL:-https://github.com/$REPO/archive/$REF.zip}"
+# In update mode the source is a branch or tag, or a whole zip URL.
+case "$REF" in *:*) [ "$UPDATE_MODE" = "0" ] || SOURCE_URL="$REF" ;; esac
+
+# What the update is doing, for the failure line; and whether a failure has already been reported.
+STEP="starting"
+FAILURE_REPORTED=0
+
+# Writes "<stage>|<text>" to the status file in one move, so the app never reads half a line.
+status() {
+  [ "$UPDATE_MODE" = "1" ] || return 0
+  printf '%s|%s\n' "$1" "$2" > "$STATUS_FILE.tmp" && mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
+}
+
+# Prints the executable inside an app bundle.
+bundle_exe() {
+  echo "$1/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$1/Contents/Info.plist")"
+}
+
+# Runs a command with a time limit in seconds; returns its exit code, or 124 on timeout.
+run_with_timeout() {
+  limit="$1"
+  shift
+  "$@" >/dev/null 2>&1 &
+  pid=$!
+  waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$limit" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
+# Starts the app at $1 detached, telling it where the status file is; sets NEW_PID.
+launch_app() {
+  EDAISY_UPDATE_STATUS_FILE="$STATUS_FILE" nohup "$(bundle_exe "$1")" >/dev/null 2>&1 &
+  NEW_PID=$!
+}
 
 KEEP_WORK=1
 cleanup() {
+  code=$?
+  if [ "$UPDATE_MODE" = "1" ]; then
+    if [ "$code" != "0" ]; then
+      rm -rf "$OUT_DIR"
+      [ "$FAILURE_REPORTED" = "1" ] || status failed "$STEP failed"
+    fi
+    rm -rf "$WORK"
+    return
+  fi
   if [ "$KEEP_WORK" = "0" ]; then
     rm -rf "$WORK"
   else
@@ -94,6 +180,8 @@ usable_installed_node() {
 }
 
 # ---- 1. Node.js: the one installed here when it is new enough, else the pinned build ----
+STEP="Node.js setup"
+status installing-node "Preparing Node.js"
 if [ "${EDAISY_NODE:-auto}" != "pinned" ] && installed_bin="$(usable_installed_node)"; then
   NODE_BIN="$installed_bin"
   echo "Using the installed Node.js $("$NODE_BIN/node" -p process.versions.node) - $NODE_BIN"
@@ -127,6 +215,8 @@ if [ -z "$NODE_BIN" ]; then
 fi
 
 # ---- 2. Source ----
+STEP="source download"
+status downloading "Downloading the source"
 echo "Downloading source from $SOURCE_URL ..."
 mkdir "$WORK/unpack"
 curl -fL --retry 3 -o "$WORK/source.zip" "$SOURCE_URL"
@@ -141,8 +231,90 @@ export npm_config_update_notifier=false
 export electron_config_cache="$WORK/electron-cache"
 export ELECTRON_CACHE="$WORK/electron-cache"
 export ELECTRON_BUILDER_CACHE="$WORK/builder-cache"
+STEP="build"
+status building "Building the application"
 cd "$SRC_DIR"
 "$NODE_BIN/node" scripts/app-build.mjs --out "$OUT_DIR"
+
+# ---- 4a. Update: test the staged build, wait for the app to quit, swap, start, roll back on failure ----
+if [ "$UPDATE_MODE" = "1" ]; then
+  STEP="smoke test"
+  status testing "Testing the new version"
+  NEW_EXE="$(bundle_exe "$OUT_DIR/$APP_NAME.app")"
+  if EDAISY_UPDATE_STATUS_FILE="" run_with_timeout 180 "$NEW_EXE" --smoke-test; then :; else
+    exit 1
+  fi
+
+  # A later update uses this copy of the script, so the install folder keeps the current one.
+  if [ -f "$APP_DIR/install.command" ]; then
+    cp "$SRC_DIR/install/install.command" "$APP_DIR/install.command.new" &&
+      chmod +x "$APP_DIR/install.command.new" &&
+      mv -f "$APP_DIR/install.command.new" "$APP_DIR/install.command" || true
+  fi
+
+  STEP="waiting for the app to quit"
+  status ready "The update is ready"
+  cd /tmp
+  while kill -0 "$APP_PID" 2>/dev/null; do sleep 1; done
+
+  STEP="swap"
+  rm -rf "$PREV_BUNDLE"
+  swapped=0
+  for _ in $(seq 1 30); do
+    if mv "$APP_BUNDLE" "$PREV_BUNDLE" 2>/dev/null; then
+      swapped=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$swapped" = "0" ]; then
+    status failed "The installed app could not be replaced"
+    FAILURE_REPORTED=1
+    [ ! -f "$STATUS_FILE.go" ] || launch_app "$APP_BUNDLE"
+    rm -f "$STATUS_FILE.go"
+    exit 1
+  fi
+  if ! mv "$OUT_DIR/$APP_NAME.app" "$APP_BUNDLE"; then
+    mv "$PREV_BUNDLE" "$APP_BUNDLE" || true
+    status failed "The new version could not be put in place"
+    FAILURE_REPORTED=1
+    [ ! -f "$STATUS_FILE.go" ] || launch_app "$APP_BUNDLE"
+    rm -f "$STATUS_FILE.go"
+    exit 1
+  fi
+
+  if [ ! -f "$STATUS_FILE.go" ]; then
+    status swapped "Updated; starts next time"
+    exit 0
+  fi
+
+  STEP="start"
+  status swapped "Updated"
+  launch_app "$APP_BUNDLE"
+  started=0
+  for _ in $(seq 1 120); do
+    if grep -q '^started|' "$STATUS_FILE" 2>/dev/null; then
+      started=1
+      break
+    fi
+    kill -0 "$NEW_PID" 2>/dev/null || break
+    sleep 2
+  done
+  if [ "$started" = "1" ]; then
+    rm -rf "$PREV_BUNDLE"
+    rm -f "$STATUS_FILE.go"
+    exit 0
+  fi
+
+  kill "$NEW_PID" 2>/dev/null || true
+  rm -rf "$APP_BUNDLE"
+  mv "$PREV_BUNDLE" "$APP_BUNDLE" || true
+  status reverted "The new version did not start; the previous one was restored"
+  FAILURE_REPORTED=1
+  rm -f "$STATUS_FILE.go"
+  launch_app "$APP_BUNDLE"
+  exit 1
+fi
 
 # ---- 4. Clean up and start ----
 cd "$OUT_DIR"

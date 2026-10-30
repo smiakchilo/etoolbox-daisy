@@ -14,7 +14,8 @@ import {
   type ToolCallId,
   type TurnId,
 } from '../../../../src/shared';
-import { addonPins } from '../../../../src/shared/addons/pins';
+import { builtAddonContributions } from '../../../support/addonContributions';
+import { setContributedToolRenderers } from '../../../../src/renderer/src/chat/toolRegistry';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import {
   resetTableOnlySkills,
@@ -270,28 +271,34 @@ describe('createTranscriptStore', () => {
       ]);
     });
 
-    it("hides a report turn's prose - the report is the answer", () => {
-      // The report tool the pins declare: its result paints the answer itself.
-      const reportTool = Object.values(addonPins)
-        .flatMap((pin) => pin.contributions.tools)
+    it("hides a report turn's prose - the report is the answer", async () => {
+      // The report tool the built add-ons declare: its result paints the answer itself.
+      const addons = await builtAddonContributions();
+      const reportTool = addons
+        .flatMap((entry) => entry.contributions.tools)
         .find((tool) => tool.presentation === 'report')?.name;
-      // A build with no pinned report tool has no such turn to replay.
+      // A build with no report tool has no such turn to replay.
       if (reportTool === undefined) return;
-      const store = createTranscriptStore();
-      store.applyUserPrompt(turnId, '/search');
-      store.markTableOnlyTurn(turnId);
-      store.applyEvent(toolRequested(0, reportTool));
-      store.applyEvent(toolApproved(1));
-      store.applyEvent(toolResultSucceeded(2));
-      store.applyEvent(messageStarted(3));
-      store.applyEvent(completed(4, 'No response.'));
+      setContributedToolRenderers(addons);
+      try {
+        const store = createTranscriptStore();
+        store.applyUserPrompt(turnId, '/search');
+        store.markTableOnlyTurn(turnId);
+        store.applyEvent(toolRequested(0, reportTool));
+        store.applyEvent(toolApproved(1));
+        store.applyEvent(toolResultSucceeded(2));
+        store.applyEvent(messageStarted(3));
+        store.applyEvent(completed(4, 'No response.'));
 
-      // The report (presentation 'report') is the turn's answer, so
-      // the model's own "No response." prose is not painted.
-      expect(store.items()).toEqual([
-        { kind: 'userPrompt', turnId },
-        { kind: 'toolCall', toolCallId },
-      ]);
+        // The report (presentation 'report') is the turn's answer, so
+        // the model's own "No response." prose is not painted.
+        expect(store.items()).toEqual([
+          { kind: 'userPrompt', turnId },
+          { kind: 'toolCall', toolCallId },
+        ]);
+      } finally {
+        setContributedToolRenderers([]);
+      }
     });
 
     it('keeps the only output of a table-only turn that produced no table', () => {

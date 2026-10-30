@@ -13,7 +13,7 @@ import { projectIdSchema, proxyIdSchema, serverIdSchema } from './contracts';
 import { agentIdSchema } from './contracts';
 import { originSchema } from './contracts';
 import { modelIdSchema, reasoningEffortSchema } from './contracts';
-import { updateUrlSchema } from './contracts';
+import { updateSourceSchema } from './contracts';
 import { modelSelectionStateSchema, type ModelSelectionState } from './contracts';
 import {
   environmentRootTextSchema,
@@ -679,14 +679,15 @@ export type UpdateMemoSettingsRequest = Readonly<z.infer<typeof updateMemoSettin
 // ---------------------------------------------------------------------------
 
 /**
- * `settings:update-update-settings`. A partial patch: `url` is the custom
- * update folder (`null` clears it), `checkOnStartup` the silent startup check.
+ * `settings:update-update-settings`. A partial patch: `source` is the update
+ * branch, tag or zip URL (`null` clears it), `checkOnStartup` the silent
+ * startup check.
  */
 export const updateUpdateSettingsRequestSchema = z
   .object({
     changes: z
       .object({
-        url: updateUrlSchema.nullable().optional(),
+        source: updateSourceSchema.nullable().optional(),
         checkOnStartup: z.boolean().optional(),
       })
       .strict()

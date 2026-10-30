@@ -39,6 +39,7 @@ beforeEach(() => {
     getStatus: vi.fn(() => AVAILABLE),
     check: vi.fn(() => Promise.resolve(AVAILABLE)),
     apply: vi.fn(() => Promise.resolve({ kind: 'applying' } satisfies UpdateStatus)),
+    resumeAfterUpdate: vi.fn(() => Promise.resolve()),
   };
   logger = makeRecordingLogger();
   registerUpdatesIpcHandlers({

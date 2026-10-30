@@ -60,13 +60,6 @@ export interface AppPaths {
    * to an agent as `AgentHost.stateDirectory`).
    */
   readonly agents: string;
-  /**
-   * Downloaded add-ons, one folder per id and version
-   * (`<addons>/<id>/<version>/`). Technical, like the browser profile: a user
-   * removes an add-on by deleting its folder, and it is downloaded again on the
-   * next use (docs/addon-architecture.md).
-   */
-  readonly addons: string;
   /** Scratch/temporary files. */
   readonly tmp: string;
 }
@@ -173,7 +166,6 @@ export function resolveAppPaths(homeDir: string, localDataDir: string): AppPaths
     windowState: path.join(dataRoot, 'window-state.json'),
     browser: path.join(dataRoot, 'browser'),
     agents: path.join(dataRoot, 'agents'),
-    addons: path.join(dataRoot, 'addons'),
     tmp: path.join(dataRoot, 'tmp'),
   };
 }
@@ -196,7 +188,6 @@ export function ensureAppDirectories(paths: AppPaths): void {
     paths.credentials,
     paths.browser,
     paths.agents,
-    paths.addons,
     paths.tmp,
   ];
   for (const dir of directories) {

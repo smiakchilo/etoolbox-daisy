@@ -10,6 +10,7 @@ export * from './browser-ipc';
 export * from './table-export-ipc';
 export * from './skills-ipc';
 export * from './rules-ipc';
+export * from './addons-ipc';
 export * from './memos-ipc';
 export * from './credentials-ipc';
 export * from './updates-ipc';

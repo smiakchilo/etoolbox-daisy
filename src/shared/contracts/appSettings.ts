@@ -174,30 +174,38 @@ export const memoSettingsSchema = z
 
 export type MemoSettings = Readonly<z.infer<typeof memoSettingsSchema>>;
 
-/** A custom update source is a folder URL and must be `https:`. */
-export const updateUrlSchema = z
+const UPDATE_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
+
+/**
+ * An update source is a branch or tag of the project repository (`master`,
+ * `release/1.2`) or a full `https:` URL of a source zip.
+ */
+export const updateSourceSchema = z
   .string()
+  .trim()
+  .min(1)
   .max(2048)
   .refine(
     (value) => {
+      if (UPDATE_REF_PATTERN.test(value)) return !value.includes('..') && !value.startsWith('/');
       try {
         return new URL(value).protocol === 'https:';
       } catch {
         return false;
       }
     },
-    { message: 'must be an https URL' },
+    { message: 'must be a branch or tag name, or an https URL' },
   );
 
 /**
- * Update settings (the Settings "Updates" tab). `url` is the optional custom
- * update folder, checked before the built-in sources; absent means built-ins
- * only. `checkOnStartup` (default `false`) makes the app look for an update
+ * Update settings (the Settings "Updates" tab). `source` is the optional
+ * branch, tag or zip URL the update is built from; absent means the default
+ * branch. `checkOnStartup` (default `false`) makes the app look for an update
  * silently once the shell has painted.
  */
 export const updateSettingsSchema = z
   .object({
-    url: updateUrlSchema.optional(),
+    source: updateSourceSchema.optional(),
     checkOnStartup: z.boolean().default(false),
   })
   .strict();

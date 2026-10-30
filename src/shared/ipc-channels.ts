@@ -142,6 +142,13 @@ export const RULES_OPEN_FOLDER_CHANNEL = 'rules:open-folder' as const;
 export const RULES_RELOAD_CHANNEL = 'rules:reload' as const;
 
 /**
+ * Asks main what the add-ons built into this install contribute (tools, skills,
+ * billets), so the renderer can paint a contributed tool's billet. No payload
+ * (see `src/shared/addons-ipc.ts`).
+ */
+export const ADDONS_CONTRIBUTIONS_CHANNEL = 'addons:contributions' as const;
+
+/**
  * Persists the self-learning flag (the Settings "Skills" tab's checkbox). A
  * partial patch, like {@link SETTINGS_UPDATE_BROWSER_SETTINGS_CHANNEL}.
  */

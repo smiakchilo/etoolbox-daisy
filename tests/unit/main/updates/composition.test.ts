@@ -1,76 +1,78 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { readUpdateBuildInfo, resolveTargetAsar } from '../../../../src/main/updates/composition';
+import { describe, expect, it, vi } from 'vitest';
+import { type AppUpdaterOptions, createAppUpdater } from '../../../../src/main/updates/composition';
+import type { Logger } from '../../../../src/main/logger';
+import { type AppSettings, type UpdateStatus, defaultAppSettings } from '../../../../src/shared';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
-const scratch = createScratchDirs('updates-composition', 'upd-comp-');
+const scratch = createScratchDirs('update-composition', 'update-composition-');
 
-afterEach(() => {
-  scratch.cleanup();
-});
-
-function appWith(packageJson: string | undefined): string {
-  const directory = scratch.create();
-  if (packageJson !== undefined) writeFileSync(path.join(directory, 'package.json'), packageJson);
-  return directory;
+function settingsWith(source?: string): AppSettings {
+  return {
+    ...defaultAppSettings(),
+    updates: { checkOnStartup: false, ...(source === undefined ? {} : { source }) },
+  };
 }
 
-describe('readUpdateBuildInfo', () => {
-  it('reads the built-in sources', () => {
-    const appPath = appWith(
-      JSON.stringify({ updates: { urls: ['https://github.com/o/r/tree/main/updates'] } }),
-    );
-    expect(readUpdateBuildInfo(appPath)).toEqual({
-      urls: ['https://github.com/o/r/tree/main/updates'],
-    });
+function build(overrides: Partial<AppUpdaterOptions> = {}) {
+  const root = scratch.create();
+  const statuses: UpdateStatus[] = [];
+  const quit = vi.fn();
+  const logger = { error: vi.fn(), warn: vi.fn() } as unknown as Logger;
+  const updater = createAppUpdater({
+    installedVersion: '1.0.0',
+    platform: 'win32',
+    pid: 1,
+    executablePath: path.join(root, 'app', 'EToolbox Daisy.exe'),
+    resourcesPath: path.join(root, 'resources'),
+    scratchDirectory: path.join(root, 'scratch'),
+    statusFileFromUpdate: undefined,
+    readSettings: () => settingsWith('https://example.test/source.zip'),
+    secretStore: { get: () => Promise.resolve(undefined) },
+    logger,
+    quit,
+    onStatusChanged: (status) => statuses.push(status),
+    ...overrides,
+  });
+  return { root, statuses, updater };
+}
+
+describe('createAppUpdater', () => {
+  it('offers an archive source without reading anything', async () => {
+    const { updater } = build();
+    expect((await updater.check()).kind).toBe('available');
   });
 
-  it('tolerates an updates block that carries more than the sources', () => {
-    const appPath = appWith(
-      JSON.stringify({ updates: { urls: ['https://x.example/u'], somethingNewer: 3 } }),
-    );
-    expect(readUpdateBuildInfo(appPath)).toEqual({ urls: ['https://x.example/u'] });
+  it('refuses to apply on a platform that cannot update itself', async () => {
+    const { updater } = build({ platform: 'linux' });
+    await updater.check();
+    const status = await updater.apply();
+    expect(status.kind).toBe('failed');
+    expect(status).toMatchObject({ phase: 'apply' });
   });
 
-  it.each([
-    ['a missing file', undefined],
-    ['malformed JSON', '{nope'],
-    ['no updates block', JSON.stringify({ name: 'x' })],
-    ['a wrongly-typed block', JSON.stringify({ updates: { urls: 'x' } })],
-  ])('means no built-in sources for %s', (_label, content) => {
-    const info = readUpdateBuildInfo(appWith(content));
-    expect(info).toEqual({ urls: [] });
-  });
-});
-
-describe('resolveTargetAsar', () => {
-  const asar = path.join('install', 'resources', 'app.asar');
-
-  it('targets the running archive of a packaged app', () => {
-    expect(resolveTargetAsar({ isPackaged: true, appPath: asar, sandbox: undefined })).toBe(asar);
+  it('refuses to apply when the build carries no install script', async () => {
+    const { updater } = build();
+    await updater.check();
+    expect(await updater.apply()).toMatchObject({ kind: 'failed', phase: 'apply' });
   });
 
-  it('refuses a packaged app that is not running from an archive', () => {
-    expect(
-      resolveTargetAsar({ isPackaged: true, appPath: 'install/app', sandbox: undefined }),
-    ).toBeUndefined();
+  it('reports an update it did not start as nothing to resume', async () => {
+    const { root, statuses, updater } = build();
+    const statusFile = path.join(root, 'scratch', 'update-status.txt');
+    await updater.resumeAfterUpdate();
+    expect(statuses).toEqual([]);
+    expect(() => readFileSync(statusFile)).toThrow();
   });
 
-  it('is not updatable when unpackaged without a sandbox', () => {
-    expect(
-      resolveTargetAsar({ isPackaged: false, appPath: 'src', sandbox: undefined }),
-    ).toBeUndefined();
-    expect(resolveTargetAsar({ isPackaged: false, appPath: 'src', sandbox: '' })).toBeUndefined();
-  });
-
-  it('targets the sandbox install when unpackaged with one', () => {
-    expect(resolveTargetAsar({ isPackaged: false, appPath: 'src', sandbox: 'scratch' })).toBe(
-      path.join('scratch', 'resources', 'app.asar'),
-    );
-  });
-
-  it('ignores the sandbox for a packaged app', () => {
-    expect(resolveTargetAsar({ isPackaged: true, appPath: asar, sandbox: 'scratch' })).toBe(asar);
+  it('confirms a start to the update script through the file the script named', async () => {
+    const root = scratch.create();
+    const statusFile = path.join(root, 'from-script.txt');
+    writeFileSync(statusFile, 'swapped|Updated');
+    const { statuses, updater } = build({ statusFileFromUpdate: statusFile });
+    await updater.resumeAfterUpdate();
+    expect(readFileSync(statusFile, 'utf8')).toContain('started|1.0.0');
+    expect(statuses.at(-1)).toEqual({ kind: 'updated', version: '1.0.0' });
   });
 });

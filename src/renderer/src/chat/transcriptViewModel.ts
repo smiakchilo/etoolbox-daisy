@@ -3,7 +3,6 @@ import {
   type RequiredAction,
   readLeadingSkillToken,
 } from '../../../shared';
-import { addonPins } from '../../../shared/addons/pins';
 import type { ToolCallStatus } from './transcriptStore';
 
 /**
@@ -143,13 +142,11 @@ export function splitLeadingSkill(
  * The skills whose answer is a deterministic, application-rendered table. They
  * are the fallback of the table-only registry below, so a startup replay that
  * runs before the skill list has loaded still suppresses their prose. The
- * application's own are named here; an add-on's come from the pins, because the
- * renderer must not name a skill an add-on owns.
+ * application's own are named here; an add-on's skill is not, because the
+ * renderer must not name a skill an add-on owns - the skill list the chat pane
+ * loads is authoritative for it.
  */
 const BUNDLED_TABLE_ONLY_SKILLS: readonly string[] = [
-  ...Object.values(addonPins).flatMap((pin) =>
-    pin.contributions.skills.filter((skill) => skill.tableOnly).map((skill) => skill.name),
-  ),
   'search',
   'semantic-search',
   'search-page',

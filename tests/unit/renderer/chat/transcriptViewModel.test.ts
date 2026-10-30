@@ -10,9 +10,9 @@ import {
   setTableOnlySkills,
   splitLeadingSkill,
 } from '../../../../src/renderer/src/chat/transcriptViewModel';
-import { addonPins } from '../../../../src/shared/addons/pins';
 import type { ToolCallStatus } from '../../../../src/renderer/src/chat/transcriptStore';
 import { REQUIRED_ACTIONS, requestIdSchema, type ToolError } from '../../../../src/shared';
+import { builtAddonContributions } from '../../../support/addonContributions';
 
 const requestId = requestIdSchema.parse('req-1');
 
@@ -189,16 +189,20 @@ describe('isDeterministicTablePrompt', () => {
 });
 
 describe('a table-only skill an add-on contributes', () => {
-  it('is recognised from the pins before the skill list has loaded', () => {
-    const skill = Object.values(addonPins)
-      .flatMap((pin) => pin.contributions.skills)
+  it('is recognised once the skill list carries it', async () => {
+    const skill = (await builtAddonContributions())
+      .flatMap((entry) => entry.contributions.skills)
       .find((entry) => entry.tableOnly);
-    // A build with no pinned add-on has nothing to recognise.
+    // A build with no add-on skill of this kind has nothing to recognise.
     if (skill === undefined) return;
 
-    resetTableOnlySkills();
+    try {
+      setTableOnlySkills([{ name: skill.name, tableOnly: true }]);
 
-    expect(isTableOnlySkill(skill.name)).toBe(true);
-    expect(isDeterministicTablePrompt(`/${skill.name} something`)).toBe(true);
+      expect(isTableOnlySkill(skill.name)).toBe(true);
+      expect(isDeterministicTablePrompt(`/${skill.name} something`)).toBe(true);
+    } finally {
+      resetTableOnlySkills();
+    }
   });
 });

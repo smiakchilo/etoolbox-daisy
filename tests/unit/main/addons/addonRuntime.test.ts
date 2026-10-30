@@ -2,8 +2,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  type AddonHost,
   type AddonHiddenWindowOptions,
+  type AddonHost,
   type ContributedTool,
   type ToolHost,
   ADDON_API_VERSION,
@@ -13,44 +13,44 @@ import {
   newTurnId,
   ok,
 } from '../../../../src/shared';
-import type { AddonPins } from '../../../../src/shared/addons/pins';
-import { createAddonLoader, type AddonHostHandle } from '../../../../src/main/addons';
-import type { AddonManager } from '../../../../src/main/addons';
-import { addonPartitionName, createAddonHost } from '../../../../src/main/addons';
-import type { InstalledAddon } from '../../../../src/main/addons/store';
+import {
+  type AddonHostHandle,
+  type ScannedAddon,
+  addonPartitionName,
+  createAddonHost,
+  createAddonLoader,
+} from '../../../../src/main/addons';
 import { createContributedToolModules } from '../../../../src/main/tools/addonProxy';
 import { createCountingIdGenerator } from '../../../support/testIds';
 
 /**
- * The generic add-on machinery: the loader (ensure → import → apiVersion →
- * activate, once per add-on, success-only caching), the host (the safety-critical
- * window options it forces, the sessions it hands out, its cleanup) and the tool
- * proxy (progress, error mapping, raw argument forwarding, one executor per
- * add-on tool). None of these knows any add-on: the fixtures are neutral.
+ * The generic add-on machinery: the loader, the host an add-on receives and the
+ * proxy that advertises its tools. None of it knows any add-on, so the fixtures
+ * here are neutral.
  */
 
 const { createdWindows, fromPartition } = vi.hoisted(() => ({
-  createdWindows: [] as {
-    options: Record<string, unknown>;
-    destroyed: boolean;
-  }[],
+  createdWindows: [] as { options: Record<string, unknown>; destroyed: boolean }[],
   fromPartition: vi.fn((name: string) => ({ partition: name })),
 }));
 
 vi.mock('electron', () => ({
   BrowserWindow: class {
-    readonly record: { options: Record<string, unknown>; destroyed: boolean };
+    private readonly record: { options: Record<string, unknown>; destroyed: boolean };
     readonly webContents = { id: 1 };
+
     constructor(options: Record<string, unknown>) {
       this.record = { options, destroyed: false };
       createdWindows.push(this.record);
     }
-    once(): void {
-      // The host listens for `closed`; the fake never fires it.
-    }
+
+    // The host listens for `closed`; the fake never fires it.
+    once(): void {}
+
     isDestroyed(): boolean {
       return this.record.destroyed;
     }
+
     destroy(): void {
       this.record.destroyed = true;
     }
@@ -63,15 +63,8 @@ beforeEach(() => {
   fromPartition.mockClear();
 });
 
-const ADDON_DIR = path.join('C:', 'addons', 'example-addon', '0123456789abcdef');
 const ADDON_ID = 'example-addon';
-
-function installed(entry = 'index.js', apiVersion = ADDON_API_VERSION): InstalledAddon {
-  return {
-    dir: ADDON_DIR,
-    descriptor: { id: ADDON_ID, identity: '0123456789abcdef', apiVersion, entry },
-  };
-}
+const DIR = path.join('C:', 'addons', ADDON_ID);
 
 const TOOL: ContributedTool = {
   name: 'example_tool',
@@ -85,205 +78,161 @@ const TOOL: ContributedTool = {
   billet: { rows: [{ label: 'Target', value: { path: 'target' } }] },
 };
 
-function pins(): AddonPins {
-  return {
-    [ADDON_ID]: {
-      identity: '0123456789abcdef',
-      apiVersion: ADDON_API_VERSION,
-      contributions: { tools: [TOOL], skills: [] },
-    },
-  };
-}
-
-function manager(ensure: AddonManager['ensure']): AddonManager {
-  return { ensure };
-}
+const SCANNED: ScannedAddon = {
+  id: ADDON_ID,
+  directory: DIR,
+  descriptor: { id: ADDON_ID, apiVersion: ADDON_API_VERSION, entry: 'index.js' },
+  contributions: { tools: [TOOL], skills: [] },
+};
 
 const NO_HOST: AddonHostHandle = {
   host: {} as AddonHost<never, never>,
   destroyWindows: () => undefined,
 };
 
-function loader(options: {
-  readonly ensure?: AddonManager['ensure'];
-  readonly importModule?: (specifier: string) => Promise<unknown>;
-  readonly createHost?: () => AddonHostHandle;
-}) {
+function activationWith(tools: Record<string, unknown>) {
+  return { apiVersion: ADDON_API_VERSION, activate: () => ({ tools }) };
+}
+
+function loader(
+  options: {
+    entries?: readonly ScannedAddon[];
+    importModule?: (specifier: string) => Promise<unknown>;
+    createHost?: (id: string) => AddonHostHandle;
+  } = {},
+) {
   return createAddonLoader({
-    manager: manager(options.ensure ?? (() => Promise.resolve({ ok: true, value: installed() }))),
-    pins: pins(),
+    entries: options.entries ?? [SCANNED],
     createHost: options.createHost ?? (() => NO_HOST),
     ...(options.importModule === undefined ? {} : { importModule: options.importModule }),
   });
 }
 
-function activationWith(tools: Record<string, unknown>) {
-  return { apiVersion: ADDON_API_VERSION, activate: () => ({ tools }) };
-}
+const exampleModule = () => ({
+  addon: activationWith({ example_tool: () => () => Promise.resolve(ok({})) }),
+});
 
 describe('createAddonLoader', () => {
-  it('ensures, imports the entry, checks the apiVersion and activates once', async () => {
-    const ensure = vi.fn<AddonManager['ensure']>((_id, options) => {
-      options?.onProgress?.(0.34);
-      options?.onProgress?.(1);
-      return Promise.resolve({ ok: true, value: installed() });
-    });
-    const factory = vi.fn(() => () => Promise.resolve(ok({})));
-    const activate = vi.fn(() => ({ tools: { example_tool: factory } }));
-    const importModule = vi.fn(() =>
-      Promise.resolve({ addon: { apiVersion: ADDON_API_VERSION, activate } }),
-    );
-    const load = loader({ ensure, importModule });
-    const progress: number[] = [];
+  it('imports the entry from the add-on folder and exposes its directory and host', async () => {
+    const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+    const instance = loader({ importModule });
 
-    const loaded = await load.load(ADDON_ID, { onProgress: (fraction) => progress.push(fraction) });
+    expect(instance.directoryOf(ADDON_ID)).toBeUndefined();
+    expect(instance.hostOf(ADDON_ID)).toBeUndefined();
+
+    const loaded = await instance.load(ADDON_ID);
 
     expect(loaded.ok).toBe(true);
-    expect(progress).toEqual([0.34, 1]);
-    expect(importModule).toHaveBeenCalledWith(pathToFileURL(path.join(ADDON_DIR, 'index.js')).href);
-    expect(activate).toHaveBeenCalledTimes(1);
-    expect(load.directoryOf(ADDON_ID)).toBe(ADDON_DIR);
+    expect(importModule).toHaveBeenCalledWith(pathToFileURL(path.join(DIR, 'index.js')).href);
+    expect(instance.directoryOf(ADDON_ID)).toBe(DIR);
+    expect(instance.hostOf(ADDON_ID)).toBe(NO_HOST);
   });
 
-  it('is single-flight per add-on and caches only a success', async () => {
-    const ensure = vi
-      .fn<AddonManager['ensure']>()
-      .mockImplementation(() => Promise.resolve({ ok: true, value: installed() }));
-    const importModule = vi.fn(() =>
-      Promise.resolve({
-        addon: activationWith({ example_tool: () => () => Promise.resolve(ok({})) }),
-      }),
-    );
-    const load = loader({ ensure, importModule });
+  it('shares one load between concurrent callers and caches a success', async () => {
+    const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+    const instance = loader({ importModule });
 
-    const both = await Promise.all([load.load(ADDON_ID), load.load(ADDON_ID)]);
-    expect(both.every((result) => result.ok)).toBe(true);
-    expect(ensure).toHaveBeenCalledTimes(1);
+    await Promise.all([instance.load(ADDON_ID), instance.load(ADDON_ID)]);
+    await instance.load(ADDON_ID);
+
     expect(importModule).toHaveBeenCalledTimes(1);
-
-    await load.load(ADDON_ID);
-    expect(ensure).toHaveBeenCalledTimes(1);
   });
 
-  it('does not cache a failure: the next call tries again', async () => {
-    const ensure = vi
-      .fn<AddonManager['ensure']>()
-      .mockResolvedValueOnce({ ok: false, error: { reason: 'hash', message: 'bad checksum' } })
-      .mockResolvedValueOnce({ ok: true, value: installed() });
-    const load = loader({
-      ensure,
-      importModule: () =>
-        Promise.resolve({
-          addon: activationWith({ example_tool: () => () => Promise.resolve(ok({})) }),
-        }),
-    });
+  it('does not cache a failure', async () => {
+    const importModule = vi
+      .fn<(specifier: string) => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error('disk hiccup'))
+      .mockResolvedValue(exampleModule());
+    const instance = loader({ importModule });
 
-    const first = await load.load(ADDON_ID);
-    expect(first).toMatchObject({ ok: false, error: { kind: 'unavailable' } });
-    expect((first as { error: { message: string } }).error.message).toContain(ADDON_ID);
-
-    expect(await load.load(ADDON_ID)).toMatchObject({ ok: true });
+    expect((await instance.load(ADDON_ID)).ok).toBe(false);
+    expect((await instance.load(ADDON_ID)).ok).toBe(true);
   });
 
-  it('maps a cancelled download to `cancelled`', async () => {
-    const load = loader({
-      ensure: () =>
-        Promise.resolve({ ok: false, error: { reason: 'cancelled', message: 'cancelled' } }),
-      importModule: vi.fn(),
-    });
-
-    expect(await load.load(ADDON_ID)).toMatchObject({ ok: false, error: { kind: 'cancelled' } });
-  });
-
-  it('refuses an add-on whose apiVersion is not this build’s', async () => {
-    const load = loader({
-      ensure: () => Promise.resolve({ ok: true, value: installed('index.js', 99) }),
-      importModule: vi.fn(),
-    });
-
-    expect(await load.load(ADDON_ID)).toMatchObject({ ok: false, error: { kind: 'apiVersion' } });
-  });
-
-  it('refuses a module whose own apiVersion differs from the pins', async () => {
-    const load = loader({
-      importModule: () =>
-        Promise.resolve({ addon: { apiVersion: 2, activate: () => ({ tools: {} }) } }),
-    });
-
-    expect(await load.load(ADDON_ID)).toMatchObject({ ok: false, error: { kind: 'apiVersion' } });
-  });
-
-  it('reports an unusable module as unavailable, never throwing', async () => {
-    const missing = loader({ importModule: () => Promise.resolve({}) });
-    expect(await missing.load(ADDON_ID)).toMatchObject({
-      ok: false,
-      error: { kind: 'unavailable' },
-    });
-
-    const failing = loader({ importModule: () => Promise.reject(new Error('cannot load')) });
-    expect(await failing.load(ADDON_ID)).toMatchObject({
-      ok: false,
-      error: { kind: 'unavailable' },
-    });
-  });
-
-  it('fails as unavailable when a pinned tool is missing from the activation', async () => {
-    const load = loader({ importModule: () => Promise.resolve({ addon: activationWith({}) }) });
-
-    const loaded = await load.load(ADDON_ID);
+  it('reports an add-on that is not part of this build as unavailable', async () => {
+    const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+    const loaded = await loader({ importModule }).load('missing-addon');
 
     expect(loaded).toMatchObject({ ok: false, error: { kind: 'unavailable' } });
-    expect((loaded as { error: { message: string } }).error.message).toContain('example_tool');
+    expect(importModule).not.toHaveBeenCalled();
   });
 
-  it('fails as unavailable when the activation offers no tools at all', async () => {
-    const load = loader({
-      importModule: () =>
-        Promise.resolve({
-          addon: { apiVersion: ADDON_API_VERSION, activate: () => ({}) },
-        }),
+  it('refuses a descriptor written for another api version before importing it', async () => {
+    const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+    const entry: ScannedAddon = {
+      ...SCANNED,
+      descriptor: { ...SCANNED.descriptor, apiVersion: 99 },
+    };
+    const loaded = await loader({ entries: [entry], importModule }).load(ADDON_ID);
+
+    expect(loaded).toMatchObject({ ok: false, error: { kind: 'apiVersion' } });
+    expect(importModule).not.toHaveBeenCalled();
+  });
+
+  it('refuses a module built for another api version', async () => {
+    const importModule = () =>
+      Promise.resolve({
+        addon: { apiVersion: ADDON_API_VERSION + 1, activate: () => ({ tools: {} }) },
+      });
+
+    expect(await loader({ importModule }).load(ADDON_ID)).toMatchObject({
+      ok: false,
+      error: { kind: 'apiVersion' },
     });
-
-    expect(await load.load(ADDON_ID)).toMatchObject({ ok: false, error: { kind: 'unavailable' } });
   });
 
-  it('fails as unavailable when activate throws', async () => {
-    const load = loader({
-      importModule: () =>
+  it.each([
+    ['a module without an add-on', () => Promise.resolve({})],
+    ['an import that rejects', () => Promise.reject(new Error('syntax error'))],
+    [
+      'an activation without tools',
+      () => Promise.resolve({ addon: { apiVersion: ADDON_API_VERSION, activate: () => ({}) } }),
+    ],
+    [
+      'an activation that throws',
+      () =>
         Promise.resolve({
           addon: {
             apiVersion: ADDON_API_VERSION,
             activate: () => {
-              throw new Error('nope');
+              throw new Error('no window available');
             },
           },
         }),
+    ],
+  ])('reports %s as unavailable and never throws', async (_name, importModule) => {
+    expect(await loader({ importModule }).load(ADDON_ID)).toMatchObject({
+      ok: false,
+      error: { kind: 'unavailable' },
     });
+  });
 
-    expect(await load.load(ADDON_ID)).toMatchObject({ ok: false, error: { kind: 'unavailable' } });
+  it('reports a declared tool the activation does not provide, naming it', async () => {
+    const importModule = () => Promise.resolve({ addon: activationWith({}) });
+    const loaded = await loader({ importModule }).load(ADDON_ID);
+
+    expect(loaded).toMatchObject({ ok: false, error: { kind: 'unavailable' } });
+    expect(!loaded.ok && loaded.error.message).toContain(TOOL.name);
   });
 });
 
 describe('createAddonHost', () => {
   function makeHost() {
-    const pane = { partition: 'persist:webview' } as never;
-    const builder = createAddonHost(ADDON_ID, {
-      paneSession: pane,
+    const handle = createAddonHost(ADDON_ID, {
+      paneSession: { partition: 'persist:webview' } as never,
       currentUrl: () => 'https://a.example/',
       isConfiguredOrigin: (origin) => origin === 'https://a.example',
       logger: { warn: vi.fn() },
     });
-    return { builder, pane };
+    return { builder: handle, pane: handle.host.sessions.pane() };
   }
 
-  it('forces the safety-critical window options, whatever the add-on asks for', () => {
-    const { builder } = makeHost();
-    const session = builder.host.sessions.pane();
+  it('forces the safety-critical window options whatever the add-on asks for', () => {
+    const { builder, pane } = makeHost();
 
-    // The host option type carries none of these; a cast is the only way an
-    // add-on could try, and the host still decides.
+    // The cast is the only way an add-on could try this.
     builder.host.browser.createHiddenWindow({
-      session,
+      session: pane,
       offscreen: true,
       backgroundThrottling: false,
       width: 640,
@@ -297,7 +246,7 @@ describe('createAddonHost', () => {
       width: 640,
       height: 480,
       webPreferences: {
-        session,
+        session: pane,
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
@@ -308,55 +257,58 @@ describe('createAddonHost', () => {
     });
   });
 
-  it('names an isolated session after its add-on', () => {
+  it('names an isolated session after the add-on', () => {
     const { builder } = makeHost();
 
-    const isolated = builder.host.sessions.isolated('anonymous');
+    builder.host.sessions.isolated('anonymous');
 
-    expect(fromPartition).toHaveBeenCalledWith(`addon-${ADDON_ID}-anonymous`);
-    expect(isolated).toMatchObject({ partition: `addon-${ADDON_ID}-anonymous` });
-    expect(addonPartitionName(ADDON_ID, 'anonymous')).toBe(`addon-${ADDON_ID}-anonymous`);
+    expect(fromPartition).toHaveBeenCalledWith(addonPartitionName(ADDON_ID, 'anonymous'));
+    expect(addonPartitionName(ADDON_ID, 'anonymous')).toBe('addon-example-addon-anonymous');
   });
 
   it('refuses a session it did not hand out', () => {
     const { builder } = makeHost();
 
-    expect(() => builder.host.browser.createHiddenWindow({ session: {} as never })).toThrow(
-      /did not hand out/,
-    );
+    expect(() =>
+      builder.host.browser.createHiddenWindow({
+        session: {} as never,
+      }),
+    ).toThrow(/did not hand out/);
   });
 
-  it('destroys the windows it created that are still open', () => {
-    const { builder } = makeHost();
-    builder.host.browser.createHiddenWindow({ session: builder.host.sessions.pane() });
+  it('destroys the windows it created', () => {
+    const { builder, pane } = makeHost();
 
+    builder.host.browser.createHiddenWindow({ session: pane });
     builder.destroyWindows();
 
     expect(createdWindows[0]?.destroyed).toBe(true);
   });
 
-  it('answers the address policy and the configured hosts', async () => {
+  it('exposes the address policy and the pane URL', async () => {
     const { builder } = makeHost();
 
     expect(builder.host.hosts.isConfiguredOrigin('https://a.example')).toBe(true);
     expect(builder.host.hosts.isConfiguredOrigin('https://b.example')).toBe(false);
     expect(builder.host.pane.currentUrl()).toBe('https://a.example/');
-    expect(await builder.host.network.inspectTarget('not a url')).toEqual({ allowed: false });
-    expect(await builder.host.network.inspectTarget('http://127.0.0.1/x')).toEqual({
+    await expect(builder.host.network.inspectTarget('not a url')).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(builder.host.network.inspectTarget('http://127.0.0.1/x')).resolves.toMatchObject({
       allowed: false,
     });
   });
 
-  it('logs a generic runtime failure carrying its own id', () => {
+  it('logs a failure under the add-on id', () => {
     const warn = vi.fn();
-    const builder = createAddonHost(ADDON_ID, {
+    const { host } = createAddonHost(ADDON_ID, {
       paneSession: {} as never,
       currentUrl: () => undefined,
       isConfiguredOrigin: () => false,
       logger: { warn },
     });
 
-    builder.host.log({ code: 'runtime-failed' });
+    host.log({ code: 'runtime-failed' });
 
     expect(warn).toHaveBeenCalledWith('ADDON_RUNTIME_FAILED', {
       outcome: 'failure',
@@ -368,9 +320,9 @@ describe('createAddonHost', () => {
 describe('createContributedToolModules', () => {
   const ids = createCountingIdGenerator('proxy');
 
-  function toolHost(report?: (toolCallId: unknown, text: string) => void): ToolHost {
-    const host = {
-      bridge: { request: () => Promise.resolve({ kind: 'cancelled' }) },
+  function toolHost(report?: (id: unknown, text: string) => void): ToolHost {
+    return {
+      bridge: { request: vi.fn() },
       currentContext: () => ({
         origin: 'https://a.example',
         serverId: newServerId(ids),
@@ -379,95 +331,68 @@ describe('createContributedToolModules', () => {
         chatId: newChatId(ids),
         turnId: newTurnId(ids),
       }),
-      environmentFacts: () => undefined,
-      configuredHosts: () => [],
-      skills: { list: () => [] },
-      openPage: () => Promise.resolve({ kind: 'no_view' }),
-      requestUserInput: () => Promise.resolve({ selections: [], freeform: null }),
-      invokeTool: () => Promise.resolve(ok({})),
-      clock: () => 1,
+      environmentFacts: vi.fn(),
+      configuredHosts: vi.fn(() => []),
+      skills: { list: vi.fn(() => []) },
+      openPage: vi.fn(),
+      requestUserInput: vi.fn(),
+      invokeTool: vi.fn(),
+      clock: { now: () => 0 },
       idGenerator: ids,
       ...(report === undefined ? {} : { reportToolProgress: report }),
-    };
-    return host as unknown as ToolHost;
+    } as unknown as ToolHost;
   }
 
   const CONTEXT = { toolCallId: newToolCallId(ids), signal: undefined };
 
-  it('advertises the tool before the add-on is downloaded', () => {
-    const ensure = vi.fn<AddonManager['ensure']>(() => new Promise(() => undefined));
-    const load = loader({ ensure });
-    const [module] = createContributedToolModules({
+  function modules(importModule: (specifier: string) => Promise<unknown>) {
+    return createContributedToolModules({
       tools: [{ addonId: ADDON_ID, tool: TOOL }],
-      loader: load,
+      loader: loader({ importModule }),
     });
+  }
 
-    expect(module?.name).toBe(TOOL.name);
-    expect(module?.descriptor).toEqual(TOOL.descriptor);
-    expect(module?.allowlistEntry).toBe(TOOL.allowlistEntry);
-    expect(module?.instructions).toBe(TOOL.instructions);
-    expect(ensure).not.toHaveBeenCalled();
+  it('advertises the tool without loading the add-on', () => {
+    const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+    const [module] = modules(importModule);
+
+    expect(module).toMatchObject({
+      name: TOOL.name,
+      descriptor: TOOL.descriptor,
+      allowlistEntry: TOOL.allowlistEntry,
+      instructions: TOOL.instructions,
+    });
+    expect(importModule).not.toHaveBeenCalled();
   });
 
-  it('writes the download’s progress and the loading stage onto the call', async () => {
-    const ensure = vi.fn<AddonManager['ensure']>((_id, options) => {
-      options?.onProgress?.(0.5);
-      return Promise.resolve({ ok: true, value: installed() });
-    });
-    const load = loader({
-      ensure,
-      importModule: () =>
-        Promise.resolve({
-          addon: activationWith({ example_tool: () => () => Promise.resolve(ok({ done: true })) }),
-        }),
-    });
+  it('reports only that the tools are loading', async () => {
     const reported: string[] = [];
-    const [module] = createContributedToolModules({
-      tools: [{ addonId: ADDON_ID, tool: TOOL }],
-      loader: load,
-    });
-    const execute = module?.createExecutor(toolHost((_id, text) => reported.push(text)));
+    const [module] = modules(() => Promise.resolve(exampleModule()));
 
-    await execute?.({}, CONTEXT);
+    await module?.createExecutor(toolHost((_id, text) => reported.push(text)))({}, CONTEXT);
 
-    expect(reported[0]).toContain('Downloading add-on');
-    expect(reported[0]).toContain('50%');
-    expect(reported).toContain('Loading tools');
+    expect(reported).toEqual(['Loading tools']);
   });
 
-  it('forwards the model’s arguments unchanged and builds the executor once', async () => {
-    const received: unknown[] = [];
-    const factory = vi.fn(() => (args: unknown) => {
-      received.push(args);
-      return Promise.resolve(ok({}));
-    });
-    const load = loader({
-      importModule: () => Promise.resolve({ addon: activationWith({ example_tool: factory }) }),
-    });
-    const [module] = createContributedToolModules({
-      tools: [{ addonId: ADDON_ID, tool: TOOL }],
-      loader: load,
-    });
+  it('forwards the arguments unchanged and builds the executor once', async () => {
+    const run = vi.fn(() => Promise.resolve(ok({ done: true })));
+    const factory = vi.fn(() => run);
+    const [module] = modules(() =>
+      Promise.resolve({ addon: activationWith({ example_tool: factory }) }),
+    );
     const execute = module?.createExecutor(toolHost());
-    const args = { target: 'https://a.example/x', nested: { a: [1, 2] } };
 
-    await execute?.(args, CONTEXT);
-    await execute?.(args, CONTEXT);
+    await execute?.({ target: 'x' }, CONTEXT);
+    await execute?.({ target: 'y' }, CONTEXT);
 
     expect(factory).toHaveBeenCalledTimes(1);
     expect(factory).toHaveBeenCalledWith(expect.anything(), TOOL.descriptor);
-    expect(received).toEqual([args, args]);
+    expect(run).toHaveBeenNthCalledWith(1, { target: 'x' }, CONTEXT);
+    expect(run).toHaveBeenNthCalledWith(2, { target: 'y' }, CONTEXT);
   });
 
-  it('maps a failed load to a retryable STORAGE_ERROR naming the add-on', async () => {
-    const load = loader({
-      ensure: () =>
-        Promise.resolve({ ok: false, error: { reason: 'offline', message: 'offline' } }),
-    });
-    const [module] = createContributedToolModules({
-      tools: [{ addonId: ADDON_ID, tool: TOOL }],
-      loader: load,
-    });
+  it('turns a failed load into a retryable error naming the add-on', async () => {
+    const [module] = modules(() => Promise.reject(new Error('missing file')));
 
     const outcome = await module?.createExecutor(toolHost())({}, CONTEXT);
 
@@ -475,45 +400,35 @@ describe('createContributedToolModules', () => {
       ok: false,
       error: { code: 'STORAGE_ERROR', retryable: true },
     });
-    expect((outcome as { error: { message: string } }).error.message).toContain(ADDON_ID);
+    expect(JSON.stringify(outcome)).toContain(ADDON_ID);
   });
 
-  it('maps a cancelled download to CANCELLED', async () => {
-    const load = loader({
-      ensure: () =>
-        Promise.resolve({ ok: false, error: { reason: 'cancelled', message: 'cancelled' } }),
-    });
-    const [module] = createContributedToolModules({
-      tools: [{ addonId: ADDON_ID, tool: TOOL }],
-      loader: load,
-    });
-
-    expect(await module?.createExecutor(toolHost())({}, CONTEXT)).toMatchObject({
-      ok: false,
-      error: { code: 'CANCELLED' },
-    });
-  });
-
-  it('retries a failed load on the next call instead of remembering it', async () => {
-    const ensure = vi
-      .fn<AddonManager['ensure']>()
-      .mockResolvedValueOnce({ ok: false, error: { reason: 'offline', message: 'offline' } })
-      .mockResolvedValueOnce({ ok: true, value: installed() });
-    const load = loader({
-      ensure,
-      importModule: () =>
-        Promise.resolve({
-          addon: activationWith({ example_tool: () => () => Promise.resolve(ok({ done: true })) }),
-        }),
-    });
-    const [module] = createContributedToolModules({
-      tools: [{ addonId: ADDON_ID, tool: TOOL }],
-      loader: load,
-    });
+  it('loads again on the next call after a failure', async () => {
+    const importModule = vi
+      .fn<(specifier: string) => Promise<unknown>>()
+      .mockRejectedValueOnce(new Error('missing file'))
+      .mockResolvedValue(exampleModule());
+    const [module] = modules(importModule);
     const execute = module?.createExecutor(toolHost());
 
     expect(await execute?.({}, CONTEXT)).toMatchObject({ ok: false });
     expect(await execute?.({}, CONTEXT)).toMatchObject({ ok: true });
-    expect(ensure).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a tool factory that throws as unavailable', async () => {
+    const [module] = modules(() =>
+      Promise.resolve({
+        addon: activationWith({
+          example_tool: () => {
+            throw new Error('cannot start');
+          },
+        }),
+      }),
+    );
+
+    expect(await module?.createExecutor(toolHost())({}, CONTEXT)).toMatchObject({
+      ok: false,
+      error: { code: 'STORAGE_ERROR', retryable: true },
+    });
   });
 });

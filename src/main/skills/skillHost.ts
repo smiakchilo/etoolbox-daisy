@@ -69,7 +69,7 @@ const SCRIPT_FAILURE_CODES: Readonly<
 export interface SkillHostOptions {
   readonly store: SkillStore;
   /**
-   * Makes sure the add-on carrying `name` is installed and its skills are read,
+   * Makes sure the add-on carrying `name` is loaded and its skills are read,
    * or answers why it is not. Absent means this build has no add-ons; a
    * contributed skill then simply fails as `NOT_FOUND`.
    */
@@ -232,9 +232,8 @@ export function createSkillHost(options: SkillHostOptions): SkillHost {
   }
 
   /**
-   * Resolves a skill, installing the add-on that carries it on first use. A
-   * contributed skill's body is not in the application; reading it means
-   * downloading the add-on, which is why nothing else does.
+   * Resolves a skill, loading the add-on that carries it on first use. A
+   * contributed skill's body lives in its add-on folder and is read only then.
    */
   async function resolve(name: string): Promise<SkillOutcome<LoadedSkill>> {
     const prepare = options.prepareSkill;
@@ -245,7 +244,7 @@ export function createSkillHost(options: SkillHostOptions): SkillHost {
     const skill = store.get(name);
     if (skill === undefined) return notFound(name);
     if (skill.addonId !== undefined && skill.body === '' && skill.directory === '') {
-      // The add-on installed, but its folder does not carry this skill.
+      // The add-on loaded, but its folder does not carry this skill.
       return err({
         code: 'NOT_FOUND',
         message: `The add-on that carries "${name}" does not provide it.`,

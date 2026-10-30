@@ -40,10 +40,10 @@ Target: Windows 10 x64, internal, unsigned build.
 | `docs/agent-plugin-architecture.md` | Why agents are plugins (`src/agents/<name>/`), the contract, isolation table, add/disable/remove recipes, known limits.                                                                                                                       | Read before adding, removing or restructuring an agent/SDK. |
 | `docs/tool-plugin-architecture.md` | Same for tools (`src/tools/<name>/`).                                                                                                                                                                                                         | Read before adding or removing a tool. |
 | `docs/backlog.md` | Deferred, deliberately-put-off work — features and fixes recorded as *not yet done*, each self-contained.                                                                                                                                     | Read before starting anything that sounds like a "later" idea; append an entry when you consciously defer one. |
-| `docs/updates.md` | How in-app updates work and the release procedure (version bump, the **derived** runtime descriptor that alone decides swap vs. fresh install, publish workflow, sandbox).                                                                              | Read before changing the updater or cutting a release. |
-| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder. | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
+| `docs/updates.md` | How in-app updates work: the updater reads `version` on the configured ref, the install script's `--update` mode builds the source in place, smoke-tests it, swaps and rolls back on failure. A release is a `version` bump.                                                                          | Read before changing the updater or cutting a release. |
+| `docs/run-from-source.md` | The build-from-source distribution: `install/install.cmd` (Windows) and `install/install.command` (Mac) - an already-installed Node.js 22.12+ is used as it is, else a pinned, signature-checked portable Node is downloaded (`EDAISY_NODE=pinned` forces it) - plus the shared `scripts/app-build.mjs`; they build the app into the script's own folder, and the same scripts run the in-app update (`--update` mode). | Read before changing those scripts; keep the `.cmd` CRLF and the `.command` LF + executable, call Windows tools by absolute path, and keep both scripts' Node pin in step (`tests/unit/install/installScripts.test.ts`). |
 | `docs/custom-skills.md` | How a user writes and installs a custom skill (folder, front matter incl. `table-only`, Reload skills), which built-in tools it can call, and the example skill in `docs/examples/skills/`. | Read before changing the skill front matter or the tools a skill is documented to use; the example is guarded by `tests/unit/main/skills/exampleSkills.test.ts`. |
-| `docs/addon-architecture.md` | The add-on model: the DLL principle, content identities in `src/shared/addons/pins.json`, the contributions a folder declares and the build derives, the generic `AddonHost`, the `addons.json` catalogue, the install store, `out/addons` in development, the recipe for adding one, the decoupling acceptance, and why the Copilot CLI is not an add-on. | Read before touching `src/main/addons/`, `src/agents/copilot/cli/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
+| `docs/addon-architecture.md` | The add-on model: the DLL principle, the built descriptors (`addon.json`) that `scanAddons` reads and the `addons:contributions` IPC serves, the generic `AddonHost`, `out/addons` in development and `resources/addons` packaged, the recipe for adding one, the decoupling acceptance, and why the Copilot CLI is not an add-on. | Read before touching `src/main/addons/`, `src/agents/copilot/cli/`, `scripts/build-addons.mjs`, or moving anything heavy out of the base install. |
 
 ---
 
@@ -94,8 +94,8 @@ commit unless the user asks.**
 │                                                                      │
 │  src/addons/<id>/  ← self-contained plugins (DLLs): their own tools,  │
 │    page-audit/        skills and libraries; loaded at run time with a │
-│   real import(); pinned by src/shared/addons/pins.json, installed by  │
-│   src/main/addons/, never in the asar (docs/addon-architecture.md)    │
+│   real import(); built by scripts/build-addons.mjs, scanned by        │
+│   src/main/addons/, shipped in resources/addons (addon-architecture)  │
 └──────────┬───────────────────────────────────┬───────────────────────┘
            │ typed IPC                         │ stdio
 ┌──────────┴───────────┐            ┌──────────┴─────────────────────┐
@@ -216,8 +216,8 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > The most recent shared-surface change **lets an add-on contribute its
 > own tools and skills** (2026-10-28): a new `src/shared/addons/` (the strict
 > contribution schema, the generic `AddonHost`/`AddonModule`/`ADDON_API_VERSION`,
-> and the pins parser `pins.ts` moved from `src/main/addons/`), the pins gaining
-> `contributions`, `ToolHost.pageAudit` and `src/shared/tools/core/pageAudit.ts`
+> and a pins parser, since removed with the pins when add-ons became
+> built-in), `ToolHost.pageAudit` and `src/shared/tools/core/pageAudit.ts`
 > **removed** (the add-on owns them), `SkillSource` gaining `'addon'`,
 > `SkillHost.activate` becoming async (so `resolveSkillPrompt` takes an async
 > lookup), the log code `PAGE_AUDIT_FAILED` becoming `ADDON_RUNTIME_FAILED` (with
@@ -528,18 +528,16 @@ recorded (best-effort per session), remove the journal. A runtime recycle
 re-opens the same chat under a new SDK session, so the journal records each one
 (a `session.opened` record after the header) and deletion removes them all.
 
-`src/main/addons/` is the add-on machinery: `manager.ts` (`ensure`,
-single-flight, typed failures), `store.ts` (the atomic install under
-`<dataRoot>/addons/<id>/<identity>`), `manifest.ts` (the `addons.json` and
-`addon.json` schemas, the latter carrying the folder's `contributes`),
-`downloader.ts` (the catalogue and one archive), `devSource.ts` (`out/addons`
-for a build from this repository), `addonHost.ts` (the generic `AddonHost`: a
+`src/main/addons/` is the add-on machinery: `manifest.ts` (the strict built
+`addon.json` schema, carrying the folder's `contributes`), `scan.ts`
+(`scanAddons`: reads the built descriptors synchronously at startup from
+`out/addons` in development or `resources/addons` packaged; a rejected folder
+is logged as `ADDON_REJECTED`), `addonHost.ts` (the generic `AddonHost`: a
 hidden window, the sessions, the address policy, the pane URL, a log line),
-`loader.ts` (ensure → `import()` → `apiVersion` → `activate`, once per add-on,
-success-only caching) and `testProbe.ts` (an unpackaged-build-only probe for the
-E2E). The pins parser moved to `src/shared/addons/pins.ts` because the renderer
-reads the pins too. `updates/download.ts` is the one verified archive download,
-shared with the updater.
+`loader.ts` (`import()` → `apiVersion` → `activate`, once per add-on,
+success-only caching) and `index.ts`. `ipc/addons.ts` serves
+`addons:contributions` to the renderer (`src/shared/addons-ipc.ts`). Add-ons
+always ship inside the install, so there is no download, store or catalogue.
 
 `main/webview/` is the browser pane's runtime: `session.ts` owns the single
 persistent Electron session (proxy, TLS exceptions, cookie persistence),
@@ -1117,10 +1115,10 @@ src/tools/<name>/
   it is contributed by the `page-audit` add-on** (`src/addons/page-audit/tool.ts` the
   executor, `pageAudit.ts` the runner and its hardening, `pageAuditTransport.ts`,
   `evidence.ts`, `types.ts`). Nothing outside that folder knows the tool exists: the
-  build derives its declaration into `src/shared/addons/pins.json`, and the application
+  build writes its declaration into the built `addon.json` (`out/addons/page-audit/`), and the application
   registers a proxy (`src/main/tools/addonProxy.ts`) that advertises it from the first
   launch and loads the add-on on its first call (`src/main/addons/loader.ts`). Its
-  billet comes from the pins' `billet` spec; its `presentation: 'report'` result
+  billet comes from the descriptor's `billet` spec; its `presentation: 'report'` result
   carries the report under `data.report`, which the renderer paints generically.
   **The tool builds the whole report itself**: one score table (`Category`/`Score`/`Status`
   with the pass ≥ 90 / warn ≥ 50 / fail thresholds), then **one section per category
@@ -1152,7 +1150,7 @@ src/tools/<name>/
   window and its network position stay the application's decisions while the hardening
   inside it is the add-on's. The runner takes an optional third `progress` callback that
   the executor forwards to `reportToolProgress`: the billet reads
-  "Downloading add-on page-audit 34%" while the add-on installs, then "Loading tools"
+  "Loading tools"
   while the lazy imports run (the slow first audit), then "Auditing the page". Their
   results are untrusted page data (`session.md`). Rule 7.4 is unchanged: `method` stays
   GET/HEAD.
@@ -1163,8 +1161,8 @@ src/tools/<name>/
   the hidden `WebContents` instead of a second browser. Dropping Puppeteer would mean
   writing a Lighthouse driver. Cost: ~137 MB of `node_modules` across ~114 packages
   (largest: `lighthouse`, `@sentry/*`, `@paulirish/trace_engine`,
-  `@opentelemetry/semantic-conventions`, `chromium-bidi`), downloaded on the first audit
-  and kept under `%LOCALAPPDATA%\etoolbox-daisy\addons`; no `.node` files, so nothing to
+  `@opentelemetry/semantic-conventions`, `chromium-bidi`), built into the install's `resources/addons`
+  with the rest of the add-ons; no `.node` files, so nothing to
   rebuild. Keep both pinned in the add-on's own lockfile (never the root
   `package.json` — electron-builder would package them again) and imported only from
   that add-on.
@@ -1444,18 +1442,21 @@ Do not reintroduce a tinted surface or an always-visible reason paragraph;
 `chat-tool-call__detail` is now only the reason under a failed/rejected
 `ask_user` question.
 
-### Add-ons are downloaded plugins: one folder under `src/addons/<id>/`
+### Add-ons are built-in plugins: one folder under `src/addons/<id>/`
 
 An add-on is a **self-contained child application, like a DLL**: it owns its
 tools, its skills, its third-party libraries, its window and session hardening,
-its types and its tests, and the application knows it only through the generated
-pins and a **generic** host interface. Nothing outside its folder names it
+its types and its tests, and the application knows it only through the built
+descriptor in `resources/addons/<id>/addon.json` and a **generic** host
+interface. Add-ons are compiled from the same source as the application and
+ship inside the install - nothing is downloaded, pinned or hashed. Nothing
+outside its folder names it
 (`tests/unit/addons/addonIsolation.test.ts` enforces that), and deleting the
 folder leaves the repository green with no other edit. Full detail, layout, the
 host API, lockfile policy, security notes and the decoupling acceptance:
 `docs/addon-architecture.md`. One exists today — `page-audit` (Lighthouse +
 `puppeteer-core`, contributing the `page_audit` tool and the `check-page` skill).
-The Copilot CLI is **not** an add-on any more: it is GitHub's release channel and
+The Copilot CLI is **not** an add-on: it is GitHub's release channel and
 is resolved at sign-in time by the agent that uses it
 (`src/agents/copilot/cli/`).
 
@@ -1466,55 +1467,36 @@ is resolved at sign-in time by the agent that uses it
   both with **one schema** (`src/shared/addons/contribution.ts`) and fails on a
   name the app or another add-on owns, a descriptor that disagrees with its tool,
   a malformed front matter, or a billet `path` the descriptor does not declare.
-- **The pins are the only run-time source.** `src/shared/addons/pins.json` is
-  generated by `scripts/build-addons.mjs` (`identity`, `apiVersion` and
-  `contributions` per id) at install/build time and is **git-ignored** (never
-  committed, never regenerated by hand). The identity is the first 16 hex
-  characters of a sha256 over the add-on's shipped files (its `tests/` and
-  `e2e/` excluded) **and** every `src/shared` module its bundle inlines, so it
-  changes exactly when what ships changes. There is no version number to bump or
-  forget, and `apiVersion` (`ADDON_API_VERSION`) stays the compatibility contract.
-  **The pins are not re-exported by `src/shared/addons/index.ts`**, and that is
-  load-bearing: an add-on imports that barrel for the `AddonHost`/`AddonModule`
-  contract, so a re-export would pull the generated JSON into every add-on's
-  bundle - which needs the file before the script that writes it has run (a clean
-  checkout has none, so `npm ci`'s `postinstall` failed on CI with `Could not
-  resolve "./pins.json"`) and hashes generated output into the identity (a new
-  identity on every build, so every release re-published and re-downloaded an
-  unchanged add-on). Anything that wants the pins imports
-  `src/shared/addons/pins` itself; `tests/unit/addons/buildDerivation.test.ts`
-  bundles each real add-on and fails if the pins reach it.
-- **Advertised before download.** At startup the app registers a **proxy** per
-  pinned tool (`src/main/tools/addonProxy.ts`) and an index entry per pinned skill,
-  so the model, the session instructions, the composer's `/` list and the home
-  screen all see them from the first launch. Nothing is downloaded until a call or
-  a skill load needs it, and everything one add-on contributes shares that one
-  load (`src/main/addons/loader.ts`: ensure → `import()` → `apiVersion` →
-  `activate(host)`, single-flight, success-only caching). A failure is
-  `CANCELLED` or a retryable `STORAGE_ERROR` naming the add-on and the reason.
-- **Installed under `%LOCALAPPDATA%\etoolbox-daisy\addons\<id>\<identity>\`**
-  (`appPaths.addons`). No Settings UI: removing an add-on means deleting its
-  folder, and it is downloaded again on next use. Every failure is typed
-  (`offline`, `hash`, `extract`, `identity`, `apiVersion`, `cancelled`)
-  and logged as `ADDON_FAILED`; `ADDON_INSTALLED` records a success.
-- **No binary add-ons.** The capability existed only for `copilot.exe` and its
-  build path hard-coded `@github/copilot-<platform>`, so it was removed with it.
-  The deferred SDK-runtime add-on must first add an explicit payload source to
-  `addon.json` (`docs/backlog.md`).
+- **The built descriptor is the only run-time source.** `scripts/build-addons.mjs`
+  writes `out/addons/<id>/{index.js, addon.json, package.json, skills/,
+  node_modules}` (the built `addon.json` carries the derived contributions,
+  skills included); `scripts/app-build.mjs` copies that into
+  `<install>/resources/addons`. Main reads those descriptors synchronously at
+  startup (`src/main/addons/scan.ts`; a rejected folder is logged as
+  `ADDON_REJECTED`), and the renderer gets the contributions over the
+  `addons:contributions` IPC (`src/main/ipc/addons.ts`,
+  `src/shared/addons-ipc.ts`). There are no pins, no identity hash, no version
+  to bump and no catalogue: the add-on and the application are built from one
+  source, so they cannot disagree.
+- **Advertised from the first launch, loaded on first use.** The app registers a
+  **proxy** per contributed tool (`src/main/tools/addonProxy.ts`) and an index
+  entry per contributed skill, so the model, the session instructions, the
+  composer's `/` list and the home screen all see them at once. The add-on's code
+  is imported only when a call or a skill load needs it, and everything one
+  add-on contributes shares that one load (`src/main/addons/loader.ts`: `import()`
+  → `apiVersion` → `activate(host)`, single-flight, success-only caching). A
+  failure is a retryable `STORAGE_ERROR` naming the add-on and the reason
+  (`unavailable` or `apiVersion`).
+- **No binary add-ons, no management UI.** An add-on is JavaScript only. Removing
+  one means deleting its folder from the source.
 - **A JS add-on is its own npm package** (`src/addons/<id>/package.json` +
   `package-lock.json`, `private`, `type: "module"`, **not** a workspace member
   and **not** listed in the root `package.json` — electron-builder packages the
   root's production dependencies, which is exactly what must not happen).
-  `npm ci` at the root runs `postinstall` → `npm run addons:install && npm run
-  addons:build`, so the add-on dependencies and the generated `pins.json` are
-  both ready without a manual step.
-- **Every private package carries the application's version.** An add-on's
-  `package.json` version is its own bookkeeping instead: it is **not** compared
-  with the root's any more (all add-ons sit at `1.0.0` until an owner raises one
-  for a procedural reason), and it is **excluded from the identity**, so raising
-  it re-publishes and re-downloads nothing. `npm install --prefix
-  src/addons/<id> --package-lock-only` keeps the lockfile's copy in step if you
-  do raise it.
+  `npm ci` at the root, then `npm run addons:install` and `npm run addons:build`
+  (both run by `scripts/app-build.mjs` and by `npm run build`), make the add-on
+  dependencies and the built folders ready without a manual step. Its
+  `package.json` version is its own bookkeeping.
 - **Loaded with a real `import()`.** A plain dynamic import is rewritten into
   `require()` by the bundler, which cannot load an ESM folder outside the asar;
   `src/main/addons/loader.ts` keeps one runtime `import()` (a documented
@@ -1533,40 +1515,36 @@ is resolved at sign-in time by the agent that uses it
   only; its own npm dependencies are its own. ESLint enforces both directions
   (the dependency list is read from each add-on's `package.json`), and the
   fixture is `tests/fixtures/eslint-violations/addon-boundary-violation.ts`.
-- **Development never downloads.** `npm run build` / `npm run dev` run
+- **Where the built add-ons live.** `npm run build` / `npm run dev` run
   `npm run addons:build`, which writes `out/addons/<id>/` (bundled `index.js`,
-  `addon.json`, a junction to the add-on's `node_modules`);
-  `src/main/addons/devSource.ts` returns that folder and `ensure` never touches
-  the network. `scripts/app-build.mjs` copies the built add-ons into
-  `<install>/resources/addons` for a run-from-source install. `electron-builder.yml`
-  excludes `out/addons/**` and `src/addons/**` from the asar.
-- **`EDAISY_ADDON_SOURCE=<folder>`** (unpackaged only) forces the download path
-  against a local folder — `tests/e2e/addon-download.spec.ts`.
+  `addon.json`, `package.json`, `skills/`, a junction to the add-on's
+  `node_modules`). `addonsDirectory` (`src/main/addons/index.ts`) is
+  `<resources>/addons` when packaged and `out/addons` otherwise.
+  `scripts/app-build.mjs` copies the built add-ons into
+  `<install>/resources/addons`, so an install (and every in-app update, which
+  rebuilds the whole install) carries them. Nothing is downloaded.
 
 #### Recipe: add an add-on
 
 1. `src/addons/<id>/addon.json` — `{ id, apiVersion: 1, entry: "index.js" }`,
    plus `contributes.tools` for each tool it offers; `id` must equal the folder
-   name, and there is **no version** (the build derives the identity). A JS add-on
-   adds `package.json` (`private`, `type: "module"`, version equal to the app's)
-   and `index.ts` exporting `export const addon: AddonModule = { apiVersion,
+   name. A JS add-on adds `package.json` (`private`, `type: "module"`) and
+   `index.ts` exporting `export const addon: AddonModule = { apiVersion,
    activate(host) { return { tools: { … } } } }`.
 2. Its tools live in its own `tool.ts` (a factory
    `(toolHost: ToolHost) => ToolExecutor`), its skills in `skills/<name>/SKILL.md`,
-   its tests in `tests/` and `e2e/` — never shipped, never hashed.
-3. `npm install --prefix src/addons/<id>` (its lockfile).
-   `src/shared/addons/pins.json` is regenerated automatically by
-   `postinstall`/`npm run build`, so there is nothing to commit for it. A name
-   clash, a bad billet path or malformed front matter fails the build here.
+   its tests in `tests/` and `e2e/` — never shipped.
+3. `npm install --prefix src/addons/<id>` (its lockfile). `npm run addons:build`
+   (also run by `npm run build`) writes `out/addons/<id>/`. A name clash, a bad
+   billet path or malformed front matter fails the build here.
 4. Nothing else. There is no feature to wire: the proxy, the allowlist entry, the
-   session instructions and the skill catalogue all come from the pins, and the
-   renderer paints the billet from them. Remove the dependency from the root
+   session instructions and the skill catalogue all come from the built
+   descriptors the main process scans at startup, and the renderer paints the
+   billet from `addons:contributions`. Remove the dependency from the root
    `package.json` if it was there; add the exclusion to `electron-builder.yml`
    only if the package was a root dependency.
 5. Tests: the add-on's own, plus `tests/unit/main/addons/` (host, loader, proxy),
-   `tests/unit/addons/` (build derivation, the isolation invariant) and a
-   built-app case in `tests/e2e/addon-download.spec.ts` style if the download
-   path matters.
+   `tests/unit/addons/` (build derivation, the isolation invariant).
 6. Record evidence in the current archive and update
    `docs/addon-architecture.md`.
 
@@ -1581,9 +1559,10 @@ them in its catalogue but the `/` menu does not list them). `page-template` hold
 the one template-name-to-path resolution, loaded by `search-page` and
 `search-component` alike; do not copy that procedure into either skill.
 A tenth, `check-page`, is **an add-on's skill**: it lives in
-`src/addons/page-audit/skills/check-page/`, the build derives its catalogue entry
-from that `SKILL.md` into the pins, and it is listed (and `/`-completable) from the
-first launch — the add-on is downloaded the first time the skill is loaded. It is
+`src/addons/page-audit/skills/check-page/`, the build copies it into the built
+add-on and the catalogue entry is derived from that `SKILL.md`, so it is listed (and
+`/`-completable) from the first launch — the add-on's code is loaded the first time
+the skill is loaded. It is
 the Lighthouse report: one `page_audit` call, and the tool paints the score table
 and one section per category with Lighthouse's evidence.
 
@@ -1611,8 +1590,8 @@ Scripts are ES modules that `export default` a function of the input; relative
 imports work; **JS only** (a `.py` file is readable, not runnable).
 
 **Three sources, user wins.** Bundled skills come from `resources/skills/`; an
-add-on's skills from the pins (their bodies from `<install>/skills/<name>/`, read on
-first use — the catalogue entry needs no download); user
+add-on's skills from the built descriptor (their bodies from
+`<resources>/addons/<id>/skills/<name>/`, read on first use); user
 skills from exactly `~\etoolbox-daisy\skills` (`appPaths.skills`), read at startup
 and again on the Skills tab's icon-only reload button (`skills:reload`; no restart
 needed - rules have the same, `rules:reload`). A user skill with a bundled skill's name
@@ -1780,7 +1759,7 @@ gone).
 
 The application's own rules: the model-facing prose that is not a skill, as markdown
 so it reads as text in the repository. Application-owned, shipped with `resources/`
-inside `app.asar` (so an update delivers it), read by main from the install
+inside `app.asar` (so an update's rebuild delivers it), read by main from the install
 location only
 (`resolveBundledResourcesDirectory`). It parallels `resources/skills/` (bundled) and
 `~\etoolbox-daisy\skills` (the user's); here `resources/rules/` is the bundled side
@@ -1954,48 +1933,30 @@ groups `9001_group`..`9005_group` (the type group plus up to
 
 ### In-app updates (`src/main/updates/`)
 
-The app swaps only `resources/app.asar` (22.6 MB since the add-ons left the
-asar, 135.4 MB before; the install is 477 MB), driven
-by a hand-rolled `update.json` in plain GitHub folders - no `electron-updater`.
-Full description and the release procedure: `docs/updates.md`. The distribution
-lives on a dedicated **`update` branch** (files at its root; `package.json`'s
-`updates.urls` points at `tree/update`), never on the default branch: the publish
-job force-pushes one parentless commit per release, so a clone of the code never
-downloads a release's archives and the branch never accumulates them. The branch
-holds `update.json`, `addons.json` and the archives that catalogue names - the
-publish step deletes any other zip, because the app resolves every add-on
-download through the catalogue and an unnamed archive is unreachable. Each
-published `update.json` carries an `addons` node - its id -> identity map, written
-by `scripts/package-update.mjs` and deliberately not read by the app - so the
-release, not a kept archive, records what a version pinned.
+The app updates **the way it installs**: it fetches the source of the configured
+ref (default `master`), builds it in place with the install script and restarts.
+There is no published artifact, no `update` branch, no workflow and no add-on
+pinning. Full description: `docs/updates.md`.
 
-- **Places.** The Settings **Updates** tab's `updates.url` (https only) is tried
-  first, then `updates.urls` in `package.json`. A `github.com/.../tree/<ref>/<path>`
-  URL is rewritten to `raw.githubusercontent.com`; a `tree/<ref>` URL (a branch
-  root, which is how `update` is addressed) becomes that branch's root. The first
-  strictly newer manifest with a `<platform>-<arch>` entry wins.
-- **Whether an archive may be swapped in is derived, not declared.** A swap
-  replaces one file (`resources/app.asar`), so the manifest names the runtime
-  layer its archive needs - `runtime: { format, electron, payload }`, where
-  `payload` is a path-and-size hash of `resources/app.asar.unpacked` - and the
-  app describes the layer it is running (`src/main/updates/runtime.ts`:
-  `process.versions.electron` plus the same hash of the payload beside its own
-  archive) and compares. A difference is "installer required", not a swap, and
-  the status names the parts that differ (`UpdateRuntimePart`). The producer side
-  is `scripts/runtime-descriptor.mjs`, run by `package-update.mjs` against the
-  packaged output; `tests/unit/main/updates/runtimeDescriptorScript.test.ts`
-  holds the two implementations together byte for byte. Bumping Electron,
-  changing `asarUnpack` or shipping a new Copilot runtime therefore needs no
-  manual step, and cannot be forgotten. It is the **only** mechanism: an archive
-  entry without a descriptor is refused rather than guessed at, and there is no
-  counter anywhere (`updates.runtimeGeneration` / `minInstalled` were removed
-  outright).
-- **Modules.** `manifest.ts` (parse/validate, file-name and sha512 rules,
-  the runtime descriptor), `runtime.ts` (the descriptor: hash, comparison,
-  installed side), `updater.ts` (single-flight check, download + verify + stage,
-  status), `applier.ts` (swap script, `.bak` kept), `proxy.ts` (reuses the
-  browser's default proxy, else the active agent's), `composition.ts` (the
-  sandbox switch); `ipc/updates.ts` carries `updates:check` / `updates:apply` /
+- **Release gating.** The `version` in `package.json` on the configured ref
+  (`UPDATE_REPOSITORY` is hard-coded); the owner bumps it to release. A full
+  `https:` zip URL as the source is always "available" (version label `archive`).
+- **Mechanism.** `updater.ts` (`check`, `apply`, `resumeAfterUpdate`, status)
+  spawns the install script from `resources/install/` detached in
+  `--update <ref-or-zip-url> <app-folder> <app-pid> <status-file>` mode
+  (`scriptRunner.ts`, `composition.ts`). The script builds into `<app>.new` while
+  the app keeps running (reusing an installed Node 22.12+, else the pinned,
+  signature-checked portable Node), smoke-tests the staged build (headless
+  `--smoke-test`, `src/main/smokeTest.ts`), and only on success waits for the app
+  to exit, swaps (`<app>.previous` kept), relaunches and reverts if the new
+  version does not report started. A failed build or smoke test leaves the current
+  install untouched. Progress is a status file the updater polls (stages
+  `installing-node`, `downloading`, `building`, `testing`, `ready`, `failed`,
+  `swapped`, `reverted`); `proxy.ts` hands the app's resolved proxy to the script
+  as `HTTPS_PROXY`/`HTTP_PROXY`. A build with no `resources/install` is "not an
+  installed build" and cannot self-update.
+- **Modules.** `version.ts`, `updater.ts`, `scriptRunner.ts`, `proxy.ts`,
+  `composition.ts`; `ipc/updates.ts` carries `updates:check` / `updates:apply` /
   `updates:get-status` and the `updates:status-changed` push. Main owns the
   status; the renderer only renders it.
 - **UI.** The **Updates** tab (last in Settings): Check and, on the same line,
@@ -2003,28 +1964,26 @@ release, not a kept archive, records what a version pinned.
   `confirmDestructiveAction`-style prompt) with no help badge on the buttons;
   then, after a subsection gap, the **Check for updates on startup** checkbox
   (`updates.checkOnStartup`, default
-  off; a startup check is silent) and the **Custom update URL**. A found update raises the chat pane's sticky
+  off; a startup check is silent) and the **Update source** (`updates.source`: a
+  branch/tag, or a full `https:` zip URL; empty means `master`). A found update raises the chat pane's sticky
   notice once per version (Details → Settings → Updates) and puts an accent-blue
   "Update X available" `sp-action-button` (`home-update-link`; the shared
   `.action-button--primary` class in `base.css`, also on Settings' **Update**) on the Home screen's version
   line (a `.browser-home__meta` row; a hidden button or empty row takes no
   space); the button starts the update itself, after the same confirmation as
   the Settings tab's **Update**. `!!update <version>` previews all of it (dev only).
-- **Sandbox.** `EDAISY_UPDATE_SANDBOX` (a folder holding `resources/app.asar`) is
-  honoured only when `!app.isPackaged`: the swap runs in-process, keeps `.bak`,
-  does not restart. This is how QA and `settings-updates.spec.ts` run the whole
-  flow.
-- **Contract changes (2026-10-21).** `contracts/appSettings.ts` gained the
-  `updates` group (`url?`, `checkOnStartup`), `settingsSnapshot.ts` and
-  `settings-ipc.ts` follow (`updateUpdateSettings`), `app-api.ts` gained
-  `DaisyUpdatesApi`, and `updates-ipc.ts` is new. Existing settings fixtures
-  gained `updates: { checkOnStartup: false }`.
-- **Unproven / deferred.** The macOS runtime paths (`runtimePaths.ts`), the
-  Mac zip targets and `asarUnpack`, the three-platform workflow matrix
-  (`publish-update.yml`) and the Mac swap's ad-hoc `codesign` re-seal exist but
-  have never run on a Mac or in CI: `docs/backlog.md` "In-app updates: macOS
-  runtime and unrun CI". Updates are published only by that workflow; there is
-  no local publish command.
+- **Test hook.** `EDAISY_UPDATE_STATUS_FILE` overrides the status file path
+  (default `<scratch>/update-status.txt`); the new version is told to report
+  started through it. `EDAISY_SOURCE_URL` overrides the script's default archive
+  URL. `settings-updates.spec.ts` drives the Settings tab against the built app.
+- **Settings contract.** `contracts/appSettings.ts`'s `updates` group is
+  `{ source?, checkOnStartup }` (`updateSourceSchema`); `settingsSnapshot.ts`,
+  `settings-ipc.ts` (`updateUpdateSettings`) and `settingsStore.ts` follow;
+  `updates-ipc.ts` carries the status contract.
+- **Unproven / deferred.** The update has not been run against real GitHub, and
+  the macOS path (`install.command --update`, the unsigned-zip and ad-hoc
+  `codesign` caveats) has never run on a Mac: `docs/backlog.md` "In-app updates:
+  source-based — known limits and the unrun Mac path".
 
 ### `tests/`
 
@@ -2068,10 +2027,7 @@ npm run build
 # electron-vite dev, with icons, add-ons and the webview preload built first
 npm run dev
 
-# publish the add-on archives + dist-addons/addons.json; reuses what `build` just made
-npm run addons:zip
-
-# rebuild out/addons/<id>/ and src/shared/addons/pins.json only
+# rebuild out/addons/<id>/ only
 npm run addons:build
 
 # install each add-on's own dependencies; `npm install` / `npm ci` do this via postinstall
@@ -3739,8 +3695,8 @@ description limit still applies to the **model-facing** catalogue: keep skill
 descriptions short (`docs/compatibility.md` §4.5).
 
 **Resource paths.** `resources/` (skills, rules, icons) ships **inside**
-`app.asar` (`electron-builder.yml`'s `files`), so an in-app update delivers it with
-the swap; nothing else but the unpacked agent runtime is left outside the archive.
+`app.asar` (`electron-builder.yml`'s `files`), so an in-app update's rebuild delivers it;
+nothing else but the unpacked agent runtime and the built add-ons is left outside the archive.
 The store reads it from `path.join(app.getAppPath(), "resources", "skills")` when
 packaged and from `out/main/../../resources/skills` when not
 (`resolveBundledResourcesDirectory`). Measured on Electron 44: `readdir` with
@@ -4024,7 +3980,7 @@ file).
 | Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live browser session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/webview/proxyResolution.ts`). |
 | `address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
-| Add-ons and the Copilot CLI | **Owner-pending.** The add-on download path is proven in the built app (`addon-download.spec.ts`, 9/9), and the Copilot resolver is unit-tested end to end (discovery, digest, extraction, cache, ladder); but no real Lighthouse audit has run from the installed add-on, and no interactive Copilot sign-in has run against a **resolved** CLI on a clean profile - the old `copilot-cli` add-on's copy-out was never exercised either. The publish workflow was never run. Mac payloads and Mac CLI resolution unrun. See `docs/addon-architecture.md`, `docs/backlog.md` "Add-ons". |
+| Add-ons, self-update and the Copilot CLI | **Owner-pending.** Add-ons ship inside the install (no download path), and the Copilot resolver is unit-tested end to end; but the source-based update has never run against real GitHub or on a Mac, no real Lighthouse audit has run from the built add-on, and no interactive Copilot sign-in has run against a **resolved** CLI on a clean profile. See `docs/updates.md`, `docs/addon-architecture.md`, `docs/backlog.md` "In-app updates: source-based — known limits and the unrun Mac path". |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 
 ---

@@ -22,6 +22,25 @@ export async function createUpdateFetch(
 }
 
 /**
+ * The environment the install script's downloads run with: the same proxy as
+ * {@link createUpdateFetch}, in the `HTTPS_PROXY`/`HTTP_PROXY` form curl and npm
+ * read. Empty when no proxy is configured.
+ */
+export async function createUpdateProxyEnv(
+  settings: AppSettings,
+  secretStore: Pick<SecretStore, 'get'>,
+): Promise<Record<string, string>> {
+  const entry = resolveProxyEntry(settings);
+  if (entry === undefined) return {};
+  const password =
+    entry.credentials === undefined
+      ? undefined
+      : await secretStore.get(entry.credentials.secretRef);
+  const { httpsProxy, httpProxy } = buildRuntimeProxyOverrides(entry, password);
+  return { HTTPS_PROXY: httpsProxy, HTTP_PROXY: httpProxy };
+}
+
+/**
  * Whether {@link createUpdateFetch} would go through a proxy for this settings
  * document. The anonymous outside fetch asks this because a proxy resolves the
  * address itself: the app can then only check literals and internal-looking

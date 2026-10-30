@@ -13,11 +13,11 @@ import type { AddonLoadFailureKind, AddonLoader } from '../addons';
 /**
  * The application's proxy for a tool an add-on contributes.
  *
- * The tool is **advertised before the add-on is downloaded**: its name,
- * descriptor, allowlist entry and instructions are data in the pins, so the
- * model can see it (and the session instructions can describe it) from the first
- * launch. Nothing is downloaded or imported until a call actually needs it, and
- * every tool that add-on contributes shares one load.
+ * The tool is **advertised before the add-on is loaded**: its name, descriptor,
+ * allowlist entry and instructions are data in the add-on's built manifest, so
+ * the model can see it (and the session instructions can describe it) from the
+ * first launch. Nothing is imported until a call actually needs it, and every
+ * tool that add-on contributes shares one load.
  *
  * The proxy is generic: it names no add-on and knows nothing about what the tool
  * does. It forwards the model's arguments **unchanged** - the add-on's own
@@ -34,16 +34,13 @@ export interface ContributedToolModulesOptions {
   readonly loader: AddonLoader;
 }
 
-/** How a failed load reads to the model: retryable unless the user cancelled it. */
+/** How a failed load reads to the model: always retryable. */
 function loadFailure(
   addonId: string,
   kind: AddonLoadFailureKind,
   message: string,
   requestId: ReturnType<typeof newRequestId>,
 ) {
-  if (kind === 'cancelled') {
-    return err(createToolError('CANCELLED', message, requestId, { retryable: true }));
-  }
   return err(
     createToolError(
       'STORAGE_ERROR',
@@ -65,15 +62,8 @@ function createProxyExecutor(
 
   return async (args, context) => {
     if (executor === undefined) {
-      const loaded = await loader.load(source.addonId, {
-        ...(context.signal === undefined ? {} : { signal: context.signal }),
-        onProgress: (fraction) => {
-          host.reportToolProgress?.(
-            context.toolCallId,
-            `Downloading add-on ${source.addonId} ${String(Math.round(fraction * 100))}%`,
-          );
-        },
-      });
+      host.reportToolProgress?.(context.toolCallId, 'Loading tools');
+      const loaded = await loader.load(source.addonId);
       if (!loaded.ok) {
         return loadFailure(
           source.addonId,
@@ -82,7 +72,6 @@ function createProxyExecutor(
           newRequestId(host.idGenerator),
         );
       }
-      host.reportToolProgress?.(context.toolCallId, 'Loading tools');
       const factory = loaded.value.activation.tools[source.tool.name];
       if (factory === undefined) {
         return loadFailure(

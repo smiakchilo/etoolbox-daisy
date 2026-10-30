@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type AddonContributionsEntry,
   type JsonValue,
   type ToolReportMessage,
   TOOL_REPORT_PAYLOAD_KEY,
 } from '../../../../src/shared';
-import type { AddonPins } from '../../../../src/shared/addons/pins';
 import {
   contributeToolRenderers,
   describeContributedCall,
@@ -13,7 +13,7 @@ import {
 import { createToolRendererRegistry } from '../../../../src/renderer/src/chat/toolRegistry';
 
 /**
- * A contributed tool's transcript view: its billet comes from the pins (a data
+ * A contributed tool's transcript view: its billet comes from the add-on declaration (a data
  * spec, not code), and a `presentation: 'report'` result is read through the
  * generic `data.report` convention. Nothing here names an add-on.
  */
@@ -28,10 +28,9 @@ const BILLET = {
   ],
 };
 
-const PINS: AddonPins = {
-  'example-addon': {
-    identity: '0123456789abcdef',
-    apiVersion: 1,
+const ADDONS: readonly AddonContributionsEntry[] = [
+  {
+    id: 'example-addon',
     contributions: {
       tools: [
         {
@@ -60,7 +59,7 @@ const PINS: AddonPins = {
       skills: [],
     },
   },
-};
+];
 
 const REPORT: ToolReportMessage = {
   summary: {
@@ -96,7 +95,7 @@ describe('a contributed billet', () => {
     expect(details.parameters).toEqual([{ label: 'Target', value: 'Current page' }]);
   });
 
-  it('falls back to the generic argument dump when the pins carry no billet', () => {
+  it('falls back to the generic argument dump when the declaration carries no billet', () => {
     const details = describeContributedCall(undefined, { target: 'x' });
 
     expect(details.summary).toBeUndefined();
@@ -105,8 +104,8 @@ describe('a contributed billet', () => {
 });
 
 describe('a contributed tool in the registry', () => {
-  it('renders its billet through the pins', () => {
-    const registry = createToolRendererRegistry({}, contributeToolRenderers(PINS));
+  it('renders its billet through the declaration', () => {
+    const registry = createToolRendererRegistry({}, contributeToolRenderers(ADDONS));
 
     expect([...registry.toolNames].sort()).toEqual(['example_report', 'example_tool']);
     expect(registry.describeCall('example_tool', { target: '/content/a.html' }).summary).toBe(
@@ -114,8 +113,8 @@ describe('a contributed tool in the registry', () => {
     );
   });
 
-  it('declares the presentation the pins name, and no report reader otherwise', () => {
-    const registry = createToolRendererRegistry({}, contributeToolRenderers(PINS));
+  it('declares the presentation the declaration names, and no report reader otherwise', () => {
+    const registry = createToolRendererRegistry({}, contributeToolRenderers(ADDONS));
 
     expect(registry.presentationOf('example_report')).toBe('report');
     expect(registry.presentationOf('example_tool')).toBe('billet');
@@ -123,14 +122,14 @@ describe('a contributed tool in the registry', () => {
   });
 
   it('paints the report a settled result carries under data.report', () => {
-    const registry = createToolRendererRegistry({}, contributeToolRenderers(PINS));
+    const registry = createToolRendererRegistry({}, contributeToolRenderers(ADDONS));
     const data = { ok: true, [TOOL_REPORT_PAYLOAD_KEY]: REPORT } as unknown as JsonValue;
 
     expect(registry.readReportMessage('example_report', {}, data)).toEqual(REPORT);
   });
 
   it('paints nothing for a result without a report', () => {
-    const registry = createToolRendererRegistry({}, contributeToolRenderers(PINS));
+    const registry = createToolRendererRegistry({}, contributeToolRenderers(ADDONS));
 
     expect(registry.readReportMessage('example_report', {}, { ok: true })).toBeUndefined();
     expect(readContributedReport(undefined)).toBeUndefined();
@@ -141,7 +140,7 @@ describe('a contributed tool in the registry', () => {
     // A stored call from an older payload carries the evidence at the top level
     // and no `report` key at all. There is no compatibility reader: the report is
     // simply not painted, and the ordinary billet remains.
-    const registry = createToolRendererRegistry({}, contributeToolRenderers(PINS));
+    const registry = createToolRendererRegistry({}, contributeToolRenderers(ADDONS));
     const oldResult = {
       ok: true,
       url: 'https://example.com/',

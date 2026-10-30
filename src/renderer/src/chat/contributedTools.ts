@@ -1,4 +1,5 @@
 import {
+  type AddonContributionsEntry,
   type BilletSpec,
   type BilletValueSpec,
   type JsonValue,
@@ -9,16 +10,14 @@ import {
   asRecord,
   parameterRows,
 } from '../../../shared';
-import type { AddonPins } from '../../../shared/addons/pins';
 
 /**
  * The transcript's renderer for the tools an add-on contributes, built from the
- * pins.
+ * contributions main read from the installed add-ons.
  *
  * A contributed tool is **data**: the build derived its billet (the collapsed
  * summary and the expansion rows) and its presentation from the add-on's own
- * manifest, so the application can paint a call it has never seen before -
- * including one replayed from a journal whose add-on is not installed. A
+ * manifest, so the application can paint a call it has never seen before. A
  * `presentation: 'report'` result carries the report the tool built under
  * `data.report` (`toolRenderer.ts`), which this module reads generically.
  *
@@ -47,7 +46,7 @@ function readValue(
   return spec.fallback;
 }
 
-/** The `getDetails()` of one contributed call, from the pins' billet spec. */
+/** The `getDetails()` of one contributed call, from the tool's billet spec. */
 export function describeContributedCall(
   billet: BilletSpec | undefined,
   args: Readonly<Record<string, JsonValue>>,
@@ -91,12 +90,14 @@ export function readContributedReport(data: JsonValue | undefined): ToolReportMe
   };
 }
 
-/** One renderer per contributed tool the pins list. */
-export function contributeToolRenderers(pins: AddonPins): readonly ToolRendererModule[] {
-  return Object.keys(pins)
-    .sort()
-    .flatMap((id) =>
-      (pins[id]?.contributions.tools ?? []).map((tool) => ({
+/** One renderer per tool the installed add-ons contribute. */
+export function contributeToolRenderers(
+  addons: readonly AddonContributionsEntry[],
+): readonly ToolRendererModule[] {
+  return [...addons]
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .flatMap((addon) =>
+      addon.contributions.tools.map((tool) => ({
         toolName: tool.name,
         ...(tool.presentation === undefined ? {} : { presentation: tool.presentation }),
         describeCall: (args: Readonly<Record<string, JsonValue>>) =>

@@ -21,9 +21,9 @@ import { parseSkillFrontMatter, splitSkillMarkdown } from './skillFrontMatter';
  * and holds the result in memory: the body, a file index and the summary. A
  * skill of the user's with a bundled skill's name replaces it.
  *
- * A skill an **add-on** contributes is listed from the pins without a download:
- * only its catalogue entry is known until the add-on is installed, and its body
- * and files are read from `<install>/skills/<name>` the first time it is used
+ * A skill an **add-on** contributes is listed from the add-on's built
+ * `addon.json`: only its catalogue entry is known at startup, and its body and
+ * files are read from `<addon>/skills/<name>` the first time it is used
  * (`hydrateAddon`). Its source ranks exactly like a bundled one; a clash is a
  * build fault, so nothing is ever replaced by one.
  *
@@ -58,7 +58,7 @@ export interface SkillRejection {
   readonly reason: string;
 }
 
-/** One skill an add-on's pins declare: its catalogue entry and the add-on that carries it. */
+/** One skill an add-on declares: its catalogue entry and the add-on that carries it. */
 export interface AddonSkillPin {
   readonly addonId: string;
   readonly skill: ContributedSkill;
@@ -68,11 +68,11 @@ export interface SkillStoreOptions {
   readonly bundledDirectory: string;
   /** Omitted when the user folder is not wanted (tests, the fake agent). */
   readonly userDirectory?: string;
-  /** Every pinned add-on skill, listed without downloading anything. */
+  /** Every add-on skill, listed from the add-ons' manifests without loading them. */
   readonly addons?: readonly AddonSkillPin[];
   /**
-   * The installed folder of an add-on, ensured on first use. `undefined` when the
-   * add-on could not be installed (its skill stays a catalogue entry only).
+   * The built folder of an add-on. `undefined` when it cannot be resolved (its
+   * skill stays a catalogue entry only).
    */
   readonly addonDirectory?: (addonId: string) => Promise<string | undefined>;
   readonly onRejected?: (rejection: SkillRejection) => void;
@@ -98,8 +98,8 @@ export interface SkillStore {
   /** The add-on carrying this skill, when it is a contributed one. */
   addonOf(name: string): string | undefined;
   /**
-   * Reads an installed add-on's skills from its own folder, once per identity.
-   * Answers whether they are readable now; a skill the pins declared but the
+   * Reads an add-on's skills from its own folder, once per load of the store.
+   * Answers whether they are readable now; a skill the manifest declared but the
    * folder does not carry is rejected and left as a catalogue entry.
    */
   hydrateAddon(addonId: string): Promise<boolean>;
@@ -268,9 +268,9 @@ function sortSkills(skills: ReadonlyMap<string, LoadedSkill>): readonly LoadedSk
 }
 
 /**
- * A contributed skill before its add-on is installed: the catalogue entry the
- * pins derive from its `SKILL.md`, with no body or files yet. Reading them would
- * mean downloading the add-on, and nothing is downloaded at startup.
+ * A contributed skill before its folder is read: the catalogue entry the build
+ * derived from its `SKILL.md`, with no body or files yet. They are read on first
+ * use, so startup touches no add-on folder.
  */
 function placeholderSkill(addonId: string, skill: ContributedSkill): LoadedSkill {
   return {
@@ -307,8 +307,8 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
     for (const skill of await readSource(options.bundledDirectory, 'bundled', rejections)) {
       merged.set(skill.summary.name, skill);
     }
-    // A contributed skill is listed exactly like a bundled one, from the pins.
-    // Its body is read from the installed add-on the first time it is used.
+    // A contributed skill is listed exactly like a bundled one, from the add-on's
+    // manifest. Its body is read from the add-on's folder the first time it is used.
     for (const pin of addonSkills) {
       merged.set(pin.skill.name, placeholderSkill(pin.addonId, pin.skill));
     }
@@ -352,7 +352,7 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
   }
 
   /**
-   * Reads one installed add-on's skills. The folder is `<install>/skills`, and
+   * Reads one add-on's skills. The folder is `<add-on>/skills`, and
    * each skill is validated exactly like a bundled one: the same size, count and
    * depth limits, no links, and a real-path containment check on every read.
    */
@@ -360,10 +360,10 @@ export function createSkillStore(options: SkillStoreOptions): SkillStore {
     const directory = await options.addonDirectory?.(addonId);
     if (directory === undefined) return false;
     const root = path.join(directory, 'skills');
-    const pins = addonSkills.filter((pin) => pin.addonId === addonId);
+    const declared = addonSkills.filter((pin) => pin.addonId === addonId);
     const rejections: SkillRejection[] = [];
     const updated = new Map(snapshot.skills);
-    for (const pin of pins) {
+    for (const pin of declared) {
       const name = pin.skill.name;
       // A user skill of the same name wins; the add-on's copy is not read.
       if (updated.get(name)?.summary.source === 'user') continue;

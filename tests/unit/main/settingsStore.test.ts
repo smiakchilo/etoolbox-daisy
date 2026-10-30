@@ -606,22 +606,22 @@ describe('applyMemoSettingsChange', () => {
 });
 
 describe('applyUpdateSettingsChange', () => {
-  const FOLDER = 'https://github.com/o/r/tree/main/updates';
+  const SOURCE = 'release';
 
-  it('sets, keeps and clears the custom URL, and toggles the startup check', () => {
-    const withUrl = applyUpdateSettingsChange(defaultAppSettings(), { url: FOLDER });
-    expect(withUrl.updates.url).toBe(FOLDER);
-    expect(applyUpdateSettingsChange(withUrl, {}).updates.url).toBe(FOLDER);
-    expect(applyUpdateSettingsChange(withUrl, { checkOnStartup: true }).updates).toEqual({
-      url: FOLDER,
+  it('sets, keeps and clears the update source, and toggles the startup check', () => {
+    const withSource = applyUpdateSettingsChange(defaultAppSettings(), { source: SOURCE });
+    expect(withSource.updates.source).toBe(SOURCE);
+    expect(applyUpdateSettingsChange(withSource, {}).updates.source).toBe(SOURCE);
+    expect(applyUpdateSettingsChange(withSource, { checkOnStartup: true }).updates).toEqual({
+      source: SOURCE,
       checkOnStartup: true,
     });
-    expect('url' in applyUpdateSettingsChange(withUrl, { url: null }).updates).toBe(false);
+    expect('source' in applyUpdateSettingsChange(withSource, { source: null }).updates).toBe(false);
   });
 
-  it('refuses a custom URL that is not https', () => {
+  it('refuses a source that is neither a ref nor an https URL', () => {
     expect(() =>
-      applyUpdateSettingsChange(defaultAppSettings(), { url: 'http://x.example/u' }),
+      applyUpdateSettingsChange(defaultAppSettings(), { source: 'http://x.example/u' }),
     ).toThrow();
   });
 
@@ -631,14 +631,14 @@ describe('applyUpdateSettingsChange', () => {
 });
 
 describe('normalizeSettingsDocument updates', () => {
-  it('keeps a valid custom URL and flag, and drops unusable values instead of failing the load', () => {
+  it('keeps a valid source and flag, and drops unusable values instead of failing the load', () => {
     const keep = normalizeSettingsDocument({
-      updates: { url: 'https://x.example/u', checkOnStartup: true, extra: 1 },
+      updates: { source: 'https://x.example/u.zip', checkOnStartup: true, extra: 1 },
     }) as Record<string, unknown>;
-    expect(keep['updates']).toEqual({ url: 'https://x.example/u', checkOnStartup: true });
+    expect(keep['updates']).toEqual({ source: 'https://x.example/u.zip', checkOnStartup: true });
 
     const drop = normalizeSettingsDocument({
-      updates: { url: 'http://x.example/u', checkOnStartup: 'yes' },
+      updates: { source: 'http://x.example/u', checkOnStartup: 'yes' },
     }) as Record<string, unknown>;
     expect(drop['updates']).toEqual({});
   });

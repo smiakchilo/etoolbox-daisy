@@ -21,6 +21,7 @@ import {
   AGENT_CHAT_STATUS_CHANGED_CHANNEL,
   APP_INFO_CHANNEL,
   APP_SHORTCUT_CHANNEL,
+  ADDONS_CONTRIBUTIONS_CHANNEL,
   BROWSER_AGENT_NAVIGATION_CHANNEL,
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_AUTH_INCIDENT_CHANNEL,
@@ -86,6 +87,7 @@ import {
   highlightElementRequestSchema,
   highlightElementResultSchema,
   parseAddProjectResult,
+  parseAddonContributionsResult,
   parseAddProxyResult,
   parseAddServerResult,
   parseAgentChatByIdRequest,
@@ -213,6 +215,7 @@ import {
   type SetModelPreferencesRequest,
   type SettingsIpcVoidResult,
   type RulesOpenFolderResult,
+  type AddonContributionsResult,
   type RulesReloadResult,
   type SkillsOpenFolderResult,
   type SkillsReloadResult,
@@ -543,6 +546,12 @@ const daisyApi: DaisyAppApi = {
     async reload(): Promise<SkillsReloadResult> {
       const raw: unknown = await ipcRenderer.invoke(SKILLS_RELOAD_CHANNEL);
       return parseSkillsReloadResult(raw);
+    },
+  },
+  addons: {
+    async contributions(): Promise<AddonContributionsResult> {
+      const raw: unknown = await ipcRenderer.invoke(ADDONS_CONTRIBUTIONS_CHANNEL);
+      return parseAddonContributionsResult(raw);
     },
   },
   rules: {

@@ -35,7 +35,7 @@ let showPrompt: ReturnType<typeof vi.fn<StatusBannerSink['showPrompt']>>;
 let reportSave: (outcome: Promise<SaveOutcome>) => void;
 let onSettingsChanged: () => void;
 
-function snapshotWith(updates: { url?: string; checkOnStartup: boolean }): AppSettingsSnapshot {
+function snapshotWith(updates: { source?: string; checkOnStartup: boolean }): AppSettingsSnapshot {
   return parseAppSettingsSnapshot({
     hosts: [],
     proxies: [],
@@ -146,28 +146,26 @@ describe('createUpdatesSection', () => {
 
   it('reflects the stored settings on update', () => {
     const section = buildSection();
-    section.update(snapshotWith({ url: 'https://example.com/x', checkOnStartup: true }));
-    expect(query<Field>(section.element, byField('updates-url')).value).toBe(
-      'https://example.com/x',
-    );
+    section.update(snapshotWith({ source: 'release/1.0', checkOnStartup: true }));
+    expect(query<Field>(section.element, byField('updates-source')).value).toBe('release/1.0');
     expect(query<Field>(section.element, byField('updates-check-on-startup')).checked).toBe(true);
   });
 
-  it('persists a trimmed URL, and null when it is cleared', async () => {
+  it('persists a trimmed source, and null when it is cleared', async () => {
     const section = buildSection();
-    const field = query<Field>(section.element, byField('updates-url'));
+    const field = query<Field>(section.element, byField('updates-source'));
 
-    field.value = '  https://example.com/x  ';
+    field.value = '  release/1.0  ';
     field.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
     expect(updateUpdateSettings).toHaveBeenLastCalledWith({
-      changes: { url: 'https://example.com/x' },
+      changes: { source: 'release/1.0' },
     });
     await flush();
     expect(onSettingsChanged).toHaveBeenCalledTimes(1);
 
     field.value = '   ';
     field.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
-    expect(updateUpdateSettings).toHaveBeenLastCalledWith({ changes: { url: null } });
+    expect(updateUpdateSettings).toHaveBeenLastCalledWith({ changes: { source: null } });
   });
 
   it('persists exactly the startup flag it changed', () => {
@@ -205,12 +203,12 @@ describe('createUpdatesSection', () => {
     expect(actions.querySelector('sp-contextual-help')).toBeNull();
   });
 
-  it('lists the startup checkbox before the custom URL, after the button line', () => {
+  it('lists the startup checkbox before the update source, after the button line', () => {
     const section = buildSection();
     const order = [
       byTestId('updates-check'),
       byField('updates-check-on-startup'),
-      byField('updates-url'),
+      byField('updates-source'),
     ].map((selector) => query(section.element, selector));
     for (let index = 1; index < order.length; index += 1) {
       const previous = order[index - 1];
@@ -221,24 +219,28 @@ describe('createUpdatesSection', () => {
     }
   });
 
-  it('says what part of the runtime layer needs the fresh installation', () => {
+  it('shows the live stage of an update, the version it reached, and why it failed', () => {
     const section = buildSection();
-    const apply = query<Field>(section.element, byTestId('updates-apply'));
     const status = (): string =>
       query(section.element, byTestId('updates-status')).textContent ?? '';
 
-    pushStatus({ kind: 'installerRequired', version: '2.0.0' });
+    pushStatus({ kind: 'applying' });
     const bare = status();
-    expect(apply.hasAttribute('hidden')).toBe(true);
-    expect(bare).toContain('2.0.0');
+    pushStatus({ kind: 'applying', stage: 'building', text: 'Building the app' });
+    const staged = status();
+    expect(staged).toContain('Building the app');
+    expect(staged).not.toBe(bare);
 
-    pushStatus({ kind: 'installerRequired', version: '2.0.0', changed: ['payload', 'electron'] });
-    const explained = status();
-    expect(explained).toContain('2.0.0');
-    expect(explained).not.toBe(bare);
+    pushStatus({ kind: 'updated', version: '2.0.0' });
+    const updated = status();
+    expect(updated).toContain('2.0.0');
+
+    pushStatus({ kind: 'failed', phase: 'apply', reason: 'disk full' });
+    const failed = status();
+    expect(failed).toContain('disk full');
+
     // A status phrase is a label: the app's copy never ends with a period.
-    expect(bare.endsWith('.')).toBe(false);
-    expect(explained.endsWith('.')).toBe(false);
+    for (const phrase of [bare, staged, updated, failed]) expect(phrase.endsWith('.')).toBe(false);
   });
 
   it('unsubscribes from status pushes on dispose', () => {

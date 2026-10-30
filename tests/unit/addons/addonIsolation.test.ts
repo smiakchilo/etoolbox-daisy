@@ -1,13 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { addonPins } from '../../../src/shared/addons/pins';
 
 /**
  * The decoupling invariant: **nothing outside an add-on names it.**
  *
  * An add-on is a self-contained child application, like a DLL. The application
- * knows it only through the generated pins and generic interfaces, so deleting
+ * knows it only through the built descriptor and generic interfaces, so deleting
  * `src/addons/<id>/` must leave the repository green with no other edit. This
  * test is what makes that true rather than aspirational: it scans every text
  * file in the repository - comments included - for an add-on's id, for a
@@ -15,7 +14,6 @@ import { addonPins } from '../../../src/shared/addons/pins';
  * contributes, and fails on any hit outside the places that are allowed to know:
  *
  * - `src/addons/**` (the add-on itself, its tests and its docs);
- * - `src/shared/addons/pins.json` (the generated pin, which *is* the contract);
  * - `docs/**` and `AGENTS.md` (the written record).
  *
  * The forbidden words are read from the add-on folders themselves, never typed
@@ -62,7 +60,7 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 
 /** Files that are allowed to name an add-on. Repo-relative, `/` separators. */
-const ALLOWED_PATHS = ['src/shared/addons/pins.json', 'AGENTS.md'];
+const ALLOWED_PATHS = ['AGENTS.md'];
 
 const ALLOWED_PREFIXES = ['src/addons/', 'docs/'];
 
@@ -153,10 +151,18 @@ function wordPattern(word: string): RegExp {
 describe('add-on isolation', () => {
   const facts = addonFacts();
 
-  it('reads exactly the add-ons this build pins, so the scan is not vacuous', () => {
+  it('reads every add-on folder, so the scan is not vacuous', () => {
     // A build with no add-ons is a valid repository (deleting the folder removes
-    // the capability); a pinned add-on the scan cannot read is the failure.
-    expect(facts.map((addon) => addon.id).sort()).toEqual(Object.keys(addonPins).sort());
+    // the capability); an add-on folder the scan cannot read is the failure.
+    const folders = existsSync(addonsRoot)
+      ? readdirSync(addonsRoot, { withFileTypes: true })
+          .filter(
+            (entry) =>
+              entry.isDirectory() && existsSync(path.join(addonsRoot, entry.name, 'addon.json')),
+          )
+          .map((entry) => entry.name)
+      : [];
+    expect(facts.map((addon) => addon.id).sort()).toEqual(folders.sort());
   });
 
   it('names no add-on, dependency, tool or skill anywhere outside the allowed places', () => {

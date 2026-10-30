@@ -192,7 +192,7 @@ function createInvokeTool(params: {
 export async function buildToolRegistry(params: {
   readonly loaders: ToolModuleLoaders;
   /**
-   * Tools an add-on contributes, already described by the pins and proxied by
+   * Tools an add-on contributes, already described by its manifest and proxied by
    * the registry's caller (`src/main/tools/addonProxy.ts`). They register exactly
    * like a folder tool - same isolation, same `uses` check - so a duplicate name
    * or a missing part disables only that tool.
@@ -243,8 +243,8 @@ export async function buildToolRegistry(params: {
     }
     register((mod as { tool?: unknown } | null)?.tool, source);
   }
-  // A contributed tool is not downloaded - it is a proxy described by the pins -
-  // so it joins the same registration path after the folder tools.
+  // A contributed tool is a proxy described by its add-on's manifest, so it
+  // joins the same registration path after the folder tools.
   for (const tool of params.contributed ?? []) {
     register(tool, `addon:${tool.name}`);
   }

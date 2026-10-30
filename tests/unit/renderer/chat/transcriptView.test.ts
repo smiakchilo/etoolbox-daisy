@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   agentEventSchema,
   chatIdSchema,
@@ -14,7 +14,8 @@ import {
   type ToolCallId,
   type TurnId,
 } from '../../../../src/shared';
-import { addonPins } from '../../../../src/shared/addons/pins';
+import { builtAddonContributions } from '../../../support/addonContributions';
+import { setContributedToolRenderers } from '../../../../src/renderer/src/chat/toolRegistry';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import { createTranscriptView } from '../../../../src/renderer/src/chat/transcriptView';
 import { createMarkdownRenderer } from '../../../../src/renderer/src/chat/renderMarkdown';
@@ -2021,17 +2022,24 @@ describe('ongoing billet placement and the expansion accordion', () => {
 });
 
 /**
- * The report tool the pins declare (no add-on's name is written here): its
+ * The report tool the built add-ons declare (no add-on's name is written here): its
  * result carries the generic report message under `data.report`, and the
- * transcript paints it below the ordinary billet. A build with no pinned report
+ * transcript paints it below the ordinary billet. A build with no report
  * tool skips these cases, as the generic specs do.
  */
-const REPORT_TOOL = Object.values(addonPins)
-  .flatMap((pin) => pin.contributions.tools)
+const REPORT_TOOL = (await builtAddonContributions())
+  .flatMap((entry) => entry.contributions.tools)
   .find((tool) => tool.presentation === 'report')?.name;
 
 describe.skipIf(REPORT_TOOL === undefined)('a contributed report presentation', () => {
   const TOOL = REPORT_TOOL ?? '';
+
+  beforeAll(async () => {
+    setContributedToolRenderers(await builtAddonContributions());
+  });
+  afterAll(() => {
+    setContributedToolRenderers([]);
+  });
 
   const REPORT_DATA = {
     ok: true,

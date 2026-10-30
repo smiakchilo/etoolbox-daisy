@@ -19,6 +19,14 @@ rem and are not touched; run this again in the same folder to update the applica
 rem
 rem Usage:  install.cmd            build the latest source of the default branch
 rem         install.cmd <ref>      build a branch, tag or commit instead
+rem         install.cmd --update <ref-or-zip-url> <app-folder> <app-pid> <status-file>
+rem                                the application's own updater: builds into
+rem                                "<app-folder>.new" while the application runs, checks
+rem                                that build starts, waits for <app-pid> to exit, swaps
+rem                                the folders, starts the new build and reverts to
+rem                                "<app-folder>.previous" if that does not come up.
+rem                                Progress goes to <status-file> as "stage|text"; there
+rem                                is never a prompt in this mode.
 rem Behind a proxy, set HTTPS_PROXY first. Uses only tools that ship with Windows 10+.
 rem Set EDAISY_NODE=pinned to ignore an installed Node.js and always use the
 rem verified download - that is the toolchain the build is tested with.
@@ -35,13 +43,16 @@ set "NODE_BASELINE_MAJOR=22"
 set "NODE_BASELINE_MINOR=12"
 set "REPO=smiakchilo/etoolbox-daisy"
 set "REF=master"
-if not "%~1"=="" set "REF=%~1"
+set "UPDATE_MODE="
+set "STATUS_FILE="
+if /i "%~1"=="--update" (set "UPDATE_MODE=1") else if not "%~1"=="" set "REF=%~1"
 
 rem The folder this file is in (the trailing "." keeps the path safe to quote).
 set "OUT_DIR=%~dp0."
 set "WORK=%TEMP%\etoolbox-daisy-build"
 set "NODE_DIR="
 set "SRC_DIR=%WORK%\src"
+set "STEP=starting"
 rem Absolute paths: a trimmed PATH must not decide whether the build works, and
 rem certutil lives in System32 too - calling it by name is what once turned a
 rem downloadable Node into "certutil is not recognized".
@@ -53,7 +64,13 @@ rem Cleared before any PowerShell call, so a PowerShell 7 parent (whose
 rem PSModulePath wins otherwise) does not hide Get-FileHash or break the
 rem signature check.
 set "PSModulePath="
+set "TASKLIST=%SystemRoot%\System32\tasklist.exe"
+set "TASKKILL=%SystemRoot%\System32\taskkill.exe"
+set "FINDSTR=%SystemRoot%\System32\findstr.exe"
+set "PING=%SystemRoot%\System32\ping.exe"
 set "SOURCE_URL=%EDAISY_SOURCE_URL%"
+if defined UPDATE_MODE call :setup_update %*
+if defined UPDATE_MODE if not defined APP_DIR exit /b 2
 if not defined SOURCE_URL set "SOURCE_URL=https://github.com/%REPO%/archive/%REF%.zip"
 
 for %%T in ("%CURL%" "%TAR%" "%POWERSHELL%") do if not exist "%%~T" (
@@ -64,6 +81,10 @@ for %%T in ("%CURL%" "%TAR%" "%POWERSHELL%") do if not exist "%%~T" (
 
 if exist "%WORK%" rmdir /s /q "%WORK%"
 mkdir "%WORK%" || goto fail
+if defined UPDATE_MODE (
+  if exist "%OUT_DIR%" rmdir /s /q "%OUT_DIR%"
+  mkdir "%OUT_DIR%" || goto fail
+)
 
 rem ---- 1. Node.js: the one installed here when it is new enough, else the pinned build ----
 set "NODE_SEARCHED="
@@ -71,11 +92,15 @@ if /i not "%EDAISY_NODE%"=="pinned" set "NODE_SEARCHED=1"
 if defined NODE_SEARCHED call :find_installed_node
 if defined NODE_DIR goto node_ready
 if defined NODE_SEARCHED echo No Node.js %NODE_BASELINE_MAJOR%.%NODE_BASELINE_MINOR% or newer with npm was found; downloading the pinned %NODE_VERSION% ...
+set "STEP=Node.js setup"
+call :status installing-node "Downloading Node.js"
 call :install_pinned_node
 if not defined NODE_DIR goto fail
 
 :node_ready
 rem ---- 2. Source ----
+set "STEP=Source download"
+call :status downloading "Downloading the source"
 echo Downloading source from %SOURCE_URL% ...
 mkdir "%WORK%\unpack"
 "%CURL%" -fL --retry 3 -o "%WORK%\source.zip" "%SOURCE_URL%" || goto fail
@@ -90,12 +115,16 @@ set "npm_config_update_notifier=false"
 set "electron_config_cache=%WORK%\electron-cache"
 set "ELECTRON_CACHE=%WORK%\electron-cache"
 set "ELECTRON_BUILDER_CACHE=%WORK%\builder-cache"
+set "STEP=Build"
+call :status building "Building the update"
 cd /d "%SRC_DIR%"
 "%NODE_DIR%\node.exe" scripts\app-build.mjs --out "%OUT_DIR%"
 if errorlevel 1 (
   if defined NODE_INSTALLED echo Retry with EDAISY_NODE=pinned to build with the Node.js this script is tested with.
   goto fail
 )
+
+if defined UPDATE_MODE goto update_finish
 
 rem ---- 4. Clean up and start ----
 cd /d "%OUT_DIR%"
@@ -105,14 +134,149 @@ echo EToolbox Daisy is ready: "%~dp0EToolbox Daisy.exe"
 start "" "%~dp0EToolbox Daisy.exe"
 exit /b 0
 
+rem ---- 4. (--update) Check the build starts, wait for the application to exit, swap, start, verify ----
+rem The application keeps running until here. Nothing in the installed folder has
+rem been touched yet, so every failure up to the swap just discards the staging folder.
+
+:update_finish
+set "STEP=Start-up check"
+call :status testing "Checking the new build starts"
+rem The status file is how the application recognises a freshly swapped build; the
+rem check must not look like one.
+set "EDAISY_UPDATE_STATUS_FILE="
+"%POWERSHELL%" -NoProfile -NonInteractive -Command "$p = Start-Process -FilePath '%OUT_DIR%\EToolbox Daisy.exe' -ArgumentList '--smoke-test' -PassThru; if (-not $p.WaitForExit(180000)) { $p.Kill(); exit 124 }; exit $p.ExitCode"
+if errorlevel 1 goto fail
+
+rem Keep the user's own copy of this script beside the new build.
+if exist "%APP_DIR%\install.cmd" copy /y "%SRC_DIR%\install\install.cmd" "%OUT_DIR%\install.cmd" >nul
+
+set "STEP=Swap"
+call :status ready "The update is ready to install"
+cd /d "%TEMP%"
+:wait_exit
+"%TASKLIST%" /FI "PID eq %APP_PID%" /NH 2>nul | "%FINDSTR%" /c:" %APP_PID% " >nul || goto app_gone
+"%PING%" -n 3 127.0.0.1 >nul
+goto wait_exit
+
+:app_gone
+if exist "%PREV_DIR%" rmdir /s /q "%PREV_DIR%"
+set "TRIES=0"
+:swap_old
+ren "%APP_DIR%" "%APP_NAME%.previous" 2>nul && goto swap_new
+set /a TRIES+=1
+if %TRIES% GEQ 30 goto swap_failed
+"%PING%" -n 2 127.0.0.1 >nul
+goto swap_old
+
+:swap_new
+ren "%OUT_DIR%" "%APP_NAME%" 2>nul && goto swapped
+ren "%PREV_DIR%" "%APP_NAME%" 2>nul
+
+:swap_failed
+call :status failed "Swap failed: the installed folder could not be replaced"
+if exist "%APP_DIR%\EToolbox Daisy.exe" if exist "%STATUS_FILE%.go" call :launch "%APP_DIR%\EToolbox Daisy.exe"
+goto update_cleanup
+
+:swapped
+rem Without the restart marker the user only closed the application; the new build
+rem is in place and starts the next time they open it.
+if not exist "%STATUS_FILE%.go" (
+  call :status swapped "Updated; starts next time"
+  goto update_cleanup
+)
+call :status swapped "Updated"
+set "EDAISY_UPDATE_STATUS_FILE=%STATUS_FILE%"
+call :launch "%APP_DIR%\EToolbox Daisy.exe"
+set "WAITED=0"
+:wait_started
+"%FINDSTR%" /b /c:"started|" "%STATUS_FILE%" >nul 2>&1 && goto started
+if not defined NEW_PID goto start_failed
+"%TASKLIST%" /FI "PID eq %NEW_PID%" /NH 2>nul | "%FINDSTR%" /c:" %NEW_PID% " >nul || goto start_failed
+set /a WAITED+=1
+if %WAITED% GEQ 120 goto start_failed
+"%PING%" -n 2 127.0.0.1 >nul
+goto wait_started
+
+:started
+if exist "%PREV_DIR%" rmdir /s /q "%PREV_DIR%"
+goto update_cleanup
+
+rem The new build never reported in: stop that process, put the old install back.
+:start_failed
+if defined NEW_PID "%TASKKILL%" /PID %NEW_PID% /T /F >nul 2>&1
+set "TRIES=0"
+:revert_remove
+if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%" 2>nul
+if not exist "%APP_DIR%" goto revert_rename
+set /a TRIES+=1
+if %TRIES% GEQ 15 goto update_cleanup
+"%PING%" -n 2 127.0.0.1 >nul
+goto revert_remove
+:revert_rename
+ren "%PREV_DIR%" "%APP_NAME%" 2>nul || goto update_cleanup
+call :status reverted "The new version did not start; the previous one was restored"
+set "EDAISY_UPDATE_STATUS_FILE=%STATUS_FILE%"
+call :launch "%APP_DIR%\EToolbox Daisy.exe"
+goto update_cleanup
+
+:update_cleanup
+cd /d "%TEMP%"
+if exist "%STATUS_FILE%.go" del "%STATUS_FILE%.go" >nul 2>&1
+if exist "%WORK%" rmdir /s /q "%WORK%"
+exit /b 0
+
 :fail
+if defined UPDATE_MODE goto update_fail
 echo.
 echo Failed. The temporary files in "%WORK%" are kept for inspection; delete that folder when done.
 echo Nothing else was changed, except possibly files written to "%OUT_DIR%".
 pause
 exit /b 1
 
+:update_fail
+cd /d "%TEMP%"
+if exist "%OUT_DIR%" rmdir /s /q "%OUT_DIR%"
+call :status failed "%STEP% failed"
+if exist "%WORK%" rmdir /s /q "%WORK%"
+exit /b 1
+
 rem ---- Subroutines ----
+
+rem --update only: reads <ref-or-url> <app-folder> <app-pid> <status-file> from the
+rem arguments and derives the staging and previous folders beside the application's.
+rem A value with a colon is a URL (http, https, file); anything else is a branch,
+rem tag or commit. Leaves APP_DIR empty when an argument is missing.
+
+:setup_update
+set "UPDATE_SOURCE=%~2"
+set "APP_DIR=%~3"
+set "APP_PID=%~4"
+set "STATUS_FILE=%~5"
+if not defined UPDATE_SOURCE set "APP_DIR="
+if not defined APP_PID set "APP_DIR="
+if not defined STATUS_FILE set "APP_DIR="
+if not defined APP_DIR goto :eof
+if "%APP_DIR:~-1%"=="\" set "APP_DIR=%APP_DIR:~0,-1%"
+for %%I in ("%APP_DIR%") do set "APP_NAME=%%~nxI"
+set "OUT_DIR=%APP_DIR%.new"
+set "PREV_DIR=%APP_DIR%.previous"
+if not "%UPDATE_SOURCE::=%"=="%UPDATE_SOURCE%" (set "SOURCE_URL=%UPDATE_SOURCE%") else set "REF=%UPDATE_SOURCE%"
+goto :eof
+
+rem Records the stage the update has reached as "stage|text" for the application to
+rem read. A no-op when this is not an update.
+
+:status
+if not defined STATUS_FILE goto :eof
+>"%STATUS_FILE%" echo %~1^|%~2
+goto :eof
+
+rem Starts %1 detached and leaves its process id in NEW_PID.
+
+:launch
+set "NEW_PID="
+for /f "usebackq delims=" %%P in (`"%POWERSHELL%" -NoProfile -NonInteractive -Command "(Start-Process -FilePath '%~1' -WorkingDirectory '%~dp1' -PassThru).Id"`) do if not defined NEW_PID set "NEW_PID=%%P"
+goto :eof
 
 rem Sets NODE_DIR to the folder of the Node.js already on PATH, when it is new
 rem enough and carries npm beside node.exe - the layout app-build.mjs needs.

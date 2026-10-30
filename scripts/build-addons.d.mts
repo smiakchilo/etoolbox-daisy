@@ -51,20 +51,11 @@ export function contributionsFor(
   taken: TakenNames,
 ): AddonContributionProblem;
 
-export function sourceFiles(directory: string): readonly string[];
+export function appToolNames(): readonly string[];
 
-export function inlinedInputsFrom(
-  metafile: { readonly inputs?: Readonly<Record<string, unknown>> },
-  directory: string,
-): readonly string[];
-
-export function identityFor(directory: string, inlinedInputs: readonly string[]): string;
+export function bundledSkillNames(): readonly string[];
 
 export function bundleAddon(
   directory: string,
   pkg: { readonly dependencies?: Readonly<Record<string, string>> },
-): Promise<{
-  readonly code: Uint8Array;
-  readonly identity: string;
-  readonly inlinedInputs: readonly string[];
-}>;
+): Promise<{ readonly code: Uint8Array }>;

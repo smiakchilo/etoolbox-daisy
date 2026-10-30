@@ -1,6 +1,6 @@
 import { el } from '../lib/dom';
 import { subscribeUpdateStatus } from '../lib/updateStatusFeed';
-import type { AppSettingsSnapshot, UpdateRuntimePart, UpdateStatus } from '../../../shared';
+import type { AppSettingsSnapshot, UpdateStatus } from '../../../shared';
 import { createContextualHelp, helpAccessibleName, labelledField } from './fieldHelp';
 import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } from './statusBanner';
 
@@ -10,7 +10,7 @@ import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } fro
  * The first line holds **Check for updates** and, beside it, **Update** - shown
  * only while an update is pending (`available`) - then a short status phrase.
  * After a subsection gap: the **Check for updates on startup** checkbox (off by
- * default), then the **Custom update URL** (checked before the built-in places).
+ * default), then the **Update source** (a branch, a tag or an https zip URL).
  * Both settings save
  * immediately; the status itself is main's (`window.daisy.updates`), so this
  * section only renders what main pushes and asks main to check or apply.
@@ -29,31 +29,15 @@ export interface UpdatesSectionOptions {
 
 export interface UpdatesSection {
   readonly element: HTMLElement;
-  /** Re-reads the URL field and the startup checkbox from the snapshot. */
+  /** Re-reads the source field and the startup checkbox from the snapshot. */
   update(snapshot: AppSettingsSnapshot): void;
   dispose(): void;
 }
 
 const CHECK_LABEL = 'Check for updates';
 const UPDATE_LABEL = 'Update';
-const URL_LABEL = 'Custom update URL';
+const SOURCE_LABEL = 'Update source';
 const STARTUP_LABEL = 'Check for updates on startup';
-
-/** How a part of the runtime layer reads in a status phrase. */
-const RUNTIME_PART_LABELS: Readonly<Record<UpdateRuntimePart, string>> = {
-  format: 'the update mechanism',
-  electron: 'the Electron version',
-  payload: 'the agent runtime',
-};
-
-/**
- * Says which part of the runtime layer blocks the update: a fresh installation
- * is only understandable if the reader is told what changed.
- */
-function describeChangedRuntime(changed: readonly UpdateRuntimePart[] | undefined): string {
-  if (changed === undefined || changed.length === 0) return '';
-  return ` (${changed.map((part) => RUNTIME_PART_LABELS[part]).join(' and ')} changed)`;
-}
 
 /** The phrase the section shows beside its buttons; empty when there is nothing to say. */
 export function describeUpdateStatus(status: UpdateStatus): string {
@@ -66,14 +50,15 @@ export function describeUpdateStatus(status: UpdateStatus): string {
       return 'You have the latest version';
     case 'available':
       return `Version ${status.version} is available`;
-    case 'installerRequired':
-      return `Version ${status.version} needs a fresh installation${describeChangedRuntime(status.changed)}`;
     case 'applying':
-      return 'Updating\u2026';
-    case 'failed':
-      return status.phase === 'check'
-        ? 'Could not check for updates'
-        : 'Could not apply the update';
+      return status.text === undefined ? 'Updating\u2026' : `Updating: ${status.text}`;
+    case 'updated':
+      return `Updated to version ${status.version}`;
+    case 'failed': {
+      const base =
+        status.phase === 'check' ? 'Could not check for updates' : 'Could not apply the update';
+      return status.reason === undefined ? base : `${base}: ${status.reason}`;
+    }
   }
 }
 
@@ -97,21 +82,21 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     children: [checkButton, updateButton, statusText],
   });
 
-  const urlFieldId = 'updates-url';
-  const urlField = el('sp-textfield', {
+  const sourceFieldId = 'updates-source';
+  const sourceField = el('sp-textfield', {
     attrs: {
-      id: urlFieldId,
+      id: sourceFieldId,
       class: 'host-field__input',
-      placeholder: 'E.g.: https://github.com/owner/repo/tree/main/update',
-      'aria-label': URL_LABEL,
-      'data-field': 'updates-url',
+      placeholder: 'E.g.: master',
+      'aria-label': SOURCE_LABEL,
+      'data-field': 'updates-source',
     },
   }) as TextField;
-  const urlRow = labelledField(
-    urlFieldId,
-    URL_LABEL,
-    urlField,
-    'A GitHub folder holding update.json, checked before the built-in places. Must start with https',
+  const sourceRow = labelledField(
+    sourceFieldId,
+    SOURCE_LABEL,
+    sourceField,
+    'A branch or tag of the repository to update from, or an https link to a source zip. Empty means the main branch',
   );
 
   const startupCheckbox = el('sp-checkbox', {
@@ -133,7 +118,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
   // settings (see settings.css); the settings keep the plain gap between them.
   const settingsGroup = el('div', {
     attrs: { class: 'updates-section__group' },
-    children: [startupRow, urlRow],
+    children: [startupRow, sourceRow],
   });
 
   const section = el('div', {
@@ -180,7 +165,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
   let rendering = false;
 
   async function save(changes: {
-    url?: string | null;
+    source?: string | null;
     checkOnStartup?: boolean;
   }): Promise<SaveOutcome> {
     try {
@@ -191,7 +176,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     }
   }
 
-  function report(changes: { url?: string | null; checkOnStartup?: boolean }): void {
+  function report(changes: { source?: string | null; checkOnStartup?: boolean }): void {
     const outcome = save(changes);
     options.reportSave(outcome);
     void outcome.then((result) => {
@@ -199,16 +184,16 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     });
   }
 
-  const onUrlCommit = (): void => {
+  const onSourceCommit = (): void => {
     if (rendering) return;
-    const value = urlField.value.trim();
-    report({ url: value === '' ? null : value });
+    const value = sourceField.value.trim();
+    report({ source: value === '' ? null : value });
   };
   const onStartupChange = (): void => {
     if (rendering) return;
     report({ checkOnStartup: startupCheckbox.checked });
   };
-  urlField.addEventListener('change', onUrlCommit);
+  sourceField.addEventListener('change', onSourceCommit);
   startupCheckbox.addEventListener('change', onStartupChange);
 
   void window.daisy.updates
@@ -222,7 +207,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     element: section,
     update(snapshot): void {
       rendering = true;
-      urlField.value = snapshot.updates.url ?? '';
+      sourceField.value = snapshot.updates.source ?? '';
       startupCheckbox.checked = snapshot.updates.checkOnStartup;
       rendering = false;
     },
@@ -230,7 +215,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
       unsubscribe();
       checkButton.removeEventListener('click', onCheckClick);
       updateButton.removeEventListener('click', onUpdateClick);
-      urlField.removeEventListener('change', onUrlCommit);
+      sourceField.removeEventListener('change', onSourceCommit);
       startupCheckbox.removeEventListener('change', onStartupChange);
     },
   };

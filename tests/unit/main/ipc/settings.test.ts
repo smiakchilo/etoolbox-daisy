@@ -606,21 +606,21 @@ describe('updateMemoSettings', () => {
 });
 
 describe('updateUpdateSettings', () => {
-  it('persists the custom URL and startup flag and reads them back through the snapshot', async () => {
+  it('persists the update source and startup flag and reads them back through the snapshot', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
     await writeSettings(settingsDir, defaultAppSettings());
 
     expect(
       await updateUpdateSettings(settingsDir, {
-        changes: { url: 'https://github.com/o/r/tree/main/updates', checkOnStartup: true },
+        changes: { source: 'release', checkOnStartup: true },
       }),
     ).toEqual({ ok: true });
 
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected a snapshot');
     expect(snapshot.snapshot.updates).toEqual({
-      url: 'https://github.com/o/r/tree/main/updates',
+      source: 'release',
       checkOnStartup: true,
     });
   });

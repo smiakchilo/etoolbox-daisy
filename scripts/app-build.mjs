@@ -15,7 +15,7 @@
  * download mark (Windows "Mark of the Web", macOS quarantine), which is what
  * SmartScreen and Gatekeeper act on, so neither shows a warning.
  *
- * Usage: node install/build.mjs --out <folder>
+ * Usage: node scripts/app-build.mjs --out <folder>
  */
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
@@ -36,7 +36,7 @@ function fail(message) {
 const outIndex = process.argv.indexOf('--out');
 const outArg = outIndex === -1 ? undefined : process.argv[outIndex + 1];
 if (!outArg) {
-  fail('Usage: node install/build.mjs --out <folder>');
+  fail('Usage: node scripts/app-build.mjs --out <folder>');
 }
 if (!isWindows && !isMac) {
   fail(`Unsupported platform: ${process.platform}. Windows and macOS only.`);
@@ -125,9 +125,8 @@ const node = (label, args) => run(label, process.execPath, args);
 /**
  * Copies the add-ons built from this repository beside the packaged
  * application (`<out>/resources/addons`), where `src/main/addons/devSource.ts`
- * finds them. The packaged asar deliberately carries none: a release downloads
- * the add-on it pins, while a build-from-source installation uses the copies
- * made here and never downloads one.
+ * finds them. The packaged asar deliberately carries none: they are built from
+ * the same source as the application and installed with it.
  *
  * The built JS add-on's `node_modules` is a junction into `src/addons/<id>/`, so
  * the copy must dereference it - the source tree is deleted with the temporary
@@ -139,6 +138,15 @@ function copyAddons(target) {
     fail(`No add-ons were built: ${built} does not exist.`);
   }
   cpSync(built, target, { recursive: true, force: true, dereference: true });
+}
+
+/**
+ * Copies the install scripts beside the application (`<out>/resources/install`),
+ * so the in-app updater can run the very script that installed it in `--update`
+ * mode.
+ */
+function copyInstallScripts(target) {
+  cpSync(join(root, 'install'), target, { recursive: true, force: true });
 }
 
 node('Installing dependencies safely', [
@@ -180,6 +188,7 @@ if (isWindows) {
     );
   }
   copyAddons(join(outDir, 'resources', 'addons'));
+  copyInstallScripts(join(outDir, 'resources', 'install'));
 } else {
   const bundleName = 'EToolbox Daisy.app';
   const built = readdirSync(packageDir)
@@ -195,7 +204,10 @@ if (isWindows) {
     ['rm', ['-rf', target]],
     ['ditto', [built, target]],
   ];
-  const addonsInBundle = () => copyAddons(join(target, 'Contents', 'Resources', 'addons'));
+  const addonsInBundle = () => {
+    copyAddons(join(target, 'Contents', 'Resources', 'addons'));
+    copyInstallScripts(join(target, 'Contents', 'Resources', 'install'));
+  };
   steps.push(
     // Apple Silicon refuses unsigned code: seal the bundle with an ad-hoc signature (no identity).
     ['codesign', ['--force', '--deep', '--sign', '-', target]],

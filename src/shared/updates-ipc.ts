@@ -1,21 +1,12 @@
 import { z } from 'zod';
 
 /**
- * The parts of the runtime layer a swap cannot replace. Named so the Settings
- * tab can say *what* needs the fresh installation, and so the check never has
- * to compare an unnameable value.
- */
-export const updateRuntimePartSchema = z.enum(['format', 'electron', 'payload']);
-
-export type UpdateRuntimePart = Readonly<z.infer<typeof updateRuntimePartSchema>>;
-
-/**
  * The updater's status, shared by main (which owns it) and the renderer (the
  * Settings "Updates" tab, the chat pane's notice and the home screen's link).
- * `available` carries the version of a pending update; `installerRequired`
- * means a newer version exists but needs a fresh installation (its runtime
- * layer - Electron, the unpacked agent runtime - differs from this install's),
- * so it cannot be applied in place.
+ * `available` carries the version of a pending update; `applying` is an update
+ * being built from source, with the install script's current stage and a short
+ * phrase for it; `updated` is the outcome of the update the running app was
+ * started by; `failed` carries a short reason when the install script gave one.
  */
 export const updateStatusSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('idle') }).strict(),
@@ -30,16 +21,20 @@ export const updateStatusSchema = z.discriminatedUnion('kind', [
     .strict(),
   z
     .object({
-      kind: z.literal('installerRequired'),
-      version: z.string().min(1).max(64),
-      /** The runtime parts that differ, when the install could be compared at all. */
-      changed: z.array(updateRuntimePartSchema).min(1).max(3).optional(),
+      kind: z.literal('applying'),
+      stage: z.string().min(1).max(40).optional(),
+      text: z.string().min(1).max(200).optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('applying') }).strict(),
-  z.object({ kind: z.literal('failed'), phase: z.enum(['check', 'apply']) }).strict(),
+  z.object({ kind: z.literal('updated'), version: z.string().min(1).max(64) }).strict(),
+  z
+    .object({
+      kind: z.literal('failed'),
+      phase: z.enum(['check', 'apply']),
+      reason: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
 ]);
-
 export type UpdateStatus = Readonly<z.infer<typeof updateStatusSchema>>;
 
 export const updatesErrorCodeSchema = z.enum(['untrusted_sender', 'invalid_payload']);

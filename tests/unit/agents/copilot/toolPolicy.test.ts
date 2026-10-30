@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addonPins } from '../../../../src/shared/addons/pins';
 import {
   createHardenedSession,
   denyAllPermissions,
@@ -8,6 +7,7 @@ import {
   type HardenedSessionClient,
   type HardenedToolPolicy,
 } from '../../../../src/agents/copilot/toolPolicy';
+import { builtAddonContributions } from '../../../support/addonContributions';
 
 // Derived structurally from `HardenedSessionClient` instead of importing
 // `CopilotSession`/`SessionUpdateOptionsResult` from `@github/copilot-sdk`
@@ -57,11 +57,11 @@ describe('denyAllPermissions', () => {
 });
 
 describe('a tool an add-on contributes', () => {
-  it('is approved from its pins allowlist entry, by bare name and by source-qualified name', () => {
-    const tool = Object.values(addonPins)
-      .flatMap((pin) => pin.contributions.tools)
+  it('is approved from its declared allowlist entry, by bare name and by source-qualified name', async () => {
+    const tool = (await builtAddonContributions())
+      .flatMap((entry) => entry.contributions.tools)
       .at(0);
-    // A build with no pinned add-on has nothing to admit.
+    // A build with no add-on has nothing to admit.
     if (tool === undefined) return;
     const ask = allowlistedToolPermissions({ availableTools: [tool.allowlistEntry] });
 

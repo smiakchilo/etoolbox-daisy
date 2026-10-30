@@ -1,49 +1,53 @@
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { z } from 'zod';
 
-import type { AgentFetch, UpdateRuntimePart, UpdateStatus } from '../../shared';
+import type { AgentFetch, UpdateStatus } from '../../shared';
 import { type LogReason, type Logger, toLoggableUrl } from '../logger';
-import { downloadVerifiedArchive, sha512Expectation } from './download';
-import {
-  compareVersions,
-  fileUrlIn,
-  MAX_MANIFEST_BYTES,
-  MAX_UPDATE_ARCHIVE_BYTES,
-  resolveFolderUrl,
-  UPDATE_MANIFEST_FILE,
-  updateManifestSchema,
-  type UpdateFile,
-  type UpdateManifest,
-} from './manifest';
-import { describeRuntimeDifferences, type RuntimeDescriptor } from './runtime';
+import { compareVersions } from './version';
 
-const MANIFEST_TIMEOUT_MS = 15_000;
-const ARCHIVE_TIMEOUT_MS = 5 * 60_000;
+/** The repository the app updates from - the one `install/install.cmd` installs from. */
+export const UPDATE_REPOSITORY = 'smiakchilo/etoolbox-daisy';
+/** The ref an install follows until the Settings "Update source" names another. */
+export const DEFAULT_UPDATE_REF = 'master';
+
+/** Shown as the version of an update whose source is a whole archive URL, which carries none. */
+const ARCHIVE_SOURCE_VERSION = 'archive';
+
+const VERSION_TIMEOUT_MS = 15_000;
+const MAX_PACKAGE_BYTES = 64 * 1024;
+const POLL_INTERVAL_MS = 1000;
+/** An update whose status stays untouched this long is abandoned: the script died. */
+const STALL_LIMIT_MS = 30 * 60_000;
+const MAX_STAGE_LENGTH = 40;
+const MAX_TEXT_LENGTH = 200;
+
+const packageVersionSchema = z.object({ version: z.string().regex(/^\d+\.\d+\.\d+$/) });
 
 export interface UpdaterDependencies {
   readonly installedVersion: string;
-  /**
-   * This install's runtime layer, as it physically is - `undefined` when it
-   * cannot be described, which is never read as "compatible".
-   */
-  readonly readInstalledRuntime: () => Promise<RuntimeDescriptor | undefined>;
-  /** `<platform>-<arch>`, the key into a manifest's `files`. */
-  readonly platformKey: string;
-  /** The folders built into the app, checked after the custom one. */
-  readonly builtinUrls: readonly string[];
-  /** The Settings "Custom update URL", read fresh on every check. */
-  readonly customUrl: () => string | undefined;
+  /** The Settings "Update source" (a ref or an https archive URL), read fresh on every use. */
+  readonly source: () => string | undefined;
   /** A fetch honouring the proxy configured right now. */
   readonly createFetch: () => Promise<AgentFetch>;
   /**
    * Whether that fetch goes through a configured proxy. Read fresh per check and
-   * recorded on every failed source, so a diagnostic can tell "the network could
+   * recorded on every failed read, so a diagnostic can tell "the network could
    * not reach GitHub" from "the configured proxy could not be reached".
    */
   readonly usesProxy: () => boolean;
-  /** The installed `app.asar`; `undefined` when this process cannot be updated in place. */
-  readonly targetAsar: string | undefined;
-  /** Starts the swap of the verified, staged archive; `restart` says whether to quit now. */
-  readonly install: (stagedAsar: string) => { readonly restart: boolean };
+  /**
+   * The file the update script reports its progress in. Both sides of the
+   * hand-over use it: the script writes `stage|text` lines, the relaunched app
+   * answers `started|<version>`, and a `.go` file beside it asks for a restart.
+   */
+  readonly statusFile: string;
+  /** Whether this process was started by an update's swap (the script says so). */
+  readonly startedByUpdate: boolean;
+  /**
+   * Starts the detached script that builds `source` and swaps it in once the app
+   * has exited. Rejects when that cannot be done (an unpackaged build, no script).
+   */
+  readonly launch: (source: string) => Promise<void>;
   readonly quit: () => void;
   readonly logger: Pick<Logger, 'error' | 'warn'>;
   readonly onStatusChanged: (status: UpdateStatus) => void;
@@ -52,16 +56,14 @@ export interface UpdaterDependencies {
 export interface Updater {
   getStatus(): UpdateStatus;
   check(): Promise<UpdateStatus>;
+  /** Builds the update in the background; the app quits itself once it is ready to swap in. */
   apply(): Promise<UpdateStatus>;
+  /** Answers the script that started this process, and reports how its update ended. */
+  resumeAfterUpdate(): Promise<void>;
 }
 
-interface PendingUpdate {
-  readonly folder: URL;
-  readonly file: UpdateFile;
-}
-
-/** Why one source could not be read - the fields `UPDATE_CHECK_FAILED` carries. */
-interface ManifestFailure {
+/** Why one version read failed - the fields `UPDATE_CHECK_FAILED` carries. */
+interface VersionFailure {
   readonly ok: false;
   readonly reason: LogReason;
   readonly durationMs: number;
@@ -69,21 +71,55 @@ interface ManifestFailure {
   readonly statusCode?: number;
 }
 
-type ManifestRead = { readonly ok: true; readonly manifest: UpdateManifest } | ManifestFailure;
+type VersionRead = { readonly ok: true; readonly version: string } | VersionFailure;
+
+/** `package.json` at `ref` - the version there is the release. */
+export function packageJsonUrl(ref: string): URL {
+  return new URL(`https://raw.githubusercontent.com/${UPDATE_REPOSITORY}/${ref}/package.json`);
+}
+
+/** An archive URL names its own location; anything else is a branch or tag. */
+export function isArchiveSource(source: string): boolean {
+  return source.includes(':');
+}
+
+function parseStatusLine(raw: string): { readonly stage: string; readonly text: string } {
+  const line = (raw.split(/\r?\n/)[0] ?? '').trim();
+  const bar = line.indexOf('|');
+  return bar < 0
+    ? { stage: line, text: '' }
+    : { stage: line.slice(0, bar).trim(), text: line.slice(bar + 1).trim() };
+}
+
+function applyingStatus(stage: string, text: string): UpdateStatus {
+  return {
+    kind: 'applying',
+    ...(stage === '' ? {} : { stage: stage.slice(0, MAX_STAGE_LENGTH) }),
+    ...(text === '' ? {} : { text: text.slice(0, MAX_TEXT_LENGTH) }),
+  };
+}
+
+function failedApplyStatus(reason: string): UpdateStatus {
+  return {
+    kind: 'failed',
+    phase: 'apply',
+    ...(reason === '' ? {} : { reason: reason.slice(0, MAX_TEXT_LENGTH) }),
+  };
+}
 
 /**
  * The updater's state machine. It never throws: every failure becomes a
- * `failed` status and a log line, so a flaky source or a bad download can
- * never be anything worse than "the update did not happen".
+ * `failed` status and a log line, so a flaky source or a broken build can never
+ * be anything worse than "the update did not happen".
  *
- * Sources are tried in order - the custom folder, then the built-in ones - and
- * the first reachable source whose manifest carries a newer version for this
- * platform wins. An unreachable or malformed source is skipped and logged with
- * its own reason, so a failed check names the source that failed.
+ * A check reads the `version` of `package.json` on the configured ref and
+ * compares it with the running one. An update is built by the install script
+ * (`--update`), which swaps the finished build in after this process exits.
  */
 export function createUpdater(deps: UpdaterDependencies): Updater {
+  const goFile = `${deps.statusFile}.go`;
   let status: UpdateStatus = { kind: 'idle' };
-  let pending: PendingUpdate | undefined;
+  let pending: string | undefined;
   let busy = false;
 
   function setStatus(next: UpdateStatus): UpdateStatus {
@@ -92,18 +128,24 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     return next;
   }
 
+  async function readStatusFile(): Promise<string | undefined> {
+    try {
+      return await readFile(deps.statusFile, 'utf8');
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
-   * Reads the manifest at `url`, or says why it could not. Never throws: the
+   * Reads the version at `url`, or says why it could not. Never throws: the
    * reason is what `check()` logs, so a failed check is diagnosable from
    * `app.log` without a debugger.
    */
-  async function readManifest(fetchFn: AgentFetch, url: URL): Promise<ManifestRead> {
+  async function readVersion(fetchFn: AgentFetch, url: URL): Promise<VersionRead> {
     const started = Date.now();
     const elapsed = (): number => Math.max(0, Date.now() - started);
     try {
-      const response = await fetchFn(url, {
-        signal: AbortSignal.timeout(MANIFEST_TIMEOUT_MS),
-      });
+      const response = await fetchFn(url, { signal: AbortSignal.timeout(VERSION_TIMEOUT_MS) });
       if (!response.ok) {
         return {
           ok: false,
@@ -116,7 +158,7 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
         return { ok: false, reason: 'insecure', durationMs: elapsed() };
       }
       const text = await response.text();
-      if (text.length > MAX_MANIFEST_BYTES) {
+      if (text.length > MAX_PACKAGE_BYTES) {
         return { ok: false, reason: 'too-large', durationMs: elapsed() };
       }
       let json: unknown;
@@ -125,9 +167,9 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
       } catch {
         return { ok: false, reason: 'invalid-manifest', durationMs: elapsed() };
       }
-      const parsed = updateManifestSchema.safeParse(json);
+      const parsed = packageVersionSchema.safeParse(json);
       if (!parsed.success) return { ok: false, reason: 'invalid-manifest', durationMs: elapsed() };
-      return { ok: true, manifest: parsed.data };
+      return { ok: true, version: parsed.data.version };
     } catch (error) {
       // `AbortSignal.timeout` rejects with a `TimeoutError`; anything else is a
       // transport failure the caller can only classify as a network failure.
@@ -136,8 +178,7 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     }
   }
 
-  /** One line per unreadable source: which URL, why, how long, and over which route. */
-  function logSourceFailure(failure: ManifestFailure, url: URL, proxied: boolean): void {
+  function logReadFailure(failure: VersionFailure, url: URL, proxied: boolean): void {
     deps.logger.warn('UPDATE_CHECK_FAILED', {
       outcome: 'failure',
       reason: failure.reason,
@@ -152,59 +193,26 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     if (busy) return status;
     busy = true;
     setStatus({ kind: 'checking' });
-    /**
-     * This install's own runtime layer, described at most once per check and
-     * only when a candidate archive names one to compare against. An install
-     * that cannot be described reads as `undefined`, which never matches.
-     */
-    let installedRuntime: Promise<RuntimeDescriptor | undefined> | undefined;
-    const currentRuntime = (): Promise<RuntimeDescriptor | undefined> => {
-      installedRuntime ??= deps.readInstalledRuntime().catch(() => undefined);
-      return installedRuntime;
-    };
     try {
-      const custom = deps.customUrl();
-      const folders = [...(custom === undefined ? [] : [custom]), ...deps.builtinUrls]
-        .map(resolveFolderUrl)
-        .filter((folder): folder is URL => folder !== undefined);
-      const fetchFn = await deps.createFetch();
-      const proxied = deps.usesProxy();
-      let reachable = false;
-      for (const folder of folders) {
-        const url = fileUrlIn(folder, UPDATE_MANIFEST_FILE);
-        const read = await readManifest(fetchFn, url);
-        if (!read.ok) {
-          logSourceFailure(read, url, proxied);
-          continue;
-        }
-        reachable = true;
-        const manifest = read.manifest;
-        const file = manifest.files[deps.platformKey];
-        if (file === undefined || compareVersions(manifest.version, deps.installedVersion) <= 0) {
-          continue;
-        }
-        const installerRequired = await checkRuntime(file, currentRuntime);
-        if (installerRequired !== undefined) {
-          pending = undefined;
-          return setStatus({
-            kind: 'installerRequired',
-            version: manifest.version,
-            ...(installerRequired.length === 0 ? {} : { changed: [...installerRequired] }),
-          });
-        }
-        pending = { folder, file };
-        return setStatus({
-          kind: 'available',
-          version: manifest.version,
-          ...(manifest.notes === undefined ? {} : { notes: manifest.notes }),
-        });
+      const source = deps.source() ?? DEFAULT_UPDATE_REF;
+      if (isArchiveSource(source)) {
+        // An archive has no cheap version to compare: it is always offered.
+        pending = source;
+        return setStatus({ kind: 'available', version: ARCHIVE_SOURCE_VERSION });
       }
-      pending = undefined;
-      if (reachable) return setStatus({ kind: 'upToDate' });
-      // No source could be read. `count` separates "every source failed" (the
-      // per-source lines above say why) from "no source was configured at all".
-      deps.logger.warn('UPDATE_CHECK_FAILED', { outcome: 'failure', count: folders.length });
-      return setStatus({ kind: 'failed', phase: 'check' });
+      const url = packageJsonUrl(source);
+      const read = await readVersion(await deps.createFetch(), url);
+      if (!read.ok) {
+        pending = undefined;
+        logReadFailure(read, url, deps.usesProxy());
+        return setStatus({ kind: 'failed', phase: 'check' });
+      }
+      if (compareVersions(read.version, deps.installedVersion) <= 0) {
+        pending = undefined;
+        return setStatus({ kind: 'upToDate' });
+      }
+      pending = source;
+      return setStatus({ kind: 'available', version: read.version });
     } catch {
       pending = undefined;
       deps.logger.error('UPDATE_CHECK_FAILED', { outcome: 'failure', reason: 'unexpected' });
@@ -214,68 +222,83 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     }
   }
 
-  async function download(update: PendingUpdate, targetAsar: string): Promise<string> {
-    const fetchFn = await deps.createFetch();
-    const bytes = await downloadVerifiedArchive(
-      fetchFn,
-      fileUrlIn(update.folder, update.file.name),
-      sha512Expectation(update.file),
-      { timeoutMs: ARCHIVE_TIMEOUT_MS, maxBytes: MAX_UPDATE_ARCHIVE_BYTES },
-    );
-    const staged = `${targetAsar}.new`;
-    await writeFile(staged, bytes);
-    return staged;
+  function failApply(reason: string): void {
+    pending = undefined;
+    deps.logger.error('UPDATE_APPLY_FAILED', { outcome: 'failure' });
+    setStatus(failedApplyStatus(reason));
   }
 
-  async function apply(): Promise<UpdateStatus> {
-    if (busy || status.kind !== 'available' || pending === undefined) return status;
-    busy = true;
-    setStatus({ kind: 'applying' });
-    const update = pending;
-    const target = deps.targetAsar;
-    let staged: string | undefined;
+  /** Follows the script's status file until it is ready to swap, or failed. */
+  async function watch(): Promise<void> {
+    let last = '';
+    let changedAt = Date.now();
     try {
-      staged = await download(update, target ?? failNotUpdatable());
-      const { restart } = deps.install(staged);
-      if (restart) {
-        deps.quit();
-        return status;
+      for (;;) {
+        await new Promise<void>((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+        const raw = await readStatusFile();
+        const line = raw === undefined ? undefined : raw.trim();
+        if (line !== undefined && line !== '' && line !== last) {
+          last = line;
+          changedAt = Date.now();
+          const { stage, text } = parseStatusLine(line);
+          if (stage === 'ready') {
+            // The user confirmed "install and restart" when starting the update.
+            await writeFile(goFile, '');
+            setStatus(applyingStatus(stage, text));
+            deps.quit();
+            return;
+          }
+          if (stage === 'failed') {
+            failApply(text);
+            return;
+          }
+          setStatus(applyingStatus(stage, text));
+        } else if (Date.now() - changedAt > STALL_LIMIT_MS) {
+          failApply('The update stopped responding');
+          return;
+        }
       }
-      pending = undefined;
-      return setStatus({ kind: 'upToDate' });
     } catch {
-      if (staged !== undefined) await rm(staged, { force: true }).catch(() => undefined);
-      pending = undefined;
-      deps.logger.error('UPDATE_APPLY_FAILED', { outcome: 'failure' });
-      return setStatus({ kind: 'failed', phase: 'apply' });
+      failApply('');
     } finally {
       busy = false;
     }
   }
 
-  return { getStatus: () => status, check, apply };
-}
+  async function apply(): Promise<UpdateStatus> {
+    if (busy || status.kind !== 'available' || pending === undefined) return status;
+    busy = true;
+    const source = pending;
+    setStatus({ kind: 'applying' });
+    try {
+      await rm(deps.statusFile, { force: true });
+      await rm(goFile, { force: true });
+      await deps.launch(source);
+    } catch (error) {
+      busy = false;
+      failApply(error instanceof Error ? error.message : '');
+      return status;
+    }
+    void watch();
+    return status;
+  }
 
-/**
- * Whether `file` may be swapped into this install.
- *
- * `undefined` means yes. An empty list means no, and refuses to guess why - the
- * archive does not say which runtime layer it needs, or this install cannot
- * describe the one it has. Neither case is treated as compatible: with no
- * counter behind it any more, a descriptor is the only evidence there is. A
- * non-empty list names the parts that differ, which the Settings tab shows.
- */
-async function checkRuntime(
-  file: UpdateFile,
-  currentRuntime: () => Promise<RuntimeDescriptor | undefined>,
-): Promise<readonly UpdateRuntimePart[] | undefined> {
-  if (file.runtime === undefined) return [];
-  const installed = await currentRuntime();
-  if (installed === undefined) return [];
-  const changed = describeRuntimeDifferences(installed, file.runtime);
-  return changed.length === 0 ? undefined : changed;
-}
+  async function resumeAfterUpdate(): Promise<void> {
+    if (!deps.startedByUpdate) return;
+    try {
+      const raw = await readStatusFile();
+      if (raw === undefined) return;
+      const { stage, text } = parseStatusLine(raw);
+      if (stage === 'swapped') {
+        await writeFile(deps.statusFile, `started|${deps.installedVersion}`);
+        setStatus({ kind: 'updated', version: deps.installedVersion });
+      } else if (stage === 'reverted' || stage === 'failed') {
+        setStatus(failedApplyStatus(text));
+      }
+    } catch {
+      deps.logger.warn('UPDATE_APPLY_FAILED', { outcome: 'failure', reason: 'unexpected' });
+    }
+  }
 
-function failNotUpdatable(): never {
-  throw new Error('not updatable in place');
+  return { getStatus: () => status, check, apply, resumeAfterUpdate };
 }

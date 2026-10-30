@@ -62,6 +62,7 @@ import './styles/chat.css';
 import './styles/settings.css';
 import './styles/history.css';
 import './styles/usage.css';
+import { setContributedToolRenderers } from './chat/toolRegistry';
 import { installTextfieldPlaceholderColor } from './lib/textfieldPlaceholder';
 import { mountMainShell } from './shell/mainShell';
 
@@ -80,6 +81,12 @@ async function render(): Promise<void> {
   theme.setAttribute('color', 'light');
   theme.setAttribute('scale', 'medium');
   root.appendChild(theme);
+
+  // The shell paints transcripts, so the add-ons' tool renderers must be known first.
+  const contributions = await window.daisy.addons.contributions();
+  if (contributions.ok) {
+    setContributedToolRenderers(contributions.addons);
+  }
 
   await mountMainShell(theme);
 }
