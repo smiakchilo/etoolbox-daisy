@@ -9,13 +9,13 @@ table-only: true
 # Lighthouse check
 
 The input is optional: a web address, or nothing (the page on screen). It may also name
-the categories ("accessibility only") or a desktop run.
+the categories ("accessibility only") or a mobile run.
 
 ## Procedure
 
 1. Call `page_audit` **once**. Pass `url` only when the user gave one. Pass `categories`
-   only when the user narrowed them, and `formFactor: "desktop"` only when they asked for
-   desktop. Do not retry a successful audit.
+   only when the user narrowed them, and `formFactor: "mobile"` only when they asked for a
+   mobile run. Do not retry a successful audit.
 2. If the call fails with `select_server`, ask the user to open a page or pick a host and
    stop. Any other failure is reported in one sentence with the tool's own reason.
 3. Add nothing. `page_audit` puts the whole report on screen itself, as one structured

@@ -42,7 +42,7 @@ import {
  * looks like, and the application only knows the generic report shape.
  */
 
-export const PAGE_AUDIT_DEFAULT_FORM_FACTOR: PageAuditFormFactor = 'mobile';
+export const PAGE_AUDIT_DEFAULT_FORM_FACTOR: PageAuditFormFactor = 'desktop';
 
 export const pageAuditArgsSchema = z
   .object({
