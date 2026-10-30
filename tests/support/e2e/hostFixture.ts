@@ -36,6 +36,8 @@ export interface FixtureServerOptions {
    * Return `undefined` to fall through to `render`.
    */
   readonly respond?: (url: string) => FixtureResponse | undefined;
+  /** Extra headers sent with every response (e.g. `cache-control: no-store`). */
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /** A loopback server that answers every path with `render(url)` (recording the paths). */
@@ -49,21 +51,49 @@ export async function startFixtureServer(
     requests.push(url);
     const override = options.respond?.(url);
     if (override !== undefined) {
-      res.writeHead(200, { 'content-type': override.contentType, ...override.headers });
+      res.writeHead(200, {
+        'content-type': override.contentType,
+        ...options.headers,
+        ...override.headers,
+      });
       res.end(override.body);
       return;
     }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...options.headers });
     res.end(render(url));
   });
+  return { server, origin: await listenOnLoopback(server), requests };
+}
+
+/**
+ * Starts an already-built `Server` on a random loopback port and returns its
+ * origin. For a fixture whose responses the spec drives itself (holding a
+ * request open, for instance) and which therefore cannot be handed to
+ * `startFixtureServer`'s always-answering `render`.
+ */
+export async function listenOnLoopback(server: Server): Promise<string> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
   if (address === null || typeof address === 'string') throw new Error('no server port');
-  return { server, origin: `http://127.0.0.1:${String(address.port)}`, requests };
+  return `http://127.0.0.1:${String(address.port)}`;
 }
 
 export function closeFixtureServer(server: Server): Promise<void> {
   return new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
+/**
+ * Switches the pane to a configured host through the same IPC the app's own
+ * History resume and hosts picker use (not a toolbar click): the specs here
+ * need the pane on some host without depending on which host is showing.
+ */
+export async function switchHost(page: Page, serverId: string): Promise<void> {
+  await page.evaluate(async (id: string) => {
+    const daisy = Reflect.get(window, 'daisy') as {
+      browser: { switchServer(serverId: string): Promise<unknown> };
+    };
+    await daisy.browser.switchServer(id);
+  }, serverId);
 }
 
 export interface HostFixture {

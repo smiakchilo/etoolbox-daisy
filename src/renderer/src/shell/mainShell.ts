@@ -4,6 +4,7 @@ import { clearLastChat, loadLastChat, saveLastChat } from '../lib/lastChatStore'
 import { loadSettingsSnapshot } from '../lib/settingsClient';
 import { subscribeUpdateStatus } from '../lib/updateStatusFeed';
 import {
+  isCancelledNavigation,
   parseNavigationTarget,
   type AgentChatHistoryEntry,
   type AppShortcutAction,
@@ -403,8 +404,10 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
    * The chat pane holds a send until the switch settles, so a prompt is not
    * answered against the previous page. A failed switch is reported in the
    * pane's status row and the conversation is resumed anyway: its reads then fail
-   * the way any read against an unloaded page does. Only the latest resume's
-   * failure is reported, so a superseded click cannot raise a stale error.
+   * the way any read against an unloaded page does. A *cancelled* switch is not
+   * a failure and raises nothing (see `switchToHistoryHost`). Only the latest
+   * resume's failure is reported, so a superseded click cannot raise a stale
+   * error.
    */
   async function resumeHistoryConversation(entry: AgentChatHistoryEntry): Promise<void> {
     browserPane.panelHost.close();
@@ -414,12 +417,27 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     await chatPane.openConversationFromHistory(entry.chatId, { hostSettled });
   }
 
-  /** Moves the browser to a history entry's host. Settles whether or not it loaded. */
+  /**
+   * Moves the browser to a history entry's host. Settles whether or not it
+   * loaded.
+   *
+   * The pane itself reveals the page the switch loads - it dismisses an open
+   * panel and clears the Home veil on the switch's `switching` edge, the same
+   * way any other application-caused navigation does, so a History resume
+   * started from the Home screen (or from a panel opened over it) cannot leave
+   * the newly loaded page hidden underneath.
+   *
+   * Only a genuine failure is reported. Chromium aborts a load whose page
+   * starts its own navigation (AEM author's root redirect, an SSO hop), which
+   * is reported as the cancellation codes but leaves the destination on
+   * screen - the toolbar suppresses exactly those (`isCancelledNavigation`), so
+   * the resume path must not paint them as "Couldn't load …" either.
+   */
   async function switchToHistoryHost(entry: AgentChatHistoryEntry, resume: number): Promise<void> {
     if (entry.serverId === undefined || !hosts.some((host) => host.id === entry.serverId)) return;
     try {
       const switched = await window.daisy.browser.switchServer(entry.serverId);
-      if (!switched.ok && resume === latestResume) {
+      if (!switched.ok && !isCancelledNavigation(switched) && resume === latestResume) {
         browserPane.surfaceStatus.showError(switched.error.message);
       }
     } catch (error) {

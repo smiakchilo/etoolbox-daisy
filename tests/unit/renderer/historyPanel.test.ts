@@ -340,16 +340,16 @@ describe('History panel focus', () => {
     );
     const panel = buildPanel();
     await openPanel(panel);
-    const resume = makeFocusable(require(byTestId('history-resume')));
+    const firstOpen = require(byTestId('history-open'));
 
     makeFocusable(require(byTestId('history-panel-close'))).focus();
-    expect(document.activeElement).not.toBe(resume);
+    expect(document.activeElement).not.toBe(firstOpen);
 
     await panel.reload();
 
-    // Buttons outlive a reload, so the reader keeps the position they were on.
-    expect(document.activeElement).toBe(resume);
-    expect(rows()[0]?.contains(resume)).toBe(true);
+    // The row's open button is a fresh element per repaint, so the position is
+    // re-established on the new first row rather than kept by identity.
+    expect(document.activeElement).toBe(rows()[0]?.querySelector(byTestId('history-open')));
   });
 
   it('keeps the first row focused across a close and reopen', async () => {
@@ -358,15 +358,58 @@ describe('History panel focus', () => {
     );
     const panel = buildPanel();
     await openPanel(panel);
-    const resume = makeFocusable(require(byTestId('history-resume')));
-    resume.focus();
+    require(byTestId('history-open')).focus();
 
     panel.close();
     panel.open();
     await flushMicrotasks();
 
-    expect(document.activeElement).toBe(resume);
-    expect(rows()[0]?.contains(resume)).toBe(true);
+    // The reopen repaints the list, so the row - not the replaced element - is
+    // what stays focused.
+    const firstRow = rows()[0];
+    expect(document.activeElement).toBe(firstRow?.querySelector(byTestId('history-open')));
+    expect(firstRow?.contains(document.activeElement)).toBe(true);
+  });
+});
+
+describe('History panel resume', () => {
+  it('resumes the conversation of the row that is clicked', async () => {
+    listConversations.mockResolvedValueOnce(
+      page([entry('chat-1', 'first'), entry('chat-2', 'second')]),
+    );
+    const onResume = vi.fn();
+    const panel = createHistoryPanel({
+      status,
+      onResume,
+      onDelete: vi.fn(() => Promise.resolve()),
+      onDismiss: vi.fn(),
+    });
+    await openPanel(panel);
+    const [, secondRow] = rows();
+    if (secondRow === undefined) throw new Error('two rows expected');
+
+    secondRow.click();
+
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(onResume).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'chat-2' }));
+  });
+
+  it('does not resume when a travelling action is clicked', async () => {
+    listConversations.mockResolvedValueOnce(page([entry('chat-1', 'first')]));
+    const onResume = vi.fn();
+    const panel = createHistoryPanel({
+      status,
+      onResume,
+      onDelete: vi.fn(() => Promise.resolve()),
+      onDismiss: vi.fn(),
+    });
+    await openPanel(panel);
+
+    require(byTestId('history-reveal')).click();
+    require(byTestId('history-delete')).click();
+
+    expect(onResume).not.toHaveBeenCalled();
+    expect(showPrompt).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -380,15 +423,20 @@ describe('History panel actions', () => {
     const [firstRow, secondRow] = rows();
     if (firstRow === undefined || secondRow === undefined) throw new Error('two rows expected');
 
-    // Exactly one set for the whole list - never one per row - first anchored
-    // on row one.
+    // Exactly one set of the *other* actions for the whole list - never one per
+    // row - first anchored on row one. Resuming is the row itself, so it is not
+    // in that set: there is no Resume control at all.
     expect(document.querySelectorAll(byTestId('history-actions'))).toHaveLength(1);
-    expect(document.querySelectorAll(byTestId('history-resume'))).toHaveLength(1);
+    expect(document.querySelectorAll(byTestId('history-reveal'))).toHaveLength(1);
+    expect(document.querySelectorAll(byTestId('history-resume'))).toHaveLength(0);
     expect(travelling()?.parentElement).toBe(firstRow);
 
     hover(secondRow);
     expect(travelling()?.parentElement).toBe(secondRow);
-    expect(document.querySelectorAll(byTestId('history-resume'))).toHaveLength(1);
+    expect(document.querySelectorAll(byTestId('history-reveal'))).toHaveLength(1);
+
+    // Each row carries its own open control, and one travels over them.
+    expect(document.querySelectorAll(byTestId('history-open'))).toHaveLength(2);
   });
 
   it('acts on the row it has travelled to', async () => {

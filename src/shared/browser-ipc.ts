@@ -242,6 +242,28 @@ export function parseBrowserIpcVoidResult(candidate: unknown): BrowserIpcVoidRes
   return browserIpcVoidResultSchema.parse(candidate);
 }
 
+/**
+ * Whether a failed navigation result is Chromium reporting a *cancelled* load
+ * rather than a failure to display the destination. Chromium spells both
+ * cancellations `ERR_ABORTED`/`ERR_FAILED`: the pane was stopped by a newer
+ * navigation (or the user's Stop, which Electron 44 reports as `ERR_FAILED`),
+ * or the page's own navigation - an SSO redirect, an AEM author root hop -
+ * took the load over. None of them means the page could not be loaded, and in
+ * the redirect case the very document that aborted the request is on screen.
+ *
+ * `hostView.ts` filters the same two codes out of its navigation commands, so
+ * every consumer that paints a navigation failure must consult this instead of
+ * re-deriving the rule - the toolbar's `handleVoidResult` and the shell's
+ * History host switch both do.
+ */
+export function isCancelledNavigation(result: BrowserIpcVoidResult): boolean {
+  return (
+    !result.ok &&
+    result.error.code === 'network_error' &&
+    (result.error.errorCode === 'ERR_ABORTED' || result.error.errorCode === 'ERR_FAILED')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------

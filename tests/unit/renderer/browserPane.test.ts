@@ -116,6 +116,11 @@ function emitAgentNavigation(): void {
   for (const listener of agentNavigationListeners) listener();
 }
 
+/** Emits one switch-state push to every listener (like one IPC event). */
+function emitSwitchState(switching: boolean): void {
+  for (const listener of switchListeners) listener({ switching });
+}
+
 describe('createBrowserPane page panel', () => {
   it('stacks the message row below the view slot, outside the region a panel replaces', () => {
     const pane = build();
@@ -684,6 +689,56 @@ describe('createBrowserPane navigation failure recovery', () => {
 
     expect(home?.hidden).toBe(true);
     expect(viewHost?.hidden).toBe(false);
+  });
+
+  it('reveals the page when an application-caused host switch starts', () => {
+    vi.useFakeTimers();
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    const other = createPanel({
+      title: 'History',
+      closeAriaLabel: 'Close history',
+      content: document.createElement('div'),
+      onDismiss: () => pane.panelHost.close(),
+    });
+    pane.appendPanel(other);
+    emitNavigationState();
+
+    // The reported sequence: Home over a loaded page, then History over Home.
+    // Resuming a conversation switches the host straight through
+    // `browser.switchServer` - no toolbar action, so nothing but the switch's
+    // own state edge can reveal the destination.
+    pane.element.querySelector<HTMLElement>(byTestId('browser-home'))?.click();
+    pane.panelHost.open(other);
+    expect(viewHost?.hidden).toBe(true);
+
+    emitSwitchState(true);
+
+    expect(other.isOpen).toBe(false);
+    expect(pane.panelHost.isActive(other)).toBe(false);
+    expect(home?.hidden).toBe(true);
+    expect(viewHost?.hidden).toBe(false);
+
+    // Settle the toolbar's debounced loading row so no timer outlives the test.
+    emitSwitchState(false);
+    vi.advanceTimersByTime(BANNER_TRANSITION_DURATION_MS);
+  });
+
+  it('leaves the veil up when a switch merely settles (the user pressed Home mid-load)', () => {
+    const pane = build();
+    const viewHost = pane.element.querySelector<HTMLElement>('.browser-view-host');
+    const home = pane.element.querySelector<HTMLElement>('.browser-home');
+    emitNavigationState();
+    pane.element.querySelector<HTMLElement>(byTestId('browser-home'))?.click();
+    expect(home?.hidden).toBe(false);
+
+    // Only the `switching` edge is a navigation starting; a switch ending is
+    // not one, so a veil the user re-raised during the load stays up.
+    emitSwitchState(false);
+
+    expect(home?.hidden).toBe(false);
+    expect(viewHost?.hidden).toBe(true);
   });
 });
 

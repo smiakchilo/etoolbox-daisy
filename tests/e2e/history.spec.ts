@@ -12,6 +12,12 @@ import {
 import { appSettingsSchema, defaultAppSettings } from '../../src/shared';
 import { mainEntry } from '../support/e2e/app';
 import { waitForComposerReady } from '../support/e2e/composer';
+import {
+  closeFixtureServer,
+  listenOnLoopback,
+  startFixtureServer,
+  switchHost,
+} from '../support/e2e/hostFixture';
 import { createLaunchProfile, writeSettings } from '../support/e2e/profile';
 import { readRevealedPaths, stubShowItemInFolder } from '../support/e2e/shellStubs';
 import { byTestId } from '../support/selectors';
@@ -82,6 +88,8 @@ test.describe('History panel', () => {
     if (address === null || typeof address === 'string') throw new Error('no port');
     const origin = `http://127.0.0.1:${String(address.port)}`;
 
+    const echoId = randomUUID();
+
     const base = defaultAppSettings();
     writeSettings(
       home,
@@ -90,7 +98,7 @@ test.describe('History panel', () => {
         hosts: [
           ...base.hosts,
           {
-            id: randomUUID(),
+            id: echoId,
             label: 'Echo',
             origin,
             color: { kind: 'swatch', swatch: 'blue' },
@@ -103,7 +111,10 @@ test.describe('History panel', () => {
     const app = await electron.launch({ args: [mainEntry], env });
     try {
       const page = await app.firstWindow();
-      await page.locator(`${byTestId('hosts-item')}[data-origin="${origin}"]`).click();
+      // Switch through the awaited IPC, not the picker's fire-and-forget click:
+      // the chat records the host it is first used on, and a prompt sent while
+      // the switch is still settling records none.
+      await switchHost(page, echoId);
       await waitForComposerReady(page, { expectSendVisible: false });
 
       // Two conversations, so History has something to distinguish.
@@ -130,21 +141,27 @@ test.describe('History panel', () => {
       await expect(firstRow.locator('.history-item__server-label')).toHaveText('Echo');
       await expect(secondRow.locator('.history-item__server-label')).toHaveText('Echo');
 
-      // One travelling set of actions for the whole list, never one per row: it
-      // starts on the top row, whose Resume the panel focused when its first
-      // batch painted, and it is hidden while that row is neither hovered nor
-      // focused.
+      // One travelling set of the *other* actions (Reveal / Delete) for the
+      // whole list, never one per row: it starts on the top row, whose open
+      // button the panel focused when its first batch painted, and it is hidden
+      // while that row is neither hovered nor focused.
       await expect(page.locator(byTestId('history-actions'))).toHaveCount(1);
-      await expect(secondRow.locator(byTestId('history-resume'))).toBeVisible();
+      await expect(secondRow.locator(byTestId('history-reveal'))).toBeVisible();
       await page.locator(byTestId('history-panel-close')).focus();
-      await expect(secondRow.locator(byTestId('history-resume'))).toBeHidden();
+      await expect(secondRow.locator(byTestId('history-reveal'))).toBeHidden();
 
       // Reaching another row carries the actions to it, leaving no buttons at
       // all on the rows it has left.
       await firstRow.hover();
       await expect(firstRow.locator(byTestId('history-actions'))).toHaveCount(1);
-      await expect(firstRow.locator(byTestId('history-resume'))).toBeVisible();
-      await expect(secondRow.locator(byTestId('history-resume'))).toHaveCount(0);
+      await expect(firstRow.locator(byTestId('history-reveal'))).toBeVisible();
+      await expect(secondRow.locator(byTestId('history-reveal'))).toHaveCount(0);
+
+      // Resuming is the row itself: no Resume control is left anywhere, and
+      // every row carries its own open button instead.
+      await expect(page.locator(byTestId('history-resume'))).toHaveCount(0);
+      await expect(page.locator(byTestId('history-open'))).toHaveCount(2);
+      await expect(firstRow.locator(byTestId('history-actions'))).toHaveCount(1);
 
       // Reveal in folder and the chat footer's reveal-log control are the same
       // action, so they must wear the same glyph: two names for one thing cannot
@@ -155,20 +172,14 @@ test.describe('History panel', () => {
         await glyph(page.locator(byTestId('chat-reveal-log'))),
       );
 
-      // Resume is an icon button wearing the replay glyph, and the glyph is a
-      // *registered* custom element - not an unknown tag (which jsdom cannot
-      // prove, so it is asserted here against the built app).
-      await expect(firstRow.locator(`${byTestId('history-resume')} sp-icon-replay`)).toHaveCount(1);
-      expect(await page.evaluate(() => customElements.get('sp-icon-replay') !== undefined)).toBe(
-        true,
-      );
-
       // Newest first: the second chat sits above the first.
       const order = await page.locator('.history-item__title').allInnerTexts();
       expect(order[0]).toContain('second question about assets');
 
-      // Resume the first: the panel closes and its transcript returns.
-      await firstRow.locator(byTestId('history-resume')).click();
+      // Clicking the row resumes it: the panel closes and the transcript
+      // returns. The click lands on the row's text (its center), never on the
+      // travelling action strip at the right edge.
+      await firstRow.click();
       await expect(page.locator(byTestId('history-panel'))).not.toBeVisible({ timeout: 30_000 });
       await expect(page.locator('.chat-message--user')).toContainText(
         'first question about media',
@@ -287,14 +298,9 @@ test.describe('History panel', () => {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end('<!doctype html><title>other</title><p>ok</p>');
     });
-    const originOf = async (server: Server): Promise<string> => {
-      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-      const address = server.address();
-      if (address === null || typeof address === 'string') throw new Error('no port');
-      return `http://127.0.0.1:${String(address.port)}`;
-    };
-    const echoOrigin = await originOf(echo);
-    const otherOrigin = await originOf(other);
+    const echoOrigin = await listenOnLoopback(echo);
+    const otherOrigin = await listenOnLoopback(other);
+    const echoId = randomUUID();
     const otherId = randomUUID();
 
     const base = defaultAppSettings();
@@ -305,7 +311,7 @@ test.describe('History panel', () => {
         hosts: [
           ...base.hosts,
           {
-            id: randomUUID(),
+            id: echoId,
             label: 'Echo',
             origin: echoOrigin,
             color: { kind: 'swatch', swatch: 'blue' },
@@ -325,27 +331,23 @@ test.describe('History panel', () => {
     const app = await electron.launch({ args: [mainEntry], env });
     try {
       const page = await app.firstWindow();
-      await page.locator(`${byTestId('hosts-item')}[data-origin="${echoOrigin}"]`).click();
+      // Awaited so the chat records the host it is first used on (a prompt sent
+      // mid-switch records none).
+      await switchHost(page, echoId);
       await waitForComposerReady(page, { expectSendVisible: false });
       await sendViaComposer(page, 'a question asked on echo');
 
       // Leave the chat and the host: an empty conversation, with the pane on Other.
       await page.locator(byTestId('chat-new-session')).click();
       await expect(page.locator('.chat-message--user')).toHaveCount(0, { timeout: 30_000 });
-      await page.evaluate(async (serverId) => {
-        const daisy = Reflect.get(window, 'daisy') as {
-          browser: { switchServer(id: string): Promise<unknown> };
-        };
-        await daisy.browser.switchServer(serverId);
-      }, otherId);
+      await switchHost(page, otherId);
 
       // From here on Echo never answers.
       hang = true;
       await page.locator(byTestId('chat-history')).click();
       await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 30_000 });
       const target = row(page, 'a question asked on echo');
-      await target.hover();
-      await target.locator(byTestId('history-resume')).click();
+      await target.click();
 
       // The host switch is in flight - Echo has the request and is holding it -
       // and the transcript is already on screen, not waiting behind it.
@@ -369,6 +371,197 @@ test.describe('History panel', () => {
       await app.close();
       echo.close();
       other.close();
+    }
+  });
+
+  test('resuming from History over the Home veil reveals the page the host switch loads', async () => {
+    test.setTimeout(180_000);
+    const env = createLaunchProfile(scratchBase, { fakeAgent: true }).env;
+    const home = env['USERPROFILE'] ?? '';
+
+    // A host whose root page immediately navigates itself on to `/landed` -
+    // the shape of AEM author's own root hop, and the case Chromium reports as
+    // a *cancelled* load (ERR_ABORTED) even though the destination loads fine.
+    const redirecting = await startFixtureServer(
+      (url) =>
+        url.startsWith('/landed')
+          ? '<!doctype html><title>landed</title><p>ok</p>'
+          : '<!doctype html><title>hop</title><script>location.replace("/landed")</script>',
+      // The resume re-loads the root: Chromium must ask the server again rather
+      // than answer from its heuristic HTML cache, or the test observes nothing.
+      { headers: { 'cache-control': 'no-store' } },
+    );
+    const other = await startFixtureServer(() => '<!doctype html><title>other</title><p>ok</p>');
+    const redirectOrigin = redirecting.origin;
+    const otherOrigin = other.origin;
+    const redirectId = randomUUID();
+    const otherId = randomUUID();
+
+    const base = defaultAppSettings();
+    writeSettings(
+      home,
+      appSettingsSchema.parse({
+        ...base,
+        hosts: [
+          ...base.hosts,
+          {
+            id: redirectId,
+            label: 'Redirect',
+            origin: redirectOrigin,
+            color: { kind: 'swatch', swatch: 'blue' },
+            revision: 0,
+          },
+          {
+            id: otherId,
+            label: 'Other',
+            origin: otherOrigin,
+            color: { kind: 'swatch', swatch: 'green' },
+            revision: 0,
+          },
+        ],
+      }),
+    );
+
+    const app = await electron.launch({ args: [mainEntry], env });
+    try {
+      const page = await app.firstWindow();
+      const addressInput = page.locator(`${byTestId('browser-address')} input`);
+      // Awaited so the chat records the host it is first used on.
+      await switchHost(page, redirectId);
+      await waitForComposerReady(page, { expectSendVisible: false });
+      await sendViaComposer(page, 'a question asked on the redirecting host');
+
+      // Leave the host (the chat keeps the one it was used on), then veil the
+      // page with Home.
+      await switchHost(page, otherId);
+      await expect
+        .poll(async () => await addressInput.inputValue(), { timeout: 60_000 })
+        .toBe(`${otherOrigin}/`);
+      await page.locator(byTestId('browser-home')).click();
+      await expect(page.locator('.browser-home')).toBeVisible();
+      await expect(page.locator('.browser-view-host')).toBeHidden();
+
+      // The reported sequence: History, opened from the home screen, then
+      // Resume - which switches the host straight through `browser.switchServer`.
+      await page.locator(byTestId('home-history')).click();
+      await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 30_000 });
+      const target = row(page, 'a question asked on the redirecting host');
+      await target.click();
+
+      // The destination is on screen: the veil went with the switch, and the
+      // page the host's root hopped to is what loaded. The address is the proof
+      // the resume re-loaded the host (a cached document may answer it without
+      // a second request, so the server's hit count is not used here).
+      await expect(page.locator('.browser-home')).toBeHidden({ timeout: 60_000 });
+      await expect(page.locator('.browser-view-host')).toBeVisible();
+      await expect
+        .poll(async () => await addressInput.inputValue(), { timeout: 60_000 })
+        .toBe(`${redirectOrigin}/landed`);
+
+      // And the cancelled load was not reported as a failure: the pane's
+      // surface row stays empty. Wait for the switch to settle first (the
+      // Refresh control replaces Stop), since its outcome is what would raise
+      // the error.
+      await expect(page.locator(byTestId('browser-refresh'))).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator('.surface-status-banner')).not.toHaveAttribute('open', '');
+    } finally {
+      await app.close();
+      await closeFixtureServer(redirecting.server);
+      await closeFixtureServer(other.server);
+    }
+  });
+
+  test('a host switch cancelled while resuming from History is not reported as an error', async () => {
+    test.setTimeout(180_000);
+    const env = createLaunchProfile(scratchBase, { fakeAgent: true }).env;
+    const home = env['USERPROFILE'] ?? '';
+
+    // The chat's host answers until `hang` is set, then holds every request
+    // open, so the resume's switch stays in flight until it is stopped.
+    let hang = false;
+    const held: ServerResponse[] = [];
+    const slow = createServer((_req, res) => {
+      if (hang) {
+        held.push(res);
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        // The resume re-loads the root: it must reach the server (and hang)
+        // rather than be answered from Chromium's heuristic HTML cache.
+        'cache-control': 'no-store',
+      });
+      res.end('<!doctype html><title>slow</title><p>ok</p>');
+    });
+    const other = await startFixtureServer(() => '<!doctype html><title>other</title><p>ok</p>');
+    const slowOrigin = await listenOnLoopback(slow);
+    const otherOrigin = other.origin;
+    const slowId = randomUUID();
+    const otherId = randomUUID();
+
+    const base = defaultAppSettings();
+    writeSettings(
+      home,
+      appSettingsSchema.parse({
+        ...base,
+        hosts: [
+          ...base.hosts,
+          {
+            id: slowId,
+            label: 'Slow',
+            origin: slowOrigin,
+            color: { kind: 'swatch', swatch: 'blue' },
+            revision: 0,
+          },
+          {
+            id: otherId,
+            label: 'Other',
+            origin: otherOrigin,
+            color: { kind: 'swatch', swatch: 'green' },
+            revision: 0,
+          },
+        ],
+      }),
+    );
+
+    const app = await electron.launch({ args: [mainEntry], env });
+    try {
+      const page = await app.firstWindow();
+      const addressInput = page.locator(`${byTestId('browser-address')} input`);
+      // Awaited so the chat records the host it is first used on.
+      await switchHost(page, slowId);
+      await waitForComposerReady(page, { expectSendVisible: false });
+      await sendViaComposer(page, 'a question asked on the slow host');
+
+      await switchHost(page, otherId);
+      await expect
+        .poll(async () => await addressInput.inputValue(), { timeout: 60_000 })
+        .toBe(`${otherOrigin}/`);
+      await page.locator(byTestId('browser-home')).click();
+      await expect(page.locator('.browser-home')).toBeVisible();
+
+      // The resume's switch to Slow never gets an answer, so it is still in
+      // flight when the user stops it - Electron rejects the pending load with
+      // ERR_FAILED, which is a *cancellation*, not a failure to report.
+      hang = true;
+      const heldBeforeResume = held.length;
+      await page.locator(byTestId('home-history')).click();
+      await expect(page.locator(byTestId('history-panel'))).toBeVisible({ timeout: 30_000 });
+      const target = row(page, 'a question asked on the slow host');
+      await target.click();
+      await expect.poll(() => held.length, { timeout: 60_000 }).toBeGreaterThan(heldBeforeResume);
+
+      // The switch already revealed its destination over the veil.
+      await expect(page.locator('.browser-home')).toBeHidden();
+
+      await page.locator(byTestId('browser-stop')).click();
+      // The switch has settled once the toolbar is back to Refresh.
+      await expect(page.locator(byTestId('browser-refresh'))).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator('.surface-status-banner')).not.toHaveAttribute('open', '');
+    } finally {
+      await app.close();
+      slow.close();
+      await closeFixtureServer(other.server);
     }
   });
 

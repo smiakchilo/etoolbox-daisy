@@ -28,14 +28,20 @@ import type { AgentChatHistoryEntry } from '../../../shared';
  * A reload (open, or the settle of a delete) starts a fresh scan and
  * supersedes any still-running one.
  *
- * The rows carry no buttons of their own: **one set of actions travels**.
- * It is hidden only when its row is neither hovered nor focused, and it is
- * re-anchored into whichever row the reader points at or tabs to
- * (`mouseenter`/`focusin`), so hovering a row reveals
- * `Resume conversation` / `Reveal in folder` / `Delete conversation` for
+ * The rows carry no buttons of their own for the conversation itself: **a click
+ * on the row resumes it**. The row's text is a real button (so Enter/Space work
+ * and the row is a proper tab stop), and the row also resumes on a click in its
+ * own padding, so "click the entry" is the whole of the affordance - there is
+ * no separate Resume control to find.
+ *
+ * The two *other* actions travel: **one set for the whole list**. It is hidden
+ * only when its row is neither hovered nor focused, and it is re-anchored into
+ * whichever row the reader points at or tabs to (`mouseenter`/`focusin`), so
+ * hovering a row reveals `Reveal in folder` / `Delete conversation` for
  * exactly that row - and no other row reserves the space twice. (Anchoring on
- * focus keeps the buttons keyboard-reachable too: the row is a tab stop, and
- * the traveller follows it.)
+ * focus keeps the buttons keyboard-reachable too: the row's open button is a
+ * tab stop, and the traveller follows it.) A click inside that strip is the
+ * button's own action, never a resume of the row it happens to sit in.
  *
  * Delete asks for confirmation in the pane's message alert banner (the shared
  * one-button prompt the Settings panel uses) before calling back; the shell
@@ -62,7 +68,10 @@ export interface HistoryPanelOptions {
    * panel.
    */
   readonly status: StatusBannerSink;
-  /** Opens `entry`'s conversation. The shell repaints it and switches the browser host. */
+  /**
+   * Opens `entry`'s conversation - a click (or Enter/Space) on the row. The
+   * shell repaints it and switches the browser host.
+   */
   readonly onResume: (entry: AgentChatHistoryEntry) => void;
   /**
    * Deletes `entry`'s stored conversation. The panel awaits this, then reloads
@@ -113,7 +122,7 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
     surfaceClassName: 'history-panel',
     testId: 'history-panel',
     closeButtonClassName: 'history-panel__close',
-    autofocusSelector: '.history-item__resume',
+    autofocusSelector: '.history-item__main',
     content: list,
     onDismiss(): void {
       options.onDismiss();
@@ -154,25 +163,6 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
         el('span', { attrs: { class: 'history-item__server-label' }, text: server.label }),
       ],
     });
-  }
-
-  function buildResumeButton(): HTMLElement {
-    const resume = el('sp-action-button', {
-      attrs: {
-        quiet: '',
-        class: 'history-item__resume',
-        title: 'Resume conversation',
-        'aria-label': 'Resume conversation',
-        'data-testid': 'history-resume',
-      },
-    });
-    const resumeIcon = document.createElement('sp-icon-replay');
-    resumeIcon.setAttribute('slot', 'icon');
-    resume.append(resumeIcon);
-    resume.addEventListener('click', () => {
-      if (anchoredEntry !== undefined) options.onResume(anchoredEntry);
-    });
-    return resume;
   }
 
   /**
@@ -223,10 +213,10 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
     return remove;
   }
 
-  // The three buttons are built once and merely re-parented: their handlers
-  // read whatever row the traveller currently sits in, so a move never has to
+  // The two buttons are built once and merely re-parented: their handlers read
+  // whatever row the traveller currently sits in, so a move never has to
   // rebuild them - and a button that held focus keeps it.
-  travelling.replaceChildren(buildResumeButton(), buildRevealButton(), buildDeleteButton());
+  travelling.replaceChildren(buildRevealButton(), buildDeleteButton());
 
   /**
    * Moves the travelling actions into `row`, pointing them at `entry`. Called
@@ -248,25 +238,26 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
   }
 
   /**
-   * Moves focus onto the anchored row's Resume - the affordance the panel's
-   * `autofocusSelector` names, which `panel.open()` cannot reach while the list
-   * is still empty. The row is focused first: the actions are `visibility:
-   * hidden` until their row is hovered or focused, and a hidden control cannot
-   * take focus, so reaching the row is what reveals the button that then takes
-   * the caret.
+   * Moves focus onto the anchored row's open control - the affordance the
+   * panel's `autofocusSelector` names, which `panel.open()` cannot reach while
+   * the list is still empty. Reaching that row is also what reveals the
+   * travelling actions (`:focus-within`).
    */
-  function focusAnchoredRowActions(): void {
-    const row = anchoredRow;
-    const resume = travelling.querySelector<HTMLElement>('.history-item__resume');
-    if (row === undefined || resume === null) return;
-    row.focus();
-    resume.focus();
+  function focusAnchoredRow(): void {
+    anchoredRow?.querySelector<HTMLElement>('.history-item__main')?.focus();
   }
 
   function buildItem(entry: AgentChatHistoryEntry): HTMLElement {
     const serverMeta = buildServerMeta(entry);
-    const main = el('div', {
-      attrs: { class: 'history-item__main' },
+    // A real button, so the row's text is a tab stop with Enter/Space for free.
+    // The row's own click handler (below) is what resumes it; this element only
+    // gives the row its keyboard affordance.
+    const open = el('button', {
+      attrs: {
+        class: 'history-item__main',
+        type: 'button',
+        'data-testid': 'history-open',
+      },
       children: [
         el('span', {
           attrs: { class: 'history-item__title' },
@@ -289,11 +280,17 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
       attrs: {
         class: 'history-item',
         role: 'listitem',
-        tabindex: '0',
         'data-testid': 'history-item',
         'data-chat-id': entry.chatId,
       },
-      children: [main],
+      children: [open],
+    });
+    row.addEventListener('click', (event) => {
+      // A click inside the travelling actions is that button's own action,
+      // never a resume of the row it happens to sit in.
+      const target = event.target as Node | null;
+      if (target !== null && travelling.contains(target)) return;
+      options.onResume(entry);
     });
     row.addEventListener('mouseenter', () => {
       anchorActions(row, entry);
@@ -352,11 +349,12 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
       if (pending.length === 0) return;
       if (!committed) {
         // Where focus sat before the repaint: on the close button (a first
-        // open, where the panel's autofocus found no row yet), or on a row, or
-        // on a button of the list about to be replaced. In every one of those
-        // cases the repaint takes the position away, and the first row's
-        // Resume picks it up - the affordance the panel's `autofocusSelector`
-        // intends. A reader who focused something outside the panel keeps it.
+        // open, where the panel's autofocus found no row yet), on a row's open
+        // button, or on one of the list's travelling action buttons. In every
+        // one of those cases the repaint takes the position away, and the first
+        // row's open button picks it up - the affordance the panel's
+        // `autofocusSelector` intends. A reader who focused something outside
+        // the panel keeps it.
         const focusedBefore = document.activeElement;
         const closeButton = panel.element.querySelector<HTMLElement>('.history-panel__close');
         const focusWillBeLost =
@@ -368,7 +366,7 @@ export function createHistoryPanel(options: HistoryPanelOptions): HistoryPanel {
         anchoredEntry = undefined;
         list.replaceChildren();
         appendItems(pending);
-        if (focusWillBeLost) focusAnchoredRowActions();
+        if (focusWillBeLost) focusAnchoredRow();
         committed = true;
       } else {
         appendItems(pending);

@@ -667,17 +667,21 @@ ready and swapped in whole - blanking and refilling it was the visible twitch.
 replaced by `snapshotChatHistoryIds` + `readChatHistoryPage` in
 `src/main/chatHistory.ts`.
 
-The rows carry no buttons of their own: **one set of actions travels**. The
-panel builds `Resume` (the `sp-icon-replay` glyph), `Reveal in folder`
+**A click on the row resumes the conversation** - the row's text is a real
+`<button>` (a tab stop, Enter/Space included), and the row also resumes on a
+click in its own padding, so there is no separate Resume control to find. The
+two *other* actions travel: **one set for the whole list**. The panel builds
+`Reveal in folder`
 (`sp-icon-folder-open-outline`, the chat footer's own `revealJournal` call - the
 two reveal controls wear the same glyph - main derives
 the journal path from the id) and `Delete` once, and re-parents that one element
 into whichever row the reader hovers or tabs to (`mouseenter`/`focusin`), so
 each row reserves the same strip and no row carries a second set; the click
-handlers read the currently-anchored conversation. Visibility is CSS -
-`visibility: hidden` until the anchored row's `:hover`/`:focus-within` - and
-because a hidden control cannot take focus, the panel reaches the row first and
-then the button when it restores the caret after a repaint. **Delete**
+handlers read the currently-anchored conversation. A click inside that strip is
+the button's own action, never a resume of the row it sits in. Visibility is
+CSS - `visibility: hidden` until the anchored row's `:hover`/`:focus-within` -
+and because a hidden control cannot take focus, the panel focuses the row's open
+button when it restores the caret after a repaint. **Delete**
 confirms in the pane's message alert banner. That
 confirmation is the one shared destructive-confirm method
 (`confirmDestructiveAction`, `settings/statusBanner.ts`): a sticky, one-button
@@ -826,15 +830,32 @@ reads from every call). New session and a History resume rebuild it.
 **An application-caused navigation reveals the page over any panel.**
 `browserPane.ts` dismisses its active panel (and clears the Home veil) when a
 navigation *the application* causes begins, so the destination is never hidden
-behind Settings, History or the hosts picker. Two signals reach the one
+behind Settings, History or the hosts picker. Three signals reach the one
 `revealPageForExternalNavigation`: the toolbar's `onNavigationStarted` (a
 transcript link, a typed/selected address, Back/Forward, Refresh - all
-renderer-initiated) and the agent's `browser_navigate`, which main announces
+renderer-initiated), the agent's `browser_navigate`, which main announces
 with the `browser:agent-navigation` push (`browserController.openForAgent`, sent
 once the target has validated) that the app preload exposes as
-`window.daisy.browser.onAgentNavigation`. An in-page navigation produces neither
-- it surfaces only as `browser:state-changed` - so a panel the user opened is
-left alone while the AEM page navigates itself.
+`window.daisy.browser.onAgentNavigation`, and the `browser:switch-state-changed`
+push's `switching` edge. That last one exists because the shell's History resume
+switches the host straight through `browser.switchServer`, with no toolbar
+action to ride on: without it, resuming from the History panel opened over the
+Home veil loaded the page underneath a veil that stayed up (and, on a cancelled
+load, printed a spurious "Couldn't load …" row). Only the server-switch
+controller emits that push, so it is always an application-caused switch. An
+in-page navigation produces none of the three - it surfaces only as
+`browser:state-changed` - so a panel the user opened is left alone while the AEM
+page navigates itself.
+
+**A cancelled load is not a navigation failure.** Chromium spells a load that
+was stopped, superseded or taken over by the page's own navigation
+`ERR_ABORTED`/`ERR_FAILED` (`hostView.ts` filters the same two codes out of its
+Back/Forward/Reload commands). A caller that paints a navigation failure must
+therefore consult `isCancelledNavigation` (`src/shared/browser-ipc.ts`) rather
+than treat every `!ok` result as an error - the toolbar's `handleVoidResult` and
+the shell's History host switch both do. Without it, a host whose root page
+re-navigates itself (AEM author, an SSO hop) left a "Couldn't load …" row on
+screen while the destination had in fact loaded.
 
 **Application-wide keyboard shortcuts have no menu to hang off.** `index.ts`
 clears the application menu, so a shortcut cannot be an accelerator - and the
@@ -2072,7 +2093,31 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4846 passed / 13 skipped** (+1 against the
+Current baseline: **`npm run test` → 4801 passed / 1 failed / 13 skipped**
+(4815 total; the failure is the environment-bound
+`tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
+HEAD because this machine is signed in to Copilot - +2 passed against the 4799
+run below, for **A click on a History row resumes it; Resume leaves the
+action strip** (2026-10-31): the row's text is a real `<button>` and the row
+resumes on a click outside the travelling Reveal/Delete strip, so the Resume
+control (`history-resume`, `sp-icon-replay`) is gone; `historyPanel` +2. Before
+that it was **`npm run test` → 4799 passed / 1 failed / 13 skipped** (4813):
++5 against the 4794
+`page_audit`-desktop run below; the drop from 4846 is the update-model rewrite's
+deleted scripts and their tests, `page_audit` desktop default and that day's
+five **Resuming from History over the Home veil reveals the page, and a
+cancelled switch is not an error** (2026-10-31) cases: `browserPane` +2
+(`browser:switch-state-changed`'s `switching` edge reveals the page, an idle edge
+does not) and `browser-ipc` +3 for the new shared `isCancelledNavigation`
+predicate, which the shell's History host switch now consults so a cancelled
+load no longer paints "Couldn't load …"; built-app `history.spec.ts` +2. See
+§5's "An application-caused navigation reveals the page over any panel", "A
+cancelled load is not a navigation failure" and "A click on the row resumes the
+conversation", and
+`docs/verification/followons-2026-10.md` "Resuming from History over the Home
+veil reveals the page … (2026-10-31)" and "A click on a History row resumes it …
+(2026-10-31)"). Before that it was **`npm run test` →
+4846 passed / 13 skipped** (+1 against the
 4845 below - **the published update lives on its own `update` branch**
 (2026-10-29): `package.json`'s `updates.urls` points at `tree/update`, the
 publish job force-pushes one parentless commit holding exactly that release's

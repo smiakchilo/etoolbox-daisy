@@ -19,6 +19,7 @@ import {
   type BrowserIpcVoidResult,
   type BrowserNavigationState,
   type CertificateBlockedInfo,
+  isCancelledNavigation,
   resolveContextualHostUrl,
   SERVER_SWATCHES,
 } from '../../../shared';
@@ -893,14 +894,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
       // A Stop clicked during a load makes `loadURL` reject. Verified on
       // Electron 44.3.0 (probe in the Step 05 verification records): the
       // rejection arrives as ERR_FAILED. ERR_ABORTED covers other cancellation
-      // paths and earlier Chromium versions. Neither code is produced by a
-      // genuine server-side failure here or AEM QueryBuilder traffic (those map
-      // to ERR_CONNECTION_REFUSED, ERR_TIMED_OUT, ERR_NAME_NOT_RESOLVED…), so
-      // suppressing them cannot hide a real "couldn't display content"
-      // condition.
-      const isCancellation =
-        result.error.code === 'network_error' &&
-        (result.error.errorCode === 'ERR_ABORTED' || result.error.errorCode === 'ERR_FAILED');
+      // paths (a redirect taking the load over, a newer navigation). Neither
+      // code is produced by a genuine server-side failure here or AEM
+      // QueryBuilder traffic (those map to ERR_CONNECTION_REFUSED,
+      // ERR_TIMED_OUT, ERR_NAME_NOT_RESOLVED…), so suppressing them cannot hide
+      // a real "couldn't display content" condition.
+      const isCancellation = isCancelledNavigation(result);
       if (!isCancellation) {
         if (result.error.code === 'unknown_origin') {
           // requirements-decisions.md section 3: an unknown origin must never

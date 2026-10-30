@@ -266,6 +266,22 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     revealPageForExternalNavigation();
   });
 
+  // A host switch is the other way the application starts a navigation on its
+  // own: the toolbar's address bar and hosts picker announce theirs through
+  // `onNavigationStarted` above, but a caller that goes straight to
+  // `browser.switchServer` - the shell's History resume - has no toolbar action
+  // to ride on. Without this, resuming a conversation from the History panel
+  // opened over the Home veil switched the host underneath it and left the
+  // veil covering the page the resume had just loaded.
+  // `browser:switch-state-changed` is only ever emitted by the server-switch
+  // controller, which every application-caused navigation goes through - never
+  // by an in-page navigation - so revealing on its `switching` edge keeps the
+  // "a panel the user opened survives an in-page navigation" rule intact. A
+  // toolbar-initiated switch reveals twice; the second reveal is a no-op.
+  const unsubscribeSwitchState = window.daisy.browser.onSwitchStateChanged((state) => {
+    if (state.switching) revealPageForExternalNavigation();
+  });
+
   // The slot the native view, the home screen and every whole-size panel share,
   // directly above the status/prompt row. Exactly one of the three is visible
   // at a time (see `updateViewVisibility`), and a panel *replaces* the region
@@ -355,13 +371,13 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
 
   /**
    * Reveals the page when a navigation the *application* caused (a transcript
-   * link, a typed/selected address, Back/Forward, Refresh, or the agent's
-   * `browser_navigate`) begins: dismisses whatever whole-size panel covers the
-   * page-view region and clears the home veil, so the destination is never
-   * hidden behind either. In-page navigation never calls this - it surfaces
-   * only as a `browser:state-changed` push - so a panel the user opened is left
-   * alone while the AEM page navigates itself. A no-op when neither a panel nor
-   * the veil is up.
+   * link, a typed/selected address, Back/Forward, Refresh, the shell's History
+   * host switch, or the agent's `browser_navigate`) begins: dismisses whatever
+   * whole-size panel covers the page-view region and clears the home veil, so
+   * the destination is never hidden behind either. In-page navigation never
+   * calls this - it surfaces only as a `browser:state-changed` push - so a
+   * panel the user opened is left alone while the AEM page navigates itself. A
+   * no-op when neither a panel nor the veil is up.
    */
   function revealPageForExternalNavigation(): void {
     const panelWasOpen = activePanel !== undefined;
@@ -486,6 +502,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     dispose(): void {
       unsubscribeState();
       unsubscribeAgentNavigation();
+      unsubscribeSwitchState();
       surfaceStatus.dispose();
       toolbar.dispose();
       findBar.dispose();
