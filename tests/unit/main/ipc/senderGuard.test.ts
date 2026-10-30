@@ -180,6 +180,7 @@ beforeEach(() => {
     reload: () => Promise.resolve(record('reload')),
     reloadForAgent: () => Promise.resolve(false),
     stop: () => record('stop'),
+    clearBrowsingData: () => Promise.resolve(record('clearBrowsingData')),
     setViewBounds: () => {
       controllerCalls.push('setViewBounds');
     },

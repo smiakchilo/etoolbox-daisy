@@ -10,8 +10,10 @@ import {
   type AemOrigin,
 } from '../integration/support/testAemServer';
 import { launchApp, type ElectronApp } from '../support/e2e/app';
-import { findHostViewId } from '../support/e2e/hostView';
+import { loginFieldValues, signInOnLoginForm, waitForLoginForm } from '../support/e2e/fixtureLogin';
+import { findHostViewId, paneEvaluate } from '../support/e2e/hostView';
 import { createScratchDirs, writeSettings } from '../support/e2e/profile';
+import { openBrowserSettingsTab } from '../support/e2e/settingsBrowserTab';
 import { byTestId } from '../support/selectors';
 
 /**
@@ -21,33 +23,18 @@ import { byTestId } from '../support/selectors';
  *    the plaintext index names the origin and username and never the password;
  * 2. signing out immediately shows a prefilled form, and so does a restart
  *    (with the session cookies cleared, so the host really asks again);
- * 3. the Settings "Browser" tab's one action erases them, through the shared
- *    destructive-confirm prompt, and a further restart proves the form is empty.
+ * 3. the Settings "Browser" tab's **Clear personal data** erases them, through
+ *    the shared destructive-confirm prompt, and a further restart proves the
+ *    form is empty.
  *
  * The pane is a `WebContentsView`, so its DOM is reached through
- * `app.evaluate` + `executeJavaScript` (`findHostViewId`), the same way the
- * other pane-driving specs do. The fixture is `tests/integration/support/testAemServer.ts`.
+ * `app.evaluate` + `executeJavaScript` (`paneEvaluate`/`findHostViewId`), the
+ * same way the other pane-driving specs do. The fixture is
+ * `tests/integration/support/testAemServer.ts`.
  */
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'saved-sign-ins-scratch');
 const VIEW_PARTITION = 'persist:webview';
-
-interface PaneEvalArgs {
-  readonly id: number;
-  readonly code: string;
-}
-
-async function paneEvaluate<T>(app: ElectronApp, viewId: number, code: string): Promise<T> {
-  return (await app.evaluate(
-    async ({ webContents }, args: PaneEvalArgs) => {
-      const contents = webContents.fromId(args.id);
-      if (contents === undefined) throw new Error('the pane webContents is gone');
-      const result: unknown = await contents.executeJavaScript(args.code);
-      return result;
-    },
-    { id: viewId, code },
-  )) as T;
-}
 
 async function paneText(app: ElectronApp, viewId: number): Promise<string> {
   return paneEvaluate<string>(app, viewId, 'document.body ? document.body.textContent : ""');
@@ -62,30 +49,6 @@ async function paneLoad(app: ElectronApp, viewId: number, url: string): Promise<
     },
     { id: viewId, url },
   );
-}
-
-async function loginFieldValues(
-  app: ElectronApp,
-  viewId: number,
-): Promise<{ username: string; password: string }> {
-  return paneEvaluate<{ username: string; password: string }>(
-    app,
-    viewId,
-    `(() => {
-      const username = document.querySelector('#username');
-      const password = document.querySelector('#password');
-      return { username: username ? username.value : '', password: password ? password.value : '' };
-    })()`,
-  );
-}
-
-/** True while the fixture's sign-in form is the document on screen. */
-async function loginFormPresent(app: ElectronApp, viewId: number): Promise<boolean> {
-  return paneEvaluate<boolean>(app, viewId, 'document.querySelector("#login-form") !== null');
-}
-
-async function waitForLoginForm(app: ElectronApp, viewId: number): Promise<void> {
-  await expect.poll(() => loginFormPresent(app, viewId), { timeout: 30_000 }).toBe(true);
 }
 
 /** Clears the view session's cookies, so the fixture host asks for a sign-in again. */
@@ -155,21 +118,7 @@ test('a sign-in is remembered, prefilled after sign-out and restart, and erased 
     // ---------------------------------------------------------------- launch 1
     const first = await launchOnLoginForm();
     try {
-      await paneEvaluate<boolean>(
-        first.app,
-        first.viewId,
-        `(() => {
-          const form = document.querySelector('#login-form');
-          if (!form) return false;
-          document.querySelector('#username').value = ${JSON.stringify(FIXTURE_USERNAME)};
-          document.querySelector('#password').value = ${JSON.stringify(FIXTURE_PASSWORD)};
-          form.requestSubmit();
-          return true;
-        })()`,
-      );
-      await expect
-        .poll(() => loginFormPresent(first.app, first.viewId), { timeout: 30_000 })
-        .toBe(false);
+      await signInOnLoginForm(first.app, first.viewId);
       await expect
         .poll(() => paneText(first.app, first.viewId), { timeout: 30_000 })
         .not.toContain('Please sign in to AEM');
@@ -203,18 +152,12 @@ test('a sign-in is remembered, prefilled after sign-out and restart, and erased 
         .poll(() => loginFieldValues(second.app, second.viewId), { timeout: 30_000 })
         .toEqual({ username: FIXTURE_USERNAME, password: FIXTURE_PASSWORD });
 
-      // The Settings line is the one erase action, and pressing it only raises
-      // the shared destructive-confirm prompt in the pane's status row.
+      // The Settings line is the personal-data clear action, and pressing it
+      // only raises the shared destructive-confirm prompt in the pane's status
+      // row.
       const page = await second.app.firstWindow();
-      await page.locator(byTestId('chat-settings')).click();
-      await page
-        .locator(byTestId('settings-panel'))
-        .first()
-        .waitFor({ state: 'visible', timeout: 30_000 });
-      await page.locator(byTestId('settings-tab-browser')).click();
-
-      const panel = page.locator('.settings-panel__tab-panel[selected]');
-      await panel.locator(byTestId('erase-saved-credentials')).click();
+      const panel = await openBrowserSettingsTab(page);
+      await panel.locator(byTestId('clear-personal-data')).click();
       const confirm = page.locator(byTestId('banner-confirm'));
       await expect(confirm).toBeVisible();
       await confirm.click();

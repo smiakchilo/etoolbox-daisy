@@ -1,4 +1,4 @@
-import { app, ipcMain, shell } from 'electron';
+import { app, ipcMain, shell, webContents } from 'electron';
 import type { BrowserWindow, IpcMainEvent, WebContents } from 'electron';
 import {
   APP_SHORTCUT_CHANNEL,
@@ -18,6 +18,7 @@ import type {
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
+  BrowsingDataScope,
   FindRequest,
   FindTarget,
   HighlightElementRequest,
@@ -50,6 +51,7 @@ import {
   type ChromeNavigationOutcome,
 } from './hostView';
 import { ServerSwitchController } from './serverSwitch';
+import { clearBrowsingData as clearPaneBrowsingData, documentsInSession } from './browsingData';
 import { describeNetworkError } from './networkErrorCopy';
 import { decideAddressNavigation } from './unknownOrigin';
 import { createCertificateBlockedListener } from './certificatePrompt';
@@ -193,6 +195,15 @@ export interface BrowserController {
   reloadForAgent(serverId: ServerId): Promise<boolean>;
   /** Stops any in-flight load in the browser view (the toolbar's Stop control while a navigation is loading). */
   stop(): BrowserIpcVoidResult;
+  /**
+   * Clears the pane's stored state for one scope - `personal` (cookies and every
+   * open document's session storage) or `storage` (local data and caches) - and
+   * then reloads the document that is open, so the page shows the consequence.
+   * See `browsingData.ts` for the exact split. The reload is best-effort: the
+   * clearing has already happened, so a refused or cancelled reload is logged,
+   * never reported as a failed erase.
+   */
+  clearBrowsingData(scope: BrowsingDataScope): Promise<BrowserIpcVoidResult>;
   setViewBounds(bounds: ViewBounds): void;
   /**
    * Runs a `findInPage` request against the named document (`browser` = the host
@@ -1091,6 +1102,42 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     return ok();
   }
 
+  /**
+   * Clears the pane's stored state (see `browsingData.ts` for what each scope
+   * names), then reloads the open document so the page actually shows the
+   * consequence - a cleared cookie jar is invisible until the page asks the
+   * host again. The reload is deliberately not part of the result: the clearing
+   * is the operation the user asked for, and reporting a cancelled reload as a
+   * failed erase would be a lie.
+   */
+  async function clearBrowsingData(scope: BrowsingDataScope): Promise<BrowserIpcVoidResult> {
+    try {
+      const outcome = await clearPaneBrowsingData(scope, {
+        session: viewSession.session,
+        documents: documentsInSession(webContents.getAllWebContents(), viewSession.session),
+      });
+      logger.info('BROWSING_DATA_CLEARED', { dataScope: scope, count: outcome.clearedDocuments });
+      if (outcome.failedDocuments > 0) {
+        // A frame that could not run script (a destroyed document, `about:blank`)
+        // keeps its sessionStorage; the cookies are already gone either way.
+        logger.warn('BROWSING_DATA_SESSION_STORAGE_SKIPPED', {
+          dataScope: scope,
+          count: outcome.failedDocuments,
+        });
+      }
+    } catch {
+      logger.error('BROWSING_DATA_CLEAR_FAILED', { dataScope: scope, outcome: 'failure' });
+      return fail(storageError('The browser data could not be cleared'));
+    }
+    const url = currentDocumentUrl();
+    if (url !== undefined && !url.startsWith('about:')) {
+      agentNavigation = undefined;
+      const reloaded = await settleHistoryCommand(await hostView.reload());
+      if (!reloaded.ok) logger.warn('BROWSING_DATA_RELOAD_FAILED');
+    }
+    return ok();
+  }
+
   function destroy(): void {
     app.removeListener('certificate-error', certificateBlockedListener);
     ipcMain.removeListener(WEBVIEW_BRIDGE_HIGHLIGHT_REPLY_CHANNEL, highlightReplyListener);
@@ -1127,6 +1174,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     reload,
     reloadForAgent,
     stop,
+    clearBrowsingData,
     setViewBounds(bounds: ViewBounds): void {
       // The renderer reports CSS pixels; the native view is positioned in DIP.
       // They coincide only at 100% shell zoom (see `scaleBounds`).

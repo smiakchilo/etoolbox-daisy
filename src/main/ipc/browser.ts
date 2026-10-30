@@ -1,6 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent, type IpcMainEvent } from 'electron';
 import {
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
+  BROWSER_CLEAR_DATA_CHANNEL,
   BROWSER_FIND_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
   BROWSER_GO_FORWARD_CHANNEL,
@@ -15,6 +16,7 @@ import {
 } from '../../shared';
 import {
   approveCertificateExceptionRequestSchema,
+  clearBrowsingDataRequestSchema,
   findRequestSchema,
   highlightElementRequestSchema,
   navigateRequestSchema,
@@ -125,6 +127,16 @@ export function registerBrowserIpcHandlers(deps: BrowserIpcDependencies): void {
     if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
     return deps.controller.stop();
   });
+
+  ipcMain.handle(
+    BROWSER_CLEAR_DATA_CHANNEL,
+    async (event, rawRequest: unknown): Promise<BrowserIpcVoidResult> => {
+      if (!checkSender(event)) return UNTRUSTED_SENDER_RESULT;
+      const parsed = clearBrowsingDataRequestSchema.safeParse(rawRequest);
+      if (!parsed.success) return invalidPayloadResult(parsed.error.message);
+      return deps.controller.clearBrowsingData(parsed.data.scope);
+    },
+  );
 
   ipcMain.handle(
     BROWSER_NAVIGATE_CHANNEL,

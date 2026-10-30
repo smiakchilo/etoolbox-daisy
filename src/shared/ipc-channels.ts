@@ -245,6 +245,14 @@ export const BROWSER_FIND_RESULT_CHANNEL = 'browser:find-result' as const;
  */
 export const BROWSER_HIGHLIGHT_ELEMENT_CHANNEL = 'browser:highlight-element' as const;
 
+/**
+ * `browser:clear-data` - the Settings "Browser" tab clears the pane's stored
+ * state: `personal` (cookies + session storage) or `storage` (local data and
+ * every cache). Main clears and then reloads the open document. See
+ * src/shared/browser-ipc.ts for the exact split.
+ */
+export const BROWSER_CLEAR_DATA_CHANNEL = 'browser:clear-data' as const;
+
 // Agent chat IPC surface (step 07) - see src/main/ipc/agentChat.ts and
 // src/shared/agent-chat-ipc.ts. Puts the `AgentService` behind IPC for a
 // renderer chat pane, distinct from the `agent:*` sign-in/out surface above.

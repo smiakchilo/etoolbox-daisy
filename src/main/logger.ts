@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import {
+  type BrowsingDataScope,
   type ChatId,
   type MessageId,
   type RequestId,
@@ -10,6 +11,7 @@ import {
   type ToolCallId,
   type ToolErrorCode,
   type TurnId,
+  browsingDataScopeSchema,
   chatIdSchema,
   messageIdSchema,
   parseOrigin,
@@ -86,6 +88,10 @@ export const DIAGNOSTIC_CODES = [
   'BROWSER_CERTIFICATE_RETRY_FAILED',
   'BROWSER_OPEN_EXTERNAL_FAILED',
   'BROWSER_IPC_SENDER_REJECTED',
+  'BROWSING_DATA_CLEARED',
+  'BROWSING_DATA_CLEAR_FAILED',
+  'BROWSING_DATA_SESSION_STORAGE_SKIPPED',
+  'BROWSING_DATA_RELOAD_FAILED',
   'SETTINGS_WINDOW_CREATED',
   'AGENT_CHAT_IPC_SENDER_REJECTED',
   'AGENT_CHAT_ILLEGAL_TRANSITION',
@@ -266,6 +272,8 @@ export interface LogFields {
   readonly proxied?: boolean;
   /** Which add-on a generic add-on event concerns (its pins id). */
   readonly addonId?: string;
+  /** Which clearing action a browser-data line concerns (Settings "Browser" tab). */
+  readonly dataScope?: BrowsingDataScope;
   readonly ids?: LogIds;
   readonly url?: LoggableUrl;
 }
@@ -316,6 +324,7 @@ const logFieldsValidationSchema = z
       .string()
       .regex(/^[a-z][a-z0-9-]{0,63}$/)
       .optional(),
+    dataScope: browsingDataScopeSchema.optional(),
     ids: logIdsSchema.optional(),
     url: loggableUrlValidationSchema.optional(),
   })
@@ -337,6 +346,7 @@ function buildRecord(
   if (fields.reason !== undefined) record['reason'] = fields.reason;
   if (fields.proxied !== undefined) record['proxied'] = fields.proxied;
   if (fields.addonId !== undefined) record['addonId'] = fields.addonId;
+  if (fields.dataScope !== undefined) record['dataScope'] = fields.dataScope;
   if (fields.ids !== undefined) {
     const ids: Record<string, string> = {};
     if (fields.ids.requestId !== undefined) ids['requestId'] = fields.ids.requestId;

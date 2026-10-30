@@ -330,3 +330,30 @@ export const approveCertificateExceptionRequestSchema = z
 export type ApproveCertificateExceptionRequest = Readonly<
   z.infer<typeof approveCertificateExceptionRequestSchema>
 >;
+
+/**
+ * `browser:clear-data` - the Settings "Browser" tab's two clearing actions.
+ *
+ * The scopes split the pane's stored state into the two things a user means by
+ * "log me out of everything" and "start this site from scratch":
+ *
+ *  - `personal` - what identifies the user: the pane's cookies (AEM's
+ *    `login-token`, an identity provider's session cookies) and the open
+ *    documents' `sessionStorage`. The saved-sign-in vault is erased by the
+ *    caller as well (it is the app's own store, not the session's).
+ *  - `storage` - what a site keeps for itself: `localStorage`, IndexedDB, the
+ *    filesystem store, service-worker registrations and cache storage, plus the
+ *    HTTP cache.
+ *
+ * Neither scope is a navigation: main clears, then reloads the open document so
+ * the page actually shows the consequence (a sign-in form, a fresh site).
+ */
+export const BROWSING_DATA_SCOPES = ['personal', 'storage'] as const;
+
+export type BrowsingDataScope = (typeof BROWSING_DATA_SCOPES)[number];
+
+export const browsingDataScopeSchema = z.enum(BROWSING_DATA_SCOPES);
+
+export const clearBrowsingDataRequestSchema = z.object({ scope: browsingDataScopeSchema }).strict();
+
+export type ClearBrowsingDataRequest = Readonly<z.infer<typeof clearBrowsingDataRequestSchema>>;

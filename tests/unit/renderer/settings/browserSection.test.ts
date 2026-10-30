@@ -11,6 +11,7 @@ import {
   parseAppSettingsSnapshot,
   proxySnapshotSchema,
   type AppSettingsSnapshot,
+  type BrowserIpcVoidResult,
   type CredentialsIpcResult,
   type ProxySnapshot,
 } from '../../../../src/shared';
@@ -33,6 +34,7 @@ let restoreGlobals: () => void;
 
 const updateBrowserSettings = vi.fn();
 const erase = vi.fn<() => Promise<CredentialsIpcResult>>();
+const clearData = vi.fn<(request: { scope: string }) => Promise<BrowserIpcVoidResult>>();
 
 let status: StatusBannerSink;
 let showStatus: ReturnType<typeof vi.fn<(message: string) => void>>;
@@ -97,6 +99,8 @@ beforeEach(() => {
   updateBrowserSettings.mockResolvedValue({ ok: true });
   erase.mockReset();
   erase.mockResolvedValue({ ok: true });
+  clearData.mockReset();
+  clearData.mockResolvedValue({ ok: true });
 
   showStatus = vi.fn();
   showError = vi.fn();
@@ -115,6 +119,7 @@ beforeEach(() => {
   Reflect.set(dom.window, 'daisy', {
     settings: { updateBrowserSettings },
     credentials: { erase },
+    browser: { clearData },
   });
 });
 
@@ -213,10 +218,13 @@ describe('createBrowserSection', () => {
     });
   });
 
-  describe('Saved sign-ins', () => {
-    function eraseButtonOf(section: ReturnType<typeof createBrowserSection>): HTMLElement {
-      const button = section.element.querySelector(byTestId('erase-saved-credentials'));
-      if (button === null) throw new Error('erase button not found');
+  describe('Clearing the pane data', () => {
+    function buttonOf(
+      section: ReturnType<typeof createBrowserSection>,
+      testId: string,
+    ): HTMLElement {
+      const button = section.element.querySelector(byTestId(testId));
+      if (button === null) throw new Error(`${testId} not found`);
       return button as HTMLElement;
     }
 
@@ -226,33 +234,31 @@ describe('createBrowserSection', () => {
       return action;
     }
 
-    it('has no count line beside the button', () => {
+    it('confirms before clearing personal data, and does nothing until the prompt is accepted', async () => {
       const section = buildSection();
       section.update(snapshotWith(true));
 
-      expect(section.element.querySelector(byTestId('saved-sign-ins-status'))).toBeNull();
-    });
-
-    it('confirms before erasing, and does nothing until the prompt is accepted', () => {
-      const section = buildSection();
-      section.update(snapshotWith(true));
-
-      eraseButtonOf(section).click();
+      buttonOf(section, 'clear-personal-data').click();
 
       expect(showPrompt).toHaveBeenCalledTimes(1);
       expect(erase).not.toHaveBeenCalled();
+      expect(clearData).not.toHaveBeenCalled();
       expect(lastPrompt().testId).toBe('banner-confirm');
 
       lastPrompt().onActivate();
+      await flush();
 
+      // One action, two stores: the app's saved sign-ins and the pane's own
+      // cookie jar/session storage.
       expect(erase).toHaveBeenCalledTimes(1);
+      expect(clearData).toHaveBeenCalledWith({ scope: 'personal' });
     });
 
-    it('reports a successful erase as a status line', async () => {
+    it('reports a successful personal clear as a status line', async () => {
       const section = buildSection();
       section.update(snapshotWith(true));
 
-      eraseButtonOf(section).click();
+      buttonOf(section, 'clear-personal-data').click();
       lastPrompt().onActivate();
       await flush();
 
@@ -260,20 +266,66 @@ describe('createBrowserSection', () => {
       expect(showError).not.toHaveBeenCalled();
     });
 
-    it('surfaces a failed erase as an error', async () => {
-      erase.mockResolvedValue({
+    it('still erases the sign-ins when the pane data clear fails, and surfaces the failure', async () => {
+      clearData.mockResolvedValue({
         ok: false,
-        error: { code: 'storage_error', message: 'could not forget' },
+        error: { code: 'storage_error', message: 'the profile is locked' },
       });
       const section = buildSection();
       section.update(snapshotWith(true));
 
-      eraseButtonOf(section).click();
+      buttonOf(section, 'clear-personal-data').click();
       lastPrompt().onActivate();
       await flush();
 
-      expect(showError).toHaveBeenCalledWith('could not forget');
+      expect(erase).toHaveBeenCalledTimes(1);
+      expect(showError).toHaveBeenCalledWith('the profile is locked');
       expect(showStatus).not.toHaveBeenCalled();
+    });
+
+    it('confirms before clearing storage, and clears only the pane storage', async () => {
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      buttonOf(section, 'clear-storage').click();
+
+      expect(showPrompt).toHaveBeenCalledTimes(1);
+      expect(clearData).not.toHaveBeenCalled();
+
+      lastPrompt().onActivate();
+      await flush();
+
+      expect(clearData).toHaveBeenCalledWith({ scope: 'storage' });
+      // Clearing local data must never sign the user out.
+      expect(erase).not.toHaveBeenCalled();
+    });
+
+    it('reports a failed storage clear as an error', async () => {
+      clearData.mockResolvedValue({
+        ok: false,
+        error: { code: 'storage_error', message: 'could not clear' },
+      });
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      buttonOf(section, 'clear-storage').click();
+      lastPrompt().onActivate();
+      await flush();
+
+      expect(showError).toHaveBeenCalledWith('could not clear');
+      expect(showStatus).not.toHaveBeenCalled();
+    });
+
+    it('gives each clearing action its own contextual help', () => {
+      const section = buildSection();
+      section.update(snapshotWith(true));
+
+      for (const testId of ['clear-personal-data', 'clear-storage']) {
+        const button = buttonOf(section, testId);
+        expect(
+          button.closest('.field-label-row')?.querySelector('sp-contextual-help'),
+        ).not.toBeNull();
+      }
     });
   });
 });

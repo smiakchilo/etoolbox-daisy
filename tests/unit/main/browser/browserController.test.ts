@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { app, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { createBrowserController } from '../../../../src/main/browser/browserController';
+import type { BrowsingDataStorage } from '../../../../src/main/browser/browsingData';
 import { describeNetworkError } from '../../../../src/main/browser/networkErrorCopy';
 import type { HostView } from '../../../../src/main/browser/hostView';
 import type { WindowOpenRouter } from '../../../../src/main/browser/windowOpenRouter';
@@ -54,6 +55,7 @@ vi.mock('electron', () => ({
   ipcMain: { on: vi.fn(), removeListener: vi.fn() },
   screen: { on: vi.fn(), removeListener: vi.fn() },
   shell: { openExternal: openExternalMock },
+  webContents: { getAllWebContents: vi.fn(() => []) },
   WebContentsView: class {},
   BrowserWindow: class {},
 }));
@@ -207,7 +209,10 @@ interface FakeViewSessionControls {
   readonly switchProxy: ReturnType<typeof vi.fn>;
   readonly applyProxy: ReturnType<typeof vi.fn>;
   readonly approveCertificateException: ReturnType<typeof vi.fn>;
+  readonly clearStorageData: Mock<(options: { storages: BrowsingDataStorage[] }) => Promise<void>>;
+  readonly clearCache: ReturnType<typeof vi.fn>;
   switchProxyImpl: () => Promise<void>;
+  clearStorageDataImpl: () => Promise<void>;
 }
 
 function makeFakeViewSession(): FakeViewSessionControls {
@@ -216,8 +221,22 @@ function makeFakeViewSession(): FakeViewSessionControls {
   });
   const applyProxy = vi.fn(() => Promise.resolve());
   const approveCertificateException = vi.fn(() => Promise.resolve());
+  const clearStorageData = vi.fn((options: { storages: BrowsingDataStorage[] }) => {
+    void options;
+    return controls.clearStorageDataImpl();
+  });
+  const clearCache = vi.fn(() => Promise.resolve());
+  // Only the two members `browsingData.ts` touches: the controller never reads
+  // any other part of the session, and the spy objects themselves cannot be
+  // asserted to `Session` (a vitest `Mock` carries its own bookkeeping). The
+  // wrappers keep the spies observable while the object it is asserted *to*
+  // stays a plain two-method shape.
+  const session = {
+    clearStorageData: (value: { storages: BrowsingDataStorage[] }) => clearStorageData(value),
+    clearCache: () => clearCache(),
+  } as Session;
   const viewSession: ViewSession = {
-    session: {} as Session,
+    session,
     switchProxy,
     applyProxy,
     approveCertificateException,
@@ -228,7 +247,10 @@ function makeFakeViewSession(): FakeViewSessionControls {
     switchProxy,
     applyProxy,
     approveCertificateException,
+    clearStorageData,
+    clearCache,
     switchProxyImpl: () => Promise.resolve(),
+    clearStorageDataImpl: () => Promise.resolve(),
   };
   return controls;
 }
@@ -427,6 +449,80 @@ describe('browserController.stop', () => {
 
     expect(result).toEqual({ ok: true });
     expect(harness.hostViewControls.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('browserController.clearBrowsingData', () => {
+  it('clears the personal scope - the cookie jar - and reloads the open document', async () => {
+    const harness = makeControllerHarness();
+    harness.hostViewControls.setNavigationUrl('https://author.example/content/site.html');
+
+    const result = await harness.controller.clearBrowsingData('personal');
+
+    expect(result).toEqual({ ok: true });
+    expect(harness.viewSessionControls.clearStorageData).toHaveBeenCalledWith({
+      storages: ['cookies'],
+    });
+    // The page must be told, not merely have its jar emptied: an AEM page still
+    // renders as signed in until it asks the host again.
+    expect(harness.hostViewControls.reload).toHaveBeenCalledTimes(1);
+    expect(harness.viewSessionControls.clearCache).not.toHaveBeenCalled();
+  });
+
+  it('clears the storage scope - local data and every cache - and never the cookies', async () => {
+    const harness = makeControllerHarness();
+    harness.hostViewControls.setNavigationUrl('https://author.example/content/site.html');
+
+    const result = await harness.controller.clearBrowsingData('storage');
+
+    expect(result).toEqual({ ok: true });
+    const storages = harness.viewSessionControls.clearStorageData.mock.calls[0]?.[0]?.storages;
+    expect(storages).toEqual(
+      expect.arrayContaining(['localstorage', 'indexdb', 'serviceworkers', 'cachestorage']),
+    );
+    expect(storages).not.toContain('cookies');
+    expect(harness.viewSessionControls.clearCache).toHaveBeenCalledTimes(1);
+    expect(harness.hostViewControls.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reload when the pane holds no document', async () => {
+    const harness = makeControllerHarness();
+
+    const result = await harness.controller.clearBrowsingData('personal');
+
+    expect(result).toEqual({ ok: true });
+    expect(harness.hostViewControls.reload).not.toHaveBeenCalled();
+  });
+
+  it('reports storage_error, and does not reload, when the session cannot be cleared', async () => {
+    const harness = makeControllerHarness();
+    harness.hostViewControls.setNavigationUrl('https://author.example/content/site.html');
+    harness.viewSessionControls.clearStorageDataImpl = () =>
+      Promise.reject(new Error('profile is locked'));
+
+    const result = await harness.controller.clearBrowsingData('personal');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a failure result');
+    expect(result.error.code).toBe('storage_error');
+    expect(harness.hostViewControls.reload).not.toHaveBeenCalled();
+    expect(harness.loggerSpies.error).toHaveBeenCalledWith(
+      'BROWSING_DATA_CLEAR_FAILED',
+      expect.objectContaining({ dataScope: 'personal' }),
+    );
+  });
+
+  it('still reports ok when the follow-up reload fails - the data is already gone', async () => {
+    const harness = makeControllerHarness();
+    harness.hostViewControls.setNavigationUrl('https://author.example/content/site.html');
+    harness.hostViewControls.view.reload = vi.fn(() =>
+      Promise.resolve({ ok: false, errorCode: 'ERR_ABORTED', failedUrl: '' }),
+    );
+
+    const result = await harness.controller.clearBrowsingData('personal');
+
+    expect(result).toEqual({ ok: true });
+    expect(harness.loggerSpies.warn).toHaveBeenCalledWith('BROWSING_DATA_RELOAD_FAILED');
   });
 });
 
@@ -1138,6 +1234,23 @@ describe('browserController per-origin proxy reconciliation', () => {
 });
 
 describe('browserController.activeServer', () => {
+  /** Two configured hosts, with the pane already switched to the first. */
+  async function harnessOnFirstOfTwoServers(): Promise<{
+    harness: ReturnType<typeof makeControllerHarness>;
+    serverA: ServerConfig;
+    serverB: ServerConfig;
+  }> {
+    const serverA = makeServer({ id: newServerId(() => 'server-a'), origin: 'https://a.example' });
+    const serverB = makeServer({ id: newServerId(() => 'server-b'), origin: 'https://b.example' });
+    const harness = makeControllerHarness();
+    await writeSettings(harness.settingsDir, {
+      ...defaultAppSettings(),
+      hosts: [serverA, serverB],
+    });
+    await harness.controller.switchServer(serverA.id);
+    return { harness, serverA, serverB };
+  }
+
   it('reports undefined before any server has been switched to, rather than a fabricated placeholder', async () => {
     const harness = makeControllerHarness();
     await writeSettings(harness.settingsDir, defaultAppSettings());
@@ -1161,14 +1274,7 @@ describe('browserController.activeServer', () => {
   });
 
   it('clears to undefined when a switch fails, rather than continuing to report the previous server', async () => {
-    const serverA = makeServer({ id: newServerId(() => 'server-a'), origin: 'https://a.example' });
-    const serverB = makeServer({ id: newServerId(() => 'server-b'), origin: 'https://b.example' });
-    const harness = makeControllerHarness();
-    await writeSettings(harness.settingsDir, {
-      ...defaultAppSettings(),
-      hosts: [serverA, serverB],
-    });
-    await harness.controller.switchServer(serverA.id);
+    const { harness, serverA, serverB } = await harnessOnFirstOfTwoServers();
     expect(harness.controller.activeServer()?.serverId).toBe(serverA.id);
     harness.hostViewControls.loadURLImpl = () =>
       Promise.reject(new Error('net::ERR_CONNECTION_REFUSED'));
@@ -1214,14 +1320,7 @@ describe('browserController.activeServer', () => {
   });
 
   it('does not report a certificate-exception change to a different, inactive server', async () => {
-    const serverA = makeServer({ id: newServerId(() => 'server-a'), origin: 'https://a.example' });
-    const serverB = makeServer({ id: newServerId(() => 'server-b'), origin: 'https://b.example' });
-    const harness = makeControllerHarness();
-    await writeSettings(harness.settingsDir, {
-      ...defaultAppSettings(),
-      hosts: [serverA, serverB],
-    });
-    await harness.controller.switchServer(serverA.id);
+    const { harness, serverB } = await harnessOnFirstOfTwoServers();
     const before = harness.controller.activeServer();
 
     await harness.controller.approveCertificateException({

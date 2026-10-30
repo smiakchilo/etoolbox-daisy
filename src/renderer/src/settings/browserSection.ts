@@ -8,7 +8,7 @@ import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } fro
  * The Settings panel's Browser tab: browser-pane behaviour that is not about a
  * host, a proxy entry, or the agent.
  *
- * Three controls:
+ * The controls, top to bottom:
  *
  *  - **Default proxy** (first) - the entry of the "Proxies" library the AEM
  *    pane uses for any origin that is not one of the configured hosts (for
@@ -28,13 +28,28 @@ import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } fro
  *    (there is deliberately no list: the pane prefills an origin's most
  *    recently used credential and the user switches accounts by typing another
  *    saved username, and no count either - a number beside the button had no
- *    action attached to it). The erase is all-or-nothing and confirms through
- *    the shared destructive prompt, exactly like removing a host or a proxy.
+ *    action attached to it). The erase is all-or-nothing and now travels with
+ *    the pane's own cookie jar inside **Clear personal data** below, so there is
+ *    no button of its own.
+ *
+ * The last group is the pane's two clearing actions, stacked:
+ *
+ *  - **Clear personal data** - saved sign-ins, the pane's cookies and every open
+ *    document's session storage. This is "log me out of everything".
+ *  - **Clear storage** - local storage, IndexedDB, service workers, cache
+ *    storage and the HTTP cache. This is "start this site from scratch".
+ *
+ * Both clear through main (`browser:clear-data`) and then reload the open page,
+ * so the consequence is visible at once; both confirm through the shared
+ * destructive prompt. They deliberately carry a contextual-help badge each,
+ * spelling out the exact split - a data-clearing action whose scope is a guess
+ * is not acceptable (owner decision, overriding the "a button is not a field"
+ * rule the Updates tab's buttons still follow).
  *
  * The first two save immediately on change (there is nothing to debounce and no
  * dependent fields), through the panel's one save reporter, exactly like the
- * other sections' immediate mutations. The erase is not a save: it reports to
- * the same status banner directly.
+ * other sections' immediate mutations. The clearing actions are not saves: they
+ * report to the same status banner directly.
  */
 export interface BrowserSectionOptions {
   /** The panel's single status slot. */
@@ -109,16 +124,42 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     children: [proxyField, checkboxRow],
   });
 
-  const eraseButton = el('sp-action-button', {
-    attrs: { 'data-testid': 'erase-saved-credentials' },
-    text: 'Erase saved sign-ins',
+  const personalButton = el('sp-action-button', {
+    attrs: { 'data-testid': 'clear-personal-data' },
+    text: 'Clear personal data',
   }) as HTMLElement & { disabled: boolean };
-  // A button is not a field: it carries no contextual-help badge (the same rule
-  // the Updates tab's Check/Update buttons follow), and it stands on its own
-  // line with nothing beside it.
-  const credentialsRow = el('div', {
-    attrs: { class: 'field-label-row' },
-    children: [eraseButton],
+  const storageButton = el('sp-action-button', {
+    attrs: { 'data-testid': 'clear-storage' },
+    text: 'Clear storage',
+  }) as HTMLElement & { disabled: boolean };
+
+  // Both clearing actions carry a help badge that names exactly what goes - the
+  // one place the split between them is written where the user can read it. (The
+  // behavioral truth lives in `src/main/browser/browsingData.ts`.)
+  const clearingRows = el('div', {
+    attrs: { class: 'browser-section__clearing host-item__fields' },
+    children: [
+      el('div', {
+        attrs: { class: 'field-label-row' },
+        children: [
+          personalButton,
+          createContextualHelp(
+            "Forgets saved sign-ins, the pane's cookies and session storage, then reloads the open page",
+            helpAccessibleName('Clear personal data'),
+          ),
+        ],
+      }),
+      el('div', {
+        attrs: { class: 'field-label-row' },
+        children: [
+          storageButton,
+          createContextualHelp(
+            'Clears local storage, IndexedDB, service workers and cached files, then reloads the open page',
+            helpAccessibleName('Clear storage'),
+          ),
+        ],
+      }),
+    ],
   });
 
   const section = el('div', {
@@ -126,45 +167,81 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
       class: 'settings-section browser-section subsection-gap',
       'aria-label': 'Browser',
     },
-    children: [fields, credentialsRow],
+    children: [fields, clearingRows],
   });
 
   // Guards `update` against the `change` event assigning `.checked` can emit
   // in some environments (the same guard the Agents section uses).
   let rendering = false;
   let disposed = false;
-  let erasing = false;
+  let clearingPersonal = false;
+  let clearingStorage = false;
 
-  async function eraseSavedSignIns(): Promise<void> {
-    if (erasing) return;
-    erasing = true;
-    eraseButton.disabled = true;
+  async function failureOf(
+    work: () => Promise<{ ok: boolean; error?: { message: string } }>,
+  ): Promise<string | undefined> {
     try {
-      const result = await window.daisy.credentials.erase();
-      if (disposed) return;
-      if (!result.ok) {
-        options.status.showError(result.error.message);
-        return;
-      }
-      options.status.showStatus('Sign-ins erased');
+      const result = await work();
+      return result.ok ? undefined : result.error?.message;
     } catch (error) {
-      if (!disposed) {
-        options.status.showError(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      erasing = false;
-      if (!disposed) eraseButton.disabled = false;
+      return error instanceof Error ? error.message : String(error);
     }
   }
 
-  const onEraseClick = (): void => {
+  async function clearPersonalData(): Promise<void> {
+    if (clearingPersonal) return;
+    clearingPersonal = true;
+    personalButton.disabled = true;
+    try {
+      // Both halves run even when one fails: the saved sign-ins and the cookie
+      // jar are independent stores, and the error names whichever half broke.
+      const signIns = await failureOf(() => window.daisy.credentials.erase());
+      const paneData = await failureOf(() => window.daisy.browser.clearData({ scope: 'personal' }));
+      if (disposed) return;
+      const failure = signIns ?? paneData;
+      if (failure !== undefined) {
+        options.status.showError(failure);
+        return;
+      }
+      options.status.showStatus('Personal data cleared');
+    } finally {
+      clearingPersonal = false;
+      if (!disposed) personalButton.disabled = false;
+    }
+  }
+
+  async function clearStorage(): Promise<void> {
+    if (clearingStorage) return;
+    clearingStorage = true;
+    storageButton.disabled = true;
+    try {
+      const failure = await failureOf(() => window.daisy.browser.clearData({ scope: 'storage' }));
+      if (disposed) return;
+      if (failure !== undefined) {
+        options.status.showError(failure);
+        return;
+      }
+      options.status.showStatus('Storage cleared');
+    } finally {
+      clearingStorage = false;
+      if (!disposed) storageButton.disabled = false;
+    }
+  }
+
+  const onPersonalClick = (): void => {
     // The prompt dismisses itself when its button is pressed (see
-    // `showPrompt`), so the erase's outcome takes the row.
-    confirmDestructiveAction(options.status, 'erase every saved sign-in', () => {
-      void eraseSavedSignIns();
+    // `showPrompt`), so the clearing's outcome takes the row.
+    confirmDestructiveAction(options.status, 'clear your personal data', () => {
+      void clearPersonalData();
     });
   };
-  eraseButton.addEventListener('click', onEraseClick);
+  const onStorageClick = (): void => {
+    confirmDestructiveAction(options.status, 'clear the browser storage', () => {
+      void clearStorage();
+    });
+  };
+  personalButton.addEventListener('click', onPersonalClick);
+  storageButton.addEventListener('click', onStorageClick);
 
   async function save(changes: {
     disableNativeWebAuthn?: boolean;
@@ -212,7 +289,8 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
     dispose(): void {
       disposed = true;
       checkbox.removeEventListener('change', onWebAuthnChange);
-      eraseButton.removeEventListener('click', onEraseClick);
+      personalButton.removeEventListener('click', onPersonalClick);
+      storageButton.removeEventListener('click', onStorageClick);
     },
   };
 }

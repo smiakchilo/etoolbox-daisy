@@ -26,6 +26,7 @@ import {
   BROWSER_APPROVE_CERTIFICATE_EXCEPTION_CHANNEL,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   BROWSER_CERTIFICATE_BLOCKED_CHANNEL,
+  BROWSER_CLEAR_DATA_CHANNEL,
   BROWSER_FIND_CHANNEL,
   BROWSER_FIND_RESULT_CHANNEL,
   BROWSER_GO_BACK_CHANNEL,
@@ -107,6 +108,7 @@ import {
   parseAppInfo,
   parseAppShortcutAction,
   agentAuthRequestSchema,
+  clearBrowsingDataRequestSchema,
   parseAgentAuthProgress,
   parseAuthPresence,
   parseAuthStatus,
@@ -193,6 +195,7 @@ import {
   type BrowserNavigationState,
   type BrowserSwitchState,
   type CertificateBlockedInfo,
+  type ClearBrowsingDataRequest,
   type CredentialsIpcResult,
   type DaisyAppApi,
   type FindRequest,
@@ -630,6 +633,11 @@ const daisyApi: DaisyAppApi = {
     },
     async stop(): Promise<BrowserIpcVoidResult> {
       const raw: unknown = await ipcRenderer.invoke(BROWSER_STOP_CHANNEL);
+      return parseBrowserIpcVoidResult(raw);
+    },
+    async clearData(request: ClearBrowsingDataRequest): Promise<BrowserIpcVoidResult> {
+      const parsedRequest = clearBrowsingDataRequestSchema.parse(request);
+      const raw: unknown = await ipcRenderer.invoke(BROWSER_CLEAR_DATA_CHANNEL, parsedRequest);
       return parseBrowserIpcVoidResult(raw);
     },
     async navigate(value: string): Promise<BrowserIpcVoidResult> {

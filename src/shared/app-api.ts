@@ -42,6 +42,7 @@ import type {
   BrowserNavigationState,
   BrowserSwitchState,
   CertificateBlockedInfo,
+  ClearBrowsingDataRequest,
   FindRequest,
   FindResult,
   HighlightElementRequest,
@@ -316,6 +317,14 @@ export interface DaisyBrowserApi {
    */
   highlightElement(request: HighlightElementRequest): Promise<HighlightElementResult>;
   switchServer(serverId: string): Promise<BrowserIpcVoidResult>;
+  /**
+   * Clears the browser pane's stored state for one scope - `personal`
+   * (cookies and session storage) or `storage` (local data and caches) - and
+   * then reloads the open document, so the page shows the consequence. The
+   * saved-sign-in vault is not part of this call; the Settings "Browser" tab
+   * erases it alongside the `personal` scope through `credentials.erase`.
+   */
+  clearData(request: ClearBrowsingDataRequest): Promise<BrowserIpcVoidResult>;
   /** Fire-and-forget: reports the renderer's `.browser-view-host` bounds. Never awaited. */
   setViewBounds(bounds: ViewBounds): void;
   approveCertificateException(

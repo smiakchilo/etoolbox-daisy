@@ -25,6 +25,27 @@ export async function findHostViewId(app: ElectronApp, origin: string): Promise<
   throw new Error('AEM view not found');
 }
 
+/**
+ * Runs `code` inside the AEM view's own document and returns its value. The pane
+ * is a `WebContentsView`, so it is not part of the shell `Page`; this is the one
+ * way a spec reads or writes anything in it.
+ */
+export async function paneEvaluate<T>(
+  app: ElectronApp,
+  hostViewId: number,
+  code: string,
+): Promise<T> {
+  return (await app.evaluate(
+    async ({ webContents }, args: { id: number; code: string }) => {
+      const contents = webContents.fromId(args.id);
+      if (contents === undefined) throw new Error('the pane webContents is gone');
+      const result: unknown = await contents.executeJavaScript(args.code);
+      return result;
+    },
+    { id: hostViewId, code },
+  )) as T;
+}
+
 /** The AEM view's own `isLoading()` flag, read from main. */
 export function viewIsLoading(app: ElectronApp, hostViewId: number): Promise<boolean> {
   return app.evaluate(

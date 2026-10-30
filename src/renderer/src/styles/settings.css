@@ -481,6 +481,14 @@
   min-width: 12rem;
 }
 
+/* The Browser tab's two data-clearing actions line up as one column for the same
+   reason: "Clear personal data" and "Clear storage" keep one width, so their
+   help badges sit at the same x position. 12rem fits the longer label with the
+   same room the Skills column's longest label gets. */
+.browser-section__clearing .field-label-row sp-action-button {
+  min-width: 12rem;
+}
+
 /* The Skills tab reads as three subsections - skills, rules, and the memos pair
    (Self-learning + Memos folder). `.subsection-gap` sets the 24px boundaries
    (the same gap the other tabs use); the two rows inside the memos pair keep the

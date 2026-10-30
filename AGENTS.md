@@ -583,13 +583,25 @@ new/confirm-password fields), no `new-password`, no submit, bounded
 `MutationObserver`, and a typed different saved username swaps the password),
 and `hostAuth.ts` (an `isProxy: false` `app.on('login')` challenge is answered
 from the same vault - the sibling of `webview/proxyAuth.ts`, with the same
-one-time-callback discipline). The Settings "Browser" tab's only management is
-**Erase saved sign-ins** (`credentials:erase`, all-or-nothing, through the
-shared destructive-confirm prompt), a button that stands alone: there is
+one-time-callback discipline). The Settings "Browser" tab's saved-sign-in
+management is part of **Clear personal data**, which forgets the vault
+(`credentials:erase`, all-or-nothing, through the shared destructive-confirm
+prompt) in the same action as the pane's cookies and session storage; there is
 deliberately no list, no picker (see `docs/backlog.md` "Saved sign-ins: a
 per-origin picker") and no stored count - a number beside the button had no
 action attached to it. `appPaths.credentials` is technical, under
 `%LOCALAPPDATA%\etoolbox-daisy`.
+The tab's other group is the pane's two clearing actions: **Clear personal data**
+(saved sign-ins, the pane's cookies and every open document's session storage) and
+**Clear storage** (local storage, IndexedDB, the filesystem store, service
+workers, cache storage and the HTTP cache), each confirmed through the same
+destructive prompt. Main clears through `browser:clear-data`
+(`BrowsingDataScope`, whose exact split lives in `src/main/browser/browsingData.ts`)
+and then reloads the open document, so the page shows the consequence; the reload
+is best-effort and its failure is logged, never reported as a failed erase.
+Electron's `clearStorageData` has no session-storage type, so the personal scope
+runs `window.sessionStorage.clear()` in every live document the pane's session
+owns - the view itself and any `window.open` SSO popup.
 
 **Names describe what a thing is: `AEM` only for AEM-specific behaviour.**
 The browser pane, its preload (`webview-preload`), its persistent session
@@ -624,7 +636,9 @@ helpText)` - the visible label, then an `sp-contextual-help` badge immediately
 after it - or, for a control with no label of its own (the Browser tab's
 checkbox), a bare `createContextualHelp(text, accessibleName)` in a
 `.field-label-row`. A control that is not an input at all carries none (the
-Agents tab's auth row is a status light, not a field). The help is one short
+Agents tab's auth row is a status light, not a field) - the one exception is the
+Browser tab's two data-clearing buttons, which carry a badge each by owner
+decision because the split between their scopes must not be a guess. The help is one short
 phrase stating the field's role and then its limitations, **fixed in code**
 (there is no translation layer and none is planned), **never ending with a
 period**, and every Settings field must have one: new work is a call to
@@ -2093,16 +2107,24 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4801 passed / 1 failed / 13 skipped**
-(4815 total; the failure is the environment-bound
+Current baseline: **`npm run test` → 4816 passed / 1 failed / 13 skipped**
+(4830 total; the failure is the environment-bound
 `tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
-HEAD because this machine is signed in to Copilot - +2 passed against the 4799
-run below, for **A click on a History row resumes it; Resume leaves the
-action strip** (2026-10-31): the row's text is a real `<button>` and the row
-resumes on a click outside the travelling Reveal/Delete strip, so the Resume
-control (`history-resume`, `sp-icon-replay`) is gone; `historyPanel` +2. Before
-that it was **`npm run test` → 4799 passed / 1 failed / 13 skipped** (4813):
-+5 against the 4794
+HEAD because this machine is signed in to Copilot - +15 against the 4801 run
+below, for **Clearing the pane's data: two scopes, one reload** (2026-10-31): the
+Browser tab's erase button became **Clear personal data** (saved sign-ins, the
+pane's cookies and session storage) and **Clear storage** (local data and every
+cache), both clearing through `browser:clear-data` and reloading the open page.
+`browsingData` +8 (new), `browserController` +5, `browserSection` +2 (4 replaced
+by 6), and a new built-app `browser-data-clearing.spec.ts` (Playwright +1) with
+the shared fixture-login/pane-evaluate/settings-tab helpers extracted. Before
+that it was **`npm run test` → 4801 passed / 1 failed / 13 skipped** (4815):
++2 passed against the 4799 run below, for **A click on a History row resumes it;
+Resume leaves the action strip** (2026-10-31): the row's text is a real
+`<button>` and the row resumes on a click outside the travelling Reveal/Delete
+strip, so the Resume control (`history-resume`, `sp-icon-replay`) is gone;
+`historyPanel` +2. Before that it was **`npm run test` → 4799 passed / 1 failed /
+13 skipped** (4813): +5 against the 4794
 `page_audit`-desktop run below; the drop from 4846 is the update-model rewrite's
 deleted scripts and their tests, `page_audit` desktop default and that day's
 five **Resuming from History over the Home veil reveals the page, and a
