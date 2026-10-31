@@ -1,5 +1,5 @@
 import type { BrowserWindow, Session } from 'electron';
-import type { AddonHost } from '../../shared';
+import { type AddonHost, looksLikeLoginUrl } from '../../shared';
 import { type LighthouseAudit, auditEvidence, hasMeasuredSaving } from './evidence';
 import { DebuggerTransport } from './pageAuditTransport';
 import type {
@@ -40,6 +40,16 @@ export interface LighthouseResult {
     | undefined
   >;
   readonly runtimeError?: { readonly message?: string; readonly code?: string };
+}
+
+/** Whether loading the requested page ended on a sign-in page the request did not ask for. */
+export function redirectedToLogin(requested: string, loaded: string): boolean {
+  return loaded !== '' && looksLikeLoginUrl(loaded) && !looksLikeLoginUrl(requested);
+}
+
+/** Whether a main-document HTTP status says the request was not signed in. */
+export function isSignedOutStatus(status: number): boolean {
+  return status === 401 || status === 403;
 }
 
 /** Audits whose score says nothing about a pass or a failure. */
@@ -277,6 +287,21 @@ export function createPageAudit(
     };
     win.webContents.on('will-navigate', onWillNavigate);
     win.webContents.on('will-redirect', onWillRedirect);
+    // AEM answers a signed-out request with HTTP 401 and the sign-in page at the
+    // very same URL, so the address alone never reveals it. Lighthouse navigates
+    // the window again, so the latest status is what the report is about.
+    let documentStatus = 0;
+    const onDidNavigate = (_event: unknown, _url: string, httpResponseCode: number): void => {
+      documentStatus = httpResponseCode;
+    };
+    win.webContents.on('did-navigate', onDidNavigate);
+    const signedOut = (): PageAuditOutcome | undefined =>
+      isSignedOutStatus(documentStatus)
+        ? {
+            kind: 'auth_required',
+            message: `The host answered HTTP ${documentStatus}, so the session is signed out.`,
+          }
+        : undefined;
 
     let transport: DebuggerTransport | undefined;
     let browser: import('puppeteer-core').Browser | undefined;
@@ -297,6 +322,15 @@ export function createPageAudit(
       } finally {
         if (loadTimer !== undefined) clearTimeout(loadTimer);
       }
+      const loadedUrl = win.webContents.getURL();
+      if (redirectedToLogin(url, loadedUrl)) {
+        return {
+          kind: 'auth_required',
+          message: 'The page redirected to a sign-in page, so the session is signed out.',
+        };
+      }
+      const signedOutAfterLoad = signedOut();
+      if (signedOutAfterLoad !== undefined) return signedOutAfterLoad;
       progress?.('Loading tools');
       const lighthouse = (await import('lighthouse')).default;
       const puppeteer = await import('puppeteer-core');
@@ -324,6 +358,8 @@ export function createPageAudit(
       );
       if (result === undefined)
         return { kind: 'failed', message: 'Lighthouse returned no result.' };
+      const signedOutAfterAudit = signedOut();
+      if (signedOutAfterAudit !== undefined) return signedOutAfterAudit;
       const lhr = result.lhr as unknown as LighthouseResult;
       const scores: PageAuditScore[] = request.categories.map((category) => ({
         category,
@@ -332,7 +368,7 @@ export function createPageAudit(
       const failures = lighthouseFailures(lhr, request.categories);
       return {
         kind: 'report',
-        url,
+        url: loadedUrl === '' ? url : loadedUrl,
         formFactor: request.formFactor,
         scores,
         failures,

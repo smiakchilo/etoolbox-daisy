@@ -301,6 +301,7 @@ export function buildPageAuditReport(result: PageAuditSuccess): ToolReportMessag
 // ---------------------------------------------------------------------------
 
 const ERROR_MESSAGES = {
+  auth_required: 'The host showed its sign-in page instead of the requested page',
   blocked: 'The page is on a local, private or internal address and cannot be audited',
   cancelled: 'The audit was cancelled',
   failed: 'The page could not be audited',
@@ -310,12 +311,19 @@ const ERROR_MESSAGES = {
 } as const satisfies Record<PageAuditFailureKind, string>;
 
 interface ErrorMapping {
-  readonly code: 'ACCESS_DENIED' | 'CANCELLED' | 'NETWORK_ERROR' | 'INVALID_ARGUMENT' | 'TIMEOUT';
+  readonly code:
+    | 'ACCESS_DENIED'
+    | 'AUTH_REQUIRED'
+    | 'CANCELLED'
+    | 'NETWORK_ERROR'
+    | 'INVALID_ARGUMENT'
+    | 'TIMEOUT';
   readonly retryable: boolean;
-  readonly requiredAction: 'none' | 'select_server';
+  readonly requiredAction: 'none' | 'select_server' | 'sign_in_to_host';
 }
 
 const ERROR_MAPPINGS: Readonly<Record<PageAuditFailureKind, ErrorMapping>> = {
+  auth_required: { code: 'AUTH_REQUIRED', retryable: false, requiredAction: 'sign_in_to_host' },
   blocked: { code: 'ACCESS_DENIED', retryable: false, requiredAction: 'none' },
   cancelled: { code: 'CANCELLED', retryable: true, requiredAction: 'none' },
   failed: { code: 'NETWORK_ERROR', retryable: true, requiredAction: 'none' },

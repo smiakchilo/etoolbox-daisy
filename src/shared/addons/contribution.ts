@@ -30,11 +30,18 @@ export type ContributedToolPresentation = (typeof CONTRIBUTED_TOOL_PRESENTATIONS
  * One value a billet row reads from the call's own arguments. `path` names a
  * top-level parameter of the tool's descriptor (the build checks it), an absent
  * or empty value falls back to `fallback`, and an array is joined with `join`.
- * A value that is still absent is omitted - never rendered blank.
+ * A value that is still absent is omitted - never rendered blank. An optional
+ * `result` names a top-level key of the succeeded call's result; once the call
+ * has succeeded a non-empty text there wins over the argument (the URL a tool
+ * actually used, rather than the one it was asked for).
  */
 export const billetValueSchema = z
   .object({
     path: z.string().regex(/^[A-Za-z0-9_]{1,64}$/),
+    result: z
+      .string()
+      .regex(/^[A-Za-z0-9_]{1,64}$/)
+      .optional(),
     fallback: z.string().max(200).optional(),
     /** The separator for an array value (e.g. `", "`); absent renders the array as-is. */
     join: z.string().max(8).optional(),

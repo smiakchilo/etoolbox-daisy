@@ -6,6 +6,8 @@ import {
   inspectAuditRequest,
   lighthouseFailures,
   parseTarget,
+  isSignedOutStatus,
+  redirectedToLogin,
 } from '../pageAudit';
 
 /**
@@ -31,6 +33,7 @@ interface FakeWebContents {
   setWindowOpenHandler: () => void;
   setWebRTCIPHandlingPolicy: (policy: string) => void;
   on: (event: string, listener: (...args: never[]) => void) => void;
+  emit: (event: string, ...args: unknown[]) => void;
   getTitle: () => string;
   getURL: () => string;
   loadUrl: (url: string) => Promise<void>;
@@ -39,14 +42,17 @@ interface FakeWebContents {
 function createWindowFactory(): {
   readonly windows: FakeWindow[];
   setLoadUrl(handler: (url: string) => Promise<void>): void;
+  setFinalUrl(url: string): void;
   reset(): void;
   create(options: FakeWindow['options']): FakeWindow;
 } {
   const windows: FakeWindow[] = [];
   let loadUrl: (url: string) => Promise<void> = () => new Promise<void>(() => undefined);
+  let finalUrl = 'https://a.example/';
   let nextId = 7;
 
   const create = (options: FakeWindow['options']): FakeWindow => {
+    const listeners = new Map<string, ((...args: never[]) => void)[]>();
     const webContents: FakeWebContents = {
       id: nextId,
       stop: vi.fn(),
@@ -60,9 +66,16 @@ function createWindowFactory(): {
       setFrameRate: vi.fn(),
       setWindowOpenHandler: vi.fn(),
       setWebRTCIPHandlingPolicy: vi.fn(),
-      on: vi.fn(),
+      on: (event, listener) => {
+        listeners.set(event, [...(listeners.get(event) ?? []), listener]);
+      },
+      emit: (event, ...args) => {
+        for (const listener of listeners.get(event) ?? []) {
+          (listener as (...rest: unknown[]) => void)(...args);
+        }
+      },
       getTitle: () => 'audit',
-      getURL: () => 'https://a.example/',
+      getURL: () => finalUrl,
       loadUrl: (url: string) => loadUrl(url),
     };
     nextId += 1;
@@ -85,8 +98,12 @@ function createWindowFactory(): {
     setLoadUrl: (handler) => {
       loadUrl = handler;
     },
+    setFinalUrl: (url) => {
+      finalUrl = url;
+    },
     reset: () => {
       windows.length = 0;
+      finalUrl = 'https://a.example/';
       loadUrl = () => new Promise<void>(() => undefined);
     },
     create,
@@ -665,6 +682,36 @@ describe('inspectAuditRequest', () => {
   });
 });
 
+describe('redirectedToLogin', () => {
+  const login =
+    'https://a.example/libs/granite/core/content/login.html?resource=%2Fcontent%2Fa.html';
+
+  it('flags a sign-in page the request did not ask for', () => {
+    expect(redirectedToLogin('https://a.example/content/a.html', login)).toBe(true);
+  });
+
+  it('lets a request for a sign-in page itself be audited', () => {
+    expect(redirectedToLogin(login, login)).toBe(false);
+  });
+
+  it('does not flag an ordinary page or an unknown final address', () => {
+    expect(
+      redirectedToLogin('https://a.example/content/a.html', 'https://a.example/content/b.html'),
+    ).toBe(false);
+    expect(redirectedToLogin('https://a.example/content/a.html', '')).toBe(false);
+  });
+});
+
+describe('isSignedOutStatus', () => {
+  it('treats 401 and 403 as a signed-out session and nothing else', () => {
+    expect(isSignedOutStatus(401)).toBe(true);
+    expect(isSignedOutStatus(403)).toBe(true);
+    expect(isSignedOutStatus(200)).toBe(false);
+    expect(isSignedOutStatus(404)).toBe(false);
+    expect(isSignedOutStatus(0)).toBe(false);
+  });
+});
+
 describe('createPageAudit', () => {
   const request = { url: undefined, categories: ['seo'], formFactor: 'mobile' } as const;
 
@@ -746,6 +793,39 @@ describe('createPageAudit', () => {
     expect(probe.setPermissionCheckHandler).toHaveBeenCalled();
     expect(probe.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
   });
+
+  it('reports a signed-out session when the page loaded is the host sign-in page', async () => {
+    const { run, windows } = auditRunner(undefined, session(), () => true);
+    windows.setLoadUrl(() => Promise.resolve());
+    windows.setFinalUrl(
+      'https://a.example/libs/granite/core/content/login.html?resource=%2Fcontent%2Fa.html',
+    );
+
+    const outcome = await run({ ...request, url: 'https://a.example/content/a.html' }, undefined);
+
+    expect(outcome).toMatchObject({ kind: 'auth_required' });
+  });
+
+  it.each([401, 403])(
+    'reports a signed-out session when the page answers %i at the requested address',
+    async (status) => {
+      const { run, windows } = auditRunner(undefined, session(), () => true);
+      windows.setFinalUrl('https://a.example/content/a.html');
+      windows.setLoadUrl(() => {
+        windows.windows[0]?.webContents.emit(
+          'did-navigate',
+          {},
+          'https://a.example/content/a.html',
+          status,
+        );
+        return Promise.resolve();
+      });
+
+      const outcome = await run({ ...request, url: 'https://a.example/content/a.html' }, undefined);
+
+      expect(outcome).toMatchObject({ kind: 'auth_required' });
+    },
+  );
 
   it('reports a refused request when the page load fails because of it', async () => {
     const { run, probe, windows } = auditRunner(undefined);

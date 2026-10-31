@@ -214,6 +214,7 @@ describe('the audit executor', () => {
   });
 
   it.each([
+    ['auth_required', 'AUTH_REQUIRED'],
     ['blocked', 'ACCESS_DENIED'],
     ['cancelled', 'CANCELLED'],
     ['failed', 'NETWORK_ERROR'],
@@ -224,6 +225,15 @@ describe('the audit executor', () => {
     const result = await execute(runnerReturning({ kind }), {});
 
     expect(result).toMatchObject({ ok: false, error: { code } });
+  });
+
+  it('asks the user to sign in when the host showed its sign-in page', async () => {
+    const result = await execute(runnerReturning({ kind: 'auth_required' }), {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { requiredAction: 'sign_in_to_host', retryable: false },
+    });
   });
 
   it('asks the user to pick a host when there is no page to audit', async () => {

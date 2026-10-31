@@ -86,7 +86,7 @@ export interface PageAuditReport {
 }
 
 export type PageAuditFailureKind =
-  'blocked' | 'cancelled' | 'failed' | 'invalid_url' | 'no_page' | 'timeout';
+  'auth_required' | 'blocked' | 'cancelled' | 'failed' | 'invalid_url' | 'no_page' | 'timeout';
 
 export interface PageAuditFailed {
   readonly kind: PageAuditFailureKind;

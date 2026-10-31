@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   type AddonContributionsEntry,
+  billetValueSchema,
   type JsonValue,
   type ToolReportMessage,
   TOOL_REPORT_PAYLOAD_KEY,
@@ -93,6 +94,41 @@ describe('a contributed billet', () => {
 
     expect(details.summary).toBe('Current page');
     expect(details.parameters).toEqual([{ label: 'Target', value: 'Current page' }]);
+  });
+
+  describe('a value declared to prefer the succeeded result', () => {
+    const RESULT_BILLET = {
+      summary: { path: 'target', result: 'url', fallback: 'Current page' },
+      rows: [{ label: 'Url', value: { path: 'target', result: 'url' } }],
+    };
+
+    it('shows the result’s value over the argument', () => {
+      const details = describeContributedCall(
+        RESULT_BILLET,
+        { target: '/content/a.html' },
+        { url: 'http://host/content/a.html?wcmmode=disabled' },
+      );
+
+      expect(details.summary).toBe('http://host/content/a.html?wcmmode=disabled');
+      expect(details.parameters).toEqual([
+        { label: 'Url', value: 'http://host/content/a.html?wcmmode=disabled' },
+      ]);
+    });
+
+    it('is declared with a plain top-level key of the result', () => {
+      expect(billetValueSchema.safeParse({ path: 'target', result: 'url' }).success).toBe(true);
+      expect(billetValueSchema.safeParse({ path: 'target', result: 'a.b' }).success).toBe(false);
+      expect(billetValueSchema.safeParse({ path: 'target', result: '' }).success).toBe(false);
+    });
+
+    it.each([
+      ['an empty string', { url: '' }],
+      ['a non-string', { url: 3 }],
+      ['no such key', { other: 'x' }],
+    ])('falls back to the argument, then the fallback, with %s', (_name, data) => {
+      expect(describeContributedCall(RESULT_BILLET, { target: '/a' }, data).summary).toBe('/a');
+      expect(describeContributedCall(RESULT_BILLET, {}, data).summary).toBe('Current page');
+    });
   });
 
   it('falls back to the generic argument dump when the declaration carries no billet', () => {

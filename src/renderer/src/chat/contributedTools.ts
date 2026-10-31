@@ -29,7 +29,12 @@ import {
 function readValue(
   args: Readonly<Record<string, JsonValue>>,
   spec: BilletValueSpec,
+  data?: JsonValue,
 ): string | undefined {
+  if (spec.result !== undefined) {
+    const produced = asRecord(data)?.[spec.result];
+    if (typeof produced === 'string' && produced !== '') return produced;
+  }
   const raw = args[spec.path];
   let text: string | undefined;
   if (typeof raw === 'string') {
@@ -50,14 +55,15 @@ function readValue(
 export function describeContributedCall(
   billet: BilletSpec | undefined,
   args: Readonly<Record<string, JsonValue>>,
+  data?: JsonValue,
 ): ToolCallDetails {
   if (billet === undefined) {
     return { summary: undefined, parameters: parameterRows([['Arguments', describeArgs(args)]]) };
   }
   return {
-    summary: billet.summary === undefined ? undefined : readValue(args, billet.summary),
+    summary: billet.summary === undefined ? undefined : readValue(args, billet.summary, data),
     parameters: parameterRows(
-      billet.rows.map((row) => [row.label, readValue(args, row.value)] as const),
+      billet.rows.map((row) => [row.label, readValue(args, row.value, data)] as const),
     ),
   };
 }
@@ -100,8 +106,8 @@ export function contributeToolRenderers(
       addon.contributions.tools.map((tool) => ({
         toolName: tool.name,
         ...(tool.presentation === undefined ? {} : { presentation: tool.presentation }),
-        describeCall: (args: Readonly<Record<string, JsonValue>>) =>
-          describeContributedCall(tool.billet, args),
+        describeCall: (args: Readonly<Record<string, JsonValue>>, data?: JsonValue) =>
+          describeContributedCall(tool.billet, args, data),
         ...(tool.presentation === 'report'
           ? {
               readReportMessage: (_args: Readonly<Record<string, JsonValue>>, data?: JsonValue) =>
