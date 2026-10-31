@@ -41,6 +41,7 @@ vi.mock('electron', () => ({
 }));
 
 import { createViewSession } from '../../../../src/main/webview';
+import { createAuthDiagnostics } from '../../../../src/main/webview/authDiagnostics';
 
 /** The listener `createViewSession` registered most recently. */
 function registeredHeadersListener(): HeadersListener {
@@ -133,5 +134,77 @@ describe('createViewSession - renderable attachments', () => {
     registeredHeadersListener()({ url: 'http://author.example/' }, callback);
 
     expect(callback).toHaveBeenCalledWith({});
+  });
+});
+
+describe('createViewSession - authentication cookie diagnostics', () => {
+  type CookieChangedListener = (
+    event: unknown,
+    cookie: Record<string, unknown>,
+    cause: string,
+    removed: boolean,
+  ) => void;
+
+  function registeredCookieListener(): CookieChangedListener {
+    const registration = fakeSession.cookies.on.mock.calls
+      .filter(([event]) => event === 'changed')
+      .at(-1);
+    if (registration === undefined) {
+      throw new Error('no cookie "changed" listener was registered');
+    }
+    return registration[1];
+  }
+
+  function setUp(withDiagnostics: boolean) {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), getHealth: vi.fn() };
+    createViewSession({
+      logger,
+      ...(withDiagnostics ? { authDiagnostics: createAuthDiagnostics() } : {}),
+    });
+    return { logger, listener: registeredCookieListener() };
+  }
+
+  it('logs a removed sign-in cookie as a closed label with its cause and no value', () => {
+    const { logger, listener } = setUp(true);
+
+    listener(
+      {},
+      {
+        name: 'login-token',
+        value: 'SECRET-VALUE',
+        domain: 'author.example',
+        httpOnly: true,
+        session: true,
+      },
+      'expired',
+      true,
+    );
+
+    expect(logger.info).toHaveBeenCalledWith('VIEW_COOKIE_CHANGED', {
+      cookie: {
+        name: 'login-token',
+        httpOnly: true,
+        session: true,
+        cause: 'expired',
+        removed: true,
+      },
+    });
+    expect(JSON.stringify(logger.info.mock.calls)).not.toContain('SECRET-VALUE');
+  });
+
+  it('stays silent about a cookie that is not an authentication cookie', () => {
+    const { logger, listener } = setUp(true);
+
+    listener({}, { name: 'theme', value: 'dark', domain: 'author.example' }, 'explicit', false);
+
+    expect(logger.info).not.toHaveBeenCalledWith('VIEW_COOKIE_CHANGED', expect.anything());
+  });
+
+  it('logs nothing without a diagnostics tracker', () => {
+    const { logger, listener } = setUp(false);
+
+    listener({}, { name: 'login-token', value: 'v', domain: 'author.example' }, 'explicit', true);
+
+    expect(logger.info).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,13 @@
 import { app, session } from 'electron';
 import type { Session } from 'electron';
 import type { ProxyConfig } from '../../shared';
-import { type Logger, toLoggableUrl } from '../logger';
+import {
+  COOKIE_CHANGE_CAUSES,
+  type CookieChangeCause,
+  type Logger,
+  toLoggableUrl,
+} from '../logger';
+import { type AuthDiagnostics, toCookieDigest } from './authDiagnostics';
 import {
   createCertificateErrorListener,
   createCertificateExceptionStore,
@@ -34,6 +40,12 @@ import { buildPersistCookieDetails, shouldPersistSessionCookie } from './session
  * test file either.
  */
 export const VIEW_SESSION_PARTITION = 'persist:webview';
+
+function toCookieChangeCause(cause: string): CookieChangeCause {
+  return (COOKIE_CHANGE_CAUSES as readonly string[]).includes(cause)
+    ? (cause as CookieChangeCause)
+    : 'unknown';
+}
 
 /** The small API the window layer uses to route host connections through this session's proxy/certificate policy. */
 export interface ViewSession {
@@ -77,6 +89,8 @@ export interface ViewSession {
 export interface ViewSessionOptions {
   /** Optional diagnostics sink for a failed cookie promotion. */
   readonly logger?: Logger;
+  /** When supplied, a change to an authentication cookie is recorded and logged (never its value). */
+  readonly authDiagnostics?: AuthDiagnostics;
   /**
    * The response-header rules this session applies (`responseHeaderFilter.ts`).
    * Omitted uses the default rule list; supplying one here is how a future
@@ -138,7 +152,21 @@ export function createViewSession(options: ViewSessionOptions = {}): ViewSession
     event.preventDefault();
   });
 
-  viewSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
+  viewSession.cookies.on('changed', (_event, cookie, cause, removed) => {
+    if (options.authDiagnostics !== undefined && options.logger !== undefined) {
+      const now = Date.now();
+      const closedCause = toCookieChangeCause(cause);
+      if (
+        options.authDiagnostics.noteCookieChange(cookie, closedCause, removed, now) !== undefined
+      ) {
+        const digest = toCookieDigest(cookie, now);
+        if (digest !== undefined) {
+          options.logger.info('VIEW_COOKIE_CHANGED', {
+            cookie: { ...digest, cause: closedCause, removed },
+          });
+        }
+      }
+    }
     if (!shouldPersistSessionCookie(cookie, removed)) return;
     const details = buildPersistCookieDetails(cookie, Date.now());
     if (details === undefined) return;

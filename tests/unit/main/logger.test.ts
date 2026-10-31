@@ -4,6 +4,7 @@ import { afterEach, describe, expect, expectTypeOf, it } from 'vitest';
 import { newChatId, newRequestId } from '../../../src/shared';
 import {
   createLogger,
+  MAX_COOKIE_DIGESTS,
   toLoggableUrl,
   type DiagnosticCode,
   type LoggableUrl,
@@ -371,6 +372,87 @@ describe('createLogger: canaries', () => {
 
     const raw = readLogBytes(dir).toString('utf8');
     expect(raw).not.toContain(PASSWORD_CANARY);
+    expect(logger.getHealth().lastFailureCode).toBe('INVALID_FIELDS');
+  });
+});
+
+describe('createLogger: authentication diagnostics', () => {
+  const PASSWORD_CANARY = 'CANARY-FORGED-7c4a1e9b02d35f68';
+
+  it('writes a snapshot with its source, session age and cookie digests', () => {
+    const dir = createScratchRoot();
+    const logger = createLogger(dir);
+
+    logger.warn('AUTH_DIAGNOSTIC_SNAPSHOT', {
+      source: 'audit',
+      statusCode: 401,
+      ageMs: 480_000,
+      url: toLoggableUrl('http://localhost:4502/content/site.html?wcmmode=disabled'),
+      samePartition: true,
+      lastCookieChange: { name: 'login-token', cause: 'overwrite', removed: true, ageMs: 5 },
+      cookies: [{ name: 'login-token', httpOnly: true, session: false, expiresInMs: 1000 }],
+    });
+
+    expect(JSON.parse(readLogLines(dir)[0] ?? '')).toMatchObject({
+      code: 'AUTH_DIAGNOSTIC_SNAPSHOT',
+      source: 'audit',
+      statusCode: 401,
+      ageMs: 480_000,
+      samePartition: true,
+      lastCookieChange: { name: 'login-token', cause: 'overwrite', removed: true },
+      cookies: [{ name: 'login-token', httpOnly: true, session: false, expiresInMs: 1000 }],
+    });
+    expect(readLogBytes(dir).toString('utf8')).not.toContain('wcmmode');
+  });
+
+  it('rejects a cookie digest whose name is not one of the closed labels', () => {
+    const dir = createScratchRoot();
+    const logger = createLogger(dir);
+    const forgedName = PASSWORD_CANARY as 'token';
+
+    logger.info('VIEW_COOKIE_CHANGED', {
+      cookie: {
+        name: forgedName,
+        cause: 'explicit',
+        removed: false,
+        httpOnly: true,
+        session: true,
+      },
+    });
+
+    expect(readLogBytes(dir).toString('utf8')).not.toContain(PASSWORD_CANARY);
+    expect(logger.getHealth().lastFailureCode).toBe('INVALID_FIELDS');
+  });
+
+  it('rejects a forged source and a forged change cause', () => {
+    const dir = createScratchRoot();
+    const logger = createLogger(dir);
+
+    logger.info('VIEW_NAVIGATED', { source: PASSWORD_CANARY as 'pane' });
+    logger.info('VIEW_COOKIE_CHANGED', {
+      cookie: {
+        name: 'token',
+        cause: PASSWORD_CANARY as 'explicit',
+        removed: false,
+        httpOnly: true,
+        session: true,
+      },
+    });
+
+    expect(readLogBytes(dir).toString('utf8')).not.toContain(PASSWORD_CANARY);
+    expect(logger.getHealth().writeFailureCount).toBe(2);
+  });
+
+  it('rejects more cookie digests than the bound allows', () => {
+    const dir = createScratchRoot();
+    const logger = createLogger(dir);
+    const digest = { name: 'token', httpOnly: true, session: true } as const;
+
+    logger.warn('AUTH_DIAGNOSTIC_SNAPSHOT', {
+      cookies: Array.from({ length: MAX_COOKIE_DIGESTS + 1 }, () => digest),
+    });
+
+    expect(readLogLines(dir)).toHaveLength(0);
     expect(logger.getHealth().lastFailureCode).toBe('INVALID_FIELDS');
   });
 });

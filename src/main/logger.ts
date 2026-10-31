@@ -108,6 +108,9 @@ export const DIAGNOSTIC_CODES = [
   'AGENT_TURN_SUMMARY',
   'AEM_COUNT_FAILED',
   'AUTH_LOST',
+  'AUTH_DIAGNOSTIC_SNAPSHOT',
+  'VIEW_COOKIE_CHANGED',
+  'VIEW_NAVIGATED',
   'SKILL_REJECTED',
   'SKILL_SCRIPT_FAILED',
   'SKILLS_IPC_SENDER_REJECTED',
@@ -191,6 +194,50 @@ export const LOG_REASONS = [
 ] as const;
 
 export type LogReason = (typeof LOG_REASONS)[number];
+
+/** Which window or reader a browser-session diagnostic line concerns. */
+export const LOG_SOURCES = ['pane', 'audit', 'bridge', 'window'] as const;
+export type LogSource = (typeof LOG_SOURCES)[number];
+
+/** Electron's cookie-change causes, verbatim. */
+export const COOKIE_CHANGE_CAUSES = [
+  'explicit',
+  'overwrite',
+  'expired',
+  'evicted',
+  'expired-overwrite',
+  'inserted',
+  'unknown',
+] as const;
+export type CookieChangeCause = (typeof COOKIE_CHANGE_CAUSES)[number];
+
+/**
+ * The only cookie names a log line may carry: a closed label a real cookie
+ * name is *classified* into (`classifyAuthCookie`), never the name itself,
+ * since a name is a string a page chose.
+ */
+export const AUTH_COOKIE_LABELS = ['login-token', 'JSESSIONID', 'sling', 'saml', 'token'] as const;
+export type AuthCookieLabel = (typeof AUTH_COOKIE_LABELS)[number];
+
+/** What a log line may say about one authentication cookie - never its value. */
+export interface CookieDigest {
+  readonly name: AuthCookieLabel;
+  readonly httpOnly: boolean;
+  /** A session cookie (no expiry); the application may have promoted it. */
+  readonly session: boolean;
+  /** Milliseconds until it expires; negative when already past. Absent for a session cookie. */
+  readonly expiresInMs?: number;
+}
+
+/** The last authentication-cookie change seen for an origin. */
+export interface CookieChangeDigest {
+  readonly name: AuthCookieLabel;
+  readonly cause: CookieChangeCause;
+  readonly removed: boolean;
+  readonly ageMs: number;
+}
+
+export const MAX_COOKIE_DIGESTS = 16;
 
 export type LogLevel = 'info' | 'warn' | 'error';
 
@@ -276,6 +323,18 @@ export interface LogFields {
   readonly addonId?: string;
   /** Which clearing action a browser-data line concerns (Settings "Browser" tab). */
   readonly dataScope?: BrowsingDataScope;
+  /** Which window or reader the line concerns. */
+  readonly source?: LogSource;
+  /** Milliseconds since the last remembered sign-in on the origin. */
+  readonly ageMs?: number;
+  /** The authentication cookie a `VIEW_COOKIE_CHANGED` line concerns, and why it changed. */
+  readonly cookie?: CookieDigest & { readonly cause: CookieChangeCause; readonly removed: boolean };
+  /** The authentication cookies currently in the jar for the origin. */
+  readonly cookies?: readonly CookieDigest[];
+  /** The most recent authentication-cookie change on the origin. */
+  readonly lastCookieChange?: CookieChangeDigest;
+  /** Whether the reader of the line shares the pane's session (partition). */
+  readonly samePartition?: boolean;
   readonly ids?: LogIds;
   readonly url?: LoggableUrl;
 }
@@ -314,6 +373,35 @@ const loggableUrlValidationSchema = z
   })
   .strict();
 
+const cookieDigestSchema = z
+  .object({
+    name: z.enum(AUTH_COOKIE_LABELS),
+    httpOnly: z.boolean(),
+    session: z.boolean(),
+    expiresInMs: z.number().int().optional(),
+  })
+  .strict();
+
+const cookieChangeSchema = z
+  .object({
+    name: z.enum(AUTH_COOKIE_LABELS),
+    httpOnly: z.boolean(),
+    session: z.boolean(),
+    expiresInMs: z.number().int().optional(),
+    cause: z.enum(COOKIE_CHANGE_CAUSES),
+    removed: z.boolean(),
+  })
+  .strict();
+
+const lastCookieChangeSchema = z
+  .object({
+    name: z.enum(AUTH_COOKIE_LABELS),
+    cause: z.enum(COOKIE_CHANGE_CAUSES),
+    removed: z.boolean(),
+    ageMs: z.number().nonnegative(),
+  })
+  .strict();
+
 const logFieldsValidationSchema = z
   .object({
     durationMs: z.number().nonnegative().optional(),
@@ -327,6 +415,12 @@ const logFieldsValidationSchema = z
       .regex(/^[a-z][a-z0-9-]{0,63}$/)
       .optional(),
     dataScope: browsingDataScopeSchema.optional(),
+    source: z.enum(LOG_SOURCES).optional(),
+    ageMs: z.number().nonnegative().optional(),
+    cookie: cookieChangeSchema.optional(),
+    cookies: z.array(cookieDigestSchema).max(MAX_COOKIE_DIGESTS).optional(),
+    lastCookieChange: lastCookieChangeSchema.optional(),
+    samePartition: z.boolean().optional(),
     ids: logIdsSchema.optional(),
     url: loggableUrlValidationSchema.optional(),
   })
@@ -349,6 +443,12 @@ function buildRecord(
   if (fields.proxied !== undefined) record['proxied'] = fields.proxied;
   if (fields.addonId !== undefined) record['addonId'] = fields.addonId;
   if (fields.dataScope !== undefined) record['dataScope'] = fields.dataScope;
+  if (fields.source !== undefined) record['source'] = fields.source;
+  if (fields.ageMs !== undefined) record['ageMs'] = fields.ageMs;
+  if (fields.cookie !== undefined) record['cookie'] = fields.cookie;
+  if (fields.cookies !== undefined) record['cookies'] = fields.cookies;
+  if (fields.lastCookieChange !== undefined) record['lastCookieChange'] = fields.lastCookieChange;
+  if (fields.samePartition !== undefined) record['samePartition'] = fields.samePartition;
   if (fields.ids !== undefined) {
     const ids: Record<string, string> = {};
     if (fields.ids.requestId !== undefined) ids['requestId'] = fields.ids.requestId;

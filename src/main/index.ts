@@ -5,12 +5,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   type AppSettings,
+  type AuthIncidentSeverity,
   type AuthStatus,
+  type ServerId,
   type SkillSummary,
   AGENT_AUTH_PROGRESS_CHANNEL,
   answerWith,
   BROWSER_AUTH_INCIDENT_CHANNEL,
   err,
+  looksLikeLoginUrl,
   ok,
   readLeadingSkillToken,
   renderSkillCatalogue,
@@ -18,6 +21,7 @@ import {
   UPDATES_STATUS_CHANGED_CHANNEL,
 } from '../shared';
 import { createViewSession } from './webview';
+import { createAuthDiagnostics, digestCookieJar } from './webview/authDiagnostics';
 import { createWebviewBridgeBroker } from './webview/bridgeBroker';
 import { createWebviewBridgeTransport } from './webview/bridgeTransport';
 import { createToolHttpLogger } from './webview/toolHttpLog';
@@ -89,7 +93,7 @@ import { registerSkillsIpcHandlers } from './ipc/skills';
 import { registerTableExportIpcHandlers } from './ipc/tableExport';
 import { createTrustedWindowRegistry } from './ipc/trustedWindows';
 import { registerUpdatesIpcHandlers } from './ipc/updates';
-import { createLogger } from './logger';
+import { type CookieDigest, type LogSource, createLogger, toLoggableUrl } from './logger';
 import { loadRuleResources } from './rules/ruleResources';
 import { normalizeProjectLabel } from './rules/ruleFrontMatter';
 import { renderGenericRules, renderProjectRules } from './rules/ruleRendering';
@@ -367,7 +371,8 @@ if (smokeTest) {
       secrets: secretStore,
       logger,
     });
-    registerCredentialCaptureIpc({ vault: credentialVault, logger });
+    const authDiagnostics = createAuthDiagnostics();
+    registerCredentialCaptureIpc({ vault: credentialVault, logger, authDiagnostics });
     // An origin's own HTTP authentication (`isProxy: false`) is answered from the
     // same vault. `createViewSession` wires the proxy listener; each declines the
     // other's challenges, and neither touches the one-time callback unless it
@@ -415,7 +420,39 @@ if (smokeTest) {
     // 3) - created once, for the app's lifetime, and handed to the browser
     // controller below. Certificate-error/login policy is wired inside
     // `createViewSession` itself; nothing here duplicates it.
-    const viewSession = createViewSession({ logger });
+    const viewSession = createViewSession({ logger, authDiagnostics });
+
+    // One diagnostic record per sign-in episode, written the first time anything
+    // (the pane, a bridge read, an audit window) is told the session is gone:
+    // what the cookie jar holds at that moment, how old the sign-in was and
+    // what last changed a login cookie. Closed labels only - never a value.
+    const logAuthSnapshot = async (
+      source: LogSource,
+      origin: string,
+      statusCode: number | undefined,
+      url: string | undefined,
+      samePartition: boolean,
+    ): Promise<void> => {
+      if (!authDiagnostics.claimSnapshot(origin)) return;
+      const now = Date.now();
+      let cookies: readonly CookieDigest[] = [];
+      try {
+        cookies = digestCookieJar(await viewSession.session.cookies.get({ url: origin }), now);
+      } catch {
+        // best effort: the snapshot is still useful without the jar
+      }
+      const ageMs = authDiagnostics.signInAgeMs(origin, now);
+      const lastCookieChange = authDiagnostics.lastCookieChange(origin, now);
+      logger.warn('AUTH_DIAGNOSTIC_SNAPSHOT', {
+        source,
+        ...(statusCode !== undefined ? { statusCode } : {}),
+        ...(url !== undefined ? { url: toLoggableUrl(url) } : {}),
+        ...(ageMs !== undefined ? { ageMs } : {}),
+        ...(lastCookieChange !== undefined ? { lastCookieChange } : {}),
+        cookies,
+        samePartition,
+      });
+    };
 
     // Prefill a saved sign-in on every document in the pane's session - the
     // pane itself and every popup an SSO flow opens (`window.open` windows get a
@@ -430,6 +467,36 @@ if (smokeTest) {
         listForOrigin: (origin) => credentialVault.listForOrigin(origin),
         recentUsernames: () => credentialVault.recentUsernames(),
         logger,
+      });
+      // Every main-frame navigation of a document in the pane's session, with
+      // its HTTP status: this is what shows an audit window (or a popup) being
+      // answered 401 while the pane looks signed in.
+      contents.on('did-navigate', (_navEvent, url, httpResponseCode) => {
+        if (!/^https?:/i.test(url)) return;
+        const origin = new URL(url).origin;
+        const window = BrowserWindow.fromWebContents(contents);
+        const source: LogSource =
+          contents === browserController.hostView.webContents
+            ? 'pane'
+            : window !== null && window.isVisible()
+              ? 'window'
+              : 'audit';
+        const ageMs = authDiagnostics.signInAgeMs(origin, Date.now());
+        logger.info('VIEW_NAVIGATED', {
+          source,
+          url: toLoggableUrl(url),
+          statusCode: httpResponseCode,
+          ...(ageMs !== undefined ? { ageMs } : {}),
+        });
+        const signedOut = httpResponseCode === 401 || httpResponseCode === 403;
+        if (!signedOut && !looksLikeLoginUrl(url)) return;
+        void logAuthSnapshot(source, origin, httpResponseCode, url, true);
+        // Only a hidden or secondary document is news to the user: the pane
+        // already shows its own login page.
+        if (source !== 'pane' && signedOut) {
+          const host = loadSettingsSync(appPaths.settings).hosts.find((h) => h.origin === origin);
+          if (host !== undefined) raiseAuthIncident({ serverId: host.id, severity: 'certain' });
+        }
       });
     });
 
@@ -731,6 +798,28 @@ if (smokeTest) {
     const webviewBridgeTransport = createWebviewBridgeTransport({
       viewWebContents: () => browserController.hostView.webContents,
     });
+    const raiseAuthIncident = ({
+      serverId,
+      severity,
+    }: {
+      serverId: ServerId;
+      severity: AuthIncidentSeverity;
+    }): void => {
+      const hostLabel =
+        loadSettingsSync(appPaths.settings).hosts.find((host) => host.id === serverId)?.label ??
+        'The host';
+      logger.warn('AUTH_LOST', { ids: { serverId } });
+      if (!mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(BROWSER_AUTH_INCIDENT_CHANNEL, {
+          state: 'lost',
+          severity,
+          hostLabel,
+        });
+      }
+      // Only certain evidence reloads: a reload can discard unsaved edits in
+      // the page, so a merely suspected loss leaves the page alone.
+      if (severity === 'certain') void browserController.reloadForAgent(serverId);
+    };
     const webviewBridgeBroker = createWebviewBridgeBroker({
       transport: webviewBridgeTransport,
       logger,
@@ -746,20 +835,12 @@ if (smokeTest) {
       ),
       authWatch: {
         incident: ({ serverId, severity }) => {
-          const hostLabel =
-            loadSettingsSync(appPaths.settings).hosts.find((host) => host.id === serverId)?.label ??
-            'The host';
-          logger.warn('AUTH_LOST', { ids: { serverId } });
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send(BROWSER_AUTH_INCIDENT_CHANNEL, {
-              state: 'lost',
-              severity,
-              hostLabel,
-            });
-          }
-          // Only certain evidence reloads: a reload can discard unsaved edits in
-          // the page, so a merely suspected loss leaves the page alone.
-          if (severity === 'certain') void browserController.reloadForAgent(serverId);
+          const origin = loadSettingsSync(appPaths.settings).hosts.find(
+            (host) => host.id === serverId,
+          )?.origin;
+          if (origin !== undefined)
+            void logAuthSnapshot('bridge', origin, undefined, undefined, true);
+          raiseAuthIncident({ serverId, severity });
         },
         recovered: () => {
           if (!mainWindow.isDestroyed()) {

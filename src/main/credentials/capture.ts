@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { CREDENTIALS_CAPTURED_CHANNEL, credentialCaptureSchema } from '../../shared';
 import { toLoggableUrl, type Logger, type LogReason } from '../logger';
+import type { AuthDiagnostics } from '../webview/authDiagnostics';
 import type { CredentialVault } from './credentialVault';
 
 /**
@@ -75,6 +76,8 @@ export function decideCredentialCapture(
 export interface CredentialCaptureDeps {
   readonly vault: Pick<CredentialVault, 'record' | 'latestUsername'>;
   readonly logger: Logger;
+  /** Starts a sign-in episode, so a later authentication loss can report how old the session was. */
+  readonly authDiagnostics?: Pick<AuthDiagnostics, 'noteSignIn'>;
 }
 
 type CaptureIgnoreReason = Extract<CaptureDecision, { kind: 'ignore' }>['reason'];
@@ -109,6 +112,7 @@ export function registerCredentialCaptureIpc(deps: CredentialCaptureDeps): void 
       }
       return;
     }
+    deps.authDiagnostics?.noteSignIn(decision.origin, Date.now());
     void deps.vault
       .record({
         origin: decision.origin,
