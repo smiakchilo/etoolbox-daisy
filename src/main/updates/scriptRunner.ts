@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
 export type UpdatePlatform = 'darwin' | 'win32';
@@ -41,6 +41,14 @@ function quoteForCmd(value: string): string {
   return `"${value.replaceAll('"', '')}"`;
 }
 
+/** Where Windows keeps Windows PowerShell; the bare name only as a last resort. */
+export function windowsPowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env['SystemRoot'];
+  return root === undefined || root === ''
+    ? 'powershell.exe'
+    : path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+}
+
 export function startUpdateScript(options: StartUpdateScriptOptions): void {
   mkdirSync(options.scratchDirectory, { recursive: true });
   const script = path.join(
@@ -59,20 +67,34 @@ export function startUpdateScript(options: StartUpdateScriptOptions): void {
   const env = { ...process.env, ...options.env };
 
   if (options.platform === 'win32') {
+    // The script must outlive this app (it only swaps the folders once the app has
+    // quit) and must not own a console window (closing one aborts the update, and
+    // QuickEdit freezes the script's own `tasklist | findstr` probe). Measured on
+    // Windows: a `detached` child gets a *visible* console however `windowsHide` is
+    // set, and a non-detached one is killed when this app quits. So a one-shot,
+    // hidden PowerShell starts cmd hidden (`Start-Process -WindowStyle Hidden`);
+    // cmd then belongs to nobody and survives. -EncodedCommand carries the quoted
+    // command line past every shell's quoting rules, which is where the script's
+    // own `for /f` relaunch and a plain `cmd /c` argument both broke.
     const line = [script, ...args].map(quoteForCmd).join(' ');
-    // Not `detached`: on Windows that asks for DETACHED_PROCESS, which gives the
-    // child its own *visible* console window - CREATE_NO_WINDOW (`windowsHide`)
-    // is ignored beside it, measured: GetConsoleWindow non-zero and visible.
-    // Closing that window aborts the update halfway through the build, so the
-    // script runs without one. It still outlives this app (a child is not tied to
-    // its parent's lifetime on Windows; measured with the parent exiting at once).
-    spawn('cmd.exe', ['/d', '/s', '/c', `"${line}"`], {
-      detached: false,
-      stdio: 'ignore',
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-      env,
-    }).unref();
+    const command = `Start-Process -FilePath 'cmd.exe' -ArgumentList '/d /s /c "${line.replaceAll(
+      "'",
+      "''",
+    )}"' -WindowStyle Hidden`;
+    const encoded = Buffer.from(command, 'utf16le').toString('base64');
+    const powershell = windowsPowerShellPath(env);
+    if (path.isAbsolute(powershell) && !existsSync(powershell)) {
+      throw new Error('Windows PowerShell was not found, so the update cannot start');
+    }
+    const child = spawn(
+      powershell,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
+      { detached: false, stdio: 'ignore', windowsHide: true, env },
+    );
+    // A spawn failure arrives as an event, not as a throw; without a listener it
+    // would take the app down after the status already said "applying".
+    child.on('error', () => undefined);
+    child.unref();
     return;
   }
 

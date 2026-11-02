@@ -5,19 +5,35 @@ import { createScratchDirs } from '../../../support/scratchDirs';
 
 const spawn = vi.hoisted(() => vi.fn());
 const unref = vi.hoisted(() => vi.fn());
+const on = vi.hoisted(() => vi.fn());
 
 vi.mock('node:child_process', () => ({ spawn }));
 
-const { bundledInstallScript, installScriptName, installedAppFolder, startUpdateScript } =
-  await import('../../../../src/main/updates/scriptRunner');
+const {
+  bundledInstallScript,
+  installScriptName,
+  installedAppFolder,
+  startUpdateScript,
+  windowsPowerShellPath,
+} = await import('../../../../src/main/updates/scriptRunner');
 
 const scratch = createScratchDirs('script-runner', 'script-runner-');
 
 beforeEach(() => {
   spawn.mockReset();
   unref.mockReset();
-  spawn.mockReturnValue({ unref });
+  on.mockReset();
+  spawn.mockReturnValue({ unref, on });
 });
+
+/** The hidden command a Windows launch runs: PowerShell -EncodedCommand, decoded. */
+function windowsCommand(): string {
+  const [command, args] = spawn.mock.calls[0] as [string, string[]];
+  expect(command).toMatch(/powershell\.exe$/i);
+  const index = args.indexOf('-EncodedCommand');
+  expect(index).toBeGreaterThanOrEqual(0);
+  return Buffer.from(args[index + 1] ?? '', 'base64').toString('utf16le');
+}
 
 describe('install script location', () => {
   it('names the script after the platform', () => {
@@ -91,27 +107,24 @@ describe('startUpdateScript', () => {
     expect(unref).toHaveBeenCalledTimes(1);
   });
 
-  it('runs the Windows script through cmd with every argument quoted', () => {
+  it('quotes every Windows argument into the hidden command line', () => {
     const given = options('win32');
     startUpdateScript(given);
-    const [command, args, spawnOptions] = spawn.mock.calls[0] as [
-      string,
-      string[],
-      { windowsVerbatimArguments: boolean },
-    ];
-    expect(command).toMatch(/cmd\.exe$/);
-    expect(spawnOptions.windowsVerbatimArguments).toBe(true);
-    const line = args[args.length - 1] ?? '';
-    expect(line).toContain(`"${given.appFolder}"`);
-    expect(line).toContain(`"${given.statusFile}"`);
-    expect(line).toContain('"--update"');
+    const decoded = windowsCommand();
+    expect(decoded).toContain(`"${given.appFolder}"`);
+    expect(decoded).toContain(`"${given.statusFile}"`);
+    expect(decoded).toContain('"--update"');
+    expect(decoded).toContain(`"${given.source}"`);
+    expect(decoded).toContain('"4242"');
   });
 
-  it('runs the Windows script without a console window of its own', () => {
-    // Measured on Windows: `detached` gives the child a *visible* console window
-    // even with `windowsHide` (DETACHED_PROCESS wins over CREATE_NO_WINDOW), and a
-    // reader closing that window stops the update mid-build. A non-detached child
-    // has no console and still outlives this app.
+  it('starts the Windows script in a hidden window that outlives this app', () => {
+    // Measured on Windows: a `detached` child gets a *visible* console however
+    // `windowsHide` is set (closing it aborts the build, and QuickEdit freezes the
+    // script), while a non-detached one is killed when the app quits (the script
+    // died right after writing "ready", so nothing was ever swapped). The launch
+    // therefore goes through a throwaway hidden PowerShell that starts cmd with
+    // SW_HIDE; that cmd belongs to nobody and survives.
     const given = options('win32');
     startUpdateScript(given);
     const [, , spawnOptions] = spawn.mock.calls[0] as [
@@ -121,12 +134,38 @@ describe('startUpdateScript', () => {
     ];
     expect(spawnOptions.windowsHide).toBe(true);
     expect(spawnOptions.detached).toBe(false);
+    const decoded = windowsCommand();
+    expect(decoded).toMatch(/Start-Process .*cmd\.exe/);
+    expect(decoded).toContain('-WindowStyle Hidden');
+  });
+
+  it('refuses to start when Windows PowerShell is missing', () => {
+    const given = {
+      ...options('win32'),
+      env: { SystemRoot: path.join('C:', 'no-such-windows') },
+    };
+    expect(() => startUpdateScript(given)).toThrow(/PowerShell/);
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('strips double quotes from arguments instead of letting them break out', () => {
     const given = { ...options('win32'), source: 'a" & calc & "b' };
     startUpdateScript(given);
-    const args = spawn.mock.calls[0]?.[1] as string[];
-    expect(args[args.length - 1]).not.toContain('a" &');
+    const decoded = windowsCommand();
+    expect(decoded).not.toContain('a" &');
+    expect(decoded).toContain('"a & calc & b"');
+  });
+});
+
+describe('windowsPowerShellPath', () => {
+  it('names the Windows PowerShell inside SystemRoot', () => {
+    expect(windowsPowerShellPath({ SystemRoot: 'C:\\Windows' })).toBe(
+      path.join('C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    );
+  });
+
+  it('falls back to the bare name when SystemRoot is not set', () => {
+    expect(windowsPowerShellPath({})).toBe('powershell.exe');
+    expect(windowsPowerShellPath({ SystemRoot: '' })).toBe('powershell.exe');
   });
 });

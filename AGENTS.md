@@ -2051,12 +2051,16 @@ pinning. Full description: `docs/updates.md`.
 - **Mechanism.** `updater.ts` (`check`, `apply`, `resumeAfterUpdate`, status)
   spawns the install script from `resources/install/` in the background in
   `--update <archive-zip-url> <app-folder> <app-pid> <status-file>` mode
-  (`scriptRunner.ts`, `composition.ts`). On Windows it is deliberately **not**
-  `detached`: a detached child asks for `DETACHED_PROCESS`, which overrides
-  `windowsHide`/`CREATE_NO_WINDOW` and gives the build a *visible* `cmd` window
-  (measured: `GetConsoleWindow` non-zero, `IsWindowVisible` true) whose close
-  aborted the update; a non-detached child has no console and still outlives the
-  app (measured). The script builds into `<app>.new` while
+  (`scriptRunner.ts`, `composition.ts`). On Windows it must outlive the app
+  (the swap happens after the app quits) *and* own no console window, and those
+  pull against each other (both measured): a `detached` child gets a *visible*
+  `cmd` window however `windowsHide` is set (`DETACHED_PROCESS` overrides
+  `CREATE_NO_WINDOW`), and closing it - or its QuickEdit mark mode - stops the
+  update; a non-detached child is **killed when the app quits**, so the script
+  died right after writing `ready` and nothing was swapped. So the launch is a
+  one-shot hidden PowerShell (`-EncodedCommand`, immune to shell re-quoting)
+  running `Start-Process cmd.exe … -WindowStyle Hidden`: that `cmd` owns no
+  window, belongs to nobody, and survives. macOS keeps `detached: true`. The script builds into `<app>.new` while
   the app keeps running (reusing an installed Node 22.12+, else the copy an
   earlier install kept under `%LOCALAPPDATA%\etoolbox-daisy\node`, else the pinned,
   signature-checked portable Node - which the script then keeps, for later updates
@@ -2218,27 +2222,33 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4994 passed / 13 skipped** (5007 total) - the
-suite is fully green here, +5 against the 4989 run below, for **the Windows update
-path: no console window, a relaunch that works, and no unbounded wait**
-(2026-11-03), from the first real in-app update (an installed build updating
-itself from master, `docs/verification/followons-2026-10.md` "The first real
-in-app update on Windows ..."): the script is spawned **not** `detached` on
-Windows, because `DETACHED_PROCESS` overrides `windowsHide` and gave the build a
-visible `cmd` window (measured: `GetConsoleWindow` non-zero and
-`IsWindowVisible` true; a non-detached child has no console and still outlives
-the app - measured); `install.cmd`'s `:launch` reads the new process id from a
-file instead of piping PowerShell through `for /f`, whose `cmd /c` quote
-stripping made the launch fail silently (every update reverted, app left closed);
-a smoke test killed by closing its console (negative exit code `0xC000013A`) is
-no longer read as healthy (`if errorlevel 1` cannot see a negative number, so the
-script tests `$p.ExitCode -ne 0`); the smoke test itself has a 120 s deadline
-(`SMOKE_TEST_DEADLINE_MS`) and never fails on its own profile cleanup; and
-waiting for the app to close is bounded to ten minutes in both scripts. The +5 is
-3 `installScripts`, 1 `scriptRunner` and 1 `smokeTest` case; 4 mutations were
-caught (the detached flag, the `for /f` relaunch, the exit-code check, and the
-deadline). The real update was **not** re-run end to end. Before that it was
-**`npm run test` → 4989 passed / 13 skipped** (5002 total) - the
+Current baseline: **`npm run test` → 4997 passed / 13 skipped** (5010 total) - the
+suite is fully green here, +8 against the 4989 run below, for **the Windows update
+launch: no console window, and a script that outlives the app** (2026-11-03),
+after two real in-app updates (`docs/verification/followons-2026-10.md` "The
+first real in-app update on Windows ..."). Two simpler forms were measured and
+rejected: `detached: true` gives the build a **visible** console window however
+`windowsHide` is set (`DETACHED_PROCESS` overrides `CREATE_NO_WINDOW`), whose
+close - or QuickEdit mark mode - stops the update; `detached: false` has no
+console but the child is **killed when the app quits**, so the script died right
+after writing `ready` and the staged build was never swapped. The launch is now a
+one-shot hidden Windows PowerShell (`-EncodedCommand`, immune to shell
+re-quoting; `windowsPowerShellPath` resolves the absolute path and refuses to
+start without it) running `Start-Process cmd.exe … -WindowStyle Hidden`: that
+`cmd` owns no window, belongs to nobody, and survives. Also from the same work:
+the first run succeeded (0.1.1 -> 0.1.2, `started|0.1.2` reported);
+`install.cmd`'s `:launch` reads the new process id from a file instead of piping
+PowerShell through `for /f` (whose `cmd /c` quote stripping made the launch fail
+silently, so every update reverted and left the app closed); a smoke test killed
+by closing its console (negative exit code `0xC000013A`) is a failure
+(`$p.ExitCode -ne 0`; `if errorlevel 1` cannot see a negative number); the smoke
+test itself has a 120 s deadline (`SMOKE_TEST_DEADLINE_MS`) and never fails on
+its own profile cleanup; waiting for the app to close is bounded to ten minutes
+in both scripts. The +8 is 3 `installScripts`, 4 `scriptRunner` (it decodes
+the `-EncodedCommand` back) and 1 `smokeTest` case; 6 mutations were caught (the
+`for /f` relaunch, the exit-code check, the deadline, the hidden window style,
+the launcher itself, and the detached flag before it was replaced). Before that
+it was **`npm run test` → 4989 passed / 13 skipped** (5002 total) - the
 suite is fully green here, +38 against the 4951 run below, for **an update is read
 from every default repository, and `npm run package:dir` builds a folder that can
 update itself** (2026-11-02): `src/main/updates/source.ts` holds
