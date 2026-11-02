@@ -22,7 +22,15 @@
  * or an in-app update never passes it, so it always builds from a clean install.
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -186,6 +194,66 @@ node('Packaging the application', [
   `-c.directories.output=${packageDir}`,
 ]);
 
+/**
+ * Every file of the packaged application must be beside it before the build is
+ * called finished. A copy that dropped a directory leaves an install that starts
+ * and then breaks at run time, which is worse than a build that refuses to
+ * finish - the reported case was a folder whose `resources/app.asar.unpacked`
+ * never arrived.
+ */
+function verifyTree(source, target) {
+  const missing = [];
+  const walk = (relative) => {
+    for (const entry of readdirSync(join(source, relative), { withFileTypes: true })) {
+      const child = relative === '' ? entry.name : join(relative, entry.name);
+      if (entry.isDirectory()) {
+        walk(child);
+      } else if (entry.isFile()) {
+        const copied = join(target, child);
+        if (!existsSync(copied) || statSync(copied).size !== statSync(join(source, child)).size) {
+          missing.push(child);
+        }
+      }
+    }
+  };
+  walk('');
+  if (missing.length > 0) {
+    fail(
+      `The application is incomplete in ${target}: ${missing.length} file(s) did not arrive, e.g. ${missing.slice(0, 3).join(', ')}.\nIs EToolbox Daisy running from there? Close it and try again.`,
+    );
+  }
+}
+
+/**
+ * The agent runtime ships as an unpacked platform package (`electron-builder.yml`
+ * `asarUnpack`), because its executable has to be a real file on disk. If it is
+ * not installed or not packaged, the application still starts - and then reports
+ * "No agent available", which is a confusing way to learn that a build is
+ * incomplete. Check it here instead.
+ */
+function verifyAgentRuntimePayload(resources) {
+  const scope = join(root, 'node_modules', '@github');
+  const packages = existsSync(scope)
+    ? readdirSync(scope, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith('copilot-sdk-'))
+        .map((entry) => `@github/${entry.name}`)
+    : [];
+  if (packages.length === 0) {
+    fail(
+      'The agent runtime is not installed (node_modules/@github/copilot-sdk-<platform> is missing): run npm install before packaging.',
+    );
+  }
+  const unpacked = join(resources, 'app.asar.unpacked');
+  const missing = packages.filter(
+    (name) => !existsSync(join(unpacked, 'node_modules', ...name.split('/'))),
+  );
+  if (missing.length > 0) {
+    fail(
+      `${missing.join(', ')} is missing from ${unpacked}: the application would start and then report "No agent available".`,
+    );
+  }
+}
+
 console.log(`\n== Writing the application to ${outDir}`);
 mkdirSync(outDir, { recursive: true });
 
@@ -201,6 +269,8 @@ if (isWindows) {
       `Could not write to ${outDir}: ${error.message}\nIs EToolbox Daisy running from there? Close it and try again.`,
     );
   }
+  verifyTree(unpacked, outDir);
+  verifyAgentRuntimePayload(join(outDir, 'resources'));
   copyAddons(join(outDir, 'resources', 'addons'));
   copyInstallScripts(join(outDir, 'resources', 'install'));
 } else {
@@ -232,6 +302,8 @@ if (isWindows) {
     // The add-ons go in after the copy and before the signature, so the seal
     // covers them.
     if (command === 'codesign' && !copied) {
+      verifyTree(built, target);
+      verifyAgentRuntimePayload(join(target, 'Contents', 'Resources'));
       addonsInBundle();
       copied = true;
     }

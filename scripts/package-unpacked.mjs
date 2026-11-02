@@ -19,8 +19,8 @@
  *        node scripts/package-unpacked.mjs --out <folder>
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = realpathSync.native(join(dirname(fileURLToPath(import.meta.url)), '..'));
@@ -41,14 +41,17 @@ if (!outArg) {
 }
 
 const packageDir = join(root, 'release');
-const existed = existsSync(outArg);
-mkdirSync(outArg, { recursive: true });
-const outDir = realpathSync.native(outArg);
+// Resolve before creating: a folder this script refuses must not be created
+// (and then deleted again) just to find out. An existing path is resolved
+// through links, so a junction into the build folder is refused too.
+const outDir = existsSync(outArg) ? realpathSync.native(outArg) : resolve(outArg);
 if (outDir === packageDir || outDir.startsWith(`${packageDir}${sep}`)) {
-  // Leave nothing behind for a folder this script refused.
-  if (!existed) rmSync(outArg, { recursive: true, force: true });
   fail(`Choose a folder outside ${packageDir}: the build is packaged into it.`);
 }
+if (existsSync(outDir) && !statSync(outDir).isDirectory()) {
+  fail(`${outDir} is a file, not a folder.`);
+}
+mkdirSync(outDir, { recursive: true });
 
 const result = spawnSync(
   process.execPath,

@@ -2180,7 +2180,9 @@ npm run package:mac
 # package this working tree into a folder that can update itself:
 # `npm run package:dir -- <folder>` - the electron-builder --dir result plus
 # `resources/install` (the updater's script) and `resources/addons` (source-only,
-# installed on first use). No `npm ci`, no source download.
+# installed on first use). No `npm ci`, no source download. It verifies every
+# packaged file arrived and the unpacked agent runtime is present, because a
+# folder missing that payload starts and then reports "No agent available".
 npm run package:dir
 
 # tsc --build over every project reference
