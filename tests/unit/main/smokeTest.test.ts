@@ -1,17 +1,31 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ADDON_API_VERSION } from '../../../src/shared';
+import { flushMicrotasks } from '../../support/asyncWaits';
 import { createScratchDirs } from '../../support/scratchDirs';
 
-vi.mock('electron', () => ({ app: {} }));
+const { appMock } = vi.hoisted(() => ({
+  appMock: {
+    setPath: vi.fn(),
+    whenReady: (): Promise<void> => Promise.resolve(),
+    exit: vi.fn<(code: number) => void>(),
+  },
+}));
 
-const { isSmokeTestRun, runSmokeChecks, SMOKE_TEST_FLAG } =
+vi.mock('electron', () => ({ app: appMock }));
+
+const { isSmokeTestRun, runSmokeChecks, runSmokeTest, SMOKE_TEST_FLAG } =
   await import('../../../src/main/smokeTest');
 
 const scratch = createScratchDirs('main-smoke-test', 'smoke-');
 
 afterEach(() => scratch.cleanup());
+
+beforeEach(() => {
+  appMock.exit.mockClear();
+  appMock.setPath.mockClear();
+});
 
 function writeAddon(root: string, id: string, descriptor: Record<string, unknown>): void {
   const directory = path.join(root, id);
@@ -25,6 +39,28 @@ describe('isSmokeTestRun', () => {
   it('recognises the flag anywhere in the arguments', () => {
     expect(isSmokeTestRun(['app.exe', SMOKE_TEST_FLAG])).toBe(true);
     expect(isSmokeTestRun(['app.exe'])).toBe(false);
+  });
+});
+
+describe('runSmokeTest', () => {
+  it('exits 0 for a healthy add-ons folder', async () => {
+    const root = scratch.create();
+    writeAddon(root, 'healthy', { apiVersion: ADDON_API_VERSION, entry: 'index.js' });
+
+    runSmokeTest(root, () => Promise.resolve(healthyModule));
+    await flushMicrotasks(6);
+
+    expect(appMock.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('exits 1 when an add-on will not load', async () => {
+    const root = scratch.create();
+    writeAddon(root, 'broken', { apiVersion: ADDON_API_VERSION, entry: 'absent.js' });
+
+    runSmokeTest(root, () => Promise.reject(new Error('boom')));
+    await flushMicrotasks(6);
+
+    expect(appMock.exit).toHaveBeenCalledWith(1);
   });
 });
 

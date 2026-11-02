@@ -23,6 +23,7 @@
     "test:live": "playwright test --config playwright.live.config.ts",
     "package:win": "npm run build && electron-builder --win --x64",
     "package:mac": "npm run build && electron-builder --mac",
+    "package:dir": "node scripts/package-unpacked.mjs",
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {

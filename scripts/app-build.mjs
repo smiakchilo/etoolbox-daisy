@@ -15,10 +15,14 @@
  * download mark (Windows "Mark of the Web", macOS quarantine), which is what
  * SmartScreen and Gatekeeper act on, so neither shows a warning.
  *
- * Usage: node scripts/app-build.mjs --out <folder>
+ * Usage: node scripts/app-build.mjs --out <folder> [--skip-install]
+ *
+ * `--skip-install` is for `npm run package:dir` (a developer build of this
+ * tree): it skips `npm ci` and packages what is already installed. An install
+ * or an in-app update never passes it, so it always builds from a clean install.
  */
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -142,6 +146,9 @@ function copyAddons(target) {
   if (!existsSync(built)) {
     fail(`No add-ons were built: ${built} does not exist.`);
   }
+  // Replaced whole, so an add-on removed from the source never lingers in a
+  // folder that was built before.
+  rmSync(target, { recursive: true, force: true });
   cpSync(built, target, { recursive: true, force: true, dereference: true });
 }
 
@@ -151,16 +158,20 @@ function copyAddons(target) {
  * mode.
  */
 function copyInstallScripts(target) {
+  rmSync(target, { recursive: true, force: true });
   cpSync(join(root, 'install'), target, { recursive: true, force: true });
 }
 
-node('Installing dependencies safely', [
-  npmCli,
-  'ci',
-  '--ignore-scripts',
-  '--no-audit',
-  '--no-fund',
-]);
+const skipInstall = process.argv.includes('--skip-install');
+if (!skipInstall) {
+  node('Installing dependencies safely', [
+    npmCli,
+    'ci',
+    '--ignore-scripts',
+    '--no-audit',
+    '--no-fund',
+  ]);
+}
 // The add-ons are bundled from source and their own dependencies are left for
 // the first call, so no `addons:install` step runs here.
 node('Building', [npmCli, 'run', 'build'], { EDAISY_ADDONS_SOURCE_ONLY: '1' });

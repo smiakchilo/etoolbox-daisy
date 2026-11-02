@@ -10,7 +10,7 @@ import {
   installedAppFolder,
   startUpdateScript,
 } from './scriptRunner';
-import { DEFAULT_UPDATE_REF, type Updater, createUpdater } from './updater';
+import { type Updater, createUpdater } from './updater';
 
 /** Set by the install script on the app it launches after a swap; its value is the status file. */
 export const UPDATE_STATUS_FILE_ENV = 'EDAISY_UPDATE_STATUS_FILE';
@@ -45,7 +45,7 @@ export function createAppUpdater(options: AppUpdaterOptions): Updater {
 
   return createUpdater({
     installedVersion: options.installedVersion,
-    source: () => options.readSettings().updates.source ?? DEFAULT_UPDATE_REF,
+    source: () => options.readSettings().updates.source,
     createFetch: () => createUpdateFetch(options.readSettings(), options.secretStore),
     usesProxy: () => isUpdateProxyConfigured(options.readSettings()),
     statusFile,
@@ -56,7 +56,9 @@ export function createAppUpdater(options: AppUpdaterOptions): Updater {
       }
       const bundledScript = bundledInstallScript(options.resourcesPath, platform);
       if (!existsSync(bundledScript)) {
-        throw new Error('This is not an installed build, so it cannot update itself');
+        throw new Error(
+          'This build has no update script (resources/install), so it cannot update itself. Build it with the install script, or with "npm run package:dir".',
+        );
       }
       const env = await createUpdateProxyEnv(options.readSettings(), options.secretStore);
       startUpdateScript({

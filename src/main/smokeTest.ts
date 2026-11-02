@@ -70,17 +70,30 @@ export async function runSmokeChecks(options: SmokeTestOptions): Promise<readonl
  * main bundle parses; it then loads every shipped add-on. Exits 0 when healthy,
  * 1 otherwise, never opening a window or touching the user's data.
  */
-export function runSmokeTest(addonsDirectory: string): void {
+export function runSmokeTest(
+  addonsDirectory: string,
+  importModule?: (specifier: string) => Promise<unknown>,
+): void {
   const scratch = mkdtempSync(path.join(os.tmpdir(), 'edaisy-smoke-'));
   app.setPath('userData', scratch);
   app.setPath('sessionData', scratch);
   const finish = (code: number): void => {
-    rmSync(scratch, { recursive: true, force: true });
+    try {
+      // Chromium's child processes can still hold the profile they just closed
+      // (Windows reports ENOTEMPTY or EPERM), and a run that kept retrying would
+      // look like a hung smoke test to the update script, which would revert a
+      // healthy build. The folder is temporary: leak it rather than hang or fail.
+      rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      // The result is already decided; %TEMP% is not the install.
+    }
     app.exit(code);
   };
   void app
     .whenReady()
-    .then(() => runSmokeChecks({ addonsDirectory }))
+    .then(() =>
+      runSmokeChecks({ addonsDirectory, ...(importModule === undefined ? {} : { importModule }) }),
+    )
     .then((problems) => {
       for (const problem of problems) process.stderr.write(`smoke-test: ${problem}\n`);
       finish(problems.length === 0 ? 0 : 1);

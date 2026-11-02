@@ -2033,12 +2033,24 @@ ref (default `master`), builds it in place with the install script and restarts.
 There is no published artifact, no `update` branch, no workflow and no add-on
 pinning. Full description: `docs/updates.md`.
 
-- **Release gating.** The `version` in `package.json` on the configured ref
-  (`UPDATE_REPOSITORY` is hard-coded); the owner bumps it to release. A full
-  `https:` zip URL as the source is always "available" (version label `archive`).
+- **Release gating.** The `version` in `package.json` on the configured ref; the
+  owner bumps it to release. **Two repositories are treated equally**
+  (`UPDATE_REPOSITORIES` in `src/main/updates/source.ts`:
+  `smiakchilo/etoolbox-daisy`, `exadel/etoolbox-daisy`): a check reads
+  `package.json` on the same ref in both, offers the **newest** version and
+  breaks a tie with the first entry; a repository that cannot be read never
+  hides the other's answer. A full `https:` zip URL as the source is always
+  "available" (version label `archive`). **The Settings "Update source" may name
+  one repository instead** - `owner/name@ref`, or `github.com/owner/name`
+  (optionally `@ref`) - and then only that one is read; a bare `owner/name`
+  stays a ref (so `release/1.2` can never be taken for a repository), and an
+  `https://github.com/owner/name` address is a repository, not a zip. The apply
+  passes the **winning repository's archive URL** to the script, so the
+  scripts' own `REPO` (a fresh install's, and always the first entry) never
+  decides where an update came from.
 - **Mechanism.** `updater.ts` (`check`, `apply`, `resumeAfterUpdate`, status)
   spawns the install script from `resources/install/` detached in
-  `--update <ref-or-zip-url> <app-folder> <app-pid> <status-file>` mode
+  `--update <archive-zip-url> <app-folder> <app-pid> <status-file>` mode
   (`scriptRunner.ts`, `composition.ts`). The script builds into `<app>.new` while
   the app keeps running (reusing an installed Node 22.12+, else the copy an
   earlier install kept under `%LOCALAPPDATA%\etoolbox-daisy\node`, else the pinned,
@@ -2050,9 +2062,11 @@ pinning. Full description: `docs/updates.md`.
   install untouched. Progress is a status file the updater polls (stages
   `installing-node`, `downloading`, `building`, `testing`, `ready`, `failed`,
   `swapped`, `reverted`); `proxy.ts` hands the app's resolved proxy to the script
-  as `HTTPS_PROXY`/`HTTP_PROXY`. A build with no `resources/install` is "not an
-  installed build" and cannot self-update.
-- **Modules.** `version.ts`, `updater.ts`, `scriptRunner.ts`, `proxy.ts`,
+  as `HTTPS_PROXY`/`HTTP_PROXY`. A build with no `resources/install` cannot
+  self-update (the failure names the missing script); `npm run package:dir --
+  <folder>` is the developer build that has it (`app-build.mjs --skip-install`).
+- **Modules.** `source.ts` (the repositories and the "Update source" grammar),
+  `version.ts`, `updater.ts`, `scriptRunner.ts`, `proxy.ts`,
   `composition.ts`; `ipc/updates.ts` carries `updates:check` / `updates:apply` /
   `updates:get-status` and the `updates:status-changed` push. Main owns the
   status; the renderer only renders it.
@@ -2062,7 +2076,9 @@ pinning. Full description: `docs/updates.md`.
   then, after a subsection gap, the **Check for updates on startup** checkbox
   (`updates.checkOnStartup`, default
   off; a startup check is silent) and the **Update source** (`updates.source`: a
-  branch/tag, or a full `https:` zip URL; empty means `master`). A found update is
+  ref of the default repositories, one repository as `owner/name@ref` or
+  `github.com/owner/name`, or a full `https:` zip URL; empty means `master` of
+  both defaults). A found update is
   offered on every surface that can start it: the accent-blue
   "Update X available" `sp-action-button` (`home-update-link`; the shared
   `.action-button--primary` class in `base.css`, also on Settings' **Update**) on the Home screen's version
@@ -2161,6 +2177,12 @@ npm run package:win
 # macOS zips (x64 + arm64 per electron-builder.yml): builds the app first, then packages
 npm run package:mac
 
+# package this working tree into a folder that can update itself:
+# `npm run package:dir -- <folder>` - the electron-builder --dir result plus
+# `resources/install` (the updater's script) and `resources/addons` (source-only,
+# installed on first use). No `npm ci`, no source download.
+npm run package:dir
+
 # tsc --build over every project reference
 npm run typecheck
 
@@ -2179,8 +2201,26 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4951 passed / 13 skipped** (4964 total) - the
-suite is fully green here, +1 against the 4950 run below, for **a tool-call
+Current baseline: **`npm run test` → 4989 passed / 13 skipped** (5002 total) - the
+suite is fully green here, +38 against the 4951 run below, for **an update is read
+from every default repository, and `npm run package:dir` builds a folder that can
+update itself** (2026-11-02): `src/main/updates/source.ts` holds
+`UPDATE_REPOSITORIES` (`smiakchilo/etoolbox-daisy`, `exadel/etoolbox-daisy`) and
+the "Update source" grammar; a check reads every repository in the set in
+parallel, offers the newest version (the first entry breaks a tie) and fails only
+when none answers; the apply hands the winning repository's **archive URL** to
+the install script, so the script's own `REPO` never decides it.
+`npm run package:dir -- <folder>` is the install pipeline
+(`app-build.mjs --skip-install`) for this tree, so the folder carries
+`resources/install` and source-only `resources/addons` and passes its own
+`--smoke-test` (`src/main/smokeTest.ts` now removes its scratch profile with
+retries and never lets a cleanup failure hang or fail the check - measured
+before the fix: `ENOTEMPTY`, an unhandled `EPERM` and a process that never
+exited; after: `exit=0`). The +38 is 31 `source.test.ts` cases, 4 net
+`updater.test.ts` (both repositories, the tie-break, one unreachable, a named
+repository, the winning archive), 1 `installScripts` and 2 `smokeTest`.
+Before that it was **4951 passed / 13 skipped** (4964 total) - the
+suite was fully green there, +1 against the 4950 run below, for **a tool-call
 billet never widens the transcript** (2026-11-02): its header (tool name plus
 status word) and its live progress line were unshrinkable one-line flex items,
 so a long name or a long progress note pushed the row past the pane and

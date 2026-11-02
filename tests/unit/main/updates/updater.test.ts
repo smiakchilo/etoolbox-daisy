@@ -2,16 +2,19 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as realDelay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type UpdaterDependencies, createUpdater } from '../../../../src/main/updates/updater';
 import {
-  type UpdaterDependencies,
-  createUpdater,
-  isArchiveSource,
-  packageJsonUrl,
-} from '../../../../src/main/updates/updater';
+  DEFAULT_UPDATE_REF,
+  UPDATE_REPOSITORIES,
+  sourceArchiveUrl,
+} from '../../../../src/main/updates/source';
 import type { AgentFetch, UpdateStatus } from '../../../../src/shared';
 import { createScratchDirs } from '../../../support/scratchDirs';
 
 const scratch = createScratchDirs('updater', 'updater-');
+
+const PRIMARY = UPDATE_REPOSITORIES[0];
+const SECONDARY = UPDATE_REPOSITORIES[1];
 
 function packageResponse(body: string, init: { status?: number; url?: string } = {}): Response {
   const response = new Response(body, { status: init.status ?? 200 });
@@ -21,13 +24,39 @@ function packageResponse(body: string, init: { status?: number; url?: string } =
   return response;
 }
 
-function fetchReturning(...responses: Array<Response | Error>): AgentFetch {
-  const queue = [...responses];
-  return vi.fn((): Promise<Response> => {
-    const next = queue.shift();
-    if (next === undefined) return Promise.reject(new Error('no response queued'));
-    return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
+/**
+ * A string is that version, a number an HTTP status, an Error a transport
+ * failure, and a function a raw response for an exotic body. A repository the
+ * map does not name is unreachable - so a test states what each repository
+ * answered instead of relying on call order.
+ */
+type Answer = string | number | Error | (() => Response | Error);
+
+function repositoryOf(input: string | URL | Request): string {
+  const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const [, owner = '', name = ''] = new URL(href).pathname.split('/');
+  return `${owner}/${name}`;
+}
+
+function fetchAnswers(answers: Record<string, Answer>): AgentFetch {
+  return vi.fn((input: string | URL | Request): Promise<Response> => {
+    const answer = answers[repositoryOf(input)];
+    if (answer === undefined) return Promise.reject(new Error('unreachable'));
+    if (answer instanceof Error) return Promise.reject(answer);
+    if (typeof answer === 'string') {
+      return Promise.resolve(packageResponse(JSON.stringify({ version: answer })));
+    }
+    if (typeof answer === 'number') {
+      return Promise.resolve(packageResponse('', { status: answer }));
+    }
+    const produced = answer();
+    return produced instanceof Error ? Promise.reject(produced) : Promise.resolve(produced);
   });
+}
+
+/** Both default repositories answer the same, which is the ordinary case. */
+function fetchEverywhere(answer: Answer): AgentFetch {
+  return fetchAnswers({ [PRIMARY]: answer, [SECONDARY]: answer });
 }
 
 interface Harness {
@@ -49,7 +78,7 @@ function build(overrides: Partial<UpdaterDependencies> = {}): Harness {
   const updater = createUpdater({
     installedVersion: '1.0.0',
     source: () => undefined,
-    createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.1.0"}'))),
+    createFetch: () => Promise.resolve(fetchEverywhere('1.1.0')),
     usesProxy: () => false,
     statusFile,
     startedByUpdate: false,
@@ -86,61 +115,82 @@ afterEach(() => {
   scratch.cleanup();
 });
 
-describe('source helpers', () => {
-  it('treats anything with a scheme as an archive and anything else as a ref', () => {
-    expect(isArchiveSource('https://example.com/a.zip')).toBe(true);
-    expect(isArchiveSource('release/1.0')).toBe(false);
-  });
-
-  it('reads package.json at the given ref', () => {
-    expect(packageJsonUrl('release/1.0').pathname).toMatch(/\/release\/1\.0\/package\.json$/);
-  });
-});
-
 describe('check', () => {
   it('offers a newer version of the configured ref', async () => {
     const { updater } = build();
     expect(await updater.check()).toEqual({ kind: 'available', version: '1.1.0' });
   });
 
-  it('reports up to date for the same version', async () => {
+  it('offers the newest version of the two default repositories', async () => {
     const { updater } = build({
-      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.0.0"}'))),
+      createFetch: () =>
+        Promise.resolve(fetchAnswers({ [PRIMARY]: '1.1.0', [SECONDARY]: '1.3.0' })),
     });
+    expect(await updater.check()).toEqual({ kind: 'available', version: '1.3.0' });
+  });
+
+  it('keeps the other answer when one repository cannot be read', async () => {
+    const { updater } = build({
+      createFetch: () =>
+        Promise.resolve(fetchAnswers({ [PRIMARY]: new Error('offline'), [SECONDARY]: '1.2.0' })),
+    });
+    expect(await updater.check()).toEqual({ kind: 'available', version: '1.2.0' });
+  });
+
+  it('fails only when neither repository answers, logging each failure', async () => {
+    const { updater, logger } = build({
+      createFetch: () =>
+        Promise.resolve(fetchAnswers({ [PRIMARY]: new Error('offline'), [SECONDARY]: 404 })),
+    });
+    expect(await updater.check()).toEqual({ kind: 'failed', phase: 'check' });
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('checks exactly the repository the update source names', async () => {
+    const fetcher = vi.fn<(input: string | URL | Request) => Promise<Response>>(() =>
+      Promise.resolve(packageResponse('{"version":"2.0.0"}')),
+    );
+    const { updater } = build({
+      source: () => `${SECONDARY}@release/2.0`,
+      createFetch: () => Promise.resolve(fetcher),
+    });
+    expect(await updater.check()).toEqual({ kind: 'available', version: '2.0.0' });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const called = fetcher.mock.calls[0]?.[0];
+    if (!(called instanceof URL)) throw new Error('the check must read a URL');
+    expect(called.pathname).toContain(`/${SECONDARY}/`);
+  });
+
+  it('reports up to date for the same version', async () => {
+    const { updater } = build({ createFetch: () => Promise.resolve(fetchEverywhere('1.0.0')) });
     expect((await updater.check()).kind).toBe('upToDate');
   });
 
   it('offers the same version when the check is forced', async () => {
-    const { updater } = build({
-      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.0.0"}'))),
-    });
+    const { updater } = build({ createFetch: () => Promise.resolve(fetchEverywhere('1.0.0')) });
     expect(await updater.check({ force: true })).toEqual({ kind: 'available', version: '1.0.0' });
   });
 
   it('offers an older version when the check is forced', async () => {
-    const { updater } = build({
-      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"0.5.0"}'))),
-    });
+    const { updater } = build({ createFetch: () => Promise.resolve(fetchEverywhere('0.5.0')) });
     expect((await updater.check({ force: true })).kind).toBe('available');
   });
 
   it('still fails a forced check whose source cannot be read', async () => {
     const { updater } = build({
-      createFetch: () => Promise.resolve(fetchReturning(new Error('offline'))),
+      createFetch: () => Promise.resolve(fetchEverywhere(new Error('offline'))),
     });
     expect(await updater.check({ force: true })).toEqual({ kind: 'failed', phase: 'check' });
   });
 
   it('applies an update that only a forced check offered', async () => {
-    const { updater } = build({
-      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.0.0"}'))),
-    });
+    const { updater } = build({ createFetch: () => Promise.resolve(fetchEverywhere('1.0.0')) });
     await updater.check({ force: true });
     expect((await updater.apply()).kind).not.toBe('upToDate');
   });
 
   it('always offers an archive source without fetching anything', async () => {
-    const createFetch = vi.fn(() => Promise.resolve(fetchReturning()));
+    const createFetch = vi.fn(() => Promise.resolve(fetchAnswers({})));
     const { updater } = build({ source: () => 'https://example.com/a.zip', createFetch });
     expect((await updater.check()).kind).toBe('available');
     expect(createFetch).not.toHaveBeenCalled();
@@ -148,20 +198,27 @@ describe('check', () => {
 
   // noinspection HtmlRequiredLangAttribute
   it.each([
-    ['an http error', packageResponse('', { status: 404 }), 'http-status'],
+    ['an http error', () => packageResponse('', { status: 404 }), 'http-status'],
     [
       'an insecure final url',
-      packageResponse('{"version":"2.0.0"}', { url: 'http://x.example/p.json' }),
+      () => packageResponse('{"version":"2.0.0"}', { url: 'http://x.example/p.json' }),
       'insecure',
     ],
-    ['an oversized body', packageResponse('x'.repeat(70 * 1024)), 'too-large'],
-    ['a body that is not json', packageResponse('<html>'), 'invalid-manifest'],
-    ['a version that is not semver', packageResponse('{"version":"latest"}'), 'invalid-manifest'],
-    ['a transport failure', new Error('offline'), 'network'],
-    ['a timeout', Object.assign(new Error('slow'), { name: 'TimeoutError' }), 'timeout'],
-  ])('fails on %s and logs why', async (_label, outcome, reason) => {
+    ['an oversized body', () => packageResponse('x'.repeat(70 * 1024)), 'too-large'],
+    ['a body that is not json', () => packageResponse('<html>'), 'invalid-manifest'],
+    [
+      'a version that is not semver',
+      () => packageResponse('{"version":"latest"}'),
+      'invalid-manifest',
+    ],
+    ['a transport failure', () => new Error('offline'), 'network'],
+    ['a timeout', () => Object.assign(new Error('slow'), { name: 'TimeoutError' }), 'timeout'],
+  ])('fails on %s and logs why', async (_label, make, reason) => {
     const { updater, logger } = build({
-      createFetch: () => Promise.resolve(fetchReturning(outcome)),
+      createFetch: () =>
+        Promise.resolve(
+          fetchAnswers({ [PRIMARY]: make, [SECONDARY]: make } satisfies Record<string, Answer>),
+        ),
       usesProxy: () => true,
     });
     expect(await updater.check()).toEqual({ kind: 'failed', phase: 'check' });
@@ -172,9 +229,7 @@ describe('check', () => {
   });
 
   it('records the status code of an http failure', async () => {
-    const { updater, logger } = build({
-      createFetch: () => Promise.resolve(fetchReturning(packageResponse('', { status: 503 }))),
-    });
+    const { updater, logger } = build({ createFetch: () => Promise.resolve(fetchEverywhere(503)) });
     await updater.check();
     expect(logger.warn).toHaveBeenCalledWith(
       'UPDATE_CHECK_FAILED',
@@ -183,9 +238,7 @@ describe('check', () => {
   });
 
   it('shares one read between overlapping checks', async () => {
-    const createFetch = vi.fn(() =>
-      Promise.resolve(fetchReturning(packageResponse('{"version":"1.1.0"}'))),
-    );
+    const createFetch = vi.fn(() => Promise.resolve(fetchEverywhere('1.1.0')));
     const { updater } = build({ createFetch });
     await Promise.all([updater.check(), updater.check()]);
     expect(createFetch).toHaveBeenCalledTimes(1);
@@ -213,7 +266,7 @@ describe('apply', () => {
     });
     await updater.check();
     await updater.apply();
-    expect(launch).toHaveBeenCalledWith('release/1.0');
+    expect(launch).toHaveBeenCalledWith(sourceArchiveUrl(PRIMARY, 'release/1.0'));
 
     writeFileSync(statusFile, 'building|Building the app');
     await pollUntil(() => statuses.some((s) => s.kind === 'applying' && s.stage === 'building'));
@@ -228,6 +281,25 @@ describe('apply', () => {
     await pollUntil(() => quit.mock.calls.length > 0);
     expect(quit).toHaveBeenCalledTimes(1);
     expect(existsSync(goFile)).toBe(true);
+  });
+
+  it('builds the update from the repository that offered the newest version', async () => {
+    const { updater, launch } = build({
+      createFetch: () =>
+        Promise.resolve(fetchAnswers({ [PRIMARY]: '1.1.0', [SECONDARY]: '2.0.0' })),
+    });
+    await updater.check();
+    await updater.apply();
+    expect(launch).toHaveBeenCalledWith(sourceArchiveUrl(SECONDARY, DEFAULT_UPDATE_REF));
+  });
+
+  it('builds from the first repository when both offer the same version', async () => {
+    const { updater, launch } = build({
+      createFetch: () => Promise.resolve(fetchEverywhere('2.0.0')),
+    });
+    await updater.check();
+    await updater.apply();
+    expect(launch).toHaveBeenCalledWith(sourceArchiveUrl(PRIMARY, DEFAULT_UPDATE_REF));
   });
 
   it('clears the previous run before launching', async () => {

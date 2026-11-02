@@ -368,6 +368,14 @@ async function main() {
       `Built add-on ${descriptor.id} into ${relative(root, join(outDir, descriptor.id))}`,
     );
   }
+
+  // A folder whose add-on no longer exists must not linger: the application
+  // scans this directory at startup, so a stale build would keep advertising a
+  // removed add-on's tools (or log it as rejected) long after its source is gone.
+  const current = new Set(entries.map((entry) => entry.descriptor.id));
+  for (const name of readdirSync(outDir)) {
+    if (!current.has(name)) rmSync(join(outDir, name), { recursive: true, force: true });
+  }
 }
 
 export {

@@ -175,10 +175,36 @@ export const memoSettingsSchema = z
 export type MemoSettings = Readonly<z.infer<typeof memoSettingsSchema>>;
 
 const UPDATE_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
+const UPDATE_REPOSITORY_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+const GITHUB_ADDRESS_PREFIX = 'github.com/';
+
+function isUpdateRef(value: string): boolean {
+  return UPDATE_REF_PATTERN.test(value) && !value.includes('..') && !value.startsWith('/');
+}
 
 /**
- * An update source is a branch or tag of the project repository (`master`,
- * `release/1.2`) or a full `https:` URL of a source zip.
+ * `owner/name@ref`, or `github.com/owner/name` with an optional `@ref` - the one
+ * repository the check reaches. A bare `owner/name` is deliberately **not** a
+ * repository: it stays a ref, so `release/1.2` cannot be mistaken for one.
+ */
+function isUpdateRepository(value: string): boolean {
+  if (value.startsWith(GITHUB_ADDRESS_PREFIX)) {
+    const body = value.slice(GITHUB_ADDRESS_PREFIX.length);
+    const at = body.lastIndexOf('@');
+    const repository = at < 0 ? body : body.slice(0, at);
+    return (
+      UPDATE_REPOSITORY_PATTERN.test(repository) && (at < 0 || isUpdateRef(body.slice(at + 1)))
+    );
+  }
+  const at = value.lastIndexOf('@');
+  if (at <= 0) return false;
+  return UPDATE_REPOSITORY_PATTERN.test(value.slice(0, at)) && isUpdateRef(value.slice(at + 1));
+}
+
+/**
+ * An update source is one repository (`owner/name@ref`, `github.com/owner/name`),
+ * a branch or tag of the default repositories (`master`, `release/1.2`), or a
+ * full `https:` URL of a source zip.
  */
 export const updateSourceSchema = z
   .string()
@@ -187,21 +213,25 @@ export const updateSourceSchema = z
   .max(2048)
   .refine(
     (value) => {
-      if (UPDATE_REF_PATTERN.test(value)) return !value.includes('..') && !value.startsWith('/');
+      // `github.com/` is unmistakably a repository address: a malformed one is
+      // refused rather than read as a ref that could never resolve.
+      if (value.startsWith(GITHUB_ADDRESS_PREFIX)) return isUpdateRepository(value);
+      if (isUpdateRepository(value)) return true;
+      if (isUpdateRef(value)) return true;
       try {
         return new URL(value).protocol === 'https:';
       } catch {
         return false;
       }
     },
-    { message: 'must be a branch or tag name, or an https URL' },
+    { message: 'must be a repository, a branch or tag name, or an https URL' },
   );
 
 /**
  * Update settings (the Settings "Updates" tab). `source` is the optional
- * branch, tag or zip URL the update is built from; absent means the default
- * branch. `checkOnStartup` (default `false`) makes the app look for an update
- * silently once the shell has painted.
+ * repository, branch, tag or zip URL the update is built from; absent means
+ * every default repository at its default branch. `checkOnStartup` (default
+ * `false`) makes the app look for an update silently once the shell has painted.
  */
 export const updateSettingsSchema = z
   .object({

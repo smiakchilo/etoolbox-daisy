@@ -6,6 +6,7 @@ import {
   PINNED_NODE_SIGNER,
   PINNED_NODE_VERSION,
 } from '../../../src/main/addons/nodeDownload';
+import { UPDATE_REPOSITORIES } from '../../../src/main/updates/source';
 
 /**
  * Facts about the two build-from-source installers in `install/`, held against
@@ -29,6 +30,10 @@ import {
  * 5. **The packaging step can resolve `powershell.exe`.** `scripts/app-build.mjs`
  *    is the one place both installers share, and electron-builder spawns that
  *    bare name, so the build script - not the inherited PATH - has to supply it.
+ * 6. **A fresh install follows the first update repository.** The in-app check
+ *    reads every `UPDATE_REPOSITORIES` entry and offers the newest; a script
+ *    started install has no version to compare, so both scripts name that first
+ *    entry.
  */
 const installDir = path.join(process.cwd(), 'install');
 const cmdText = readFileSync(path.join(installDir, 'install.cmd'), 'utf8');
@@ -141,6 +146,15 @@ describe('build-from-source installers', () => {
   it('offers the same update mode in both installers', () => {
     expect(cmdText).toMatch(/--update/);
     expect(commandText).toMatch(/--update/);
+  });
+
+  it('installs a fresh build from the first update repository', () => {
+    // The in-app check reads every `UPDATE_REPOSITORIES` entry and offers the
+    // newest; a script-started install has no version to compare, so it follows
+    // the first entry. Held against the constant, so the list cannot move
+    // without the scripts.
+    expect(batchValue(cmdText, 'REPO')).toBe(UPDATE_REPOSITORIES[0]);
+    expect(shellValue(commandText, 'REPO')).toBe(UPDATE_REPOSITORIES[0]);
   });
 
   it('ships the installers inside every build so the app can update itself', () => {

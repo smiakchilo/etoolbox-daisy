@@ -10,7 +10,8 @@ import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } fro
  * The first line holds **Check for updates** and, beside it, **Update** - shown
  * only while an update is pending (`available`) - then a short status phrase.
  * After a subsection gap: the **Check for updates on startup** checkbox (off by
- * default), then the **Update source** (a branch, a tag or an https zip URL).
+ * default), then the **Update source** (a ref of the default repositories, one
+ * repository, or an https zip URL).
  * Both settings save
  * immediately; the status itself is main's (`window.daisy.updates`), so this
  * section only renders what main pushes and asks main to check or apply.
@@ -103,7 +104,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     attrs: {
       id: sourceFieldId,
       class: 'host-field__input',
-      placeholder: 'E.g.: master',
+      placeholder: 'E.g.: master, or owner/name@branch',
       'aria-label': SOURCE_LABEL,
       'data-field': 'updates-source',
     },
@@ -112,7 +113,7 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     sourceFieldId,
     SOURCE_LABEL,
     sourceField,
-    'A branch or tag of the repository to update from, or an https link to a source zip. Empty means the main branch',
+    'A branch or tag of the default repositories, one repository as owner/name@branch or github.com/owner/name, or an https link to a source zip. Empty means the main branch',
   );
 
   const startupCheckbox = el('sp-checkbox', {

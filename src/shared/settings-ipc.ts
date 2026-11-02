@@ -680,8 +680,8 @@ export type UpdateMemoSettingsRequest = Readonly<z.infer<typeof updateMemoSettin
 
 /**
  * `settings:update-update-settings`. A partial patch: `source` is the update
- * branch, tag or zip URL (`null` clears it), `checkOnStartup` the silent
- * startup check.
+ * repository, branch, tag or zip URL (`null` clears it), `checkOnStartup` the
+ * silent startup check.
  */
 export const updateUpdateSettingsRequestSchema = z
   .object({

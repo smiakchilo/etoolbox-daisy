@@ -3,12 +3,8 @@ import { z } from 'zod';
 
 import type { AgentFetch, UpdateStatus } from '../../shared';
 import { type LogReason, type Logger, toLoggableUrl } from '../logger';
+import { packageJsonUrl, parseUpdateSource, sourceArchiveUrl } from './source';
 import { compareVersions } from './version';
-
-/** The repository the app updates from - the one `install/install.cmd` installs from. */
-export const UPDATE_REPOSITORY = 'smiakchilo/etoolbox-daisy';
-/** The ref an install follows until the Settings "Update source" names another. */
-export const DEFAULT_UPDATE_REF = 'master';
 
 /** Shown as the version of an update whose source is a whole archive URL, which carries none. */
 const ARCHIVE_SOURCE_VERSION = 'archive';
@@ -25,7 +21,10 @@ const packageVersionSchema = z.object({ version: z.string().regex(/^\d+\.\d+\.\d
 
 export interface UpdaterDependencies {
   readonly installedVersion: string;
-  /** The Settings "Update source" (a ref or an https archive URL), read fresh on every use. */
+  /**
+   * The Settings "Update source" (a ref, a repository or an https archive URL),
+   * read fresh on every use.
+   */
   readonly source: () => string | undefined;
   /** A fetch honouring the proxy configured right now. */
   readonly createFetch: () => Promise<AgentFetch>;
@@ -44,10 +43,11 @@ export interface UpdaterDependencies {
   /** Whether this process was started by an update's swap (the script says so). */
   readonly startedByUpdate: boolean;
   /**
-   * Starts the detached script that builds `source` and swaps it in once the app
-   * has exited. Rejects when that cannot be done (an unpackaged build, no script).
+   * Starts the detached script that builds the offered archive and swaps it in
+   * once the app has exited. Rejects when that cannot be done (an unpackaged
+   * build, no script).
    */
-  readonly launch: (source: string) => Promise<void>;
+  readonly launch: (archiveUrl: string) => Promise<void>;
   readonly quit: () => void;
   readonly logger: Pick<Logger, 'error' | 'warn'>;
   readonly onStatusChanged: (status: UpdateStatus) => void;
@@ -74,16 +74,6 @@ interface VersionFailure {
 
 type VersionRead = { readonly ok: true; readonly version: string } | VersionFailure;
 
-/** `package.json` at `ref` - the version there is the release. */
-export function packageJsonUrl(ref: string): URL {
-  return new URL(`https://raw.githubusercontent.com/${UPDATE_REPOSITORY}/${ref}/package.json`);
-}
-
-/** An archive URL names its own location; anything else is a branch or tag. */
-export function isArchiveSource(source: string): boolean {
-  return source.includes(':');
-}
-
 function parseStatusLine(raw: string): { readonly stage: string; readonly text: string } {
   const line = (raw.split(/\r?\n/)[0] ?? '').trim();
   const bar = line.indexOf('|');
@@ -108,18 +98,45 @@ function failedApplyStatus(reason: string): UpdateStatus {
   };
 }
 
+interface RepositoryRead {
+  readonly repository: string;
+  readonly url: URL;
+  readonly read: VersionRead;
+}
+
+/**
+ * The newest version any repository answered, the first repository breaking a
+ * tie. A repository that could not be read never hides the other's answer;
+ * `undefined` means none of them answered.
+ */
+function newestReading(
+  readings: readonly RepositoryRead[],
+): { readonly repository: string; readonly version: string } | undefined {
+  let newest: { readonly repository: string; readonly version: string } | undefined;
+  for (const { repository, read } of readings) {
+    if (!read.ok) continue;
+    if (newest === undefined || compareVersions(read.version, newest.version) > 0) {
+      newest = { repository, version: read.version };
+    }
+  }
+  return newest;
+}
+
 /**
  * The updater's state machine. It never throws: every failure becomes a
  * `failed` status and a log line, so a flaky source or a broken build can never
  * be anything worse than "the update did not happen".
  *
- * A check reads the `version` of `package.json` on the configured ref and
- * compares it with the running one. An update is built by the install script
- * (`--update`), which swaps the finished build in after this process exits.
+ * A check reads the `version` of `package.json` on one ref in every repository
+ * the "Update source" names (`src/main/updates/source.ts`) - both defaults when
+ * it names none - and offers the newest one. An update is built by the install
+ * script (`--update`), from that repository's archive, which swaps the finished
+ * build in after this process exits.
  */
 export function createUpdater(deps: UpdaterDependencies): Updater {
   const goFile = `${deps.statusFile}.go`;
   let status: UpdateStatus = { kind: 'idle' };
+  /** The archive URL the script builds, set by a check that offered an update. */
   let pending: string | undefined;
   let busy = false;
 
@@ -195,25 +212,34 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     busy = true;
     setStatus({ kind: 'checking' });
     try {
-      const source = deps.source() ?? DEFAULT_UPDATE_REF;
-      if (isArchiveSource(source)) {
+      const parsed = parseUpdateSource(deps.source());
+      if (parsed.kind === 'archive') {
         // An archive has no cheap version to compare: it is always offered.
-        pending = source;
+        pending = parsed.url;
         return setStatus({ kind: 'available', version: ARCHIVE_SOURCE_VERSION });
       }
-      const url = packageJsonUrl(source);
-      const read = await readVersion(await deps.createFetch(), url);
-      if (!read.ok) {
+      const fetcher = await deps.createFetch();
+      const readings = await Promise.all(
+        parsed.repositories.map(async (repository) => {
+          const url = packageJsonUrl(repository, parsed.ref);
+          return { repository, url, read: await readVersion(fetcher, url) };
+        }),
+      );
+      const proxied = deps.usesProxy();
+      for (const { url, read } of readings) {
+        if (!read.ok) logReadFailure(read, url, proxied);
+      }
+      const newest = newestReading(readings);
+      if (newest === undefined) {
         pending = undefined;
-        logReadFailure(read, url, deps.usesProxy());
         return setStatus({ kind: 'failed', phase: 'check' });
       }
-      if (options?.force !== true && compareVersions(read.version, deps.installedVersion) <= 0) {
+      if (options?.force !== true && compareVersions(newest.version, deps.installedVersion) <= 0) {
         pending = undefined;
         return setStatus({ kind: 'upToDate' });
       }
-      pending = source;
-      return setStatus({ kind: 'available', version: read.version });
+      pending = sourceArchiveUrl(newest.repository, parsed.ref);
+      return setStatus({ kind: 'available', version: newest.version });
     } catch {
       pending = undefined;
       deps.logger.error('UPDATE_CHECK_FAILED', { outcome: 'failure', reason: 'unexpected' });
