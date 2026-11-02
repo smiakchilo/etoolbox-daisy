@@ -55,6 +55,14 @@ export function appToolNames(): readonly string[];
 
 export function bundledSkillNames(): readonly string[];
 
+export function writeAddon(
+  directory: string,
+  descriptor: { readonly id: string; readonly apiVersion: number; readonly entry: string },
+  built: { readonly code: Uint8Array },
+  contributions: { readonly tools: readonly unknown[]; readonly skills: readonly unknown[] },
+  options?: { readonly outputDir?: string; readonly shipSourceOnly?: boolean },
+): void;
+
 export function bundleAddon(
   directory: string,
   pkg: { readonly dependencies?: Readonly<Record<string, string>> },

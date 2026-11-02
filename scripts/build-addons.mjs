@@ -12,9 +12,13 @@
  * body stays in the add-on.
  *
  * A JS add-on is bundled with esbuild into one ESM `index.js`, with its own
- * runtime dependencies left external, and its `node_modules` is linked beside
- * it so Node resolves them the ordinary way. Its `skills/` folder ships beside
- * it; its `tests/` and `e2e/` never do.
+ * runtime dependencies left external. Its `package.json` and lock file ship
+ * beside the bundle, and so does its `skills/` folder; its `tests/` and `e2e/`
+ * never do. A developer build also links the add-on's `node_modules` beside the
+ * bundle so Node resolves them the ordinary way; with
+ * `EDAISY_ADDONS_SOURCE_ONLY=1` (the install build) nothing is linked, and the
+ * application installs the dependencies itself on the add-on's first call
+ * (`src/main/addons/builder.ts`).
  *
  * Usage: node scripts/build-addons.mjs
  */
@@ -41,6 +45,12 @@ const toolsSourceDir = join(root, 'src', 'tools');
 const bundledSkillsDir = join(root, 'resources', 'skills');
 
 const SKILL_FILE_NAME = 'SKILL.md';
+
+/**
+ * The install build ships an add-on without its dependencies: the application
+ * installs them on the add-on's first call. A developer build links them.
+ */
+const sourceOnly = process.env['EDAISY_ADDONS_SOURCE_ONLY'] === '1';
 
 function fail(message) {
   console.error(`\n${message}`);
@@ -265,9 +275,15 @@ async function bundleAddon(directory, pkg) {
 }
 
 /** Writes the built add-on into `out/addons/<id>/`, replacing what was there. */
-function writeAddon(directory, descriptor, built, contributions) {
+function writeAddon(
+  directory,
+  descriptor,
+  built,
+  contributions,
+  { outputDir = outDir, shipSourceOnly = sourceOnly } = {},
+) {
   const id = descriptor.id;
-  const target = join(outDir, id);
+  const target = join(outputDir, id);
   rmSync(target, { recursive: true, force: true });
   mkdirSync(target, { recursive: true });
 
@@ -293,6 +309,12 @@ function writeAddon(directory, descriptor, built, contributions) {
   const skills = join(directory, 'skills');
   if (existsSync(skills)) cpSync(skills, join(target, 'skills'), { recursive: true });
 
+  // The lock file ships so the application can install exactly these
+  // dependencies on the add-on's first call.
+  const lock = join(directory, 'package-lock.json');
+  if (existsSync(lock)) copyFileSync(lock, join(target, 'package-lock.json'));
+
+  if (shipSourceOnly) return;
   const modules = join(directory, 'node_modules');
   if (!existsSync(modules)) {
     fail(`The ${id} add-on's dependencies are not installed. Run "npm run addons:install" first.`);
@@ -357,6 +379,7 @@ export {
   contributionsFor,
   deriveSkill,
   loadAppParsers,
+  writeAddon,
 };
 
 // Running it builds; importing it (a test) only exposes the parts above.

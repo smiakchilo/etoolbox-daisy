@@ -51,6 +51,12 @@ rem The folder this file is in (the trailing "." keeps the path safe to quote).
 set "OUT_DIR=%~dp0."
 set "WORK=%TEMP%\etoolbox-daisy-build"
 set "NODE_DIR="
+rem A pinned Node.js this script had to download is kept here (the app's technical
+rem folder, beside its add-ons) instead of being deleted with the work folder: the
+rem app needs npm to prepare an add-on on its first call, and the next update
+rem reuses it instead of downloading it again. A Node.js already installed on the
+rem machine is used as it is and nothing is kept.
+set "KEPT_NODE=%LOCALAPPDATA%\etoolbox-daisy\node"
 set "SRC_DIR=%WORK%\src"
 set "STEP=starting"
 rem Absolute paths: a trimmed PATH must not decide whether the build works, and
@@ -90,6 +96,8 @@ rem ---- 1. Node.js: the one installed here when it is new enough, else the pinn
 set "NODE_SEARCHED="
 if /i not "%EDAISY_NODE%"=="pinned" set "NODE_SEARCHED=1"
 if defined NODE_SEARCHED call :find_installed_node
+if defined NODE_DIR goto node_ready
+call :find_kept_node
 if defined NODE_DIR goto node_ready
 if defined NODE_SEARCHED echo No Node.js %NODE_BASELINE_MAJOR%.%NODE_BASELINE_MINOR% or newer with npm was found; downloading the pinned %NODE_VERSION% ...
 set "STEP=Node.js setup"
@@ -306,8 +314,19 @@ echo Using the installed Node.js %INSTALLED_NODE_VERSION% - %NODE_DIR%
 echo It is neither downloaded nor signature-checked by this script.
 goto :eof
 
-rem Downloads the pinned portable Node.js, verifies it and extracts it to
-rem %NODE_DIR%.
+rem Sets NODE_DIR to the pinned Node.js a previous run kept, when it is this
+rem script's pin (its marker file is named after the version) and still whole.
+
+:find_kept_node
+if not exist "%KEPT_NODE%\.pinned-%NODE_VERSION%" goto :eof
+if not exist "%KEPT_NODE%\node.exe" goto :eof
+if not exist "%KEPT_NODE%\node_modules\npm\bin\npm-cli.js" goto :eof
+set "NODE_DIR=%KEPT_NODE%"
+echo Using the Node.js %NODE_VERSION% kept from an earlier run - %NODE_DIR%
+goto :eof
+
+rem Downloads the pinned portable Node.js, verifies it and keeps it in
+rem %KEPT_NODE%, which becomes %NODE_DIR%.
 
 :install_pinned_node
 set "NODE_ZIP=node-v%NODE_VERSION%-win-x64.zip"
@@ -330,6 +349,11 @@ set "NODE_DIR=%WORK%\node"
 move "%WORK%\node-v%NODE_VERSION%-win-x64" "%NODE_DIR%" >nul || goto :eof
 del "%WORK%\%NODE_ZIP%"
 "%POWERSHELL%" -NoProfile -Command "$s = Get-AuthenticodeSignature '%NODE_DIR%\node.exe'; Write-Host ('node.exe signature: ' + $s.Status + ', ' + $s.SignerCertificate.Subject); if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notlike '*%NODE_SIGNER%*') { exit 1 }" || goto :eof
+if exist "%KEPT_NODE%" rmdir /s /q "%KEPT_NODE%"
+if not exist "%LOCALAPPDATA%\etoolbox-daisy" mkdir "%LOCALAPPDATA%\etoolbox-daisy"
+move "%NODE_DIR%" "%KEPT_NODE%" >nul || goto :eof
+type nul > "%KEPT_NODE%\.pinned-%NODE_VERSION%"
+set "NODE_DIR=%KEPT_NODE%"
 goto :eof
 
 rem Sets HASH to the lower/upper-case hex SHA-256 of %1, or leaves it undefined.

@@ -119,6 +119,7 @@ export const DIAGNOSTIC_CODES = [
   'ADDON_REJECTED',
   'ADDONS_IPC_SENDER_REJECTED',
   'ADDON_RUNTIME_FAILED',
+  'ADDON_BUILD_FAILED',
   'RULE_REJECTED',
   'RULES_IPC_SENDER_REJECTED',
   'RULES_FOLDER_OPEN_FAILED',
@@ -189,6 +190,8 @@ export const LOG_REASONS = [
   'invalid-manifest',
   /** A submission arrived that named no username, so nothing could be stored. */
   'no-username',
+  /** No usable Node.js with npm was found to build an add-on. */
+  'no-node',
   /** A failure with no narrower cause: an exception outside the request itself. */
   'unexpected',
 ] as const;

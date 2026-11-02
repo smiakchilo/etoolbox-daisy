@@ -63,7 +63,9 @@ function createProxyExecutor(
   return async (args, context) => {
     if (executor === undefined) {
       host.reportToolProgress?.(context.toolCallId, 'Loading tools');
-      const loaded = await loader.load(source.addonId);
+      const loaded = await loader.load(source.addonId, () =>
+        host.reportToolProgress?.(context.toolCallId, 'Installing tools'),
+      );
       if (!loaded.ok) {
         return loadFailure(
           source.addonId,

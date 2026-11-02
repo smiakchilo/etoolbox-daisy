@@ -552,7 +552,9 @@ hidden window, the sessions, the address policy, the pane URL, a log line),
 `loader.ts` (`import()` → `apiVersion` → `activate`, once per add-on,
 success-only caching) and `index.ts`. `ipc/addons.ts` serves
 `addons:contributions` to the renderer (`src/shared/addons-ipc.ts`). Add-ons
-always ship inside the install, so there is no download, store or catalogue.
+ship as source inside the install and are built on their first call
+(`addons/builder.ts`: a content-keyed `npm ci --ignore-scripts` into
+`appPaths.addons`), so there is no download, store or catalogue.
 
 `main/webview/` is the browser pane's runtime: `session.ts` owns the single
 persistent Electron session (proxy, TLS exceptions, cookie persistence),
@@ -1512,7 +1514,8 @@ tools, its skills, its third-party libraries, its window and session hardening,
 its types and its tests, and the application knows it only through the built
 descriptor in `resources/addons/<id>/addon.json` and a **generic** host
 interface. Add-ons are compiled from the same source as the application and
-ship inside the install - nothing is downloaded, pinned or hashed. Nothing
+ship as source inside the install and are built on their first call - nothing
+is downloaded, pinned or hashed. Nothing
 outside its folder names it
 (`tests/unit/addons/addonIsolation.test.ts` enforces that), and deleting the
 folder leaves the repository green with no other edit. Full detail, layout, the
@@ -1536,7 +1539,8 @@ is resolved at sign-in time by the agent that uses it
   skills included); `scripts/app-build.mjs` copies that into
   `<install>/resources/addons`. Main reads those descriptors synchronously at
   startup (`src/main/addons/scan.ts`; a rejected folder is logged as
-  `ADDON_REJECTED`), and the renderer gets the contributions over the
+  `ADDON_REJECTED`; an installed build ships the folder without `node_modules`,
+  `app-build.mjs` runs the build with `EDAISY_ADDONS_SOURCE_ONLY=1`), and the renderer gets the contributions over the
   `addons:contributions` IPC (`src/main/ipc/addons.ts`,
   `src/shared/addons-ipc.ts`). There are no pins, no identity hash, no version
   to bump and no catalogue: the add-on and the application are built from one
@@ -1546,9 +1550,21 @@ is resolved at sign-in time by the agent that uses it
   entry per contributed skill, so the model, the session instructions, the
   composer's `/` list and the home screen all see them at once. The add-on's code
   is imported only when a call or a skill load needs it, and everything one
-  add-on contributes shares that one load (`src/main/addons/loader.ts`: `import()`
-  → `apiVersion` → `activate(host)`, single-flight, success-only caching). A
-  failure is a retryable `STORAGE_ERROR` naming the add-on and the reason
+  add-on contributes shares that one load (`src/main/addons/loader.ts`: build if
+  needed → `import()` → `apiVersion` → `activate(host)`, single-flight,
+  success-only caching). **The first-call build** (`src/main/addons/builder.ts`)
+  copies the shipped folder to `<appPaths.addons>/<id>/<16-hex content key>`
+  (`.ready` marker; stale keys removed), runs `npm ci --ignore-scripts` with a
+  Node >= 22.12 (PATH, then the copy kept in `appPaths.node`, else the pinned
+  portable Node the app downloads itself - `src/main/addons/nodeDownload.ts`,
+  sha256 then signature checked, kept for reuse) and a 10-minute limit, and
+  reports `Installing tools` while it runs. A changed
+  source is a new key, so an app update never leaves a stale build in use; the
+  dev tree (a `node_modules` junction) skips the build. It needs network access
+  (for `npm ci` and, with no Node present, the Node download): failures are
+  `ADDON_BUILD_FAILED` (`no-node` only where no download is possible - Linux,
+  Windows non-x64 - or it failed; `timeout`/`network`/`insecure`/`unexpected`).
+  A failure is a retryable `STORAGE_ERROR` naming the add-on and the reason
   (`unavailable` or `apiVersion`).
 - **No binary add-ons, no management UI.** An add-on is JavaScript only. Removing
   one means deleting its folder from the source.
@@ -1557,8 +1573,10 @@ is resolved at sign-in time by the agent that uses it
   and **not** listed in the root `package.json` — electron-builder packages the
   root's production dependencies, which is exactly what must not happen).
   `npm ci` at the root, then `npm run addons:install` and `npm run addons:build`
-  (both run by `scripts/app-build.mjs` and by `npm run build`), make the add-on
-  dependencies and the built folders ready without a manual step. Its
+  (`npm install` runs the former via postinstall; `npm run build` runs the
+  latter) make a development tree ready; the install script does **not** run
+  `addons:install` - the add-on's lock file is what the first-call `npm ci`
+  follows. Its
   `package.json` version is its own bookkeeping.
 - **Loaded with a real `import()`.** A plain dynamic import is rewritten into
   `require()` by the bundler, which cannot load an ESM folder outside the asar;
@@ -1583,9 +1601,9 @@ is resolved at sign-in time by the agent that uses it
   `addon.json`, `package.json`, `skills/`, a junction to the add-on's
   `node_modules`). `addonsDirectory` (`src/main/addons/index.ts`) is
   `<resources>/addons` when packaged and `out/addons` otherwise.
-  `scripts/app-build.mjs` copies the built add-ons into
-  `<install>/resources/addons`, so an install (and every in-app update, which
-  rebuilds the whole install) carries them. Nothing is downloaded.
+  `scripts/app-build.mjs` copies the add-ons **as source** (no `node_modules`)
+  into `<install>/resources/addons`, so an install (and every in-app update)
+  carries them; their dependencies are installed on the first call.
 
 #### Recipe: add an add-on
 
@@ -2008,8 +2026,10 @@ pinning. Full description: `docs/updates.md`.
   spawns the install script from `resources/install/` detached in
   `--update <ref-or-zip-url> <app-folder> <app-pid> <status-file>` mode
   (`scriptRunner.ts`, `composition.ts`). The script builds into `<app>.new` while
-  the app keeps running (reusing an installed Node 22.12+, else the pinned,
-  signature-checked portable Node), smoke-tests the staged build (headless
+  the app keeps running (reusing an installed Node 22.12+, else the copy an
+  earlier install kept under `%LOCALAPPDATA%\etoolbox-daisy\node`, else the pinned,
+  signature-checked portable Node - which the script then keeps, for later updates
+  and for add-on builds), smoke-tests the staged build (headless
   `--smoke-test`, `src/main/smokeTest.ts`), and only on success waits for the app
   to exit, swaps (`<app>.previous` kept), relaunches and reverts if the new
   version does not report started. A failed build or smoke test leaves the current
@@ -2135,8 +2155,30 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4833 passed / 1 failed / 13 skipped**
-(4847 total; the failure is the environment-bound
+Current baseline: **`npm run test` → 4931 passed / 1 failed / 13 skipped**
+(4945 total; the failure is the environment-bound
+`tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
+HEAD because this machine is signed in to Copilot - +27 against the 4904 run
+below, for **the add-on builder downloads the pinned Node when none is present**
+(2026-10-30): `src/main/addons/nodeDownload.ts` fetches, hash-checks and
+signature-checks the pinned portable Node into `appPaths.node` and keeps it
+(22 downloader cases, 4 builder cases, 1 pin-drift case against the install
+scripts). Before that it was **4904 passed / 1 failed / 13 skipped** (4918 total;
++71 against the 4833 run below), for **add-ons are built on their first call** (2026-10-30): an installed
+build ships an add-on as source (no `node_modules`), and
+`src/main/addons/builder.ts` builds it on its first tool call or skill load - a
+content-keyed cache under `appPaths.addons` (`<id>/<16-hex key>`, a `.ready`
+marker), `npm ci --ignore-scripts` run with a Node >= 22.12 found on `PATH`, else
+the copy kept under `appPaths.node`, else the pinned portable Node the app
+downloads and keeps (`nodeDownload.ts`), a 10-minute limit, and the
+`Installing tools` progress text. `ADDON_BUILD_FAILED` is logged on failure. The
+install scripts keep the pinned portable Node they had to download. New: `builder.test.ts` (19), the `with a builder` block
+in `addonRuntime.test.ts`, the `writing a built add-on` block in
+`buildDerivation.test.ts`, and the `installScripts`/`appPaths` cases; 7 mutations
+caught. The packaged first-call build, the kept-Node install logic on a clean
+machine and the Mac path have not run. See
+`docs/verification/followons-2026-10.md`. Before that it was **4833 passed / 1
+failed / 13 skipped** (4847 total; the failure is the environment-bound
 `tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
 HEAD because this machine is signed in to Copilot - +17 against the 4816 run
 below, for **A sign-in may be just an email** (2026-10-31): the vault keeps a
@@ -4079,7 +4121,7 @@ file).
 | Host `proxyId` | **Applied (2026-09-21).** The active agent's proxy configures the Copilot runtime and sign-in; a host's three-way `proxyId` selection (Default/No proxy/entry) and the `browser.proxy` default are applied to the live browser session, reconciled per navigation origin (`src/main/browser/proxyReconciliation.ts` + `src/main/webview/proxyResolution.ts`). |
 | `address-deep-link` E2E flake | Rare (≈1 of 6), load-correlated: post-fix run 5 failed the final "settings.json gains `unconfigured.example`" assertion; 5 full-suite greens since and isolated repeats never red. Root cause not split (OK-click vs `settings:add-server`); the assertion now dumps banner/open/address/on-disk context on failure so one recurrence pins it. See `docs/verification.md` Step 05 closeability section. |
 | `settings-tabs.spec.ts:121` E2E failure | **Pre-existing, deterministic** (reproduced on HEAD with the work stashed, 2026-10-06): the spec locates `section[aria-label="Browser"]`, which is the browser *pane* (the settings Browser section is a `div`), and expects `Takes effect after restarting the app.` while the pane's helper text has no trailing period. Not caused by the environment-facts work; needs a spec/element fix in its own change. |
-| Add-ons, self-update and the Copilot CLI | **Owner-pending.** Add-ons ship inside the install (no download path), and the Copilot resolver is unit-tested end to end; but the source-based update has never run against real GitHub or on a Mac, no real Lighthouse audit has run from the built add-on, and no interactive Copilot sign-in has run against a **resolved** CLI on a clean profile. See `docs/updates.md`, `docs/addon-architecture.md`, `docs/backlog.md` "In-app updates: source-based — known limits and the unrun Mac path". |
+| Add-ons, self-update and the Copilot CLI | **Owner-pending.** Add-ons ship as source and are built on their first call (the packaged first-call build and the installer's kept-Node logic have never run), and the Copilot resolver is unit-tested end to end; but the source-based update has never run against real GitHub or on a Mac, no real Lighthouse audit has run from the built add-on, and no interactive Copilot sign-in has run against a **resolved** CLI on a clean profile. See `docs/updates.md`, `docs/addon-architecture.md`, `docs/backlog.md` "In-app updates: source-based — known limits and the unrun Mac path". |
 | Git | Has commits. The plugin refactors (tools, agents) were left uncommitted for the owner to review. |
 
 ---

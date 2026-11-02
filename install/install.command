@@ -6,7 +6,8 @@
 #      the binary, that one is used. Only when there is none does it download
 #      portable Node.js from nodejs.org, check its SHA-256 against the value
 #      pinned below, and check the node binary carries a valid code signature
-#      from the OpenJS Foundation.
+#      from the OpenJS Foundation. A downloaded Node.js is kept in the app's
+#      data folder, so later updates and add-on builds reuse it.
 #   2. Downloads this repository's source as a zip from GitHub.
 #   3. With that Node, installs the locked npm dependencies (install scripts
 #      disabled), builds the application and writes "EToolbox Daisy.app" into
@@ -87,6 +88,10 @@ else
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/etoolbox-daisy-build.XXXXXX")"
+# A pinned Node.js this script had to download is kept here, in the app's technical
+# folder, so the app can build an add-on later and the next update can reuse it. An
+# installed Node.js is used as it is and nothing is kept.
+KEPT_NODE="$HOME/Library/Application Support/etoolbox-daisy/node"
 # The folder holding the node binary that will be used, and the one to put on PATH.
 NODE_BIN=""
 SRC_DIR="$WORK/src"
@@ -179,13 +184,26 @@ usable_installed_node() {
   echo "$bin_dir"
 }
 
-# ---- 1. Node.js: the one installed here when it is new enough, else the pinned build ----
+# Prints the bin folder of the kept pinned Node.js when it is the current pin and complete.
+usable_kept_node() {
+  [ -f "$KEPT_NODE/.pinned-$NODE_VERSION" ] || return 1
+  [ -x "$KEPT_NODE/bin/node" ] || return 1
+  [ -f "$KEPT_NODE/lib/node_modules/npm/bin/npm-cli.js" ] || return 1
+  echo "$KEPT_NODE/bin"
+}
+
+# ---- 1. Node.js: the one installed here when it is new enough, then the kept pinned build, else a download ----
 STEP="Node.js setup"
 status installing-node "Preparing Node.js"
 if [ "${EDAISY_NODE:-auto}" != "pinned" ] && installed_bin="$(usable_installed_node)"; then
   NODE_BIN="$installed_bin"
   echo "Using the installed Node.js $("$NODE_BIN/node" -p process.versions.node) - $NODE_BIN"
   echo "It is neither downloaded nor signature-checked by this script."
+fi
+
+if [ -z "$NODE_BIN" ] && kept_bin="$(usable_kept_node)"; then
+  NODE_BIN="$kept_bin"
+  echo "Using the kept Node.js $NODE_VERSION - $NODE_BIN"
 fi
 
 if [ -z "$NODE_BIN" ]; then
@@ -212,6 +230,12 @@ if [ -z "$NODE_BIN" ]; then
     exit 1
   fi
   echo "node signature: valid, $NODE_SIGNER"
+  # Move it out of the work folder, which is deleted at the end.
+  rm -rf "$KEPT_NODE"
+  mkdir -p "$(dirname "$KEPT_NODE")"
+  mv "$WORK/node" "$KEPT_NODE"
+  : > "$KEPT_NODE/.pinned-$NODE_VERSION"
+  NODE_BIN="$KEPT_NODE/bin"
 fi
 
 # ---- 2. Source ----

@@ -11,9 +11,11 @@ import {
   newServerId,
   newToolCallId,
   newTurnId,
+  err,
   ok,
 } from '../../../../src/shared';
 import {
+  type AddonBuilder,
   type AddonHostHandle,
   type ScannedAddon,
   addonPartitionName,
@@ -99,14 +101,18 @@ function loader(
     entries?: readonly ScannedAddon[];
     importModule?: (specifier: string) => Promise<unknown>;
     createHost?: (id: string) => AddonHostHandle;
+    builder?: AddonBuilder;
   } = {},
 ) {
   return createAddonLoader({
     entries: options.entries ?? [SCANNED],
     createHost: options.createHost ?? (() => NO_HOST),
     ...(options.importModule === undefined ? {} : { importModule: options.importModule }),
+    ...(options.builder === undefined ? {} : { builder: options.builder }),
   });
 }
+
+const BUILT_DIR = path.join('C:', 'built', ADDON_ID, 'key');
 
 const exampleModule = () => ({
   addon: activationWith({ example_tool: () => () => Promise.resolve(ok({})) }),
@@ -204,6 +210,67 @@ describe('createAddonLoader', () => {
     expect(await loader({ importModule }).load(ADDON_ID)).toMatchObject({
       ok: false,
       error: { kind: 'unavailable' },
+    });
+  });
+
+  describe('with a builder', () => {
+    it('imports the entry from the built folder and keeps the shipped one for skills', async () => {
+      const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+      const ensureBuilt = vi.fn(() => Promise.resolve(ok(BUILT_DIR)));
+      const instance = loader({ importModule, builder: { ensureBuilt } });
+
+      expect((await instance.load(ADDON_ID)).ok).toBe(true);
+
+      expect(ensureBuilt).toHaveBeenCalledWith(ADDON_ID, SCANNED, undefined);
+      expect(importModule).toHaveBeenCalledWith(
+        pathToFileURL(path.join(BUILT_DIR, 'index.js')).href,
+      );
+      expect(instance.directoryOf(ADDON_ID)).toBe(DIR);
+    });
+
+    it('reports a failed build as unavailable without importing', async () => {
+      const importModule = vi.fn(() => Promise.resolve(exampleModule()));
+      const ensureBuilt = vi.fn(() =>
+        Promise.resolve(err({ message: 'no node', reason: 'no-node' as const })),
+      );
+
+      const loaded = await loader({ importModule, builder: { ensureBuilt } }).load(ADDON_ID);
+
+      expect(loaded).toMatchObject({ ok: false, error: { kind: 'unavailable' } });
+      expect(!loaded.ok && loaded.error.message).toContain('no node');
+      expect(importModule).not.toHaveBeenCalled();
+    });
+
+    it('builds again on the next load after a failure', async () => {
+      const ensureBuilt = vi
+        .fn<AddonBuilder['ensureBuilt']>()
+        .mockResolvedValueOnce(err({ message: 'offline', reason: 'unexpected' }))
+        .mockResolvedValue(ok(BUILT_DIR));
+      const instance = loader({
+        importModule: () => Promise.resolve(exampleModule()),
+        builder: { ensureBuilt },
+      });
+
+      expect((await instance.load(ADDON_ID)).ok).toBe(false);
+      expect((await instance.load(ADDON_ID)).ok).toBe(true);
+      expect(ensureBuilt).toHaveBeenCalledTimes(2);
+    });
+
+    it('hands the first caller’s install notice to the builder, once for concurrent loads', async () => {
+      const onInstall = vi.fn();
+      const ensureBuilt = vi.fn<AddonBuilder['ensureBuilt']>((_id, _entry, notify) => {
+        notify?.();
+        return Promise.resolve(ok(BUILT_DIR));
+      });
+      const instance = loader({
+        importModule: () => Promise.resolve(exampleModule()),
+        builder: { ensureBuilt },
+      });
+
+      await Promise.all([instance.load(ADDON_ID, onInstall), instance.load(ADDON_ID, vi.fn())]);
+
+      expect(ensureBuilt).toHaveBeenCalledTimes(1);
+      expect(onInstall).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -372,6 +439,27 @@ describe('createContributedToolModules', () => {
     await module?.createExecutor(toolHost((_id, text) => reported.push(text)))({}, CONTEXT);
 
     expect(reported).toEqual(['Loading tools']);
+  });
+
+  it('also reports that the tools are being installed when the build has to run', async () => {
+    const reported: string[] = [];
+    const ensureBuilt = vi.fn<AddonBuilder['ensureBuilt']>((_id, _entry, notify) => {
+      notify?.();
+      return Promise.resolve(ok(BUILT_DIR));
+    });
+    const [module] = createContributedToolModules({
+      tools: [{ addonId: ADDON_ID, tool: TOOL }],
+      loader: loader({
+        importModule: () => Promise.resolve(exampleModule()),
+        builder: { ensureBuilt },
+      }),
+    });
+
+    await module?.createExecutor(toolHost((_id, text) => reported.push(text)))({}, CONTEXT);
+
+    expect(reported).toHaveLength(2);
+    expect(reported[0]).toBe('Loading tools');
+    expect(reported[1]).not.toBe(reported[0]);
   });
 
   it('forwards the arguments unchanged and builds the executor once', async () => {

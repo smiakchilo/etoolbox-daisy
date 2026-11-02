@@ -60,6 +60,15 @@ export interface AppPaths {
    * to an agent as `AgentHost.stateDirectory`).
    */
   readonly agents: string;
+  /**
+   * The pinned portable Node.js the installer had to download because the
+   * machine had none usable. Kept so a later add-on build or in-app update can
+   * reuse it instead of downloading again; absent when the machine's own Node is
+   * used.
+   */
+  readonly node: string;
+  /** Add-ons built on their first call (`<addons>/<id>/<key>`): their installed dependencies and entry. */
+  readonly addons: string;
   /** Scratch/temporary files. */
   readonly tmp: string;
 }
@@ -166,6 +175,8 @@ export function resolveAppPaths(homeDir: string, localDataDir: string): AppPaths
     windowState: path.join(dataRoot, 'window-state.json'),
     browser: path.join(dataRoot, 'browser'),
     agents: path.join(dataRoot, 'agents'),
+    node: path.join(dataRoot, 'node'),
+    addons: path.join(dataRoot, 'addons'),
     tmp: path.join(dataRoot, 'tmp'),
   };
 }
@@ -188,6 +199,7 @@ export function ensureAppDirectories(paths: AppPaths): void {
     paths.credentials,
     paths.browser,
     paths.agents,
+    paths.addons,
     paths.tmp,
   ];
   for (const dir of directories) {

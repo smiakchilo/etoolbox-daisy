@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  PINNED_NODE_SHA256,
+  PINNED_NODE_SIGNER,
+  PINNED_NODE_VERSION,
+} from '../../../src/main/addons/nodeDownload';
 
 /**
  * Facts about the two build-from-source installers in `install/`, held against
@@ -62,6 +67,16 @@ describe('build-from-source installers', () => {
     expect(shellValue(commandText, 'NODE_SHA256_ARM64')).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('keeps the in-app Node.js downloader on the installers pin', () => {
+    expect(PINNED_NODE_VERSION).toBe(batchValue(cmdText, 'NODE_VERSION'));
+    expect(PINNED_NODE_VERSION).toBe(shellValue(commandText, 'NODE_VERSION'));
+    expect(PINNED_NODE_SHA256['win32-x64']).toBe(batchValue(cmdText, 'NODE_SHA256'));
+    expect(PINNED_NODE_SHA256['darwin-x64']).toBe(shellValue(commandText, 'NODE_SHA256_X64'));
+    expect(PINNED_NODE_SHA256['darwin-arm64']).toBe(shellValue(commandText, 'NODE_SHA256_ARM64'));
+    expect(PINNED_NODE_SIGNER.win32).toBe(batchValue(cmdText, 'NODE_SIGNER'));
+    expect(PINNED_NODE_SIGNER.darwin).toBe(shellValue(commandText, 'NODE_SIGNER'));
+  });
+
   it('accepts an installed Node.js only at or above the pinned version', () => {
     for (const key of ['NODE_BASELINE_MAJOR', 'NODE_BASELINE_MINOR']) {
       expect(batchValue(cmdText, key)).toBe(shellValue(commandText, key));
@@ -110,6 +125,16 @@ describe('build-from-source installers', () => {
         const bare = new RegExp(`(^|[\\s'"()&|])${tool}\\b`, 'i').test(withoutVariables);
         expect(bare, `bare "${tool}" call: ${line.trim()}`).toBe(false);
       }
+    }
+  });
+
+  it('keeps a downloaded Node.js in the data folder for updates and add-on builds', () => {
+    // src/main/addons/builder.ts looks for it at <data>/node, so the folder name
+    // and the marker the installers write are one contract.
+    expect(batchValue(cmdText, 'KEPT_NODE')).toMatch(/\\etoolbox-daisy\\node$/);
+    expect(shellValue(commandText, 'KEPT_NODE')).toMatch(/\/etoolbox-daisy\/node$/);
+    for (const text of [cmdText, commandText]) {
+      expect(text).toMatch(/\.pinned-\$?\{?%?NODE_VERSION/);
     }
   });
 

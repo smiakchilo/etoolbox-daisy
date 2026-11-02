@@ -78,7 +78,13 @@ import { createCredentialVault } from './credentials/credentialVault';
 import { createHostLoginListener } from './credentials/hostAuth';
 import { mergeDisabledFeatures } from './disabledFeatures';
 import { createExternalFetch } from './externalFetch';
-import { addonsDirectory, createAppAddonLoader, scanAddons } from './addons';
+import {
+  addonsDirectory,
+  createAddonBuilder,
+  createAppAddonLoader,
+  createNodeDownloader,
+  scanAddons,
+} from './addons';
 import { createContributedToolModules } from './tools/addonProxy';
 import { registerAgentAuthHandlers } from './ipc/agent';
 import { registerAgentChatIpcHandlers } from './ipc/agentChat';
@@ -109,7 +115,7 @@ import { createSkillStore } from './skills/skillStore';
 import { isSmokeTestRun, runSmokeTest } from './smokeTest';
 import { buildToolRegistry, discoverToolLoaders } from './tools/registry';
 import { createAppUpdater, UPDATE_STATUS_FILE_ENV } from './updates/composition';
-import { createUpdateFetch, isUpdateProxyConfigured } from './updates/proxy';
+import { createUpdateFetch, createUpdateProxyEnv, isUpdateProxyConfigured } from './updates/proxy';
 import {
   APP_USER_MODEL_ID,
   createMainWindow,
@@ -897,8 +903,21 @@ if (smokeTest) {
     // Every add-on is loaded through one generic host: import its entry, check its
     // apiVersion, call `activate` once; everything one add-on contributes shares
     // that one load. They are built from the same source and ship with the
-    // installation, so `scanned` is exactly what this version offers.
+    // installation, so `scanned` is exactly what this version offers. Their
+    // dependencies are installed on the first call, by the builder.
+    const nodeDownloader = createNodeDownloader({
+      keptNodeDirectory: appPaths.node,
+      fetch: () => createUpdateFetch(loadSettingsSync(appPaths.settings), secretStore),
+    });
+    const addonBuilder = createAddonBuilder({
+      builtRoot: appPaths.addons,
+      keptNodeDirectory: appPaths.node,
+      downloadNode: () => nodeDownloader.ensure(),
+      logger,
+      proxyEnv: () => createUpdateProxyEnv(loadSettingsSync(appPaths.settings), secretStore),
+    });
     const addonLoader = createAppAddonLoader({
+      builder: addonBuilder,
       entries: scanned,
       paneSession: viewSession.session,
       currentUrl: () => browserController.currentDocumentUrl(),

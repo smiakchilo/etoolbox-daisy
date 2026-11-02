@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -7,6 +7,7 @@ import {
   deriveSkill,
   loadAppParsers,
   type TakenNames,
+  writeAddon,
 } from '../../../scripts/build-addons.mjs';
 import { parseSkillFrontMatter } from '../../../src/main/skills/skillFrontMatter';
 import { builtAddonContributions } from '../../support/addonContributions';
@@ -181,6 +182,50 @@ describe('the build derives an add-on’s contributions', () => {
     );
 
     expect(result.problem).toContain('contributes');
+  });
+});
+
+describe('writing a built add-on', () => {
+  function sourceFolder(): string {
+    const source = scratch.create();
+    write(source, 'package.json', '{"name":"demo-addon","private":true}');
+    write(source, 'package-lock.json', '{"lockfileVersion":3}');
+    write(source, 'node_modules/dep/index.js', '');
+    write(source, 'skills/demo-skill/SKILL.md', SKILL_MD);
+    return source;
+  }
+
+  const descriptor = { id: 'demo-addon', apiVersion: 1, entry: 'index.js' };
+  const built = { code: new TextEncoder().encode('export const addon = {};') };
+  const contributions = { tools: [], skills: [] };
+
+  it('ships source only, with its lock file and without linking dependencies', () => {
+    const output = scratch.create();
+
+    writeAddon(sourceFolder(), descriptor, built, contributions, {
+      outputDir: output,
+      shipSourceOnly: true,
+    });
+
+    const target = path.join(output, 'demo-addon');
+    expect(existsSync(path.join(target, 'index.js'))).toBe(true);
+    expect(existsSync(path.join(target, 'addon.json'))).toBe(true);
+    expect(existsSync(path.join(target, 'package-lock.json'))).toBe(true);
+    expect(existsSync(path.join(target, 'skills', 'demo-skill', 'SKILL.md'))).toBe(true);
+    expect(existsSync(path.join(target, 'node_modules'))).toBe(false);
+  });
+
+  it('links the installed dependencies for a developer build', () => {
+    const output = scratch.create();
+
+    writeAddon(sourceFolder(), descriptor, built, contributions, {
+      outputDir: output,
+      shipSourceOnly: false,
+    });
+
+    expect(existsSync(path.join(output, 'demo-addon', 'node_modules', 'dep', 'index.js'))).toBe(
+      true,
+    );
   });
 });
 

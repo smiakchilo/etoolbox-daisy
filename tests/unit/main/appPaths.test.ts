@@ -86,6 +86,8 @@ describe('resolveAppPaths', () => {
       paths.windowState,
       paths.browser,
       paths.agents,
+      paths.addons,
+      paths.node,
       paths.tmp,
     ]) {
       expect(path.dirname(technical)).toBe(paths.dataRoot);
@@ -138,6 +140,7 @@ describe('ensureAppDirectories', () => {
       paths.credentials,
       paths.browser,
       paths.agents,
+      paths.addons,
       paths.tmp,
     ];
   }
@@ -161,5 +164,13 @@ describe('ensureAppDirectories', () => {
     for (const dir of expectedDirectories(paths)) {
       expect(existsSync(dir)).toBe(true);
     }
+  });
+
+  it('does not create the kept-Node folder: it exists only when the installer downloaded one', () => {
+    const paths = resolveAppPaths(createScratchRoot(), createScratchRoot());
+
+    ensureAppDirectories(paths);
+
+    expect(existsSync(paths.node)).toBe(false);
   });
 });

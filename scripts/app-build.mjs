@@ -112,25 +112,30 @@ if (npmCli === undefined) {
   fail(`npm was not found next to ${process.execPath}. Run this with the Node.js that ships npm.`);
 }
 
-function run(label, command, args) {
+function run(label, command, args, extraEnv = {}) {
   console.log(`\n== ${label}`);
-  const result = spawnSync(command, args, { cwd: root, env, stdio: 'inherit' });
+  const result = spawnSync(command, args, {
+    cwd: root,
+    env: { ...env, ...extraEnv },
+    stdio: 'inherit',
+  });
   if (result.status !== 0) {
     fail(`Step failed: ${label}`);
   }
 }
 
-const node = (label, args) => run(label, process.execPath, args);
+const node = (label, args, extraEnv) => run(label, process.execPath, args, extraEnv);
 
 /**
  * Copies the add-ons built from this repository beside the packaged
- * application (`<out>/resources/addons`), where `src/main/addons/devSource.ts`
- * finds them. The packaged asar deliberately carries none: they are built from
- * the same source as the application and installed with it.
+ * application (`<out>/resources/addons`), where `src/main/addons/scan.ts` finds
+ * them. The packaged asar deliberately carries none.
  *
- * The built JS add-on's `node_modules` is a junction into `src/addons/<id>/`, so
- * the copy must dereference it - the source tree is deleted with the temporary
- * work folder, and a junction pointing into it would dangle.
+ * They ship as source-only builds (`EDAISY_ADDONS_SOURCE_ONLY`): the descriptor,
+ * the bundled entry, the lock file and the skills, but no `node_modules`. The
+ * application installs an add-on's dependencies the first time it is called
+ * (`src/main/addons/builder.ts`), so an install or an update neither downloads
+ * nor carries the heavy libraries nobody may ever use.
  */
 function copyAddons(target) {
   const built = join(root, 'out', 'addons');
@@ -156,11 +161,9 @@ node('Installing dependencies safely', [
   '--no-audit',
   '--no-fund',
 ]);
-// `--ignore-scripts` skipped the root `postinstall`, so the add-ons' own
-// dependencies are installed explicitly. They are separate npm packages
-// (src/addons/<id>/), and the build below needs them.
-node('Installing add-on dependencies', [npmCli, 'run', 'addons:install']);
-node('Building', [npmCli, 'run', 'build']);
+// The add-ons are bundled from source and their own dependencies are left for
+// the first call, so no `addons:install` step runs here.
+node('Building', [npmCli, 'run', 'build'], { EDAISY_ADDONS_SOURCE_ONLY: '1' });
 
 const platformFlags = isWindows
   ? ['--win', '--x64']

@@ -9,6 +9,7 @@ import {
   ok,
 } from '../../shared';
 import type { AddonHostHandle } from './addonHost';
+import type { AddonBuilder } from './builder';
 import type { ScannedAddon } from './scan';
 
 /**
@@ -38,7 +39,11 @@ export interface LoadedAddon {
 }
 
 export interface AddonLoader {
-  load(id: string): Promise<Result<LoadedAddon, AddonLoadFailure>>;
+  /**
+   * `onInstall` fires once, when the add-on's dependencies have to be installed
+   * before it can load (single-flight: only the first caller's is honoured).
+   */
+  load(id: string, onInstall?: () => void): Promise<Result<LoadedAddon, AddonLoadFailure>>;
   /**
    * The folder of an add-on that has loaded successfully, if any.
    * A skill's files are read from here once its add-on has been activated.
@@ -53,6 +58,8 @@ export interface AddonLoaderOptions {
   readonly entries: readonly ScannedAddon[];
   /** Creates an add-on's host on first use; called at most once per id. */
   readonly createHost: (id: string) => AddonHostHandle;
+  /** Prepares an add-on's dependencies on its first call; absent, the shipped folder is imported as it is. */
+  readonly builder?: AddonBuilder;
   /** A real dynamic import, so a CommonJS main bundle still loads the ESM add-on. */
   readonly importModule?: (specifier: string) => Promise<unknown>;
 }
@@ -90,7 +97,10 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
     return created;
   }
 
-  async function activate(id: string): Promise<Result<LoadedAddon, AddonLoadFailure>> {
+  async function activate(
+    id: string,
+    onInstall: (() => void) | undefined,
+  ): Promise<Result<LoadedAddon, AddonLoadFailure>> {
     const entry = entries.get(id);
     if (entry === undefined) {
       return err({ kind: 'unavailable', message: `The "${id}" add-on is not part of this build` });
@@ -103,10 +113,19 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
       });
     }
 
+    // `dir` stays the shipped folder (skills are read from it); the entry may be
+    // imported from where its dependencies were installed.
+    let importDir = dir;
+    if (options.builder !== undefined) {
+      const built = await options.builder.ensureBuilt(id, entry, onInstall);
+      if (!built.ok) return err({ kind: 'unavailable', message: built.error.message });
+      importDir = built.value;
+    }
+
     let module: unknown;
     try {
       module = await importModule(
-        pathToFileURL(path.join(dir, ...descriptor.entry.split('/'))).href,
+        pathToFileURL(path.join(importDir, ...descriptor.entry.split('/'))).href,
       );
     } catch {
       return err({
@@ -158,12 +177,12 @@ export function createAddonLoader(options: AddonLoaderOptions): AddonLoader {
   }
 
   return {
-    load(id) {
+    load(id, onInstall) {
       const cached = loaded.get(id);
       if (cached !== undefined) return Promise.resolve(ok(cached));
       const running = loading.get(id);
       if (running !== undefined) return running;
-      const run = activate(id).then((result) => {
+      const run = activate(id, onInstall).then((result) => {
         if (result.ok) loaded.set(id, result.value);
         return result;
       });

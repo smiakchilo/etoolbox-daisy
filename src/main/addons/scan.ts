@@ -9,7 +9,10 @@ import { ADDON_DESCRIPTOR_FILE, type AddonDescriptor, addonDescriptorSchema } fr
  * `scripts/build-addons.mjs` writes `<root>/<id>/addon.json` for every add-on
  * of this repository, and the same build ships them with the application, so
  * what is on disk is exactly what this version offers: no catalogue, no
- * download and no pin. An unusable folder is skipped and reported, never fatal.
+ * download and no pin. The shipped folder carries the bundled entry, the
+ * descriptor and the skills but not the add-on's npm dependencies: those are
+ * installed on the first call (`builder.ts`). An unusable folder is skipped
+ * and reported, never fatal.
  */
 
 export interface AddonsDirectoryOptions {
@@ -34,7 +37,7 @@ export function addonsDirectory(options: AddonsDirectoryOptions): string {
 
 export interface ScannedAddon {
   readonly id: string;
-  /** The built folder holding the entry point and the skills. */
+  /** The shipped folder holding the entry point, the descriptor and the skills. */
   readonly directory: string;
   readonly descriptor: AddonDescriptor;
   readonly contributions: AddonContributions;
