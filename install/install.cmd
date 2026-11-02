@@ -152,7 +152,11 @@ call :status testing "Checking the new build starts"
 rem The status file is how the application recognises a freshly swapped build; the
 rem check must not look like one.
 set "EDAISY_UPDATE_STATUS_FILE="
-"%POWERSHELL%" -NoProfile -NonInteractive -Command "$p = Start-Process -FilePath '%OUT_DIR%\EToolbox Daisy.exe' -ArgumentList '--smoke-test' -PassThru; if (-not $p.WaitForExit(180000)) { $p.Kill(); exit 124 }; exit $p.ExitCode"
+rem The exit code is checked explicitly. A check whose console window is closed on
+rem it dies with a negative code (0xC000013A), and "if errorlevel 1" does not see a
+rem negative number - that form once passed a crashed check off as healthy, so an
+rem unverified build was swapped in.
+"%POWERSHELL%" -NoProfile -NonInteractive -Command "$p = Start-Process -FilePath '%OUT_DIR%\EToolbox Daisy.exe' -ArgumentList '--smoke-test' -PassThru; if (-not $p.WaitForExit(180000)) { $p.Kill(); exit 124 }; if ($p.ExitCode -ne 0) { exit 1 }; exit 0"
 if errorlevel 1 goto fail
 
 rem Keep the user's own copy of this script beside the new build.
@@ -161,10 +165,24 @@ if exist "%APP_DIR%\install.cmd" copy /y "%SRC_DIR%\install\install.cmd" "%OUT_D
 set "STEP=Swap"
 call :status ready "The update is ready to install"
 cd /d "%TEMP%"
+rem The app quits itself once it reads "ready", so this loop normally ends at
+rem once. The bound matters when it does not (a hung quit, a recycled pid): the
+rem install is still untouched here, so after ten minutes the update reports the
+rem failure instead of spinning in a window nobody watches.
+set "WAIT_EXIT=0"
 :wait_exit
 "%TASKLIST%" /FI "PID eq %APP_PID%" /NH 2>nul | "%FINDSTR%" /c:" %APP_PID% " >nul || goto app_gone
+set /a WAIT_EXIT+=1
+if %WAIT_EXIT% GEQ 300 goto wait_exit_failed
 "%PING%" -n 3 127.0.0.1 >nul
 goto wait_exit
+
+:wait_exit_failed
+if exist "%OUT_DIR%" rmdir /s /q "%OUT_DIR%"
+if exist "%STATUS_FILE%.go" del "%STATUS_FILE%.go" >nul 2>&1
+call :status failed "The application did not close; nothing was changed"
+if exist "%WORK%" rmdir /s /q "%WORK%"
+exit /b 1
 
 :app_gone
 if exist "%PREV_DIR%" rmdir /s /q "%PREV_DIR%"
@@ -280,10 +298,25 @@ if not defined STATUS_FILE goto :eof
 goto :eof
 
 rem Starts %1 detached and leaves its process id in NEW_PID.
+rem PowerShell writes the id to a file rather than to stdout: a "for /f" over a
+rem command hands it to "cmd /c", whose quote handling turns a quoted absolute
+rem path into "'...powershell.exe" -NoProfile ...' is not recognized". The launch
+rem then failed silently, every update reverted, and the app was left closed.
 
 :launch
 set "NEW_PID="
-for /f "usebackq delims=" %%P in (`"%POWERSHELL%" -NoProfile -NonInteractive -Command "(Start-Process -FilePath '%~1' -WorkingDirectory '%~dp1' -PassThru).Id"`) do if not defined NEW_PID set "NEW_PID=%%P"
+set "PID_FILE=%WORK%\launch-pid.txt"
+rem PowerShell sees these in single quotes, so each quote is doubled first: an
+rem install folder named "Bob's Daisy" must not end the string early.
+set "LAUNCH_PID_FILE=%PID_FILE:'=''%"
+set "LAUNCH_EXE=%~1"
+set "LAUNCH_EXE=%LAUNCH_EXE:'=''%"
+set "LAUNCH_DIR=%~dp1"
+set "LAUNCH_DIR=%LAUNCH_DIR:'=''%"
+if exist "%PID_FILE%" del "%PID_FILE%" >nul 2>&1
+"%POWERSHELL%" -NoProfile -NonInteractive -Command "(Start-Process -FilePath '%LAUNCH_EXE%' -WorkingDirectory '%LAUNCH_DIR%' -PassThru).Id | Set-Content -LiteralPath '%LAUNCH_PID_FILE%'"
+if exist "%PID_FILE%" for /f "usebackq tokens=*" %%P in ("%PID_FILE%") do if not defined NEW_PID set "NEW_PID=%%P"
+if exist "%PID_FILE%" del "%PID_FILE%" >nul 2>&1
 goto :eof
 
 rem Sets NODE_DIR to the folder of the Node.js already on PATH, when it is new

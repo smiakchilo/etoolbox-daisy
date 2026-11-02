@@ -148,6 +148,32 @@ describe('build-from-source installers', () => {
     expect(commandText).toMatch(/--update/);
   });
 
+  it('fails the update on a start-up check that did not exit 0', () => {
+    // A check whose console window is closed on it dies with a negative code
+    // (0xC000013A), and "if errorlevel 1" is false for a negative number - that
+    // form once passed a crashed check off as healthy and swapped in a build
+    // nobody had verified.
+    expect(cmdText).toMatch(/\$p\.ExitCode -ne 0/);
+  });
+
+  it('relaunches the app without piping PowerShell through "for /f"', () => {
+    // `for /f` over a command hands it to `cmd /c`, which strips the first and
+    // last quote; with an absolute PowerShell path the command then fails as
+    // "'...powershell.exe" -NoProfile' is not recognized". The relaunch silently
+    // did nothing, so every update reverted and left the app closed.
+    const launch = /^:launch\r?\n([\s\S]*?)^goto :eof/m.exec(cmdText)?.[1] ?? '';
+    expect(launch).not.toBe('');
+    expect(launch).not.toMatch(/for \/f[^\r\n]*in \(`/);
+    expect(launch).toMatch(/NEW_PID/);
+  });
+
+  it('bounds waiting for the running app to close', () => {
+    // The app quits itself once the update is ready, so an unbounded wait only
+    // catches a hang - and there it must report a failure instead of spinning.
+    expect(cmdText).toMatch(/if %WAIT_EXIT% GEQ \d+ goto/);
+    expect(commandText).toMatch(/if \[ "\$waited" -ge \d+ ]; then/);
+  });
+
   it('installs a fresh build from the first update repository', () => {
     // The in-app check reads every `UPDATE_REPOSITORIES` entry and offers the
     // newest; a script-started install has no version to compare, so it follows

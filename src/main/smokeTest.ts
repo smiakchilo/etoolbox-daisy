@@ -10,6 +10,13 @@ import { ADDON_DESCRIPTOR_FILE, isSafeRelativePath } from './addons/manifest';
 /** The command-line flag the update script passes to a freshly built application. */
 export const SMOKE_TEST_FLAG = '--smoke-test';
 
+/**
+ * How long the checks may take before the run gives up and reports a failure.
+ * Comfortably inside the update script's own 180 s limit, so a check that never
+ * settles fails here with a line on stderr instead of looking like a hung test.
+ */
+export const SMOKE_TEST_DEADLINE_MS = 120_000;
+
 export function isSmokeTestRun(argv: readonly string[]): boolean {
   return argv.includes(SMOKE_TEST_FLAG);
 }
@@ -74,10 +81,20 @@ export function runSmokeTest(
   addonsDirectory: string,
   importModule?: (specifier: string) => Promise<unknown>,
 ): void {
-  const scratch = mkdtempSync(path.join(os.tmpdir(), 'edaisy-smoke-'));
+  let scratch: string;
+  try {
+    scratch = mkdtempSync(path.join(os.tmpdir(), 'edaisy-smoke-'));
+  } catch (error) {
+    // A full or unwritable %TEMP% is a failed check, never a reason to throw
+    // from the composition root and leave the update script waiting on a dialog.
+    process.stderr.write(`smoke-test: ${error instanceof Error ? error.message : String(error)}\n`);
+    app.exit(1);
+    return;
+  }
   app.setPath('userData', scratch);
   app.setPath('sessionData', scratch);
-  const finish = (code: number): void => {
+  function finish(code: number): void {
+    clearTimeout(deadline);
     try {
       // Chromium's child processes can still hold the profile they just closed
       // (Windows reports ENOTEMPTY or EPERM), and a run that kept retrying would
@@ -88,7 +105,14 @@ export function runSmokeTest(
       // The result is already decided; %TEMP% is not the install.
     }
     app.exit(code);
-  };
+  }
+  // A check that never settles (an add-on's module graph waiting on something it
+  // cannot reach) must not hold the process open: the update script would only
+  // kill it at its own limit, and a closed console window must not be the way out.
+  const deadline = setTimeout(() => {
+    process.stderr.write('smoke-test: timed out\n');
+    finish(1);
+  }, SMOKE_TEST_DEADLINE_MS);
   void app
     .whenReady()
     .then(() =>

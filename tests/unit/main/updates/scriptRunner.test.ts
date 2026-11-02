@@ -107,6 +107,22 @@ describe('startUpdateScript', () => {
     expect(line).toContain('"--update"');
   });
 
+  it('runs the Windows script without a console window of its own', () => {
+    // Measured on Windows: `detached` gives the child a *visible* console window
+    // even with `windowsHide` (DETACHED_PROCESS wins over CREATE_NO_WINDOW), and a
+    // reader closing that window stops the update mid-build. A non-detached child
+    // has no console and still outlives this app.
+    const given = options('win32');
+    startUpdateScript(given);
+    const [, , spawnOptions] = spawn.mock.calls[0] as [
+      string,
+      string[],
+      { detached: boolean; windowsHide: boolean },
+    ];
+    expect(spawnOptions.windowsHide).toBe(true);
+    expect(spawnOptions.detached).toBe(false);
+  });
+
   it('strips double quotes from arguments instead of letting them break out', () => {
     const given = { ...options('win32'), source: 'a" & calc & "b' };
     startUpdateScript(given);

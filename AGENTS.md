@@ -2049,9 +2049,14 @@ pinning. Full description: `docs/updates.md`.
   scripts' own `REPO` (a fresh install's, and always the first entry) never
   decides where an update came from.
 - **Mechanism.** `updater.ts` (`check`, `apply`, `resumeAfterUpdate`, status)
-  spawns the install script from `resources/install/` detached in
+  spawns the install script from `resources/install/` in the background in
   `--update <archive-zip-url> <app-folder> <app-pid> <status-file>` mode
-  (`scriptRunner.ts`, `composition.ts`). The script builds into `<app>.new` while
+  (`scriptRunner.ts`, `composition.ts`). On Windows it is deliberately **not**
+  `detached`: a detached child asks for `DETACHED_PROCESS`, which overrides
+  `windowsHide`/`CREATE_NO_WINDOW` and gives the build a *visible* `cmd` window
+  (measured: `GetConsoleWindow` non-zero, `IsWindowVisible` true) whose close
+  aborted the update; a non-detached child has no console and still outlives the
+  app (measured). The script builds into `<app>.new` while
   the app keeps running (reusing an installed Node 22.12+, else the copy an
   earlier install kept under `%LOCALAPPDATA%\etoolbox-daisy\node`, else the pinned,
   signature-checked portable Node - which the script then keeps, for later updates
@@ -2059,7 +2064,17 @@ pinning. Full description: `docs/updates.md`.
   `--smoke-test`, `src/main/smokeTest.ts`), and only on success waits for the app
   to exit, swaps (`<app>.previous` kept), relaunches and reverts if the new
   version does not report started. A failed build or smoke test leaves the current
-  install untouched. Progress is a status file the updater polls (stages
+  install untouched. Three things the first real update proved: the smoke test
+  gives itself a 120 s deadline and never fails on its own scratch-profile
+  cleanup (`SMOKE_TEST_DEADLINE_MS`; Chromium holds the profile, `ENOTEMPTY`/
+  `EPERM`), the script's `:launch` reads the new process id from a file (a
+  `for /f` over a command goes through `cmd /c`, whose quote handling turned the
+  quoted absolute PowerShell path into "'...powershell.exe" -NoProfile' is not
+  recognized", so the new build never started and every update reverted), and
+  both the smoke-test check (`$p.ExitCode -ne 0`, because a closed console dies
+  with a negative code `if errorlevel 1` cannot see) and waiting for the app to
+  close (ten minutes, then `failed`) are explicit. Progress is a status file the
+  updater polls (stages
   `installing-node`, `downloading`, `building`, `testing`, `ready`, `failed`,
   `swapped`, `reverted`); `proxy.ts` hands the app's resolved proxy to the script
   as `HTTPS_PROXY`/`HTTP_PROXY`. A build with no `resources/install` cannot
@@ -2203,7 +2218,27 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4989 passed / 13 skipped** (5002 total) - the
+Current baseline: **`npm run test` → 4994 passed / 13 skipped** (5007 total) - the
+suite is fully green here, +5 against the 4989 run below, for **the Windows update
+path: no console window, a relaunch that works, and no unbounded wait**
+(2026-11-03), from the first real in-app update (an installed build updating
+itself from master, `docs/verification/followons-2026-10.md` "The first real
+in-app update on Windows ..."): the script is spawned **not** `detached` on
+Windows, because `DETACHED_PROCESS` overrides `windowsHide` and gave the build a
+visible `cmd` window (measured: `GetConsoleWindow` non-zero and
+`IsWindowVisible` true; a non-detached child has no console and still outlives
+the app - measured); `install.cmd`'s `:launch` reads the new process id from a
+file instead of piping PowerShell through `for /f`, whose `cmd /c` quote
+stripping made the launch fail silently (every update reverted, app left closed);
+a smoke test killed by closing its console (negative exit code `0xC000013A`) is
+no longer read as healthy (`if errorlevel 1` cannot see a negative number, so the
+script tests `$p.ExitCode -ne 0`); the smoke test itself has a 120 s deadline
+(`SMOKE_TEST_DEADLINE_MS`) and never fails on its own profile cleanup; and
+waiting for the app to close is bounded to ten minutes in both scripts. The +5 is
+3 `installScripts`, 1 `scriptRunner` and 1 `smokeTest` case; 4 mutations were
+caught (the detached flag, the `for /f` relaunch, the exit-code check, and the
+deadline). The real update was **not** re-run end to end. Before that it was
+**`npm run test` → 4989 passed / 13 skipped** (5002 total) - the
 suite is fully green here, +38 against the 4951 run below, for **an update is read
 from every default repository, and `npm run package:dir` builds a folder that can
 update itself** (2026-11-02): `src/main/updates/source.ts` holds

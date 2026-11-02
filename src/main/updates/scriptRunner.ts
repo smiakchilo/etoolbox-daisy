@@ -60,8 +60,14 @@ export function startUpdateScript(options: StartUpdateScriptOptions): void {
 
   if (options.platform === 'win32') {
     const line = [script, ...args].map(quoteForCmd).join(' ');
+    // Not `detached`: on Windows that asks for DETACHED_PROCESS, which gives the
+    // child its own *visible* console window - CREATE_NO_WINDOW (`windowsHide`)
+    // is ignored beside it, measured: GetConsoleWindow non-zero and visible.
+    // Closing that window aborts the update halfway through the build, so the
+    // script runs without one. It still outlives this app (a child is not tied to
+    // its parent's lifetime on Windows; measured with the parent exiting at once).
     spawn('cmd.exe', ['/d', '/s', '/c', `"${line}"`], {
-      detached: true,
+      detached: false,
       stdio: 'ignore',
       windowsHide: true,
       windowsVerbatimArguments: true,

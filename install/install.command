@@ -279,7 +279,18 @@ if [ "$UPDATE_MODE" = "1" ]; then
   STEP="waiting for the app to quit"
   status ready "The update is ready"
   cd /tmp
-  while kill -0 "$APP_PID" 2>/dev/null; do sleep 1; done
+  # The app quits itself once it reads "ready". Nothing has been touched yet, so a
+  # quit that never happens is reported instead of waited on for ever.
+  waited=0
+  while kill -0 "$APP_PID" 2>/dev/null; do
+    if [ "$waited" -ge 600 ]; then
+      status failed "The application did not close; nothing was changed"
+      FAILURE_REPORTED=1
+      exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
 
   STEP="swap"
   rm -rf "$PREV_BUNDLE"

@@ -15,7 +15,7 @@ const { appMock } = vi.hoisted(() => ({
 
 vi.mock('electron', () => ({ app: appMock }));
 
-const { isSmokeTestRun, runSmokeChecks, runSmokeTest, SMOKE_TEST_FLAG } =
+const { isSmokeTestRun, runSmokeChecks, runSmokeTest, SMOKE_TEST_DEADLINE_MS, SMOKE_TEST_FLAG } =
   await import('../../../src/main/smokeTest');
 
 const scratch = createScratchDirs('main-smoke-test', 'smoke-');
@@ -61,6 +61,21 @@ describe('runSmokeTest', () => {
     await flushMicrotasks(6);
 
     expect(appMock.exit).toHaveBeenCalledWith(1);
+  });
+
+  it('gives up on a check that never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const root = scratch.create();
+      writeAddon(root, 'slow', { apiVersion: ADDON_API_VERSION, entry: 'index.js' });
+
+      runSmokeTest(root, () => new Promise<never>(() => {}));
+      await vi.advanceTimersByTimeAsync(SMOKE_TEST_DEADLINE_MS);
+
+      expect(appMock.exit).toHaveBeenCalledWith(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
