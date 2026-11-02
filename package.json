@@ -1,7 +1,7 @@
 {
   "name": "etoolbox-daisy",
   "productName": "EToolbox Daisy",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Desktop application pairing a private AEM browser with agentic frameworks.",
   "private": true,
   "main": "out/main/index.js",
