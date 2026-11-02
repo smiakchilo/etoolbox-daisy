@@ -18,7 +18,11 @@ import {
   describeUsagePanel,
   replayJournalIntoUsage,
 } from '../chat/sessionUsage';
-import { createStatusBanner, type StatusBanner } from '../settings/statusBanner';
+import {
+  createStatusBanner,
+  type StatusBanner,
+  type StatusBannerAction,
+} from '../settings/statusBanner';
 import {
   buildNoAnswer,
   computeComposerButtonState,
@@ -134,6 +138,12 @@ export interface ChatPane {
    * newly available version.
    */
   noticeUpdateAvailable(version: string): void;
+  /**
+   * Retracts the update notice once a blue **Update** button is on screen (the
+   * Home screen's, or the Settings Updates tab's) - the offer itself replaces
+   * the fallback notification. Leaves any other notice alone.
+   */
+  dismissUpdateNotice(): void;
   /**
    * Raises the pane's sticky notice that the host stopped recognising the user
    * mid-run, with a **Reload** action that runs `onReload` (the toolbar's own
@@ -1401,7 +1411,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       })
       .then((result) => {
         if (!result.ok || !result.saved) return;
-        statusBanner.showNotice(`Exported to ${result.fileName}`, {
+        showNotice('other', `Exported to ${result.fileName}`, {
           label: 'Open in folder',
           testId: 'banner-open-in-folder',
           onActivate: () => revealLastExport(),
@@ -1422,7 +1432,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     if (transcriptStore.toolCallFor(event.toolCallId)?.toolName !== MEMO_TOOL_NAME) return;
     const id = asText(asRecord(event.outcome.data)?.['id']);
     if (id === undefined) return;
-    statusBanner.showNotice(`Memo was stored. Press ${BANNER_ACTION_MARKER} to view it in folder`, {
+    showNotice('other', `Memo was stored. Press ${BANNER_ACTION_MARKER} to view it in folder`, {
       label: 'Open',
       testId: 'banner-open-memo-folder',
       onActivate: () => revealMemo(id),
@@ -1494,6 +1504,24 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   const statusBanner: StatusBanner = createStatusBanner({
     surfaceClassName: CHAT_STATUS_BANNER_SURFACE_CLASS,
   });
+
+  /**
+   * Which of the pane's notices the single status row is showing, so one can be
+   * retracted without clearing another that has replaced it: the row is shared
+   * by the update notice, the sign-out notice and the export/memo one-shot
+   * notices, and only the latest is on screen.
+   */
+  let noticeOwner: 'update' | 'auth' | 'other' | undefined;
+
+  /** Raises a sticky notice and records which one now owns the row. */
+  function showNotice(
+    owner: 'update' | 'auth' | 'other',
+    copy: string,
+    action: StatusBannerAction,
+  ): void {
+    noticeOwner = owner;
+    statusBanner.showNotice(copy, action);
+  }
 
   /**
    * Points the pane at a conversation. A *changed* id makes any error row that
@@ -1731,11 +1759,18 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
       findBar.close();
     },
     noticeUpdateAvailable(version: string): void {
-      statusBanner.showNotice(`Update ${version} is available`, {
+      showNotice('update', `Update ${version} is available`, {
         label: 'Details',
         testId: 'banner-update-details',
         onActivate: () => options.onOpenSettings('updates'),
       });
+    },
+    dismissUpdateNotice(): void {
+      // Only the update notice is dropped: a sign-out, memo or export notice
+      // that has taken the row since must stay.
+      if (noticeOwner !== 'update') return;
+      noticeOwner = undefined;
+      statusBanner.clearNotice();
     },
     noticeAuthLost(
       hostLabel: string,
@@ -1746,13 +1781,15 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         severity === 'certain'
           ? `${hostLabel} no longer recognises you. Press ${BANNER_ACTION_MARKER} to show its sign-in page`
           : `${hostLabel} may have signed you out. Press ${BANNER_ACTION_MARKER} to check the page`;
-      statusBanner.showNotice(copy, {
+      showNotice('auth', copy, {
         label: 'Reload',
         testId: 'banner-auth-reload',
         onActivate: onReload,
       });
     },
     clearAuthNotice(): void {
+      if (noticeOwner !== 'auth') return;
+      noticeOwner = undefined;
       statusBanner.clearNotice();
     },
     dispose(): void {

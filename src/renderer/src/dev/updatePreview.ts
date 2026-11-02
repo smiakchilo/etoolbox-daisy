@@ -3,11 +3,11 @@ import { updateStatusSchema, type UpdateStatus } from '../../../shared';
 /**
  * The dev-only "pretend an update is pending" trigger: `!!update <version>`
  * typed into the composer makes every update surface behave as if main had
- * reported that version available - the chat pane's notice (with its Details
- * action), the Home screen's link and the Settings → Updates tab's Update
- * button and status. `!!update off` returns them to idle. Reachable only when
- * dev tools are enabled (`window.daisy.devTools`), which a packaged build never
- * sets.
+ * reported that version available - the Home screen's link, the Settings →
+ * Updates tab's Update button and status, and (while no Update button is on
+ * screen) the chat pane's notice with its Details action. `!!update off`
+ * returns them to idle. Reachable only when dev tools are enabled
+ * (`window.daisy.devTools`), which a packaged build never sets.
  *
  * Pure and side-effect free: it only parses a string into a status. The pane
  * injects it through `lib/updateStatusFeed.ts`, so no real update, network or

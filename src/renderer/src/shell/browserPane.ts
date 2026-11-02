@@ -38,6 +38,13 @@ export interface BrowserPane {
    */
   readonly home: HomeScreen;
   /**
+   * True while the home (welcome) screen is the visible layer of the page-view
+   * region - no document is loaded or the Home veil is up, and no panel covers
+   * the slot. The shell consults it for whether the home screen's own controls
+   * (notably "Update X available") are the ones on screen.
+   */
+  isHomeShown(): boolean;
+  /**
    * The pane-owned status slot for the whole-size panels it hosts (Settings and
    * History today). It lives in the page panel directly below the view
    * slot - outside every panel - so a panel's feedback (a save, a deletion)
@@ -151,6 +158,15 @@ export interface BrowserPaneCallbacks {
   readonly onOpenHistory?: () => void;
   /** Starts the pending update; the home screen's "Update X available" button invokes it. */
   readonly onApplyUpdate?: () => void;
+  /**
+   * Fired whenever the visible layer of the page-view region may have changed
+   * (the home screen, the native page or a whole-size panel takes the slot).
+   * The shell uses it to retract a message that a surface now makes redundant -
+   * the update notice once an Update button is on screen. Called once during
+   * construction, before callers have finished wiring their own state, so the
+   * handler must tolerate its first call.
+   */
+  readonly onSurfaceChanged?: () => void;
 }
 
 export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): BrowserPane {
@@ -335,6 +351,7 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     // is what lets the DOM layer show: a native view composites above the
     // document regardless of z-order, so it must be sized to zero.
     viewHost.setSuspended(!nativeVisible);
+    callbacks.onSurfaceChanged?.();
   }
 
   /**
@@ -453,6 +470,9 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
       isActive: (panel) => activePanel === panel,
     },
     home,
+    isHomeShown(): boolean {
+      return !home.element.hidden;
+    },
     surfaceStatus,
     openHostsPicker(): void {
       openPanel(picker);

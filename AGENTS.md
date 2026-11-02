@@ -2052,13 +2052,21 @@ pinning. Full description: `docs/updates.md`.
   then, after a subsection gap, the **Check for updates on startup** checkbox
   (`updates.checkOnStartup`, default
   off; a startup check is silent) and the **Update source** (`updates.source`: a
-  branch/tag, or a full `https:` zip URL; empty means `master`). A found update raises the chat pane's sticky
-  notice once per version (Details → Settings → Updates) and puts an accent-blue
+  branch/tag, or a full `https:` zip URL; empty means `master`). A found update is
+  offered on every surface that can start it: the accent-blue
   "Update X available" `sp-action-button` (`home-update-link`; the shared
   `.action-button--primary` class in `base.css`, also on Settings' **Update**) on the Home screen's version
   line (a `.browser-home__meta` row; a hidden button or empty row takes no
-  space); the button starts the update itself, after the same confirmation as
-  the Settings tab's **Update**. `!!update <version>` previews all of it (dev only); `!!update force` makes a
+  space) and the Settings tab's own **Update**; the Home button starts the update
+  itself, after the same confirmation as the Settings tab's **Update**. The chat
+  pane's sticky notice (Details → Settings → Updates, dismissed on activation) is
+  only a **fallback for an automatic startup check** that found an update while
+  no Update button was on screen - a check the reader ran themselves is answered
+  beside the button, and seeing an Update button retracts a live notice
+  (`lib/updateStatusFeed.ts`'s origins + `shell/mainShell.ts`). A failed apply is
+  reported in the pane's status row (the reason survives the panel closing) and
+  the label beside Check clears; a failed check stays beside the buttons.
+  `!!update <version>` previews all of it (dev only); `!!update force` makes a
 real check that offers the remote's version even if not newer (dev only, no handler
 in a packaged build).
 - **Test hook.** `EDAISY_UPDATE_STATUS_FILE` overrides the status file path
@@ -2161,8 +2169,24 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4931 passed / 1 failed / 13 skipped**
-(4945 total; the failure is the environment-bound
+Current baseline: **`npm run test` → 4949 passed / 1 failed / 13 skipped**
+(4963 total; the failure is the environment-bound
+`tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
+HEAD because this machine is signed in to Copilot - +18 against the 4931 run
+below: +8 from the forced update check (`ipc/updates.test.ts` and
+`updater.test.ts`), +10 for **the update notice is only a fallback** (2026-11-02):
+`lib/updateStatusFeed.ts` labels every status with its origin (`automatic`,
+`user`, `preview`) so a check the reader ran raises no chat notice, the notice is
+withheld while a blue Update button is on screen (`shouldAnnounceUpdate`) and is
+retracted when one appears (`browserPane.onSurfaceChanged` +
+`settingsPanel.onTabChanged`), the notice dismisses itself on activation, and a
+failed apply reports in the pane's status row while the label beside Check clears
+(`describeUpdateApplyFailure`); 5 `updateStatusFeed` cases, 2 net
+`updatesSection`, 1 each `chatPane`, `settingsPanel` and `browserPane`, and the
+built-app `settings-updates.spec.ts` asserts the notice stays away for a
+user-run check and the failure lands in the pane row. Before that it was
+**4931 passed / 1 failed / 13 skipped** (4945 total; the failure is the
+environment-bound
 `tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
 HEAD because this machine is signed in to Copilot - +27 against the 4904 run
 below, for **the add-on builder downloads the pinned Node when none is present**

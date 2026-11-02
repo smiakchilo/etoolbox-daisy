@@ -128,6 +128,19 @@ async function waitForBannerClosed(pane: ChatPane): Promise<void> {
   throw new Error('the chat status banner never collapsed');
 }
 
+/**
+ * Waits until `testId`'s notice action is off the row. A notice's row may fall
+ * back to the standing floor instead of closing, so the action's absence - not
+ * the row's - is what proves the notice went.
+ */
+async function waitForNoticeDismissed(pane: ChatPane, testId: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (agentBanner(pane)?.querySelector(byTestId(testId)) == null) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`the notice action ${testId} never left the banner`);
+}
+
 beforeEach(() => {
   getStatus.mockReset();
   openConversation.mockReset();
@@ -435,6 +448,30 @@ describe('createChatPane status push', () => {
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     expect(onOpenSettings).toHaveBeenCalledWith('updates');
 
+    // Activating the notice is a one-shot acknowledgement: it takes the reader
+    // where the update lives and leaves the row.
+    await waitForNoticeDismissed(pane, 'banner-update-details');
+
+    pane.dispose();
+  });
+
+  it('retracts the update notice without disturbing another notice on the row', async () => {
+    const pane = createChatPane({ onOpenSettings: vi.fn() });
+    pane.setAgents({ copilot: { active: true, hasToken: true } });
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+
+    // Another notice has taken the row since; retracting the update notice must
+    // not clear it. A dismissal starts the row's collapse synchronously, so the
+    // class check catches even a dismissal that has not torn the row down yet.
+    pane.noticeUpdateAvailable('2.0.0');
+    pane.noticeAuthLost('Author', 'certain', vi.fn());
+    pane.dismissUpdateNotice();
+    const banner = agentBanner(pane);
+    expect(banner?.classList.contains(BANNER_CLOSING_CLASS)).toBe(false);
+    expect(banner?.querySelector(byTestId('banner-auth-reload'))).not.toBeNull();
+
+    pane.clearAuthNotice();
     pane.dispose();
   });
 

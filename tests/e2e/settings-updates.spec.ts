@@ -72,6 +72,9 @@ test('the Updates tab offers a source, and applying it on a non-installed build 
 
     await checkButton.click();
     await expect(applyButton).toBeVisible({ timeout: 30_000 });
+    // The reader asked for this check and sees its answer right here: the chat
+    // pane's fallback notice must not fire for a check they started.
+    await expect(shell.locator(byTestId('banner-update-details'))).toHaveCount(0);
     // The check button and the Update button share one line, in different fills.
     const fillOf = (node: HTMLElement) => getComputedStyle(node).backgroundColor;
     expect(await applyButton.evaluate(fillOf)).not.toBe(await checkButton.evaluate(fillOf));
@@ -83,9 +86,12 @@ test('the Updates tab offers a source, and applying it on a non-installed build 
     await shell.locator(`.surface-status-banner[open] ${byTestId('banner-confirm')}`).click();
 
     // A development build has no install script to hand the source to, so the
-    // attempt fails and the offer is withdrawn until the next check.
+    // attempt fails and the offer is withdrawn until the next check. The reason
+    // lands in the pane's status row (which outlives the panel), and the label
+    // beside Check is cleared rather than repeating it.
     await expect(applyButton).toBeHidden({ timeout: 30_000 });
-    await expect(panel.locator(byTestId('updates-status'))).toBeVisible();
+    await expect(shell.locator('.surface-status-banner[open]')).not.toHaveText('');
+    await expect(panel.locator(byTestId('updates-status'))).toHaveText('');
   } finally {
     await app.close();
   }

@@ -985,3 +985,30 @@ describe('createBrowserPane find bar', () => {
     expect(bar(pane).hidden).toBe(true);
   });
 });
+
+describe('createBrowserPane visible layer', () => {
+  it('reports the home screen as shown until a panel covers it, and announces every layer change', () => {
+    const onSurfaceChanged = vi.fn();
+    const pane = createBrowserPane({ onSurfaceChanged });
+    // Fires once during construction, so the shell must tolerate that first call.
+    expect(onSurfaceChanged).toHaveBeenCalled();
+    expect(pane.isHomeShown()).toBe(true);
+
+    const panel = createPanel({
+      title: 'Surface',
+      content: dom.window.document.createElement('div'),
+      closeAriaLabel: 'Close surface',
+      onDismiss: () => pane.panelHost.close(),
+    });
+    pane.appendPanel(panel);
+    onSurfaceChanged.mockClear();
+
+    pane.panelHost.open(panel);
+    expect(pane.isHomeShown()).toBe(false);
+    expect(onSurfaceChanged).toHaveBeenCalledTimes(1);
+
+    pane.panelHost.close();
+    expect(pane.isHomeShown()).toBe(true);
+    expect(onSurfaceChanged).toHaveBeenCalledTimes(2);
+  });
+});

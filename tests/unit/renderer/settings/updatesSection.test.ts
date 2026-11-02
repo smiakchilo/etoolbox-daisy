@@ -31,6 +31,7 @@ const unsubscribe = vi.fn();
 let pushStatus: (status: UpdateStatus) => void;
 
 let status: StatusBannerSink;
+let showError: ReturnType<typeof vi.fn<StatusBannerSink['showError']>>;
 let showPrompt: ReturnType<typeof vi.fn<StatusBannerSink['showPrompt']>>;
 let reportSave: (outcome: Promise<SaveOutcome>) => void;
 let onSettingsChanged: () => void;
@@ -67,9 +68,10 @@ beforeEach(() => {
   apply.mockResolvedValue({ ok: true, status: { kind: 'applying' } });
 
   showPrompt = vi.fn<StatusBannerSink['showPrompt']>();
+  showError = vi.fn<StatusBannerSink['showError']>();
   status = {
     showStatus: vi.fn(),
-    showError: vi.fn(),
+    showError,
     showPrompt,
     showNotice: vi.fn(),
     clear: vi.fn(),
@@ -219,7 +221,7 @@ describe('createUpdatesSection', () => {
     }
   });
 
-  it('shows the live stage of an update, the version it reached, and why it failed', () => {
+  it('shows the live stage of an update and the version it reached', () => {
     const section = buildSection();
     const status = (): string =>
       query(section.element, byTestId('updates-status')).textContent ?? '';
@@ -235,12 +237,29 @@ describe('createUpdatesSection', () => {
     const updated = status();
     expect(updated).toContain('2.0.0');
 
-    pushStatus({ kind: 'failed', phase: 'apply', reason: 'disk full' });
-    const failed = status();
-    expect(failed).toContain('disk full');
-
     // A status phrase is a label: the app's copy never ends with a period.
-    for (const phrase of [bare, staged, updated, failed]) expect(phrase.endsWith('.')).toBe(false);
+    for (const phrase of [bare, staged, updated]) expect(phrase.endsWith('.')).toBe(false);
+  });
+
+  it('reports a failed apply in the pane banner and clears the label beside the buttons', () => {
+    const section = buildSection();
+
+    pushStatus({ kind: 'failed', phase: 'apply', reason: 'disk full' });
+
+    // The one message lives in the pane-owned row, which outlives the panel;
+    // the button line has nothing left to repeat it.
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+    expect(query(section.element, byTestId('updates-status')).textContent).toBe('');
+  });
+
+  it('keeps a failed check beside the buttons, where the reader pressed Check', () => {
+    const section = buildSection();
+
+    pushStatus({ kind: 'failed', phase: 'check', reason: 'timeout' });
+
+    expect(query(section.element, byTestId('updates-status')).textContent).toContain('timeout');
+    expect(showError).not.toHaveBeenCalled();
   });
 
   it('unsubscribes from status pushes on dispose', () => {

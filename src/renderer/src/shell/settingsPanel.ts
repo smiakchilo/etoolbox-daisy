@@ -50,6 +50,8 @@ export interface SettingsPanel extends Panel {
    * by the chat pane's "activate an agent" banner to land directly on Agents.
    */
   selectTab(tab: SettingsTab): void;
+  /** The tab the strip is showing now (`hosts` until a selection is made). */
+  selectedTab(): SettingsTab;
 }
 
 /** The Settings panel's tab ids, in strip order. */
@@ -79,6 +81,12 @@ export interface CreateSettingsPanelOptions {
   onDismiss(): void;
   /** Fired after Reload skills succeeded, so the chat re-reads its skill list. */
   onSkillsReloaded?(): void;
+  /**
+   * Fired when the selected tab changes (a click in the strip, or
+   * `selectTab`), so the shell can react to the tab now on screen - the update
+   * notice is retracted once the Updates tab's own Update button is visible.
+   */
+  onTabChanged?(tab: SettingsTab): void;
 }
 
 export function createSettingsPanel(options: CreateSettingsPanelOptions): SettingsPanel {
@@ -220,6 +228,15 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     ],
   });
 
+  /** The strip's current selection (`sp-tabs` reflects `selected` as an attribute). */
+  function selectedTab(): SettingsTab {
+    return (tabs.getAttribute('selected') as SettingsTab | null) ?? 'hosts';
+  }
+
+  // A click in the strip changes `selected` and dispatches `change`; report it
+  // so the shell can notice the Updates tab's own Update button arriving.
+  tabs.addEventListener('change', () => options.onTabChanged?.(selectedTab()));
+
   // The tab strip and its panels are the only content column children.
   const content = el('div', {
     attrs: { class: 'settings-panel__content' },
@@ -267,7 +284,9 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
       // way it is seeded with `hosts` above); setting it before `open()` means
       // the panel paints on the requested tab with no first-frame flicker.
       tabs.setAttribute('selected', tab);
+      options.onTabChanged?.(tab);
     },
+    selectedTab,
     dispose(): void {
       hostsSection.dispose();
       proxiesSection.dispose();

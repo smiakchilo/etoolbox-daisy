@@ -175,6 +175,33 @@ describe('createSettingsPanel dismissal', () => {
     expect(tabs?.getAttribute('selected')).toBe('agents');
   });
 
+  it('reports the selected tab and every tab change, so the shell can retract the update notice', () => {
+    const onTabChanged = vi.fn();
+    const pane = createBrowserPane();
+    const settings = createSettingsPanel({
+      status: pane.surfaceStatus,
+      onSnapshotApplied: vi.fn(),
+      onDismiss: () => pane.panelHost.close(),
+      onTabChanged,
+    });
+    pane.appendPanel(settings);
+    const tabs = settings.element.querySelector<HTMLElement>('.settings-panel__tabs');
+
+    expect(settings.selectedTab()).toBe('hosts');
+
+    // `sp-tabs` writes the new value and then dispatches `change` - the same
+    // pair a click produces.
+    tabs?.setAttribute('selected', 'updates');
+    tabs?.dispatchEvent(new dom.window.Event('change'));
+    expect(settings.selectedTab()).toBe('updates');
+    expect(onTabChanged).toHaveBeenLastCalledWith('updates');
+
+    // A programmatic selection (the chat pane's "land on Agents") reports too.
+    settings.selectTab('agents');
+    expect(settings.selectedTab()).toBe('agents');
+    expect(onTabChanged).toHaveBeenLastCalledWith('agents');
+  });
+
   it('orders the strip so Proxies comes before Browser', () => {
     const { settings } = build();
     const values = [

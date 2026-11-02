@@ -2,7 +2,11 @@ import { loadBrowserPaneFraction, saveBrowserPaneFraction } from '../lib/paneLay
 import { isHostPageUrl, loadLastPageUrl, saveLastPageUrl } from '../lib/lastPageStore';
 import { clearLastChat, loadLastChat, saveLastChat } from '../lib/lastChatStore';
 import { loadSettingsSnapshot } from '../lib/settingsClient';
-import { subscribeUpdateStatus } from '../lib/updateStatusFeed';
+import {
+  type UpdateStatusOrigin,
+  shouldAnnounceUpdate,
+  subscribeUpdateStatus,
+} from '../lib/updateStatusFeed';
 import {
   isCancelledNavigation,
   parseNavigationTarget,
@@ -16,6 +20,7 @@ import { createBrowserPane } from './browserPane';
 import { createChatPane, type StartupConversation } from './chatPane';
 import { createHistoryPanel, type HistoryPanel } from './historyPanel';
 import { confirmDestructiveAction } from '../settings/statusBanner';
+import { describeUpdateApplyFailure } from '../settings/updatesSection';
 import { createMainSplitView } from './mainSplitView';
 import { DEFAULT_BROWSER_PANE_FRACTION } from './splitLayout';
 import { createSettingsPanel, type SettingsPanel } from './settingsPanel';
@@ -59,9 +64,21 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     browserPane.setAgentPaneOpen(agentPaneVisible);
   }
 
+  // The pane reports every visible-layer change. The handler below closes over
+  // the panels and update state created after the pane, and the pane fires it
+  // once during construction, so it stays inert until the shell has finished
+  // wiring them.
+  let surfaceWatchingReady = false;
+
   const browserPane = createBrowserPane({
     onToggleAgentPane(): void {
       toggleAgentPane();
+    },
+    // The page-view region's visible layer changed (home, page or panel). An
+    // Update button may have just arrived on screen, which makes the chat
+    // pane's fallback notice redundant.
+    onSurfaceChanged(): void {
+      if (surfaceWatchingReady) syncUpdateNotice();
     },
     // The home screen's "Open settings" action. The shell owns the settings
     // panel, which is created just below; the callback closes over it and only
@@ -84,7 +101,16 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
           void window.daisy.updates
             .apply()
             .then((result) => {
-              if (!result.ok) browserPane.surfaceStatus.showError(result.error.message);
+              // An apply can fail without the IPC call failing: main answers
+              // `ok: true` with a `failed` status (a dev build has no install
+              // script). Its message belongs in the pane's status row, the same
+              // place the Settings tab reports a failed apply.
+              if (!result.ok) {
+                browserPane.surfaceStatus.showError(result.error.message);
+                return;
+              }
+              const failure = describeUpdateApplyFailure(result.status);
+              if (failure !== undefined) browserPane.surfaceStatus.showError(failure);
             })
             .catch((error: unknown) => {
               browserPane.surfaceStatus.showError(
@@ -116,6 +142,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     // The chat pane is created after the panel; the callback runs on a click only.
     onSkillsReloaded() {
       void chatPane.reloadSkills();
+    },
+    // The Updates tab's own Update button is a blue offer: arriving on that tab
+    // retracts the chat pane's fallback notice.
+    onTabChanged() {
+      if (surfaceWatchingReady) syncUpdateNotice();
     },
   });
   browserPane.appendPanel(settingsPanel);
@@ -212,26 +243,54 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   });
 
   // ── Updates ──────────────────────────────────────────────────────────────
-  // Main owns the updater's status. A newly available version raises the chat
-  // pane's one-shot notice (once per version) and the home screen's link; any
-  // other status clears the link. Both are best-effort: a failed read leaves
-  // the Settings tab as the only surface.
+  // Main owns the updater's status. A newly available version offers the update
+  // on every surface that can start it (the Settings Updates tab's Update button
+  // while it is open, and the Home screen's accent button); the chat pane's
+  // sticky notice is only the fallback for an automatic check that found an
+  // update while none of those was on screen. A check the reader ran themselves
+  // is answered in the Settings tab's own status line, never as a second notice.
+  // The offer and the notice follow the status live: seeing an Update button
+  // retracts the notice, and an update that is no longer available clears both.
+  let updateVersion: string | undefined;
   let announcedUpdateVersion: string | undefined;
-  function applyUpdateStatus(status: UpdateStatus): void {
+
+  /** True while a blue Update button is on screen (the Home screen's, or the Settings Updates tab's). */
+  function updateOfferOnScreen(): boolean {
+    if (updateVersion === undefined) return false;
+    if (browserPane.isHomeShown()) return true;
+    return (
+      browserPane.panelHost.isActive(settingsPanel) && settingsPanel.selectedTab() === 'updates'
+    );
+  }
+
+  /** Retracts the update notice once an Update button is on screen; a no-op otherwise. */
+  function syncUpdateNotice(): void {
+    if (updateOfferOnScreen()) chatPane.dismissUpdateNotice();
+  }
+
+  function applyUpdateStatus(status: UpdateStatus, origin: UpdateStatusOrigin): void {
     if (status.kind !== 'available') {
+      updateVersion = undefined;
       browserPane.home.setUpdateAvailable(undefined);
+      // No update is pending any more (it is installing, it failed, or the
+      // source says there is none), so a live "Update X is available" notice is
+      // stale. Only the update notice is dropped; another notice stays.
+      chatPane.dismissUpdateNotice();
       return;
     }
+    updateVersion = status.version;
     browserPane.home.setUpdateAvailable(status.version);
     if (announcedUpdateVersion === status.version) return;
     announcedUpdateVersion = status.version;
+    if (!shouldAnnounceUpdate({ origin, offerOnScreen: updateOfferOnScreen() })) return;
     chatPane.noticeUpdateAvailable(status.version);
   }
+  surfaceWatchingReady = true;
   subscribeUpdateStatus(applyUpdateStatus);
   void window.daisy.updates
     .getStatus()
     .then((result) => {
-      if (result.ok) applyUpdateStatus(result.status);
+      if (result.ok) applyUpdateStatus(result.status, 'automatic');
     })
     .catch(() => undefined);
 

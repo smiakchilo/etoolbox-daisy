@@ -1,5 +1,5 @@
 import { el } from '../lib/dom';
-import { subscribeUpdateStatus } from '../lib/updateStatusFeed';
+import { markUserRequestedUpdateCheck, subscribeUpdateStatus } from '../lib/updateStatusFeed';
 import type { AppSettingsSnapshot, UpdateStatus } from '../../../shared';
 import { createContextualHelp, helpAccessibleName, labelledField } from './fieldHelp';
 import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } from './statusBanner';
@@ -54,12 +54,28 @@ export function describeUpdateStatus(status: UpdateStatus): string {
       return status.text === undefined ? 'Updating\u2026' : `Updating: ${status.text}`;
     case 'updated':
       return `Updated to version ${status.version}`;
-    case 'failed': {
-      const base =
-        status.phase === 'check' ? 'Could not check for updates' : 'Could not apply the update';
-      return status.reason === undefined ? base : `${base}: ${status.reason}`;
-    }
+    case 'failed':
+      // A failed *check* is the answer to the button the reader just pressed, so
+      // it stays here. A failed *apply* is reported in the pane's banner instead
+      // (see `describeUpdateApplyFailure`), where it survives the panel closing;
+      // this label clears so the same message is not shown twice.
+      return status.phase === 'check'
+        ? `Could not check for updates${status.reason === undefined ? '' : `: ${status.reason}`}`
+        : '';
   }
+}
+
+/**
+ * The pane-banner message for a failed apply, or `undefined` for any other
+ * status. Applying ends in "nothing happened, and here is why" - the one update
+ * outcome worth a sticky status row that outlives the Settings panel (the
+ * button line's label is cleared for it, so the message lives in one place).
+ */
+export function describeUpdateApplyFailure(status: UpdateStatus): string | undefined {
+  if (status.kind !== 'failed' || status.phase !== 'apply') return undefined;
+  return status.reason === undefined
+    ? 'Could not apply the update'
+    : `Could not apply the update: ${status.reason}`;
 }
 
 type TextField = HTMLElement & { value: string };
@@ -131,6 +147,11 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
 
   function render(status: UpdateStatus): void {
     statusText.textContent = describeUpdateStatus(status);
+    // A failed apply belongs in the pane's status row, not beside the buttons:
+    // the message stays readable after the panel is dismissed, and the label has
+    // already cleared for it (see `describeUpdateStatus`).
+    const applyFailure = describeUpdateApplyFailure(status);
+    if (applyFailure !== undefined) options.status.showError(applyFailure);
     const busy = status.kind === 'checking' || status.kind === 'applying';
     checkButton.disabled = busy;
     updateButton.disabled = busy;
@@ -149,7 +170,12 @@ export function createUpdatesSection(options: UpdatesSectionOptions): UpdatesSec
     }
   }
 
-  const onCheckClick = (): void => void runUpdateCall(() => window.daisy.updates.check());
+  const onCheckClick = (): void => {
+    // The result is answered here, beside the button the reader pressed, so its
+    // availability must not also raise the chat pane's fallback notice.
+    markUserRequestedUpdateCheck();
+    void runUpdateCall(() => window.daisy.updates.check());
+  };
   const onUpdateClick = (): void => {
     confirmDestructiveAction(options.status, 'install the update and restart the app', () => {
       void runUpdateCall(() => window.daisy.updates.apply());
