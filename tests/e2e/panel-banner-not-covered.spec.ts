@@ -73,7 +73,7 @@ test('a failed load does not replace an open panel, and the error banner is visi
   test.setTimeout(120_000);
 
   const hanging = await startHangingOrigin();
-  const { home, env } = createLaunchProfile(scratchBase);
+  const { home, env } = createLaunchProfile(scratchBase, { fakeAgent: true });
 
   const base = defaultAppSettings();
   writeSettings(
@@ -170,7 +170,7 @@ test('two stacked banner rows are separated only while both are showing', async 
   test.setTimeout(120_000);
 
   const hanging = await startHangingOrigin();
-  const { home, env } = createLaunchProfile(scratchBase);
+  const { home, env } = createLaunchProfile(scratchBase, { fakeAgent: true });
 
   const base = defaultAppSettings();
   writeSettings(
@@ -209,6 +209,8 @@ test('two stacked banner rows are separated only while both are showing', async 
     // row opens, and the surface-status row above it is still idle.
     await page.locator(byTestId('chat-settings')).click();
     await page.locator(byTestId('settings-panel')).waitFor({ state: 'visible', timeout: 30_000 });
+    // The removal confirmation is a host row's, so show the Hosts tab.
+    await page.locator(byTestId('settings-tab-hosts')).click();
     hanging.fail();
     await expect(errorRow).toContainText(hanging.origin, { timeout: 60_000 });
     await expect(errorRow).toBeVisible();

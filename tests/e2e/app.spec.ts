@@ -80,7 +80,7 @@ test.describe('EToolbox Daisy shell', () => {
     }
   });
 
-  // The switch is driven by the Settings "Browser" tab's checkbox, read
+  // The switch is driven by the Settings "General" tab's checkbox, read
   // synchronously before Electron is ready (a change takes effect next launch).
   test('omits the native WebAuthn suppression when the persisted flag is off', async () => {
     const env = createLaunchProfile(scratchBase).env;

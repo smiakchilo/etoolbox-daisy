@@ -5,8 +5,12 @@ import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import { confirmDestructiveAction, type SaveOutcome, type StatusBannerSink } from './statusBanner';
 
 /**
- * The Settings panel's Browser tab: browser-pane behaviour that is not about a
+ * The Settings panel's General tab: browser-pane behaviour that is not about a
  * host, a proxy entry, or the agent.
+ *
+ * The tab's id is still `browser` (and it edits the `browser.*` settings
+ * group); "General" is the label because these are the pane-level settings the
+ * host- and proxy-specific tabs below refine.
  *
  * The controls, top to bottom:
  *
@@ -165,7 +169,7 @@ export function createBrowserSection(options: BrowserSectionOptions): BrowserSec
   const section = el('div', {
     attrs: {
       class: 'settings-section browser-section subsection-gap',
-      'aria-label': 'Browser',
+      'aria-label': 'General',
     },
     children: [fields, clearingRows],
   });

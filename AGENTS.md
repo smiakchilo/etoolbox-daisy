@@ -171,7 +171,7 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > transition, because the SDK can make a tool call a turn's first event), the
 > settings contracts `appSettings.ts` /
 > `settingsSnapshot.ts` (the latter gained the `browser` object with
-> `disableNativeWebAuthn`, the Settings "Browser" tab's WebAuthn-suppression
+> `disableNativeWebAuthn`, the Settings "General" tab's WebAuthn-suppression
 > flag), and `settings-ipc.ts`. The host-structure settings most recently moved
 > off the host: `serverConfig.ts` lost `contentRoots`/`componentRoots` (now a new
 > `projectConfig.ts` library plus a host's optional `projectId`), which
@@ -613,7 +613,7 @@ field - filtered as the user types, with Arrow/Enter/Escape and mousedown), and
 `hostAuth.ts` (an `isProxy: false` `app.on('login')` challenge is answered
 from the same vault - the sibling of `webview/proxyAuth.ts`, with the same
 one-time-callback discipline; only an entry with `hasPassword` may answer it).
-The Settings "Browser" tab's saved-sign-in management is part of **Clear
+The Settings "General" tab's saved-sign-in management is part of **Clear
 personal data**, which forgets the vault
 (`credentials:erase`, all-or-nothing, through the shared destructive-confirm
 prompt) in the same action as the pane's cookies and session storage; there is
@@ -660,14 +660,24 @@ failed precisely because a helper text had no period while its assertion
 expected one (AGENTS.md §11) - that asymmetry is the rule, applied to the app's
 own copy.
 
+**The Settings strip leads with General.** `shell/settingsPanel.ts`'s
+`tabSections` is the whole order: the pane-level **General** tab first (its id is
+still `browser`, and it edits the `browser.*` group via `browserSection.ts`),
+then Hosts, Projects, Agents, Skills, Proxies, Updates. A freshly opened panel
+selects the strip's first tab, as the Hosts tab did before it moved (owner
+decision, 2026-11-02). The ids are the test hooks (`settings-tab-<value>`), so a
+label can change without touching a spec; the order and the default selection
+are asserted in `tests/unit/renderer/settingsPanel.test.ts` and the built-app
+`tests/e2e/settings-tabs.spec.ts`.
+
 **Every Settings field carries contextual help.** Each field's label row is
 built by `settings/fieldHelp.ts`'s `labelledField(fieldId, label, control,
 helpText)` - the visible label, then an `sp-contextual-help` badge immediately
-after it - or, for a control with no label of its own (the Browser tab's
+after it - or, for a control with no label of its own (the General tab's
 checkbox), a bare `createContextualHelp(text, accessibleName)` in a
 `.field-label-row`. A control that is not an input at all carries none (the
 Agents tab's auth row is a status light, not a field) - the one exception is the
-Browser tab's two data-clearing buttons, which carry a badge each by owner
+General tab's two data-clearing buttons, which carry a badge each by owner
 decision because the split between their scopes must not be a guess. The help is one short
 phrase stating the field's role and then its limitations, **fixed in code**
 (there is no translation layer and none is planned), **never ending with a
@@ -2169,11 +2179,25 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4949 passed / 1 failed / 13 skipped**
-(4963 total; the failure is the environment-bound
-`tests/integration/agent-runtime.test.ts:92`, which fails identically on a clean
-HEAD because this machine is signed in to Copilot - +18 against the 4931 run
-below: +8 from the forced update check (`ipc/updates.test.ts` and
+Current baseline: **`npm run test` → 4950 passed / 13 skipped** (4963 total) - the
+suite is fully green here, +1 against the 4949 run below, for **the two
+permanently-red tests are made machine-independent** (2026-11-02):
+`tests/integration/agent-runtime.test.ts` now hands the runtime sentinel values
+for the three ambient credential variables (a regression in
+`buildRuntimeChildEnv`'s strip shows up as `authType: "env"`) and a `PATH` with
+every `gh` directory removed, so a scratch `COPILOT_HOME` is deterministically
+unauthenticated instead of reporting this machine's `gh` CLI login
+(`authType: "gh-cli"`, measured - the inherited fallback is `docs/backlog.md`
+"Copilot auth through an ambient `gh` CLI login is inherited"); and the Settings
+E2E specs launch with `{ fakeAgent: true }`, so `settings-hosts.spec.ts`'s
+"a commit does not steal focus" case no longer waits on a real Copilot
+model-catalogue failure ("Could not retrieve the list of models") on a scratch
+profile - which also removed the logged `host-proxy-selection` flake
+(6/6 under `--repeat-each=3`, ~1.5 s a case instead of a 60 s timeout). No test
+was added or removed (still 4963); 19 built-app cases re-run green. Before that
+it was **4949 passed / 1 failed / 13 skipped** (4963 total; the failure was the
+environment-bound `tests/integration/agent-runtime.test.ts:92` - +18 against the
+4931 run below: +8 from the forced update check (`ipc/updates.test.ts` and
 `updater.test.ts`), +10 for **the update notice is only a fallback** (2026-11-02):
 `lib/updateStatusFeed.ts` labels every status with its origin (`automatic`,
 `user`, `preview`) so a check the reader ran raises no chat notice, the notice is
@@ -4037,6 +4061,18 @@ removed.
 constant, changes a contract, or deletes a test, say so in the handoff and in the
 evidence log. Do not delete a test silently and do not weaken an assertion
 without recording why. The baseline in §6 is updated only from a measured run.
+
+**10. A spec that opens the Settings panel launches with the fake agent.**
+`settingsPanel.open()`/`reload()` runs `agentsSection.refresh()`, which starts the
+real Copilot runtime and reports a failed model-catalogue read ("Could not
+retrieve the list of models") on a scratch profile - so such a spec becomes a
+statement about *this machine's* sign-in state, and any assertion on the pane's
+status row trips over that error. Pass `{ fakeAgent: true }` to `scratchEnv` /
+`createLaunchProfile` / `launchApp` unless the spec is deliberately about the
+agent itself (`agent-token-canary`, the model pickers). Measured 2026-11-02: the
+`settings-hosts` "a commit does not steal focus" case and the logged
+`host-proxy-selection` flake were both this, and both went green - and fast - with
+the fake.
 
 **`get_file_problems` before the gate.** After editing any project file, run the
 `get_file_problems` tool from the intellij MCP on that file and amend until it

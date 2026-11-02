@@ -25,7 +25,7 @@ test('the Skills tab opens the custom skills folder through main', async () => {
   test.setTimeout(120_000);
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {

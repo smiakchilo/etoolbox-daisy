@@ -34,7 +34,7 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });
@@ -48,6 +48,8 @@ test('picking a swatch, and typing a custom hex, both set a host colour', async 
       .locator(byTestId('settings-panel'))
       .first()
       .waitFor({ state: 'visible', timeout: 60_000 });
+    // The panel opens on its first tab (General); the host fields are on Hosts.
+    await settings.locator(byTestId('settings-tab-hosts')).click();
     await settings
       .locator('.multifield__add')
       .first()

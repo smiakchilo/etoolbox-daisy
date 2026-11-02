@@ -20,7 +20,7 @@ test('Settings tabs and contextual help are registered, switch panels and open',
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
@@ -45,12 +45,16 @@ test('Settings tabs and contextual help are registered, switch panels and open',
     const tabItems = tabs.locator('sp-tab');
     expect(await tabItems.first().evaluate((node) => node.shadowRoot !== null)).toBe(true);
 
-    // Proxies defines the library entries the Browser tab's default proxy
-    // points at, so the definition is listed first.
+    // The pane-level General tab leads the strip (its value is still `browser`),
+    // and it is the selection the panel opens on.
     const tabValues = await tabItems.evaluateAll((nodes) =>
       nodes.map((node) => node.getAttribute('value')),
     );
-    expect(tabValues.indexOf('proxies')).toBe(tabValues.indexOf('browser') - 1);
+    expect(tabValues[0]).toBe('browser');
+    await expect(tabs.locator('.settings-panel__tab-panel[selected]')).toHaveAttribute(
+      'value',
+      'browser',
+    );
     expect(
       await tabs
         .locator('.settings-panel__tab-panel')
@@ -61,10 +65,9 @@ test('Settings tabs and contextual help are registered, switch panels and open',
     // Exactly one panel is selected; clicking another tab swaps it.
     const selectedPanel = settings.locator('.settings-panel__tab-panel[selected]');
     await expect(selectedPanel).toHaveCount(1);
-    const initialValue = await selectedPanel.first().getAttribute('value');
-    await tabItems.nth(3).click();
+    await settings.locator(byTestId('settings-tab-skills')).click();
     await expect(selectedPanel).toHaveCount(1);
-    await expect.poll(() => selectedPanel.first().getAttribute('value')).not.toBe(initialValue);
+    await expect(selectedPanel).toHaveAttribute('value', 'skills');
 
     // The contextual-help badge opens its popover.
     const badge = selectedPanel.locator('sp-contextual-help').first();

@@ -25,7 +25,7 @@ import { byTestId } from '../support/selectors';
  *    the plaintext index names the origin and username and never the password;
  * 2. signing out immediately shows a prefilled form, and so does a restart
  *    (with the session cookies cleared, so the host really asks again);
- * 3. the Settings "Browser" tab's **Clear personal data** erases them, through
+ * 3. the Settings "General" tab's **Clear personal data** erases them, through
  *    the shared destructive-confirm prompt, and a further restart proves the
  *    form is empty.
  *
@@ -96,7 +96,7 @@ test('a sign-in is remembered, prefilled after sign-out and restart, and erased 
 
   /** Launches, picks the host (the seeded profile opens the hosts panel), waits for the login form. */
   async function launchOnLoginForm(): Promise<{ app: ElectronApp; viewId: number }> {
-    const app = await launchApp({ home, appData, localAppData }, {});
+    const app = await launchApp({ home, appData, localAppData }, { fakeAgent: true });
     const page = await app.firstWindow();
     await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
     // A remembered page from the previous launch may still be signed in on disk;
@@ -272,7 +272,7 @@ test('an email-only step is remembered, prefilled, and offered as a suggestion',
   );
 
   try {
-    const app = await launchApp({ home, appData, localAppData }, {});
+    const app = await launchApp({ home, appData, localAppData }, { fakeAgent: true });
     try {
       const window = await app.firstWindow();
       await window

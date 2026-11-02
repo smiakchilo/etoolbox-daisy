@@ -34,7 +34,7 @@ test('servers added in the Settings panel persist, and removal persists too', as
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const openSettings = async () => {
@@ -43,6 +43,8 @@ test('servers added in the Settings panel persist, and removal persists too', as
     await shell.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
     await shell.locator(byTestId('chat-settings')).click();
     await shell.locator(byTestId('settings-panel')).waitFor({ state: 'visible', timeout: 60_000 });
+    // The panel opens on its first tab (General); the host fields live on Hosts.
+    await shell.locator(byTestId('settings-tab-hosts')).click();
     await shell.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     return { app, page: shell };
   };
@@ -185,13 +187,14 @@ test('the Settings banner keeps one height with and without an action button', a
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
     const page = await app.firstWindow();
     await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
     await page.locator(byTestId('chat-settings')).click();
+    await page.locator(byTestId('settings-tab-hosts')).click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
     const banner = page.locator('.surface-status-banner').first();
 
@@ -254,7 +257,7 @@ test('a commit does not steal focus from the field being typed in', async () => 
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
   const readDoc = (): string => {
     try {
@@ -269,6 +272,7 @@ test('a commit does not steal focus from the field being typed in', async () => 
     const page = await app.firstWindow();
     await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
     await page.locator(byTestId('chat-settings')).click();
+    await page.locator(byTestId('settings-tab-hosts')).click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     // One persisted host (a draft counts as a row, so the disk read is what
@@ -320,7 +324,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const readOrigins = (): string[] => {
@@ -338,6 +342,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     const page = await app.firstWindow();
     await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
     await page.locator(byTestId('chat-settings')).click();
+    await page.locator(byTestId('settings-tab-hosts')).click();
     await page.locator('.multifield__item').first().waitFor({ state: 'visible', timeout: 60_000 });
     return page;
   };
@@ -348,6 +353,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     const page = await first.firstWindow();
     await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
     await page.locator(byTestId('chat-settings')).click();
+    await page.locator(byTestId('settings-tab-hosts')).click();
     await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
 
     const add = async (label: string, origin: string): Promise<void> => {

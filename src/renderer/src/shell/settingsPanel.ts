@@ -194,27 +194,29 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
 
   // The sections become tab panels (AGENTS.md rule 1: Spectrum Web
   // Components only), their headings promoted to `<sp-tab>` labels so the
-  // panel body no longer repeats the tab's title. The Hosts tab is the
-  // default selection, matching the previous stacked layout's top position.
+  // panel body no longer repeats the tab's title. General leads: it is the
+  // pane-level settings (default proxy, WebAuthn suppression, the data-clearing
+  // actions) that the host- and proxy-specific tabs below refine, and it is
+  // also the default selection, so opening Settings lands on the strip's first
+  // tab - the position the Hosts tab held before (owner decision).
   const tabSections: ReadonlyArray<{
     readonly value: SettingsTab;
     readonly label: string;
     readonly element: HTMLElement;
   }> = [
+    // The tab's id stays `browser` (as do `browserSection.ts` and the
+    // `browser.*` settings group it edits); "General" is its label.
+    { value: 'browser', label: 'General', element: browserSection.element },
     { value: 'hosts', label: 'Hosts', element: hostsSection.element },
     { value: 'projects', label: 'Projects', element: projectsSection.element },
     { value: 'agents', label: 'Agents', element: agentsSection.element },
     { value: 'skills', label: 'Skills', element: skillsSection.element },
-    // Proxies sits ahead of Browser: the library is where entries are defined,
-    // and the browser's "(Default)" proxy points at one of them, so the
-    // definition reads naturally before the setting that consumes it.
     { value: 'proxies', label: 'Proxies', element: proxiesSection.element },
-    { value: 'browser', label: 'Browser', element: browserSection.element },
     { value: 'updates', label: 'Updates', element: updatesSection.element },
   ];
 
   const tabs = el('sp-tabs', {
-    attrs: { class: 'settings-panel__tabs', selected: 'hosts', size: 'm' },
+    attrs: { class: 'settings-panel__tabs', selected: 'browser', size: 'm' },
     children: [
       ...tabSections.map(({ value, label }) =>
         el('sp-tab', { attrs: { value, 'data-testid': `settings-tab-${value}` }, text: label }),
@@ -230,7 +232,7 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
 
   /** The strip's current selection (`sp-tabs` reflects `selected` as an attribute). */
   function selectedTab(): SettingsTab {
-    return (tabs.getAttribute('selected') as SettingsTab | null) ?? 'hosts';
+    return (tabs.getAttribute('selected') as SettingsTab | null) ?? 'browser';
   }
 
   // A click in the strip changes `selected` and dispatches `change`; report it

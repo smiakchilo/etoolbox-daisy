@@ -24,7 +24,7 @@ test('the Updates tab offers a source, and applying it on a non-installed build 
 
   const app = await electron.launch({
     args: [mainEntry],
-    env: scratchEnv({ home, appData, localAppData }),
+    env: scratchEnv({ home, appData, localAppData }, { fakeAgent: true }),
   });
   try {
     const shell = await app.firstWindow();

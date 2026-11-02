@@ -84,7 +84,7 @@ test('a password typed into Settings is never written anywhere in plaintext', as
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const app = await electron.launch({ args: [mainEntry], env });

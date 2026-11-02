@@ -30,7 +30,7 @@ test('a host uses a library proxy, and removing it clears the reference', async 
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const readDoc = (): SettingsDoc => {
@@ -123,7 +123,7 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
 
   const { home, appData, localAppData } = createScratchDirs(scratchBase);
 
-  const env = scratchEnv({ home, appData, localAppData });
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
   const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
 
   const readDoc = (): SettingsDoc => {
@@ -162,7 +162,7 @@ test('a host can explicitly disable the proxy, and the browser default proxy per
     const corporateId = proxyIdOnDisk();
     if (corporateId === undefined) throw new Error('proxy id missing on disk');
 
-    // The Browser tab's Default proxy maps to `browser.proxy`.
+    // The General tab's Default proxy maps to `browser.proxy`.
     await page.locator(byTestId('settings-tab-browser')).click();
     const browserSection = page.locator('.browser-section');
     const defaultProxy = browserSection.locator(byField('browser-default-proxy'));

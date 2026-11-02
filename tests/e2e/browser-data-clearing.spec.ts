@@ -11,7 +11,7 @@ import { openBrowserSettingsTab } from '../support/e2e/settingsBrowserTab';
 import { byTestId } from '../support/selectors';
 
 /**
- * The Settings "Browser" tab's two clearing actions, against the built app:
+ * The Settings "General" tab's two clearing actions, against the built app:
  *
  * - **Clear personal data** empties the pane's cookie jar (so the host asks for a
  *   sign-in again) and the open document's session storage, and reloads the
@@ -52,7 +52,7 @@ test('Clear personal data signs the pane out, and Clear storage leaves the cooki
     }),
   );
 
-  const app = await launchApp({ home, appData, localAppData }, {});
+  const app = await launchApp({ home, appData, localAppData }, { fakeAgent: true });
   try {
     const page = await app.firstWindow();
     await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });

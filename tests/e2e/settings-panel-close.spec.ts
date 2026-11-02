@@ -44,7 +44,7 @@ test('closing Settings with its close button restores the AEM view and Settings 
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  const { home, env } = createLaunchProfile(scratchBase);
+  const { home, env } = createLaunchProfile(scratchBase, { fakeAgent: true });
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -170,7 +170,7 @@ test('an agent navigation dismisses an open Settings panel so the page is reveal
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  const { home, env } = createLaunchProfile(scratchBase);
+  const { home, env } = createLaunchProfile(scratchBase, { fakeAgent: true });
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -241,7 +241,7 @@ test('save feedback survives closing the Settings panel', async () => {
   if (address === null || typeof address === 'string') throw new Error('no port');
   const origin = `http://127.0.0.1:${String(address.port)}`;
 
-  const { home, env } = createLaunchProfile(scratchBase);
+  const { home, env } = createLaunchProfile(scratchBase, { fakeAgent: true });
   const base = defaultAppSettings();
   writeSettings(
     home,
@@ -273,8 +273,10 @@ test('save feedback survives closing the Settings panel', async () => {
     await settingsPanel.waitFor({ state: 'visible', timeout: 30_000 });
 
     // Commit a label edit (leaving the field), then close the panel straight
-    // away - the save is still settling.
-    const label = page.locator(`${'.hosts-section'} ${byField('host-label')} input`);
+    // away - the save is still settling. The panel opens on its first tab
+    // (General), so pick Hosts first.
+    await page.locator(byTestId('settings-tab-hosts')).click();
+    const label = page.locator(`.hosts-section ${byField('host-label')} input`);
     await label.fill('Echo renamed');
     await label.press('Enter');
     await page.locator(byTestId('settings-panel-close')).click();

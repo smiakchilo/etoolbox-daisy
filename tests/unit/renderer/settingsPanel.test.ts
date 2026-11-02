@@ -170,7 +170,7 @@ describe('createSettingsPanel dismissal', () => {
     const { settings } = build();
     const tabs = settings.element.querySelector<HTMLElement>('.settings-panel__tabs');
 
-    expect(tabs?.getAttribute('selected')).toBe('hosts');
+    expect(tabs?.getAttribute('selected')).toBe('browser');
     settings.selectTab('agents');
     expect(tabs?.getAttribute('selected')).toBe('agents');
   });
@@ -187,7 +187,7 @@ describe('createSettingsPanel dismissal', () => {
     pane.appendPanel(settings);
     const tabs = settings.element.querySelector<HTMLElement>('.settings-panel__tabs');
 
-    expect(settings.selectedTab()).toBe('hosts');
+    expect(settings.selectedTab()).toBe('browser');
 
     // `sp-tabs` writes the new value and then dispatches `change` - the same
     // pair a click produces.
@@ -202,15 +202,16 @@ describe('createSettingsPanel dismissal', () => {
     expect(onTabChanged).toHaveBeenLastCalledWith('agents');
   });
 
-  it('orders the strip so Proxies comes before Browser', () => {
+  it('puts the pane-level General tab first, and selects it by default', () => {
     const { settings } = build();
     const values = [
       ...settings.element.querySelectorAll<HTMLElement>('.settings-panel__tabs sp-tab'),
     ].map((tab) => tab.getAttribute('value'));
 
-    // Proxies defines the library entries the Browser tab's "(Default)" proxy
-    // points at, so the definition reads before the setting that consumes it.
-    expect(values.indexOf('proxies')).toBe(values.indexOf('browser') - 1);
+    // The pane-level settings lead the strip (the `browser`-valued tab, shown
+    // as "General"); the host- and proxy-specific tabs refine them.
+    expect(values[0]).toBe('browser');
+    expect(settings.selectedTab()).toBe('browser');
     // The panels follow the same order as their tabs.
     const panelValues = [
       ...settings.element.querySelectorAll<HTMLElement>('.settings-panel__tab-panel'),
