@@ -110,6 +110,35 @@ describe('check', () => {
     expect((await updater.check()).kind).toBe('upToDate');
   });
 
+  it('offers the same version when the check is forced', async () => {
+    const { updater } = build({
+      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.0.0"}'))),
+    });
+    expect(await updater.check({ force: true })).toEqual({ kind: 'available', version: '1.0.0' });
+  });
+
+  it('offers an older version when the check is forced', async () => {
+    const { updater } = build({
+      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"0.5.0"}'))),
+    });
+    expect((await updater.check({ force: true })).kind).toBe('available');
+  });
+
+  it('still fails a forced check whose source cannot be read', async () => {
+    const { updater } = build({
+      createFetch: () => Promise.resolve(fetchReturning(new Error('offline'))),
+    });
+    expect(await updater.check({ force: true })).toEqual({ kind: 'failed', phase: 'check' });
+  });
+
+  it('applies an update that only a forced check offered', async () => {
+    const { updater } = build({
+      createFetch: () => Promise.resolve(fetchReturning(packageResponse('{"version":"1.0.0"}'))),
+    });
+    await updater.check({ force: true });
+    expect((await updater.apply()).kind).not.toBe('upToDate');
+  });
+
   it('always offers an archive source without fetching anything', async () => {
     const createFetch = vi.fn(() => Promise.resolve(fetchReturning()));
     const { updater } = build({ source: () => 'https://example.com/a.zip', createFetch });

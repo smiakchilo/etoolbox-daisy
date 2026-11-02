@@ -186,6 +186,11 @@ export interface DaisyUpdatesApi {
   getStatus(): Promise<UpdatesIpcResult>;
   /** Checks the update sources now (custom URL first, then the built-ins). */
   check(): Promise<UpdatesIpcResult>;
+  /**
+   * Dev tooling only (`!!update force`): checks and offers the source's version
+   * even when it is not newer. Main refuses it in a packaged build.
+   */
+  checkForced(): Promise<UpdatesIpcResult>;
   /** Downloads, verifies and swaps in the pending update, then restarts the app. */
   apply(): Promise<UpdatesIpcResult>;
   /** Subscribes to status changes pushed by main. Returns an unsubscribe function. */

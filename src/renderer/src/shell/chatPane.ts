@@ -1016,7 +1016,8 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * `src/renderer/src/dev/devCommands.ts` - checked first, so `?` is never read
    * as a command's own argument. `!!ask ...` paints the local ask-user preview,
    * `!!open <chatId>` opens a stored conversation by id, `!!update <version>`
-   * (or `off`) previews a pending update on every update surface. All of their logic
+   * (or `off`) previews a pending update on every update surface, and
+   * `!!update force` makes a real check that treats the source's version as newer. All of their logic
    * lives in `src/renderer/src/dev/`; this factory plus `onAnswer`/
    * `resetInputMode`/`onStop`/`openStoredConversation` are the pane's only
    * coupling to it.
@@ -1047,12 +1048,37 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
         statusBanner.showError(
           `Dev: "!!update <version>" needs a version (got "${updateCommand.raw}")`,
         );
+      } else if (updateCommand.kind === 'force') {
+        void forceUpdateCheck();
       } else {
         injectUpdateStatus(updateCommand.status);
       }
       return true;
     }
     return false;
+  }
+
+  /**
+   * Dev-only `!!update force`: asks main for a real check that offers the
+   * source's version even when it is not newer. The real status push then drives
+   * the chat notice, Home link and Settings button, so nothing is injected here.
+   */
+  async function forceUpdateCheck(): Promise<void> {
+    printDevMessage('Forced update check: reading the update source...');
+    try {
+      const result = await window.daisy.updates.checkForced();
+      if (!result.ok) {
+        statusBanner.showError(result.error.message);
+        return;
+      }
+      printDevMessage(
+        'Forced check done. Press Update in Settings > Updates (or on Home) to install it; an unpackaged dev run ends in a failed status, which is expected.',
+      );
+    } catch (error) {
+      statusBanner.showError(
+        `Dev: forced check unavailable (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
   }
 
   /**

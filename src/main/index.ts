@@ -1043,6 +1043,7 @@ if (smokeTest) {
       logger,
       rendererDistDir,
       mainWebContentsId: mainWindow.webContents.id,
+      allowForcedCheck: !app.isPackaged,
     });
     void updater.resumeAfterUpdate();
     // Tools are discovered from `src/tools/*/tool.ts`; a tool that fails to

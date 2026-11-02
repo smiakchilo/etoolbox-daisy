@@ -5,6 +5,7 @@ import type { Updater } from '../../../../src/main/updates/updater';
 import {
   UPDATES_APPLY_CHANNEL,
   UPDATES_CHECK_CHANNEL,
+  UPDATES_CHECK_FORCED_CHANNEL,
   UPDATES_GET_STATUS_CHANNEL,
   type UpdateStatus,
 } from '../../../../src/shared';
@@ -86,6 +87,43 @@ describe('registerUpdatesIpcHandlers', () => {
       expect(logger.warn).toHaveBeenCalledWith('UPDATES_IPC_SENDER_REJECTED');
     },
   );
+
+  describe('forced check', () => {
+    function registerWith(allowForcedCheck: boolean | undefined): void {
+      invokeHandlers.clear();
+      registerUpdatesIpcHandlers({
+        updater: updater as unknown as Updater,
+        logger,
+        rendererDistDir: RENDERER_DIST,
+        mainWebContentsId: MAIN_WEB_CONTENTS_ID,
+        ...(allowForcedCheck === undefined ? {} : { allowForcedCheck }),
+      });
+    }
+
+    it.each([undefined, false])('registers no handler when allowForcedCheck is %s', (allow) => {
+      registerWith(allow);
+      expect(invokeHandlers.has(UPDATES_CHECK_FORCED_CHANNEL)).toBe(false);
+    });
+
+    it('forces the check when allowed', async () => {
+      registerWith(true);
+      expect(await call(UPDATES_CHECK_FORCED_CHANNEL, trusted())).toEqual({
+        ok: true,
+        status: AVAILABLE,
+      });
+      expect(updater.check).toHaveBeenCalledWith({ force: true });
+    });
+
+    it('refuses a remote frame without touching the updater', async () => {
+      registerWith(true);
+      const result = await call(
+        UPDATES_CHECK_FORCED_CHANNEL,
+        ipcEventFrom('https://aem.example/', MAIN_WEB_CONTENTS_ID),
+      );
+      expect(result).toMatchObject({ ok: false, error: { code: 'untrusted_sender' } });
+      expect(updater.check).not.toHaveBeenCalled();
+    });
+  });
 
   it('refuses a call with no sender frame', async () => {
     const result = await call(UPDATES_APPLY_CHANNEL, {

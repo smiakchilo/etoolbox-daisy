@@ -974,7 +974,11 @@ can never select. The **update preview** is `dev/updatePreview.ts`
 through `lib/updateStatusFeed.ts` (the one subscription point that
 `mainShell.ts` and the Updates tab use, beside main's push), so the chat
 notice, the Home link and the Settings button all show a pending update with no
-manifest or IPC. A fourth module, `dev/devCommands.ts`, is the one **command
+manifest or IPC. `!!update force` is the one *real* variant: it calls
+`window.daisy.updates.checkForced()` (`updates:check-forced`, registered by
+`ipc/updates.ts` only when `index.ts` passes `allowForcedCheck: !app.isPackaged`),
+i.e. `updater.check({ force: true })`, which skips only the "newer than
+installed" gate so the remote's version is offered whatever it is. A fourth module, `dev/devCommands.ts`, is the one **command
 registry**: each command exports its `[form, description]` usage lines, and the
 registry answers a lone `?`/`help` argument for all of them (`!!ask ?`,
 `!!open ?`; `!!?` lists every command), printing the usage into the transcript
@@ -2054,7 +2058,9 @@ pinning. Full description: `docs/updates.md`.
   `.action-button--primary` class in `base.css`, also on Settings' **Update**) on the Home screen's version
   line (a `.browser-home__meta` row; a hidden button or empty row takes no
   space); the button starts the update itself, after the same confirmation as
-  the Settings tab's **Update**. `!!update <version>` previews all of it (dev only).
+  the Settings tab's **Update**. `!!update <version>` previews all of it (dev only); `!!update force` makes a
+real check that offers the remote's version even if not newer (dev only, no handler
+in a packaged build).
 - **Test hook.** `EDAISY_UPDATE_STATUS_FILE` overrides the status file path
   (default `<scratch>/update-status.txt`); the new version is told to report
   started through it. `EDAISY_SOURCE_URL` overrides the script's default archive

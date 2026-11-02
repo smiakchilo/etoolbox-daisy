@@ -22,10 +22,15 @@ export const UPDATE_PREVIEW_PREFIX = '!!update';
 export const UPDATE_PREVIEW_HELP: ReadonlyArray<readonly [string, string]> = [
   ['!!update <version>', 'preview a pending update: chat notice, Home link, Settings button'],
   ['!!update off', 'clear the preview'],
+  [
+    '!!update force',
+    'really check the source and offer its version even if not newer; Update then installs it (installed builds only)',
+  ],
 ];
 
 export type UpdatePreviewCommand =
   | { readonly kind: 'set'; readonly status: UpdateStatus }
+  | { readonly kind: 'force' }
   | { readonly kind: 'invalid'; readonly raw: string };
 
 /**
@@ -40,6 +45,7 @@ export function parseUpdatePreview(input: string): UpdatePreviewCommand | undefi
   }
   const raw = trimmed.slice(UPDATE_PREVIEW_PREFIX.length).trim();
   if (raw.toLowerCase() === 'off') return { kind: 'set', status: { kind: 'idle' } };
+  if (raw.toLowerCase() === 'force') return { kind: 'force' };
   const parsed = updateStatusSchema.safeParse({ kind: 'available', version: raw });
   if (!parsed.success) return { kind: 'invalid', raw };
   return { kind: 'set', status: parsed.data };

@@ -188,6 +188,8 @@ export const UPDATES_GET_STATUS_CHANNEL = 'updates:get-status' as const;
 export const UPDATES_CHECK_CHANNEL = 'updates:check' as const;
 /** Downloads, verifies and swaps in the pending update, then restarts the app. No payload. */
 export const UPDATES_APPLY_CHANNEL = 'updates:apply' as const;
+/** Dev only: check and offer the source's version even when it is not newer (`!!update force`). */
+export const UPDATES_CHECK_FORCED_CHANNEL = 'updates:check-forced' as const;
 /** Push channel: main -> renderer, whenever the updater's status changes. */
 export const UPDATES_STATUS_CHANGED_CHANNEL = 'updates:status-changed' as const;
 

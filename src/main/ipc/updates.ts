@@ -3,6 +3,7 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 import {
   UPDATES_APPLY_CHANNEL,
   UPDATES_CHECK_CHANNEL,
+  UPDATES_CHECK_FORCED_CHANNEL,
   UPDATES_GET_STATUS_CHANNEL,
   type UpdatesIpcResult,
 } from '../../shared';
@@ -21,6 +22,11 @@ export interface UpdatesIpcDependencies {
   readonly logger: Logger;
   readonly rendererDistDir: string;
   readonly mainWebContentsId: number;
+  /**
+   * Registers the forced check (dev tooling). The composition root passes
+   * `!app.isPackaged`; a packaged build has no such handler at all.
+   */
+  readonly allowForcedCheck?: boolean;
 }
 
 function senderInfoFrom(event: IpcMainInvokeEvent): SkillsIpcSenderInfo | undefined {
@@ -53,6 +59,14 @@ export function registerUpdatesIpcHandlers(deps: UpdatesIpcDependencies): void {
   ipcMain.handle(UPDATES_CHECK_CHANNEL, (event) =>
     guarded(event, async () => ({ ok: true, status: await deps.updater.check() })),
   );
+  if (deps.allowForcedCheck === true) {
+    ipcMain.handle(UPDATES_CHECK_FORCED_CHANNEL, (event) =>
+      guarded(event, async () => ({
+        ok: true,
+        status: await deps.updater.check({ force: true }),
+      })),
+    );
+  }
   ipcMain.handle(UPDATES_APPLY_CHANNEL, (event) =>
     guarded(event, async () => ({ ok: true, status: await deps.updater.apply() })),
   );

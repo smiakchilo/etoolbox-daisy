@@ -55,7 +55,8 @@ export interface UpdaterDependencies {
 
 export interface Updater {
   getStatus(): UpdateStatus;
-  check(): Promise<UpdateStatus>;
+  /** `force` (dev tooling) offers whatever version the source has, even an equal or older one. */
+  check(options?: { readonly force?: boolean }): Promise<UpdateStatus>;
   /** Builds the update in the background; the app quits itself once it is ready to swap in. */
   apply(): Promise<UpdateStatus>;
   /** Answers the script that started this process, and reports how its update ended. */
@@ -189,7 +190,7 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
     });
   }
 
-  async function check(): Promise<UpdateStatus> {
+  async function check(options?: { readonly force?: boolean }): Promise<UpdateStatus> {
     if (busy) return status;
     busy = true;
     setStatus({ kind: 'checking' });
@@ -207,7 +208,7 @@ export function createUpdater(deps: UpdaterDependencies): Updater {
         logReadFailure(read, url, deps.usesProxy());
         return setStatus({ kind: 'failed', phase: 'check' });
       }
-      if (compareVersions(read.version, deps.installedVersion) <= 0) {
+      if (options?.force !== true && compareVersions(read.version, deps.installedVersion) <= 0) {
         pending = undefined;
         return setStatus({ kind: 'upToDate' });
       }

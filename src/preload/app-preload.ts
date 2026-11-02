@@ -67,6 +67,7 @@ import {
   SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
   UPDATES_APPLY_CHANNEL,
   UPDATES_CHECK_CHANNEL,
+  UPDATES_CHECK_FORCED_CHANNEL,
   UPDATES_GET_STATUS_CHANNEL,
   UPDATES_STATUS_CHANGED_CHANNEL,
   MEMOS_OPEN_FOLDER_CHANNEL,
@@ -591,6 +592,10 @@ const daisyApi: DaisyAppApi = {
     },
     async check(): Promise<UpdatesIpcResult> {
       const raw: unknown = await ipcRenderer.invoke(UPDATES_CHECK_CHANNEL);
+      return parseUpdatesIpcResult(raw);
+    },
+    async checkForced(): Promise<UpdatesIpcResult> {
+      const raw: unknown = await ipcRenderer.invoke(UPDATES_CHECK_FORCED_CHANNEL);
       return parseUpdatesIpcResult(raw);
     },
     async apply(): Promise<UpdatesIpcResult> {
