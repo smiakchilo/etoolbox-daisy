@@ -340,6 +340,13 @@
   border-radius: 4px;
   color: var(--spectrum-gray-700, #4b4b4b);
   font-size: 13px;
+  /* A billet is transcript metadata and must never widen the transcript. Its
+     own text (a failure reason, a pagination line) breaks anywhere, and the
+     one-line row's parts shrink instead of overflowing - see the header,
+     summary and progress rules below. */
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* The whole row is the toggle. Styled as a real <button> reset, but with the
@@ -384,6 +391,15 @@
 }
 
 .chat-tool-call__header {
+  flex: 0 1 auto;
+  /* A long tool name plus its status word ("aem_query_format_ask -
+     Completed") cannot be forced onto one line: without `min-width: 0` its
+     `nowrap` min-content width is the whole string, so it pushed the row past
+     the pane and the transcript grew a horizontal scrollbar. It shrinks and
+     ellipsises like the summary; the icon still carries the status signal. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   margin: 0;
   font-weight: 600;
   color: var(--spectrum-gray-700, #4b4b4b);
@@ -404,10 +420,16 @@
 }
 
 /* A running call's live progress line (e.g. "Reading 12 of 20"). It sits
-   after the flexing summary, so it never gets ellipsised away, and it is
-   monospaced like the summary because it counts reads. */
+   after the flexing summary, so it is never the first thing ellipsised away,
+   but it does yield when the row is genuinely too narrow: a progress note may
+   be up to 120 characters, which would otherwise be wider than the pane and
+   give the transcript a horizontal scrollbar. Monospaced, like the summary,
+   because it counts reads. */
 .chat-tool-call__progress {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   color: var(--spectrum-gray-600, #6e6e6e);

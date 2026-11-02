@@ -2179,7 +2179,20 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4950 passed / 13 skipped** (4963 total) - the
+Current baseline: **`npm run test` → 4951 passed / 13 skipped** (4964 total) - the
+suite is fully green here, +1 against the 4950 run below, for **a tool-call
+billet never widens the transcript** (2026-11-02): its header (tool name plus
+status word) and its live progress line were unshrinkable one-line flex items,
+so a long name or a long progress note pushed the row past the pane and
+`.chat-transcript` (whose `overflow-x` computes to `auto` because it is
+`overflow-y: auto`) grew a horizontal scrollbar. Both now shrink and ellipsise
+(`min-width: 0` + `overflow: hidden` + `text-overflow: ellipsis`), the billet's
+own text breaks anywhere, and `.chat-transcript` stays put; the fake agent can
+script `progress` notes so the built-app spec measures the in-flight billet too.
+The +1 is the fake-agent progress case; `tests/e2e/chat-billet-width.spec.ts` is
+one built-app case (Playwright is now **176 tests**), and the neighbouring
+billet/scroll/search specs re-ran green. Before that it was
+**4950 passed / 13 skipped** (4963 total) - the
 suite is fully green here, +1 against the 4949 run below, for **the two
 permanently-red tests are made machine-independent** (2026-11-02):
 `tests/integration/agent-runtime.test.ts` now hands the runtime sentinel values

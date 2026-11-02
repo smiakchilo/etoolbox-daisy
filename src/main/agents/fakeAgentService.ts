@@ -131,6 +131,13 @@ export interface ScriptedToolCall {
   readonly toolName: string;
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly decision: ScriptedToolDecision;
+  /**
+   * Optional live progress notes, emitted between the approval and the result -
+   * what a real tool reports through `ToolHost.reportToolProgress`. Each note is
+   * its own `advance` step, so a test can inspect the in-flight billet before
+   * the call settles.
+   */
+  readonly progress?: readonly string[];
 }
 
 /**
@@ -574,6 +581,16 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
     };
   }
 
+  function makeToolProgressEvent(chatId: ChatId, toolCallId: ToolCallId, text: string): AgentEvent {
+    return {
+      type: 'tool.call.progress',
+      chatId,
+      sequence: nextSequence(chatId),
+      toolCallId,
+      text,
+    };
+  }
+
   function makeToolResultEvent(
     chatId: ChatId,
     toolCallId: ToolCallId,
@@ -779,6 +796,9 @@ export function createFakeAgentService(options: FakeAgentServiceOptions = {}): F
         continue;
       }
       queue.push(makeToolApprovedEvent(chatId, toolCallId));
+      for (const text of step.call.progress ?? []) {
+        queue.push(makeToolProgressEvent(chatId, toolCallId, text));
+      }
       queue.push(makeToolResultEvent(chatId, toolCallId, step.call.decision.outcome));
       // A turn-completing tool result ends the turn here, exactly as the real
       // adapters do at `TURN_COMPLETE_RESULT_KEY` (see

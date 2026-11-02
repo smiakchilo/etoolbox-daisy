@@ -129,6 +129,58 @@ describe('FakeAgentService - scripted content', () => {
     assertLegalSequence(events);
   });
 
+  it("delivers scripted progress notes between a tool call's approval and its result", async () => {
+    const ids = counterIdGenerator();
+    const fake = createFakeAgentService();
+    const events: AgentEvent[] = [];
+    fake.onEvent((event) => events.push(event));
+    const chatId = newChatId(ids);
+    await fake.openConversation({ chatId });
+
+    fake.scriptNextResponse({
+      steps: [
+        {
+          kind: 'toolCall',
+          call: {
+            toolName: 'aem_semantic_search',
+            arguments: { terms: 'waldo' },
+            progress: ['Reading 1 of 2', 'Testing 2 candidates'],
+            decision: { kind: 'approved', outcome: { ok: true, data: { matches: [] } } },
+          },
+        },
+      ],
+    });
+
+    await fake.sendPrompt({ chatId, turnId: newTurnId(ids), prompt: 'hi' });
+    fake.flush();
+
+    // Each note is its own event of the same call, in the order scripted, and
+    // both land before the result that settles it.
+    const orderedCalls = events
+      .filter(
+        (event) =>
+          event.type === 'tool.call.approved' ||
+          event.type === 'tool.call.progress' ||
+          event.type === 'tool.result',
+      )
+      .map((event) => ({
+        type: event.type,
+        text: event.type === 'tool.call.progress' ? event.text : undefined,
+      }));
+    expect(orderedCalls.map((entry) => entry.type)).toEqual([
+      'tool.call.approved',
+      'tool.call.progress',
+      'tool.call.progress',
+      'tool.result',
+    ]);
+    expect(orderedCalls.slice(1, 3).map((entry) => entry.text)).toEqual([
+      'Reading 1 of 2',
+      'Testing 2 candidates',
+    ]);
+
+    assertLegalSequence(events);
+  });
+
   it('ends a scripted turn at a turn-completing tool result, dropping any later scripted delta', async () => {
     const ids = counterIdGenerator();
     const fake = createFakeAgentService();
