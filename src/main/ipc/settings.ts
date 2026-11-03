@@ -571,6 +571,7 @@ export async function addServer(
     label: request.label,
     origin: request.origin,
     color: request.color,
+    ...(request.type !== undefined ? { type: request.type } : {}),
     ...(request.projectId !== undefined ? { projectId: request.projectId } : {}),
   });
   if (!created.ok) {
@@ -665,6 +666,7 @@ function presentationChangesFrom(
   return {
     ...(changes.label !== undefined ? { label: changes.label } : {}),
     ...(changes.color !== undefined ? { color: changes.color } : {}),
+    ...(changes.type !== undefined ? { type: changes.type } : {}),
     ...(changes.projectId !== undefined ? { projectId: changes.projectId } : {}),
   };
 }

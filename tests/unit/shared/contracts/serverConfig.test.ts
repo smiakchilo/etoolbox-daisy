@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { newProxyId, newServerId } from '../../../../src/shared';
+import { newProjectId, newProxyId, newServerId } from '../../../../src/shared';
 import {
   HOST_PROXY_NONE,
+  HOST_TYPES,
   SERVER_SWATCHES,
   bumpRevision,
   customHexColorSchema,
@@ -211,6 +212,49 @@ describe('serverConfigSchema', () => {
           certificateSha256Fingerprint: 'a'.repeat(64),
         }),
       ).toThrow();
+    });
+  });
+
+  describe('host type', () => {
+    it.each(HOST_TYPES)('accepts the %s role', (type) => {
+      const parsed = serverConfigSchema.parse({ ...validConfig(), type });
+      expect(parsed.type).toBe(type);
+    });
+
+    it('rejects a role that is not on the closed list', () => {
+      expect(() => serverConfigSchema.parse({ ...validConfig(), type: 'dispatcher' })).toThrow();
+    });
+
+    it('treats "(Default)" as the absence of the key', () => {
+      const parsed = serverConfigSchema.parse(validConfig());
+      expect('type' in parsed).toBe(false);
+    });
+
+    it('sets and clears the role without bumping the revision', () => {
+      const config = serverConfigSchema.parse(validConfig());
+
+      const set = updatePresentation(config, { type: 'author' });
+      expect(set.type).toBe('author');
+      expect(set.revision).toBe(config.revision);
+
+      const cleared = updatePresentation(set, { type: null });
+      expect('type' in cleared).toBe(false);
+      expect(cleared.revision).toBe(config.revision);
+    });
+
+    it('survives a targeting change, along with the project reference', () => {
+      const projectId = newProjectId(() => 'project-a');
+      const config = serverConfigSchema.parse({
+        ...validConfig(),
+        type: 'publish',
+        projectId,
+      });
+
+      const bumped = bumpRevision(config, { origin: 'https://author2.example' });
+
+      expect(bumped.type).toBe('publish');
+      expect(bumped.projectId).toBe(projectId);
+      expect(bumped.revision).toBe(config.revision + 1);
     });
   });
 

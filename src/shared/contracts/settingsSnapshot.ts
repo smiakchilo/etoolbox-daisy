@@ -14,6 +14,7 @@ import { originSchema } from './origin';
 import { environmentRootTextSchema, type ProjectConfig } from './projectConfig';
 import {
   hostProxyIdSchema,
+  hostTypeSchema,
   serverColorSchema,
   serverLabelSchema,
   serverRevisionSchema,
@@ -96,6 +97,11 @@ export const serverSnapshotSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
+    /**
+     * The host's role in a multi-host system (an AEM author or publish
+     * instance), or absent for "(Default)" - no role recorded.
+     */
+    type: hostTypeSchema.optional(),
     /**
      * The host's proxy selection: a library entry id, `HOST_PROXY_NONE` for
      * "No proxy", or absent for "(Default)" (inherit `browser.proxy`). No
@@ -257,6 +263,7 @@ export function toAppSettingsSnapshot(
     };
     if (server.proxyId !== undefined) snapshot.proxyId = server.proxyId;
     if (server.tlsException) snapshot.tlsException = server.tlsException;
+    if (server.type !== undefined) snapshot.type = server.type;
     if (server.projectId !== undefined) snapshot.projectId = server.projectId;
     return serverSnapshotSchema.parse(snapshot);
   });

@@ -194,6 +194,21 @@ export const hostProxyIdSchema = z.union([proxyIdSchema, z.literal(HOST_PROXY_NO
 
 export type HostProxyId = z.infer<typeof hostProxyIdSchema>;
 
+/**
+ * A closed set of roles one host can play within a multi-host system - an
+ * AEM author instance versus its publish instance. Closed, like the swatches,
+ * because the Settings "Hosts" tab renders a fixed picker for it.
+ *
+ * The absent case (no `type` recorded) is "(Default)": a standalone host that
+ * belongs to no such pair, which is why the persisted field is optional rather
+ * than carrying a third `'standalone'` member.
+ */
+export const HOST_TYPES = ['author', 'publish'] as const;
+
+export type HostType = (typeof HOST_TYPES)[number];
+
+export const hostTypeSchema = z.enum(HOST_TYPES);
+
 /** Non-negative: a fresh server entry starts at revision 0. */
 export const serverRevisionSchema = z.number().int().nonnegative();
 
@@ -203,6 +218,14 @@ export const serverConfigSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
+    /**
+     * Which role this host plays in a multi-host system (an AEM author or
+     * publish instance), by name. Absent means "(Default)" - no role recorded.
+     *
+     * Presentation, not targeting: it is descriptive metadata for the reader
+     * (it never reaches a request), so changing it never bumps `revision`.
+     */
+    type: hostTypeSchema.optional(),
     /**
      * Which entry of the settings `proxies` library this host reaches its origin
      * through, by id (the Settings "Hosts" multifield's Proxy combobox stores
@@ -258,6 +281,14 @@ export interface ServerPresentationChanges {
   readonly label?: ServerConfig['label'];
   readonly color?: ServerConfig['color'];
   /**
+   * Which role the host plays in a multi-host system, or `null` to reset it to
+   * "(Default)" (no role recorded). Omitting the key leaves it unchanged - the
+   * same three-state convention {@link ServerTargetingChanges.proxyId} uses,
+   * for the same reason (`exactOptionalPropertyTypes` cannot distinguish an
+   * absent key from one set to `undefined`).
+   */
+  readonly type?: ServerConfig['type'] | null;
+  /**
    * Which entry of the settings `projects` library describes this host's data
    * layout, or `null` to reset it to "(Default)" (no project). Omitting the
    * key leaves it unchanged - the same three-state convention
@@ -269,8 +300,8 @@ export interface ServerPresentationChanges {
 }
 
 /**
- * Updates the presentation-only fields (label/colour/project). `revision` is
- * left untouched on purpose: it exists solely so an in-flight request can
+ * Updates the presentation-only fields (label/colour/type/project). `revision`
+ * is left untouched on purpose: it exists solely so an in-flight request can
  * detect that its *targeting* information (origin/proxy/TLS trust) is stale,
  * and none of these changes that. The project reference is presentation too -
  * it steers what the agent is told about the host's content/component layout,
@@ -287,6 +318,13 @@ export function updatePresentation(
       delete next['projectId'];
     } else {
       next['projectId'] = changes.projectId;
+    }
+  }
+  if ('type' in changes) {
+    if (changes.type === null) {
+      delete next['type'];
+    } else {
+      next['type'] = changes.type;
     }
   }
   if (changes.label !== undefined) next['label'] = changes.label;
@@ -378,6 +416,16 @@ export function bumpRevision(
   }
   if (nextTlsException !== undefined) {
     next.tlsException = nextTlsException;
+  }
+  // The role and the project reference survive a targeting change too: a host
+  // that moves address or proxy is still the same host to the reader, and the
+  // project reference is re-read per turn rather than captured in the request.
+  // Dropping them here silently reset a configured project to "(Default)".
+  if (config.type !== undefined) {
+    next.type = config.type;
+  }
+  if (config.projectId !== undefined) {
+    next.projectId = config.projectId;
   }
   return serverConfigSchema.parse(next);
 }

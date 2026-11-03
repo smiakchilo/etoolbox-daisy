@@ -152,7 +152,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/ids.ts` | Branded ID primitives (`RequestId`, `ChatId`, `TurnId`, `ServerId`) |
 | `contracts/errors.ts` | The error taxonomy and `requiredAction` values |
 | `contracts/origin.ts` | Origin normalization and comparison |
-| `contracts/serverConfig.ts` | A host entry (id, label, colour, address, optional `projectId`, revision) |
+| `contracts/serverConfig.ts` | A host entry (id, label, colour, address, optional `type` — Author/Publish/`(Default)` —, optional `projectId`, revision) |
 | `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component/DAM roots, content priority paths) shared by several hosts, referenced by a host's optional `projectId` |
 | `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
@@ -213,8 +213,21 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change **lets a saved sign-in exist without a
-> password** (2026-10-31): `contracts/credentials-ipc.ts`'s
+> The most recent shared-surface change **gives a host a descriptive `type`**
+> (2026-11-03): `contracts/serverConfig.ts` gains `HOST_TYPES` / `HostType` /
+> `hostTypeSchema` (`author`, `publish`; absent = "(Default)") and an optional
+> `type` on `serverConfigSchema`, which joins `ServerPresentationChanges`
+> (`type?: HostType | null`) and `updatePresentation` and is preserved by
+> `bumpRevision` - `contracts/settingsSnapshot.ts` and `settings-ipc.ts` follow
+> (`settings:add-server` takes a draft's choice;
+> `settings:update-server-presentation` takes `type: null` to clear it).
+> `bumpRevision` also stopped dropping `projectId` on a proxy/origin change,
+> which it had done since projects arrived. The Settings "Hosts" tab's Type
+> combobox is the only consumer, and the role is **metadata only** - nothing is
+> fed to the agent and no behaviour differs between Author and Publish. See
+> `docs/verification/followons-2026-10.md` "The host \"Type\" field ...
+> (2026-11-03)". Before that the most recent shared-surface change **let a saved
+> sign-in exist without a password** (2026-10-31): `contracts/credentials-ipc.ts`'s
 > `credentialCaptureSchema` accepts an empty `password` (a payload that names
 > neither half is still invalid), so an email-only identity-provider step -
 > Adobe IMS's and HPE's first pages - is remembered as a **username hint**
@@ -690,6 +703,20 @@ them. The badge derives its accessible name from the visible label
 `bottom-start` so it stays inside the panel, and is styled by `settings.css` as
 an understated marker - 80% scale, 70% opacity at rest, returning to full opacity
 on hover, with no fill or content-colour change.
+
+**The Hosts row sets the browser pane's minimum width.** Colour tag, Label and
+Type share one line: the colour (150px) and the type (116px) are fixed, the label
+is the only flexible field, and it therefore has a floor of the same 116px
+(`--host-field-type-width` in `settings.css`). Without that floor it collapsed to
+nothing at the narrowest pane and the Type field's label painted over the Label
+field's. `shell/splitLayout.ts`'s `MIN_BROWSER_PANE_PX` is 540 as a result: the
+row needs ~508 inside the panel (406 of fields + the item's padding/actions
+gutter and the tab panel's own padding), and 540 also covers the tab panel's
+scrollbar. `.host-field-row` additionally wraps, so a window squeezed below both
+panes' minima degrades to a second line instead of overlapping. Changing either
+width means changing both in step - no test pins the numbers, only the relation
+(`tests/e2e/settings-hosts.spec.ts`, "the Hosts row keeps the label at least as
+wide as the type at the pane minimum").
 
 `chat/` separates view-model from view on purpose: `transcriptViewModel.ts`,
 `composerViewModel.ts`, `historyViewModel.ts` and the query tool's `queryResultViewModel.ts` (now in
@@ -2222,7 +2249,31 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 4997 passed / 13 skipped** (5010 total) - the
+Current baseline: **`npm run test` → 5019 passed / 13 skipped** (5032 total) - the
+suite is fully green here, +22 against the 4997 run below, for **the host "Type"
+field** (2026-11-03): a host gains a descriptive `type` (`HOST_TYPES` =
+`author`/`publish`, absent = "(Default)") end to end - contract, snapshot, IPC,
+store normalization, and the Settings "Hosts" tab's Type combobox on the
+colour/label line, fixed at the narrowest width that holds "(Default)"
+(`settings/hostTypePicker.ts`, `.host-field--type`); the stored value is the
+*absence* of `type`, with a picker sentinel because an `sp-menu-item` cannot
+carry an empty value. `bumpRevision` also stopped dropping `projectId` on a
+proxy/origin change. The +22 is 6 `serverConfig` (both roles, an unknown role
+rejected, the absent "(Default)", set-then-clear without a revision bump, and
+role+project surviving a targeting change), 1 `settingsSnapshot`, 3
+`settingsStore`, 2 `ipc/settings`, 6 `hostsSection` and 4 new `hostTypePicker`
+cases; Playwright is **178 tests** (+2: the built-app case proving `type:
+"author"` reaches `settings.json` with `revision` still 0, shows as "Author" in
+the real picker, comes back through the snapshot, and clears to "(Default)";
+and the narrow-pane case proving the Hosts row keeps the Label field at least as
+wide as the Type field at the browser pane's 540px floor, without overlap).
+Five
+mutations were caught (the contract ignoring `type`, `bumpRevision` dropping the
+preserved fields, the combobox sending `changes: {}`, and main's
+`presentationChangesFrom` dropping `type` - the last one in the built app). The
+new field is **metadata only**: nothing is fed to the agent yet. See
+`docs/verification/followons-2026-10.md` "The host \"Type\" field ... (2026-11-03)".
+Before that it was **`npm run test` → 4997 passed / 13 skipped** (5010 total) - the
 suite is fully green here, +8 against the 4989 run below, for **the Windows update
 launch: no console window, and a script that outlives the app** (2026-11-03),
 after two real in-app updates (`docs/verification/followons-2026-10.md` "The

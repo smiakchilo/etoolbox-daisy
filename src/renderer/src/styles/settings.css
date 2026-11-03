@@ -154,6 +154,14 @@
   min-width: 0;
 }
 
+/* A field's visible label never paints over the field beside it: when its block
+   is too narrow for the text, the text is clipped here rather than overflowing.
+   (The help badge is a sibling of the label, so it keeps its own box.) */
+.field-label-row sp-field-label {
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* The help badge: a small, quiet marker immediately after a field's label. It is
    deliberately understated - 80% scale, 70% opacity at rest - so it reads as an
    annotation rather than a control. Its one hover cue is returning to full
@@ -197,21 +205,43 @@
   width: 100%;
 }
 
-/* Colour tag + Label share one line: the colour tag is a fixed width (its hex
-   is a known shape) and the label spans the space that is left. */
+/* Colour tag + Label + Type share one line: the colour tag and the type are
+   fixed widths (their contents are a known shape) and the label spans the space
+   that is left, between them.
+
+   They only wrap when the row is narrower than they can share - a window
+   squeezed below both panes' minima. Without that, the label (the one flexible
+   field) shrinks to nothing and its neighbours' labels paint over it; with the
+   wrap, the Type moves to its own line instead. The browser pane's minimum
+   width (`shell/splitLayout.ts`) is derived from this row, so the wrap never
+   happens in the Settings panel at its narrowest. */
 .host-field-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   min-width: 0;
+
+  /* The Type field's fixed width, and therefore the Label field's floor: a
+     label narrower than the picker beside it is a squeezed remnant, and its
+     own label row would run into that picker's label. */
+  --host-field-type-width: 116px;
 }
 
 .host-field--color {
   flex: 0 0 150px;
 }
 
+/* The label takes the space left over, but never less than the Type field:
+   at the browser pane's minimum width the two are the same size. */
 .host-field--label {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 1 var(--host-field-type-width);
+  min-width: var(--host-field-type-width);
+}
+
+/* The narrowest width that still shows the widest of the type's options
+   ("(Default)") in full, with the picker's own inline padding and chevron. */
+.host-field--type {
+  flex: 0 0 var(--host-field-type-width);
 }
 
 /* The colour control is the field/button combobox at full width; the live

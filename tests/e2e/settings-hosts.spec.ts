@@ -1,4 +1,5 @@
 import { _electron as electron, expect, test } from '@playwright/test';
+import type { ElectronApplication } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { mainEntry } from '../support/e2e/app';
@@ -28,6 +29,19 @@ import { byField, byTestId } from '../support/selectors';
  */
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'step05-settings-scratch');
+
+/**
+ * Launches the app, opens Settings, selects the Hosts tab and waits for its
+ * "Add item" action - the state every host-field case below starts from.
+ */
+async function openHostsTab(app: ElectronApplication) {
+  const page = await app.firstWindow();
+  await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
+  await page.locator(byTestId('chat-settings')).click();
+  await page.locator(byTestId('settings-tab-hosts')).click();
+  await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
+  return page;
+}
 
 test('servers added in the Settings panel persist, and removal persists too', async () => {
   test.setTimeout(180_000);
@@ -191,11 +205,7 @@ test('the Settings banner keeps one height with and without an action button', a
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
-    const page = await app.firstWindow();
-    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator(byTestId('chat-settings')).click();
-    await page.locator(byTestId('settings-tab-hosts')).click();
-    await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
+    const page = await openHostsTab(app);
     const banner = page.locator('.surface-status-banner').first();
 
     // One host to edit.
@@ -269,11 +279,7 @@ test('a commit does not steal focus from the field being typed in', async () => 
 
   const app = await electron.launch({ args: [mainEntry], env });
   try {
-    const page = await app.firstWindow();
-    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator(byTestId('chat-settings')).click();
-    await page.locator(byTestId('settings-tab-hosts')).click();
-    await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
+    const page = await openHostsTab(app);
 
     // One persisted host (a draft counts as a row, so the disk read is what
     // proves the address save landed and the row is no longer a draft).
@@ -338,23 +344,10 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     }
   };
 
-  const openSettings = async (app: Awaited<ReturnType<typeof electron.launch>>) => {
-    const page = await app.firstWindow();
-    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator(byTestId('chat-settings')).click();
-    await page.locator(byTestId('settings-tab-hosts')).click();
-    await page.locator('.multifield__item').first().waitFor({ state: 'visible', timeout: 60_000 });
-    return page;
-  };
-
   // --- Launch 1: add two hosts, then close --------------------------------
   const first = await electron.launch({ args: [mainEntry], env });
   try {
-    const page = await first.firstWindow();
-    await page.locator(byTestId('browser-address')).waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator(byTestId('chat-settings')).click();
-    await page.locator(byTestId('settings-tab-hosts')).click();
-    await page.locator('.multifield__add').first().waitFor({ state: 'visible', timeout: 60_000 });
+    const page = await openHostsTab(first);
 
     const add = async (label: string, origin: string): Promise<void> => {
       await page.locator('.multifield__add').first().click();
@@ -376,7 +369,7 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
   // is deterministic. The bounds must follow the new order immediately. ---
   const second = await electron.launch({ args: [mainEntry], env });
   try {
-    const page = await openSettings(second);
+    const page = await openHostsTab(second);
     const rows = page.locator('.multifield__item');
     await expect(rows).toHaveCount(2, { timeout: 60_000 });
 
@@ -427,5 +420,157 @@ test('reordering hosts persists, and the move buttons follow the new order', asy
     expect(await forced.evaluate((el) => el === el.ownerDocument.activeElement)).toBe(true);
   } finally {
     await second.close();
+  }
+});
+
+/**
+ * The Hosts row at the narrowest browser pane. Colour tag, Label and Type share
+ * one line, and only the label is flexible - it used to collapse to nothing and
+ * let the Type field's label paint over the Label field's ("LaType"), because
+ * the row's two fixed fields already filled the pane. jsdom has no layout, so
+ * only the built app can measure this.
+ */
+test('the Hosts row keeps the label at least as wide as the type at the pane minimum', async () => {
+  test.setTimeout(180_000);
+
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await openHostsTab(app);
+    await page.locator('.multifield__add').first().click();
+    const item = page.locator('.multifield__item').last();
+    const address = item.locator(`${byField('host-address')} input`);
+    await address.fill('https://narrow.example');
+    await address.press('Enter');
+    await expect(page.locator('.multifield__item')).toHaveCount(1, { timeout: 60_000 });
+
+    // Ask for a pane far below its floor; `sp-split-view` clamps to `primary-min`
+    // (the floor the shell derives from this very row).
+    await page.locator('sp-split-view').evaluate((node) => {
+      (node as HTMLElement & { primarySize: string }).primarySize = '200px';
+    });
+
+    const row = item.locator('.host-field-row');
+    const measure = () =>
+      row.evaluate((node) => {
+        const children = [...node.children].map((child) => {
+          const box = child.getBoundingClientRect();
+          return { left: box.left, right: box.right, width: box.width };
+        });
+        return { children, width: node.getBoundingClientRect().width };
+      });
+
+    // Wait for the clamp to settle on the layout under test.
+    await expect
+      .poll(
+        async () => {
+          const [color, label, type] = (await measure()).children;
+          if (!color || !label || !type) return false;
+          return label.width >= type.width && type.width > 0;
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+
+    const { children, width } = await measure();
+    const [color, label, type] = children;
+    if (!color || !label || !type) throw new Error('expected the three one-line fields');
+
+    // The label is never the squeezed remnant: it is at least the type's width,
+    // and the three blocks stand side by side instead of overlapping.
+    expect(label.width).toBeGreaterThanOrEqual(type.width);
+    expect(color.right).toBeLessThanOrEqual(label.left + 1);
+    expect(label.right).toBeLessThanOrEqual(type.left + 1);
+    // Nothing spills past the row (the one-line layout still fits the pane).
+    expect(type.right).toBeLessThanOrEqual(color.left + width + 1);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * The host "Type" picker: a real `sp-picker` (jsdom only ever sees an
+ * un-upgraded tag) whose choice is presentation metadata - it says which half
+ * of a multi-host system the row points at. Selecting one must reach the
+ * settings document through `settings:update-server-presentation` without
+ * touching the host's revision, come back out of the snapshot, and clear again
+ * on "(Default)".
+ */
+test('a host remembers the type picked for it, and "(Default)" clears it', async () => {
+  test.setTimeout(180_000);
+
+  const { home, appData, localAppData } = createScratchDirs(scratchBase);
+  const env = scratchEnv({ home, appData, localAppData }, { fakeAgent: true });
+  const settingsFile = path.join(home, 'etoolbox-daisy', 'settings', 'settings.json');
+
+  const storedHost = (): { readonly type?: string; readonly revision?: number } | undefined => {
+    try {
+      const doc = JSON.parse(readFileSync(settingsFile, 'utf8')) as {
+        hosts?: { origin?: string; type?: string; revision?: number }[];
+      };
+      return doc.hosts?.find((host) => host.origin === 'https://typed.example');
+    } catch {
+      return undefined;
+    }
+  };
+
+  const app = await electron.launch({ args: [mainEntry], env });
+  try {
+    const page = await openHostsTab(app);
+
+    await page.locator('.multifield__add').first().click();
+    const item = page.locator('.multifield__item').last();
+    const address = item.locator(`${byField('host-address')} input`);
+    await address.fill('https://typed.example');
+    // Enter commits the address, which creates the host the type attaches to.
+    await address.press('Enter');
+    await expect.poll(() => storedHost(), { timeout: 60_000 }).toBeDefined();
+
+    const picker = item.locator(byField('host-type'));
+    await expect(picker.locator('sp-menu-item')).toHaveCount(3);
+
+    // Selecting is driven through the picker's own `value` + `change` (the same
+    // pattern host-proxy-selection uses); clicking a Spectrum overlay is
+    // brittle, while this still exercises the real change handler and IPC path.
+    await picker.evaluate((node) => {
+      const pickerNode = node as HTMLElement & { value: string };
+      pickerNode.value = 'author';
+      pickerNode.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await expect.poll(() => storedHost()?.type, { timeout: 60_000 }).toBe('author');
+    // Presentation, not targeting: the stored revision is untouched.
+    expect(storedHost()?.revision).toBe(0);
+    // The row shows the role's own label, not the picker's placeholder. The
+    // picker's own button label comes first; each menu item carries a `#label`
+    // of its own inside its shadow root.
+    await expect(picker.locator('#label').first()).toHaveText('Author');
+
+    // Leaving the tab and coming back re-reads the document, so the selection
+    // shown again came back through the snapshot rather than staying in memory.
+    await page.locator(byTestId('settings-tab-browser')).click();
+    await page.locator(byTestId('settings-tab-hosts')).click();
+    const reloaded = page.locator('.multifield__item').last().locator(byField('host-type'));
+    await expect
+      .poll(async () =>
+        reloaded.evaluate((node) => (node as HTMLElement & { value: string }).value),
+      )
+      .toBe('author');
+
+    // "(Default)" is the sentinel the picker's own first option carries.
+    const defaultOption = await reloaded.locator('sp-menu-item').first().getAttribute('value');
+    if (defaultOption === null) throw new Error('the default option carries no value');
+    await reloaded.evaluate((node, value) => {
+      const pickerNode = node as HTMLElement & { value: string };
+      pickerNode.value = value;
+      pickerNode.dispatchEvent(new Event('change', { bubbles: true }));
+    }, defaultOption);
+
+    await expect.poll(() => storedHost()?.type, { timeout: 60_000 }).toBeUndefined();
+    await expect(reloaded.locator('#label').first()).toHaveText('(Default)');
+  } finally {
+    await app.close();
   }
 });

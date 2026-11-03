@@ -375,6 +375,23 @@ describe('addServer', () => {
     expect(snapshot.snapshot.hosts).toHaveLength(1);
   });
 
+  it('adds and persists the role captured on a draft row', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, defaultAppSettings());
+
+    const result = await addServer(settingsDir, secretStore, {
+      label: 'Publish',
+      origin: 'https://publish.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      type: 'publish',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected an ok result');
+    expect(result.server.type).toBe('publish');
+  });
+
   it('returns duplicate_origin, not a raw throw, for an origin already in use', async () => {
     const settingsDir = createScratchRoot();
     const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
@@ -651,6 +668,33 @@ describe('updateServerPresentation', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected an ok result');
     expect(result.server.label).toBe('Renamed');
+  });
+
+  it('sets and clears the host type, and the cleared type is gone from the snapshot', async () => {
+    const settingsDir = createScratchRoot();
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    await writeSettings(settingsDir, settingsWithServer());
+
+    const set = await updateServerPresentation(settingsDir, secretStore, {
+      serverId: SERVER_ID,
+      changes: { type: 'author' },
+    });
+    expect(set.ok).toBe(true);
+    if (!set.ok) throw new Error('expected an ok result');
+    expect(set.server.type).toBe('author');
+
+    const cleared = await updateServerPresentation(settingsDir, secretStore, {
+      serverId: SERVER_ID,
+      changes: { type: null },
+    });
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) throw new Error('expected an ok result');
+    expect(cleared.server.type).toBeUndefined();
+    expect(Object.keys(cleared.server)).not.toContain('type');
+
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected an ok snapshot result');
+    expect(snapshot.snapshot.hosts[0]?.type).toBeUndefined();
   });
 
   it('returns server_not_found for an unknown server id', async () => {

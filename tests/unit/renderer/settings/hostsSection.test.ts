@@ -18,11 +18,12 @@ import {
   type ProxySnapshot,
   type ServerSnapshot,
 } from '../../../../src/shared';
+import { HOST_TYPE_DEFAULT_VALUE } from '../../../../src/renderer/src/settings/hostTypePicker';
+import { PROJECT_DEFAULT_VALUE } from '../../../../src/renderer/src/settings/projectPicker';
 import {
   PROXY_DEFAULT_VALUE,
   PROXY_NONE_VALUE,
 } from '../../../../src/renderer/src/settings/proxyPicker';
-import { PROJECT_DEFAULT_VALUE } from '../../../../src/renderer/src/settings/projectPicker';
 import { settle } from '../../../support/asyncWaits';
 import { installJsdomGlobals } from '../../../support/jsdomGlobals';
 import { byField } from '../../../support/selectors';
@@ -40,13 +41,14 @@ function snapshot(
   id: string,
   origin: string,
   label: string,
-  options: { swatch?: string; proxyId?: string; projectId?: string } = {},
+  options: { swatch?: string; type?: string; proxyId?: string; projectId?: string } = {},
 ): ServerSnapshot {
   return serverSnapshotSchema.parse({
     id: newServerId(() => id),
     label,
     origin,
     color: { kind: 'swatch', swatch: options.swatch ?? 'blue' },
+    ...(options.type !== undefined ? { type: options.type } : {}),
     ...(options.proxyId !== undefined ? { proxyId: options.proxyId } : {}),
     ...(options.projectId !== undefined ? { projectId: options.projectId } : {}),
     revision: 0,
@@ -71,7 +73,8 @@ function proxyMenuValues(picker: HTMLElement): string[] {
   );
 }
 
-function chooseProxy(picker: HTMLElement & { value: string }, value: string): void {
+/** Picks one option of any `sp-picker` in the row (proxy, project or type). */
+function chooseOption(picker: HTMLElement & { value: string }, value: string): void {
   picker.value = value;
   picker.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
 }
@@ -95,6 +98,7 @@ const FIELD_IDS = {
   Address: 'host-address',
   Label: 'host-label',
   'Color tag': 'host-color',
+  Type: 'host-type',
   Proxy: 'host-proxy',
   Project: 'host-project',
 } as const;
@@ -287,7 +291,7 @@ describe('createHostsSection', () => {
 
     const project = field(section.element, 'Project');
     if (!project) throw new Error('missing project picker');
-    chooseProxy(
+    chooseOption(
       project,
       newProjectId(() => 'project-a'),
     );
@@ -312,7 +316,7 @@ describe('createHostsSection', () => {
 
     const project = field(section.element, 'Project');
     if (!project) throw new Error('missing project picker');
-    chooseProxy(project, PROJECT_DEFAULT_VALUE);
+    chooseOption(project, PROJECT_DEFAULT_VALUE);
     await settle();
 
     expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
@@ -332,7 +336,7 @@ describe('createHostsSection', () => {
     const address = field(section.element, 'Address');
     const project = field(section.element, 'Project');
     if (!address || !project) throw new Error('missing fields');
-    chooseProxy(
+    chooseOption(
       project,
       newProjectId(() => 'project-a'),
     );
@@ -486,6 +490,100 @@ describe('createHostsSection', () => {
     expect(field(section.element, 'Address')?.value).toBe('https://draft.example');
   });
 
+  describe('Type combobox', () => {
+    it('offers "(Default)", Author and Publish, with "(Default)" selected', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A')]);
+
+      const picker = field(section.element, 'Type');
+      if (!picker) throw new Error('missing type picker');
+      expect(proxyMenuLabels(picker)).toEqual(['(Default)', 'Author', 'Publish']);
+      expect(picker.value).toBe(HOST_TYPE_DEFAULT_VALUE);
+    });
+
+    it('shows the stored role', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { type: 'author' })]);
+
+      expect(field(section.element, 'Type')?.value).toBe('author');
+    });
+
+    it('saves a chosen role via updateServerPresentation', async () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A')]);
+
+      const picker = field(section.element, 'Type');
+      if (!picker) throw new Error('missing type picker');
+      chooseOption(picker, 'publish');
+      await settle();
+
+      expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'a'),
+        changes: { type: 'publish' },
+      });
+      // A role is presentation, never a targeting change.
+      expect(updateServerTargeting).not.toHaveBeenCalled();
+    });
+
+    it('returns a host to "(Default)" by sending type: null', async () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A', { type: 'author' })]);
+
+      const picker = field(section.element, 'Type');
+      if (!picker) throw new Error('missing type picker');
+      chooseOption(picker, HOST_TYPE_DEFAULT_VALUE);
+      await settle();
+
+      expect(updateServerPresentation).toHaveBeenCalledExactlyOnceWith({
+        serverId: newServerId(() => 'a'),
+        changes: { type: null },
+      });
+    });
+
+    it('carries a chosen role into addServer when a draft is created', async () => {
+      const section = buildSection();
+      section.update([]);
+      section.element
+        .querySelector('.multifield__add')
+        ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+
+      const address = field(section.element, 'Address');
+      const picker = field(section.element, 'Type');
+      if (!address || !picker) throw new Error('missing fields');
+      chooseOption(picker, 'author');
+      typeAndCommit(address, 'https://new.example');
+      await settle();
+
+      expect(addServer).toHaveBeenCalledExactlyOnceWith({
+        label: 'https://new.example',
+        origin: 'https://new.example',
+        color: { kind: 'swatch', swatch: 'blue' },
+        type: 'author',
+      });
+    });
+
+    it('sits on the colour/label line, at its end', () => {
+      const section = buildSection();
+      section.update([snapshot('a', 'https://a.example', 'A')]);
+
+      const color = field(section.element, 'Color tag');
+      const label = field(section.element, 'Label');
+      const picker = field(section.element, 'Type');
+      if (!color || !label || !picker) throw new Error('missing fields');
+
+      // The picker's own labelled block is a child of the shared line, so the
+      // line is the block's parent.
+      const block = picker.parentElement;
+      const line = block?.parentElement;
+      expect(line).toBeDefined();
+      // The colour tag and the label live on that same line...
+      expect(line?.contains(color)).toBe(true);
+      expect(line?.contains(label)).toBe(true);
+      // ...with the type's block last, at the end of it.
+      expect(line?.lastElementChild).toBe(block);
+    });
+  });
+
   describe('Proxy combobox', () => {
     const corp = proxySnapshot('p1', 'Corporate', 'https://proxy.example:8080');
     const home = proxySnapshot('p2', 'Home', 'https://home.example:3128');
@@ -531,7 +629,7 @@ describe('createHostsSection', () => {
 
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
-      chooseProxy(picker, String(newProxyId(() => 'p1')));
+      chooseOption(picker, String(newProxyId(() => 'p1')));
       await Promise.resolve();
 
       expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
@@ -546,7 +644,7 @@ describe('createHostsSection', () => {
 
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
-      chooseProxy(picker, PROXY_NONE_VALUE);
+      chooseOption(picker, PROXY_NONE_VALUE);
       await Promise.resolve();
 
       expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
@@ -561,7 +659,7 @@ describe('createHostsSection', () => {
 
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
-      chooseProxy(picker, PROXY_DEFAULT_VALUE);
+      chooseOption(picker, PROXY_DEFAULT_VALUE);
       await Promise.resolve();
 
       expect(updateServerTargeting).toHaveBeenCalledExactlyOnceWith({
@@ -613,7 +711,7 @@ describe('createHostsSection', () => {
         ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
-      chooseProxy(picker, String(newProxyId(() => 'p1')));
+      chooseOption(picker, String(newProxyId(() => 'p1')));
 
       const address = field(section.element, 'Address');
       if (!address) throw new Error('missing address field');
@@ -636,7 +734,7 @@ describe('createHostsSection', () => {
         ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
       const picker = field(section.element, 'Proxy');
       if (!picker) throw new Error('missing proxy picker');
-      chooseProxy(picker, PROXY_NONE_VALUE);
+      chooseOption(picker, PROXY_NONE_VALUE);
 
       const address = field(section.element, 'Address');
       if (!address) throw new Error('missing address field');

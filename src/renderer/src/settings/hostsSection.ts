@@ -4,6 +4,7 @@ import { createMultifield } from '../lib/multifield';
 import {
   HOST_PROXY_NONE,
   type HostProxyId,
+  type HostType,
   type ProjectId,
   type ProjectSnapshot,
   type ProxySnapshot,
@@ -13,6 +14,7 @@ import {
   type ServerSwatch,
 } from '../../../shared';
 import { colorKey, createColorPicker } from './colorPicker';
+import { createHostTypePicker } from './hostTypePicker';
 import { createProjectPicker, type ProjectSelection } from './projectPicker';
 import { createProxyPicker, type ProxySelection } from './proxyPicker';
 import { createCommitSaver } from './commitSaver';
@@ -30,6 +32,16 @@ type TextField = HTMLElement & { value: string };
 /** A fresh host's colour, per the settings UI's agreed default swatch. */
 const DEFAULT_SWATCH: ServerSwatch = 'blue';
 const DEFAULT_COLOR: ServerColor = { kind: 'swatch', swatch: DEFAULT_SWATCH };
+
+/**
+ * The sliver of a settings mutation's IPC result the item's pickers care about:
+ * whether the write landed, and its message when it did not. The handlers
+ * return more than this (the updated snapshot, the mutation kind); that is
+ * deliberately ignored, because a successful change re-reads the whole document
+ * through `onSettingsChanged`.
+ */
+type MutationOutcome =
+  { readonly ok: true } | { readonly ok: false; readonly error: { readonly message: string } };
 
 /** The stored three-way host selection as the picker's value. */
 function selectionFromHostProxyId(proxyId: HostProxyId | undefined): ProxySelection {
@@ -145,6 +157,7 @@ function buildHostItem(
   const addressFieldId = `${fieldIdBase}-address`;
   const labelFieldId = `${fieldIdBase}-label`;
   const colorFieldId = `${fieldIdBase}-color`;
+  const typeFieldId = `${fieldIdBase}-type`;
   const proxyFieldId = `${fieldIdBase}-proxy`;
   const projectFieldId = `${fieldIdBase}-project`;
 
@@ -180,6 +193,13 @@ function buildHostItem(
     onInput: onFieldInput,
     onCommit: onFieldCommit,
   });
+
+  const typePicker = createHostTypePicker({
+    fieldId: typeFieldId,
+    initial: server?.type,
+    onChange: onTypeSelectionChange,
+  });
+  typePicker.element.setAttribute('data-field', 'host-type');
 
   const proxyPicker = createProxyPicker({
     fieldId: proxyFieldId,
@@ -218,6 +238,13 @@ function buildHostItem(
     'The name shown for this host. If blank, defaults to the address',
   );
   labelFieldBlock.classList.add('host-field--label');
+  const typeFieldBlock = labelledField(
+    typeFieldId,
+    'Type',
+    typePicker.element,
+    'The type of the host, if belongs to a multi-host system, such as an AEM environment',
+  );
+  typeFieldBlock.classList.add('host-field--type');
   const proxyFieldBlock = labelledField(
     proxyFieldId,
     'Proxy',
@@ -236,11 +263,12 @@ function buildHostItem(
     children: [
       // 1. Address - full width, alone on its line.
       addressFieldBlock,
-      // 2. Colour tag + Label share one line: the colour tag is a fixed width
-      // (its hex is a known shape); the label spans the remaining space.
+      // 2. Colour tag + Label + Type share one line: the colour tag and the type
+      // are fixed widths (their contents are a known shape); the label spans the
+      // space that is left, with the type last.
       el('div', {
         attrs: { class: 'host-field-row' },
-        children: [colorFieldBlock, labelFieldBlock],
+        children: [colorFieldBlock, labelFieldBlock, typeFieldBlock],
       }),
       // 3. Proxy.
       proxyFieldBlock,
@@ -255,6 +283,7 @@ function buildHostItem(
   let savedOrigin = server?.origin ?? '';
   let savedLabel = server?.label ?? '';
   let savedColorKey = colorKey(server?.color ?? DEFAULT_COLOR);
+  let savedType: HostType | undefined = server?.type;
   let savedProxyId: HostProxyId | undefined = server?.proxyId;
   let savedProjectId: ProjectId | undefined = server?.projectId;
   /** A draft's explicit proxy choice, applied once the host exists (see `runSave`). */
@@ -291,45 +320,105 @@ function buildHostItem(
   }
 
   /**
-   * The Proxy combobox changed. A saved host persists it immediately as a
-   * targeting change (which proxy reaches AEM is targeting, so it bumps the
-   * revision - but it needs no confirmation, unlike an origin change). A draft
-   * has no host to target yet, so its explicit choice is remembered and
-   * applied once `addServer` succeeds; leaving it on "(Default)" is a no-op.
+   * Persists one combobox choice made on an already-saved host. The Proxy,
+   * Project and Type pickers all commit the moment they change (never on a
+   * typing pause - there is nothing typed), clear a removal confirmation the
+   * edit supersedes, treat re-picking the value the host already has as a
+   * no-op, and update the row's own saved value only once the write landed.
    *
-   * "(Default)" is stored by *omitting* `proxyId` (so the request sends
-   * `null`), "No proxy" as the `HOST_PROXY_NONE` sentinel, and an entry as its
-   * id.
+   * "(Default)" is sent as `null`, which is how every one of these pickers
+   * spells "no selection" on the wire, and is how it is stored - by omitting
+   * the key.
    */
-  function onProxySelectionChange(): void {
+  function persistPickerChange<T>(options: {
+    readonly next: T | undefined;
+    readonly saved: T | undefined;
+    /** A draft row has nothing to target yet; the Proxy picker remembers its choice here. */
+    readonly onDraft?: () => void;
+    readonly write: (serverId: ServerId) => Promise<MutationOutcome>;
+    readonly failureMessage: string;
+    readonly commit: (next: T | undefined) => void;
+  }): void {
     if (busy) return;
     if (removeArmed) {
       removeArmed = false;
       ctx.status.clear();
     }
 
-    const next = hostProxyIdFromSelection(proxyPicker.read());
-    if (serverId === undefined) {
-      pendingProxyId = next;
+    const id = serverId;
+    if (id === undefined) {
+      options.onDraft?.();
       return;
     }
-    if (next === savedProxyId) return;
+    if (options.next === options.saved) return;
 
     reportMutation(
-      window.daisy.settings
-        .updateServerTargeting({ serverId, changes: { proxyId: next ?? null } })
-        .then(
-          (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
-          (error: unknown) => ({
-            ok: false,
-            error: error instanceof Error ? error.message : 'Could not change the proxy',
-          }),
-        ),
+      options.write(id).then(
+        (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
+        (error: unknown) => ({
+          ok: false,
+          error: error instanceof Error ? error.message : options.failureMessage,
+        }),
+      ),
       () => undefined,
       () => {
-        savedProxyId = next;
+        options.commit(options.next);
       },
     );
+  }
+
+  /**
+   * The Proxy combobox changed. A saved host persists it immediately as a
+   * targeting change (which proxy reaches AEM is targeting, so it bumps the
+   * revision - but it needs no confirmation, unlike an origin change). A draft
+   * has no host to target yet, so its explicit choice is remembered and
+   * applied once `addServer` succeeds; leaving it on "(Default)" is a no-op.
+   *
+   * "No proxy" is stored as the `HOST_PROXY_NONE` sentinel, and an entry as its
+   * id.
+   */
+  function onProxySelectionChange(): void {
+    const next = hostProxyIdFromSelection(proxyPicker.read());
+    persistPickerChange({
+      next,
+      saved: savedProxyId,
+      onDraft: () => {
+        pendingProxyId = next;
+      },
+      write: (serverId) =>
+        window.daisy.settings.updateServerTargeting({
+          serverId,
+          changes: { proxyId: next ?? null },
+        }),
+      failureMessage: 'Could not change the proxy',
+      commit: () => {
+        savedProxyId = next;
+      },
+    });
+  }
+
+  /**
+   * The Type combobox changed. A saved host persists it immediately as a
+   * presentation change (a role is descriptive metadata - it never steers how a
+   * request reaches the host - so it bumps no revision and needs no
+   * confirmation). A draft's choice is read straight from the picker when the
+   * host is created (`runSave`), so nothing is stored here.
+   */
+  function onTypeSelectionChange(): void {
+    const next = typePicker.read();
+    persistPickerChange({
+      next,
+      saved: savedType,
+      write: (serverId) =>
+        window.daisy.settings.updateServerPresentation({
+          serverId,
+          changes: { type: next ?? null },
+        }),
+      failureMessage: 'Could not change the type',
+      commit: () => {
+        savedType = next;
+      },
+    });
   }
 
   /**
@@ -338,36 +427,22 @@ function buildHostItem(
    * agent is told about the host's layout, not how a request reaches AEM, so it
    * needs no confirmation either). A draft's choice is read straight from the
    * picker when the host is created (`runSave`), so nothing is stored here.
-   *
-   * "(Default)" is stored by *omitting* `projectId` (so the request sends
-   * `null`); an entry is stored as its id.
    */
   function onProjectSelectionChange(): void {
-    if (busy) return;
-    if (removeArmed) {
-      removeArmed = false;
-      ctx.status.clear();
-    }
-
     const next = hostProjectIdFromSelection(projectPicker.read());
-    if (serverId === undefined) return;
-    if (next === savedProjectId) return;
-
-    reportMutation(
-      window.daisy.settings
-        .updateServerPresentation({ serverId, changes: { projectId: next ?? null } })
-        .then(
-          (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
-          (error: unknown) => ({
-            ok: false,
-            error: error instanceof Error ? error.message : 'Could not change the project',
-          }),
-        ),
-      () => undefined,
-      () => {
+    persistPickerChange({
+      next,
+      saved: savedProjectId,
+      write: (serverId) =>
+        window.daisy.settings.updateServerPresentation({
+          serverId,
+          changes: { projectId: next ?? null },
+        }),
+      failureMessage: 'Could not change the project',
+      commit: () => {
         savedProjectId = next;
       },
-    );
+    });
   }
 
   // The confirming action: a single OK click persists the staged origin.
@@ -416,8 +491,10 @@ function buildHostItem(
 
     // The Project picker is read straight from the row: a draft's choice is
     // applied as part of `addServer`, and a saved host's change was already
-    // persisted by `onProjectSelectionChange`.
+    // persisted by `onProjectSelectionChange`. The Type picker works the same
+    // way.
     const nextProjectId = hostProjectIdFromSelection(projectPicker.read());
+    const nextType = typePicker.read();
 
     if (serverId === undefined) {
       return window.daisy.settings
@@ -425,6 +502,7 @@ function buildHostItem(
           label: label.label,
           origin: address.origin,
           color: color.color,
+          ...(nextType !== undefined ? { type: nextType } : {}),
           ...(nextProjectId !== undefined ? { projectId: nextProjectId } : {}),
         })
         .then(
@@ -435,6 +513,7 @@ function buildHostItem(
             savedOrigin = result.server.origin;
             savedLabel = result.server.label;
             savedColorKey = colorKey(result.server.color);
+            savedType = result.server.type;
             savedProxyId = result.server.proxyId;
             savedProjectId = result.server.projectId;
             // Apply a proxy chosen while this row was still a draft.
@@ -548,6 +627,7 @@ function buildHostItem(
         addressResult.origin !== savedOrigin ||
         !labelNow.ok ||
         labelNow.label !== savedLabel ||
+        typePicker.read() !== savedType ||
         hostProjectIdFromSelection(projectPicker.read()) !== savedProjectId ||
         !colorNow.ok ||
         colorNow.color === undefined ||
@@ -766,6 +846,12 @@ export interface HostsSection {
  * selection whose entry was removed falls back to "(Default)" (main also
  * clears the dangling reference in the same write - see `removeProxy` in
  * `settingsStore.ts`).
+ *
+ * The item's "Type" field is a combobox over the fixed host roles
+ * (`HOST_TYPES`: Author, Publish) plus "(Default)" (stored by omitting `type`).
+ * A role is presentation, not targeting: it says which half of a multi-host
+ * system the row points at (an AEM author or publish instance) and never steers
+ * a request, so changing it never bumps the host revision.
  *
  * The item's "Project" field is a combobox with two kinds of choice:
  * "(Default)" (stored by omitting `projectId`: no project, so the agent is told

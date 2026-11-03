@@ -428,6 +428,23 @@ describe('normalizeSettingsDocument', () => {
     });
   });
 
+  it('keeps a recognised host role and drops an unknown one', () => {
+    const normalized = normalize({
+      hosts: [
+        { id: 'server-a', origin: 'https://author.example', type: 'author' },
+        { id: 'server-b', origin: 'https://publish.example', type: 'dispatcher' },
+        { id: 'server-c', origin: 'https://plain.example' },
+      ],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const hosts = normalized['hosts'] as Record<string, unknown>[];
+    expect(hosts[0]?.['type']).toBe('author');
+    expect(hosts[1]).not.toHaveProperty('type');
+    expect(hosts[2]).not.toHaveProperty('type');
+  });
+
   it('drops legacy host roots, which moved to projects', () => {
     const normalized = normalize({
       hosts: [
@@ -734,6 +751,23 @@ describe('applyServerPresentationChange', () => {
     }
   });
 
+  it('sets and clears the host type without changing the revision', () => {
+    const server = makeServer('server-a', 'https://a.example', { revision: 3 });
+    const settings = makeSettings([server]);
+
+    const set = applyServerPresentationChange(settings, server.id, { type: 'publish' });
+    expect(set.ok).toBe(true);
+    if (!set.ok) throw new Error('expected an ok result');
+    expect(set.value.server.type).toBe('publish');
+    expect(set.value.server.revision).toBe(3);
+
+    const cleared = applyServerPresentationChange(set.value.settings, server.id, { type: null });
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) throw new Error('expected an ok result');
+    expect('type' in cleared.value.server).toBe(false);
+    expect(cleared.value.server.revision).toBe(3);
+  });
+
   it('fails for an unknown server id', () => {
     const settings = makeSettings([]);
     const result = applyServerPresentationChange(
@@ -896,6 +930,27 @@ describe('addServer', () => {
       expect(result.value.server.proxyId).toBeUndefined();
       expect(result.value.server.tlsException).toBeUndefined();
       expect(result.value.settings.hosts).toHaveLength(1);
+    }
+  });
+
+  it('stores a role captured while the row was a draft', () => {
+    const settings = makeSettings([]);
+
+    const result = addServer(
+      settings,
+      newServerId(() => 'server-new'),
+      {
+        label: 'Publish',
+        origin: 'https://publish.example',
+        color: { kind: 'swatch', swatch: 'blue' },
+        type: 'publish',
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.server.type).toBe('publish');
+      expect(result.value.settings.hosts[0]?.type).toBe('publish');
     }
   });
 

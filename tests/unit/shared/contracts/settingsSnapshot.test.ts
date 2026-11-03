@@ -155,6 +155,22 @@ describe('toAppSettingsSnapshot', () => {
     expect(Object.keys(snapshot.hosts[0] ?? {})).not.toContain('proxy');
   });
 
+  it('carries a host role to the snapshot, and omits it for "(Default)"', () => {
+    const settings = appSettingsSchema.parse({
+      hosts: [
+        server('server-a', 'https://publish.example', { type: 'publish' }),
+        server('server-b', 'https://plain.example'),
+      ],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => true);
+
+    expect(snapshot.hosts[0]?.type).toBe('publish');
+    expect('type' in (snapshot.hosts[1] ?? {})).toBe(false);
+  });
+
   it('maps an agent token to hasToken and never emits its secretRef', () => {
     const settings = appSettingsSchema.parse({
       hosts: [],

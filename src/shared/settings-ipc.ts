@@ -18,6 +18,7 @@ import { modelSelectionStateSchema, type ModelSelectionState } from './contracts
 import {
   environmentRootTextSchema,
   hostProxyIdSchema,
+  hostTypeSchema,
   serverColorSchema,
   serverLabelSchema,
   tlsExceptionSchema,
@@ -189,6 +190,8 @@ export const addServerRequestSchema = z
     label: serverLabelSchema,
     origin: originSchema,
     color: serverColorSchema,
+    /** Optional role captured on a draft row (its "(Default)" choice is the absence of this key). */
+    type: hostTypeSchema.optional(),
     /** Optional project id captured on a draft row (its "(Default)" choice is the absence of this key). */
     projectId: projectIdSchema.optional(),
   })
@@ -214,9 +217,10 @@ export const removeServerRequestSchema = z.object({ serverId: serverIdSchema }).
 export type RemoveServerRequest = Readonly<z.infer<typeof removeServerRequestSchema>>;
 
 /**
- * `settings:update-server-presentation` - label/colour and the project
- * reference, never bumps `revision`. `projectId: null` resets the host to
- * "(Default)" (no project); omitting it leaves the current selection alone.
+ * `settings:update-server-presentation` - label/colour, the host type and the
+ * project reference, never bumps `revision`. `type: null` and `projectId: null`
+ * reset that selection to "(Default)"; omitting either leaves the current
+ * selection alone.
  */
 export const updateServerPresentationRequestSchema = z
   .object({
@@ -225,6 +229,7 @@ export const updateServerPresentationRequestSchema = z
       .object({
         label: serverLabelSchema.optional(),
         color: serverColorSchema.optional(),
+        type: hostTypeSchema.nullable().optional(),
         projectId: projectIdSchema.nullable().optional(),
       })
       .strict(),

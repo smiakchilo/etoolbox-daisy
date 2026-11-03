@@ -951,9 +951,8 @@ if (smokeTest) {
       join: (...segments) => path.join(...segments),
     });
     const ruleResources = await loadRuleResources(path.join(bundledResourcesDirectory, 'rules'));
-    // The one skill store: the bundled skills, the skills every pinned add-on
-    // contributes (listed without a download) and the user's own folder, read
-    // once (`skillStore.load()` below, before the agent starts). The tools reach
+    // The one skill store: the bundled skills, the skills every add-on contributes (listed without a download)
+    // and the user's own folder, read once (`skillStore.load()` below, before the agent starts). The tools reach
     // it through `ToolHost.skills`.
     const skillStore = createSkillStore({
       bundledDirectory: path.join(bundledResourcesDirectory, 'skills'),

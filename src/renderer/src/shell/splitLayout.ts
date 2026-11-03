@@ -9,8 +9,20 @@
  * a narrower one.
  */
 
-/** Neither pane may be dragged below these; both stay usable rather than becoming a sliver. */
-export const MIN_BROWSER_PANE_PX = 320;
+/**
+ * Neither pane may be dragged below these; both stay usable rather than
+ * becoming a sliver.
+ *
+ * The browser pane's floor is set by the Settings "Hosts" row (and the AEM page
+ * benefits from it too): its colour tag (150px), its Label field and its Type
+ * picker - the two sharing the same width, 116px - plus the row's gaps and the
+ * panel's own padding need ~508px before the row has to wrap. 540 leaves room
+ * for the tab panel's scrollbar. The row itself (`.host-field-row` in
+ * `styles/settings.css`) carries the same relation in a comment and wraps as a
+ * last resort, so a window squeezed below both minima degrades instead of
+ * painting one field over its neighbour.
+ */
+export const MIN_BROWSER_PANE_PX = 540;
 export const MIN_CHAT_PANE_PX = 280;
 
 /** Matches the split `sp-split-view` falls back to before any drag has happened. */

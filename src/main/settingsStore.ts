@@ -40,6 +40,7 @@ import {
 import { err, ok, type Result } from '../shared';
 import {
   agentIdSchema,
+  hostTypeSchema,
   modelIdSchema,
   reasoningEffortSchema,
   serverColorSchema,
@@ -51,6 +52,7 @@ import {
   proxyConfigSchema,
   serverConfigSchema,
   updatePresentation,
+  type HostType,
   type ServerColor,
   type ServerConfig,
   type ServerPresentationChanges,
@@ -219,6 +221,7 @@ const SERVER_ENTRY_KEYS = [
   'label',
   'origin',
   'color',
+  'type',
   'proxyId',
   'tlsException',
   'projectId',
@@ -315,6 +318,16 @@ function normalizeHostProxyId(
 }
 
 /**
+ * Normalizes one host's role: a recognised value is kept, anything else is
+ * dropped - which reads as "(Default)" rather than failing the load. There is
+ * no sentinel here (unlike `proxyId`): absent is the only "no role" state.
+ */
+function normalizeHostType(value: unknown): Record<string, unknown> {
+  const type = hostTypeSchema.safeParse(value);
+  return type.success ? { type: type.data } : {};
+}
+
+/**
  * Normalizes one host's project selection: a real project id is kept only when
  * it names a configured project, otherwise the whole reference is dropped -
  * which reverts the host to "(Default)" rather than failing the load. There is
@@ -396,6 +409,7 @@ function normalizeServerEntry(
     label: normalizeLabel(record['label'], origin.origin),
     color: color.success ? color.data : DEFAULT_SERVER_COLOR,
     revision: revision.success ? revision.data : 0,
+    ...normalizeHostType(record['type']),
     ...normalizeHostProxyId(record['proxyId'], proxyIds),
     ...normalizeHostProjectId(record['projectId'], projectIds),
   };
@@ -1031,6 +1045,8 @@ export interface NewServerInput {
   readonly label: string;
   readonly origin: string;
   readonly color: ServerColor;
+  /** Optional role captured while the row was a draft ("(Default)" is the absence of this key). */
+  readonly type?: HostType;
   /** Optional project id captured while the row was a draft ("(Default)" is the absence of this key). */
   readonly projectId?: ProjectId;
 }
@@ -1068,6 +1084,7 @@ export function addServer(
       label: input.label,
       origin: input.origin,
       color: input.color,
+      ...(input.type !== undefined ? { type: input.type } : {}),
       ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
       revision: 0,
     });
