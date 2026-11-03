@@ -234,6 +234,8 @@ const PROJECT_ENTRY_KEYS = [
   'componentRoots',
   'contentPriorityPaths',
   'damRoots',
+  'authorTransform',
+  'publishTransform',
 ] as const;
 const PROXY_ENTRY_KEYS = ['id', 'label', 'url', 'credentials'] as const;
 const AGENT_ENTRY_KEYS = ['active', 'proxy', 'model', 'reasoningEffort', 'token'] as const;
@@ -275,6 +277,9 @@ function labelFromOrigin(origin: string): string {
 /** Matches `environmentRootTextSchema`'s bound in `serverConfig.ts`. */
 const ROOT_TEXT_MAX_LENGTH = 2000;
 
+/** Matches `pathTransformTextSchema`'s bound in `projectConfig.ts`. */
+const PATH_TRANSFORM_MAX_LENGTH = 500;
+
 /**
  * Trims a usable roots line out of a hand-written value, or `undefined` when
  * there is nothing usable. Empty/whitespace values are dropped - the same as
@@ -284,6 +289,20 @@ const ROOT_TEXT_MAX_LENGTH = 2000;
 function normalizeRootText(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim().slice(0, ROOT_TEXT_MAX_LENGTH);
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Trims a usable path-transform rule out of a hand-written value, or
+ * `undefined` when there is nothing usable. Like {@link normalizeRootText},
+ * empty/whitespace is dropped (the same as omitting the field); the rule's own
+ * syntax is validated separately, by `parsePathTransform`, never here - a
+ * hand-edited but syntactically wrong rule still loads, and simply never
+ * applies (the page is carried unchanged).
+ */
+function normalizePathTransform(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim().slice(0, PATH_TRANSFORM_MAX_LENGTH);
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
@@ -376,6 +395,10 @@ function normalizeProjectEntry(entry: unknown): Record<string, unknown> | undefi
   if (contentPriorityPaths !== undefined) next['contentPriorityPaths'] = contentPriorityPaths;
   const damRoots = normalizeRootText(record['damRoots']);
   if (damRoots !== undefined) next['damRoots'] = damRoots;
+  const authorTransform = normalizePathTransform(record['authorTransform']);
+  if (authorTransform !== undefined) next['authorTransform'] = authorTransform;
+  const publishTransform = normalizePathTransform(record['publishTransform']);
+  if (publishTransform !== undefined) next['publishTransform'] = publishTransform;
   return next;
 }
 
@@ -1481,6 +1504,10 @@ export interface NewProjectInput {
   readonly contentPriorityPaths?: string;
   /** Optional free-text DAM roots (omitted/empty means "use the `/content/dam` default"). */
   readonly damRoots?: string;
+  /** Optional author page-path rewrite rule (`find -> replace`). */
+  readonly authorTransform?: string;
+  /** Optional publish page-path rewrite rule (`find -> replace`). */
+  readonly publishTransform?: string;
 }
 
 /**
@@ -1496,6 +1523,8 @@ function buildProject(
   const componentRoots = input.componentRoots?.trim();
   const contentPriorityPaths = input.contentPriorityPaths?.trim();
   const damRoots = input.damRoots?.trim();
+  const authorTransform = input.authorTransform?.trim();
+  const publishTransform = input.publishTransform?.trim();
   try {
     return ok(
       projectConfigSchema.parse({
@@ -1507,6 +1536,10 @@ function buildProject(
           ? { contentPriorityPaths }
           : {}),
         ...(damRoots !== undefined && damRoots.length > 0 ? { damRoots } : {}),
+        ...(authorTransform !== undefined && authorTransform.length > 0 ? { authorTransform } : {}),
+        ...(publishTransform !== undefined && publishTransform.length > 0
+          ? { publishTransform }
+          : {}),
       }),
     );
   } catch (error) {

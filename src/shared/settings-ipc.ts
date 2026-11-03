@@ -19,6 +19,7 @@ import {
   environmentRootTextSchema,
   hostProxyIdSchema,
   hostTypeSchema,
+  pathTransformTextSchema,
   serverColorSchema,
   serverLabelSchema,
   tlsExceptionSchema,
@@ -359,6 +360,8 @@ export const addProjectRequestSchema = z
     componentRoots: environmentRootTextSchema.optional(),
     contentPriorityPaths: environmentRootTextSchema.optional(),
     damRoots: environmentRootTextSchema.optional(),
+    authorTransform: pathTransformTextSchema.optional(),
+    publishTransform: pathTransformTextSchema.optional(),
   })
   .strict();
 
@@ -390,6 +393,8 @@ export const updateProjectRequestSchema = z
     componentRoots: environmentRootTextSchema.optional(),
     contentPriorityPaths: environmentRootTextSchema.optional(),
     damRoots: environmentRootTextSchema.optional(),
+    authorTransform: pathTransformTextSchema.optional(),
+    publishTransform: pathTransformTextSchema.optional(),
   })
   .strict();
 

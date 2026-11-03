@@ -17,7 +17,12 @@ import {
   resolveHostLabelForeground,
   shouldInferAddressCompletion,
 } from '../../../src/renderer/src/shell/viewModel';
-import { newServerId, type ServerSnapshot } from '../../../src/shared';
+import {
+  newProjectId,
+  newServerId,
+  type ProjectSnapshot,
+  type ServerSnapshot,
+} from '../../../src/shared';
 
 const httpsServerId = newServerId(() => 'server-https');
 const httpServerId = newServerId(() => 'server-http');
@@ -61,6 +66,54 @@ describe('buildHostOptions', () => {
 
   it('returns an empty list for no configured servers', () => {
     expect(buildHostOptions([])).toEqual([]);
+  });
+
+  it('resolves the target host’s author/publish transform from its project', () => {
+    const projectId = newProjectId(() => 'project-a');
+    const project: ProjectSnapshot = {
+      id: projectId,
+      label: 'Acme',
+      authorTransform: '^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1',
+      publishTransform: '^/content/acme/country -> ',
+    };
+    const author: ServerSnapshot = {
+      id: newServerId(() => 'server-author'),
+      label: 'Author',
+      origin: 'https://author.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      revision: 0,
+      type: 'author',
+      projectId,
+    };
+    const publish: ServerSnapshot = {
+      id: newServerId(() => 'server-publish'),
+      label: 'Publish',
+      origin: 'https://publish.example',
+      color: { kind: 'swatch', swatch: 'green' },
+      revision: 0,
+      type: 'publish',
+      projectId,
+    };
+
+    const options = buildHostOptions([author, publish], [project]);
+
+    expect(options[0]?.pathTransform).toEqual({
+      find: '^(?!/content/acme)(/.*\\.html)$',
+      replace: '/content/acme/country$1',
+    });
+    expect(options[1]?.pathTransform).toEqual({ find: '^/content/acme/country', replace: '' });
+  });
+
+  it('omits pathTransform for a host with no role, project, or matching rule', () => {
+    const plain: ServerSnapshot = {
+      id: newServerId(() => 'server-plain'),
+      label: 'Plain',
+      origin: 'https://plain.example',
+      color: { kind: 'swatch', swatch: 'blue' },
+      revision: 0,
+    };
+    const options = buildHostOptions([plain], []);
+    expect(options[0]).not.toHaveProperty('pathTransform');
   });
 });
 

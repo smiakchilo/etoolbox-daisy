@@ -1,9 +1,12 @@
 import {
+  type PathTransform,
+  type ProjectSnapshot,
+  type ServerId,
+  type ServerSnapshot,
   AEM_EDITOR_PATH_PREFIX,
   editorPagePath,
   parseNavigationTarget,
-  type ServerId,
-  type ServerSnapshot,
+  resolvePathTransform,
 } from '../../../shared';
 import { isDamPath } from '../chat/linkTargets';
 import { BANNER_ACTION_MARKER } from '../lib/alertBanner';
@@ -32,16 +35,36 @@ export interface HostOption {
   readonly origin: string;
   /** CSS colour for the paired swatch dot - never the only signal, see `resolveServerColorCss`. */
   readonly colorCss: string;
+  /**
+   * The page-path rewrite rule applied when the pane carries the open page *to*
+   * this host, resolved from its project and its author/publish role; absent
+   * when the host has no role or its project writes no rule for it.
+   */
+  readonly pathTransform?: PathTransform;
 }
 
-/** Builds the hosts panel's option list from the settings snapshot. */
-export function buildHostOptions(hosts: readonly ServerSnapshot[]): readonly HostOption[] {
-  return hosts.map((server) => ({
-    id: server.id,
-    label: server.label,
-    origin: server.origin,
-    colorCss: resolveServerColorCss(server.color),
-  }));
+/**
+ * Builds the hosts panel's option list from the settings snapshot. The target
+ * project (and its `authorTransform`/`publishTransform` rules) is resolved per
+ * host, so a picker selection can rewrite the carried page path without the
+ * toolbar having to read the projects library itself.
+ */
+export function buildHostOptions(
+  hosts: readonly ServerSnapshot[],
+  projects: readonly ProjectSnapshot[] = [],
+): readonly HostOption[] {
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  return hosts.map((server) => {
+    const project = server.projectId === undefined ? undefined : projectsById.get(server.projectId);
+    const pathTransform = resolvePathTransform(server.type, project);
+    return {
+      id: server.id,
+      label: server.label,
+      origin: server.origin,
+      colorCss: resolveServerColorCss(server.color),
+      ...(pathTransform !== undefined ? { pathTransform } : {}),
+    };
+  });
 }
 
 /**

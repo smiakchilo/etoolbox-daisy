@@ -11,7 +11,11 @@ import {
 } from './appSettings';
 import { agentIdSchema, projectIdSchema, proxyIdSchema, serverIdSchema } from './ids';
 import { originSchema } from './origin';
-import { environmentRootTextSchema, type ProjectConfig } from './projectConfig';
+import {
+  environmentRootTextSchema,
+  pathTransformTextSchema,
+  type ProjectConfig,
+} from './projectConfig';
 import {
   hostProxyIdSchema,
   hostTypeSchema,
@@ -86,6 +90,8 @@ export const projectSnapshotSchema = z
     componentRoots: environmentRootTextSchema.optional(),
     contentPriorityPaths: environmentRootTextSchema.optional(),
     damRoots: environmentRootTextSchema.optional(),
+    authorTransform: pathTransformTextSchema.optional(),
+    publishTransform: pathTransformTextSchema.optional(),
   })
   .strict();
 
@@ -227,6 +233,8 @@ function toProjectSnapshot(project: ProjectConfig): ProjectSnapshot {
     snapshot.contentPriorityPaths = project.contentPriorityPaths;
   }
   if (project.damRoots !== undefined) snapshot.damRoots = project.damRoots;
+  if (project.authorTransform !== undefined) snapshot.authorTransform = project.authorTransform;
+  if (project.publishTransform !== undefined) snapshot.publishTransform = project.publishTransform;
   return projectSnapshotSchema.parse(snapshot);
 }
 

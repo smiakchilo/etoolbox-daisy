@@ -115,6 +115,34 @@ describe('toAppSettingsSnapshot', () => {
     expect(() => serverSnapshotSchema.parse(snapshot.hosts[0])).not.toThrow();
   });
 
+  it('projects a project’s path-transform rules through unchanged, and omits them when absent', () => {
+    const withRules = projectConfigSchema.parse({
+      id: newProjectId(() => 'project-rules'),
+      label: 'Acme',
+      authorTransform: '^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1',
+      publishTransform: '^/content/acme/country -> ',
+    });
+    const bare = projectConfigSchema.parse({
+      id: newProjectId(() => 'project-bare'),
+      label: 'Bare',
+    });
+    const settings = appSettingsSchema.parse({
+      hosts: [],
+      projects: [withRules, bare],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const snapshot = toAppSettingsSnapshot(settings, () => false);
+
+    expect(snapshot.projects[0]?.authorTransform).toBe(
+      '^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1',
+    );
+    expect(snapshot.projects[0]?.publishTransform).toBe('^/content/acme/country -> ');
+    expect(snapshot.projects[1]).not.toHaveProperty('authorTransform');
+    expect(snapshot.projects[1]).not.toHaveProperty('publishTransform');
+  });
+
   it('omits the projectId key entirely when the host configures no project', () => {
     const serverA = server('server-a', 'https://a.example');
     const settings = appSettingsSchema.parse({

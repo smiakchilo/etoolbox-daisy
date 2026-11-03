@@ -42,6 +42,8 @@ const FIELD_IDS = {
   'Component roots': 'project-component-roots',
   'Content priority paths': 'project-priority-paths',
   'DAM roots': 'project-dam-roots',
+  'Author path transform': 'project-author-transform',
+  'Publish path transform': 'project-publish-transform',
 } as const;
 
 function field(root: ParentNode, name: keyof typeof FIELD_IDS) {
@@ -118,6 +120,8 @@ describe('createProjectsSection', () => {
         componentRoots: '/apps/a',
         contentPriorityPaths: '/content/a/blueprint',
         damRoots: '/content/dam/a',
+        authorTransform: '^(?!/content/a)(/.*\\.html)$ -> /content/a/en$1',
+        publishTransform: '^/content/a/en -> ',
       }),
       snapshot('b', 'Acme'),
     ]);
@@ -128,6 +132,19 @@ describe('createProjectsSection', () => {
     expect(field(section.element, 'Component roots')?.value).toBe('/apps/a');
     expect(field(section.element, 'Content priority paths')?.value).toBe('/content/a/blueprint');
     expect(field(section.element, 'DAM roots')?.value).toBe('/content/dam/a');
+    expect(field(section.element, 'Author path transform')?.value).toBe(
+      '^(?!/content/a)(/.*\\.html)$ -> /content/a/en$1',
+    );
+    expect(field(section.element, 'Publish path transform')?.value).toBe('^/content/a/en -> ');
+  });
+
+  it('gives every field, the two transforms included, a contextual-help badge', () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'HPE')]);
+
+    expect(section.element.querySelectorAll('.multifield__item sp-contextual-help')).toHaveLength(
+      7,
+    );
   });
 
   it('adds an empty draft only when "Add item" is clicked', () => {
@@ -262,6 +279,47 @@ describe('createProjectsSection', () => {
       label: 'HPE',
       contentRoots: '/content/a',
     });
+  });
+
+  it('saves a path-transform change via updateProject, and clears it when emptied', async () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'HPE', { contentRoots: '/content/a' })]);
+
+    const author = field(section.element, 'Author path transform');
+    if (!author) throw new Error('missing author transform field');
+    typeAndCommit(author, '  ^(?!/content/a)(/.*\\.html)$ -> /content/a/en$1  ');
+    await settle();
+
+    expect(updateProject).toHaveBeenLastCalledWith({
+      projectId: newProjectId(() => 'a'),
+      label: 'HPE',
+      contentRoots: '/content/a',
+      authorTransform: '^(?!/content/a)(/.*\\.html)$ -> /content/a/en$1',
+    });
+
+    typeAndCommit(author, '');
+    await settle();
+
+    expect(updateProject).toHaveBeenLastCalledWith({
+      projectId: newProjectId(() => 'a'),
+      label: 'HPE',
+      contentRoots: '/content/a',
+    });
+  });
+
+  it('shows an inline invalid state and does not save for a malformed transform rule', async () => {
+    const section = buildSection();
+    section.update([snapshot('a', 'HPE')]);
+
+    const author = field(section.element, 'Author path transform');
+    if (!author) throw new Error('missing author transform field');
+    // `$2` names a capture group the pattern does not have.
+    typeAndCommit(author, '^/content/a -> /content/a/en$2');
+    await settle();
+
+    expect(author.hasAttribute('invalid')).toBe(true);
+    expect(updateProject).not.toHaveBeenCalled();
+    expect(reportSave).not.toHaveBeenCalled();
   });
 
   it('clears a root by emptying its field (a full replace omits it)', async () => {

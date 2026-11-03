@@ -1,6 +1,7 @@
 import type { ServerId } from '../../contracts';
 import { originsMatch, parseOrigin } from '../../contracts';
 import { type Result, err, ok } from '../../result';
+import { applyPathTransform, type PathTransform } from './pathTransform';
 
 /**
  * The browser-pane navigation contract shared by the `browser_navigate` tool,
@@ -278,6 +279,17 @@ function carriesAuthenticationParameters(url: URL): boolean {
  * - the carried path passes {@link validateBrowserPath}, the same check the
  *   `browser_navigate` tool applies to a model-supplied path.
  *
+ * When a `pathTransform` is supplied (the target host's project rule for its
+ * author/publish role), it is applied to the carried *pathname only* before the
+ * URL is composed - the query and fragment are carried through untouched, and a
+ * rule that does not match leaves the pathname unchanged (see
+ * `pathTransform.ts`). Because a transform deliberately maps between author and
+ * publish path shapes, the allowlist check accepts a page whose **source**
+ * pathname is carryable *or* whose **transformed** pathname is carryable: an
+ * author path carried to publish stays carryable on the source side, while a
+ * publish path carried back to author only becomes a known `/content/...` shape
+ * after the rewrite.
+ *
  * The origin always comes from `targetOrigin` (through
  * {@link buildNavigationUrl}), never from the current URL, so nothing carried
  * can steer the navigation to another origin. Anything else falls back to the
@@ -287,8 +299,10 @@ export function resolveContextualHostUrl(params: {
   readonly currentUrl: string;
   readonly configuredOrigins: readonly string[];
   readonly targetOrigin: string;
+  /** The target host's page-path rewrite rule, already parsed; absent means "carry verbatim". */
+  readonly pathTransform?: PathTransform;
 }): string {
-  const { currentUrl, configuredOrigins, targetOrigin } = params;
+  const { currentUrl, configuredOrigins, targetOrigin, pathTransform } = params;
 
   let current: URL;
   try {
@@ -302,11 +316,16 @@ export function resolveContextualHostUrl(params: {
     return targetOrigin;
   }
   if (originsMatch(current.origin, targetOrigin)) return targetOrigin;
-  if (!isCarryablePagePath(current.pathname) || carriesAuthenticationParameters(current)) {
+  if (carriesAuthenticationParameters(current)) return targetOrigin;
+
+  const pathname = pathTransform
+    ? applyPathTransform(pathTransform, current.pathname)
+    : current.pathname;
+  if (!isCarryablePagePath(current.pathname) && !isCarryablePagePath(pathname)) {
     return targetOrigin;
   }
 
-  const path = validateBrowserPath(`${current.pathname}${current.search}${current.hash}`);
+  const path = validateBrowserPath(`${pathname}${current.search}${current.hash}`);
   if (!path.ok) return targetOrigin;
   const built = buildNavigationUrl({ origin: targetOrigin, path: path.value });
   return built.ok ? built.value : targetOrigin;

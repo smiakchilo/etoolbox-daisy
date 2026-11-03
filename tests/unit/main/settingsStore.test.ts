@@ -509,6 +509,28 @@ describe('normalizeSettingsDocument', () => {
     expect(projects[0]?.['id']).toBe('project-b');
   });
 
+  it('keeps and trims a project’s path-transform rules, and drops an empty one', () => {
+    const normalized = normalize({
+      hosts: [],
+      projects: [
+        {
+          id: 'project-a',
+          label: 'Acme',
+          authorTransform: '  ^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1  ',
+          publishTransform: '   ',
+        },
+      ],
+      proxies: [],
+      agents: { [TEST_AGENT_ID]: { active: true } },
+    });
+
+    const project = (normalized['projects'] as Record<string, unknown>[])[0];
+    expect(project?.['authorTransform']).toBe(
+      '^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1',
+    );
+    expect(project).not.toHaveProperty('publishTransform');
+  });
+
   it('clears a host’s reference to a project that does not resolve', () => {
     const normalized = normalize({
       hosts: [
@@ -1384,6 +1406,27 @@ describe('project library mutations', () => {
     expect(cleared.ok).toBe(true);
     if (cleared.ok) {
       expect(cleared.value.settings.projects[0]).not.toHaveProperty('damRoots');
+    }
+  });
+
+  it('addProject stores path-transform rules, and updateProject clears them when omitted', () => {
+    const added = addProject(defaultAppSettings(), projectId, {
+      label: 'HPE',
+      authorTransform: '  ^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1  ',
+      publishTransform: '^/content/acme/country -> ',
+    });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.value.settings.projects[0]?.authorTransform).toBe(
+      '^(?!/content/acme)(/.*\\.html)$ -> /content/acme/country$1',
+    );
+    expect(added.value.settings.projects[0]?.publishTransform).toBe('^/content/acme/country ->');
+
+    const cleared = updateProject(added.value.settings, projectId, { label: 'HPE' });
+    expect(cleared.ok).toBe(true);
+    if (cleared.ok) {
+      expect(cleared.value.settings.projects[0]).not.toHaveProperty('authorTransform');
+      expect(cleared.value.settings.projects[0]).not.toHaveProperty('publishTransform');
     }
   });
 

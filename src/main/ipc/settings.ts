@@ -918,19 +918,23 @@ function toProjectSnapshot(project: ProjectConfig): ProjectSnapshot {
 }
 
 /**
- * The optional root fields an add/update-project request may carry. Shared so
- * the two mutations cannot drift on which roots they forward.
+ * The optional fields an add/update-project request may carry. Shared so the
+ * two mutations cannot drift on which fields they forward.
  */
-function projectRootFields(request: {
+function projectOptionalFields(request: {
   readonly contentRoots?: string | undefined;
   readonly componentRoots?: string | undefined;
   readonly contentPriorityPaths?: string | undefined;
   readonly damRoots?: string | undefined;
+  readonly authorTransform?: string | undefined;
+  readonly publishTransform?: string | undefined;
 }): {
   contentRoots?: string;
   componentRoots?: string;
   contentPriorityPaths?: string;
   damRoots?: string;
+  authorTransform?: string;
+  publishTransform?: string;
 } {
   return {
     ...(request.contentRoots !== undefined ? { contentRoots: request.contentRoots } : {}),
@@ -939,6 +943,10 @@ function projectRootFields(request: {
       ? { contentPriorityPaths: request.contentPriorityPaths }
       : {}),
     ...(request.damRoots !== undefined ? { damRoots: request.damRoots } : {}),
+    ...(request.authorTransform !== undefined ? { authorTransform: request.authorTransform } : {}),
+    ...(request.publishTransform !== undefined
+      ? { publishTransform: request.publishTransform }
+      : {}),
   };
 }
 
@@ -955,7 +963,7 @@ export async function addProject(
   const newId = newProjectId(() => randomUUID());
   const created = createProjectEntry(loaded.value, newId, {
     label: request.label,
-    ...projectRootFields(request),
+    ...projectOptionalFields(request),
   });
   if (!created.ok) {
     return { ok: false, error: { code: created.error.kind, message: created.error.message } };
@@ -981,7 +989,7 @@ export async function updateProject(
 
   const updated = updateProjectEntry(loaded.value, request.projectId, {
     label: request.label,
-    ...projectRootFields(request),
+    ...projectOptionalFields(request),
   });
   if (!updated.ok) {
     return { ok: false, error: { code: updated.error.kind, message: updated.error.message } };

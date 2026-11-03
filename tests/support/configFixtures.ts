@@ -41,12 +41,14 @@ export function makeAuthorServer(
 export function projectSnapshot(
   id: string,
   label: string,
-  roots: {
+  fields: {
     contentRoots?: string;
     componentRoots?: string;
     contentPriorityPaths?: string;
     damRoots?: string;
+    authorTransform?: string;
+    publishTransform?: string;
   } = {},
 ): ProjectSnapshot {
-  return projectSnapshotSchema.parse({ id: newProjectId(() => id), label, ...roots });
+  return projectSnapshotSchema.parse({ id: newProjectId(() => id), label, ...fields });
 }

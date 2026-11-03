@@ -2220,6 +2220,22 @@ describe('createBrowserToolbar host picker selection (navigateToHost)', () => {
     expect(addressOf(toolbar).value).toBe(expected);
   });
 
+  it('rewrites the carried path with the target host’s transform', () => {
+    const publish = hostOption({
+      id: newServerId(() => 'server-publish'),
+      label: 'Publish',
+      origin: 'https://publish.example',
+      pathTransform: { find: '^/content/acme/country', replace: '' },
+    });
+    const toolbar = build();
+    toolbar.setHostOptions([author, publish]);
+    pushPage('https://author.example/content/acme/country/us/en/home.html');
+
+    toolbar.navigateToHost(publish.origin);
+
+    expect(browser.navigate).toHaveBeenCalledWith('https://publish.example/us/en/home.html');
+  });
+
   it('opens the bare origin for a page outside the allowlist', () => {
     const toolbar = loaded('https://author.example/libs/granite/core/content/login.html');
 

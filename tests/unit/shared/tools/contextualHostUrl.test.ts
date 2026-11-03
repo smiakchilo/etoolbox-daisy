@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isCarryablePagePath, resolveContextualHostUrl } from '../../../../src/shared';
+import {
+  isCarryablePagePath,
+  resolveContextualHostUrl,
+  type PathTransform,
+} from '../../../../src/shared';
 
 const LOCAL = 'http://localhost:4502';
 const CLOUD = 'https://acme.adobe.com';
@@ -153,6 +157,68 @@ describe('resolveContextualHostUrl - falling back to the bare origin', () => {
 
   it('opens the root when dot segments would have walked out of an allowlisted root', () => {
     expect(resolve(`${LOCAL}/content/../libs/granite/core/content/login.html`)).toBe(CLOUD);
+  });
+});
+
+describe('resolveContextualHostUrl - applying a page-path transform', () => {
+  const stripAuthorPrefix: PathTransform = { find: '^/content/acme/country', replace: '' };
+  const prependAuthorPrefix: PathTransform = {
+    find: '^(?!/content/acme)(/.*\\.html)$',
+    replace: '/content/acme/country$1',
+  };
+
+  function resolveTransformed(
+    currentUrl: string,
+    targetOrigin: string,
+    pathTransform: PathTransform,
+  ): string {
+    return resolveContextualHostUrl({
+      currentUrl,
+      configuredOrigins: CONFIGURED,
+      targetOrigin,
+      pathTransform,
+    });
+  }
+
+  it('strips the author prefix when switching to a publish host', () => {
+    expect(
+      resolveTransformed(`${LOCAL}/content/acme/country/us/en/home.html`, CLOUD, stripAuthorPrefix),
+    ).toBe(`${CLOUD}/us/en/home.html`);
+  });
+
+  it('prepends the author prefix when switching back to an author host', () => {
+    expect(resolveTransformed(`${CLOUD}/us/en/home.html`, LOCAL, prependAuthorPrefix)).toBe(
+      `${LOCAL}/content/acme/country/us/en/home.html`,
+    );
+  });
+
+  it('carries the query and fragment through unchanged while rewriting the pathname', () => {
+    expect(
+      resolveTransformed(
+        `${LOCAL}/content/acme/country/us/en/home.html?wcmmode=disabled#/jcr:content`,
+        CLOUD,
+        stripAuthorPrefix,
+      ),
+    ).toBe(`${CLOUD}/us/en/home.html?wcmmode=disabled#/jcr:content`);
+  });
+
+  it('carries the pathname verbatim when the rule does not match a carryable source', () => {
+    expect(resolveTransformed(`${LOCAL}/content/other/x.html`, CLOUD, stripAuthorPrefix)).toBe(
+      `${CLOUD}/content/other/x.html`,
+    );
+    expect(resolveTransformed(`${LOCAL}/crx/de/index.jsp`, CLOUD, prependAuthorPrefix)).toBe(
+      `${CLOUD}/crx/de/index.jsp`,
+    );
+  });
+
+  it('falls back to the bare origin for a publish path the rule does not rewrite to a carryable shape', () => {
+    expect(resolveTransformed(`${LOCAL}/us/en/home.html`, CLOUD, stripAuthorPrefix)).toBe(CLOUD);
+  });
+
+  it('still falls back to the bare origin for a path outside the allowlist', () => {
+    expect(
+      resolveTransformed(`${LOCAL}/libs/granite/core/content/login.html`, CLOUD, stripAuthorPrefix),
+    ).toBe(CLOUD);
   });
 });
 

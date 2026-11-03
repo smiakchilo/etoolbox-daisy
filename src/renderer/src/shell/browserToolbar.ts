@@ -1560,12 +1560,14 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     navigateToHost(origin: string): void {
       const pageOnScreen =
         !homeShown && errorText === null && lastNavigationState?.hasDocument === true;
+      const pathTransform = hostOptions.find((host) => host.origin === origin)?.pathTransform;
       navigateToUrl(
         pageOnScreen
           ? resolveContextualHostUrl({
               currentUrl: currentDisplayedUrl(),
               configuredOrigins: hostOptions.map((host) => host.origin),
               targetOrigin: origin,
+              ...(pathTransform !== undefined ? { pathTransform } : {}),
             })
           : origin,
       );

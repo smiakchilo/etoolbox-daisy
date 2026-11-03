@@ -19,6 +19,7 @@ import { serverLabelSchema } from './serverConfig';
  */
 
 const ENVIRONMENT_ROOT_TEXT_MAX_LENGTH = 2000;
+const PATH_TRANSFORM_TEXT_MAX_LENGTH = 500;
 
 /**
  * Free text naming one or more JCR roots, e.g. `/content/a, /content/b`. The
@@ -33,6 +34,22 @@ export const environmentRootTextSchema = z
   .max(
     ENVIRONMENT_ROOT_TEXT_MAX_LENGTH,
     `must be at most ${String(ENVIRONMENT_ROOT_TEXT_MAX_LENGTH)} characters`,
+  );
+
+/**
+ * Free text naming one page-path rewrite rule (`find -> replace`) applied when
+ * the browser pane switches to a host of this project's role. The
+ * interpretation - splitting on the first `->`, compiling the left side as a
+ * JavaScript regular expression, and using the right side as its replacement
+ * string - lives in `src/shared/tools/core/pathTransform.ts`; this schema only
+ * bounds the string. An empty string is accepted and means "no rule", identical
+ * to omitting the field; the forgiving reader drops it on load.
+ */
+export const pathTransformTextSchema = z
+  .string()
+  .max(
+    PATH_TRANSFORM_TEXT_MAX_LENGTH,
+    `must be at most ${String(PATH_TRANSFORM_TEXT_MAX_LENGTH)} characters`,
   );
 
 export const projectConfigSchema = z
@@ -63,6 +80,20 @@ export const projectConfigSchema = z
      * roots, after the content roots; a plain `aem_query` does not.
      */
     damRoots: environmentRootTextSchema.optional(),
+    /**
+     * A page-path rewrite rule (`find -> replace`) applied when the browser pane
+     * switches *to* an **author** host of this project, so the open page's path
+     * is put back into its author form (e.g. prepending the content root). The
+     * interpretation lives in `src/shared/tools/core/pathTransform.ts`.
+     * Optional: absent means "carry the page path unchanged".
+     */
+    authorTransform: pathTransformTextSchema.optional(),
+    /**
+     * The same rule applied when the pane switches *to* a **publish** host of
+     * this project, so the author form is shortened (e.g. stripping the content
+     * root). Optional: absent means "carry the page path unchanged".
+     */
+    publishTransform: pathTransformTextSchema.optional(),
   })
   .strict();
 

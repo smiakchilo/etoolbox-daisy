@@ -1,6 +1,11 @@
 import { containsFocus, el } from '../lib/dom';
 import { createMultifield } from '../lib/multifield';
-import { type ProjectId, type ProjectSnapshot } from '../../../shared';
+import {
+  parsePathTransform,
+  type PathTransformRejection,
+  type ProjectId,
+  type ProjectSnapshot,
+} from '../../../shared';
 import { createCommitSaver } from './commitSaver';
 import { labelledField } from './fieldHelp';
 import { type SaveOutcome, type StatusBannerSink, confirmDestructiveAction } from './statusBanner';
@@ -41,6 +46,14 @@ function setInvalid(field: TextField, help: HTMLElement, message: string | undef
   help.textContent = message;
 }
 
+/** Human-readable reason a written path-transform rule was rejected, for inline form errors. */
+const PATH_TRANSFORM_ERRORS: Readonly<Record<PathTransformRejection, string>> = {
+  missing_arrow: 'write it as `find -> replace`',
+  empty_find: 'the pattern before `->` must not be empty',
+  invalid_regex: 'the pattern is not a valid regular expression',
+  invalid_replacement: 'the replacement names a capture group the pattern does not have',
+};
+
 /**
  * One project row - a draft (no `projectId`) or an existing library entry. Its
  * label and roots are editable in place and save with no Save button, but a
@@ -65,6 +78,8 @@ function buildProjectItem(
   const componentRootsFieldId = `${fieldIdBase}-component-roots`;
   const priorityPathsFieldId = `${fieldIdBase}-priority-paths`;
   const damRootsFieldId = `${fieldIdBase}-dam-roots`;
+  const authorTransformFieldId = `${fieldIdBase}-author-transform`;
+  const publishTransformFieldId = `${fieldIdBase}-publish-transform`;
 
   const labelField = el('sp-textfield', {
     attrs: {
@@ -127,6 +142,34 @@ function buildProjectItem(
   }) as TextField;
   damRootsField.value = project?.damRoots ?? '';
 
+  // Page-path rewrite rules, one per role. Applied when the browser pane carries
+  // the open page to a host of the matching type; see `pathTransform.ts`.
+  const authorTransformField = el('sp-textfield', {
+    attrs: {
+      id: authorTransformFieldId,
+      class: 'host-field__input',
+      placeholder: 'E.g. ^(?!/content/mysite)(/.*\\.html)$ -> /content/mysite/en$1',
+      'aria-label': 'Author path transform',
+      'data-field': 'project-author-transform',
+    },
+  }) as TextField;
+  authorTransformField.value = project?.authorTransform ?? '';
+  const authorTransformHelp = el('span', { attrs: { slot: 'negative-help-text' } });
+  authorTransformField.append(authorTransformHelp);
+
+  const publishTransformField = el('sp-textfield', {
+    attrs: {
+      id: publishTransformFieldId,
+      class: 'host-field__input',
+      placeholder: 'E.g. ^/content/mysite/en -> ',
+      'aria-label': 'Publish path transform',
+      'data-field': 'project-publish-transform',
+    },
+  }) as TextField;
+  publishTransformField.value = project?.publishTransform ?? '';
+  const publishTransformHelp = el('span', { attrs: { slot: 'negative-help-text' } });
+  publishTransformField.append(publishTransformHelp);
+
   const fields = el('div', {
     attrs: { class: 'host-item__fields' },
     children: [
@@ -160,6 +203,18 @@ function buildProjectItem(
         damRootsField,
         'Where to look for DAM assets in search operations',
       ),
+      labelledField(
+        authorTransformFieldId,
+        'Author path transform',
+        authorTransformField,
+        'How we change a path when switching to an Author host; in the form "find -> replace", where "find" is RegExp and "replace" is the replacement string (may be empty)',
+      ),
+      labelledField(
+        publishTransformFieldId,
+        'Publish path transform',
+        publishTransformField,
+        'How we change a path when switching to a Publish host; in the form "find -> replace", where "find" is RegExp and "replace" is the replacement string (may be empty)',
+      ),
     ],
   });
 
@@ -171,6 +226,8 @@ function buildProjectItem(
   let savedComponentRoots = project?.componentRoots ?? '';
   let savedPriorityPaths = project?.contentPriorityPaths ?? '';
   let savedDamRoots = project?.damRoots ?? '';
+  let savedAuthorTransform = project?.authorTransform ?? '';
+  let savedPublishTransform = project?.publishTransform ?? '';
   /** Whether the remove warning is showing and the OK button is live. */
   let removeArmed = false;
   let busy = false;
@@ -191,6 +248,18 @@ function buildProjectItem(
     return result.ok ? { ok: true, label: result.label } : { ok: false, label: '' };
   }
 
+  /** Immediate inline feedback for a written transform rule; an empty field is valid (no rule). */
+  function validateTransform(field: TextField, help: HTMLElement): boolean {
+    const value = field.value.trim();
+    if (value.length === 0) {
+      setInvalid(field, help, undefined);
+      return true;
+    }
+    const parsed = parsePathTransform(value);
+    setInvalid(field, help, parsed.ok ? undefined : PATH_TRANSFORM_ERRORS[parsed.error]);
+    return parsed.ok;
+  }
+
   /**
    * Runs one save with the item's current values. Returns the outcome promise
    * for the reportSave wiring, or `undefined` when nothing was saved
@@ -206,6 +275,15 @@ function buildProjectItem(
     const componentRoots = componentRootsField.value.trim();
     const contentPriorityPaths = priorityPathsField.value.trim();
     const damRoots = damRootsField.value.trim();
+    const authorTransform = authorTransformField.value.trim();
+    const publishTransform = publishTransformField.value.trim();
+
+    if (
+      !validateTransform(authorTransformField, authorTransformHelp) ||
+      !validateTransform(publishTransformField, publishTransformHelp)
+    ) {
+      return undefined;
+    }
 
     if (projectId === undefined) {
       return window.daisy.settings
@@ -215,6 +293,8 @@ function buildProjectItem(
           ...(componentRoots.length > 0 ? { componentRoots } : {}),
           ...(contentPriorityPaths.length > 0 ? { contentPriorityPaths } : {}),
           ...(damRoots.length > 0 ? { damRoots } : {}),
+          ...(authorTransform.length > 0 ? { authorTransform } : {}),
+          ...(publishTransform.length > 0 ? { publishTransform } : {}),
         })
         .then(
           (result) => {
@@ -225,6 +305,8 @@ function buildProjectItem(
             savedComponentRoots = result.project.componentRoots ?? '';
             savedPriorityPaths = result.project.contentPriorityPaths ?? '';
             savedDamRoots = result.project.damRoots ?? '';
+            savedAuthorTransform = result.project.authorTransform ?? '';
+            savedPublishTransform = result.project.publishTransform ?? '';
             return { ok: true };
           },
           (error: unknown) => ({
@@ -243,7 +325,9 @@ function buildProjectItem(
       contentRoots === savedContentRoots &&
       componentRoots === savedComponentRoots &&
       contentPriorityPaths === savedPriorityPaths &&
-      damRoots === savedDamRoots
+      damRoots === savedDamRoots &&
+      authorTransform === savedAuthorTransform &&
+      publishTransform === savedPublishTransform
     ) {
       return undefined;
     }
@@ -258,6 +342,8 @@ function buildProjectItem(
         ...(componentRoots.length > 0 ? { componentRoots } : {}),
         ...(contentPriorityPaths.length > 0 ? { contentPriorityPaths } : {}),
         ...(damRoots.length > 0 ? { damRoots } : {}),
+        ...(authorTransform.length > 0 ? { authorTransform } : {}),
+        ...(publishTransform.length > 0 ? { publishTransform } : {}),
       })
       .then(
         (result) => (result.ok ? { ok: true } : { ok: false, error: result.error.message }),
@@ -273,6 +359,8 @@ function buildProjectItem(
         savedComponentRoots = componentRoots;
         savedPriorityPaths = contentPriorityPaths;
         savedDamRoots = damRoots;
+        savedAuthorTransform = authorTransform;
+        savedPublishTransform = publishTransform;
       }
     });
     return outcome;
@@ -289,6 +377,8 @@ function buildProjectItem(
   /** Immediate inline feedback for the label, before any save. */
   function validateFieldsNow(): void {
     validateLabel();
+    validateTransform(authorTransformField, authorTransformHelp);
+    validateTransform(publishTransformField, publishTransformHelp);
   }
 
   /** Arms the serialized commit (see `createCommitSaver`). */
@@ -323,6 +413,8 @@ function buildProjectItem(
     componentRootsField,
     priorityPathsField,
     damRootsField,
+    authorTransformField,
+    publishTransformField,
   ]) {
     field.addEventListener('input', onFieldInput);
     field.addEventListener('change', onFieldCommit);

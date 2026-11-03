@@ -440,12 +440,12 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     hostOrigins = snapshot.hosts.map((host) => host.origin);
     browserPane.update({
       addressValue: computeAddressBarValue(),
-      hostOptions: buildHostOptions(snapshot.hosts),
+      hostOptions: buildHostOptions(snapshot.hosts, snapshot.projects),
     });
     chatPane.setAgents(snapshot.agents);
     // History labels each row with its chat's host; the ids are stable across
     // renames, so the panel re-resolves them from this list on every reload.
-    historyPanel.setServers(buildHostOptions(snapshot.hosts));
+    historyPanel.setServers(buildHostOptions(snapshot.hosts, snapshot.projects));
     publishLinkContext();
   }
 

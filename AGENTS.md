@@ -153,7 +153,7 @@ that: **no Electron, no Node built-ins, no browser globals** under
 | `contracts/errors.ts` | The error taxonomy and `requiredAction` values |
 | `contracts/origin.ts` | Origin normalization and comparison |
 | `contracts/serverConfig.ts` | A host entry (id, label, colour, address, optional `type` — Author/Publish/`(Default)` —, optional `projectId`, revision) |
-| `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component/DAM roots, content priority paths) shared by several hosts, referenced by a host's optional `projectId` |
+| `contracts/projectConfig.ts` | A project entry — host-structure facts (content/component/DAM roots, content priority paths, and the author/publish `find -> replace` page-path transform rules) shared by several hosts, referenced by a host's optional `projectId` |
 | `contracts/appSettings.ts` | The persisted settings document — **no `schemaVersion`** (see §7) |
 | `contracts/settingsSnapshot.ts` | The redacted snapshot the renderer is allowed to see |
 | `contracts/chatMetadata.ts` | Chat list entries (title, date, server, selection) |
@@ -213,7 +213,22 @@ and the per-surface IPC type files (`agent-chat-ipc.ts`, `browser-ipc.ts`,
 > `normalizeSettingsDocument` in `src/main/settingsStore.ts`; the contract
 > schemas themselves stay `.strict()`. If you must change another contract, say
 > so explicitly and search for the blast radius **outside `tests/unit`** too.
-> The most recent shared-surface change **gives a host a descriptive `type`**
+> The most recent shared-surface change **adds author/publish page-path
+> transform rules to a project** (2026-11-03): `contracts/projectConfig.ts` gains
+> `pathTransformTextSchema` (a bounded string) and optional `authorTransform` /
+> `publishTransform` on `projectConfigSchema` - a `find -> replace` rule applied
+> when the pane carries the open page to a host of that role - and
+> `contracts/settingsSnapshot.ts` + `settings-ipc.ts` follow (the add/update
+> project request schemas carry both fields). A new dependency-free
+> `src/shared/tools/core/pathTransform.ts` owns the one parser/validator/applier
+> (`parsePathTransform`, `applyPathTransform`, `resolvePathTransform`), and
+> `navigation.ts`'s `resolveContextualHostUrl` gains an optional `pathTransform`
+> while its carryable check now accepts a page whose *transformed* path is
+> carryable, not only the source - so a publish path carried back to author is
+> recognized after the rewrite. See §5's "The hosts picker carries the open
+> page" bullet and `docs/verification/followons-2026-10.md` "Author/publish
+> page-path transforms ... (2026-11-03)". Before that the most recent
+> shared-surface change **gives a host a descriptive `type`**
 > (2026-11-03): `contracts/serverConfig.ts` gains `HOST_TYPES` / `HostType` /
 > `hostTypeSchema` (`author`, `publish`; absent = "(Default)") and an optional
 > `type` on `serverConfigSchema`, which joins `ServerPresentationChanges`
@@ -2249,7 +2264,23 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 5019 passed / 13 skipped** (5032 total) - the
+Current baseline: **`npm run test` → 5051 passed / 13 skipped** (5064 total) - the
+suite is fully green here, +32 against the 5019 run below, for **author/publish
+page-path transforms** (2026-11-03): a project gains two optional
+`find -> replace` rewrite rules (`authorTransform` / `publishTransform`, both
+`E.g.`-placeholder text fields on the Settings "Projects" tab) applied when the
+browser pane carries the open page to a host of the matching role - the
+`publishTransform` strips the content root on the way to publish, the
+`authorTransform` restores it on the way back. A new
+`src/shared/tools/core/pathTransform.ts` owns the one parser/validator/applier;
+`resolveContextualHostUrl` (`navigation.ts`) gains an optional `pathTransform`
+and its carryable check now accepts a page whose *transformed* path is carryable,
+not only the source. The +32 is 17 `pathTransform`, 6 `contextualHostUrl`, 2
+`shellViewModel`, 1 `settingsSnapshot`, 1 `browserToolbar`, 2 `settingsStore` and
+3 `projectsSection` cases. Playwright is unchanged at 178 tests (no E2E was added:
+the feature is pure path logic plus textfields, and the base carry-on-switch is
+already covered by `host-switch-contextual.spec.ts`).
+Before that it was **`npm run test` → 5019 passed / 13 skipped** (5032 total) - the
 suite is fully green here, +22 against the 4997 run below, for **the host "Type"
 field** (2026-11-03): a host gains a descriptive `type` (`HOST_TYPES` =
 `author`/`publish`, absent = "(Default)") end to end - contract, snapshot, IPC,

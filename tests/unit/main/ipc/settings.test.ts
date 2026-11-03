@@ -1421,6 +1421,7 @@ describe('project library ipc', () => {
       label: 'HPE',
       contentRoots: '/content/a; /content/b',
       damRoots: '/content/dam/a',
+      authorTransform: '^(?!/content/a)(/.*\\.html)$ -> /content/a/en$1',
     });
 
     expect(result.ok).toBe(true);
@@ -1428,6 +1429,7 @@ describe('project library ipc', () => {
     expect(result.project.label).toBe('HPE');
     expect(result.project.contentRoots).toBe('/content/a; /content/b');
     expect(result.project.damRoots).toBe('/content/dam/a');
+    expect(result.project.authorTransform).toBe('^(?!/content/a)(/.*\\.html)$ -> /content/a/en$1');
 
     const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
     if (!snapshot.ok) throw new Error('expected ok snapshot result');
