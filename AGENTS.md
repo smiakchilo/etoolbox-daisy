@@ -2264,19 +2264,22 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 5059 passed / 13 skipped** (5072 total) - the
-suite is fully green here, +8 against the 5051 run below, for **the startup
+Current baseline: **`npm run test` → 5060 passed / 13 skipped** (5073 total) - the
+suite is fully green here, +9 against the 5051 run below, for **the startup
 journal restore moving off the page's critical path** (2026-11-03): the browser
 navigation is dispatched before the chat pane's local journal read
 (`ChatPaneOptions.startupConversationReady`), the read itself is asynchronous
 and chunk-parsed (`readChatJournalAsync`, `JOURNAL_PARSE_CHUNK_LINES` = 512),
-and the startup replay is chunked (`replayJournalIntoTranscriptAsync`,
-`REPLAY_CHUNK_RECORDS` = 50). The +8 is 5 `chatJournalReader`, 1 `chatPane` and
-2 `journalReplay` cases. Measured: a 1.4 MB journal no longer stalls the main
-process 179 ms or the renderer 160 ms; mount -> home hidden falls from 299-309 ms
-to 141-142 ms (and from 233 ms to 165-186 ms for 110 KB). See
-`docs/verification/followons-2026-10.md` "Startup: the journal restore no longer
-holds the page back (2026-11-03)".
+the startup replay is chunked (`replayJournalIntoTranscriptAsync`,
+`REPLAY_CHUNK_RECORDS` = 50), and the startup restore's loading row appears at
+once (`NavigateOptions.loadingImmediately`, startup only - every other
+navigation keeps the 200 ms debounce). The +9 is 5 `chatJournalReader`, 1
+`chatPane`, 2 `journalReplay` and 1 `browserToolbar` case. Measured: a 1.4 MB
+journal no longer stalls the main process 179 ms or the renderer 160 ms;
+mount -> home hidden falls from 299-309 ms to 141-142 ms (and from 233 ms to
+165-186 ms for 110 KB), and the loading row appears at mount + 29 ms instead of
+mount + 254 ms. See `docs/verification/followons-2026-10.md` "Startup: the
+journal restore no longer holds the page back (2026-11-03)".
 Before that it was **`npm run test` → 5051 passed / 13 skipped** (5064 total) - the
 suite is fully green here, +32 against the 5019 run below, for **author/publish
 page-path transforms** (2026-11-03): a project gains two optional

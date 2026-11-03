@@ -1,6 +1,6 @@
 import { el } from '../lib/dom';
 import { createStatusBanner, type StatusBannerSink } from '../settings/statusBanner';
-import { createBrowserToolbar } from './browserToolbar';
+import { createBrowserToolbar, type NavigateOptions } from './browserToolbar';
 import { createBrowserViewHost } from './browserViewHost';
 import { createFindBar } from './findBar';
 import { createHomeScreen, type HomeScreen } from './homeScreen';
@@ -75,8 +75,12 @@ export interface BrowserPane {
    * selection would. The shell routes a transcript link here so the browser
    * pane owns the navigation and, in particular, its failure: a failed load
    * shows the pane's error row (with Reload) rather than a chat-pane error.
+   *
+   * `options.loadingImmediately` is for the startup restore only (see
+   * `NavigateOptions`): it shows the loading row as the navigation is
+   * dispatched instead of after the toolbar's debounce.
    */
-  navigate(url: string): void;
+  navigate(url: string, options?: NavigateOptions): void;
   /** Reveals the pane's home (welcome) screen over any loaded page (the Alt+Home shortcut). */
   showHome(): void;
   /**
@@ -488,8 +492,8 @@ export function createBrowserPane(callbacks: BrowserPaneCallbacks = {}): Browser
     closeFind(): void {
       findBar.close();
     },
-    navigate(url: string): void {
-      toolbar.navigateTo(url);
+    navigate(url: string, options?: NavigateOptions): void {
+      toolbar.navigateTo(url, options);
     },
     showHome(): void {
       showHome();

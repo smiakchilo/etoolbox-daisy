@@ -131,8 +131,12 @@ export interface BrowserToolbar {
    * typed address. Used by the hosts picker's selection and by a transcript
    * link (routed here by the shell so every browser navigation - and every
    * navigation failure - is owned by this pane, never the chat pane).
+   *
+   * `options.loadingImmediately` is only for the startup restore: a returning
+   * user is already watching an empty pane, so waiting out the loading row's
+   * debounce there adds a visible pause for no layout-shift benefit.
    */
-  navigateTo(url: string): void;
+  navigateTo(url: string, options?: NavigateOptions): void;
   /**
    * The hosts picker's selection: navigates to `origin`, carrying the open page
    * along when it is one that can be replayed on another host
@@ -156,6 +160,17 @@ export interface BrowserToolbar {
   focusAddress(): void;
   /** Unsubscribes from `onStateChanged`/`onSwitchStateChanged`/`onCertificateBlocked`. */
   dispose(): void;
+}
+
+export interface NavigateOptions {
+  /**
+   * Shows the loading row as the navigation is dispatched, instead of after
+   * `LOADING_BANNER_DELAY_MS` of sustained load. Used only by the startup
+   * restore: the pane is already on the home screen and the user is waiting,
+   * so the debounce (which exists to avoid a layout shift on a quick load)
+   * only adds a silent pause here.
+   */
+  readonly loadingImmediately?: boolean;
 }
 
 export interface BrowserToolbarCallbacks {
@@ -599,7 +614,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // reading. A user-initiated navigation clears the error first (see
     // `performNavigate`), so the loading presentation is never lost for a load
     // the user actually asked for.
-    const loading = errorText === null && (switching || isLoading);
+    const loading = errorText === null && (switching || isLoading || immediateLoading);
 
     // The Refresh/Stop swap is deliberately NOT debounced with the banner: a
     // real browser swaps the control the instant a navigation starts. Every
@@ -628,7 +643,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
         loadingBannerTimer = setTimeout(() => {
           loadingBannerTimer = null;
           const stillLoading =
-            switching || (lastNavigationState?.isLoading === true && !failedNavigation);
+            switching ||
+            immediateLoading ||
+            (lastNavigationState?.isLoading === true && !failedNavigation);
           if (stillLoading) {
             applyLoadingPresentation();
           } else {
@@ -825,14 +842,22 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
    * the edit-mode toggle, so both do the identical thing: update the field and
    * its paired chip/external state, then navigate exactly like a typed address.
    */
-  function navigateToUrl(url: string): void {
+  function navigateToUrl(url: string, options?: NavigateOptions): void {
     addressField.value = url;
     refreshAddressLabel();
     refreshExternalButton();
-    performNavigate(url);
+    performNavigate(url, options);
   }
 
-  function performNavigate(target: string): void {
+  // Set while the navigation currently in flight was asked for an immediate
+  // loading row (the startup restore). It keeps the row up for the whole load
+  // even if a transient state push says `isLoading: false` before the switch's
+  // own `switching` edge lands; `handleVoidResult` clears it when the
+  // navigation settles. Every other navigation leaves it false, so the
+  // debounce applies as before.
+  let immediateLoading = false;
+
+  function performNavigate(target: string, options?: NavigateOptions): void {
     const token = ++navigationToken;
     callbacks.onNavigationStarted?.();
     // A user-initiated navigation is what clears a previous error row (see
@@ -840,6 +865,12 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     // may take the row again.
     errorText = null;
     errorRetry = null;
+    immediateLoading = options?.loadingImmediately === true;
+    if (immediateLoading) {
+      // The startup restore: the row appears at once rather than after the
+      // debounce (see `NavigateOptions.loadingImmediately`).
+      applyLoadingPresentation();
+    }
     const previous = currentDisplayedUrl();
     void window.daisy.browser.navigate(target).then((result) =>
       handleVoidResult(result, {
@@ -857,6 +888,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     callbacks.onNavigationStarted?.();
     errorText = null;
     errorRetry = null;
+    immediateLoading = false;
     const previous = currentDisplayedUrl();
     void window.daisy.browser.reload().then((result) =>
       handleVoidResult(result, {
@@ -874,6 +906,7 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     callbacks.onNavigationStarted?.();
     errorText = null;
     errorRetry = null;
+    immediateLoading = false;
     const previous = currentDisplayedUrl();
     const retry = (): void => performHistory(direction);
     const command =
@@ -887,6 +920,9 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
   }
 
   function handleVoidResult(result: BrowserIpcVoidResult, attempt?: NavigationAttempt): void {
+    // The navigation this immediate-loading flag belonged to has settled; from
+    // here the debounce (and the state pushes) own the presentation again.
+    immediateLoading = false;
     if (!result.ok) {
       // The awaited load has settled; a buffered `isLoading:true` push must not
       // keep the Stop/banner up past the failure.
@@ -1554,8 +1590,8 @@ export function createBrowserToolbar(callbacks: BrowserToolbarCallbacks): Browse
     setAgentPaneOpen(open: boolean): void {
       renderAgentToggle(open);
     },
-    navigateTo(url: string): void {
-      navigateToUrl(url);
+    navigateTo(url: string, options?: NavigateOptions): void {
+      navigateToUrl(url, options);
     },
     navigateToHost(origin: string): void {
       const pageOnScreen =

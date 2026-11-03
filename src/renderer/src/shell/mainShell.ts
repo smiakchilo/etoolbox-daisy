@@ -575,7 +575,11 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
     )
       return false;
 
-    browserPane.navigate(url);
+    // A returning user is already watching the home screen, so the restore's
+    // loading row appears as the navigation is dispatched rather than after
+    // the toolbar's debounce (which exists only to avoid a layout shift on a
+    // quick, user-initiated load).
+    browserPane.navigate(url, { loadingImmediately: true });
     return true;
   }
 

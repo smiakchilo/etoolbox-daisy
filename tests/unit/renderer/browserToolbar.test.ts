@@ -212,6 +212,28 @@ describe('createBrowserToolbar loading state machine', () => {
     expectRefreshMode(toolbar);
   });
 
+  it('shows the loading row immediately when the startup restore asks for it', () => {
+    vi.useFakeTimers();
+    // A real navigate resolves only when the load settles; keep it pending so
+    // the immediate-loading flag is not cleared by `handleVoidResult`.
+    browser.navigate.mockReturnValue(new Promise<never>(() => undefined));
+    const toolbar = build();
+    const message = findMessage(toolbar);
+
+    toolbar.navigateTo('https://author.example/content/page.html', { loadingImmediately: true });
+
+    expect(browser.navigate).toHaveBeenCalledTimes(1);
+    // No state push and no debounce: the row is already up, loading.
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
+    expect(message.querySelector('.banner-row__progress')).not.toBeNull();
+    expectStopMode(toolbar);
+
+    vi.advanceTimersByTime(1000);
+    expect(message.hasAttribute('open')).toBe(true);
+    expect(message.classList.contains(BANNER_ROW_LOADING_CLASS)).toBe(true);
+  });
+
   it('arms the loading presentation from Back/Forward too', () => {
     vi.useFakeTimers();
     const toolbar = build();
