@@ -10,7 +10,10 @@ import { createFindBar } from './findBar';
 import { createTranscriptFindController } from '../chat/transcriptFind';
 import type { SettingsTab } from './settingsPanel';
 import { createComposer, type ComposerSendOutcome } from '../chat/composer';
-import { replayJournalIntoTranscript } from '../chat/journalReplay';
+import {
+  replayJournalIntoTranscript,
+  replayJournalIntoTranscriptAsync,
+} from '../chat/journalReplay';
 import {
   type UsageRow,
   createSessionUsage,
@@ -275,11 +278,19 @@ export interface ChatPaneOptions {
   readonly onNavigateInBrowser?: (url: string) => void;
   /**
    * Resolves the conversation to restore on startup, or `undefined` to start a
-   * fresh one. Called at most once, as early as the pane is constructed: the
-   * journal it returns is painted before the runtime is ready, and the session
-   * it names is resumed later, when the service reports ready.
+   * fresh one. Called at most once: the journal it names is painted before the
+   * runtime is ready, and the session it names is resumed later, when the
+   * service reports ready.
    */
   readonly resolveStartupConversation?: () => Promise<StartupConversation | undefined>;
+  /**
+   * Settles once the shell has dispatched the remembered page's restore. The
+   * local journal read waits for it, so it is never serviced ahead of the
+   * browser navigation on the same threads (the read used to delay the page on
+   * startup). Optional: a unit test, or a shell with no page to restore, needs
+   * no gate.
+   */
+  readonly startupConversationReady?: Promise<void>;
   /**
    * Records the active conversation and its live SDK session id, so it can be
    * genuinely resumed on the next launch. Called after a successful resume and
@@ -465,9 +476,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   // and the disabled Send cover the actual resume work, not just the wait before
   // it begins.
   let pendingStartup: StartupConversation | undefined;
-  // Whether the startup journal has been replayed into the transcript. Guards
-  // against replaying it twice when the preload wins the race to paint.
-  let startupJournalPainted = false;
+  // The startup journal's paint, memoised so the preload and a ready status
+  // share one completion: the ready path adopts the conversation and resumes
+  // its session only once the transcript is actually populated. A boolean
+  // "painted" flag would let the second caller proceed before the first one's
+  // chunked replay finished.
+  let startupJournalPaint: Promise<void> | undefined;
   // Set synchronously when the pane commits to resuming a startup conversation,
   // before the resume RPC awaits. A status poll landing in that window sees this
   // and skips, instead of resolving the startup conversation again and opening a
@@ -798,6 +812,12 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     startupConversationPromise ??= (async () => {
       if (options.resolveStartupConversation === undefined) return undefined;
       try {
+        // The remembered page's restore is dispatched first (see
+        // `startupConversationReady`): the local read below must not be
+        // serviced ahead of the browser navigation on the same threads.
+        if (options.startupConversationReady !== undefined) {
+          await options.startupConversationReady;
+        }
         return await options.resolveStartupConversation();
       } catch {
         return undefined;
@@ -809,40 +829,50 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
   /**
    * Paints a saved conversation's journal into the transcript, at most once.
    * The journal is local and needs no SDK session, so this is what lets the
-   * transcript appear while `copilot-runtime.exe` is still cold-starting.
+   * transcript appear while `copilot-runtime.exe` is still cold-starting. The
+   * replay is chunked (`replayJournalIntoTranscriptAsync`) so a long
+   * conversation cannot block the renderer while the browser pane restores its
+   * page beside it.
    */
-  function paintStartupJournal(startup: StartupConversation): void {
-    if (startupJournalPainted) return;
-    startupJournalPainted = true;
-    // If the pane already owns a conversation, main adopted it before this
-    // local journal read resolved - a renderer reload (the app surface's
-    // right-click "Reload") leaves main owning the chat the pane last opened,
-    // and the fast in-memory status read can beat this disk read. The adopted
-    // id wins: a *different* conversation means this journal is stale and must
-    // not be shown; the *same* one still has history worth painting, but no
-    // resume is pending - main already owns it - so `pendingStartup` must stay
-    // clear or the "Restoring conversation..." row would be stranded, since the
-    // only code that clears it runs while the pane still owns no chat.
-    if (chatId !== undefined && chatId !== startup.chatId) return;
-    if (chatId === undefined) pendingStartup = startup;
-    replayJournalIntoTranscript(startup.records, transcriptStore, isDeterministicTablePrompt);
-    replayJournalIntoUsage(startup.records, sessionUsage);
-    conversationHasMessage = true;
-    refreshEmptyState();
-    repaintTranscript();
+  function paintStartupJournal(startup: StartupConversation): Promise<void> {
+    startupJournalPaint ??= (async () => {
+      // If the pane already owns a conversation, main adopted it before this
+      // local journal read resolved - a renderer reload (the app surface's
+      // right-click "Reload") leaves main owning the chat the pane last opened,
+      // and the fast in-memory status read can beat this disk read. The adopted
+      // id wins: a *different* conversation means this journal is stale and must
+      // not be shown; the *same* one still has history worth painting, but no
+      // resume is pending - main already owns it - so `pendingStartup` must stay
+      // clear or the "Restoring conversation..." row would be stranded, since the
+      // only code that clears it runs while the pane still owns no chat.
+      if (chatId !== undefined && chatId !== startup.chatId) return;
+      if (chatId === undefined) pendingStartup = startup;
+      await replayJournalIntoTranscriptAsync(
+        startup.records,
+        transcriptStore,
+        isDeterministicTablePrompt,
+      );
+      replayJournalIntoUsage(startup.records, sessionUsage);
+      conversationHasMessage = true;
+      refreshEmptyState();
+      repaintTranscript();
+    })();
+    return startupJournalPaint;
   }
 
   /**
    * Reads the saved conversation's journal and paints it *before* the agent
    * runtime is ready - the read is local, and the session it belongs to is
-   * resumed later, when the service reports ready. Runs at construction, in
-   * parallel with the runtime's cold start, so the transcript no longer waits
-   * on the SDK. A no-op when there is nothing to restore.
+   * resumed later, when the service reports ready. Started at construction,
+   * in parallel with the runtime's cold start, so the transcript does not wait
+   * on the SDK; it begins once the shell has dispatched the remembered page's
+   * restore (`startupConversationReady`), so it never delays that page. A no-op
+   * when there is nothing to restore.
    */
   async function preloadStartupConversation(): Promise<void> {
     const startup = await ensureStartupConversation();
     if (startup === undefined) return;
-    paintStartupJournal(startup);
+    await paintStartupJournal(startup);
     refreshSessionPresentation();
   }
 
@@ -931,7 +961,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
           // what keeps the "Restoring conversation..." row up (and Send
           // disabled) while the session is actually being resumed, rather than
           // clearing the moment the work begins.
-          paintStartupJournal(startup);
+          await paintStartupJournal(startup);
           adoptChatId(startup.chatId);
           latestSessionId = startup.sessionId;
           const opened = await openConversation(startup.chatId, startup.sessionId);

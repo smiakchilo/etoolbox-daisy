@@ -205,6 +205,15 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   // shared with the startup-chat resolver, which needs the same snapshot.
   const snapshotPromise = loadSettingsSnapshot();
 
+  // Released once the remembered page's navigation has been dispatched (see
+  // `ChatPaneOptions.startupConversationReady`): the chat pane's local journal
+  // read waits for it, so it is never serviced ahead of `browser:navigate` on
+  // the same threads, which delayed the page on startup.
+  let releaseStartupConversation: () => void = () => undefined;
+  const startupConversationReady = new Promise<void>((resolve) => {
+    releaseStartupConversation = resolve;
+  });
+
   const chatPane = createChatPane({
     onOpenSettings(tab) {
       // Selecting before opening means the panel paints on the requested tab
@@ -228,6 +237,7 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
       browserPane.navigate(url);
     },
     resolveStartupConversation,
+    startupConversationReady,
     onConversationUsed(chatId, sessionId) {
       // The server-match gate reads this back: a chat is only worth remembering
       // when it was used against a configured host, and only that host's page
@@ -616,26 +626,34 @@ export async function mountMainShell(root: HTMLElement): Promise<void> {
   const shellResizeObserver = new ResizeObserver(() => splitView.relayout());
   shellResizeObserver.observe(splitView.element);
 
-  const result = await snapshotPromise;
-  if (result.ok) {
-    applySnapshot(result.snapshot);
-    // Restoring the last opened page takes precedence over the hosts picker, so
-    // a returning user lands on the page they left. When there is no page to
-    // restore, a configured-host profile keeps its long-standing startup
-    // affordance: the picker leads with the list ready to choose from. It no
-    // longer *covers a blank region* - the home screen sits beneath it, so
-    // dismissing the picker reveals the home screen, not a bare view. A profile
-    // with no hosts gets the home screen alone (its Settings action is the way
-    // to add the first host); nothing is auto-opened to cover a gap.
-    const restored = restoreLastPage(result.snapshot);
-    if (!restored && result.snapshot.hosts.length > 0) {
-      browserPane.openHostsPicker();
+  try {
+    const result = await snapshotPromise;
+    if (result.ok) {
+      applySnapshot(result.snapshot);
+      // Restoring the last opened page takes precedence over the hosts picker, so
+      // a returning user lands on the page they left. When there is no page to
+      // restore, a configured-host profile keeps its long-standing startup
+      // affordance: the picker leads with the list ready to choose from. It no
+      // longer *covers a blank region* - the home screen sits beneath it, so
+      // dismissing the picker reveals the home screen, not a bare view. A profile
+      // with no hosts gets the home screen alone (its Settings action is the way
+      // to add the first host); nothing is auto-opened to cover a gap.
+      const restored = restoreLastPage(result.snapshot);
+      if (!restored && result.snapshot.hosts.length > 0) {
+        browserPane.openHostsPicker();
+      }
+    } else {
+      console.warn('[daisy] failed to load settings snapshot:', result.error);
+      // No usable host list: the home screen is the landing surface, and its
+      // "Open settings" action leads to the panel whose own reload surfaces the
+      // load error in its status row.
     }
-  } else {
-    console.warn('[daisy] failed to load settings snapshot:', result.error);
-    // No usable host list: the home screen is the landing surface, and its
-    // "Open settings" action leads to the panel whose own reload surfaces the
-    // load error in its status row.
+  } finally {
+    // The remembered page's restore (or the hosts picker / home fallback) has
+    // now been dispatched, so the chat pane may resolve and paint its own
+    // conversation - never before, or its local journal read would queue ahead
+    // of the browser navigation on the same threads.
+    releaseStartupConversation();
   }
 
   // Unsubscribes the toolbar's `onStateChanged`/`onSwitchStateChanged`

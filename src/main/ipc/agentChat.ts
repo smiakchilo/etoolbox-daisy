@@ -153,9 +153,12 @@ export interface AgentChatIpcDependencies {
    * Reads one chat's journal and returns the wire result. Built in the
    * composition root (`index.ts`) so this handler stays free of filesystem and
    * path concerns; a missing/unreadable journal is an `ok: false` result, never
-   * a throw.
+   * a throw. Asynchronous so the local read cannot block the navigation IPC a
+   * startup restore has in flight beside it.
    */
-  readonly readJournal: (request: AgentChatReadJournalRequest) => AgentChatReadJournalResult;
+  readonly readJournal: (
+    request: AgentChatReadJournalRequest,
+  ) => Promise<AgentChatReadJournalResult>;
   /**
    * Reveals one chat's journal file in the OS file manager, for the transcript
    * footer's session-id anchor. Built in the composition root so this handler
@@ -269,7 +272,7 @@ export function registerAgentChatIpcHandlers(deps: AgentChatIpcDependencies): ()
 
   ipcMain.handle(
     AGENT_CHAT_READ_JOURNAL_CHANNEL,
-    (event, rawRequest: unknown): AgentChatReadJournalResult => {
+    async (event, rawRequest: unknown): Promise<AgentChatReadJournalResult> => {
       if (!checkSender(event)) return untrustedReadJournalResult();
       const parsed = agentChatReadJournalRequestSchema.safeParse(rawRequest);
       if (!parsed.success) return invalidPayloadReadJournalResult(parsed.error.message);

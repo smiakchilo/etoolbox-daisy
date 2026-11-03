@@ -40,37 +40,96 @@ export function replayJournalIntoTranscript(
   shouldSuppressTurn: (prompt: string) => boolean = () => false,
 ): void {
   for (const record of records) {
-    switch (record.recordType) {
-      case 'user.prompt':
-        // The application's own reflection prompt was never the user's message.
-        if (record.origin === 'reflection') break;
-        transcriptStore.applyUserPrompt(record.turnId, record.prompt);
-        // The table-only decision is re-derived from the replayed prompt, so a
-        // search turn's prose stays hidden after a restart exactly as it was
-        // live - and, symmetrically, a turn that produced no table keeps its
-        // prose. The mark is only an expectation; the store hides the text when
-        // the turn's own `format_table` lands.
-        if (shouldSuppressTurn(record.prompt)) {
-          transcriptStore.markTableOnlyTurn(record.turnId);
-        }
-        break;
-      case 'agent.event':
-        transcriptStore.applyEvent(record.event);
-        break;
-      case 'interruption':
-        transcriptStore.addInterruption(record.reason, false);
-        break;
-      case 'header':
-      case 'session.opened':
-      case 'assistant.message.partial':
-      case 'tool.call.abandoned':
-      case 'chat.closed':
-      case 'turn.summary':
-        break;
+    applyJournalRecord(record, transcriptStore, shouldSuppressTurn);
+  }
+  finishJournalReplay(transcriptStore);
+}
+
+/**
+ * Records one journal entry into the transcript. Shared by the synchronous
+ * replay (History resume) and the chunked startup replay below.
+ */
+function applyJournalRecord(
+  record: ChatJournalRecord,
+  transcriptStore: TranscriptStore,
+  shouldSuppressTurn: (prompt: string) => boolean,
+): void {
+  switch (record.recordType) {
+    case 'user.prompt':
+      // The application's own reflection prompt was never the user's message.
+      if (record.origin === 'reflection') break;
+      transcriptStore.applyUserPrompt(record.turnId, record.prompt);
+      // The table-only decision is re-derived from the replayed prompt, so a
+      // search turn's prose stays hidden after a restart exactly as it was
+      // live - and, symmetrically, a turn that produced no table keeps its
+      // prose. The mark is only an expectation; the store hides the text when
+      // the turn's own `format_table` lands.
+      if (shouldSuppressTurn(record.prompt)) {
+        transcriptStore.markTableOnlyTurn(record.turnId);
+      }
+      break;
+    case 'agent.event':
+      transcriptStore.applyEvent(record.event);
+      break;
+    case 'interruption':
+      transcriptStore.addInterruption(record.reason, false);
+      break;
+    case 'header':
+    case 'session.opened':
+    case 'assistant.message.partial':
+    case 'tool.call.abandoned':
+    case 'chat.closed':
+    case 'turn.summary':
+      break;
+  }
+}
+
+/**
+ * How many records the startup replay applies before yielding to the event
+ * loop. A journal is local and can hold a whole long conversation's tool calls;
+ * replaying it in one synchronous burst blocks the renderer exactly while the
+ * remembered page is committing, which delayed the page's own startup. A small
+ * journal stays under one chunk and therefore replays synchronously.
+ */
+export const REPLAY_CHUNK_RECORDS = 50;
+
+/**
+ * The startup sibling of {@link replayJournalIntoTranscript}: same result, but
+ * applied in chunks so a large journal cannot block the renderer while the
+ * browser pane is still restoring its page (a `browser:state-changed` push, the
+ * first paint of the transcript).
+ */
+export async function replayJournalIntoTranscriptAsync(
+  records: readonly ChatJournalRecord[],
+  transcriptStore: TranscriptStore,
+  shouldSuppressTurn: (prompt: string) => boolean = () => false,
+): Promise<void> {
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (record !== undefined) applyJournalRecord(record, transcriptStore, shouldSuppressTurn);
+    if ((index + 1) % REPLAY_CHUNK_RECORDS === 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
-  // A rebuilt transcript has no live turn, so nothing can still be running: a
-  // call the journal left without a result renders as an honest non-spinning
+  finishJournalReplay(transcriptStore);
+  // One last yield before the caller's synchronous DOM build (`repaintTranscript`
+  // in the startup preload): a `browser:state-changed` push for the remembered
+  // page, which is what reveals the page and hides the home veil, may be queued
+  // behind this task. Letting it run first keeps a long conversation's repaint
+  // from holding the page back. A journal that stayed within one chunk replays
+  // synchronously end to end, exactly like the synchronous sibling - there is
+  // nothing to yield between.
+  if (records.length > REPLAY_CHUNK_RECORDS) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/**
+ * The settlement every replay ends with: a rebuilt transcript has no live turn,
+ * so nothing can still be running.
+ */
+function finishJournalReplay(transcriptStore: TranscriptStore): void {
+  // A call the journal left without a result renders as an honest non-spinning
   // "Interrupted" billet instead of a spinner that will never stop.
   //
   // This sweep is derived from the calls' own statuses, not from the store's

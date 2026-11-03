@@ -67,7 +67,7 @@ import { createChatHistoryPager } from './chatHistoryPager';
 import { createChatJournal } from './chatJournal';
 import { toChatFileName } from './chatJournalPaths';
 import {
-  readChatJournal,
+  readChatJournalAsync,
   readChatSessionIds,
   type ChatJournalReadFailureReason,
 } from './chatJournalReader';
@@ -1130,10 +1130,12 @@ if (smokeTest) {
       mainWebContentsId: mainWindow.webContents.id,
       rendererWebContents: mainWindow.webContents,
       // Reads a chat's journal from the app's own `chats` directory. The read
-      // is bounded and never throws; a failure comes back as an `ok: false`
-      // result, which the renderer treats as "nothing to repaint".
-      readJournal: (request) => {
-        const outcome = readChatJournal(appPaths.chats, request.chatId);
+      // is bounded, asynchronous and chunked, so it cannot block the page
+      // restore that is in flight at startup; it never throws, and a failure
+      // comes back as an `ok: false` result, which the renderer treats as
+      // "nothing to repaint".
+      readJournal: async (request) => {
+        const outcome = await readChatJournalAsync(appPaths.chats, request.chatId);
         if (!outcome.ok) {
           return { ok: false, error: describeJournalReadFailure(outcome.reason) };
         }

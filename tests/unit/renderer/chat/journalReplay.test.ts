@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { replayJournalIntoTranscript } from '../../../../src/renderer/src/chat/journalReplay';
+import {
+  REPLAY_CHUNK_RECORDS,
+  replayJournalIntoTranscript,
+  replayJournalIntoTranscriptAsync,
+} from '../../../../src/renderer/src/chat/journalReplay';
 import { createTranscriptStore } from '../../../../src/renderer/src/chat/transcriptStore';
 import { agentEventSchema, MEMO_REFLECTION_TOOL_NAME } from '../../../../src/shared';
 import type {
@@ -475,5 +479,39 @@ describe('replayJournalIntoTranscript', () => {
         { kind: 'message', messageId: 'msg-1', turnId: 'turn-1' },
       ]);
     });
+  });
+});
+
+describe('replayJournalIntoTranscriptAsync', () => {
+  it('builds the same projection as the synchronous replay', async () => {
+    const records = [
+      header,
+      userPrompt('turn-1', 'hello'),
+      completedMessage('turn-1', 'msg-1', 'hi there'),
+    ];
+    const syncStore = createTranscriptStore();
+    const asyncStore = createTranscriptStore();
+
+    replayJournalIntoTranscript(records, syncStore);
+    await replayJournalIntoTranscriptAsync(records, asyncStore);
+
+    expect(asyncStore.items()).toEqual(syncStore.items());
+    expect(asyncStore.textForMessage('msg-1' as MessageId)).toBe('hi there');
+  });
+
+  it('replays every record across chunk boundaries and still settles the end state', async () => {
+    // More user prompts than one chunk, so the replay yields at least once. The
+    // final sweep must still run after the last chunk.
+    const records = Array.from({ length: REPLAY_CHUNK_RECORDS * 2 + 1 }, (_, index) =>
+      userPrompt(`turn-${index}`, `prompt ${index}`),
+    );
+    const store = createTranscriptStore();
+
+    await replayJournalIntoTranscriptAsync(records, store);
+
+    expect(store.items()).toHaveLength(records.length);
+    expect(store.textForUserPrompt(`turn-${records.length - 1}` as TurnId)).toBe(
+      `prompt ${records.length - 1}`,
+    );
   });
 });

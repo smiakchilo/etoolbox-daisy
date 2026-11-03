@@ -1,6 +1,11 @@
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { readChatJournal, readChatSessionIds } from '../../../src/main/chatJournalReader';
+import {
+  JOURNAL_PARSE_CHUNK_LINES,
+  readChatJournal,
+  readChatJournalAsync,
+  readChatSessionIds,
+} from '../../../src/main/chatJournalReader';
 
 /**
  * `chatJournalReader` is deliberately injectable (`readText`/`fileSize`), so
@@ -143,6 +148,90 @@ describe('readChatJournal', () => {
     const readText = vi.fn(() => lines(header));
     readChatJournal(CHATS_DIR, 'chat-1', { fileSize: () => 1, readText });
     expect(readText).toHaveBeenCalledWith(path.join(CHATS_DIR, 'chat-1.jsonl'));
+  });
+});
+
+describe('readChatJournalAsync', () => {
+  it('reads and validates every record, preserving order', async () => {
+    const outcome = await readChatJournalAsync(CHATS_DIR, 'chat-1', {
+      fileSize: () => Promise.resolve(100),
+      readText: () => Promise.resolve(lines(header, userPrompt, assistantMessage, interruption)),
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.records.map((record) => record.recordType)).toEqual([
+      'header',
+      'user.prompt',
+      'agent.event',
+      'interruption',
+    ]);
+  });
+
+  it('skips a torn or hand-edited line rather than failing the whole read', async () => {
+    const text = `${JSON.stringify(header)}\n{ this is not json\n${JSON.stringify(userPrompt)}\n`;
+    const outcome = await readChatJournalAsync(CHATS_DIR, 'chat-1', {
+      fileSize: () => Promise.resolve(100),
+      readText: () => Promise.resolve(text),
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.records.map((record) => record.recordType)).toEqual(['header', 'user.prompt']);
+  });
+
+  it('reports not_found, unreadable and too_large like the synchronous read', async () => {
+    await expect(
+      readChatJournalAsync(CHATS_DIR, 'chat-1', {
+        fileSize: () => Promise.reject(new Error('ENOENT')),
+        readText: () => Promise.resolve(''),
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'not_found' });
+
+    await expect(
+      readChatJournalAsync(CHATS_DIR, 'chat-1', {
+        fileSize: () => Promise.resolve(100),
+        readText: () => Promise.reject(new Error('EACCES')),
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'unreadable' });
+
+    const readText = vi.fn(() => Promise.resolve(lines(header)));
+    await expect(
+      readChatJournalAsync(CHATS_DIR, 'chat-1', {
+        maxBytes: 10,
+        fileSize: () => Promise.resolve(11),
+        readText,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'too_large' });
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unsafe id without touching the file', async () => {
+    const readText = vi.fn(() => Promise.resolve(''));
+    await expect(
+      readChatJournalAsync(CHATS_DIR, '../escape', {
+        fileSize: () => Promise.resolve(1),
+        readText,
+      }),
+    ).resolves.toEqual({ ok: false, reason: 'invalid_chat_id' });
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('yields between chunks without dropping a record', async () => {
+    const count = JOURNAL_PARSE_CHUNK_LINES * 2 + 7;
+    const text = Array.from({ length: count }, (_, index) =>
+      JSON.stringify({ ...userPrompt, at: index, turnId: `turn-${index}` }),
+    ).join('\n');
+
+    const outcome = await readChatJournalAsync(CHATS_DIR, 'chat-1', {
+      fileSize: () => Promise.resolve(text.length),
+      readText: () => Promise.resolve(text),
+    });
+
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.records).toHaveLength(count);
+    expect(outcome.records.at(-1)).toMatchObject({ recordType: 'user.prompt' });
   });
 });
 

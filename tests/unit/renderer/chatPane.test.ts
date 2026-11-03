@@ -885,6 +885,37 @@ describe('createChatPane startup restore', () => {
     pane.dispose();
   });
 
+  it('waits for the page restore before reading the startup journal', async () => {
+    // The shell dispatches the remembered page's navigation first and only then
+    // releases this gate; until then the local journal read must not run - it
+    // would be serviced ahead of `browser:navigate` on the same threads.
+    let release: (() => void) | undefined;
+    const startupConversationReady = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const resolveStartupConversation = vi.fn().mockResolvedValue(rememberedConversation);
+    const pane = createChatPane({
+      onOpenSettings: vi.fn(),
+      resolveStartupConversation,
+      startupConversationReady,
+    });
+
+    // Even a ready status arriving first does not read the journal yet.
+    pushStatus(definedStatus({ auth: { apiVersion: 1, isAuthenticated: true } }));
+    await flush();
+    expect(resolveStartupConversation).not.toHaveBeenCalled();
+    expect(openConversation).not.toHaveBeenCalled();
+
+    release?.();
+    await flush();
+    await waitForUserMessage(pane);
+
+    expect(resolveStartupConversation).toHaveBeenCalledTimes(1);
+    expect(openConversation).toHaveBeenCalledTimes(1);
+
+    pane.dispose();
+  });
+
   it('does not resume twice when a status lands while the startup conversation resolves', async () => {
     // Two ready statuses arriving before the startup conversation resolves must
     // not both enter the "no conversation yet" branch and open two
