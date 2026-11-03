@@ -18,6 +18,7 @@ import type {
   ApproveCertificateExceptionRequest,
   BrowserIpcError,
   BrowserIpcVoidResult,
+  BrowserNavigationState,
   BrowsingDataScope,
   FindRequest,
   FindTarget,
@@ -102,6 +103,12 @@ export interface BrowserControllerOptions {
   readonly rendererWebContents: WebContents;
   /** Called after the user zoomed the app shell (not the browser page), to persist its level. */
   readonly onShellZoomChanged?: () => void;
+  /**
+   * Called on every navigation-state change, beside the renderer push. The
+   * composition root uses it to start the agent runtime only after the startup
+   * restore has committed or settled (see `createStartupAgentStartPolicy`).
+   */
+  readonly onNavigationStateChanged?: (state: BrowserNavigationState) => void;
   /**
    * Test seam: overrides how the browser `WebContentsView` is constructed.
    * Defaults to the real {@link createHostView}. Unit tests inject a
@@ -335,7 +342,11 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     webviewPreloadPath: options.webviewPreloadPath,
     logger,
     onNavigationStateChange: (state) => {
+      // The push goes out first: the policy's start may begin the agent SDK's
+      // synchronous import on this thread, and the renderer must already have
+      // the state (the commit that hides the home veil) before that block.
       rendererWebContents.send(BROWSER_STATE_CHANGED_CHANNEL, state);
+      options.onNavigationStateChanged?.(state);
     },
   });
 

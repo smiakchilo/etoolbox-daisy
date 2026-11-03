@@ -1584,6 +1584,13 @@ export interface SettingsIpcDependencies {
    * nor on a failed change.
    */
   readonly onAgentTokenChanged?: () => void;
+  /**
+   * Called on the first `settings:getSnapshot` request from a trusted sender -
+   * the shell asking for its data as it mounts. The composition root uses it to
+   * arm the agent-start policy, so the agent SDK import cannot block the
+   * startup IPC (`createStartupAgentStartPolicy`).
+   */
+  readonly onSnapshotRequested?: () => void;
 }
 
 /**
@@ -1613,6 +1620,7 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
       if (!checkSender(event)) {
         return { ok: false, error: UNTRUSTED_SENDER_ERROR };
       }
+      deps.onSnapshotRequested?.();
       return getSettingsSnapshot(deps.settingsDir, deps.secretStore);
     },
   );

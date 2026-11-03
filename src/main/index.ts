@@ -41,6 +41,7 @@ import {
   createSecondaryTurns,
   createLateBoundUserInputActions,
   createModelPreferenceCache,
+  createStartupAgentStartPolicy,
   installAgentService,
   isAgentTurnInFlight,
   resolveBundledResourcesDirectory,
@@ -506,6 +507,20 @@ if (smokeTest) {
       });
     });
 
+    // The agent runtime's SDK import is a ~1 s synchronous block on this
+    // thread. It used to start on `did-finish-load`, which can land exactly
+    // while the renderer is asking for the settings snapshot that dispatches
+    // the remembered page - leaving the home screen up with no loading row and
+    // no navigation. The policy starts it only once startup no longer needs
+    // this thread (see `createStartupAgentStartPolicy`).
+    let agentStartRequested = false;
+    let requestAgentStart: () => void = () => {
+      agentStartRequested = true;
+    };
+    const startupAgentStart = createStartupAgentStartPolicy({
+      start: () => requestAgentStart(),
+    });
+
     const browserController = createBrowserController({
       settingsDir: appPaths.settings,
       secretStore,
@@ -515,6 +530,7 @@ if (smokeTest) {
       webviewPreloadPath,
       rendererWebContents: mainWindow.webContents,
       onShellZoomChanged: () => scheduleWindowStateSave(mainWindow),
+      onNavigationStateChanged: (state) => startupAgentStart.onNavigationStateChanged(state),
     });
 
     // Re-applies every persisted TLS exception to the live session before
@@ -644,6 +660,9 @@ if (smokeTest) {
       logger,
       rendererDistDir,
       isTrustedWebContentsId: (id) => trustedWindows.has(id),
+      // The shell's first snapshot request is the moment it mounts; that is
+      // what arms the agent-start policy (see `createStartupAgentStartPolicy`).
+      onSnapshotRequested: () => startupAgentStart.onSnapshotRequested(),
       agentDefinitions,
       modelSelection: {
         definitions: agentDefinitions,
@@ -1427,11 +1446,14 @@ if (smokeTest) {
       });
     };
 
-    // Runs `startAgentRuntime` at most once, and only once the shell has
-    // painted, so the agent import never delays the window itself (see
-    // `runAfterFrameLoad`'s own doc comment). Guarded on both
-    // `agentRuntimeStarted` and window destruction because two triggers can
-    // race it: the frame's load event and the backstop timer below.
+    // Runs `startAgentRuntime` at most once, and only once startup no longer
+    // needs this thread. The policy (`createStartupAgentStartPolicy`) decides
+    // *when*: after the shell's first settings request, it waits for the
+    // remembered page to commit (or settle), so the agent SDK's synchronous
+    // import cannot block the snapshot/navigation IPC and leave the home screen
+    // up with no loading row (see that helper's doc comment). Guarded on both
+    // `agentRuntimeStarted` and window destruction because more than one
+    // trigger can race it (the policy and the backstop timer below).
     let agentRuntimeStarted = false;
     const startAgentRuntimeOnce = (): void => {
       if (agentRuntimeStarted || mainWindow.isDestroyed()) return;
@@ -1440,18 +1462,15 @@ if (smokeTest) {
       // failure here must still be visible rather than an unhandled rejection.
       void startAgentRuntime().catch(() => logger.error('AGENT_UNAVAILABLE'));
     };
-    runAfterFrameLoad(
-      {
-        isLoadingMainFrame: () => mainWindow.webContents.isLoadingMainFrame(),
-        onceLoaded: (run) => {
-          mainWindow.webContents.once('did-finish-load', run);
-        },
-      },
-      startAgentRuntimeOnce,
-    );
-    // Backstop: a load event that never arrives (an unusual renderer failure)
-    // must not strand the chat surface on "starting" forever. `unref` so the
-    // timer never keeps the process alive on its own.
+    // The policy was created before the controller (it observes navigation
+    // state); bind its start callback now that the starter exists. A request
+    // that arrived while that was being wired is remembered and honoured here.
+    requestAgentStart = startAgentRuntimeOnce;
+    if (agentStartRequested) startAgentRuntimeOnce();
+    mainWindow.on('closed', () => startupAgentStart.dispose());
+    // Backstop: a renderer that never mounts never requests the settings
+    // snapshot, so the policy would never arm. `unref` so the timer never keeps
+    // the process alive on its own.
     setTimeout(startAgentRuntimeOnce, 10_000).unref();
     // The opt-in startup update check, after the shell has painted; a failure
     // stays silent (the status simply reads "failed").

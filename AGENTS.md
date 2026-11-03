@@ -2264,7 +2264,25 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 5060 passed / 13 skipped** (5073 total) - the
+Current baseline: **`npm run test` → 5068 passed / 13 skipped** (5081 total) - the
+suite is fully green here, +8 against the 5060 run below, for **the agent runtime
+starting after the page instead of during startup** (2026-11-04): the SDK import
+is a synchronous ~0.8-0.9 s main-thread block, and starting it at
+`did-finish-load` could land while the shell was asking for the settings
+snapshot that dispatches the remembered page - the recorded ~0.8 s of home
+screen with no loading row. `createStartupAgentStartPolicy`
+(`STARTUP_AGENT_QUIET_MS` = 700, `STARTUP_AGENT_MAX_MS` = 8000) now arms on the
+shell's first `settings:getSnapshot` and starts the agent when the page commits
+(or settles without one), after the quiet window when there is no page, or at
+the backstop. `onSnapshotRequested` (settings IPC) and
+`onNavigationStateChanged` (browser controller, called after the renderer push)
+are the wiring; no wire contract changed. The +8 is
+`tests/unit/main/agentComposition.test.ts`'s policy cases. Measured:
+window-created -> mount 1177-1310 ms -> 302-353 ms; `SETTINGS_LOADED` ->
+`BROWSER_SWITCH_STARTED` 1.1-1.4 s -> 340-355 ms. See
+`docs/verification/followons-2026-10.md` "Startup: the agent runtime waits for
+the page instead of blocking it (2026-11-04)".
+Before that it was **`npm run test` → 5060 passed / 13 skipped** (5073 total) - the
 suite is fully green here, +9 against the 5051 run below, for **the startup
 journal restore moving off the page's critical path** (2026-11-03): the browser
 navigation is dispatched before the chat pane's local journal read

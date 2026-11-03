@@ -688,6 +688,128 @@ export function runAfterFrameLoad(signal: FrameLoadSignal, start: () => void): v
   }
 }
 
+/** How long the startup restore may take to *begin* before the shell counts as
+ * having no page to restore (the home screen is the landing surface). */
+export const STARTUP_AGENT_QUIET_MS = 700;
+/** Backstop: start the agent even if the restore neither commits nor fails. */
+export const STARTUP_AGENT_MAX_MS = 8_000;
+
+export interface StartupAgentStartPolicy {
+  /**
+   * The shell asked for its settings snapshot for the first time - it is
+   * mounting. Arms the policy exactly once.
+   */
+  onSnapshotRequested(): void;
+  /** A browser navigation state change, from the controller's own push. */
+  onNavigationStateChanged(state: {
+    readonly isLoading: boolean;
+    readonly hasDocument: boolean;
+  }): void;
+  /** Cancels any pending timer (the window closed before the agent started). */
+  dispose(): void;
+}
+
+export interface StartupAgentStartPolicyOptions {
+  /** Starts the agent runtime. Called at most once. */
+  readonly start: () => void;
+  /** No-page quiet window; defaults to {@link STARTUP_AGENT_QUIET_MS}. */
+  readonly quietMs?: number;
+  /** Backstop; defaults to {@link STARTUP_AGENT_MAX_MS}. */
+  readonly maxMs?: number;
+  /** Timer seam for unit tests. Defaults to `setTimeout`/`clearTimeout`. */
+  readonly setTimer?: (callback: () => void, delayMs: number) => () => void;
+}
+
+/**
+ * Decides when the agent runtime may start, so its SDK import - a synchronous
+ * block of roughly a second on the main thread - can never starve the shell's
+ * own startup: the settings snapshot, the remembered page's navigation, or the
+ * first document commit that hides the home veil.
+ *
+ * The runtime used to start on `did-finish-load`, which can land exactly while
+ * the renderer is asking for its startup data. The import then blocked the
+ * settings snapshot for its whole duration, leaving the home screen up with no
+ * loading row (the page's navigation had not even been dispatched) - the
+ * "0.8 s of nothing" observed at launch. Deferring costs chat readiness: the
+ * pane shows its own "connecting" state until the page is on screen (or the
+ * quiet/backstop windows expire), which is honest and no longer delays the
+ * page.
+ *
+ * Rules, in priority order:
+ * - a committed document starts it at once (the page is visible);
+ * - a load that starts and then settles without a document (a failed restore)
+ *   starts it too;
+ * - if no navigation begins within `quietMs` of the first snapshot request,
+ *   there is no page to restore: start it;
+ * - `maxMs` after that request starts it regardless (a hung load must not
+ *   strand the chat on "connecting" forever).
+ */
+export function createStartupAgentStartPolicy(
+  options: StartupAgentStartPolicyOptions,
+): StartupAgentStartPolicy {
+  const quietMs = options.quietMs ?? STARTUP_AGENT_QUIET_MS;
+  const maxMs = options.maxMs ?? STARTUP_AGENT_MAX_MS;
+  const setTimer =
+    options.setTimer ??
+    ((callback: () => void, delayMs: number) => {
+      const timer = setTimeout(callback, delayMs);
+      timer.unref();
+      return () => clearTimeout(timer);
+    });
+
+  let armed = false;
+  let started = false;
+  let navigationSeen = false;
+  let cancelQuiet: (() => void) | undefined;
+  let cancelMax: (() => void) | undefined;
+
+  const startNow = (): void => {
+    if (started) return;
+    started = true;
+    cancelQuiet?.();
+    cancelMax?.();
+    cancelQuiet = undefined;
+    cancelMax = undefined;
+    options.start();
+  };
+
+  return {
+    onSnapshotRequested(): void {
+      if (armed || started) return;
+      armed = true;
+      cancelQuiet = setTimer(() => {
+        cancelQuiet = undefined;
+        // No navigation asked for: the home screen is the landing surface.
+        if (!navigationSeen) startNow();
+      }, quietMs);
+      cancelMax = setTimer(startNow, maxMs);
+    },
+    onNavigationStateChanged(state): void {
+      if (!armed || started) return;
+      if (state.hasDocument) {
+        startNow();
+        return;
+      }
+      if (state.isLoading) {
+        navigationSeen = true;
+        // The restore is under way: wait for it to commit or settle.
+        cancelQuiet?.();
+        cancelQuiet = undefined;
+        return;
+      }
+      // A load that started and then settled without a document (a failed
+      // restore, a cancelled page) is over; the home screen is the fallback.
+      if (navigationSeen) startNow();
+    },
+    dispose(): void {
+      cancelQuiet?.();
+      cancelMax?.();
+      cancelQuiet = undefined;
+      cancelMax = undefined;
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Model / reasoning-effort preference cache (step 09)
 // ---------------------------------------------------------------------------

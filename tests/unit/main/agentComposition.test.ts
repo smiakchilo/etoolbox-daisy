@@ -13,6 +13,7 @@ import {
   createEnvironmentFacts,
   createLateBoundToolContext,
   createLateBoundUserInputActions,
+  createStartupAgentStartPolicy,
   FAKE_AGENT_SERVICE_ENV_VAR,
   installAgentService,
   resolveBundledResourcesDirectory,
@@ -808,6 +809,116 @@ describe('runAfterFrameLoad', () => {
     const onceLoaded = vi.fn();
     runAfterFrameLoad({ isLoadingMainFrame: () => false, onceLoaded }, vi.fn());
     expect(onceLoaded).not.toHaveBeenCalled();
+  });
+});
+
+describe('createStartupAgentStartPolicy', () => {
+  function manualTimers(): {
+    setTimer: (callback: () => void, delayMs: number) => () => void;
+    fire: (delayMs: number) => void;
+    pending: () => number;
+  } {
+    const timers: Array<{ delay: number; callback: () => void; cancelled: boolean }> = [];
+    return {
+      setTimer: (callback, delay) => {
+        const timer = { delay, callback, cancelled: false };
+        timers.push(timer);
+        return () => {
+          timer.cancelled = true;
+        };
+      },
+      fire: (delay) => {
+        for (const timer of [...timers]) {
+          if (timer.delay === delay && !timer.cancelled) {
+            timer.cancelled = true;
+            timer.callback();
+          }
+        }
+      },
+      pending: () => timers.filter((timer) => !timer.cancelled).length,
+    };
+  }
+
+  function policyWith(start: () => void) {
+    const timers = manualTimers();
+    const policy = createStartupAgentStartPolicy({ start, setTimer: timers.setTimer });
+    return { policy, timers };
+  }
+
+  it('does nothing until the shell asks for its snapshot', () => {
+    const start = vi.fn();
+    const { policy, timers } = policyWith(start);
+    policy.onNavigationStateChanged({ isLoading: false, hasDocument: true });
+    timers.fire(700);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('starts when the startup page commits', () => {
+    const start = vi.fn();
+    const { policy } = policyWith(start);
+    policy.onSnapshotRequested();
+    policy.onNavigationStateChanged({ isLoading: true, hasDocument: false });
+    expect(start).not.toHaveBeenCalled();
+    policy.onNavigationStateChanged({ isLoading: false, hasDocument: true });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts when the load settles without a document (a failed restore)', () => {
+    const start = vi.fn();
+    const { policy } = policyWith(start);
+    policy.onSnapshotRequested();
+    policy.onNavigationStateChanged({ isLoading: true, hasDocument: false });
+    policy.onNavigationStateChanged({ isLoading: false, hasDocument: false });
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts after the quiet window when no navigation begins (no page to restore)', () => {
+    const start = vi.fn();
+    const { policy, timers } = policyWith(start);
+    policy.onSnapshotRequested();
+    // The restore may begin a little later than the snapshot request; the
+    // quiet timer is cancelled by a load starting.
+    policy.onNavigationStateChanged({ isLoading: true, hasDocument: false });
+    timers.fire(700);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('starts after the quiet window when there really is no navigation', () => {
+    const start = vi.fn();
+    const { policy, timers } = policyWith(start);
+    policy.onSnapshotRequested();
+    timers.fire(700);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts after the backstop even while a load is still running', () => {
+    const start = vi.fn();
+    const { policy, timers } = policyWith(start);
+    policy.onSnapshotRequested();
+    policy.onNavigationStateChanged({ isLoading: true, hasDocument: false });
+    timers.fire(8_000);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts once and cancels the other timer', () => {
+    const start = vi.fn();
+    const { policy, timers } = policyWith(start);
+    policy.onSnapshotRequested();
+    policy.onNavigationStateChanged({ isLoading: false, hasDocument: true });
+    timers.fire(700);
+    timers.fire(8_000);
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(timers.pending()).toBe(0);
+  });
+
+  it('dispose cancels a pending start', () => {
+    const start = vi.fn();
+    const { policy, timers } = policyWith(start);
+    policy.onSnapshotRequested();
+    policy.dispose();
+    timers.fire(700);
+    timers.fire(8_000);
+    expect(start).not.toHaveBeenCalled();
   });
 });
 
