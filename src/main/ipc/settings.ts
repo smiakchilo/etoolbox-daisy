@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { readFile, writeFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { dialog, ipcMain, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
 import {
   SETTINGS_ADD_PROJECT_CHANNEL,
   SETTINGS_ADD_PROXY_CHANNEL,
@@ -23,6 +25,8 @@ import {
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
   SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
+  SETTINGS_EXPORT_CHANNEL,
+  SETTINGS_IMPORT_CHANNEL,
 } from '../../shared';
 import {
   addProjectRequestSchema,
@@ -70,6 +74,8 @@ import {
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
   type SetPasswordRequest,
+  type SettingsExportResult,
+  type SettingsImportResult,
   type SettingsIpcError,
   type SettingsIpcVoidResult,
   type UpdateBrowserSettingsRequest,
@@ -83,6 +89,7 @@ import {
   type UpdateUpdateSettingsRequest,
 } from '../../shared';
 import { toAppSettingsSnapshot, type ServerSnapshot } from '../../shared';
+import { parsePortableSettingsDocument, toSettingsExportDocument } from '../../shared';
 import { defaultAppSettings, type AppSettings } from '../../shared';
 import { isReasoningEffortValidFor, type ModelCatalogEntry } from '../../shared';
 import type {
@@ -108,6 +115,7 @@ import {
   applyUpdateSettingsChange,
   confirmOriginChange,
   loadSettings,
+  mergeImportedSettings,
   removeProject as deleteProjectEntry,
   removeProxy as deleteProxyEntry,
   removeServer as deleteServerEntry,
@@ -1471,6 +1479,98 @@ export async function updateUpdateSettings(
 }
 
 // ---------------------------------------------------------------------------
+// Import/export (the Settings panel's header actions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Implements the core of `settings:export`: serializes the current settings
+ * into the portable export document and writes it to `filePath` (already
+ * resolved by the caller's save dialog). The dialog step lives in the
+ * registered handler so this stays unit-testable against a scratch directory.
+ */
+export async function exportSettings(
+  settingsDir: string,
+  filePath: string,
+): Promise<SettingsExportResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  const document = toSettingsExportDocument(loaded.value);
+  try {
+    await writeFile(filePath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+  } catch {
+    return {
+      ok: false,
+      error: { code: 'export_failed', message: 'The settings file could not be written' },
+    };
+  }
+  return { ok: true, saved: true, fileName: basename(filePath) };
+}
+
+/**
+ * Implements the core of `settings:import`: reads `filePath` (already resolved
+ * by the caller's open dialog), proves it a valid portable document, merges it
+ * into the current settings and persists. `onImported` runs only after the
+ * write has succeeded, so the agent runtime is recycled only for a change the
+ * file actually records.
+ */
+export async function importSettings(
+  settingsDir: string,
+  filePath: string,
+  onImported?: (settings: AppSettings) => void | Promise<void>,
+): Promise<SettingsImportResult> {
+  const loaded = await loadSettingsOrError(settingsDir);
+  if (!loaded.ok) {
+    return { ok: false, error: loaded.error };
+  }
+
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        code: 'invalid_import',
+        message: `The file could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      },
+    };
+  }
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: { code: 'invalid_import', message: 'The file is not valid JSON' } };
+  }
+
+  const parsed = parsePortableSettingsDocument(parsedJson);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      error: {
+        code: 'invalid_import',
+        message: parsed.error.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+      },
+    };
+  }
+
+  const merged = mergeImportedSettings(loaded.value, parsed.value, () => randomUUID());
+  if (!merged.ok) {
+    return { ok: false, error: { code: 'invalid_import', message: merged.error.message } };
+  }
+
+  const saved = await persist(settingsDir, merged.value);
+  if (!saved.ok) {
+    return { ok: false, error: saved.error };
+  }
+  await onImported?.(merged.value);
+  return { ok: true, imported: true };
+}
+
+// ---------------------------------------------------------------------------
 // Sender validation - the security core of this module
 // ---------------------------------------------------------------------------
 
@@ -1560,6 +1660,8 @@ export interface SettingsIpcDependencies {
   readonly secretStore: SecretStore;
   readonly logger: Logger;
   readonly rendererDistDir: string;
+  /** The window the import/export file dialogs attach to. */
+  readonly parentWindow: BrowserWindow;
   /** See {@link TrustedSenderExpectation.isTrustedWebContentsId}. */
   readonly isTrustedWebContentsId: (webContentsId: number) => boolean;
   /** Backs the step-09 model/reasoning-effort channels. See {@link ModelSelectionDependencies}. */
@@ -1591,6 +1693,14 @@ export interface SettingsIpcDependencies {
    * startup IPC (`createStartupAgentStartPolicy`).
    */
   readonly onSnapshotRequested?: () => void;
+  /**
+   * Called after - and only after - a successful `settings:import` has been
+   * persisted, with the whole merged document. The composition root recycles
+   * the agent runtime (an import can change the active provider, its proxy or
+   * its model), mirroring `onAgentSettingsSaved`. Never called on a failed or
+   * cancelled import.
+   */
+  readonly onSettingsImported?: (settings: AppSettings) => void | Promise<void>;
 }
 
 /**
@@ -1927,4 +2037,33 @@ export function registerSettingsIpcHandlers(deps: SettingsIpcDependencies): void
       return updateUpdateSettings(deps.settingsDir, parsed.data);
     },
   );
+
+  ipcMain.handle(SETTINGS_EXPORT_CHANNEL, async (event): Promise<SettingsExportResult> => {
+    if (!checkSender(event)) {
+      return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+    }
+    const chosen = await dialog.showSaveDialog(deps.parentWindow, {
+      defaultPath: 'etoolbox-daisy-settings.json',
+      filters: [{ name: 'JSON file', extensions: ['json'] }],
+    });
+    if (chosen.canceled || chosen.filePath === undefined || chosen.filePath === '') {
+      return { ok: true, saved: false };
+    }
+    return exportSettings(deps.settingsDir, chosen.filePath);
+  });
+
+  ipcMain.handle(SETTINGS_IMPORT_CHANNEL, async (event): Promise<SettingsImportResult> => {
+    if (!checkSender(event)) {
+      return { ok: false, error: UNTRUSTED_SENDER_ERROR };
+    }
+    const chosen = await dialog.showOpenDialog(deps.parentWindow, {
+      properties: ['openFile'],
+      filters: [{ name: 'JSON file', extensions: ['json'] }],
+    });
+    const filePath = chosen.filePaths[0];
+    if (chosen.canceled || filePath === undefined) {
+      return { ok: true, imported: false };
+    }
+    return importSettings(deps.settingsDir, filePath, deps.onSettingsImported);
+  });
 }

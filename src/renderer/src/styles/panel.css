@@ -75,3 +75,13 @@
   height: 32px;
   display: block;
 }
+
+/* The header's trailing controls (the Settings panel's Import/Export actions
+   and the close button) sit in one right-aligned group so the title and the
+   controls stay on opposite edges; a bare space-between over four children
+   would spread them evenly instead. */
+.panel__header-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

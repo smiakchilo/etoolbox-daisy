@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newProjectId, newProxyId, newServerId } from '../../../../src/shared';
@@ -18,7 +18,9 @@ import {
   addProxy,
   addServer,
   clearPassword,
+  exportSettings,
   getSettingsSnapshot,
+  importSettings,
   isTrustedLocalSettingsSender,
   removeProject,
   removeProxy,
@@ -1550,5 +1552,127 @@ describe('project library ipc', () => {
       OTHER_PROJECT_ID,
       PROJECT_ID,
     ]);
+  });
+});
+
+describe('settings export / import', () => {
+  const EXPORT_HOST_ID = newServerId(() => 'export-host');
+  const EXPORT_PROXY_ID = newProxyId(() => 'export-proxy');
+  const EXPORT_PROJECT_ID = newProjectId(() => 'export-project');
+
+  /** A document exercising every portable concern: ids, references, secrets, revision. */
+  function settingsWithEverything(): AppSettings {
+    const host = serverConfigSchema.parse({
+      id: EXPORT_HOST_ID,
+      label: 'Acme',
+      origin: 'https://acme.com',
+      color: { kind: 'swatch', swatch: 'blue' },
+      type: 'author',
+      proxyId: EXPORT_PROXY_ID,
+      projectId: EXPORT_PROJECT_ID,
+      revision: 2,
+    });
+    return {
+      ...defaultAppSettings(),
+      hosts: [host],
+      projects: [projectConfigSchema.parse({ id: EXPORT_PROJECT_ID, label: 'Acme project' })],
+      proxies: [
+        {
+          id: EXPORT_PROXY_ID,
+          label: 'Corp',
+          url: 'https://proxy.example',
+          credentials: { username: 'alice', secretRef: 'proxy:export-proxy' },
+        },
+      ],
+      agents: {
+        [TEST_AGENT_ID]: { active: true, token: { secretRef: `agent-token:${TEST_AGENT_ID}` } },
+      },
+    };
+  }
+
+  it('export writes a portable JSON file with no revision, credentials or token', async () => {
+    const settingsDir = createScratchRoot();
+    await writeSettings(settingsDir, settingsWithEverything());
+    const target = path.join(settingsDir, 'exported.json');
+
+    const result = await exportSettings(settingsDir, target);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected an ok result');
+    expect(result.saved).toBe(true);
+    if (!result.saved) throw new Error('expected saved: true');
+    expect(result.fileName).toBe('exported.json');
+
+    const written = JSON.parse(readFileSync(target, 'utf8')) as {
+      hosts: Array<Record<string, unknown>>;
+      proxies: Array<Record<string, unknown>>;
+      agents: Record<string, Record<string, unknown>>;
+    };
+    expect(written.hosts[0]).not.toHaveProperty('revision');
+    expect(written.hosts[0]?.id).toBe(EXPORT_HOST_ID);
+    expect(written.hosts[0]?.proxyId).toBe(EXPORT_PROXY_ID);
+    expect(written.proxies[0]).not.toHaveProperty('credentials');
+    expect(written.agents[TEST_AGENT_ID]).not.toHaveProperty('token');
+  });
+
+  it('import merges a valid file, persists it, and notifies the runtime recycler', async () => {
+    const settingsDir = createScratchRoot();
+    await writeSettings(settingsDir, defaultAppSettings());
+    const source = path.join(settingsDir, 'import.json');
+    writeFileSync(
+      source,
+      JSON.stringify({ hosts: [{ id: 'imported-host', origin: 'https://a.example', label: 'A' }] }),
+      'utf8',
+    );
+    const onImported = vi.fn();
+
+    const result = await importSettings(settingsDir, source, onImported);
+
+    expect(result).toEqual({ ok: true, imported: true });
+    expect(onImported).toHaveBeenCalledTimes(1);
+
+    const secretStore = createSecretStore(path.join(settingsDir, 'secrets'), createFakeCipher());
+    const snapshot = await getSettingsSnapshot(settingsDir, secretStore);
+    if (!snapshot.ok) throw new Error('expected an ok snapshot result');
+    expect(snapshot.snapshot.hosts).toHaveLength(1);
+    expect(snapshot.snapshot.hosts[0]?.origin).toBe('https://a.example');
+  });
+
+  it('import rejects a file that is not valid JSON', async () => {
+    const settingsDir = createScratchRoot();
+    await writeSettings(settingsDir, defaultAppSettings());
+    const source = path.join(settingsDir, 'import.json');
+    writeFileSync(source, '{ not json', 'utf8');
+
+    const result = await importSettings(settingsDir, source);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('invalid_import');
+  });
+
+  it('import rejects a document that does not prove valid (unknown key)', async () => {
+    const settingsDir = createScratchRoot();
+    await writeSettings(settingsDir, defaultAppSettings());
+    const source = path.join(settingsDir, 'import.json');
+    writeFileSync(source, JSON.stringify({ hosts: [], surprise: true }), 'utf8');
+
+    const result = await importSettings(settingsDir, source);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('invalid_import');
+  });
+
+  it('export reports a storage error when the settings file cannot be read', async () => {
+    const settingsDir = createScratchRoot();
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(path.join(settingsDir, 'settings.json'), '{ not json', 'utf8');
+
+    const result = await exportSettings(settingsDir, path.join(settingsDir, 'out.json'));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected an error result');
+    expect(result.error.code).toBe('storage_error');
   });
 });

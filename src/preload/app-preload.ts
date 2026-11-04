@@ -65,6 +65,8 @@ import {
   SETTINGS_UPDATE_SERVER_PRESENTATION_CHANNEL,
   SETTINGS_UPDATE_SERVER_TARGETING_CHANNEL,
   SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL,
+  SETTINGS_EXPORT_CHANNEL,
+  SETTINGS_IMPORT_CHANNEL,
   UPDATES_APPLY_CHANNEL,
   UPDATES_CHECK_CHANNEL,
   UPDATES_CHECK_FORCED_CHANNEL,
@@ -127,6 +129,8 @@ import {
   parseReorderServersResult,
   parseRulesOpenFolderResult,
   parseRulesReloadResult,
+  parseSettingsExportResult,
+  parseSettingsImportResult,
   parseSettingsIpcVoidResult,
   parseSkillsOpenFolderResult,
   parseSkillsReloadResult,
@@ -217,6 +221,8 @@ import {
   type ReorderServersRequest,
   type SetAgentSettingsRequest,
   type SetModelPreferencesRequest,
+  type SettingsExportResult,
+  type SettingsImportResult,
   type SettingsIpcVoidResult,
   type RulesOpenFolderResult,
   type AddonContributionsResult,
@@ -434,6 +440,14 @@ const daisyApi: DaisyAppApi = {
         parsedRequest,
       );
       return parseSettingsIpcVoidResult(raw);
+    },
+    async exportSettings(): Promise<SettingsExportResult> {
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_EXPORT_CHANNEL);
+      return parseSettingsExportResult(raw);
+    },
+    async importSettings(): Promise<SettingsImportResult> {
+      const raw: unknown = await ipcRenderer.invoke(SETTINGS_IMPORT_CHANNEL);
+      return parseSettingsImportResult(raw);
     },
   },
   agentChat: {

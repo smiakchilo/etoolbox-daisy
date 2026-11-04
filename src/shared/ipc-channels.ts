@@ -182,6 +182,22 @@ export const CREDENTIALS_ERASE_CHANNEL = 'credentials:erase' as const;
  */
 export const SETTINGS_UPDATE_UPDATE_SETTINGS_CHANNEL = 'settings:update-update-settings' as const;
 
+/**
+ * The Settings panel's header **Export** action: main serializes the settings
+ * into a portable JSON document and writes it to the path the user chose in the
+ * OS save dialog. No request payload (see `settings-ipc.ts`'s
+ * `settingsExportResultSchema`).
+ */
+export const SETTINGS_EXPORT_CHANNEL = 'settings:export' as const;
+
+/**
+ * The Settings panel's header **Import** action: main opens the OS file dialog,
+ * reads, validates and merges the chosen document into the current settings,
+ * then persists and recycles the agent runtime. No request payload (see
+ * `settings-ipc.ts`'s `settingsImportResultSchema`).
+ */
+export const SETTINGS_IMPORT_CHANNEL = 'settings:import' as const;
+
 /** Reads the updater's current status (see `src/shared/updates-ipc.ts`). */
 export const UPDATES_GET_STATUS_CHANNEL = 'updates:get-status' as const;
 /** Checks the update sources now; resolves with the resulting status. No payload. */

@@ -19,6 +19,7 @@ export * from './agents';
 export * from './serverConfig';
 export * from './projectConfig';
 export * from './appSettings';
+export * from './settingsImport';
 export * from './modelCatalog';
 export * from './settingsSnapshot';
 export * from './chatMetadata';

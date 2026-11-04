@@ -37,6 +37,9 @@ const modelStateStub = {
 let dom: JSDOM;
 let restoreGlobals: () => void;
 let stateListeners: Array<(state: BrowserNavigationState) => void>;
+let getSnapshotMock: ReturnType<typeof vi.fn>;
+let settingsExportMock: ReturnType<typeof vi.fn>;
+let settingsImportMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   ({ dom, restore: restoreGlobals } = installJsdomGlobals({
@@ -63,8 +66,16 @@ beforeEach(() => {
       onFindResult: vi.fn(() => () => undefined),
     },
     settings: {
-      getSnapshot: vi.fn(() => Promise.resolve({ ok: true, snapshot: snapshotStub })),
+      getSnapshot: (getSnapshotMock = vi.fn(() =>
+        Promise.resolve({ ok: true, snapshot: snapshotStub }),
+      )),
       getModelSelection: vi.fn(() => Promise.resolve({ ok: true, state: modelStateStub })),
+      exportSettings: (settingsExportMock = vi.fn(() =>
+        Promise.resolve({ ok: true, saved: true, fileName: 'settings.json' }),
+      )),
+      importSettings: (settingsImportMock = vi.fn(() =>
+        Promise.resolve({ ok: true, imported: true }),
+      )),
     },
     agent: {
       getAuthStatus: vi.fn(() => Promise.resolve({ apiVersion: 1, isAuthenticated: false })),
@@ -234,5 +245,39 @@ describe('createSettingsPanel dismissal', () => {
     // with the panel when it is dismissed.
     expect(pane.element.querySelectorAll('.surface-status-banner').length).toBe(1);
     expect(settings.element.querySelectorAll('.banner-row').length).toBe(0);
+  });
+
+  it('renders Import and Export as quiet header actions, in that order; each wires to its IPC', async () => {
+    const { settings } = build();
+    const headerEnd = settings.element.querySelector<HTMLElement>('.panel__header-end');
+    const importButton = settings.element.querySelector<HTMLElement>(
+      '[data-testid="settings-import"]',
+    );
+    const exportButton = settings.element.querySelector<HTMLElement>(
+      '[data-testid="settings-export"]',
+    );
+
+    expect(importButton).not.toBeNull();
+    expect(exportButton).not.toBeNull();
+    expect(importButton?.hasAttribute('quiet')).toBe(true);
+    expect(exportButton?.hasAttribute('quiet')).toBe(true);
+
+    // Import precedes Export in the header's trailing control group.
+    const order = [...(headerEnd?.children ?? [])];
+    expect(order.indexOf(importButton as Element)).toBeLessThan(
+      order.indexOf(exportButton as Element),
+    );
+
+    importButton?.click();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(settingsImportMock).toHaveBeenCalledTimes(1);
+    // The successful import re-reads the snapshot so the panel and pane follow.
+    expect(getSnapshotMock).toHaveBeenCalled();
+
+    exportButton?.click();
+    await Promise.resolve();
+    expect(settingsExportMock).toHaveBeenCalledTimes(1);
   });
 });

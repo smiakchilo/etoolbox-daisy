@@ -45,6 +45,12 @@ vi.mock('electron', () => ({
       sendHandlers.set(channel, listener);
     },
   },
+  // The export/import channels reach the OS dialogs; they are stubbed to
+  // cancel, so the trusted-sender sweep gets past the gate and does no I/O.
+  dialog: {
+    showSaveDialog: () => Promise.resolve({ canceled: true }),
+    showOpenDialog: () => Promise.resolve({ canceled: true, filePaths: [] }),
+  },
   app: { on: vi.fn(), removeListener: vi.fn() },
   screen: { on: vi.fn(), removeListener: vi.fn() },
   WebContentsView: class {},
@@ -130,6 +136,10 @@ beforeEach(() => {
     secretStore: createSecretStore(path.join(rendererDistDir, 'secrets'), fakeCipher()),
     logger,
     rendererDistDir,
+    // The mocked electron namespace's `BrowserWindow` is a bare class; the
+    // export/import handlers pass this through to the (stubbed) dialog, which
+    // never reads it, so a placeholder is all the fixture needs.
+    parentWindow: {} as import('electron').BrowserWindow,
     isTrustedWebContentsId: (id) => id === MAIN_WEB_CONTENTS_ID,
     agentDefinitions: TEST_AGENT_DEFINITIONS,
     getAgentAuthPresence: () => Promise.resolve({ present: false }),

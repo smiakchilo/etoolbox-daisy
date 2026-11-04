@@ -51,6 +51,12 @@ export interface CreatePanelOptions extends PanelDismissHandler {
   readonly title: string;
   /** The panel's scrollable body. */
   readonly content: HTMLElement;
+  /**
+   * Extra header controls rendered after the title and before the close
+   * button (the Settings panel's Export/Import actions). Optional; most panels
+   * have none.
+   */
+  readonly headerActions?: readonly HTMLElement[];
   readonly closeAriaLabel: string;
   /** Extra class names for the panel surface (kept as aliases for existing selectors). */
   readonly surfaceClassName?: string;
@@ -82,9 +88,14 @@ export function createPanel(options: CreatePanelOptions): Panel {
   closeIcon.setAttribute('slot', 'icon');
   closeButton.append(closeIcon);
 
+  const headerEnd = el('div', {
+    attrs: { class: 'panel__header-end' },
+    children: [...(options.headerActions ?? []), closeButton],
+  });
+
   const header = el('div', {
     attrs: { class: 'panel__header' },
-    children: [el('span', { attrs: { class: 'panel__title' }, text: options.title }), closeButton],
+    children: [el('span', { attrs: { class: 'panel__title' }, text: options.title }), headerEnd],
   });
 
   const element = el('div', {

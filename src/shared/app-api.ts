@@ -24,6 +24,8 @@ import type {
   ReorderServersRequest,
   SetAgentSettingsRequest,
   SetModelPreferencesRequest,
+  SettingsExportResult,
+  SettingsImportResult,
   SettingsIpcVoidResult,
   UpdateBrowserSettingsRequest,
   UpdateMemoSettingsRequest,
@@ -427,6 +429,10 @@ export interface DaisySettingsApi {
    * check, so no restart.
    */
   updateUpdateSettings(request: UpdateUpdateSettingsRequest): Promise<SettingsIpcVoidResult>;
+  /** Writes the settings to a user-chosen JSON file (the Settings header's Export action). */
+  exportSettings(): Promise<SettingsExportResult>;
+  /** Reads, validates and merges a user-chosen settings file (the Settings header's Import action). */
+  importSettings(): Promise<SettingsImportResult>;
 }
 
 /** Sign-in surface, one call per agent - see gentAuthRequestSchema. */

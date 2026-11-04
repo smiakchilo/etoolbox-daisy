@@ -29,7 +29,9 @@ import type { AgentId } from '../shared';
 import {
   HOST_PROXY_NONE,
   hostProxyIdSchema,
+  newProjectId,
   newProxyId,
+  newServerId,
   originSchema,
   parseOrigin,
   projectIdSchema,
@@ -37,6 +39,7 @@ import {
   serverIdSchema,
   serverLabelSchema,
 } from '../shared';
+import type { IdGenerator, PortableSettingsDocument } from '../shared';
 import { err, ok, type Result } from '../shared';
 import {
   agentIdSchema,
@@ -1897,4 +1900,246 @@ export function updateModelPreferences(
     model: input.model,
     reasoningEffort: input.model === null ? null : input.reasoningEffort,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Import/export merge (the Settings "Import" action)
+// ---------------------------------------------------------------------------
+
+export interface ImportMergeError {
+  readonly message: string;
+}
+
+/**
+ * Remaps one proxy reference through the import's id map. `HOST_PROXY_NONE`
+ * (the "No proxy" sentinel) is not a reference and passes through unchanged; a
+ * reference to an id the import file does not contain is dropped (`undefined`),
+ * reverting the target to its default — the same forgiving direction
+ * `normalizeSettingsDocument` takes for a dangling reference.
+ */
+function remapProxyReference(
+  value: string | undefined,
+  map: ReadonlyMap<string, string>,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (value === HOST_PROXY_NONE) return HOST_PROXY_NONE;
+  return map.get(value);
+}
+
+/** The optional roots/path-transform fields a project entry may carry, in one place. */
+function projectRootFields(entry: {
+  readonly contentRoots?: string | undefined;
+  readonly componentRoots?: string | undefined;
+  readonly contentPriorityPaths?: string | undefined;
+  readonly damRoots?: string | undefined;
+  readonly authorTransform?: string | undefined;
+  readonly publishTransform?: string | undefined;
+}): Record<string, unknown> {
+  const next: Record<string, unknown> = {};
+  if (entry.contentRoots !== undefined) next['contentRoots'] = entry.contentRoots;
+  if (entry.componentRoots !== undefined) next['componentRoots'] = entry.componentRoots;
+  if (entry.contentPriorityPaths !== undefined) {
+    next['contentPriorityPaths'] = entry.contentPriorityPaths;
+  }
+  if (entry.damRoots !== undefined) next['damRoots'] = entry.damRoots;
+  if (entry.authorTransform !== undefined) next['authorTransform'] = entry.authorTransform;
+  if (entry.publishTransform !== undefined) next['publishTransform'] = entry.publishTransform;
+  return next;
+}
+
+/**
+ * Merges a portable settings document (the Settings "Import" action) into the
+ * current document, returning the merged document for the caller to persist.
+ *
+ * Semantics (owner decisions, see `settingsImport.ts`):
+ *
+ *  - **Arrays merge by key** ({@link IMPORT_MERGE_KEYS}): a host by `origin`,
+ *    a proxy by `url`, a project by `label`. A matched entry is *replaced* by
+ *    the imported one for every field the import can express, while its
+ *    identity (`id`) and un-expressible state survive — a host keeps its own
+ *    `revision`, a proxy keeps its `credentials` (the password was never in
+ *    the file), an agent keeps its `token`.
+ *  - **References are remapped** through the import's own id map (an imported
+ *    entry merged onto an existing one takes the existing id; a new entry is
+ *    minted a fresh id). A reference to an id the file does not contain is
+ *    dropped (the target reverts to its default).
+ *  - **Singular sections** (`browser`/`memos`/`updates`) are overwritten when
+ *    present and left untouched when absent. `agents` merges per provider id;
+ *    when the import marks a provider active, every other provider is
+ *    deactivated so the document never holds two active providers.
+ *
+ * Pure and I/O-free: the caller loads, merges, and saves. `mintId` supplies
+ * fresh ids for genuinely new entries (production wires `crypto.randomUUID`).
+ */
+export function mergeImportedSettings(
+  settings: AppSettings,
+  imported: PortableSettingsDocument,
+  mintId: IdGenerator,
+): Result<AppSettings, ImportMergeError> {
+  const proxyIdMap = new Map<string, string>();
+  const projectIdMap = new Map<string, string>();
+
+  // Proxies (key: url). A matched entry keeps its id and credentials; only the
+  // label is overwritten (credentials were stripped from the export).
+  const nextProxies: Record<string, unknown>[] = settings.proxies.map((proxy) => ({ ...proxy }));
+  const proxyIdByUrl = new Map(settings.proxies.map((proxy) => [proxy.url, proxy.id]));
+  for (const entry of imported.proxies ?? []) {
+    const existingId = proxyIdByUrl.get(entry.url);
+    if (existingId !== undefined) {
+      proxyIdMap.set(entry.id, existingId);
+      const index = nextProxies.findIndex((proxy) => proxy['id'] === existingId);
+      nextProxies[index] = {
+        ...nextProxies[index],
+        label: entry.label ?? labelFromOrigin(entry.url),
+      };
+    } else {
+      const id = newProxyId(mintId);
+      proxyIdMap.set(entry.id, id);
+      const proxy: Record<string, unknown> = {
+        id,
+        url: entry.url,
+        label: entry.label ?? labelFromOrigin(entry.url),
+      };
+      nextProxies.push(proxy);
+      proxyIdByUrl.set(entry.url, id);
+    }
+  }
+
+  // Projects (key: label). Full replace of the entry's roots; a matched entry
+  // keeps its id (the hosts referencing it are rewired through `projectIdMap`).
+  const nextProjects: Record<string, unknown>[] = settings.projects.map((project) => ({
+    ...project,
+  }));
+  const projectIdByLabel = new Map(settings.projects.map((project) => [project.label, project.id]));
+  for (const entry of imported.projects ?? []) {
+    const existingId = projectIdByLabel.get(entry.label);
+    if (existingId !== undefined) {
+      projectIdMap.set(entry.id, existingId);
+      const index = nextProjects.findIndex((project) => project['id'] === existingId);
+      nextProjects[index] = { id: existingId, label: entry.label, ...projectRootFields(entry) };
+    } else {
+      const id = newProjectId(mintId);
+      projectIdMap.set(entry.id, id);
+      nextProjects.push({ id, label: entry.label, ...projectRootFields(entry) });
+      projectIdByLabel.set(entry.label, id);
+    }
+  }
+
+  // Hosts (key: origin). Full replace of the entry's expressible fields, with
+  // `proxyId`/`projectId` remapped; a matched host keeps its id and revision, a
+  // new host starts at revision 0.
+  const nextHosts: Record<string, unknown>[] = settings.hosts.map((host) => ({ ...host }));
+  const hostIdByOrigin = new Map(settings.hosts.map((host) => [host.origin, host.id]));
+  for (const entry of imported.hosts ?? []) {
+    const proxyId = remapProxyReference(entry.proxyId, proxyIdMap);
+    const projectId = entry.projectId !== undefined ? projectIdMap.get(entry.projectId) : undefined;
+    const existingId = hostIdByOrigin.get(entry.origin);
+    if (existingId !== undefined) {
+      const index = nextHosts.findIndex((host) => host['id'] === existingId);
+      const existing = nextHosts[index] as Record<string, unknown>;
+      nextHosts[index] = {
+        id: existingId,
+        label: entry.label ?? existing['label'],
+        origin: entry.origin,
+        color: entry.color ?? existing['color'],
+        revision: existing['revision'],
+        ...(entry.type !== undefined ? { type: entry.type } : {}),
+        ...(proxyId !== undefined ? { proxyId } : {}),
+        ...(entry.tlsException !== undefined ? { tlsException: entry.tlsException } : {}),
+        ...(projectId !== undefined ? { projectId } : {}),
+      };
+    } else {
+      const id = newServerId(mintId);
+      nextHosts.push({
+        id,
+        label: entry.label ?? labelFromOrigin(entry.origin),
+        origin: entry.origin,
+        color: entry.color ?? DEFAULT_SERVER_COLOR,
+        revision: 0,
+        ...(entry.type !== undefined ? { type: entry.type } : {}),
+        ...(proxyId !== undefined ? { proxyId } : {}),
+        ...(entry.tlsException !== undefined ? { tlsException: entry.tlsException } : {}),
+        ...(projectId !== undefined ? { projectId } : {}),
+      });
+      hostIdByOrigin.set(entry.origin, id);
+    }
+  }
+
+  // Agents (key: the provider id). A present node replaces that provider's
+  // node (full replace of the expressible fields), preserving its `token`
+  // (never in the file); the `proxy` reference is remapped, a dangling one
+  // dropped. The ids the import marks active win over any existing active node.
+  const nextAgents: Record<string, Record<string, unknown>> = {};
+  for (const [agentId, node] of Object.entries(settings.agents)) {
+    nextAgents[agentId] = { ...node };
+  }
+  const importedActiveIds: string[] = [];
+  for (const [agentId, node] of Object.entries(imported.agents ?? {})) {
+    const existing = nextAgents[agentId];
+    const next: Record<string, unknown> = { active: node.active === true };
+    if (existing?.['token'] !== undefined) next['token'] = existing['token'];
+    if (node.proxy !== undefined) {
+      const remapped = remapProxyReference(node.proxy, proxyIdMap);
+      if (remapped !== undefined) next['proxy'] = remapped;
+    }
+    if (node.model !== undefined) next['model'] = node.model;
+    if (node.reasoningEffort !== undefined) next['reasoningEffort'] = node.reasoningEffort;
+    if (node.active === true) importedActiveIds.push(agentId);
+    nextAgents[agentId] = next;
+  }
+  if (importedActiveIds.length > 0) {
+    for (const [agentId, node] of Object.entries(nextAgents)) {
+      if (!importedActiveIds.includes(agentId)) node['active'] = false;
+    }
+  }
+
+  // Singular sections: overwrite when present, untouched when absent. A
+  // dangling `browser.proxy`/`agents.proxy` is dropped (reverts to no default
+  // proxy), so an import never fails its own schema over a reference the file
+  // could not carry.
+  let browser: Record<string, unknown> = { ...settings.browser };
+  if (imported.browser !== undefined) {
+    const nextBrowser: Record<string, unknown> = {};
+    if (imported.browser.disableNativeWebAuthn !== undefined) {
+      nextBrowser['disableNativeWebAuthn'] = imported.browser.disableNativeWebAuthn;
+    }
+    const proxy = remapProxyReference(imported.browser.proxy, proxyIdMap);
+    if (proxy !== undefined) nextBrowser['proxy'] = proxy;
+    browser = nextBrowser;
+  }
+
+  let memos: Record<string, unknown> = { ...settings.memos };
+  if (imported.memos !== undefined) {
+    memos = imported.memos.enabled !== undefined ? { enabled: imported.memos.enabled } : {};
+  }
+
+  let updates: Record<string, unknown> = { ...settings.updates };
+  if (imported.updates !== undefined) {
+    const nextUpdates: Record<string, unknown> = {};
+    if (imported.updates.source !== undefined) nextUpdates['source'] = imported.updates.source;
+    if (imported.updates.checkOnStartup !== undefined) {
+      nextUpdates['checkOnStartup'] = imported.updates.checkOnStartup;
+    }
+    updates = nextUpdates;
+  }
+
+  const candidate = {
+    hosts: nextHosts,
+    projects: nextProjects,
+    proxies: nextProxies,
+    agents: nextAgents,
+    browser,
+    memos,
+    updates,
+  };
+
+  const parsed = appSettingsSchema.safeParse(candidate);
+  if (!parsed.success) {
+    return err({
+      message: parsed.error.issues
+        .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+        .join('; '),
+    });
+  }
+  return ok(parsed.data);
 }

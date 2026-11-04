@@ -245,12 +245,47 @@ export function createSettingsPanel(options: CreateSettingsPanelOptions): Settin
     children: [tabs],
   });
 
+  /** Builds one quiet, text-only header action (Import/Export). */
+  function headerActionButton(label: string, testId: string): HTMLElement {
+    return el('sp-action-button', {
+      attrs: { quiet: '', title: label, 'data-testid': testId },
+      text: label,
+    });
+  }
+
+  async function exportSettings(): Promise<void> {
+    const result = await window.daisy.settings.exportSettings();
+    if (!result.ok) {
+      status.showError(result.error.message);
+      return;
+    }
+    if (result.saved) status.showStatus(`Exported to ${result.fileName}`);
+  }
+
+  async function importSettings(): Promise<void> {
+    const result = await window.daisy.settings.importSettings();
+    if (!result.ok) {
+      status.showError(result.error.message);
+      return;
+    }
+    if (result.imported) {
+      status.showStatus('Settings imported');
+      await reload();
+    }
+  }
+
+  const importButton = headerActionButton('Import', 'settings-import');
+  importButton.addEventListener('click', () => void importSettings());
+  const exportButton = headerActionButton('Export', 'settings-export');
+  exportButton.addEventListener('click', () => void exportSettings());
+
   const panel = createPanel({
     title: 'Settings',
     closeAriaLabel: 'Close settings',
     surfaceClassName: 'settings-panel',
     testId: 'settings-panel',
     closeButtonClassName: 'settings-panel__close',
+    headerActions: [importButton, exportButton],
     content,
     onDismiss(): void {
       options.onDismiss();

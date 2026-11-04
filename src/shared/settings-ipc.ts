@@ -117,6 +117,10 @@ export const SETTINGS_IPC_ERROR_CODES = [
   'model_not_available',
   /** The requested reasoning effort is not one the selected model supports. */
   'unsupported_reasoning_effort',
+  /** The file chosen for `settings:import` could not be read or is not a valid settings export. */
+  'invalid_import',
+  /** The file chosen for `settings:export` could not be written. */
+  'export_failed',
 ] as const;
 
 export type SettingsIpcErrorCode = (typeof SETTINGS_IPC_ERROR_CODES)[number];
@@ -713,3 +717,48 @@ export type UpdateUpdateSettingsRequest = Readonly<
 
 export const updateUpdateSettingsResultSchema = settingsIpcVoidResultSchema;
 export type UpdateUpdateSettingsResult = SettingsIpcVoidResult;
+
+// ---------------------------------------------------------------------------
+// Import/export (the Settings panel's header actions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of `settings:export`. `saved: false` is the ordinary outcome of the
+ * user closing the save dialog — deliberately not an error, so the renderer
+ * has nothing to report. A successful save carries the written file's **name**
+ * (never its path), so the pane can say which file it wrote.
+ */
+export const settingsExportResultSchema = z.union([
+  z
+    .object({
+      ok: z.literal(true),
+      saved: z.literal(true),
+      fileName: z.string().min(1).max(255),
+    })
+    .strict(),
+  z.object({ ok: z.literal(true), saved: z.literal(false) }).strict(),
+  z.object({ ok: z.literal(false), error: settingsIpcErrorSchema }).strict(),
+]);
+
+export type SettingsExportResult = Readonly<z.infer<typeof settingsExportResultSchema>>;
+
+export function parseSettingsExportResult(candidate: unknown): SettingsExportResult {
+  return settingsExportResultSchema.parse(candidate);
+}
+
+/**
+ * Result of `settings:import`. `imported: false` is the user closing the open
+ * dialog (an ordinary outcome, not an error); `imported: true` means a valid
+ * file was read, merged and persisted.
+ */
+export const settingsImportResultSchema = z.union([
+  z.object({ ok: z.literal(true), imported: z.literal(true) }).strict(),
+  z.object({ ok: z.literal(true), imported: z.literal(false) }).strict(),
+  z.object({ ok: z.literal(false), error: settingsIpcErrorSchema }).strict(),
+]);
+
+export type SettingsImportResult = Readonly<z.infer<typeof settingsImportResultSchema>>;
+
+export function parseSettingsImportResult(candidate: unknown): SettingsImportResult {
+  return settingsImportResultSchema.parse(candidate);
+}

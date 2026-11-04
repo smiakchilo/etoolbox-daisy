@@ -659,6 +659,7 @@ if (smokeTest) {
       secretStore,
       logger,
       rendererDistDir,
+      parentWindow: mainWindow,
       isTrustedWebContentsId: (id) => trustedWindows.has(id),
       // The shell's first snapshot request is the moment it mounts; that is
       // what arms the agent-start policy (see `createStartupAgentStartPolicy`).
@@ -708,6 +709,15 @@ if (smokeTest) {
       onAgentTokenChanged: () => {
         if (useFakeAgentService) return;
         void runtimeRecycler.request(() => refreshRuntimeAfterTokenChange());
+      },
+      // An import can change the active provider, its proxy or its model, so
+      // the runtime is re-seeded and reconciled exactly as an agent-settings
+      // change does. Deferred while a turn is in flight by `runtimeRecycler`.
+      onSettingsImported: async (settings) => {
+        seedModelPreference(settings);
+        await runtimeRecycler.request(async () => {
+          await agentHub?.reconcile(settings);
+        });
       },
     });
 
