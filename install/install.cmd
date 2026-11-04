@@ -8,9 +8,8 @@ rem      download portable Node.js from nodejs.org, check its SHA-256 against th
 rem      value pinned below, and check node.exe carries a valid Authenticode
 rem      signature from the OpenJS Foundation.
 rem   2. Downloads this repository's source as a zip from GitHub.
-rem   3. With that Node, installs the locked npm dependencies (install scripts
-rem      disabled), builds the application and writes it - "EToolbox Daisy.exe"
-rem      and its files - straight into the folder this file is in.
+rem   3. With that Node, installs the locked npm dependencies, builds the application
+rem      and writes it and its files - straight into the folder this file is in.
 rem   4. Deletes the temporary work folder and starts the application.
 rem
 rem Afterwards "EToolbox Daisy.exe" runs on its own; this file is no longer needed.

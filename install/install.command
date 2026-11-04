@@ -9,9 +9,8 @@
 #      from the OpenJS Foundation. A downloaded Node.js is kept in the app's
 #      data folder, so later updates and add-on builds reuse it.
 #   2. Downloads this repository's source as a zip from GitHub.
-#   3. With that Node, installs the locked npm dependencies (install scripts
-#      disabled), builds the application and writes "EToolbox Daisy.app" into
-#      the folder this file is in.
+#   3. With that Node, installs the locked npm dependencies, builds the application
+#      and writes "EToolbox Daisy.app" into the folder this file is in.
 #   4. Deletes the temporary work folder and starts the application.
 #
 # Afterwards the app runs on its own; this file is no longer needed. The app is
