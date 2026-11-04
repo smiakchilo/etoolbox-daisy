@@ -137,6 +137,7 @@ describe('renderReportMessage', () => {
 
     const selector = container.querySelector('button[data-daisy-selector]');
     expect(selector?.getAttribute('data-daisy-selector')).toBe('div#tile > h6.title');
+    expect(selector?.getAttribute('data-daisy-snippet')).toBe('<h6 class="title">Hello</h6>');
     expect(selector?.textContent).toBe('div#tile > h6.title');
     expect(container.querySelector('.chat-report-cell__snippet')?.textContent).toBe(
       '<h6 class="title">Hello</h6>',

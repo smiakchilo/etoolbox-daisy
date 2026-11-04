@@ -2191,11 +2191,13 @@ describe.skipIf(REPORT_TOOL === undefined)('a contributed report presentation', 
 
     const selector = view.element.querySelector<HTMLElement>('button[data-daisy-selector]');
     expect(selector?.getAttribute('data-daisy-selector')).toBe('h4.card__title');
+    expect(selector?.getAttribute('data-daisy-snippet')).toBe('<h4 class="card__title">Hi</h4>');
     clickElement(selector as HTMLElement);
 
     expect(onHighlightElement).toHaveBeenCalledWith(
       'h4.card__title',
       'https://author.example/content/a.html',
+      '<h4 class="card__title">Hi</h4>',
     );
     // The rubric did not collapse.
     expect(

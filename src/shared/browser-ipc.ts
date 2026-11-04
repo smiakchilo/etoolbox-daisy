@@ -295,17 +295,18 @@ export type OpenExternalRequest = Readonly<z.infer<typeof openExternalRequestSch
 /**
  * `browser:highlight-element` - a CSS selector naming an element to scroll to
  * and highlight in the browser pane, plus (optional) the page that selector
- * belongs to. The selector comes from a report the application painted, never
- * from the model; it is handed to `querySelector` and nowhere else, so an
- * untrusted value cannot run code. When `url` is present and the pane is showing
- * a different document, main reopens that page first - so a selector from a
- * stored transcript, or one whose page the reader navigated away from, still
- * lands on the right element.
+ * belongs to and the element's raw HTML snippet. The selector comes from a
+ * report the application painted, never from the model; it is handed to
+ * `querySelector` and nowhere else, so an untrusted value cannot run code. When
+ * `url` is present and the pane is showing a different document, main reopens
+ * that page first. When the selector matches several elements, `snippet` (the
+ * element's own HTML, parsed inertly) disambiguates them.
  */
 export const highlightElementRequestSchema = z
   .object({
     selector: z.string().min(1).max(500),
     url: z.string().min(1).max(ADDRESS_MAX_LENGTH).optional(),
+    snippet: z.string().min(1).max(2000).optional(),
   })
   .strict();
 export type HighlightElementRequest = Readonly<z.infer<typeof highlightElementRequestSchema>>;

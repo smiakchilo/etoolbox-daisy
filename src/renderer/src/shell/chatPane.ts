@@ -341,7 +341,7 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
     onResume: () => resumeStoppedSession(),
     onCopyTable: (data) => copyTable(data),
     onExportTable: (data) => exportTable(data),
-    onHighlightElement: (selector, url) => highlightElement(selector, url),
+    onHighlightElement: (selector, url, snippet) => highlightElement(selector, url, snippet),
   });
 
   // The standing "no usable agent" prompt, built once and reused: it is the
@@ -1392,9 +1392,17 @@ export function createChatPane(options: ChatPaneOptions): ChatPane {
    * conversation). When the selector still does not match, a transient status
    * says so rather than doing nothing.
    */
-  function highlightElement(selector: string, url: string | undefined): void {
+  function highlightElement(
+    selector: string,
+    url: string | undefined,
+    snippet: string | undefined,
+  ): void {
     void window.daisy.browser
-      .highlightElement({ selector, ...(url === undefined ? {} : { url }) })
+      .highlightElement({
+        selector,
+        ...(url === undefined ? {} : { url }),
+        ...(snippet === undefined ? {} : { snippet }),
+      })
       .then((result) => {
         if (result.found) return;
         statusBanner.showStatus(

@@ -52,6 +52,13 @@ import {
  */
 export const PAGE_AUDIT_RUN_ORDER: readonly PageAuditFormFactor[] = ['desktop', 'mobile'];
 
+/**
+ * The model-facing choices. `both` is the default (and `undefined` means the
+ * same); a weak model tends to fill every parameter, so an explicit `both` is
+ * offered rather than relying on it omitting the field.
+ */
+export const PAGE_AUDIT_FORM_FACTOR_CHOICES = ['both', ...PAGE_AUDIT_FORM_FACTORS] as const;
+
 export const pageAuditArgsSchema = z
   .object({
     url: z.string().trim().min(1).max(2000).optional(),
@@ -60,7 +67,12 @@ export const pageAuditArgsSchema = z
       .min(1)
       .max(PAGE_AUDIT_CATEGORIES.length)
       .optional(),
-    formFactor: z.enum(PAGE_AUDIT_FORM_FACTORS).optional(),
+    formFactor: z
+      .enum(PAGE_AUDIT_FORM_FACTOR_CHOICES)
+      .default('both')
+      .describe(
+        'Measure both desktop and mobile (the default) or only one device. Omit it, or pass "both", unless the user explicitly asked for a single device.',
+      ),
   })
   .strict();
 
@@ -650,11 +662,9 @@ export function createPageAuditExecutorFactory(run: PageAuditRunner): AddonToolF
         execute: async (
           envelope: PageAuditRequestEnvelope,
         ): Promise<ToolOutcome<PageAuditSuccess>> => {
-          // Absent form factor = both, in a stable order; a named one runs alone.
+          // `both` (the schema default) = both, in a stable order; a named device runs alone.
           const requested =
-            envelope.args.formFactor === undefined
-              ? PAGE_AUDIT_RUN_ORDER
-              : [envelope.args.formFactor];
+            envelope.args.formFactor === 'both' ? PAGE_AUDIT_RUN_ORDER : [envelope.args.formFactor];
           const categories = envelope.args.categories ?? PAGE_AUDIT_CATEGORIES;
           const runs: PageAuditRun[] = [];
           const failures: PageAuditFailed[] = [];

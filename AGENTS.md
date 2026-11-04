@@ -594,9 +594,13 @@ rewrites a response's headers before Chromium classifies it - the default rule
 drops `Content-Disposition: attachment` from a renderable media type, because
 AEM serves a DAM asset URL that way and the link click would otherwise become a
 download the session cancels (so the asset previews instead of appearing dead).
-A host- or content-specific case is a new rule entry (`hosts`, `contentTypes`,
-`disposition`, remove/set mutations), never a branch in the session wiring.
-None of it is AEM-specific.
+A second default rule rewrites a **top-level navigation** (never a subresource,
+`mainFrameOnly`) to a script/text suffix (`.js`, `.mjs`, `.css`, `.json`, ...) to
+`text/plain` and drops the disposition, so clicking a script asset shows its
+source instead of downloading it; the renderable list includes the script MIME
+types too. A host- or content-specific case is a new rule entry (`hosts`,
+`contentTypes`, `disposition`, `pathSuffixes`, `mainFrameOnly`, remove/set
+mutations), never a branch in the session wiring. None of it is AEM-specific.
 
 `main/aem/` holds what is AEM-specific: `resourceUrl.ts` and `queryUrl.ts`
 build URLs, `responseValidation.ts` classifies HTTP responses,
@@ -1243,7 +1247,10 @@ src/tools/<name>/
   carries the report under `data.report`, which the renderer paints generically.
   **Both form factors by default** (2026-11-04): `formFactor` absent measures desktop
   then mobile in sequence (`PAGE_AUDIT_RUN_ORDER`, each its own hidden window); a named one
-  measures only that. **The tool builds the whole report itself**: one run leads with the
+  measures only that. The schema also offers an explicit **`both`** with `default: "both"`,
+  so a weak model that fills every parameter has the right choice instead of guessing a
+  device (a live `/check-page` passed `"desktop"` on its own before this). **The tool builds
+  the whole report itself**: one run leads with the
   `Category`/`Score`/`Status` table (pass ≥ 90 / warn ≥ 50 / fail), both runs with one
   `Category`/`Desktop`/`Mobile` table whose score cells are status lights
   (`scoreVariant`). Then **one section per category, one entry per audit** - every audit
@@ -1276,9 +1283,17 @@ src/tools/<name>/
   audited page as `ToolReportMessage.url`, so a failing element's selector link reopens that
   page before highlighting - even from a transcript replayed out of an archived journal
   (`browser:highlight-element` gained an optional `url`, and the preload refuses a document
-  that is not it). A source location an evidence URL carries (`file.js:1:3458`) is stripped
-  from the link target and left as text (`stripSourceLocation` in `linkTargets.ts`), so the
-  link is not broken. On a host Settings names **Author**, the audit loads the page with
+  that is not it). The highlight crosses **open shadow roots** (a node inside a web
+  component) and draws both an `!important` inline outline and a fixed ring above the page,
+  so a node the page paints under other content, or one inside a component's shadow tree,
+  is still framed (`bridgeHighlight.ts`). A selector that matches several copies (a
+  carousel's slides, a card list) is disambiguated by the row's own HTML `snippet` (its
+  stable attributes, compared element by element) and prefers a copy already on screen
+  over one in an inactive slide; the click carries the snippet (`data-daisy-snippet` ->
+  the request's optional `snippet`). A source location an evidence URL carries
+  (`file.js:1:3458`) is stripped from the link target and left as text
+  (`stripSourceLocation` in `linkTargets.ts`), so the link is not broken. On a host
+  Settings names **Author**, the audit loads the page with
   `wcmmode=disabled` (`auditTargetUrl`) so AEM's authoring chrome is never audited; a
   publish or "(Default)" host is untouched. Both need `AddonHost.hosts.hostType`
   (`ADDON_API_VERSION` 2).
@@ -2297,20 +2312,21 @@ hosts, and certifies behaviour from the app's own chat journal. Run
 lock). Each run makes real model calls (cost). See `docs/live-testing.md`. Vitest
 and `npm run test:e2e` never pick these specs up.
 
-Current baseline: **`npm run test` → 5097 passed / 13 skipped** (5110 total) - the
-suite is fully green here, +29 against the 5068 run below, for **`page_audit`
+Current baseline: **`npm run test` → 5105 passed / 13 skipped** (5118 total) - the
+suite is fully green here, +37 against the 5068 run below, for **`page_audit`
 measuring both form factors, an Author's web-content view, and selector deep links**
 (2026-11-04): `formFactor` now defaults to *both* (desktop then mobile,
-`PAGE_AUDIT_RUN_ORDER`), and the report merges the same audit id across the two runs
-into one entry whose **evidence is merged** - word-for-word prose or an identical
-element once with both device badges inline, a disagreement once per device; an
-evidence table is one table with a narrow **Device column right after `#`** (icons on
-screen, `desktop`/`mobile`/`desktop, mobile` in Copy/Export), identical rows marked
-both, a same-key row whose values differ kept twice (one per device), different columns
-falling back to one table per device, a **checklist rendered as an `Item | Result`
-table** (`checklistAsTable`), and a row carrying **sub-items kept one per device**
-(`hasSubItems`) because the detail is too rich to collapse. A source location an
-evidence URL carries (`file.js:1:3458`) is stripped from the link target and left as
+`PAGE_AUDIT_RUN_ORDER`), and an explicit `both` (schema `default: "both"`) gives a weak
+model that fills every parameter the right choice; the report merges the same audit id
+across the two runs into one entry whose **evidence is merged** - word-for-word prose or
+an identical element once with both device badges inline, a disagreement once per
+device; an evidence table is one table with a narrow **Device column right after `#`**
+(icons on screen, `desktop`/`mobile`/`desktop, mobile` in Copy/Export), identical rows
+marked both, a same-key row whose values differ kept twice (one per device), different
+columns falling back to one table per device, a **checklist rendered as an `Item |
+Result` table** (`checklistAsTable`), and a row carrying **sub-items kept one per
+device** (`hasSubItems`) because the detail is too rich to collapse. A source location
+an evidence URL carries (`file.js:1:3458`) is stripped from the link target and left as
 text (`stripSourceLocation`), so the link is not broken. The lead table grows a
 `Desktop`/`Mobile` pair of status-light score columns; a run that fails while the other
 succeeds becomes a `ToolReportMessage.note`. On a host Settings names **Author** the
@@ -2324,13 +2340,15 @@ comes from Lighthouse's own status stream (`lighthouse-logger`, declared as an a
 dependency so both resolve one module instance): "Analyzing desktop"/"Analyzing mobile",
 "Loading audit tools", then "Collecting desktop page data", "Analyzing desktop · <audit
 title>" per audit (Lighthouse runs them sequentially) and "Scoring desktop", deduped and
-torn down after the pass (`describeLighthouseStatus`). The +29 is 5 `pageAudit`, 4
-`describeLighthouseStatus`, 11 `tool` (device columns, the prose/table/checklist merge
-rules, sub-items rows, a partial failure, the dual model text), 1 `contributedTools`
-(the report's page), 3 `browserController` (reopen-then-highlight, in-place, gone
-host), 1 `bridgeHighlight` (the document guard), 2 `reportView` (the Device column and
-the inline prose badges) and 2 `linkTargets` (the source location and the port guard).
-The page-audit E2E is 4/4 against the built app. See
+torn down after the pass (`describeLighthouseStatus`). The +37 is 5 `pageAudit`, 4
+`describeLighthouseStatus`, 13 `tool` (device columns, the prose/table/checklist merge
+rules, sub-items rows, the `both` choice, a partial failure, the dual model text), 1
+`contributedTools` (the report's page), 3 `browserController` (reopen-then-highlight,
+in-place, gone host), 4 `bridgeHighlight` (the document guard, the shadow root, the
+visible preference and the snippet match), 3 `responseHeaderFilter` (the text-asset
+navigation rule), 2 `reportView` (the Device column and the inline prose badges) and 2
+`linkTargets` (the source location and the port guard). The page-audit E2E is 4/4 and
+the asset-preview E2E 3/3 against the built app. See
 `docs/verification/followons-2026-10.md` "page_audit: both form factors, an Author's
 web-content view, and selector deep links (2026-11-04)".
 

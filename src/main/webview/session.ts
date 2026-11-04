@@ -135,6 +135,7 @@ export function createViewSession(options: ViewSessionOptions = {}): ViewSession
     const filtered = responseHeaderFilter.filter({
       url: details.url,
       responseHeaders: headers,
+      mainFrame: details.resourceType === 'mainFrame',
     });
     if (filtered === undefined) {
       callback({});

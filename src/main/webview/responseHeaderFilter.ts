@@ -67,6 +67,18 @@ export interface ResponseHeaderRule {
   readonly contentTypes?: readonly string[];
   /** Requires a `Content-Disposition` of this kind. Omitted = either kind, or none. */
   readonly disposition?: 'attachment' | 'inline';
+  /**
+   * URL path suffixes this rule applies to (case-insensitive), e.g. `.js` or
+   * `.map`. Matched against the URL's pathname, so a query string is ignored.
+   * Omitted = any.
+   */
+  readonly pathSuffixes?: readonly string[];
+  /**
+   * When true, the rule applies only to a top-level document navigation, never
+   * to a page's own subresources (a script/style/image it loads). A content-type
+   * swap must be scoped this way, or it would break the page's scripts.
+   */
+  readonly mainFrameOnly?: boolean;
   /** Header changes, applied in order. */
   readonly mutations: readonly HeaderMutation[];
 }
@@ -76,6 +88,8 @@ export interface ResponseHeaderFilterInput {
   /** The absolute URL the response came from; only the origin/host is inspected. */
   readonly url: string;
   readonly responseHeaders: ResponseHeaderMap;
+  /** True for the top-level document (a navigation), false/absent for a subresource. */
+  readonly mainFrame?: boolean;
 }
 
 /** The substituted headers, plus which rules produced them. */
@@ -104,6 +118,11 @@ export const RENDERABLE_CONTENT_TYPES: readonly string[] = [
   'application/pdf',
   'application/xhtml+xml',
   'application/xml',
+  // Scripts and stylesheets: Chromium shows their source as a document when the
+  // response is not an attachment.
+  'application/ecmascript',
+  'application/javascript',
+  'application/x-javascript',
 ];
 
 /**
@@ -120,9 +139,29 @@ export const INLINE_RENDERABLE_ATTACHMENT_RULE: ResponseHeaderRule = {
   mutations: [{ kind: 'remove', name: 'content-disposition' }],
 };
 
+/**
+ * A script or text asset the pane should show, not save. AEM's DAM can answer a
+ * `.js` asset with `application/octet-stream` (or another type Chromium saves),
+ * so the renderable-type rule does not catch it. Forcing `text/plain` on a
+ * top-level navigation is safe - the pane is a preview surface, and a source
+ * file read as text is the point - while a page's own script subresources are
+ * never touched (`mainFrameOnly`). Scoped by path suffix, so a `.zip` or an
+ * image keeps its type and download semantics.
+ */
+export const INLINE_TEXT_ASSET_RULE: ResponseHeaderRule = {
+  id: 'inline-text-asset',
+  mainFrameOnly: true,
+  pathSuffixes: ['.js', '.mjs', '.cjs', '.css', '.json', '.txt', '.xml', '.map', '.md'],
+  mutations: [
+    { kind: 'remove', name: 'content-disposition' },
+    { kind: 'set', name: 'content-type', values: ['text/plain; charset=utf-8'] },
+  ],
+};
+
 /** The rules the view session uses unless a caller supplies its own. */
 export const DEFAULT_RESPONSE_HEADER_RULES: readonly ResponseHeaderRule[] = [
   INLINE_RENDERABLE_ATTACHMENT_RULE,
+  INLINE_TEXT_ASSET_RULE,
 ];
 
 /** The first value of `name`, matched case-insensitively (`URL` header names are not case-preserving). */
@@ -217,10 +256,21 @@ function matchesRule(
   ) {
     return false;
   }
-  if (rule.disposition !== undefined) {
-    return dispositionKind(disposition) === rule.disposition;
+  if (rule.disposition !== undefined && dispositionKind(disposition) !== rule.disposition) {
+    return false;
   }
-  return true;
+  if (rule.pathSuffixes !== undefined && rule.pathSuffixes.length > 0) {
+    let pathname: string;
+    try {
+      pathname = new URL(input.url).pathname.toLowerCase();
+    } catch {
+      return false;
+    }
+    if (!rule.pathSuffixes.some((suffix) => pathname.endsWith(suffix.toLowerCase()))) {
+      return false;
+    }
+  }
+  return rule.mainFrameOnly !== true || input.mainFrame === true;
 }
 
 /** A mutable copy of `headers`, so no rule can alter the object Electron handed over. */

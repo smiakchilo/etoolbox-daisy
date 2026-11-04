@@ -35,6 +35,7 @@ import { byTestId } from '../support/selectors';
 
 const scratchBase = path.resolve(__dirname, '../../test-results', 'asset-preview-scratch');
 const ASSET_PATH = '/content/dam/fixture/pixel.gif';
+const SCRIPT_PATH = '/content/dam/fixture/app.js';
 const ASSISTANT = '.chat-message--assistant';
 
 /** A 1x1 transparent GIF - enough for Chromium to build an image document. */
@@ -125,6 +126,61 @@ test('an asset link previews the attachment image and offers Edit plus CRX', asy
       })
       .toBe(`${origin}/crx/de/index.jsp#${ASSET_PATH}`);
     await waitForViewIdle(app, hostViewId);
+  } finally {
+    await app.close();
+    await closeFixtureServer(server);
+  }
+});
+
+test('a script asset opens as text instead of downloading', async () => {
+  test.setTimeout(120_000);
+
+  const { server, origin } = await startFixtureServer(
+    () => '<!doctype html><html lang="en"><head><title>Home</title></head><body>home</body></html>',
+    {
+      respond: (url) =>
+        url === SCRIPT_PATH
+          ? {
+              // AEM can answer a script asset with a type Chromium would save,
+              // plus an attachment disposition; the pane must show the source.
+              contentType: 'application/octet-stream',
+              body: Buffer.from('console.log("hello");', 'utf8'),
+              headers: { 'content-disposition': 'attachment; filename="app.js"' },
+            }
+          : undefined,
+    },
+  );
+  const { app, page } = await seedHostAndLaunch(scratchBase, origin, 'Asset fixture');
+
+  try {
+    await waitForComposerReady(page, { expectSendVisible: false });
+    const hostViewId = await findHostViewId(app, origin);
+    await waitForViewIdle(app, hostViewId);
+
+    await sendAssetMessage(app, page, `${origin}${SCRIPT_PATH}`);
+
+    const link = page.locator(`${ASSISTANT} a[data-daisy-link]`);
+    await expect(link).toHaveCount(1, { timeout: 30_000 });
+    await expect(link).toHaveAttribute('href', `${origin}${SCRIPT_PATH}`);
+
+    await link.click();
+    await expect
+      .poll(async () => await page.locator(`${byTestId('browser-address')} input`).inputValue(), {
+        timeout: 30_000,
+      })
+      .toBe(`${origin}${SCRIPT_PATH}`);
+    // Shown as a text document, not offered as a download.
+    await expect
+      .poll(() => viewContentType(app, hostViewId), { timeout: 30_000 })
+      .toBe('text/plain');
+    const text = await app.evaluate(
+      async ({ webContents }, id) =>
+        (await webContents.fromId(id)?.executeJavaScript('document.body.innerText')) as
+          string | undefined,
+      hostViewId,
+    );
+    expect(text).toContain('console.log');
+    await expect(page.locator('.browser-toolbar-message')).not.toHaveAttribute('open', '');
   } finally {
     await app.close();
     await closeFixtureServer(server);

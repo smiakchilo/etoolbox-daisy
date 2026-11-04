@@ -82,6 +82,50 @@ describe('createResponseHeaderFilter - default rule', () => {
   });
 });
 
+describe('createResponseHeaderFilter - script and text assets', () => {
+  it('shows a script navigated to as text, not a download', () => {
+    const filter = createResponseHeaderFilter();
+    expect(
+      filter.filter({
+        url: 'https://author.example/content/dam/hpe/js/match-height-mixin.js',
+        responseHeaders: {
+          'content-type': ['application/octet-stream'],
+          'content-disposition': ['attachment; filename="match-height-mixin.js"'],
+        },
+        mainFrame: true,
+      }),
+    ).toEqual({
+      headers: { 'content-type': ['text/plain; charset=utf-8'] },
+      ruleIds: ['inline-text-asset'],
+    });
+  });
+
+  it('keeps a script subresource’s own type, so the page’s scripts still run', () => {
+    const filter = createResponseHeaderFilter();
+    expect(
+      filter.filter({
+        url: 'https://author.example/content/dam/hpe/js/match-height-mixin.js',
+        responseHeaders: { 'content-type': ['application/javascript'] },
+        mainFrame: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('leaves a non-text asset alone, so the download guard still cancels it', () => {
+    const filter = createResponseHeaderFilter();
+    expect(
+      filter.filter({
+        url: 'https://author.example/content/dam/x/archive.zip',
+        responseHeaders: {
+          'content-type': ['application/zip'],
+          'content-disposition': ['attachment'],
+        },
+        mainFrame: true,
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe('hostMatches', () => {
   const url = 'https://author-p123-e456.adobeaemcloud.com/content/x';
 

@@ -669,6 +669,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
     requestId: string,
     selector: string,
     url: string | undefined,
+    snippet: string | undefined,
   ): Promise<boolean> {
     const contents = hostView.webContents;
     if (contents.isDestroyed()) return Promise.resolve(false);
@@ -687,6 +688,7 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
         requestId,
         selector,
         ...(url === undefined ? {} : { url }),
+        ...(snippet === undefined ? {} : { snippet }),
       });
     });
   }
@@ -708,7 +710,12 @@ export function createBrowserController(options: BrowserControllerOptions): Brow
       if (!opened.ok) return { ok: true, found: false, reason: 'not-opened' };
     }
     const requestId = `highlight-${String((highlightCounter += 1))}`;
-    const found = await sendHighlightCommand(requestId, request.selector, request.url);
+    const found = await sendHighlightCommand(
+      requestId,
+      request.selector,
+      request.url,
+      request.snippet,
+    );
     return { ok: true, found };
   }
 

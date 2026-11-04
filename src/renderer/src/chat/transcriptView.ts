@@ -124,13 +124,18 @@ export interface TranscriptViewOptions {
    */
   readonly onExportTable?: (data: TableExportData) => void;
   /**
-   * Invoked with the CSS selector of a report's failing element (and the page
-   * that report was about, when it knows one) when the reader activates its
-   * pseudo-link, so the host reopens that page if needed, scrolls the browser
-   * pane to the element and highlights it. Absent (a unit test) means the link
-   * is inert.
+   * Invoked with the CSS selector of a report's failing element (the page that
+   * report was about, and the element's own HTML snippet when it has one) when
+   * the reader activates its pseudo-link, so the host reopens that page if
+   * needed, scrolls the browser pane to the element and highlights it. The
+   * snippet disambiguates several matches of the same selector. Absent (a unit
+   * test) means the link is inert.
    */
-  readonly onHighlightElement?: (selector: string, url: string | undefined) => void;
+  readonly onHighlightElement?: (
+    selector: string,
+    url: string | undefined,
+    snippet: string | undefined,
+  ) => void;
 }
 
 /** Stable identity for an item's cached DOM node - see `createTranscriptView`'s doc comment for why this matters. */
@@ -987,7 +992,10 @@ export function createTranscriptView(
       const selector = selectorLink.getAttribute('data-daisy-selector');
       const reportUrl =
         selectorLink.closest('.chat-report-message')?.getAttribute(REPORT_URL_ATTR) ?? undefined;
-      if (selector !== null && selector !== '') options.onHighlightElement?.(selector, reportUrl);
+      const snippet = selectorLink.getAttribute('data-daisy-snippet') ?? undefined;
+      if (selector !== null && selector !== '') {
+        options.onHighlightElement?.(selector, reportUrl, snippet);
+      }
       return;
     }
     const anchor =

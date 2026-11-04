@@ -31,6 +31,29 @@ function pageWith(body: string): Document {
   return doc;
 }
 
+/** Gives one element a real box, so the viewport preference can be exercised. */
+function defineRect(
+  element: Element,
+  rect: {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  },
+): void {
+  Object.defineProperty(element, 'getBoundingClientRect', {
+    configurable: true,
+    value: () => ({
+      ...rect,
+      right: rect.left + rect.width,
+      bottom: rect.top + rect.height,
+      x: rect.left,
+      y: rect.top,
+      toJSON: () => ({}),
+    }),
+  });
+}
+
 describe('performBridgeHighlight', () => {
   it('outlines the first match and reports it found', () => {
     const doc = pageWith('<div id="a"></div><div id="b"></div>');
@@ -38,6 +61,8 @@ describe('performBridgeHighlight', () => {
     expect(performBridgeHighlight('#b', doc)).toBe(true);
     const target = doc.querySelector('#b') as HTMLElement;
     expect(target.style.outline).toContain('solid');
+    // A page's `outline: none` reset must not be able to suppress it.
+    expect(target.style.getPropertyPriority('outline')).toBe('important');
   });
 
   it('reports not-found for a selector that matches nothing', () => {
@@ -76,6 +101,77 @@ describe('performBridgeHighlight', () => {
       expect(performBridgeHighlight('#a', doc, 'https://author.example/content/a.html#frag')).toBe(
         true,
       );
+    } finally {
+      other.window.close();
+    }
+  });
+
+  it('prefers a match already on screen over an off-screen one', () => {
+    const doc = pageWith('<div class="item" id="first"></div><div class="item" id="second"></div>');
+    const first = doc.querySelector('#first') as HTMLElement;
+    const second = doc.querySelector('#second') as HTMLElement;
+    defineRect(first, { left: 0, top: -500, width: 100, height: 100 });
+    defineRect(second, { left: 10, top: 10, width: 100, height: 100 });
+    const scroll = vi.fn();
+    Object.defineProperty(second, 'scrollIntoView', { configurable: true, value: scroll });
+
+    expect(performBridgeHighlight('.item', doc)).toBe(true);
+    expect(first.style.outline).toBe('');
+    expect(second.style.outline).toContain('solid');
+    // An element already visible is not scrolled.
+    expect(scroll).not.toHaveBeenCalled();
+  });
+
+  it('uses the snippet to disambiguate several matches', () => {
+    const doc = pageWith(
+      '<button class="cta" aria-label="First" data-id="1"></button>' +
+        '<button class="cta" aria-label="Second" data-id="2"></button>',
+    );
+    const first = doc.querySelector('[data-id="1"]') as HTMLElement;
+    const second = doc.querySelector('[data-id="2"]') as HTMLElement;
+
+    expect(
+      performBridgeHighlight(
+        'button.cta',
+        doc,
+        undefined,
+        '<button class="cta" aria-label="Second" data-id="2">',
+      ),
+    ).toBe(true);
+
+    expect(first.style.outline).toBe('');
+    expect(second.style.outline).toContain('solid');
+  });
+
+  it('finds an element inside an open shadow root', () => {
+    const other = new JSDOM('<div id="host"></div>', {
+      url: 'https://author.example/content/a.html',
+    });
+    Object.defineProperty(other.window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: vi.fn(),
+    });
+    try {
+      const doc = other.window.document;
+      const host = doc.querySelector('#host') as HTMLElement;
+      const shadow = host.attachShadow({ mode: 'open' });
+      shadow.innerHTML = '<div class="bg-wrapper"><img class="bg-image" alt="" /></div>';
+
+      expect(
+        performBridgeHighlight(
+          '#host > div.bg-wrapper > img.bg-image',
+          doc,
+          'https://author.example/content/a.html',
+        ),
+      ).toBe(true);
+
+      const image = shadow.querySelector('.bg-image') as HTMLElement;
+      expect(image.style.outline).toContain('solid');
+      expect(image.style.getPropertyPriority('outline')).toBe('important');
+      // A fixed ring is drawn above the page as well, so a covered element still
+      // shows a frame.
+      expect(doc.querySelector('[data-daisy-highlight]')).not.toBeNull();
     } finally {
       other.window.close();
     }

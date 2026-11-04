@@ -61,6 +61,8 @@ export const webviewBridgeHighlightCommandSchema = z.object({
    * decorate the wrong document.
    */
   url: z.string().min(1).max(2000).optional(),
+  /** The element's own HTML, used only to pick the right match when the selector matches several. */
+  snippet: z.string().min(1).max(2000).optional(),
 });
 export type WebviewBridgeHighlightCommand = z.infer<typeof webviewBridgeHighlightCommandSchema>;
 

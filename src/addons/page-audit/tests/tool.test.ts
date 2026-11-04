@@ -153,6 +153,10 @@ describe('pageAuditArgsSchema', () => {
   it('accepts no arguments at all', () => {
     expect(pageAuditArgsSchema.safeParse({}).success).toBe(true);
   });
+
+  it('accepts "both" as the explicit default', () => {
+    expect(pageAuditArgsSchema.safeParse({ formFactor: 'both' }).success).toBe(true);
+  });
 });
 
 describe('the audit executor', () => {
@@ -183,6 +187,14 @@ describe('the audit executor', () => {
       expect.any(Function),
     );
     expect(PAGE_AUDIT_RUN_ORDER).toEqual(['desktop', 'mobile']);
+  });
+
+  it('measures both when the model passes "both" explicitly', async () => {
+    const audit = runnerReturning(REPORT);
+
+    await execute(audit, { formFactor: 'both' });
+
+    expect(audit).toHaveBeenCalledTimes(2);
   });
 
   it('runs only the named form factor', async () => {

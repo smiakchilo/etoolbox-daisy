@@ -14,9 +14,12 @@ the categories ("accessibility only") or a mobile run.
 ## Procedure
 
 1. Call `page_audit` **once**. Pass `url` only when the user gave one. Pass `categories`
-   only when the user narrowed them. Leave `formFactor` out so the page is measured on
-   **both desktop and mobile**; pass `"desktop"` or `"mobile"` only when the user named one
-   device. Do not retry a successful audit.
+   only when the user narrowed them. **Leave `formFactor` out** (or pass `"both"`) so the
+   page is measured on both desktop and mobile; pass `"desktop"` or `"mobile"` only when the
+   user named one device. Never pass a single device by default - that silently drops the
+   other device's results. A bare `/check-page` is `page_audit({ "formFactor": "both" })`
+   (plus `url` when the user named a page); it is never `"desktop"` or `"mobile"` by
+   default. Do not retry a successful audit.
 2. If the call fails with `select_server`, ask the user to open a page or pick a host and
    stop. Any other failure is reported in one sentence with the tool's own reason.
 3. Add nothing. `page_audit` puts the whole report on screen itself, as one structured
